@@ -495,18 +495,27 @@ class TestCounselorWrongConvergence:
 
     @pytest.mark.asyncio
     async def test_counselor_wrong_convergence_extreme_sends_dm(self):
-        """independence_score < 0.1 triggers therapeutic DM."""
+        """independence_score < 0.1 triggers therapeutic DM.
+
+        BF-921 (#1636): this test used a dict as the registry, and so pinned the
+        handler's ``items()`` lookup; production passes the runtime's AgentRegistry
+        (``get()``/``all()``, no ``items()``), on which that lookup raised. It now
+        uses a real AgentRegistry and pins the resolved agent id.
+        """
         from probos.cognitive.counselor import CounselorAgent
         from probos.cognitive.llm_client import BaseLLMClient
+        from probos.substrate.registry import AgentRegistry
 
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
         agent._send_therapeutic_dm = AsyncMock(return_value=True)
-        # Set up registry so agent can resolve callsigns
-        mock_registry = {}
+        registry = AgentRegistry()
         mock_agent_obj = MagicMock()
+        mock_agent_obj.id = "agent-chapel"
+        mock_agent_obj.agent_type = "medical_officer"
+        mock_agent_obj.pool = "medical"
         mock_agent_obj.callsign = "chapel"
-        mock_registry["agent-chapel"] = mock_agent_obj
-        agent._registry = mock_registry
+        await registry.register(mock_agent_obj)
+        agent._registry = registry
 
         data = {
             "agents": ["chapel"],
@@ -515,8 +524,9 @@ class TestCounselorWrongConvergence:
             "independence_score": 0.05,  # Extreme
         }
         await agent._on_wrong_convergence_detected(data)
-        # Should attempt DM to converging agent
-        assert agent._send_therapeutic_dm.called
+        # Should DM the converging agent, by its registered id
+        agent._send_therapeutic_dm.assert_awaited_once()
+        assert agent._send_therapeutic_dm.await_args.args[:2] == ("agent-chapel", "chapel")
 
     @pytest.mark.asyncio
     async def test_counselor_wrong_convergence_moderate_no_dm(self):

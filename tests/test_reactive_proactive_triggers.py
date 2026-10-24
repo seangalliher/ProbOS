@@ -6,10 +6,11 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
+from probos.cognitive.procedure_store import ProcedureStore
 from probos.cognitive.procedures import (
     Procedure,
     ProcedureStep,
@@ -20,6 +21,7 @@ from probos.cognitive.procedures import (
     diagnose_procedure_health,
 )
 from probos.config import (
+    PROCEDURE_MATCH_THRESHOLD,
     REACTIVE_COOLDOWN_SECONDS,
     PROACTIVE_SCAN_INTERVAL_SECONDS,
     EVOLUTION_MAX_RETRIES,
@@ -228,7 +230,14 @@ class TestEventTypeAndEmission:
 
 
 class TestReactiveTrigger:
-    """Tests for DreamingEngine.on_task_execution_complete()."""
+    """Tests for DreamingEngine.on_task_execution_complete().
+
+    BF-921 (#1636): the store double is built from ``ProcedureStore`` (``create_autospec``), so a call
+    the real class rejects fails here too, and each result is set through ``return_value`` or
+    ``side_effect``. The unrestricted ``AsyncMock`` it replaces accepted ``find_matching(...,
+    threshold=...)`` and returned a dict, which hid that the trigger raised on every delivered
+    completion. The real ``find_matching`` returns a ranked list of dicts that carry a ``score``.
+    """
 
     def _make_engine(self, **kwargs):
         from probos.cognitive.dreaming import DreamingEngine
@@ -238,7 +247,7 @@ class TestReactiveTrigger:
         memory.recall_by_intent = AsyncMock(return_value=[_FakeEpisode()])
         config = _FakeConfig()
         llm_client = kwargs.pop("llm_client", _make_llm_client())
-        store = kwargs.pop("procedure_store", AsyncMock())
+        store = kwargs.pop("procedure_store", create_autospec(ProcedureStore, instance=True))
         engine = DreamingEngine(
             router=router,
             trust_network=trust,
@@ -274,46 +283,60 @@ class TestReactiveTrigger:
     @pytest.mark.asyncio
     async def test_reactive_no_match_flags_candidate(self):
         engine = self._make_engine()
-        engine._procedure_store.find_matching = AsyncMock(return_value=None)
+        engine._procedure_store.find_matching.return_value = []
         await engine.on_task_execution_complete({
             "used_procedure": False, "success": True,
             "agent_id": "agent-2", "intent_type": "translate",
         })
         assert "translate" in engine._extraction_candidates
+        engine._procedure_store.find_matching.assert_awaited_once_with("translate", n_results=1)
+
+    @pytest.mark.asyncio
+    async def test_reactive_below_threshold_flags_candidate(self):
+        """BF-921 (#1636): a best match scored below PROCEDURE_MATCH_THRESHOLD is no match."""
+        engine = self._make_engine()
+        engine._procedure_store.find_matching.return_value = [
+            {"id": "proc-1", "score": PROCEDURE_MATCH_THRESHOLD - 0.01},
+        ]
+        await engine.on_task_execution_complete({
+            "used_procedure": False, "success": True,
+            "agent_id": "agent-8", "intent_type": "translate",
+        })
+        assert "translate" in engine._extraction_candidates
+        engine._procedure_store.get_quality_metrics.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reactive_match_healthy_no_action(self):
         engine = self._make_engine()
-        engine._procedure_store.find_matching = AsyncMock(return_value={"id": "proc-1"})
-        engine._procedure_store.get_quality_metrics = AsyncMock(return_value={
+        engine._procedure_store.find_matching.return_value = [{"id": "proc-1", "score": 0.9}]
+        engine._procedure_store.get_quality_metrics.return_value = {
             "total_selections": 10,
             "fallback_rate": 0.1,
             "applied_rate": 0.8,
             "completion_rate": 0.9,
             "effective_rate": 0.85,
-        })
+        }
         # healthy metrics → diagnose_procedure_health returns None → no evolution
         await engine.on_task_execution_complete({
             "used_procedure": False, "success": True,
             "agent_id": "agent-3", "intent_type": "code_review",
         })
+        engine._procedure_store.get_quality_metrics.assert_awaited_once_with("proc-1")
         engine._procedure_store.get.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reactive_match_degraded_confirmed_evolves(self):
         engine = self._make_engine()
         proc = _make_procedure()
-        engine._procedure_store.find_matching = AsyncMock(return_value={"id": "proc-1"})
-        engine._procedure_store.get_quality_metrics = AsyncMock(return_value={
+        engine._procedure_store.find_matching.return_value = [{"id": "proc-1", "score": 0.9}]
+        engine._procedure_store.get_quality_metrics.return_value = {
             "total_selections": 10,
             "fallback_rate": 0.6,  # triggers FIX:high_fallback_rate
             "applied_rate": 0.5,
             "completion_rate": 0.7,
             "effective_rate": 0.6,
-        })
-        engine._procedure_store.get = AsyncMock(return_value=proc)
-        engine._procedure_store.save = AsyncMock()
-        engine._procedure_store.deactivate = AsyncMock()
+        }
+        engine._procedure_store.get.return_value = proc
 
         # Mock LLM to confirm AND produce valid FIX evolution
         responses = [
@@ -334,15 +357,15 @@ class TestReactiveTrigger:
     async def test_reactive_match_degraded_denied_skips(self):
         engine = self._make_engine()
         proc = _make_procedure()
-        engine._procedure_store.find_matching = AsyncMock(return_value={"id": "proc-1"})
-        engine._procedure_store.get_quality_metrics = AsyncMock(return_value={
+        engine._procedure_store.find_matching.return_value = [{"id": "proc-1", "score": 0.9}]
+        engine._procedure_store.get_quality_metrics.return_value = {
             "total_selections": 10,
             "fallback_rate": 0.6,
             "applied_rate": 0.5,
             "completion_rate": 0.7,
             "effective_rate": 0.6,
-        })
-        engine._procedure_store.get = AsyncMock(return_value=proc)
+        }
+        engine._procedure_store.get.return_value = proc
         # LLM says NO
         engine._llm_client.complete = AsyncMock(
             return_value=MagicMock(content="NO\nNot needed")
@@ -359,15 +382,15 @@ class TestReactiveTrigger:
     async def test_reactive_respects_anti_loop_guard(self):
         engine = self._make_engine()
         proc = _make_procedure()
-        engine._procedure_store.find_matching = AsyncMock(return_value={"id": "proc-1"})
-        engine._procedure_store.get_quality_metrics = AsyncMock(return_value={
+        engine._procedure_store.find_matching.return_value = [{"id": "proc-1", "score": 0.9}]
+        engine._procedure_store.get_quality_metrics.return_value = {
             "total_selections": 10,
             "fallback_rate": 0.6,
             "applied_rate": 0.5,
             "completion_rate": 0.7,
             "effective_rate": 0.6,
-        })
-        engine._procedure_store.get = AsyncMock(return_value=proc)
+        }
+        engine._procedure_store.get.return_value = proc
         # Recently addressed
         engine._addressed_degradations["proc-1"] = time.time()
         # LLM confirms (would pass gate)
@@ -380,12 +403,13 @@ class TestReactiveTrigger:
         })
         # Anti-loop guard should prevent the call to confirm_evolution_with_llm
         # (it's checked in _attempt_procedure_evolution before LLM gate)
+        engine._procedure_store.get.assert_awaited_once_with("proc-1")
         engine._procedure_store.save.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reactive_never_raises(self):
         engine = self._make_engine()
-        engine._procedure_store.find_matching = AsyncMock(side_effect=RuntimeError("db error"))
+        engine._procedure_store.find_matching.side_effect = RuntimeError("db error")
         # Should not raise
         await engine.on_task_execution_complete({
             "used_procedure": False, "success": True,

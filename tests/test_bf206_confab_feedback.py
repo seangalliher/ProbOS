@@ -332,7 +332,15 @@ class TestEventEmission:
 # ===========================================================================
 
 class TestCounselorFeedback:
-    """Counselor graduated response to confabulation suppression."""
+    """Counselor response to an output suppression.
+
+    BF-921 (#1636) replaced BF-206's graduated response (a warning DM, then a
+    0.5-weight trust penalty from the second suppression in an hour) with a
+    record only, because no reason's gauge is qualified yet (quality_gate:
+    AD-1350, #1637; confabulation_detected: BF-922, #1639). The tests that pinned
+    the DM text, the penalty and its weight now pin their absence; each reason is
+    tested in tests/test_bf921_counselor_event_delivery.py.
+    """
 
     @pytest.fixture
     def counselor(self, mock_trust_network):
@@ -346,6 +354,7 @@ class TestCounselorFeedback:
         c._profile_store = None
         c._send_therapeutic_dm = AsyncMock(return_value=True)
         c._dm_cooldowns = {}
+        c._suppression_history = {}  # BF-921: set by __init__, which __new__ skips
         return c
 
     @pytest.mark.asyncio
@@ -360,131 +369,43 @@ class TestCounselorFeedback:
         counselor._on_confabulation_suppressed.assert_awaited_once_with(data)
 
     @pytest.mark.asyncio
-    async def test_first_offense_warning_dm(self, counselor):
-        """First confabulation in window sends warning DM, no trust penalty."""
-        data = {
-            "agent_id": "agent-x",
-            "callsign": "Wesley",
-            "rejection_reason": "fabricated_hex_ids",
-            "trust_score": 0.3,
-        }
+    async def test_first_suppression_sends_no_message(self, counselor):
+        """BF-921: was test_first_offense_warning_dm; the "couldn't be verified" DM is gone."""
+        data = {"agent_id": "agent-x", "callsign": "Wesley", "rejection_reason": "confabulation_detected"}
         await counselor._on_confabulation_suppressed(data)
 
-        counselor._send_therapeutic_dm.assert_awaited_once()
-        msg = counselor._send_therapeutic_dm.call_args[0][2]
-        assert "held back" in msg
-        assert "completely normal" in msg
-        # No trust penalty on first offense
+        counselor._send_therapeutic_dm.assert_not_awaited()
         counselor._trust_network.record_outcome.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_second_offense_trust_penalty(self, counselor):
-        """Second confabulation in window triggers trust penalty + escalated DM."""
-        data = {
-            "agent_id": "agent-x",
-            "callsign": "Wesley",
-            "rejection_reason": "fabricated_hex_ids",
-            "trust_score": 0.3,
-        }
-        # First call
-        await counselor._on_confabulation_suppressed(data)
-        counselor._send_therapeutic_dm.reset_mock()
-        counselor._trust_network.record_outcome.reset_mock()
-
-        # Second call — same window
-        await counselor._on_confabulation_suppressed(data)
-
-        # Trust penalty applied
-        counselor._trust_network.record_outcome.assert_called_once_with(
-            agent_id="agent-x",
-            success=False,
-            weight=0.5,
-            intent_type="confabulation_suppressed",
-            source="confabulation",
-        )
-        # Escalated DM
-        msg = counselor._send_therapeutic_dm.call_args[0][2]
-        assert "2nd" in msg
-        assert "trust rating has been adjusted" in msg
-
-    @pytest.mark.asyncio
-    async def test_second_offense_busy_trust_still_sends_honest_dm(self, counselor):
-        data = {
-            "agent_id": "agent-x",
-            "callsign": "Wesley",
-            "rejection_reason": "fabricated_hex_ids",
-            "trust_score": 0.3,
-        }
-        await counselor._on_confabulation_suppressed(data)
-        counselor._send_therapeutic_dm.reset_mock()
-        counselor._trust_network.record_outcome.side_effect = RuntimeError(
-            "trust_write_in_progress",
-        )
-
-        await counselor._on_confabulation_suppressed(data)
-
-        message = counselor._send_therapeutic_dm.await_args.args[2]
-        assert "trust adjustment was skipped" in message
-        assert "trust rating has been adjusted" not in message
-        assert counselor._cognitive_profiles["agent-x"].confabulation_count == 2
-
-    @pytest.mark.asyncio
-    async def test_second_offense_other_trust_runtime_error_propagates(self, counselor):
-        data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}
-        await counselor._on_confabulation_suppressed(data)
-        counselor._trust_network.record_outcome.side_effect = RuntimeError(
-            "trust store defect",
-        )
-
-        with pytest.raises(RuntimeError, match="^trust store defect$"):
+    async def test_repeated_suppressions_carry_no_trust_penalty(self, counselor):
+        """BF-921: was test_second_offense_trust_penalty, test_trust_penalty_weight and test_third_offense_th_suffix."""
+        data = {"agent_id": "agent-x", "callsign": "Wesley", "rejection_reason": "quality_gate"}
+        for _ in range(3):
             await counselor._on_confabulation_suppressed(data)
 
-    @pytest.mark.asyncio
-    async def test_trust_penalty_weight(self, counselor):
-        """Trust penalty uses weight=0.5 and source='confabulation'."""
-        data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}
-        # Two offenses to trigger penalty
-        await counselor._on_confabulation_suppressed(data)
-        await counselor._on_confabulation_suppressed(data)
-
-        call = counselor._trust_network.record_outcome.call_args
-        assert call.kwargs["weight"] == 0.5
-        assert call.kwargs["source"] == "confabulation"
+        counselor._trust_network.record_outcome.assert_not_called()
+        counselor._send_therapeutic_dm.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_outside_window_resets_count(self, counselor):
-        """Offenses outside 1h window don't count toward repeat threshold."""
-        data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}
-
-        # First offense
+    async def test_a_trust_network_that_would_raise_is_never_called(self, counselor):
+        """BF-921: was the two RuntimeError tests; with no trust write there is nothing to skip or propagate."""
+        counselor._trust_network.record_outcome.side_effect = RuntimeError("trust store defect")
+        data = {"agent_id": "agent-x", "callsign": "W"}
+        await counselor._on_confabulation_suppressed(data)
         await counselor._on_confabulation_suppressed(data)
 
-        # Simulate time passing beyond window
-        counselor._confab_history["agent-x"] = [time.time() - 3700]
-
-        # Second offense — but old one expired
-        counselor._trust_network.record_outcome.reset_mock()
-        await counselor._on_confabulation_suppressed(data)
-
-        # Should NOT trigger trust penalty (only 1 in window after prune)
-        # Wait — the second call adds a new entry, prunes old one, so count = 1
-        # Actually let's re-check: old timestamp pruned, new one added = count 1
-        # But then the append happens first: [old, new], prune removes old → [new] → count=1
-        # Actually the code appends THEN prunes. So: [old, new] → prune → [new] → count = 1
-        # count >= 2 is False → no penalty
         counselor._trust_network.record_outcome.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_confabulation_count_incremented(self, counselor):
-        """confabulation_count incremented in cognitive profile."""
-        data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}
+    async def test_suppressions_are_counted_within_one_hour(self, counselor):
+        """BF-921: was test_outside_window_resets_count and test_confabulation_count_incremented."""
+        counselor._suppression_history["agent-x"] = [time.time() - 3700]
+        data = {"agent_id": "agent-x", "callsign": "W"}
+        await counselor._on_confabulation_suppressed(data)
         await counselor._on_confabulation_suppressed(data)
 
-        profile = counselor._cognitive_profiles["agent-x"]
-        assert profile.confabulation_count == 1
-
-        await counselor._on_confabulation_suppressed(data)
-        assert profile.confabulation_count == 2
+        assert len(counselor._suppression_history["agent-x"]) == 2
 
     @pytest.mark.asyncio
     async def test_ignores_self_events(self, counselor):
@@ -492,18 +413,7 @@ class TestCounselorFeedback:
         data = {"agent_id": "counselor-1", "callsign": "Echo"}
         await counselor._on_confabulation_suppressed(data)
         counselor._send_therapeutic_dm.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_third_offense_th_suffix(self, counselor):
-        """Third+ offenses use 'th' suffix in DM message."""
-        data = {"agent_id": "agent-x", "callsign": "W", "trust_score": 0.3}
-        await counselor._on_confabulation_suppressed(data)
-        await counselor._on_confabulation_suppressed(data)
-        counselor._send_therapeutic_dm.reset_mock()
-        await counselor._on_confabulation_suppressed(data)
-
-        msg = counselor._send_therapeutic_dm.call_args[0][2]
-        assert "3rd" in msg
+        assert "counselor-1" not in counselor._suppression_history
 
 
 # ===========================================================================

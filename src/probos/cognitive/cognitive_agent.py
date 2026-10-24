@@ -5877,6 +5877,39 @@ class CognitiveAgent(BaseAgent):
 
         return None
 
+    def _emit_output_suppressed(self, rejection: str, observation: dict, *, path: str) -> None:
+        """BF-206 / BF-921 (#1636): announce an output the gate suppressed.
+
+        The Counselor records it (``CounselorAgent._on_confabulation_suppressed``).
+        ``path`` names the gate: ``"chain"`` (the chain's EVALUATE) or, from BF-922
+        (#1639), ``"single_call_fallback"``. Log-and-degrade: an announcement that
+        cannot be made never un-suppresses the output.
+        """
+        callsign = getattr(self, "callsign", "") or self.agent_type
+        runtime = self._runtime
+        if runtime is None:
+            logger.warning(
+                "BF-921: suppression of %s %s (%s) not announced: the agent has no runtime",
+                self.agent_type, callsign, self.id,
+            )
+            return
+        try:
+            runtime.emit_event(EventType.CONFABULATION_SUPPRESSED, {
+                "agent_id": self.id,
+                "agent_type": self.agent_type,
+                "callsign": callsign,
+                "rejection_reason": rejection,
+                "intent": observation.get("intent", ""),
+                "trust_score": observation.get("_trust_score", 0.5),
+                "chain_trust_band": observation.get("_chain_trust_band", "unknown"),
+                "path": path,
+            })
+        except Exception:
+            logger.warning(
+                "BF-921: suppression of %s %s (%s) not announced: emit failed",
+                self.agent_type, callsign, self.id, exc_info=True,
+            )
+
     async def _execute_sub_task_chain(
         self,
         chain,
@@ -6003,19 +6036,8 @@ class CognitiveAgent(BaseAgent):
                     "BF-206: Chain output suppressed — Evaluate recommended suppress (%s)",
                     rejection,
                 )
-                # Emit confabulation suppressed event
-                _rt = getattr(self, '_runtime', None)
-                if _rt and hasattr(_rt, 'emit_event'):
-                    from probos.events import EventType
-                    _rt.emit_event(EventType.CONFABULATION_SUPPRESSED, {
-                        "agent_id": self.id,
-                        "agent_type": self.agent_type,
-                        "callsign": getattr(self, 'callsign', self.agent_type),
-                        "rejection_reason": rejection,
-                        "intent": observation.get("intent", ""),
-                        "trust_score": observation.get("_trust_score", 0.5),
-                        "chain_trust_band": observation.get("_chain_trust_band", "unknown"),
-                    })
+                # BF-921 (#1636): one emitter for both suppression paths.
+                self._emit_output_suppressed(rejection, observation, path="chain")
                 return {
                     "action": "execute",
                     "llm_output": "[NO_RESPONSE]",
