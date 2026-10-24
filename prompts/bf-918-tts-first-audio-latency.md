@@ -2,21 +2,24 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
 
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24: Amendments A1 (area A, M1), A2 (area B, M2) and A3 (area C, M3), the repair of review round 1 (three parallel `gpt-6.1-sol` reviewers count as one round: 14 findings, all three areas NOT READY). The orchestrator applied the amendments by tool, in the order A2, A1, A3 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand. Amendments A4 (area A), A5 (area B) and A6 (area C), the repair of review round 2 (three parallel `gpt-6.1-sol` reviewers count as one round: 8 findings, all three areas NOT READY; the paragraph below gives the repair). The orchestrator applied them by tool, in the order A5, A4, A6 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24: Amendments A1 (area A, M1), A2 (area B, M2) and A3 (area C, M3), the repair of review round 1 (three parallel `gpt-6.1-sol` reviewers count as one round: 14 findings, all three areas NOT READY). The orchestrator applied the amendments by tool, in the order A2, A1, A3 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand. Amendments A4 (area A), A5 (area B) and A6 (area C), the repair of review round 2 (three parallel `gpt-6.1-sol` reviewers count as one round: 8 findings, all three areas NOT READY; the paragraph below gives the repair). The orchestrator applied them by tool, in the order A5, A4, A6 so that the mutation rows stay in numeric order, and merged the three areas' "for integration" lists by hand. Amendments A7 (area A), A8 (area B) and A9 (area C), the repair of review round 3 (three parallel `gpt-6.1-sol` reviewers count as one round: 5 findings, all three areas NOT READY; the round-three brake decision of 2026-10-24 06:49Z, recorded on #1626, is: continue, and round 4 is the last). The orchestrator applied A8 (one sentence), A7 (by hand: the consult could not read the amendment format, so its pairs carry no tool envelope) and A9 (by tool), in that order, and merged the "for integration" lists by hand.
 
 **Review round 1, area A (amendment A1):** both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged` on the store protocol); the inventory tool is read-only (no `--delete`, `--confirm` or `--attachments-dir`), reads every file and decodes the episode archive, and accepts only Piper's exact header; the capacity description gives the real eviction order. **Area B (amendment A2):** one worker lifecycle (B1, B2: D4a); executor refusal or shutdown cancellation degrades at every voice stage (B3); the default-pool claim narrowed to synthesis and lip-sync, with the store's own I/O executor an open slice of #1626 (B4, slice M4); B5 registered. **Area C (amendment A3):** a reply stopped before any of its audio starts ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter (C1, C3); a play rejected after a stop is terminal and does not fall back to the browser (C2). Round 2 reviews the whole M1 candidate (the store protocol gains a method, a shared contract) and the deltas of M2 and M3 with their consumers.
 
-**Review round 2, area A (amendment A4; `claude-architect`, Claude Code, Opus 5.5, 2026-10-24, read-only):** the inventory enumerates with `os.walk`; a directory it cannot list, and a link or junction to a directory (never followed), are named in `unreadable` with a trailing separator and keep every candidate; the store's own listing raises instead of counting nothing; the store docstring states the one-instance-per-root precondition and §9 states it with the one-sweep-at-a-time precondition (F2 and F3 are registered: §18 R15 and R16). **Area B (amendment A5):** the worker owns its directory from creation, so a failed stderr open leaves none behind (finding 1, a regression A2 introduced); the leftover temporary WAV of a caller-cancelled ffmpeg conversion is recorded with R10 (finding 2), and a killed Piper's directory that cannot be removed at once is R17. **Area C (amendment A6):** the profile chat consumes `dropped`. Its in-flight speech keys clear on it as on `end`, and a reply's completion listener retires on its own `dropped`, completing the controller's turn only while that reply is the newest (finding 1, a regression of A3). The comments on `SpeechQueueEntry.started` and `flushSpeechQueue` now say what D7a means (finding 3). A stop during a meeting batch is registered, not fixed, because no production caller can stop speech while one speaks (finding 2, R18); the lost-claim wait's blindness to a `dropped` is R19. No shared contract changes, except the inventory tool's report format (a script; its consumers are its own tests and §16 step 7). Round 3 reviews the delta of each area with its consumers, and re-reads the whole inventory tool against §14 item 8.
+**Review round 2, area A (amendment A4; `claude-architect`, Claude Code, Opus 5.5, 2026-10-24, read-only):** the inventory enumerates with `os.walk`; a directory it cannot list, and a link or junction to a directory (never followed), are named in `unreadable` with a trailing separator and keep every candidate; the store's own listing raises instead of counting nothing; the store docstring states the one-instance-per-root precondition and §9 states it with the one-sweep-at-a-time precondition (F2 and F3 are registered: §18 R15 and R16). **Area B (amendment A5):** the worker owns its directory from creation, so a failed stderr open leaves none behind (finding 1, a regression A2 introduced); the leftover temporary WAV of a caller-cancelled ffmpeg conversion is recorded with R10 (finding 2), and a killed Piper's directory that cannot be removed at once is R17. **Area C (amendment A6):** the profile chat consumes `dropped`. Its in-flight speech keys clear on it as on `end`, and a reply's completion listener retires on its own `dropped`, completing the controller's turn only while that reply is the newest of its arm (finding 1, a regression of A3). The comments on `SpeechQueueEntry.started` and `flushSpeechQueue` now say what D7a means (finding 3). A stop during a meeting batch is registered, not fixed, because no production caller can stop speech while one speaks (finding 2, R18); the lost-claim wait's blindness to a `dropped` is R19. No shared contract changes, except the inventory tool's report format (a script; its consumers are its own tests and §16 step 7). Round 3 reviews the delta of each area with its consumers, and re-reads the whole inventory tool against §14 item 8.
+
+**Review round 3, area A (amendment A7; `claude-architect`, Claude Code, Opus 5.5, 2026-10-24, read-only):** `<data-dir>/attachments` is the one directory read through a link or junction, as the vessel reads its store; the report's new `attachments_link` names the target (`null` for a plain directory), a store link to nothing stops the run like an unlistable store, and no other link to a directory is followed (A-R3-1). `unindexed_wavs` again matches `.wav` as the OS matches names, so `.WAV` counts on Windows as it did before round 2 (A-R3-2, a regression of A4). The report format changes again (one key; consumers: its tests and §16 step 7). **Area B (amendment A8):** §14 item 3 says what the code does and the registered R17 allows (B F1, a regression of the round-2 text: a start that fails at any step is cleaned up once, and a killed Piper that has not exited can keep its directory on Windows); no code. **Area C (amendment A9):** a conversation reply's completion listener belongs to the 1:1 arm that set it up and is retired whenever that arm ends: React's cleanup of the arm effect (an unmount, or any dependency change, the mic mode included), and the controller's `'inactive'` to the arm's options (a newer arm, a pre-emption, the silence timer). The reply counter moved into the arm. A closed or switched profile chat's late `end` or `dropped` therefore no longer ends the next chat's turn (C F1, a regression of A6; main had the `end` half, and the same retire fixes it). The BF-718 comment now states what per-agent clearing really costs (C F2, R20). `conversationController.ts` is unchanged. No shared contract changes except the inventory tool's report format. **Round 4 is the last round (the Architect's brake decision): it reviews the delta of areas A and C with their consumers; area B has no reviewer (one contract sentence).**
 
 **Status:** build-ready. One BF, three milestones (M1 S3, M2 S2, M3 S1), one batch, one PR, one broad gate. **BF number:** BF-918 (#1626); this contract allocates nothing. **Tier:** S1 STANDARD, S2 STANDARD, **S3 HIGH** (the reaper gains an automatic age-based deletion on the live store; the inventory tool no longer deletes); the batch is reviewed at HIGH (use the Copilot `Diff Reviewer`). **Base:** `origin/main` `26bec26d` (the Architect drafted on `eea6e2f4`; BF-914 merged since, and the three generated files and one pin are regenerated on top of it). **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Orchestrator mechanical repairs (2026-10-24; found by applying this contract by tool to `origin/main` `26bec26d` and running its tests; no design decision, and the tree they produce is what the contract now says).** (1) §7.9's `_tool()` registers the loaded module in `sys.modules` while it executes (and `import sys` joins the imports): a dataclass in `scripts/tts_audio_inventory.py` finds its module's namespace there, so without it the four inventory-tool tests failed with an `AttributeError` on Python 3.12. (2) New §7.9a raises the pinned model-field count in `tests/test_ad1270e1_config_facade.py` from 1879 to 1880 (the one new field; the contract listed no pin there). (3) Eight pairs state their SEARCH as a range ("the block from X through Y") instead of a fenced block: §7.20 pairs 2 and 3, §7.21 pairs 2 and 3, §7.22 pairs 3 and 4, §7.26 pair 7 and §7.27 pair 2. A Builder replaces the stated block with the REPLACE; the orchestrator's oracle applies them with a range tool that locates each block by its start and end lines, never by line numbers. (4) §7.14 pair 4's comment line moves from before the docstring to after it, as a new pair 4b: the contract's own Builder note asked for that placement, and a tool applying the pairs cannot follow a note, so the oracle's `rhubarb_backend.py` differed from the Builder's until the note became a pair. (5) New §7.9b pops the new default in `tests/test_ad1152_agentic_correlation.py`'s golden: that test pops every config default added after its capture (BF-914 added two such pops), the contract listed no pin there, and the consolidated focused check found it (three failures) where the contract's own focused lists did not run it.
 
 **Tests:**
-- New `tests/test_bf918_tts_retention.py` (M1, 16 functions).
-- New `tests/test_bf918_tts_latency.py` (M2, 26 functions).
+- New `tests/test_bf918_tts_retention.py` (M1, 23 functions).
+- New `tests/test_bf918_tts_latency.py` (M2, 27 functions).
 - New fixture `tests/fixtures/fake_piper.py` (M2).
 - New `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx` (M3, 13 cases).
+- New `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx` (M3, 14 cases: C1 to C4, and C5 to C12 with C9 as three).
 - `ui/src/audio/__tests__/voiceChunking.test.ts`: the `runSentenceQueue` describe (4 cases) is replaced by a `runPrefetchQueue` describe (6 cases).
 - Updated pins:
   - `tests/test_ad738_piper_tts.py`: 4 backend tests and 3 stubs.
@@ -124,7 +127,7 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
 | D5 | Retention | `tts_audio`, first in both tuples. TTL `attachments.tts_audio_retention_seconds` = 900 (from 60 to 86400). The upgrade rule exists already; its tuple must include the new origin. The index format is unchanged; no migration. **Review round 1 (A1):** both sweeps remove through the store's conditional removal, `unlink_if_unchanged` (same origin, not written since it was listed, decided under the store lock that removes it), so a refresh or an upgrade between a sweep's listing and its removal keeps the entry, and a kept entry frees nothing. Ranked: (1) a new protocol method, chosen: erasure's hard `unlink` keeps its meaning, and the `int | None` return separates "kept" from "freed 0 bytes"; (2) keyword arguments on `unlink`: rejected (overloads erasure's delete; a `bool` cannot say "kept"); (3) the policy moved into the store: rejected (holds the lock for a whole sweep, blocking the TTS route's write); (4) a read before the delete: rejected (the window stays open). |
 | D5a | Legacy sweep | (i) **Revised in review round 1: the inventory tool is read-only.** It counts and lists candidates, reads only `<data-dir>/attachments`, and deletes nothing. It reads every file under the data directory whatever its name, decodes the episode archive's compressed rows with the archive's own decoder, and keeps every candidate when a file or row cannot be read. (ii) An age rule over old `audio/wav` `chat_attachment` items: rejected (it would delete the Captain's uploads). (iii) The delete-capable tool as first drafted: withdrawn. Round 1 found its reference scan blind to the compressed archive and its store root separable from its guard, and the reference model is still incomplete (§18). The legacy WAVs are static (no growth), so deferring costs disk only. **Deleting them is the Captain's decision, on the follow-up issue.** |
 | D6 | Config | One field only. The lookahead is a TypeScript constant (1); the viseme mode is a request flag; pipelining stays default-off. |
-| D7 | Barge-in, and an utterance stopped before its audio | `stopSpeaking` also pauses `_activeAudio`. That fires that utterance's single terminal `end` (BF-655), and the sentence queue, whose condition is already false, stops and discards. **D7a (review round 1, C1 to C3): one terminal event per dispatched utterance.** From `_playNow` until it ends, a dispatched utterance owns the device. It ends with `end` once any of its audio emitted `start` (BF-655; the BF-767 no-engine `end` as before), or with AD-1291's `dropped`, reason `cancelled-before-audio`, when it lost the device (a stop, or a newer dispatch) before any of its audio started. Each await between dispatch and audio (the status probe, the synthesis, the prefetch queue's first sentence) re-checks ownership; on a loss the prepared `<audio>` is discarded unplayed, a failed synthesis does not fall back to the browser, and `_playNow` fires the `dropped`. A play promise rejected because a stop or a newer dispatch paused it is a cancellation: no browser fallback, and the `pause` listener's `end` stays its one terminal event. The arbiter's wait for an entry ends on that entry's own `end` or `dropped`; GUARD 1, GUARD 2, `SPEECH_JOIN_TIMEOUT_MS` and `flushSpeechQueue` are unchanged. Ranked: (1) `dropped`, fired where the loss is observed and keyed by id: chosen, because the event already means "never reached audio" and every listener but the two waits and the profile chat's in-flight bookkeeping ignores it; the profile chat releases on it what an 'end' would have released and completes a turn only for the newest reply (review round 2, §7.30b), so a late synthesis answer cannot end a newer turn; (2) an `end` with no `start`: rejected, the answer can land after the next reply's `start` and reset its modulation icon, head-bob, PTT gate and wake-word flag; (3) settling the in-flight wait inside `stopSpeaking`: rejected, it uses the unkeyed test-teardown seam in production and leaves the meeting sequencer waiting; (4) the candidate: the arbiter waits out `SPEECH_JOIN_TIMEOUT_MS`. Residual: the arbiter is freed when the cancelled synthesis answers, not at the stop; the stop has already flushed the backlog. |
+| D7 | Barge-in, and an utterance stopped before its audio | `stopSpeaking` also pauses `_activeAudio`. That fires that utterance's single terminal `end` (BF-655), and the sentence queue, whose condition is already false, stops and discards. **D7a (review round 1, C1 to C3): one terminal event per dispatched utterance.** From `_playNow` until it ends, a dispatched utterance owns the device. It ends with `end` once any of its audio emitted `start` (BF-655; the BF-767 no-engine `end` as before), or with AD-1291's `dropped`, reason `cancelled-before-audio`, when it lost the device (a stop, or a newer dispatch) before any of its audio started. Each await between dispatch and audio (the status probe, the synthesis, the prefetch queue's first sentence) re-checks ownership; on a loss the prepared `<audio>` is discarded unplayed, a failed synthesis does not fall back to the browser, and `_playNow` fires the `dropped`. A play promise rejected because a stop or a newer dispatch paused it is a cancellation: no browser fallback, and the `pause` listener's `end` stays its one terminal event. The arbiter's wait for an entry ends on that entry's own `end` or `dropped`; GUARD 1, GUARD 2, `SPEECH_JOIN_TIMEOUT_MS` and `flushSpeechQueue` are unchanged. Ranked: (1) `dropped`, fired where the loss is observed and keyed by id: chosen, because the event already means "never reached audio" and every listener but the two waits and the profile chat's in-flight bookkeeping ignores it; the profile chat releases on it what an 'end' would have released and completes a turn only for the newest reply of the arm that set it up (review round 2, §7.30b), so a late synthesis answer cannot end a newer turn, and every way an arm ends retires its replies' listeners (review round 3, §7.30f), so a closed or switched profile chat's late `end` or `dropped` cannot end another arm's turn; (2) an `end` with no `start`: rejected, the answer can land after the next reply's `start` and reset its modulation icon, head-bob, PTT gate and wake-word flag; (3) settling the in-flight wait inside `stopSpeaking`: rejected, it uses the unkeyed test-teardown seam in production and leaves the meeting sequencer waiting; (4) the candidate: the arbiter waits out `SPEECH_JOIN_TIMEOUT_MS`. Residual: the arbiter is freed when the cancelled synthesis answers, not at the stop; the stop has already flushed the backlog. |
 
 ## 4. Interaction with the queue
 
@@ -149,11 +152,12 @@ One more defect, found in the same path: barge-in does not stop Piper audio (`st
 | `PiperBackend(…, service=)` | `audio/tts/__init__.py` | the route; tests in `test_ad738…`, `test_ad738e_1…`, `test_ad1025_path_anchoring.py` |
 | `generate_visemes(…, executor=)` | `rhubarb_backend.py` | both avatar routes; stubs `(*_a, **_kw)` in `test_ad738_piper_tts.py:537, 584` and `test_ad721b1…:333`; `test_bf292…:101` reads `generate_visemes`' source for the `_SUPPORTED_SUFFIXES` line, which stays unchanged |
 | `runSentenceQueue` → `runPrefetchQueue` | `voiceChunking.ts` | `voice.ts` (the only production caller); `voiceChunking.test.ts`; a comment at `voice.ts:381` |
-| `dropped` with the new reason `cancelled-before-audio` (D7a; the event type and its fields exist since AD-1291) | `voice.ts` `_playNow` | the arbiter's wait in `_awaitEntry` (now terminal on it); `meetingVoice.ts:127` (already terminal on `dropped`; a stop does not end the rest of a meeting batch, which no production caller reaches: §18); `ProfileChatTab.tsx` (review round 2, §7.30b): the BF-718 in-flight effect clears its agent's in-flight keys on `dropped` as on `end`, and a reply's completion listener retires on its own utterance's `dropped` and completes the controller's turn only while that reply is the newest (no synthetic `end`, BF-767); its lost-claim wait and its PTT gate (`:564`) ignore it; `wakeWord.ts:187`, `useLipSyncCapture.ts:62`, `CrewVRM.tsx:502`, `ParametricAvatar.tsx:49` and `ModulationIndicator.tsx:28` act only on `start` or `end` and ignore it; no consumer reads `reason` |
+| `dropped` with the new reason `cancelled-before-audio` (D7a; the event type and its fields exist since AD-1291) | `voice.ts` `_playNow` | the arbiter's wait in `_awaitEntry` (now terminal on it); `meetingVoice.ts:127` (already terminal on `dropped`; a stop does not end the rest of a meeting batch, which no production caller reaches: §18); `ProfileChatTab.tsx` (review round 2, §7.30b): the BF-718 in-flight effect clears its agent's in-flight keys on `dropped` as on `end`, and a reply's completion listener retires on its own utterance's `dropped` and completes the controller's turn only while that reply is the newest of its own arm (no synthetic `end`, BF-767); every reply listener, the lost-claim waiter included, is retired when its arm ends (review round 3, §7.30f); its lost-claim wait and its PTT gate (`:564`) ignore it; `wakeWord.ts:187`, `useLipSyncCapture.ts:62`, `CrewVRM.tsx:502`, `ParametricAvatar.tsx:49` and `ModulationIndicator.tsx:28` act only on `start` or `end` and ignore it; no consumer reads `reason` |
+| `'inactive'` sent to an arm's `onStateChange` (review round 3) | `conversationController.ts` teardown (`:520`, `:547`): a newer arm, a disarm or dispose, the silence timer, a pre-emption | `ProfileChatTab`'s 1:1 arm now retires its replies' completion listeners on it (it only logged before); the meeting arm still only logs. The controller is unchanged |
 | `ATTACHMENT_ORIGINS` | `store.py` | `filesystem_store._normalize_origin`; `test_ad1192…:2883` iterates it (an empty `tts_audio` list is fine) |
 | `_LRU_EVICTION_ORDER`, `_ORIGIN_DURABILITY` | reaper, store | the reaper's LRU pass; `write`'s upgrade |
 | new protocol method `unlink_if_unchanged` on `AttachmentStore` (review round 1) | `FilesystemAttachmentStore`, the only implementer in `src/` | the reaper's age and size passes only. `unlink` is unchanged and keeps its callers (`knowledge/erasure.py:298`, tests). No test fake is driven by the reaper (fakes of `list_by_origin`: `test_ad1203_trace_routes.py:57`, `test_ad1203_turn_provenance.py:157`, read by the traces route). `test_attachment_reaper.py`'s injected removal failure moves to the new method (§7.9c). `ATTACHMENT_REAPED` keeps its payload shape; its counts now cover only entries actually removed |
-| `scripts/tts_audio_inventory.py` command line | the tool | the Captain (§16 step 7) and `tests/test_bf918_tts_retention.py`; nothing else. Read-only: `--delete`, `--confirm` and `--attachments-dir` are gone; the report drops `attachments_dir`, `deleted` and `freed_bytes`, and adds `seconds` |
+| `scripts/tts_audio_inventory.py` command line | the tool | the Captain (§16 step 7) and `tests/test_bf918_tts_retention.py`; nothing else. Read-only: `--delete`, `--confirm` and `--attachments-dir` are gone; the report drops `attachments_dir`, `deleted` and `freed_bytes`, and adds `seconds` and (review round 3) `attachments_link` |
 | index `origin` | `FilesystemAttachmentStore.write` | `list_by_origin` (reaper only), `write`, the new tool |
 | `AttachmentsConfig` dump | `config_models/integrations.py` | `test_ad1270e2d…` `EXPECTED_DUMPS`; the facade baseline, profiles and reference (regenerated) |
 | BF-892 launch inventory | `test_bf892_spawn_env_guard.py:87` | the guard scan |
@@ -187,6 +191,10 @@ The tests in `tests/test_bf918_tts_retention.py`:
 - `test_a_directory_that_cannot_be_listed_keeps_every_candidate` (review round 2, F1; the listed run is the control)
 - `test_a_link_to_a_directory_is_not_followed_and_keeps_every_candidate` (a symbolic link; a junction)
 - `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the counted run is the control)
+- `test_a_linked_store_is_read_through_its_link_and_named` (review round 3, A-R3-1; a junction on Windows, a symbolic link elsewhere; the plain store is the control)
+- `test_a_store_linked_inside_the_data_directory_keeps_every_candidate` (review round 3; a control on candidate 4)
+- `test_unindexed_wavs_are_matched_as_the_os_matches_names` (review round 3, A-R3-2; 3 on Windows, 1 elsewhere)
+- `test_a_store_link_to_nothing_stops_the_inventory` (review round 3)
 
 Focused check:
 
@@ -231,7 +239,7 @@ Then run `d:/ProbOS/.venv/Scripts/python.exe scripts/check_architecture_principl
 The cases:
 - `voice.prefetch.bf918.test.tsx`: P1 to P13 (P9 to P13, and the reordered P2 and P3, from review round 1).
 - `voiceChunking.test.ts`: Q1 to Q6.
-- `ProfileChatTab.bf918.test.tsx` (review round 2, §7.30e): C1 to C4.
+- `ProfileChatTab.bf918.test.tsx` (review round 2, §7.30e): C1 to C4; review round 3 (A9): C5 to C12, one per way a conversation arm ends (C9 runs three cases; C11 is a control).
 
 Focused check, from `ui/` (the Builder's tree has a `ui/node_modules` junction):
 
@@ -696,11 +704,18 @@ A WAV is a candidate only when every one of these holds:
   excepted. Every file is read, whatever its name, and an ``episode_archive`` table is
   decoded row by row with the archive's own decoder (its payloads are compressed). A
   file or archive row that cannot be read, a directory that cannot be listed, and a
-  link or junction to a directory (never followed) keep every candidate; ``unreadable``
-  names each, a directory with a trailing path separator.
+  link or junction to a directory other than the attachment directory (never followed)
+  keep every candidate; ``unreadable`` names each, a directory with a trailing path
+  separator.
 
-WAV files with no index entry are counted (``unindexed_wavs``) and never candidates. An
-attachment directory that cannot be listed stops the run, as an unreadable index does.
+The data directory given is resolved first. Under it, ``<data-dir>/attachments`` is the
+one directory read through a link or junction, as the vessel reads its store (the store
+resolves its root); the report's ``attachments_link`` names the target and is ``null``
+for a plain directory. No other link to a directory is followed.
+
+WAV files with no index entry are counted (``unindexed_wavs``; ``.wav`` is matched as the
+OS matches names, so in any case on Windows) and never candidates. An attachment directory
+that cannot be listed, or that links to nothing, stops the run, as an unreadable index does.
 
 Usage (PowerShell)::
 
@@ -741,13 +756,15 @@ _KEPT_REASONS = ("other_origin", "missing_file", "not_piper_shaped", "too_young"
 
 @dataclass
 class Inventory:
-    """What one run found. ``candidates`` maps an id to its size in bytes."""
+    """What one run found. ``candidates`` maps an id to its size in bytes; ``attachments_link``
+    is the real path of the attachment directory when that directory is a link or junction."""
 
     wav_entries: int = 0
     unindexed_wavs: int = 0
     candidates: dict[str, int] = field(default_factory=dict)
     kept: dict[str, int] = field(default_factory=lambda: dict.fromkeys(_KEPT_REASONS, 0))
     unreadable: list[str] = field(default_factory=list)
+    attachments_link: str | None = None
 
 
 def piper_shaped(path: Path) -> bool:
@@ -878,8 +895,15 @@ def referenced_ids(data_dir: Path, attachments_dir: Path, wanted: set[str]) -> t
 
 
 def take_inventory(data_dir: Path, attachments_dir: Path, *, min_age_days: float, now: float) -> Inventory:
-    """Classify every indexed WAV. Reads only."""
+    """Classify every indexed WAV. Reads only.
+
+    Review round 3 (A7): an attachment directory that is a link or junction is read through,
+    as the vessel reads its store, and its target is recorded in ``attachments_link``. A link
+    to nothing is a store that cannot be listed: the run stops.
+    """
     inventory = Inventory()
+    if os.path.islink(attachments_dir) or os.path.isjunction(attachments_dir):  # read through, and named
+        inventory.attachments_link = os.path.realpath(attachments_dir)
     index_path = attachments_dir / ".index.json"
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -892,8 +916,11 @@ def take_inventory(data_dir: Path, attachments_dir: Path, *, min_age_days: float
         with os.scandir(attachments_dir) as entries:
             names = [entry.name for entry in entries]
     except FileNotFoundError:  # no store yet: nothing is indexed and nothing unindexed
+        if inventory.attachments_link is not None:  # a link to nothing: the store cannot be listed
+            raise
         names = []
-    inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav") and name[:-4] not in index)
+    # Review round 3 (A-R3-2): ".wav" is matched as the OS matches names (any case on Windows), as Path.glob did.
+    inventory.unindexed_wavs = sum(1 for name in names if os.path.normcase(name).endswith(".wav") and name[:-4] not in index)
     cutoff = now - min_age_days * 86400
     eligible: dict[str, int] = {}
     for sha, entry in sorted(index.items()):
@@ -943,6 +970,7 @@ def main(argv: list[str] | None = None) -> int:
     inventory = take_inventory(data_dir, attachments_dir, min_age_days=args.min_age_days, now=time.time())
     report: dict[str, Any] = {
         "data_dir": str(data_dir),
+        "attachments_link": inventory.attachments_link,
         "wav_entries": inventory.wav_entries,
         "unindexed_wavs": inventory.unindexed_wavs,
         "candidates": len(inventory.candidates),
@@ -1559,6 +1587,105 @@ def test_a_store_directory_that_cannot_be_listed_stops_the_inventory(
     monkeypatch.setattr(os, "scandir", _refusing_scandir((data_dir / "attachments").resolve()))
     with pytest.raises(PermissionError):
         tool.main(["--data-dir", str(data_dir)])
+    assert capsys.readouterr().out == ""
+
+
+def _link_directory(link: Path, target: Path) -> None:
+    """Make ``link`` a real link to the directory ``target``: a junction on Windows (no
+    privilege needed), a symbolic link elsewhere. Skips the test where this machine cannot."""
+    try:
+        if sys.platform == "win32":
+            import _winapi  # CPython's Windows-only module; the test alone uses it, to make a junction without a shell
+
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot make a directory link on this machine: {exc}")
+    assert os.path.islink(link) or os.path.isjunction(link)  # the premise: a real link, not a copy
+
+
+def test_a_linked_store_is_read_through_its_link_and_named(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review round 3, A-R3-1: ``<data-dir>/attachments`` linked to a store outside the data
+    directory is read as the vessel reads it, and the report names the link's target. The
+    first run, a plain store, is the control: ``attachments_link`` is null."""
+    tool = _tool()
+    plain = tmp_path / "plain"
+    asyncio.run(_legacy_store(plain))
+    assert tool.main(["--data-dir", str(plain)]) == 0
+    assert json.loads(capsys.readouterr().out)["attachments_link"] is None
+
+    data_dir = tmp_path / "data"
+    external = tmp_path / "external_store"
+    data_dir.mkdir()
+    external.mkdir()
+    _link_directory(data_dir / "attachments", external)
+    shas = asyncio.run(_legacy_store(data_dir))  # the store resolves its root, so it writes into the target
+    assert (external / ".index.json").is_file()  # the premise: the store lives outside the data directory
+
+    assert tool.main(["--data-dir", str(data_dir), "--list"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["attachments_link"] == os.path.realpath(external)
+    assert sorted(report["candidate_ids"]) == sorted([shas["legacy"], shas["legacy_low"]])
+    assert report["wav_entries"] == 6
+    assert report["unreadable"] == []
+
+
+def test_a_store_linked_inside_the_data_directory_keeps_every_candidate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review round 3: when ``<data-dir>/attachments`` links to a directory inside the data
+    directory, the walk reads that directory under its own name (it is not a link) and its
+    index names every id, so every candidate is kept: conservative, never a false candidate."""
+    data_dir = tmp_path / "data"
+    inside = data_dir / "store"
+    inside.mkdir(parents=True)
+    _link_directory(data_dir / "attachments", inside)
+    asyncio.run(_legacy_store(data_dir))
+
+    assert _tool().main(["--data-dir", str(data_dir), "--list"]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["candidate_ids"] == []
+    assert report["kept"]["referenced"] == 3  # every eligible WAV: legacy, legacy_low, referenced
+    assert report["unreadable"] == []
+
+
+def test_unindexed_wavs_are_matched_as_the_os_matches_names(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review round 3, A-R3-2: ``.wav``, ``.WAV`` and ``.WaV`` files with no index entry are all
+    WAV files to Windows, as ``Path.glob`` counted them before round 2; elsewhere only ``.wav`` is."""
+    attachments = tmp_path / "data" / "attachments"
+    attachments.mkdir(parents=True)
+    for name in ("lower.wav", "upper.WAV", "mixed.WaV"):
+        (attachments / name).write_bytes(_piper_wav(10))
+
+    assert _tool().main(["--data-dir", str(tmp_path / "data")]) == 0
+
+    assert json.loads(capsys.readouterr().out)["unindexed_wavs"] == (3 if os.name == "nt" else 1)
+
+
+def test_a_store_link_to_nothing_stops_the_inventory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Review round 3: ``<data-dir>/attachments`` linked to a directory that is gone (a removed
+    or unplugged store) cannot be listed; it is not an absent store. The run raises and prints
+    no report, where a report of an empty store would be falsely clean."""
+    data_dir = tmp_path / "data"
+    gone = tmp_path / "gone"
+    data_dir.mkdir()
+    gone.mkdir()
+    link = data_dir / "attachments"
+    _link_directory(link, gone)
+    gone.rmdir()
+    assert os.path.lexists(link) and not os.path.exists(link)  # the premise: a link to nothing
+
+    with pytest.raises(OSError):
+        _tool().main(["--data-dir", str(data_dir)])
     assert capsys.readouterr().out == ""
 ```
 
@@ -5626,26 +5753,7 @@ REPLACE:
 
 Candidate 3 does not otherwise change this file; each SEARCH is its text at `origin/main` `26bec26d`. D7a is the rule. BF-718, BF-767 and BF-290 keep their behaviour; the lost-claim wait is unchanged.
 
-Pair 1 of 4:
-
-SEARCH:
-```tsx
-  // Speech keys currently being uttered. Losing a claim does NOT prove someone
-  // is speaking: the claim may have lost to identical text said earlier, in
-  // which case no 'end' will ever fire and anything waiting on one strands.
-  const speechInFlightRef = useRef(new Set<string>());
-```
-REPLACE:
-```tsx
-  // Speech keys currently being uttered. Losing a claim does NOT prove someone
-  // is speaking: the claim may have lost to identical text said earlier, in
-  // which case no 'end' will ever fire and anything waiting on one strands.
-  const speechInFlightRef = useRef(new Set<string>());
-  // BF-918 (#1626, review round 2): counts conversation-mode replies. A reply's
-  // completion listener may complete the controller's turn on its own 'dropped'
-  // only while no later reply has taken the controller since.
-  const agentReplyTurnRef = useRef(0);
-```
+Pair 1 of 4: withdrawn in review round 3 (A9). The component-wide reply counter it declared let one count span several arms, so a closed or switched arm's late `dropped` still matched; the counter is now `replyTurn` inside the 1:1 arm (§7.30f pair 2), and the component's ref declarations stay as on the base.
 
 Pair 2 of 4:
 
@@ -5663,7 +5771,7 @@ REPLACE:
   // lost the device before any of its audio started ends with 'dropped'
   // (`cancelled-before-audio`), never 'end', and a pre-empted or flushed entry
   // never played at all. Keeping its key made a later identical answer wait on an
-  // 'end' that nothing would emit. Same per-agent rule, same direction of error.
+  // 'end' that nothing would emit. Same per-agent rule, same direction of error (R20).
   useEffect(() => onSpeechEvent((event) => {
     if (event.type !== 'end' && event.type !== 'dropped') return;
     const ended = event.agent_id;
@@ -5680,8 +5788,8 @@ SEARCH:
 REPLACE:
 ```tsx
       onAgentReply: (replyText: string) => {
-        // BF-918 (review round 2): this reply now holds the controller's turn.
-        const ourTurn = ++agentReplyTurnRef.current;
+        // BF-918 (review rounds 2 and 3): this reply now holds this arm's turn.
+        const ourTurn = ++replyTurn;
         // 1. Append to the per-agent conversation so the operator sees it
         // in the DM thread.
 ```
@@ -5708,6 +5816,7 @@ REPLACE:
         const retire = (): boolean => {
           if (completed) return false;
           completed = true;
+          pendingReplies.delete(retire);
           try { unsub(); } catch { /* Tier-2 */ }
           return true;
         };
@@ -5718,13 +5827,13 @@ REPLACE:
           // BF-918 (#1626, review round 2): this reply's OWN utterance never reached
           // audio (a stop, or a newer dispatch, before its first 'start'), so its
           // terminal event is 'dropped' and no 'end' is coming. Retire this
-          // listener, and complete the turn only if no later reply has taken the
-          // controller since: a late 'dropped' must not end a newer turn. Never a
-          // synthetic 'end' (BF-767). The lost-claim path cannot know the id and
-          // keeps waiting on the agent's 'end' (BF-718).
+          // listener, and complete the turn only if no later reply of this arm has
+          // taken the controller since: a late 'dropped' must not end a newer turn.
+          // Never a synthetic 'end' (BF-767). The lost-claim path cannot know the id
+          // and keeps waiting on the agent's 'end' (BF-718) until its arm ends.
           if (event.type === 'dropped') {
             if (!claimed || event.utterance_id !== ourUtteranceId) return;
-            if (agentReplyTurnRef.current !== ourTurn) { retire(); return; }
+            if (replyTurn !== ourTurn) { retire(); return; }
             complete();
             return;
           }
@@ -5796,7 +5905,7 @@ REPLACE:
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, type RenderResult } from '@testing-library/react';
 
 const hardware = vi.hoisted(() => ({
   transcripts: new Set<(text: string) => void>(),
@@ -5832,6 +5941,7 @@ import { useStore } from '../../../store/useStore';
 import * as voice from '../../../audio/voice';
 import {
   getConversationState,
+  onConversationState,
   _resetConversationControllerForTests,
 } from '../../../audio/conversationController';
 import { _resetForTests as resetMicArbiter } from '../../../audio/speechRecognitionArbiter';
@@ -6037,6 +6147,352 @@ describe('BF-918 review round 2: a dropped reply releases what its end would hav
     expect(getConversationState()).toBe('silence_pending');
   });
 });
+
+/** BF-918 (#1626), review round 3, area C finding 1: a reply's completion
+ *  listener ends with the conversation arm that set it up. The controller's
+ *  `markAgentReplyComplete` completes whichever arm owns it when it is called,
+ *  so a listener that outlived its arm ended the NEXT arm's turn on its own late
+ *  'dropped' (the round-2 repair) or 'end' (as on main). One case per way an arm
+ *  ends. Each old reply is agent a1's; each replacement queues in the speech
+ *  arbiter behind it, so the replacement's controller is in `agent_speaking`
+ *  when the old terminal event lands. Assertions are on the controller's state. */
+describe('BF-918 review round 3: a reply completion ends with its arm', () => {
+  let voiceProfileAnswer: unknown = null;
+  let byAgent: Array<[string, string | undefined]> = [];
+  let states: string[] = [];
+  let offAgents: () => void = () => {};
+  let offStates: () => void = () => {};
+
+  beforeEach(() => {
+    voiceProfileAnswer = null;
+    byAgent = [];
+    states = [];
+    localStorage.setItem('hxi_chat_mic_mode_a2', 'conversation');
+    localStorage.setItem('hxi_chat_tts_a2', '1');
+    const outer = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+      const path = String(url);
+      if (path === '/api/agent/a2/chat') {
+        chats += 1;
+        return respond({ response: answers.shift() ?? REPEATED });
+      }
+      if (path.endsWith('/profile')) return respond({ voiceProfile: voiceProfileAnswer });
+      // A thread id (C9) is answered "not found": its transcript stays empty.
+      if (path.startsWith('/api/threads/')) {
+        return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+      }
+      return outer(url, options);
+    }));
+    offAgents = voice.onSpeechEvent((e) => { byAgent.push([e.type, e.agent_id]); });
+    offStates = onConversationState((state) => { states.push(state); });
+  });
+
+  afterEach(() => {
+    offAgents();
+    offStates();
+  });
+
+  async function armFor(agentId: string): Promise<RenderResult> {
+    const view = render(<ProfileChatTab agentId={agentId} />);
+    await waitFor(() => expect(getConversationState()).toBe('listening'));
+    return view;
+  }
+
+  /** The first reply's synthesis answers and its audio plays: an 'end' is coming. */
+  async function oldReplyPlays(): Promise<MediaDouble> {
+    await captainSays('First question.');
+    expect(getConversationState()).toBe('agent_speaking');
+    await answerSynthesis();
+    expect(audios).toHaveLength(1);
+    expect(audios[0].played).toBe(true);
+    return audios[0];
+  }
+
+  /** The arm ends by `change` and a new arm takes the controller. */
+  async function armEnds(change: () => Promise<void>): Promise<void> {
+    await change();
+    await waitFor(() => expect(getConversationState()).toBe('listening'));
+    expect(states).toContain('inactive');
+  }
+
+  /** The new arm's own reply. It queues behind the old utterance, which still
+   *  owns the device, so its synthesis is not requested yet. */
+  async function replacementAsks(): Promise<void> {
+    await captainSays('Replacement question.');
+    expect(chats).toBe(2);
+    expect(getConversationState()).toBe('agent_speaking');
+    expect(ttsPosts).toHaveLength(1);
+  }
+
+  async function oldEndLands(old: MediaDouble): Promise<void> {
+    await endAudio(old);
+    expect(byAgent.filter(([type, agent]) => type === 'end' && agent === 'a1')).toHaveLength(1);
+  }
+
+  /** Only the replacement's own audio ending may complete its turn. */
+  async function replacementPlaysAndEnds(): Promise<void> {
+    await waitFor(() => expect(ttsPosts).toHaveLength(2));
+    expect(getConversationState()).toBe('agent_speaking');
+    await answerSynthesis();
+    await waitFor(() => expect(audios).toHaveLength(2));
+    expect(audios[1].played).toBe(true);
+    expect(getConversationState()).toBe('agent_speaking');
+    await endAudio(audios[1]);
+    expect(getConversationState()).toBe('silence_pending');
+  }
+
+  async function selectMicMode(mode: 'ptt' | 'conversation'): Promise<void> {
+    await act(async () => {
+      fireEvent.contextMenu(screen.getByRole('button', { name: 'Voice input' }));
+      await flush();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId(`profile-chat-mic-mode-${mode}`));
+      await flush();
+    });
+  }
+
+  it('C5: after an unmount, the old reply\'s late drop does not complete the next profile\'s turn', async () => {
+    answers = ['Unmounted answer.', 'Replacement answer.'];
+    const first = await armFor('a1');
+    await captainSays('First question.');
+    expect(ttsPosts).toEqual(['Unmounted answer.']);
+    await bargeIn(); // stopped while its synthesis is held: its terminal event will be 'dropped'
+    expect(getConversationState()).toBe('listening');
+    first.unmount();
+    expect(getConversationState()).toBe('inactive');
+    await armFor('a2');
+    await replacementAsks();
+    await answerSynthesis(); // the unmounted reply's synthesis answers late
+    expect(events).toEqual([CANCELLED]);
+    expect(byAgent).toEqual([['dropped', 'a1']]);
+    // Before the fix: `silence_pending`, the replacement's turn ended by the old drop.
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+
+  it('C6: after an unmount, the old reply\'s late end does not complete the next profile\'s turn', async () => {
+    answers = ['Unmounted answer.', 'Replacement answer.'];
+    const first = await armFor('a1');
+    const old = await oldReplyPlays();
+    first.unmount(); // its utterance is dispatched, so the unmount's flush leaves it playing
+    expect(getConversationState()).toBe('inactive');
+    await armFor('a2');
+    await replacementAsks();
+    await oldEndLands(old);
+    // Before the fix, and on main: `silence_pending`, ended by the old reply's 'end'.
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+
+  it('C7: after the agent changes on the same mount, the old reply\'s late end does not complete the new turn', async () => {
+    answers = ['Old agent answer.', 'New agent answer.'];
+    const view = await armFor('a1');
+    const old = await oldReplyPlays();
+    await armEnds(async () => {
+      await act(async () => { view.rerender(<ProfileChatTab agentId="a2" />); await flush(); });
+    });
+    await replacementAsks();
+    await oldEndLands(old);
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+
+  it('C8: after mic mode goes conversation, off and back, the old reply\'s late end does not complete the re-armed turn', async () => {
+    answers = ['Before the mode change.', 'After the mode change.'];
+    await armFor('a1');
+    const old = await oldReplyPlays();
+    await selectMicMode('ptt');
+    expect(getConversationState()).toBe('inactive');
+    await armEnds(() => selectMicMode('conversation'));
+    await replacementAsks();
+    await oldEndLands(old);
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+
+  // `ttsKey` is derived from `agentId` and `speechOwner` is fixed per mount, so
+  // C7 and C5/C6 are their cases. `meetingActive` reaches a 1:1 arm again only
+  // through a second change: the same React cleanup, with call speech this
+  // harness does not model.
+  const dependencyChanges: Array<[string, (view: RenderResult) => Promise<void>]> = [
+    ['threadId', async (view) => {
+      await act(async () => {
+        view.rerender(<ProfileChatTab agentId="a1" threadId="bf918-thread" />);
+        await flush();
+      });
+    }],
+    ['voiceProfile', async () => {
+      voiceProfileAnswer = { voice_name: 'test', pitch: 1, rate: 1, volume: 1 };
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('voice-profile-updated', { detail: { agentId: 'a1' } }));
+        await flush();
+      });
+    }],
+    ['callAudioEnabled', async () => {
+      await act(async () => {
+        useStore.setState({ callAudioEnabled: !useStore.getState().callAudioEnabled });
+        await flush();
+      });
+    }],
+  ];
+
+  it.each(dependencyChanges)('C9 (%s): after the arm re-runs on that change, the old reply\'s late end does not complete the new turn', async (_name, change) => {
+    answers = ['Before the change.', 'After the change.'];
+    const view = await armFor('a1');
+    const old = await oldReplyPlays();
+    await armEnds(() => change(view));
+    await replacementAsks();
+    await oldEndLands(old);
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+
+  it('C10: when a second profile arms, the first profile\'s late end does not complete the second one\'s turn', async () => {
+    answers = ['First surface answer.', 'Second surface answer.'];
+    await armFor('a1');
+    const old = await oldReplyPlays();
+    // The first profile stays mounted, so React never cleans its arm up: only the
+    // controller's 'inactive' to its options tells it that its arm has ended.
+    await armEnds(async () => { render(<ProfileChatTab agentId="a2" />); });
+    await replacementAsks();
+    await oldEndLands(old);
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+
+  it('C11 control: under StrictMode\'s double effect run, a reply still completes on its own end', async () => {
+    render(<React.StrictMode><ProfileChatTab agentId="a1" /></React.StrictMode>);
+    await waitFor(() => expect(getConversationState()).toBe('listening'));
+    await captainSays('First question.');
+    expect(getConversationState()).toBe('agent_speaking');
+    await answerSynthesis();
+    expect(audios[0].played).toBe(true);
+    expect(getConversationState()).toBe('agent_speaking');
+    await endAudio(audios[0]);
+    // BF-290's stuck turn would stay `agent_speaking` here.
+    expect(getConversationState()).toBe('silence_pending');
+  });
+
+  it('C12: an unmount retires the reply even when the controller dropped the arm without telling it', async () => {
+    answers = ['Unmounted answer.', 'Replacement answer.'];
+    const first = await armFor('a1');
+    const old = await oldReplyPlays();
+    // The controller's test seam tears the arm down with no 'inactive' to its
+    // options (as a pre-empted arm whose queued 'inactive' a later job superseded
+    // would be): only the React cleanup is left to retire the reply.
+    act(() => { _resetConversationControllerForTests(); });
+    expect(getConversationState()).toBe('inactive');
+    first.unmount();
+    await armFor('a2');
+    await replacementAsks();
+    await oldEndLands(old);
+    expect(getConversationState()).toBe('agent_speaking');
+    await replacementPlaysAndEnds();
+  });
+});
+```
+
+### 7.30f `ui/src/components/profile/ProfileChatTab.tsx` (M3: review round 3, C F1 and C F2; base text; apply after §7.30b)
+
+Four pairs. Each SEARCH is the file's text at `origin/main` `26bec26d`, occurs there once, and §7.30b's pairs leave it as it is. Pair 1 corrects the BF-718 comment (C F2, R20). Pairs 2 to 4 tie every reply completion to its 1:1 arm (C F1): the arm holds its replies' retire functions and its reply counter (pair 2; §7.30b pairs 3 and 4 read both), each reply puts its retire in the set before it can speak (pair 3), and the arm retires them when the controller tells it `'inactive'` and when React ends it (pair 4). `onAgentReply` gets no liveness check: the controller calls it only while that arm owns it (`conversationController.ts:433-435`). `conversationController.ts`, the meeting arm and the lost-claim rule are unchanged.
+
+Pair 1 of 4:
+
+SEARCH:
+```tsx
+  // here at all. Erring toward "not speaking" keeps a missed correlation from
+  // stranding the conversation controller, which is the opposite of the
+  // failure BF-767 fixes: over-clearing here costs a redundant wait, while
+```
+REPLACE:
+```tsx
+  // here at all. Erring toward "not speaking" keeps a missed correlation from
+  // stranding the conversation controller, which is the opposite of the
+  // failure BF-767 fixes. Over-clearing here is not free (BF-918, #1626: R20):
+  // clearing another same-agent key lets a later lost claim on that key skip
+  // its wait and complete the turn while that utterance still plays. The
+  // alternative is worse:
+```
+
+Pair 2 of 4:
+
+SEARCH:
+```tsx
+    // without enabling any voice output.
+    const armOpts: ArmOptions = {
+```
+REPLACE:
+```tsx
+    // without enabling any voice output.
+    //
+    // BF-918 (#1626, review round 3, C F1): every completion a reply of THIS arm
+    // sets up ends with the arm. `markAgentReplyComplete` completes whichever arm
+    // owns the controller when it is called, so a listener that outlived its arm
+    // (an unmount, a re-run of this effect, or a newer arm taking the controller)
+    // ended the next arm's turn on its own late 'end' or 'dropped'. The reply
+    // counter is per arm for the same reason. `onAgentReply` needs no liveness
+    // check of its own: the controller calls it only while this arm owns it.
+    const pendingReplies = new Set<() => boolean>();
+    const retirePendingReplies = (): void => {
+      for (const retireReply of [...pendingReplies]) retireReply();
+    };
+    let replyTurn = 0;
+    const armOpts: ArmOptions = {
+```
+
+Pair 3 of 4:
+
+SEARCH:
+```tsx
+          if (claimed && event.utterance_id !== ourUtteranceId) return;
+          complete();
+        });
+        if (!claimed) return;
+```
+REPLACE:
+```tsx
+          if (claimed && event.utterance_id !== ourUtteranceId) return;
+          complete();
+        });
+        // BF-918 (review round 3): this arm's end retires the listener, claimed or
+        // not, and it is in the set before speakResponse can emit anything for it.
+        pendingReplies.add(retire);
+        if (!claimed) return;
+```
+
+Pair 4 of 4:
+
+SEARCH:
+```tsx
+      onStateChange: (state) => {
+        console.info(`AD-747/BF-290: conversation state for ${armAgentId}: ${state}`);
+      },
+    };
+    console.info(`AD-760: mic mode ${mode} armed for agent ${armAgentId}`);
+    const disposeConversation = armConversationMode(armOpts);
+    return disposeConversation;
+```
+REPLACE:
+```tsx
+      onStateChange: (state) => {
+        console.info(`AD-747/BF-290: conversation state for ${armAgentId}: ${state}`);
+        // BF-918 (review round 3): the controller has ended this arm (a newer arm
+        // took it, a pre-emption, the silence timer, or this arm's own dispose).
+        // Nothing re-arms these options, so retiring is enough.
+        if (state === 'inactive') retirePendingReplies();
+      },
+    };
+    console.info(`AD-760: mic mode ${mode} armed for agent ${armAgentId}`);
+    const disposeConversation = armConversationMode(armOpts);
+    // BF-918 (review round 3): React ends the arm here (an unmount, or a change
+    // of any dependency below). Retire first, whether or not the controller
+    // still tells this arm it is inactive; disposing may then notify again,
+    // which finds nothing left.
+    return () => {
+      retirePendingReplies();
+      disposeConversation();
+    };
 ```
 
 ## 8. Tracking
@@ -6053,7 +6509,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-918 (2026-10-23), #1626 -- a spoken reply's first audio and sentence gaps: the next sentence is synthesized while one plays, Piper stays resident, rhubarb is off the first-audio path, voice work has its own executor, and spoken audio expires.** S1: `runPrefetchQueue` (`ui/src/audio/voiceChunking.ts`) replaces the AD-1071 sequential queue: sentence N+1 is synthesized while N plays, playback stays ordered, and a stop drops prefetched audio unplayed. The client asks for deferred visemes and fetches them from `/api/avatars/lipsync`. `stopSpeaking` now also pauses Piper audio (barge-in used to let it play on). A reply stopped before any of its audio started plays nothing, falls back to nothing and ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter. Stopping a still-loading play no longer speaks the text through the browser instead. In conversation mode, a reply stopped before its audio no longer strands a later identical answer. Two User Timing measures were added (`bf918:first-audio`, `bf918:sentence-gap`). S2: new `probos/audio/tts/resident.py` (`VoiceSynthesisService`, `runtime.voice_synthesis`) holds one `piper --json-input` process per voice and prosody set (at most 4), on a 4-thread voice executor that admits 16 requests (more degrade to the browser); work the executor refuses, or that shutdown cancels, degrades the same way at every stage, and shutdown releases every resident and evicted process (a busy one when its request returns). Rhubarb and ffmpeg run on the same executor (the attachment store's write and lookups still use the default pool: slice M4 of #1626), and the route logs per-stage timings. S3: a new origin `tts_audio`, deleted after `attachments.tts_audio_retention_seconds` (900) and evicted first under the size cap; a more durable write of the same bytes keeps its origin; the age and size sweeps remove an entry only if no write touched it since it was listed (`unlink_if_unchanged`). `scripts/tts_audio_inventory.py` counts the legacy WAVs (1,126 files, 962 indexed) read-only, keeping every candidate when a file, archive row or directory cannot be read, and deleting them is tracked separately. New: `tests/test_bf918_tts_retention.py`, `tests/test_bf918_tts_latency.py`, `tests/fixtures/fake_piper.py`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`, `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`. #1626 stays open for slices M4 (a bounded I/O executor owned by the attachment store) and M5 (the arbiter's wait ends on a pipelined reply's last sentence) and for the Captain's live measurement, which runs once after both have merged; deleting the legacy WAVs is a separate Captain decision (the contract's section 18). The contract is `prompts/bf-918-tts-first-audio-latency.md`.
+**BF-918 (2026-10-23), #1626 -- a spoken reply's first audio and sentence gaps: the next sentence is synthesized while one plays, Piper stays resident, rhubarb is off the first-audio path, voice work has its own executor, and spoken audio expires.** S1: `runPrefetchQueue` (`ui/src/audio/voiceChunking.ts`) replaces the AD-1071 sequential queue: sentence N+1 is synthesized while N plays, playback stays ordered, and a stop drops prefetched audio unplayed. The client asks for deferred visemes and fetches them from `/api/avatars/lipsync`. `stopSpeaking` now also pauses Piper audio (barge-in used to let it play on). A reply stopped before any of its audio started plays nothing, falls back to nothing and ends with AD-1291's `dropped` (`cancelled-before-audio`), which frees the speech arbiter. Stopping a still-loading play no longer speaks the text through the browser instead. In conversation mode, a reply stopped before its audio no longer strands a later identical answer, and a reply's completion ends with the conversation arm that started it, so a reply left over from a closed or switched profile chat cannot end the next chat's turn. Two User Timing measures were added (`bf918:first-audio`, `bf918:sentence-gap`). S2: new `probos/audio/tts/resident.py` (`VoiceSynthesisService`, `runtime.voice_synthesis`) holds one `piper --json-input` process per voice and prosody set (at most 4), on a 4-thread voice executor that admits 16 requests (more degrade to the browser); work the executor refuses, or that shutdown cancels, degrades the same way at every stage, and shutdown releases every resident and evicted process (a busy one when its request returns). Rhubarb and ffmpeg run on the same executor (the attachment store's write and lookups still use the default pool: slice M4 of #1626), and the route logs per-stage timings. S3: a new origin `tts_audio`, deleted after `attachments.tts_audio_retention_seconds` (900) and evicted first under the size cap; a more durable write of the same bytes keeps its origin; the age and size sweeps remove an entry only if no write touched it since it was listed (`unlink_if_unchanged`). `scripts/tts_audio_inventory.py` counts the legacy WAVs (1,126 files, 962 indexed) read-only, keeping every candidate when a file, archive row or directory cannot be read, and deleting them is tracked separately. New: `tests/test_bf918_tts_retention.py`, `tests/test_bf918_tts_latency.py`, `tests/fixtures/fake_piper.py`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`, `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`. #1626 stays open for slices M4 (a bounded I/O executor owned by the attachment store) and M5 (the arbiter's wait ends on a pipelined reply's last sentence) and for the Captain's live measurement, which runs once after both have merged; deleting the legacy WAVs is a separate Captain decision (the contract's section 18). The contract is `prompts/bf-918-tts-first-audio-latency.md`.
 ```
 
 **`DECISIONS.md`:**
@@ -6071,8 +6527,8 @@ REPLACE:
 - *D3 (visemes).* A client that sends `defer_visemes: true` gets audio without rhubarb (`visemes_deferred: true`) and fetches the visemes from the existing `/api/avatars/lipsync`; the heuristic schedule runs until they arrive. Other clients are unchanged. Rejected: Piper phoneme timing (not emitted), and overlapping rhubarb with the store write.
 - *D4 (executor).* `VoiceSynthesisService` is owned by the runtime (built in `__init__`, closed in `shutdown()`): 4 threads, 16 admitted requests; refusal degrades, including work the executor refuses or that shutdown cancels (`run_voice_work`). Not `set_default_executor` (global, and bounds nothing). The attachment store's I/O stays on the default pool (slice M4 of #1626).
 - *D4a (worker lifecycle).* One releaser per worker: `close` when idle, the running request's thread otherwise; a closed worker starts nothing; evicted workers stay reachable until closed.
-- *D5 (retention).* Origin `tts_audio`, first in both the durability and the eviction order; TTL 900 s. The store's upgrade rule already existed (#1626's "keeps the first origin" was wrong). Both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged`, review round 1). The legacy WAVs are counted by a read-only tool (Piper's exact header; references read from every file and the decoded episode archive; a file, row or directory it cannot read, or a linked directory, keeps every candidate); deleting them is tracked separately and is the Captain's decision.
-- *D7.* `stopSpeaking` pauses Piper audio. A dispatched utterance that loses the device before its audio starts ends with `dropped` (`cancelled-before-audio`), not `end`, and the arbiter's wait ends on either; BF-655's one terminal `end` per `start` is unchanged. The profile chat's in-flight keys and reply completion treat `dropped` like `end`; a `dropped` completes only the newest reply's turn (review round 2).
+- *D5 (retention).* Origin `tts_audio`, first in both the durability and the eviction order; TTL 900 s. The store's upgrade rule already existed (#1626's "keeps the first origin" was wrong). Both sweeps remove an entry only if it is unchanged since listed (`unlink_if_unchanged`, review round 1). The legacy WAVs are counted by a read-only tool (Piper's exact header; references read from every file and the decoded episode archive; a file, row or directory it cannot read, or a linked directory other than the attachment directory, keeps every candidate; the attachment directory is read through its link, as the vessel reads it, the report names the target, and a link to nothing stops the run); deleting them is tracked separately and is the Captain's decision.
+- *D7.* `stopSpeaking` pauses Piper audio. A dispatched utterance that loses the device before its audio starts ends with `dropped` (`cancelled-before-audio`), not `end`, and the arbiter's wait ends on either; BF-655's one terminal `end` per `start` is unchanged. The profile chat's in-flight keys and reply completion treat `dropped` like `end`; a reply's completion belongs to its conversation arm and is retired when the arm ends, and within an arm a `dropped` completes only the newest reply's turn (review rounds 2 and 3).
 - *Reversal.* Revert the commits. `tts_audio` index entries then belong to no known origin and are never swept or evicted (the safe direction). Resident processes end with the runtime.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -6085,7 +6541,7 @@ REPLACE:
 - `tts.sentence_pipelining_enabled` stays default-off, and the Captain's `config/system.yaml` is not touched. The status route is unchanged.
 - The browser backend makes zero HTTP calls per utterance (Captain decision #9).
 - The AD-1291 arbiter's classes and pre-emption, `flushSpeechQueue`, GUARD 1, GUARD 2 and `SPEECH_JOIN_TIMEOUT_MS` are unchanged; its wait for an entry also ends on that entry's own `dropped` (D7a). BF-764, BF-767's shared utterance id and BF-655 balance are unchanged.
-- `meetingVoice.ts` and `useMeetingVoice.ts` are unchanged (review round 2): a stop does not end the rest of a meeting batch, which no production caller can reach today (§18). `ProfileChatTab`'s lost-claim wait (BF-718), its BF-290 completions and BF-767's `end` correlation are unchanged.
+- `meetingVoice.ts` and `useMeetingVoice.ts` are unchanged (review round 2): a stop does not end the rest of a meeting batch, which no production caller can reach today (§18). `ProfileChatTab`'s lost-claim rule (BF-718: agent-scoped, no utterance id), its BF-290 completions and BF-767's `end` correlation are unchanged; review round 3 (§7.30f) only bounds every reply listener, the lost-claim waiter included, by the life of the conversation arm that set it up. `conversationController.ts` is unchanged: `markAgentReplyComplete` still completes whichever arm owns the controller, and the component no longer keeps a listener that could call it for another arm. The meeting arm and `meetingVoice.ts` and `useMeetingVoice.ts` are not touched by that repair.
 - `splitIntoSentences` is unchanged.
 - The `/api/avatars/lipsync` contract is unchanged, and so is the browser-capture lip-sync path (`useLipSyncCapture`, `uploadAudioForLipSync`).
 - The prosody table, voice resolution, AD-1025 anchoring and BF-291 overrides are unchanged.
@@ -6096,7 +6552,7 @@ REPLACE:
 - Two preconditions stay as they were and are not enforced (review round 2, F2 and F3; both on the register, §18). One attachment store instance per attachment root: there is one constructor (`routers/chat.py` `_get_attachment_store`, cached per runtime) and AD-816's pidfile allows one vessel per data directory; the conditional removal is decided under that instance's lock against its own index. One sweep at a time per store: one reaper, built in `startup/finalize.py`, whose loop awaits each sweep; overlapping size passes would each stop on their own total.
 - Out of scope: streaming the LLM reply (#1130), compressed or streamed audio, and a voice mode. The legacy WAVs are not deleted by any build, test or gate.
 
-## 10. Mutation rows (59 Python and 15 TypeScript; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (65 Python and 19 TypeScript; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row on the applied tree after an unmutated baseline run passes, and restore each file before the next row.
 
@@ -6106,7 +6562,7 @@ Python campaign command:
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf918_tts_retention.py tests/test_bf918_tts_latency.py tests/test_bf892_spawn_env_guard.py -n 0 -x -q
 ```
 
-The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vitest run src/audio/__tests__/voiceChunking.test.ts src/audio/__tests__/voice.prefetch.bf918.test.tsx`.
+The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vitest run src/audio/__tests__/voiceChunking.test.ts src/audio/__tests__/voice.prefetch.bf918.test.tsx src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`.
 
 | # | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -6167,7 +6623,13 @@ The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vite
 | R65 | `scripts/tts_audio_inventory.py` | `unreadable.append(f"{child}{os.sep}")  # a link to a directory: its records are not read` | `pass` | `test_a_link_to_a_directory_is_not_followed_and_keeps_every_candidate` (both cases: pruned without a word, `legacy` is a candidate) |
 | R66 | `scripts/tts_audio_inventory.py` | `subdirs[:] = walked` | `pass` | `test_the_dry_run_finds_the_legacy_wavs_and_changes_nothing` (the store is walked and its index names every id) |
 | R67 | `scripts/tts_audio_inventory.py` | `except FileNotFoundError:  # no store yet: nothing is indexed and nothing unindexed` | `except OSError:` | `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the refusal is swallowed: DID NOT RAISE) |
-| R68 | `scripts/tts_audio_inventory.py` | `inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav") and name[:-4] not in index)` | `inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav"))` | `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the control counts 7, not 1) |
+| R68 | `scripts/tts_audio_inventory.py` | `inventory.unindexed_wavs = sum(1 for name in names if os.path.normcase(name).endswith(".wav") and name[:-4] not in index)` | `inventory.unindexed_wavs = sum(1 for name in names if os.path.normcase(name).endswith(".wav"))` | `test_a_store_directory_that_cannot_be_listed_stops_the_inventory` (the control counts 7, not 1) |
+| R69 | `scripts/tts_audio_inventory.py` | `if os.path.islink(attachments_dir) or os.path.isjunction(attachments_dir):  # read through, and named` | `if True:` | `test_a_linked_store_is_read_through_its_link_and_named` (the plain store's control names a target) |
+| R70 | `scripts/tts_audio_inventory.py` | `if os.path.islink(attachments_dir) or os.path.isjunction(attachments_dir):  # read through, and named` | `if os.path.islink(attachments_dir):` | `test_a_linked_store_is_read_through_its_link_and_named`; `test_a_store_link_to_nothing_stops_the_inventory`. **Windows only:** the tests' link is a junction there; on POSIX it is a symbolic link and the mutant is equivalent |
+| R71 | `scripts/tts_audio_inventory.py` | `inventory.attachments_link = os.path.realpath(attachments_dir)` | `inventory.attachments_link = str(attachments_dir)` | `test_a_linked_store_is_read_through_its_link_and_named` (the link's own path, not its target) |
+| R72 | `scripts/tts_audio_inventory.py` | `"attachments_link": inventory.attachments_link,` | `"attachments_link": None,` | `test_a_linked_store_is_read_through_its_link_and_named` |
+| R73 | `scripts/tts_audio_inventory.py` | `if inventory.attachments_link is not None:  # a link to nothing: the store cannot be listed` | `if False:` | `test_a_store_link_to_nothing_stops_the_inventory` (DID NOT RAISE: an empty store's report is printed) |
+| R74 | `scripts/tts_audio_inventory.py` | `inventory.unindexed_wavs = sum(1 for name in names if os.path.normcase(name).endswith(".wav") and name[:-4] not in index)` | `inventory.unindexed_wavs = sum(1 for name in names if name.endswith(".wav") and name[:-4] not in index)` | `test_unindexed_wavs_are_matched_as_the_os_matches_names`. **Windows only** (counts 1, not 3); on POSIX `normcase` is the identity and the mutant is equivalent |
 | R76 | `src/probos/audio/tts/resident.py` | `self._dir = directory` | `pass` | `test_a_failed_stderr_open_still_releases_the_worker_directory` (the first directory survives the failed request; the mutant also leaves every request without an output directory, so most resident tests in §7.19 fail too) |
 | TS1 | `ui/src/audio/voiceChunking.ts` | `for (let k = i + 1; k <= i + lookahead; k += 1) ensure(k);` | `for (let k = i + 1; k <= i; k += 1) ensure(k);` | run by hand: voiceChunking Q2; prefetch P1 |
 | TS3 | `ui/src/audio/voiceChunking.ts` | `if (p !== undefined) void p.then(discard);` | `if (false) void p.then(discard);` | run by hand: voiceChunking Q3; prefetch P3 |
@@ -6181,9 +6643,13 @@ The TypeScript rows (TS*) are run by hand. The command, from `ui/`, is `npx vite
 | TS12 | `ui/src/audio/voice.ts` | `if (_activeUtteranceId !== utterance_id) { _finish(false); return; }` | `if (false) { _finish(false); return; }` | run by hand: prefetch P13 (the browser speaks 'Pending.' after the stop) |
 | TS13 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (event.type !== 'end' && event.type !== 'dropped') return;` | `if (event.type !== 'end') return;` | run by hand: ProfileChatTab.bf918 C2 (the in-flight key survives the drop; the identical answer waits: `agent_speaking`) |
 | TS14 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (!claimed \|\| event.utterance_id !== ourUtteranceId) return;` | `if (!claimed) return;` | run by hand: ProfileChatTab.bf918 C3 (the newer reply's listener completes on the older reply's drop: `silence_pending` while the newer reply waits) |
-| TS15 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (agentReplyTurnRef.current !== ourTurn) { retire(); return; }` | `if (false) { retire(); return; }` | run by hand: ProfileChatTab.bf918 C3 (the older reply's late drop completes the newer turn) |
+| TS15 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (replyTurn !== ourTurn) { retire(); return; }` | `if (false) { retire(); return; }` | run by hand: ProfileChatTab.bf918 C3 (the older reply's late drop completes the newer turn) |
 | TS16 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (event.type === 'dropped') {` | `if (false) {` | run by hand: ProfileChatTab.bf918 C4 (the turn stays `agent_speaking`) |
-| TS17 | `ui/src/components/profile/ProfileChatTab.tsx` | `const ourTurn = ++agentReplyTurnRef.current;` | `const ourTurn = agentReplyTurnRef.current;` | run by hand: ProfileChatTab.bf918 C3 (every reply shares turn 0, so the late drop completes the newer turn) |
+| TS17 | `ui/src/components/profile/ProfileChatTab.tsx` | `const ourTurn = ++replyTurn;` | `const ourTurn = replyTurn;` | run by hand: ProfileChatTab.bf918 C3 (every reply shares turn 0, so the late drop completes the newer turn) |
+| TS18 | `ui/src/components/profile/ProfileChatTab.tsx` | `for (const retireReply of [...pendingReplies]) retireReply();` | `for (const retireReply of [...pendingReplies]) void retireReply;` | run by hand: ProfileChatTab.bf918 C5, C6, C7, C8, C9 (each case), C10, C12 (nothing is ever retired: `silence_pending` right after the old reply's late `dropped` or `end`) |
+| TS19 | `ui/src/components/profile/ProfileChatTab.tsx` | `if (state === 'inactive') retirePendingReplies();` | `if (false) retirePendingReplies();` | run by hand: ProfileChatTab.bf918 C10 (the first profile stays mounted, so only the controller's `'inactive'` ends its arm; the cases that unmount or re-run the effect survive this mutant by design: the cleanup retires) |
+| TS20 | `ui/src/components/profile/ProfileChatTab.tsx` | `retirePendingReplies();` | `void retirePendingReplies;` | run by hand: ProfileChatTab.bf918 C12 (the controller dropped the arm without an `'inactive'`; the cases that unmount or re-run the effect survive this mutant by design: the dispose's `'inactive'` retires the same listeners) |
+| TS21 | `ui/src/components/profile/ProfileChatTab.tsx` | `pendingReplies.add(retire);` | `void pendingReplies;` | run by hand: ProfileChatTab.bf918 C5, C6, C7, C8, C9 (each case), C10, C12 (no reply is in the set, so no arm end retires it) |
 
 ## 11. Verified Against Codebase (2026-10-23, worktree `bf918-consult` at `origin/main` `eea6e2f4`)
 
@@ -6326,13 +6792,13 @@ HOLDS: yes
 3. `close` is idempotent, never awaits, and refuses all later admissions. When it returns, every idle and every retiring worker is released, or is being released by the voice thread that holds it. Every running worker is killed, and its request releases it when its blocking call returns. No pipe is closed under a running read.
    - Every worker the service creates is released exactly once, on every path: success, timeout, exit, empty output, the caller cancelling, executor refusal, eviction and shutdown.
    - A worker closed before or during its process start launches nothing afterwards, or kills what it launched before writing a request.
-   - Each resource a worker creates (its directory, its stderr file, its process) is owned by the worker from the moment it exists: a start that fails at any step leaves nothing behind once the request's retirement or shutdown has run, and a later request on the same key still answers.
+   - Each resource a worker creates (its directory, its stderr file, its process) is owned by the worker from the moment it exists: when a start fails at any step, the request's retirement or shutdown kills its process, closes its pipes and stderr file, and removes its directory once (a killed Piper that has not exited within `wait_seconds` can keep the directory on Windows: R17); a later request on the same key still answers.
    - Shutdown never turns queued or refused voice work into an exception: that request answers `None` or `[]`, and any converted file is removed. Only a cancellation of the calling task itself propagates.
 4. With the service present, voice work never runs on asyncio's default pool. Admitted work is bounded, and a refusal degrades to `None` or `[]` without raising into a route. The attachment store's write and lookups are not voice work and stay on asyncio's default pool; no comment or tracker text claims otherwise.
 5. The only new process launch uses `env=trusted_command_env()` (BF-892) and `subprocess.Popen` in a thread (BF-280). No WAV travels over stdout (BF-282).
 6. The `/api/avatars/tts` response is a superset of the old one. A request without `defer_visemes: true` gets the same fields and behaviour as before.
 7. Spoken audio is written as `tts_audio`. No other origin is ever downgraded. Age-based deletion reaches only `perception_frame` (as before) and `tts_audio`. Age and size removal take an entry only if it still has the origin and the timestamp the sweep listed, decided under the store lock that removes it. A kept entry frees nothing and is not counted. This holds for writes through the same store instance. One instance per attachment root and one sweep at a time per store are preconditions (§9), not properties.
-8. The inventory tool creates, changes and locks nothing anywhere: no lock file, no SQLite side file. It reads only `<data-dir>` and offers no delete. A file or archive row it cannot read, a directory under `<data-dir>` it cannot list (refused, or gone since its parent was listed), and a link or junction to a directory (never followed) each keep every candidate and are named in `unreadable`, a directory with a trailing path separator. An attachment directory it cannot list stops the run and prints no report. A WAV is a candidate only if it has Piper's exact 44-byte header with sizes that match the file.
+8. The inventory tool creates, changes and locks nothing anywhere: no lock file, no SQLite side file. It offers no delete, and it reads only `<data-dir>` and, when `<data-dir>/attachments` is a link or junction, that link's target, read as the vessel's store reads it and named in the report's `attachments_link` (`null` otherwise). A file or archive row it cannot read, a directory under `<data-dir>` it cannot list (refused, or gone since its parent was listed), and any other link or junction to a directory (never followed) each keep every candidate and are named in `unreadable`, a directory with a trailing path separator. An attachment directory it cannot list, or one that links to nothing, stops the run and prints no report. `unindexed_wavs` matches `.wav` as the OS matches names (in any case on Windows). A WAV is a candidate only if it has Piper's exact 44-byte header with sizes that match the file.
 9. Client:
    - Playback order is sentence order, and a sentence plays only after the previous one ended.
    - After a stop, no prefetched audio plays and no 'start' fires for it.
@@ -6343,15 +6809,17 @@ HOLDS: yes
    - A play promise rejected while the utterance no longer owns the device speaks nothing in its place; one refused while it still owns the device falls back to the browser as before.
    - The arbiter's wait for an entry ends only on an `end` or `dropped` carrying that entry's id, or on GUARD 1 or GUARD 2; no `dropped` fires for an entry whose audio started.
    - `ProfileChatTab` releases on a `dropped` what an `end` releases: its agent's in-flight speech keys (BF-718's per-agent rule) and the completion listener armed for that utterance id.
-   - A `dropped` completes the controller's turn only when it carries the id of the newest conversation-mode reply. It never completes an older or a newer turn, and nothing fires an `end` in its place.
-   - The lost-claim wait, BF-290's immediate completions and BF-767's `end` correlation are unchanged.
+   - A `dropped` completes the controller's turn only when it carries the id of the newest conversation-mode reply of its own arm. It never completes an older or a newer turn, or another arm's turn, and nothing fires an `end` in its place.
+   - Every way a 1:1 conversation arm ends retires every reply completion listener that arm set up, claimed or lost: React's cleanup of the arm effect, before it disposes the controller, and the controller's `'inactive'` to that arm's options. A retired listener never calls `markAgentReplyComplete`, so no reply's `end` or `dropped` completes another arm's turn. Retiring completes no turn and touches neither the in-flight keys nor the speech ledger.
+   - A live arm is never left stuck. Its own reply completes on its own `end`, on the newest reply's `dropped`, or immediately (BF-290), under StrictMode's double effect run too. The controller calls `onAgentReply` only while that arm owns it.
+   - The lost-claim rule (agent-scoped, no id), BF-290's immediate completions and BF-767's `end` correlation are unchanged. The lost-claim waiter is retired with its arm like every reply listener.
    - No production caller of `stopSpeaking` runs while a meeting batch speaks. Its only caller is the controller's barge-in, which runs only in `agent_speaking`, a state the AD-985 meeting mode never enters.
 10. Every new class stays within 500 lines and 15 methods, adds no layer import, and creates no task it does not hold.
 
 ## 15. Acceptance criteria
 
 - [ ] M1 to M3 are built; the focused checks in §6 pass; the three `--check` commands pass; `check_architecture_principles.py --check` passes; `npx tsc -b` passes.
-- [ ] Cancelling or superseding a reply stops it immediately, and no prefetched sentence plays afterwards (P2, P3, P7, P9 to P13); a conversation-mode reply stopped before its audio strands no later turn (`ProfileChatTab.bf918` C2 and C4).
+- [ ] Cancelling or superseding a reply stops it immediately, and no prefetched sentence plays afterwards (P2, P3, P7, P9 to P13); a conversation-mode reply stopped before its audio strands no later turn (`ProfileChatTab.bf918` C2 and C4), and no reply's late `end` or `dropped` completes the turn of an arm other than its own (C5 to C10, C12), while a live arm's own reply still completes (C11).
 - [ ] Lip-sync visemes fire for every utterance on both paths (P4, P5, P6, and the route tests).
 - [ ] The browser fallback is unchanged: no request when `backend != "piper"`, and a fallback per sentence on failure (serverTts, pipelining test 4).
 - [ ] With pipelining off, the single-call path behaves as before, apart from the S2 speed-up and the deferred visemes.
@@ -6402,7 +6870,7 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
    d:/ProbOS/.venv/Scripts/python.exe -I -c "import json,collections,os;d=json.load(open(os.path.expandvars(r'%LOCALAPPDATA%\ProbOS\data\attachments\.index.json'),encoding='utf-8'));print(collections.Counter((v.get('origin'),v.get('mime')) for v in d.values()))"
    ```
    The `('tts_audio','audio/wav')` count must stay small: only the replies of the last 15 minutes. Re-run it a day later; the number of `*.wav` files must not grow past 1,126 plus that small number.
-7. **Legacy inventory (read-only).** `d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$D"`, preferably with ProbOS stopped (a database being written may be reported `unreadable`, which keeps every candidate). Post the JSON, including `kept`, `unreadable`, `unindexed_wavs` and `seconds` (the cost of reading every file, backups included). An `unreadable` entry that ends in a path separator is a directory the tool could not list, or a link or junction to a directory, which it never follows; either keeps every candidate. If the attachment directory itself cannot be listed, the run stops with an error and prints no JSON. It deletes nothing; the sweep decision belongs to the follow-up issue.
+7. **Legacy inventory (read-only).** `d:/ProbOS/.venv/Scripts/python.exe scripts/tts_audio_inventory.py --data-dir "$D"`, preferably with ProbOS stopped (a database being written may be reported `unreadable`, which keeps every candidate). Post the JSON, including `kept`, `unreadable`, `unindexed_wavs`, `attachments_link` and `seconds` (the cost of reading every file, backups included). `attachments_link` is `null` unless `$D\attachments` is a link or junction; then it names the target, which the tool reads as the vessel does. An `unreadable` entry that ends in a path separator is a directory the tool could not list, or another link or junction to a directory, which it never follows; either keeps every candidate. If the attachment directory itself cannot be listed, or links to nothing, the run stops with an error and prints no JSON. It deletes nothing; the sweep decision belongs to the follow-up issue.
 
 **Targets:** first audio within about 1.5 s at p50, with p95 reported; no gap over about 0.3 s, excluding `sentence_silence`.
 
@@ -6418,6 +6886,8 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - **Expected phantom-precheck false positives**, all from code blocks: the `Inventory`, `PiperOutcome` and fake-process field accesses (new symbols), `Timer` (`threading.Timer`), `OrderedDict`, `SimpleNamespace`, `ThreadPoolExecutor` where already in `src`, and `VisemeFrame` where already in `src`. Amendments A1 to A3 add `unlink_if_unchanged` (new), `record.document` and `record.metadata` (`ArchiveRecord` fields) and `connection.execute` (`sqlite3`).
 - **Amendments A1 to A3 (2026-10-24, read-only consults):** each ran no test, vitest, `tsc`, precheck or generator, so every "fails on the candidate" claim came from reading; the orchestrator's tests-first run on candidate 2's unchanged source is the execution check (see the verification paragraph). Area A's consult was denied one `ls` of the live data directory and read none of it; its live facts are the orchestrator's read-only evidence. Area B read Piper's logging from upstream `main.cpp` and `piper.cpp`, not from the installed binary; its lifecycle tests use an in-memory process fake (a real stderr file and directory), so OS handle inheritance and Windows directory removal while a killed child has not exited are not exercised; the default pool's live saturation was not measured. Area C modelled the native media boundaries (`pause` rejecting a pending play with an abort error; an answer arriving after a stop) with doubles taken from the reviewer's Chromium probes, and ran no vitest.
 - **Amendments A4 to A6 (2026-10-24, read-only consults):** each ran no test, vitest, `tsc`, precheck or generator, so every "fails on the candidate" claim came from reading; the orchestrator's tests-first run on candidate 3's unchanged source is the execution check (see the verification paragraph). A4's directory refusals and links are injected at `os.scandir`, `os.path.islink` and `os.path.isjunction`; no real ACL, symlink or junction is created, and whether the live data directory contains a link was not checked (one would appear in `unreadable` and keep every candidate). A5's stderr-open failure is injected by replacing `mkdtemp` with a function that makes a directory whose `stderr.log` is itself a directory; real causes (a full disk, an antivirus lock) are not exercised. A6's cases C1 to C4 run the real component, controller and voice code with the harness of the round-2 reviewer's executed probe. The claim behind R18, that no production code can stop speech while a meeting batch speaks, is from reading; the orchestrator re-ran its enumeration (`stopSpeaking` has one non-test caller, `conversationController.ts:356`, inside `_onVadSpeechStart` under `_state === 'agent_speaking'`, and the only assignment of that state is the `/chat` branch of `_onTranscript`, which the group submit path never reaches).
+- **Amendment A7 (2026-10-24, read-only consult):** it ran no test, so every "fails on the candidate" claim is from reading; the orchestrator's tests-first run on candidate 4 is the execution check. Not run here: what `os.scandir` raises on Windows for a junction whose target is gone (expected `FileNotFoundError`; the test accepts any `OSError` after asserting its premise, a link to nothing), `os.path.realpath` on that junction (CPython 3.12's non-strict `ntpath.realpath` reads the link instead of raising), and the POSIX `os.symlink` branch of the link helper (this host makes a junction). A link to a file is not tested (on Windows it needs a privileged file symbolic link); by reading, the index read or the store listing raises and stops the run. A4's bullet above says a link in the live data directory would appear in `unreadable`: that holds for every link except `<data-dir>\attachments`, which A7 reads through and names in `attachments_link`. Whether the live `attachments` is a link was not checked; §16 step 7's report now shows it.
+- **Amendment A9 (2026-10-24, read-only consult):** it ran no test, vitest, `tsc` or precheck, so every "fails on candidate 4" claim comes from reading; the orchestrator's tests-first run is the execution check. C5 is the round-3 reviewer's executed probe. C6 to C12 extend the same harness (a second agent, a second mount, StrictMode, the mic-mode menu, the `voice-profile-updated` event, and a thread id answered with 404) and were not run by the consult. The cleanup's retire has no ordinary killer: whenever the arm still owns the controller at cleanup, the dispose's `'inactive'` retires the same listeners. C12 therefore uses the controller's test seam, which tears down without notifying; it stands in for a pre-empted arm whose queued `'inactive'` is superseded (`conversationController.ts:540-544`), a path that was not constructed. The round-2 design's liveness check on `onAgentReply` was left out on reading: the controller's ownership check comes before the call (`:433-435`), and `ProfileChatTab.bf718.test.tsx` calls the first arm's `onAgentReply` after a voice-profile re-arm. Within one arm, an older reply's own late `end` can still complete a newer reply's turn (the turn guard applies to `dropped` only): the consult's reading, not executed, and it predates BF-918. Possible precheck false positives: `pendingReplies.add`, `pendingReplies.delete`.
 - `ATTACHMENT_REAPED` is `GRANDFATHERED` (`event_persistence.py:126`): it is emitted but not written to `events.db` by default. No sentence of this contract or its code claims otherwise; A1's consult report did, wrongly.
 
 **Orchestrator verification, round 0 (2026-10-24, by tool, on `origin/main` `26bec26d` = BF-914 merged; the consult above ran none of this; the contract as drafted plus the five mechanical repairs).** All 60 verbatim pairs apply, each SEARCH once (11 in M1 with §7.9a and §7.9b, 36 in M2 with pair 4b, 14 in M3), the eight range pairs apply by their markers, and the six new files are created by tool: the oracle is three scratch commits, M1 `ffa300cd`, M2 `a461fd02` and M3 `c0185231` (tree `701e589c`). **The oracle found what a read-only consult cannot** (the header lists the five repairs): the retention test's tool loader, the facade's pinned field count, the range pairs a verbatim-pair tool skips and, from the consolidated focused check, the agentic-loop golden's pop of the new default. After them, on the final oracle: the M1 and M2 focused lists, 21 test files, 1,188 passed (repair 5 adds the `test_ad1152` file to M1's list); the 13 config-pin test files that read the whole configuration or its models, 1,939 passed; vitest over 33 files, 338 passed, and `tsc -b` clean; the generators move the model-field count 1879 to 1880 and change the three generated files. **Mutation campaign:** the 21 Python rows ran one at a time after an unmutated baseline (110 passed): 21 of 21 killed, none survived, none inert, none invalid; a census run that records every failing test of every mutant found 0 claimed killers that do not fail. The four TypeScript rows, run by hand (baseline 26 passed): 4 of 4 killed. "25 mutants parsed" equals the 21 and 4 rows of section 10. **The three Builders** (`claude-sonnet-5.5`; M2 and M3 built concurrently in separate trees) produced files blob-equal to the oracle's stages: M1's 13, M2's 26 cumulative paths and M3's 6, with 0 mismatches (the 14th M1 path, §7.9b, was applied by the oracle's tool after the focused check, not by a Builder); the one difference found on the way (§7.14 pair 4's comment placement) is repair 4 above. **Tests-first:** the oracle's nine Python test files on `26bec26d`'s source: 14 failed and 376 passed, and four files fail at collection because they import `probos.audio.tts.resident`; the four vitest files: 17 failed and 16 passed.
@@ -6425,6 +6895,8 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 **Orchestrator verification, round 1 repair (2026-10-24, by tool).** The three amendments apply to the contract by tool, each SEARCH once (A2 27 pairs, A1 28 and A3 19, in that order); the oracle is three scratch commits on `26bec26d`, M1 `2c305c91`, M2 `1a2c9d32` and M3 `1e384b73` (tree `e348bbe8`). **Tests-first**, the oracle's changed test files on candidate 2's unchanged source: of 61 Python tests, 24 fail, namely the 23 new tests for the findings and the one pin that moved (`test_reaper_continues_past_permission_error`); the one new test that passes is the WebM control. The failures have the findings' reasons: the store has no `unlink_if_unchanged`, a write after the listing is deleted anyway, the removed tool options are accepted, malformed headers and archived references are candidates, a closed worker answers, a busy or evicted worker keeps its pipes, stderr file and directory, a queued request ends in `CancelledError`, and the lip-sync route raises `RuntimeError` after the executor closed. Of 13 vitest tests, the five new ones (P9 to P13) fail. **After the repair**, on the oracle: retention 23, reaper 12 and latency 26 passed; the M1 focused list (9 files) 691 and the M2 focused list (14 files) 567 (the 21 files together 1,209); the 13 config-pin test files 1,939; vitest over 35 files 350 and `tsc -b` clean; the three generator `--check` commands and the architecture, store-registry and seam checks pass. **Mutation campaign:** the 51 Python rows ran one at a time after an unmutated baseline (131 passed): 51 of 51 killed, none survived, none inert, none invalid; a census over every failing test of every mutant found 0 claimed killers that do not fail; the 10 TypeScript rows, run by hand (baseline 31 passed): 10 of 10 killed, and their census found 0 claimed killers that do not fail. "61 mutants parsed" equals the 51 and 10 rows of section 10. **The three repair Builders** (`claude-sonnet-5.5`, reasoning effort high, in separate trees on candidate 2) saw the predicted tests-first counts (area A 16 failed and 19 passed, area B 8 and 18, area C 5 and 8) and produced files blob-equal to the oracle's: A's 9, B's 5 and C's 2 paths, 0 mismatches (area A's Builder shortened the SEARCH of two pairs, the protocol method in §7.1 and its implementation in §7.2, with the same result).
 
 **Orchestrator verification, round 2 repair (2026-10-24, by tool).** The three amendments apply to the contract by tool, each SEARCH once (A5 4 pairs, A4 11 and A6 6, in that order); the oracle is three scratch commits on `26bec26d`, M1 `39f9bfe7`, M2 `567d77de` and M3 `b324e994` (tree `896f1705`). **Tests-first**, the oracle's changed test files on candidate 3's unchanged source: of 54 Python tests, 5 fail (the four retention cases for the directory, link and store-listing refusals, and the latency test for a failed stderr open) and 49 pass, and no old test fails; the failures have the findings' reasons (the unreadable directory is not reported and its candidates are not kept, the linked directory is read through, the store's listing does not raise, the worker's directory remains after the failed open). Of the 4 new vitest cases, C2 and C4 fail with `expected 'agent_speaking' to be 'silence_pending'`, and C1 (the control) and C3 (the late-drop guard) pass by design. **The Windows behaviour that the tests inject was also run for real** (a probe in a temporary data directory: an ACL that denies listing a directory, a real junction and an unlistable attachments directory, each scenario asserting its own premise first; creating a directory symlink was refused for lack of the privilege): candidate 3's tool is falsely clean with the denied directory (`unreadable` empty, the WAV still a candidate) and reads through the junction, and the repaired tool keeps every candidate, names the directory and the junction with a trailing separator, never follows the junction, and stops with `PermissionError` without printing a report when the attachments directory cannot be listed. **After the repair**, on the oracle: retention 27, reaper 12 and latency 27 passed; the M1 focused list (9 files) 695 and the M2 focused list (14 files) 572; vitest over the broader M3 command (65 files, every ProfileChatTab test included) 720 passed and `tsc -b` clean; the three generator `--check` commands and the architecture, store-registry and seam checks pass. **Mutation campaign:** the 59 Python rows ran one at a time after an unmutated baseline (136 passed): 59 of 59 killed, none survived, none inert, none invalid; a census over every failing test of every mutant found 0 claimed killers that do not fail. The 15 TypeScript rows, run by hand (baseline 35 passed): 15 of 15 killed, and their census found 0 claimed killers that do not fail, with the five new rows' claims equal to the failing sets (TS13 C2, TS14 C3, TS15 C3, TS16 C4, TS17 C3). "74 mutants parsed" equals the 59 and 15 rows of section 10. **The three repair Builders** (`claude-sonnet-5.5`, reasoning effort high, in separate trees on candidate 3) saw the predicted tests-first counts (area A 4 failed and 35 passed, area B 1 and 26, area C 2 and 2) and produced files blob-equal to the oracle's: A's 3, B's 2 and C's 4 paths, 0 mismatches (area B's M2 focused check read 568 in its tree because the retention file there is candidate 3's, with 23 tests; with area A's four cases it is 572).
+
+**Orchestrator verification, round 3 repair (2026-10-24, by tool).** The amendments reach the contract in three ways: A8 is one sentence (applied by hand); A7's pairs carry no tool envelope (its consult could not read the amendment format), so they were applied by hand with exact-match edits, each SEARCH once; A9's 16 pairs applied by tool, each SEARCH once. The oracle is three scratch commits on `26bec26d`, M1 `8f52e5f2`, M2 `b2ce3015` and M3 `ca6a67d9` (tree `548c218d`; 80 SEARCH labels in the slices equal the 80 in the contract). **Tests-first**, the oracle's changed test files on candidate 4's unchanged source: of 31 retention tests, 3 fail (`attachments_link` is missing from the report, `.WAV` and `.WaV` count 1 of 3, a link to nothing does not stop the run) and the inside-the-data-directory control passes, with no old test failing; of the 14 `ProfileChatTab` cases, 9 fail (C5 to C8, the three C9 cases, C10 and C12, each with `expected 'silence_pending' to be 'agent_speaking'`: the replacement's turn ended by the old reply) and 5 pass (C1 to C4, and C11, the StrictMode control). **The Windows behaviour was also run for real**: a probe in a temporary data directory (a real junction as the store root, a junction to a removed directory, and unindexed `.wav`, `.WAV` and `.WaV` files, each scenario asserting its premise first): candidate 4's tool follows the junctioned store root silently (`attachments_link` is absent), prints a falsely clean empty-store report for the junction to nothing and counts 1 of the 3 names; the repaired tool names the target in `attachments_link`, stops with `FileNotFoundError` and no report for the junction to nothing, and counts 3; the earlier scenarios (a real ACL that denies listing, a real junction in a record directory, an unlistable attachments directory) still behave as in round 3. The area C reviewer's `unmount-regression` probe was re-run on the candidate, `b96cbe22` and `26bec26d` before the repair (`silence_pending`, `agent_speaking`, `silence_pending`). **After the repair**, on the oracle: retention 31, reaper 12 and latency 27 passed; the M1 focused list (9 files) 699 and the M2 list (14 files) 576; vitest over the broader M3 command (65 files) 730 passed and `tsc -b` clean; the generator `--check` commands and the architecture, store-registry and seam checks pass. **Mutation campaign:** the 65 Python rows ran one at a time after an unmutated baseline (140 passed): 65 of 65 killed, none survived, none inert, none invalid; a census over every failing test of every mutant found 0 claimed killers that do not fail. The 19 TypeScript rows, run by hand (baseline 45 passed): 19 of 19 killed and their census found 0 claimed killers that do not fail, with the new rows' claims equal to the failing sets (the census first read the case ids that the TS19 and TS20 cells named as surviving by design as claims, until those cells stopped naming them: a mechanical wording repair, no row changed). "84 mutants parsed" equals the 65 and 19 rows of section 10. **The two repair Builders** (`claude-sonnet-5.5`, reasoning effort high, in separate trees on candidate 4; area B had no code to build) saw the predicted tests-first counts (area A 3 failed and 40 passed of 43 tests, area C 9 failed and 5 passed of 14) and produced files blob-equal to the oracle's: A's 2 and C's 2 paths, 0 mismatches.
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -6440,12 +6912,13 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - R10 (B5; round 2, area B finding 2): cancelling a caller frees its admission slot while ffmpeg, rhubarb or Piper still occupy a voice thread (measured: 20 unfinished against a bound of 16), and a caller-cancelled ffmpeg conversion leaves its temporary WAV behind (`_convert_to_wav` creates it before the await; measured `converted_left=1`, the same on `26bec26d`). Reached only by injected cancellation; both predate BF-918. Follow-up: one done-callback on the executor future that holds the slot and removes the conversion output after the work finishes (an unlink at cancellation would race a running ffmpeg), or kill the child when the caller cancels.
 - R11 (Low): a resident Piper's `stderr.log` grows for the process lifetime (one real-time-factor line per request), and `_stderr_tail` reads the whole file to quote 500 bytes.
 - R12 (review round 1, area C): pipelined replies are cut after their first sentence when another utterance is queued. Under pipelining every sentence shares the entry id (BF-767), so the first sentence's `end` dispatches the queued utterance, whose `_playNow` takes the id, and the remaining sentences stop. Predates BF-918; P2, ordinary reach with pipelining on (default off). The fix touches the arbiter's own contract: its wait would have to end on the reply's last sentence. **An open slice (M5) of #1626, by the Architect's decision of 2026-10-24:** it would truncate the pipelined replies of the live acceptance itself, so it lands before the measurement.
-- R13 (fixed in review round 2, §7.30b; kept here so that the numbering holds; round 1's "without effect after a barge-in" was wrong): `ProfileChatTab` ignored `dropped`. Before BF-918 that leaked a flushed or pre-empted entry's in-flight key. D7a made the leak reachable by an ordinary barge-in before audio, and a later identical answer then stranded the controller in `agent_speaking`. The residual is R19.
+- R13 (fixed in review round 2, §7.30b; kept here so that the numbering holds; round 1's "without effect after a barge-in" was wrong): `ProfileChatTab` ignored `dropped`. Before BF-918 that leaked a flushed or pre-empted entry's in-flight key. D7a made the leak reachable by an ordinary barge-in before audio, and a later identical answer then stranded the controller in `agent_speaking`. The residual is R19. Review round 3 (C F1): the round-2 listener outlived its arm, so a closed or switched profile chat's late `end` (as on main) or `dropped` completed the next arm's turn; A9 retires every reply listener when its arm ends (§7.30f).
 - R14: a media error after `start` fires the server `end`, and then the browser fallback speaks with a second start and end pair (R3's family; reached only by an injected fault; predates BF-918).
 - R15 (review round 2, area A, F2; P2, injected only): overlapping size sweeps on one store over-evict. Each `sweep_once` takes its own `total_size_bytes` and stops on it (measured: 200 bytes removed where 100 sufficed). Production runs one sweep at a time (one `AttachmentReaper(` at `finalize.py:757`, whose `_loop` awaits each sweep; `start` is idempotent), and the counts stay honest. Follow-up, when a second caller appears: serialize the size pass per store, not per reaper (two reapers on one store would also overlap), or re-read the total under the store lock for each removal.
 - R16 (review round 2, area A, F3; P2, injected only): a second writer to one attachment root (another store object or process) is not coordinated, so a stale index removes an entry the other promoted. Production has one `FilesystemAttachmentStore(` (`routers/chat.py:1017`, cached per runtime), and AD-816's pidfile allows one vessel per data directory. The precondition is stated in §9 and in `unlink_if_unchanged`'s docstring. Outside it: two vessels whose data directories differ but whose `attachments.attachments_dir` is the same, or an external writer. Follow-up, if more than one writer must be supported: an interprocess lock, reloading the index while it is held.
 - R17 (review round 2, area B; Low, injected only, not a regression): `PiperWorker._release` removes the worker's directory once, with `ignore_errors`. When a killed Piper has not exited within `wait_seconds` (on Windows it still holds `stderr.log`), the directory remains with no owner. Follow-up: remove it again after the process has exited, or log the failed removal.
 - R18 (review round 2, area C, finding 2; P2, injected only, predates BF-918): a stop does not end the rest of a meeting batch, because `speakRepliesSequentially` breaks only on a generation check that `stopSpeaking` does not move. Not reachable today: `stopSpeaking`'s only non-test caller is the controller's barge-in (`conversationController.ts:356`), which runs only in `agent_speaking`, a state the group path (`submitTranscript`) never enters; the in-call mute ends a batch and works. It becomes reachable once any meeting-time stop caller exists (a stop button, meeting-mode barge-in, a wake-word "stop") or a second `ProfileChatTab` shares a document. Design, when it is wanted: a stop epoch in `speechQueueStore.ts` (not a new `voice.ts` export: about 50 test files mock `voice` with factories that would lack it), bumped first in `stopSpeaking`, captured per batch and compared in `useMeetingVoice`'s `shouldContinue`; the stopped reply still runs `onUtteranceEnd`, so that `setGroupTyping(null)` at `ProfileChatTab.tsx:1823` runs.
-- R19 (review round 2, area C; P3, narrow, partly pre-existing): a lost-claim waiter (BF-718) has no utterance id, so it cannot see the `dropped` of the identical in-flight utterance it waits on. If that utterance is dropped, the waiter stays subscribed: it can complete a later turn early on another `end` from the same agent, or strand the controller if the drop was a pre-emption while the turn waits. It needs identical text in flight, a drop and a second utterance from the same agent. Follow-up: give the in-flight set utterance ids, so that waiters correlate exactly.
+- R19 (review round 2, area C; P3, narrow, partly pre-existing): a lost-claim waiter (BF-718) has no utterance id, so it cannot see the `dropped` of the identical in-flight utterance it waits on. If that utterance is dropped, the waiter stays subscribed until its arm ends (review round 3: every way a conversation arm ends retires it, §7.30f). Within that arm it can complete a later turn early on another `end` from the same agent, or leave the turn in `agent_speaking` if the drop was a pre-emption while the turn waits; a barge-in or the arm's end recovers it. It needs identical text in flight, a drop and a second utterance from the same agent. Follow-up (with R20): give the in-flight set utterance ids, so that waiters correlate exactly.
+- R20 (review round 3, area C, F2; P3, injected only, not a regression; predates BF-918): BF-718's in-flight set is cleared per agent, so any `end` or `dropped` from an agent clears every in-flight key of that agent, including the key of a different utterance that is still preparing or playing. A later reply with that utterance's text then loses its speech claim, finds no in-flight key and completes the controller's turn at once while that utterance still plays: the barge-in guard detaches and the silence timer starts early. The same early completion follows a remount, whose in-flight set starts empty while the speech ledger (module-scoped, BF-765) keeps the claim. Demonstrated only with an injected owner flush (the round-3 reviewer's `per-agent-cost.test.tsx`: one chat POST, one TTS POST, `silence_pending`, then a `start` with no `end` between). The per-agent rule was chosen so that a missed correlation never strands the controller. Follow-up: key the set by utterance id once the lost-claim path can learn it (with R19).
 
-The register numbers on #1523 (F-389 onward) are assigned when the register comment is posted; R9 and R12 are the open slices M4 and M5 of #1626, and R13 is fixed, so none of the three goes on #1523.
+The register numbers on #1523 (F-389 onward) are assigned when the register comment is posted, in the order of this list (R1 to R8, R10, R11 and R14 to R20); R9 and R12 are the open slices M4 and M5 of #1626, and R13 is repaired, so none of the three goes on #1523.
