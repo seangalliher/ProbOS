@@ -1,12 +1,13 @@
 # BF-918 slices M4 and M5 (#1626): the attachment store gets its own I/O threads, and the speech arbiter waits for a pipelined reply's last sentence
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 — Amendment A1: M4 review round 1 (one P1, three P2); code pairs on candidate 1 `6d63cc93`.
 
 **Status:** ready for the Builder. **Base:** `origin/main` `cb190f32` (BF-918 M1 to M3 merged, PR #1645). **Issue:** #1626 (BF-918). No new AD or BF number: both are slices of BF-918.
 
 | Milestone | Slice | Finding | Tier | Files | Test files |
 |---|---|---|---|---|---|
-| M4 | the attachment store's bounded I/O executor | BF-918 §18 R9 | **HIGH** | `src/probos/attachments/filesystem_store.py`, `src/probos/routers/chat.py`, `src/probos/startup/shutdown.py`, `tests/test_ad720_attachment_store.py`, `tests/test_bf918_attachment_io.py` (new), `PROGRESS.md`, `DECISIONS.md` | `tests/test_bf918_attachment_io.py` (new, 8 tests), `tests/test_ad720_attachment_store.py` (1 test updated) |
+| M4 | the attachment store's bounded I/O executor | BF-918 §18 R9 | **HIGH** | `src/probos/attachments/filesystem_store.py`, `src/probos/routers/chat.py`, `src/probos/startup/shutdown.py`, `tests/test_ad720_attachment_store.py`, `tests/test_bf918_attachment_io.py` (new), `PROGRESS.md`, `DECISIONS.md` | `tests/test_bf918_attachment_io.py` (new, 18 cases after A1), `tests/test_ad720_attachment_store.py` (1 test and the `store` fixture updated) |
 | M5 | the arbiter's wait ends on a pipelined reply's last sentence | BF-918 §18 R12 | **HIGH** | `ui/src/audio/voice.ts`, `ui/src/audio/__tests__/voice.prefetch.bf918.test.tsx`, `PROGRESS.md`, `DECISIONS.md` | `voice.prefetch.bf918.test.tsx` (7 tests appended, P14 to P20) |
 
 **Tiers.** Both HIGH, the parent's tier (BF-918 is HIGH and a slice is never lowered without the Captain). M4 also earns it on its own: every attachment write in the vessel (artifacts, traces, perception frames, spoken audio) and the index save move to new threads, and shutdown gains a step. M5 changes the one speech arbiter that all seven producers share and adds a field to the public `SpeechEvent`; a defect there silences every later utterance for 45 s.
@@ -23,7 +24,7 @@
 
 ## 2. Solution
 
-**M4.** The store owns a bounded `ThreadPoolExecutor` (`ATTACHMENT_IO_WORKERS = 4` threads, named `probos-attachment-io_N`), made on first use. One private helper `_run` sends every blocking call to it: the file reads, writes, stats, unlinks, the directory glob of `_find`, the cold size scan, and the index save. The only exception is the constructor's synchronous index load. Calls beyond 4 queue on those threads; store I/O is never refused. `close()` stops the threads without cancelling accepted work and never awaits. After it, `_run` uses `asyncio.to_thread`, which is today's behaviour, so a caller late in shutdown still completes. `startup/shutdown.py` closes the cached store right after the attachment reaper stops, through a new `routers/chat.py:close_attachment_store(runtime)`. That function builds no store and keeps the cached instance, preserving one instance per root (R16).
+**M4.** The store owns a bounded `ThreadPoolExecutor` (`ATTACHMENT_IO_WORKERS = 4` threads, named `probos-attachment-io_N`), made on first use. One private helper `_run` sends every blocking call to it: the file reads, writes, stats, unlinks, the directory glob of `_find`, the cold size scan, the index save, and `write`'s path resolution with its existence check, in one call (A1). The only exception is the constructor (resolving the root, making it and loading the index), which is called from sync code. A thread cannot be stopped, so a cancelled caller waits for its call to end before the cancellation propagates: a caller holding the store's lock never releases it while its call still runs (A1). Calls beyond 4 queue on those threads; store I/O is never refused. `close()` stops the threads without cancelling accepted work and never awaits. After it, `_run` uses `asyncio.to_thread`, which is today's behaviour, so a caller late in shutdown still completes. `startup/shutdown.py` closes the cached store right after the attachment reaper stops, through a new `routers/chat.py:close_attachment_store(runtime)`. That function builds no store and keeps the cached instance, preserving one instance per root (R16). With nothing cached, it leaves a marker in the cache, so a store first built afterwards (by a request accepted before shutdown) is closed before it is returned (A1).
 
 **M5.** The pipelined path marks each sentence's `'end'` with an additive `final` field: `false` when more of the same utterance will play, `true` when nothing more will (its last sentence, or a stop or a newer dispatch took the device first). Every other utterance's `'end'` carries no `final`, so events with pipelining off are unchanged. The arbiter's wait ignores an `'end'` whose `final` is `false` and re-arms its join timeout on it. The timeout (GUARD 2) then bounds the silence between two events of the entry, not the length of the reply. A stop between two sentences fires no `'end'`, because nothing is playing, and its queue can still be awaiting the next sentence's synthesis. While a sentence queue runs, `stopSpeaking` therefore ends that entry's wait itself, through `_endSentenceQueueWait`. A reply stopped before its first sentence still ends with `dropped` (D7a, unchanged).
 
@@ -33,21 +34,26 @@
 2. **New slice M7 of #1626 (found while drafting M5; ordinary reach with pipelining on; by reading, not executed).** In conversation mode, `ProfileChatTab`'s reply listener completes the controller's turn on the reply's first sentence's `'end'` (`ProfileChatTab.tsx:2196-2205`: `type === 'end'`, own `agent_id`, own `utterance_id`, then `complete()`). The controller then enters `silence_pending` (`conversationController.ts:450-471`) while sentences 2 to n still play. Barge-in, which works only in `agent_speaking` (`:350`), stops working, and the silence timer starts early. This is R12's root, one consumer up. M5's `final` field is the signal M7 needs: one condition in that `end` branch, which is the same branch M6 changes, in the same test harness. The same family, with lower stakes, belongs in M7's design note: the in-flight key clear (`:1385-1393`) and the BF-300 PTT gate (`:563-590`) also act on every sentence's `'end'`. Under the convergence rule an ordinary-reach finding is a slice, not a register entry. **M7 does not gate the live acceptance** if the acceptance's 20 replies are typed in the chat, not spoken in conversation mode (see §15).
 3. **M4's bound is a module constant**, `ATTACHMENT_IO_WORKERS = 4`, with a constructor keyword `io_workers` for tests. A Pydantic field was rejected: this follows BF-918's own precedent for the voice limits (`resident.py:46-50`, `VOICE_EXECUTOR_WORKERS = 4`, constants), no operator has a reason to tune it, and a config field moves the pinned dump, the facade field count and three generated files (BF-918 repair 5). Revisit if the live `store_ms` shows saturation of the store's own threads.
 4. **A closed store degrades to the default pool; it does not refuse.** Refusing was rejected: about 60 call sites use the store (artifact writes, traces, perception frames, routes), many run after the reaper stops (the pools stop at `shutdown.py:1945` onward), and a refused artifact write is lost data. Accepted work is never cancelled (`cancel_futures=False`), for the same reason.
-5. **M4 covers every blocking call, not only R9's four.** `write`'s existence check and the index save, which ran on the event loop, and `size`, `unlink`, `unlink_if_unchanged` and the cold scan, which ran on the default pool, all go through `_run`. One helper with a partial list would leave the same dependency on the default pool. The index save runs while `self._lock` is held, and every `_index` mutation in the file is under that lock (§11), so the dictionary does not change while it is serialised.
+5. **M4 covers every blocking call, not only R9's four.** `write`'s existence check and the index save, which ran on the event loop, and `size`, `unlink`, `unlink_if_unchanged` and the cold scan, which ran on the default pool, all go through `_run`. One helper with a partial list would leave the same dependency on the default pool. The index save runs while `self._lock` is held, and every `_index` mutation in the file is under that lock (§11), so the dictionary does not change while it is serialised. A1: that held only while the caller was not cancelled; `_run` now waits for a cancelled caller's call to end before the cancellation propagates (decision 9).
 6. **Close placement:** immediately after the attachment reaper's stop (`shutdown.py:1600-1605`), as R9 specified. The reaper is the store's only background user with a lifecycle. Everything else is request-driven and falls back (decision 4). The shutdown helper reads `sys.modules` instead of importing `probos.routers.chat`: only that module builds a store, so when it was never imported there is nothing to close, and importing it would load the HTTP layer during shutdown.
 7. **M5's signal is an additive `final` field on `'end'`** (option a). Ranked: (a) the field (chosen): the arbiter needs it now, and M7 needs the same fact; (b) an internal-only wait object passed to `_playNow`: rejected, because M7 would then need a second mechanism for the same fact; (c) ending the wait when the sentence queue returns: rejected, because a last sentence spoken by the browser fallback returns at once (R3), so the next utterance's `_playNow` would cancel it; (d) a new event type: rejected, because it is a wider contract change than one optional field.
 8. **Pipelining stays default-off.** Neither slice touches config.
+9. **A1, review round 1 finding 1 (P1): the drain lives in `_run`, for every call** (option a). Ranked: (a) `_run` shields the call and, when its caller is cancelled, waits for the call to end, then re-raises (chosen): one mechanism covers the three index saves, the blob write and both unlinks, on the store's threads and on the default pool after close; a thread cannot be stopped, so no caller should end before the call it started. (b) A helper used only under the lock: rejected, because the next call added under the lock would be unprotected by default. (c) Shield each locked operation as a whole (all-or-nothing): deferred (§18 R31); each method splits in two, and the partial states it removes are index hints. (d) `asyncio.shield` alone: rejected; the call goes on, but the caller still leaves the lock (the finding). A second cancellation while waiting is absorbed and the first is re-raised when the call ends. An exception the call raises after its caller was cancelled is logged as a WARNING, and the caller ends cancelled. A closed store keeps `asyncio.to_thread`, in a task (`ensure_future`), so the callee still gets a copy of the caller's context. `AttachmentReaper.stop()` and `close()` are unchanged: `stop()` now returns after the save it interrupted has ended, and `close()` still cancels nothing. The blob-call windows predate M4 (the parent ran `write_bytes` and the unlinks through `to_thread` under the lock); the index-save race is M4's.
+10. **A1, finding 3: `write` resolves its path and tests it in one store-thread call** (`_locate_sync`), so a fresh write stays at three executor handoffs and a repeated one at two; a fourth handoff was avoidable. Validation errors (`ValueError`) now surface from that call, under the lock, and reach the caller unchanged.
+11. **A1, finding 4: the "close point passed" fact is a marker in `_ATTACHMENT_STORE_CACHE`** (`_CLOSED_BEFORE_BUILD`, keyed by `id(runtime)` like the stores). Ranked: (a) the cache marker (chosen): one place, cleared with the cache by `tests/conftest.py` before each test, so `id()` reuse by a later test's runtime is handled by the clear that already handles a reused store; within one test a reused id gets a closed store, which still works on the default pool, as a runtime object started again after a shutdown does. (b) `runtime._shutdown_started` (`runtime.py:1550`): rejected, a private attribute across a module boundary, and a `MagicMock` runtime reads truthy. (c) A separate module set: rejected, `tests/conftest.py` would need a second clear. (d) An attribute set on the runtime: rejected, test runtimes include `MagicMock`s and `SimpleNamespace`s. `close_attachment_store(runtime)` keeps its signature, and `startup/shutdown.py` is unchanged.
 
 ## 4. Milestones, focused checks and tests-first expectations
 
 **M4** (Python). Apply §7.1 to §7.5 and §8's M4 pairs, then run:
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf918_attachment_io.py tests/test_ad720_attachment_store.py tests/test_attachment_reaper.py tests/test_filesystem_store_origin.py tests/test_camera_frame_origin.py tests/test_ad720_attachments_endpoint.py tests/test_bf918_tts_retention.py tests/test_bf918_tts_latency.py tests/test_conftest_attachment_store_cache_isolation.py tests/test_issue1452_stop_leftovers.py tests/test_issue1419_failed_start_rollback.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1242_crew_verifier_trace.py tests/test_bf918_attachment_io.py tests/test_ad720_attachment_store.py tests/test_attachment_reaper.py tests/test_filesystem_store_origin.py tests/test_camera_frame_origin.py tests/test_ad720_attachments_endpoint.py tests/test_bf918_tts_retention.py tests/test_bf918_tts_latency.py tests/test_conftest_attachment_store_cache_isolation.py tests/test_issue1452_stop_leftovers.py tests/test_issue1419_failed_start_rollback.py -n 0 -q
 d:/ProbOS/.venv/Scripts/python.exe scripts/check_architecture_principles.py --check
 ```
 
 Tests-first, on the base source with the M4 tests applied: `tests/test_bf918_attachment_io.py` fails at collection (it imports `ATTACHMENT_IO_THREAD_PREFIX`), and the updated `test_filesystem_store_runs_blocking_io_on_its_own_threads` fails (`ImportError` inside the test). Every other test in the list passes.
+
+**M4 A1 (review round 1 repair).** Apply the A1 code pairs to candidate 1, then run the same focused check. It now starts with `tests/test_ad1242_crew_verifier_trace.py`, in the same process, which reproduces finding 2's ordering. Tests first, on candidate 1 with only A1's test pairs: these fail: the six `test_a_cancelled_caller_keeps_the_lock_until_its_index_save_finishes` cases, `test_a_cancelled_blob_write_keeps_the_lock_until_the_bytes_are_written`, `test_the_reapers_stop_returns_only_after_its_cancelled_save_has_finished`, `test_a_call_that_fails_after_its_caller_was_cancelled_is_logged`, `test_every_blocking_call_runs_on_the_store_threads` (`resolve` on the event loop's thread) and `test_a_store_first_built_after_the_close_point_is_born_closed`. Every other test passes, including the thread-exit test after the verifier-trace file. Then rerun all 19 Python rows of §10: `_run` and both campaign test files changed.
 
 **M5** (TypeScript). Apply §7.6 and §7.7 and §8's M5 pairs, then, from `ui/`:
 
@@ -76,11 +82,13 @@ project standard is ``run_in_executor`` / ``asyncio.to_thread``).
 ```
 REPLACE:
 ```python
-Content-addressed by sha256. BF-918 M4 (#1626): every blocking call except the
-constructor's index load runs on the store's own bounded executor
-(``ATTACHMENT_IO_WORKERS`` threads), so crew work that fills asyncio's default
-pool does not delay storing or serving an attachment; after :meth:`close`, on the
-default pool (no ``aiofiles`` dependency; project standard is ``run_in_executor``).
+Content-addressed by sha256. BF-918 M4 (#1626): every blocking call runs on the
+store's own bounded executor (``ATTACHMENT_IO_WORKERS`` threads), so crew work
+that fills asyncio's default pool does not delay storing or serving an
+attachment; after :meth:`close`, on the default pool (no ``aiofiles``
+dependency; project standard is ``run_in_executor``). The exception is the
+constructor (resolving the root, making it and loading the index), which is
+called from sync code.
 ```
 
 Pair 2:
@@ -136,6 +144,26 @@ ATTACHMENT_IO_WORKERS = 4
 ATTACHMENT_IO_THREAD_PREFIX = "probos-attachment-io"
 
 
+async def _finish_cancelled(call: asyncio.Future[Any]) -> None:
+    """BF-918 M4 (review round 1): wait for a store call whose caller was cancelled.
+
+    A thread cannot be stopped. Waiting keeps the caller's lock held until the call
+    really ends; the caller then re-raises its cancellation. A further cancellation
+    while waiting is absorbed for the same reason. An exception the call raised is
+    logged, since its caller can no longer receive it.
+    """
+    while not call.done():
+        try:
+            await asyncio.wait((call,))
+        except asyncio.CancelledError:
+            pass  # cancelled again: keep waiting; the caller re-raises the first cancellation
+    if not call.cancelled() and call.exception() is not None:
+        logger.warning(
+            "BF-918: an attachment store call failed after its caller was cancelled: %r",
+            call.exception(),
+        )
+
+
 _MIME_TO_EXT: dict[str, str] = {
 ```
 
@@ -186,15 +214,27 @@ REPLACE:
         Calls beyond ``io_workers`` queue on these threads: store I/O is never
         refused. After :meth:`close`, a call (a route, or crew work that stops
         later in shutdown) runs on the default pool, as before BF-918 M4.
+
+        A thread cannot be stopped, so a cancelled caller first waits for its call
+        to end and then re-raises the cancellation (BF-918 M4, review round 1). A
+        caller that holds ``self._lock`` therefore never releases it while its
+        index save, blob write or unlink still runs.
         """
+        call: asyncio.Future[_T]
         if self._io_closed:
-            return await asyncio.to_thread(fn, *args)
-        if self._io_executor is None:
-            self._io_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=self._io_workers,
-                thread_name_prefix=ATTACHMENT_IO_THREAD_PREFIX,
-            )
-        return await asyncio.get_running_loop().run_in_executor(self._io_executor, fn, *args)
+            call = asyncio.ensure_future(asyncio.to_thread(fn, *args))
+        else:
+            if self._io_executor is None:
+                self._io_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self._io_workers,
+                    thread_name_prefix=ATTACHMENT_IO_THREAD_PREFIX,
+                )
+            call = asyncio.get_running_loop().run_in_executor(self._io_executor, fn, *args)
+        try:
+            return await asyncio.shield(call)
+        except asyncio.CancelledError:
+            await _finish_cancelled(call)
+            raise
 
     def close(self) -> None:
         """Stop this store's I/O threads. Idempotent; never raises; never awaits.
@@ -212,10 +252,12 @@ REPLACE:
     # ---- AD-733-1: sidecar index helpers ------------------------------
 ```
 
-Pair 7 (`write`: the existence check and the blob):
+Pair 7 (`write`: the path and its existence check in one store-thread call, A1, then the blob):
 
 SEARCH:
 ```python
+        path = self._path_for(content_hash, mime)
+        async with self._lock:
             need_write = not path.exists()
             if need_write:
                 try:
@@ -223,7 +265,9 @@ SEARCH:
 ```
 REPLACE:
 ```python
-            need_write = not await self._run(path.exists)
+        async with self._lock:
+            path, present = await self._run(self._locate_sync, content_hash, mime)
+            need_write = not present
             if need_write:
                 try:
                     await self._run(path.write_bytes, blob)
@@ -363,9 +407,67 @@ REPLACE:
         return await self._run(_scan)
 ```
 
-After §7.1, `asyncio.to_thread` occurs once in the file, in `_run`, and `self._save_index_sync()` is no longer called directly anywhere in it.
+Pair 17 (A1: `_locate_sync`, after `_path_for`):
+
+SEARCH:
+```python
+            raise ValueError(
+                f"AD-720: path traversal rejected for {content_hash!r}"
+            )
+        return candidate
+```
+REPLACE:
+```python
+            raise ValueError(
+                f"AD-720: path traversal rejected for {content_hash!r}"
+            )
+        return candidate
+
+    def _locate_sync(self, content_hash: str, mime: str) -> tuple[Path, bool]:
+        """BF-918 M4 (review round 1): the blob's checked path and whether it exists.
+
+        ``Path.resolve`` and ``exists`` touch the filesystem, so ``write`` runs
+        both in one call on a store thread. The validation in :meth:`_path_for`
+        raises ``ValueError`` from there, unchanged.
+        """
+        path = self._path_for(content_hash, mime)
+        return path, path.exists()
+```
+
+After §7.1, `asyncio.to_thread` occurs once in the file, in `_run`, `self._save_index_sync()` is no longer called directly anywhere in it, and `self._path_for(` is called only from `_locate_sync`.
 
 ### 7.2 `src/probos/routers/chat.py` (M4)
+
+Pair 1 (A1: the marker):
+
+SEARCH:
+```python
+_ATTACHMENT_STORE_CACHE: dict[int, Any] = {}
+```
+REPLACE:
+```python
+_ATTACHMENT_STORE_CACHE: dict[int, Any] = {}
+#: BF-918 M4 (review round 1): cached in place of a store when shutdown closes the store
+#: before any was built, so the store a later caller builds is closed before it is returned.
+_CLOSED_BEFORE_BUILD: Any = object()
+```
+
+Pair 2 (A1: the lookup skips the marker):
+
+SEARCH:
+```python
+    cached = _ATTACHMENT_STORE_CACHE.get(key)
+    if cached is not None:
+        return cached
+```
+REPLACE:
+```python
+    cached = _ATTACHMENT_STORE_CACHE.get(key)
+    if cached is not None and cached is not _CLOSED_BEFORE_BUILD:
+        return cached
+```
+
+Pair 3 (the closer; A1: a store built after the close point is closed):
 
 SEARCH:
 ```python
@@ -377,6 +479,8 @@ REPLACE:
 ```python
     store = FilesystemAttachmentStore(root)
     _ATTACHMENT_STORE_CACHE[key] = store
+    if cached is _CLOSED_BEFORE_BUILD:
+        close_attachment_store(runtime)  # BF-918 M4 (review round 1): built after shutdown's close point
     return store
 
 
@@ -386,10 +490,15 @@ def close_attachment_store(runtime: Any) -> None:
     Builds no store, and keeps the cached one: a later caller gets the same
     instance (one store per attachment root, BF-918 R16), whose I/O then runs on
     asyncio's default pool. Anything else cached here (a test double) is left alone.
+    With nothing cached, it records that the close point has passed (review round 1),
+    so a store first built afterwards, by a request accepted before shutdown, is closed too.
     """
     from probos.attachments.filesystem_store import FilesystemAttachmentStore
-    store = _ATTACHMENT_STORE_CACHE.get(id(runtime))
-    if isinstance(store, FilesystemAttachmentStore):
+    key = id(runtime)
+    store = _ATTACHMENT_STORE_CACHE.get(key)
+    if store is None:
+        _ATTACHMENT_STORE_CACHE[key] = _CLOSED_BEFORE_BUILD
+    elif isinstance(store, FilesystemAttachmentStore):
         store.close()
 ```
 
@@ -466,7 +575,9 @@ REPLACE:
 
 ### 7.4 `tests/test_ad720_attachment_store.py` (M4: the test that pinned the old dispatch)
 
-This test asserted `asyncio.to_thread` itself, which is the dependency R9 removes. It is updated, not deleted. The property it protected, that blocking I/O runs off the event loop, is still asserted, together with the new owner of that I/O.
+This test asserted `asyncio.to_thread` itself, which is the dependency R9 removes. It is updated, not deleted. The property it protected, that blocking I/O runs off the event loop, is still asserted, together with the new owner of that I/O. A1 also makes the file's `store` fixture close the store it owns (pairs 2 and 3).
+
+Pair 1 (the test):
 
 SEARCH:
 ```python
@@ -512,6 +623,39 @@ async def test_filesystem_store_runs_blocking_io_on_its_own_threads(store, monke
     assert threads and all(name.startswith(ATTACHMENT_IO_THREAD_PREFIX) for name in threads), threads
 ```
 
+Pair 2 (A1: the import for the fixture's type):
+
+SEARCH:
+```python
+import asyncio
+import hashlib
+from pathlib import Path
+```
+REPLACE:
+```python
+import asyncio
+import hashlib
+from collections.abc import Iterator
+from pathlib import Path
+```
+
+Pair 3 (A1, review round 1 finding 2: the fixture closes the store it owns):
+
+SEARCH:
+```python
+@pytest.fixture
+def store(tmp_path: Path) -> FilesystemAttachmentStore:
+    return FilesystemAttachmentStore(tmp_path / "attachments")
+```
+REPLACE:
+```python
+@pytest.fixture
+def store(tmp_path: Path) -> Iterator[FilesystemAttachmentStore]:
+    owned = FilesystemAttachmentStore(tmp_path / "attachments")
+    yield owned
+    owned.close()  # BF-918 M4 (review round 1): its I/O threads end with the test
+```
+
 ### 7.5 New file: `tests/test_bf918_attachment_io.py` (M4)
 
 ```python
@@ -526,10 +670,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import errno
 import hashlib
 import inspect
+import logging
 import textwrap
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -561,19 +708,75 @@ async def _until(predicate, timeout: float = 3.0) -> bool:
 
 
 class _HeldReads:
-    """Stands in for ``Path.read_bytes``: each call records its thread, then blocks until released."""
+    """Stands in for ``Path.read_bytes``: each call records its thread, then blocks until released.
+
+    It records the thread object, not its name: every store names its threads alike
+    (review round 1, finding 2).
+    """
 
     def __init__(self) -> None:
         self.release = threading.Event()
-        self.threads: list[str] = []
+        self.threads: list[threading.Thread] = []
         self._real = Path.read_bytes
         self._lock = threading.Lock()
 
     def __call__(self, path: Path) -> bytes:
         with self._lock:
-            self.threads.append(threading.current_thread().name)
+            self.threads.append(threading.current_thread())
         self.release.wait(10)
         return self._real(path)
+
+
+class _Gate:
+    """Stands in for one blocking call: its first call sets ``entered``, then blocks until ``release``.
+
+    ``finished`` is set once that call has returned or raised. Later calls pass straight through.
+    """
+
+    def __init__(self, real, *, fail: BaseException | None = None) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.finished = threading.Event()
+        self._real = real
+        self._fail = fail
+        self._first = True
+        self._lock = threading.Lock()
+
+    def __call__(self, *args):
+        with self._lock:
+            first, self._first = self._first, False
+        if not first:
+            return self._real(*args)
+        self.entered.set()
+        self.release.wait(10)
+        try:
+            if self._fail is not None:
+                raise self._fail
+            return self._real(*args)
+        finally:
+            self.finished.set()
+
+
+async def _turns(count: int = 20) -> None:
+    """Lets the event loop run ``count`` times: loop turns, not wall-clock time."""
+    for _ in range(count):
+        await asyncio.sleep(0)
+
+
+@pytest.fixture(autouse=True)
+def _close_the_stores_built_here(monkeypatch) -> Iterator[None]:
+    """Closes every store a test in this file builds, pass or fail (review round 1, finding 2)."""
+    built: list[FilesystemAttachmentStore] = []
+    real_init = FilesystemAttachmentStore.__init__
+
+    def init(self, *args, **kwargs) -> None:
+        real_init(self, *args, **kwargs)
+        built.append(self)
+
+    monkeypatch.setattr(FilesystemAttachmentStore, "__init__", init)
+    yield
+    for store in built:
+        store.close()
 
 
 @pytest.mark.asyncio
@@ -605,37 +808,43 @@ async def test_store_io_does_not_wait_for_a_busy_default_pool(tmp_path: Path) ->
 
 @pytest.mark.asyncio
 async def test_every_blocking_call_runs_on_the_store_threads(tmp_path: Path, monkeypatch) -> None:
+    """Every blocking call of every method, including ``write``'s path resolution and each stat
+    (review round 1, finding 3), runs on a store thread. Only calls on paths in the store count."""
     store = FilesystemAttachmentStore(tmp_path / "attachments")
-    seen: dict[str, str] = {}
+    root = str((tmp_path / "attachments").resolve())
+    seen: dict[str, set[str]] = {}
     real_save = FilesystemAttachmentStore._save_index_sync
-    real_read = Path.read_bytes
-    real_write = Path.write_bytes
 
     def save(self) -> None:
-        seen["index save"] = threading.current_thread().name
+        seen.setdefault("index save", set()).add(threading.current_thread().name)
         real_save(self)
 
-    def read(self) -> bytes:
-        seen["read"] = threading.current_thread().name
-        return real_read(self)
+    def spy(name: str, real):
+        def call(path: Path, *args, **kwargs):
+            if str(path).startswith(root):
+                seen.setdefault(name, set()).add(threading.current_thread().name)
+            return real(path, *args, **kwargs)
 
-    def write(self, data) -> int:
-        seen["write"] = threading.current_thread().name
-        return real_write(self, data)
+        return call
 
     monkeypatch.setattr(FilesystemAttachmentStore, "_save_index_sync", save)
-    monkeypatch.setattr(Path, "read_bytes", read)
-    monkeypatch.setattr(Path, "write_bytes", write)
+    for name in ("resolve", "exists", "stat", "read_bytes", "write_bytes", "unlink"):
+        monkeypatch.setattr(Path, name, spy(name, getattr(Path, name)))
     blob, h = _blob(b"n")
+    other, h2 = _blob(b"m")
     try:
         await store.write(h, blob, "audio/wav", origin="tts_audio")
+        await store.write(h, blob, "audio/wav", origin="tts_audio")  # the repeated write
         assert await store.read(h) == blob
         assert await store.size(h) == len(blob)
         assert await store.unlink(h) is True
+        await store.write(h2, other, "audio/wav", origin="tts_audio")
+        [(_, written_at)] = await store.list_by_origin("tts_audio")
+        assert await store.unlink_if_unchanged(h2, origin="tts_audio", written_at=written_at) == len(other)
     finally:
         store.close()
-    assert set(seen) == {"index save", "read", "write"}
-    assert all(name.startswith(ATTACHMENT_IO_THREAD_PREFIX) for name in seen.values()), seen
+    assert set(seen) == {"index save", "resolve", "exists", "stat", "read_bytes", "write_bytes", "unlink"}, seen
+    assert all(name.startswith(ATTACHMENT_IO_THREAD_PREFIX) for names in seen.values() for name in names), seen
 
 
 @pytest.mark.asyncio
@@ -667,7 +876,7 @@ async def test_close_lets_accepted_work_finish_and_its_threads_exit(tmp_path: Pa
     monkeypatch.setattr(Path, "read_bytes", lambda self: held(self))
     running = asyncio.create_task(store.read(h))
     assert await _until(lambda: len(held.threads) == 1)
-    worker = next(t for t in threading.enumerate() if t.name == held.threads[0])
+    worker = held.threads[0]  # this store's own thread: names repeat across stores
     queued = asyncio.create_task(store.read(h))  # its lookup is queued behind the running read
     await asyncio.sleep(0.05)
 
@@ -710,8 +919,9 @@ def test_shutdown_closes_the_cached_store_after_the_reaper_and_builds_none(tmp_p
     from probos.routers import chat as chat_router
 
     runtime = SimpleNamespace()
-    shutdown_module._close_attachment_store(runtime)  # nothing cached: nothing built
-    assert id(runtime) not in chat_router._ATTACHMENT_STORE_CACHE
+    shutdown_module._close_attachment_store(runtime)  # nothing cached: nothing built, the close point recorded
+    assert not isinstance(chat_router._ATTACHMENT_STORE_CACHE.get(id(runtime)), FilesystemAttachmentStore)
+    assert not (tmp_path / "attachments").exists()
 
     store = FilesystemAttachmentStore(tmp_path / "attachments")
     other = SimpleNamespace()
@@ -737,6 +947,152 @@ def test_shutdown_closes_the_cached_store_after_the_reaper_and_builds_none(tmp_p
     )
     store_close = _first_line(lambda n: isinstance(n.func, ast.Name) and n.func.id == "_close_attachment_store")
     assert reaper_stop < store_close
+
+
+def test_a_store_first_built_after_the_close_point_is_born_closed(tmp_path: Path, monkeypatch) -> None:
+    """Review round 1, finding 4: shutdown passed its close point before any store was built, and a
+    request accepted earlier builds one afterwards. That store is closed before it is returned."""
+    from probos.routers import chat as chat_router
+
+    root = tmp_path / "attachments"
+    monkeypatch.setattr("probos.attachments.store._resolve_attachments_dir", lambda configured: root)
+    runtime = SimpleNamespace(config=SimpleNamespace(attachments=SimpleNamespace(attachments_dir="attachments")))
+    try:
+        shutdown_module._close_attachment_store(runtime)
+        assert not root.exists()  # the closer built nothing
+        store = chat_router._get_attachment_store(runtime)
+        assert isinstance(store, FilesystemAttachmentStore) and store.io_closed is True
+        assert chat_router._get_attachment_store(runtime) is store  # one store per root
+    finally:
+        chat_router._ATTACHMENT_STORE_CACHE.pop(id(runtime), None)
+
+
+_SAVE_SITES = ("write", "unlink", "unlink_if_unchanged")
+
+
+@pytest.mark.parametrize("closed", [False, True], ids=["own-threads", "closed"])
+@pytest.mark.parametrize("site", _SAVE_SITES)
+@pytest.mark.asyncio
+async def test_a_cancelled_caller_keeps_the_lock_until_its_index_save_finishes(
+    tmp_path: Path, monkeypatch, site: str, closed: bool
+) -> None:
+    """Review round 1, finding 1: cancelling a caller while its index save runs (the reaper's stop
+    cancels its sweep) neither releases the lock nor ends the caller before that save has ended, even
+    when it is cancelled twice. The file on disk then holds what the caller left in memory."""
+    root = tmp_path / "attachments"
+    store = FilesystemAttachmentStore(root)
+    blob, h = _blob(b"s")
+    await store.write(h, blob, "image/png", origin="perception_frame")
+    [(_, written_at)] = await store.list_by_origin("perception_frame")
+    if closed:
+        store.close()
+    gate = _Gate(FilesystemAttachmentStore._save_index_sync)
+    monkeypatch.setattr(FilesystemAttachmentStore, "_save_index_sync", lambda self: gate(self))
+    operations = {
+        "write": lambda: store.write(h, blob, "image/png", origin="agent_artifact"),
+        "unlink": lambda: store.unlink(h),
+        "unlink_if_unchanged": lambda: store.unlink_if_unchanged(
+            h, origin="perception_frame", written_at=written_at
+        ),
+    }
+    task = asyncio.create_task(operations[site]())
+    ended_after_save: list[bool] = []
+    task.add_done_callback(lambda _task: ended_after_save.append(gate.finished.is_set()))
+    try:
+        assert await asyncio.to_thread(gate.entered.wait, 5)
+        task.cancel()
+        await _turns()
+        task.cancel()  # cancelled again while it waits
+        await _turns()
+        contender = asyncio.create_task(store.list_by_origin("agent_artifact"))
+        await _turns()
+        assert not task.done() and not contender.done()  # the caller still holds the lock
+    finally:
+        gate.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ended_after_save == [True]
+    in_memory = await contender
+    reopened = FilesystemAttachmentStore(root)
+    assert await reopened.list_by_origin("agent_artifact") == in_memory
+    assert await reopened.list_by_origin("perception_frame") == await store.list_by_origin("perception_frame")
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_blob_write_keeps_the_lock_until_the_bytes_are_written(tmp_path: Path, monkeypatch) -> None:
+    """Review round 1, finding 1: a write cancelled during its blob write keeps the lock until the bytes
+    are on disk, so a second write of the same hash cannot find a partly written file and skip its own."""
+    store = FilesystemAttachmentStore(tmp_path / "attachments")
+    gate = _Gate(Path.write_bytes)
+    monkeypatch.setattr(Path, "write_bytes", lambda self, data: gate(self, data))
+    blob, h = _blob(b"p")
+    first = asyncio.create_task(store.write(h, blob, "image/png", origin="perception_frame"))
+    try:
+        assert await asyncio.to_thread(gate.entered.wait, 5)
+        first.cancel()
+        await _turns()
+        second = asyncio.create_task(store.write(h, blob, "image/png", origin="agent_artifact"))
+        await _turns()
+        assert not first.done() and not second.done()  # the cancelled write still holds the lock
+    finally:
+        gate.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert (await second).read_bytes() == blob
+    assert [sha for sha, _ in await store.list_by_origin("agent_artifact")] == [h]
+
+
+@pytest.mark.asyncio
+async def test_the_reapers_stop_returns_only_after_its_cancelled_save_has_finished(tmp_path: Path, monkeypatch) -> None:
+    """Review round 1, finding 1, across the seam: shutdown's ``AttachmentReaper.stop()`` cancels a sweep
+    whose index save is running. It returns once that save has ended, with the sweep's removal on disk."""
+    from probos.attachments.reaper import AttachmentReaper
+    from probos.config import AttachmentsConfig, PerceptionConfig
+
+    root = tmp_path / "attachments"
+    store = FilesystemAttachmentStore(root)
+    blob, h = _blob(b"r")
+    await store.write(h, blob, "image/png", origin="perception_frame")
+    async with store._lock:  # noqa: SLF001 -- force-age, as tests/test_attachment_reaper.py does
+        store._index[h]["written_at"] -= 3600  # noqa: SLF001
+    gate = _Gate(FilesystemAttachmentStore._save_index_sync)
+    monkeypatch.setattr(FilesystemAttachmentStore, "_save_index_sync", lambda self: gate(self))
+    reaper = AttachmentReaper(
+        store,
+        perception_cfg=PerceptionConfig(enabled=True, frame_retention_seconds=30, reaper_interval_seconds=60),
+        attachments_cfg=AttachmentsConfig(max_store_bytes=0),
+    )
+    await reaper.start()  # its first sweep starts at once
+    try:
+        assert await asyncio.to_thread(gate.entered.wait, 5)  # the sweep's removal is saving the index
+        stop = asyncio.create_task(reaper.stop())
+        await _turns()
+        assert not stop.done()  # stop() waits for the save its cancellation interrupted
+    finally:
+        gate.release.set()
+    await stop
+    assert gate.finished.is_set()
+    assert await FilesystemAttachmentStore(root).list_by_origin("perception_frame") == []
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_fails_after_its_caller_was_cancelled_is_logged(tmp_path: Path, monkeypatch, caplog) -> None:
+    """Review round 1, finding 1: the caller ends cancelled, and the error its call raised afterwards is logged."""
+    store = FilesystemAttachmentStore(tmp_path / "attachments")
+    gate = _Gate(Path.write_bytes, fail=OSError(errno.EIO, "injected"))
+    monkeypatch.setattr(Path, "write_bytes", lambda self, data: gate(self, data))
+    caplog.set_level(logging.WARNING, logger="probos.attachments.filesystem_store")
+    blob, h = _blob(b"e")
+    task = asyncio.create_task(store.write(h, blob, "image/png"))
+    try:
+        assert await asyncio.to_thread(gate.entered.wait, 5)
+        task.cancel()
+        await _turns()
+    finally:
+        gate.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert any("after its caller was cancelled" in record.getMessage() for record in caplog.records)
 ```
 
 ### 7.6 `ui/src/audio/voice.ts` (M5)
@@ -1300,7 +1656,7 @@ Rhubarb and ffmpeg run on the same executor (the attachment store's write and lo
 ```
 REPLACE:
 ```markdown
-Rhubarb and ffmpeg run on the same executor, and the route logs per-stage timings. M4 (2026-10-24): the attachment store runs its blocking I/O (file reads and writes, lookups, the index save) on 4 threads of its own, closed after the attachment reaper at shutdown (later callers use the default pool), so crew work that fills asyncio's default pool no longer delays storing or serving spoken audio; `tests/test_bf918_attachment_io.py`.
+Rhubarb and ffmpeg run on the same executor, and the route logs per-stage timings. M4 (2026-10-24): the attachment store runs its blocking I/O (file reads and writes, path lookups, the index save) on 4 threads of its own (a cancelled caller waits for its call, so index saves never overlap), closed after the attachment reaper at shutdown (later callers use the default pool), so crew work that fills asyncio's default pool no longer delays storing or serving spoken audio; `tests/test_bf918_attachment_io.py`.
 ```
 
 **M4, `PROGRESS.md`** (pair 2):
@@ -1323,7 +1679,7 @@ The attachment store's I/O stays on the default pool (slice M4 of #1626).
 ```
 REPLACE:
 ```markdown
-M4 (2026-10-24): the attachment store owns a 4-thread I/O executor (`ATTACHMENT_IO_WORKERS`, a constant like the voice limits) for every blocking call it makes except the constructor's index load. Calls beyond it queue, never refuse. `close()` runs after the attachment reaper; afterwards calls use the default pool, so a late caller still completes, and accepted work is never cancelled. Rejected: a config field (no tuning need), and refusing after close (a refused artifact write is lost data).
+M4 (2026-10-24): the attachment store owns a 4-thread I/O executor (`ATTACHMENT_IO_WORKERS`, a constant like the voice limits) for every blocking call it makes except the constructor's (resolving and making the root, loading the index). A cancelled caller waits for its call to end, so the store's lock is never released while an index save or blob call still runs, and a store first built after shutdown's close point is built closed (A1, review round 1). Calls beyond it queue, never refuse. `close()` runs after the attachment reaper; afterwards calls use the default pool, so a late caller still completes, and accepted work is never cancelled. Rejected: a config field (no tuning need), and refusing after close (a refused artifact write is lost data).
 ```
 
 **M5, `PROGRESS.md`** (pair 1):
@@ -1367,6 +1723,7 @@ No `docs/development/roadmap.md` change (no new BF).
 - `[x] M5: with pipelining on, a queued utterance waits for a pipelined reply's last sentence (BF-918 §18 R12).` Tick it at M5's merge.
 - Add, unticked: `[ ] M7: in conversation mode with pipelining on, a reply's turn completes on its last sentence's end (final), not its first (found while drafting M5; with M6).`
 - The live-acceptance item is unblocked by M4 and M5 together.
+- Record §18's R22 correction and R26 to R31 in #1626's register (A1).
 
 ## 9. What this does NOT change
 
@@ -1377,7 +1734,7 @@ No `docs/development/roadmap.md` change (no new BF).
 - `routers/avatars.py`, `routers/chat.py`'s routes, the reaper, configuration and generated files. `FileResponse`'s own file streaming (Starlette, on its own threads) is outside the store (§18).
 - Pipelining stays default-off.
 
-## 10. Mutation rows (11 Python, 8 TypeScript; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (19 Python after A1, 8 TypeScript; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row on the applied tree after an unmutated baseline run passes, and restore each file before the next row.
 
@@ -1391,7 +1748,7 @@ The TypeScript rows are run by hand, from `ui/`: `npx vitest run src/audio/__tes
 
 | # | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|
-| M4-1 | `src/probos/attachments/filesystem_store.py` | `return await asyncio.get_running_loop().run_in_executor(self._io_executor, fn, *args)` | `return await asyncio.to_thread(fn, *args)` | `test_store_io_does_not_wait_for_a_busy_default_pool`, `test_every_blocking_call_runs_on_the_store_threads`, `test_filesystem_store_runs_blocking_io_on_its_own_threads` |
+| M4-1 | `src/probos/attachments/filesystem_store.py` | `call = asyncio.get_running_loop().run_in_executor(self._io_executor, fn, *args)` | `call = asyncio.ensure_future(asyncio.to_thread(fn, *args))` | `test_store_io_does_not_wait_for_a_busy_default_pool`, `test_every_blocking_call_runs_on_the_store_threads`, `test_filesystem_store_runs_blocking_io_on_its_own_threads` |
 | M4-2 | `src/probos/attachments/filesystem_store.py` | `if self._io_closed:` | `if True:` | the same three |
 | M4-3 | `src/probos/attachments/filesystem_store.py` | `self._io_closed = True` | `self._io_closed = False` | `test_a_closed_store_still_stores_and_serves_on_the_default_pool`, `test_close_lets_accepted_work_finish_and_its_threads_exit`, `test_shutdown_closes_the_cached_store_after_the_reaper_and_builds_none` |
 | M4-4 | `src/probos/attachments/filesystem_store.py` | `executor.shutdown(wait=False, cancel_futures=False)` | `executor.shutdown(wait=False, cancel_futures=True)` | `test_close_lets_accepted_work_finish_and_its_threads_exit` (the queued lookup is cancelled) |
@@ -1401,7 +1758,15 @@ The TypeScript rows are run by hand, from `ui/`: `npx vitest run src/audio/__tes
 | M4-8 | `src/probos/attachments/filesystem_store.py` | `return await self._run(path.read_bytes)` | `return await asyncio.to_thread(path.read_bytes)` | `test_store_io_does_not_wait_for_a_busy_default_pool`, `test_every_blocking_call_runs_on_the_store_threads` |
 | M4-9 | `src/probos/attachments/filesystem_store.py` | `await self._run(path.write_bytes, blob)` | `await asyncio.to_thread(path.write_bytes, blob)` | `test_store_io_does_not_wait_for_a_busy_default_pool`, `test_every_blocking_call_runs_on_the_store_threads`, `test_filesystem_store_runs_blocking_io_on_its_own_threads` |
 | M4-10 | `src/probos/startup/shutdown.py` | `_close_attachment_store(runtime)` | `pass` | `test_shutdown_closes_the_cached_store_after_the_reaper_and_builds_none` |
-| M4-11 | `src/probos/routers/chat.py` | `store.close()` | `pass` | `test_shutdown_closes_the_cached_store_after_the_reaper_and_builds_none` |
+| M4-11 | `src/probos/routers/chat.py` | `store.close()` | `pass` | `test_shutdown_closes_the_cached_store_after_the_reaper_and_builds_none`, `test_a_store_first_built_after_the_close_point_is_born_closed` |
+| M4-12 | `src/probos/attachments/filesystem_store.py` | `await _finish_cancelled(call)` | `pass` | `test_a_cancelled_caller_keeps_the_lock_until_its_index_save_finishes` (all six cases: the caller ends while its save still runs), `test_a_cancelled_blob_write_keeps_the_lock_until_the_bytes_are_written`, `test_the_reapers_stop_returns_only_after_its_cancelled_save_has_finished` |
+| M4-13 | `src/probos/attachments/filesystem_store.py` | `return await asyncio.shield(call)` | `return await call` | the same three (cancelling the caller cancels its call's future while the thread goes on) |
+| M4-14 | `src/probos/attachments/filesystem_store.py` | `pass  # cancelled again: keep waiting; the caller re-raises the first cancellation` | `raise` | `test_a_cancelled_caller_keeps_the_lock_until_its_index_save_finishes` (the second cancellation ends the caller before its save does) |
+| M4-15 | `src/probos/attachments/filesystem_store.py` | `if not call.cancelled() and call.exception() is not None:` | `if False:` | `test_a_call_that_fails_after_its_caller_was_cancelled_is_logged` |
+| M4-16 | `src/probos/attachments/filesystem_store.py` | `path, present = await self._run(self._locate_sync, content_hash, mime)` | `path, present = self._locate_sync(content_hash, mime)` | `test_every_blocking_call_runs_on_the_store_threads` (`resolve` and `exists` run on the event loop's thread) |
+| M4-17 | `src/probos/attachments/filesystem_store.py` | `return await self._run(lambda: path.stat().st_size)` | `return await asyncio.to_thread(lambda: path.stat().st_size)` | `test_every_blocking_call_runs_on_the_store_threads` (`size`'s stat runs on a default-pool thread) |
+| M4-18 | `src/probos/routers/chat.py` | `if cached is _CLOSED_BEFORE_BUILD:` | `if False:` | `test_a_store_first_built_after_the_close_point_is_born_closed` |
+| M4-19 | `src/probos/routers/chat.py` | `_ATTACHMENT_STORE_CACHE[key] = _CLOSED_BEFORE_BUILD` | `pass` | `test_a_store_first_built_after_the_close_point_is_born_closed` |
 | M5-1 | `ui/src/audio/voice.ts` | `if (event.type === 'end' && event.final === false) {` | `if (false) {` | run by hand: P14 (`Next.` posted after One's end), P16, P19 |
 | M5-2 | `ui/src/audio/voice.ts` | `if (timer !== undefined) { clearTimeout(timer); timer = setTimeout(done, SPEECH_JOIN_TIMEOUT_MS); }` | `{}` | run by hand: P16 (the wait times out during Two) |
 | M5-3 | `ui/src/audio/voice.ts` | `if (endWait !== null) endWait();` | `if (false) endWait();` | run by hand: P15 (`Next.` waits) |
@@ -1413,7 +1778,7 @@ The TypeScript rows are run by hand, from `ui/`: `npx vitest run src/audio/__tes
 
 (In M5-6 the table escapes `||` as `\|\|`; the line in the file has `||`.)
 
-No row for: the three `await self._run(self._save_index_sync)` lines and the three `_speakBrowserFallback(text, profile, agent_id, utterance_id, last);` lines, because each text occurs more than once in its file. They are covered by `test_every_blocking_call_runs_on_the_store_threads` (write's and unlink's save) and by P19 (the failed-synthesis fallback). Also no row for `need_write = not await self._run(path.exists)`: it ran on the event loop before, so no default-pool test distinguishes it.
+No row for: the three `await self._run(self._save_index_sync)` lines and the three `_speakBrowserFallback(text, profile, agent_id, utterance_id, last);` lines, because each text occurs more than once in its file. They are covered by `test_every_blocking_call_runs_on_the_store_threads` (write's and unlink's save) and by P19 (the failed-synthesis fallback). Also no row for `need_write = not present` (A1; the dispatch of `_locate_sync` is M4-16). No source row for review round 1's finding 2: A1 changes only tests there (the thread-exit test compares the thread object, and the files close the stores they build). Its evidence is the focused check's order, which runs `tests/test_ad1242_crew_verifier_trace.py` first, in the same process; that ordering failed on candidate 1.
 
 ## 11. Verified Against Codebase (2026-10-24, worktree `m45-draft`, detached at `origin/main` `cb190f32`, clean)
 
@@ -1462,6 +1827,17 @@ voice.prefetch.bf918.test.tsx:1-164  harness (FakeAudio, _makeFetch with holdTts
 ProfileChatTab.tsx:2190-2205  reply listener: 'end' with own id completes (M6, M7)
 ProfileChatTab.tsx:1385-1393  in-flight keys clear on every 'end' or 'dropped' of the agent
 conversationController.ts:350-364  barge-in only in agent_speaking; 450-471 markAgentReplyComplete -> silence_pending
+A1 (2026-10-24, candidate 1 6d63cc93, tree 9796b2bb):
+filesystem_store.py:135-150  _run (to_thread in the closed branch :144; run_in_executor :150)
+filesystem_store.py:244-259  _path_for (resolve :254); :278 its one call, before the lock
+filesystem_store.py:315, 375, 426  await self._run(self._save_index_sync), each under `async with self._lock`
+routers/chat.py:1004-1033  the cache, the factory, the closer
+attachments/reaper.py:75-92  stop(): cancel, then await the task (no timeout); 94-99 the first sweep runs at start; 230-239 _safe_reap catches Exception only
+tests/test_attachment_reaper.py:24-56  _make_cfg and the force-age pattern
+tests/test_ad720_attachments_endpoint.py:34-37  monkeypatch of probos.attachments.store._resolve_attachments_dir
+tests/conftest.py:222-224  _ATTACHMENT_STORE_CACHE.clear() per test
+pyproject.toml:9  requires-python = ">=3.12"
+git show e973acbe:src/probos/attachments/filesystem_store.py  229 await asyncio.to_thread(path.write_bytes, blob) under the lock (:225); 260, 320, 371 self._save_index_sync() on the loop
 ```
 
 ## 12. Absence Verified (2026-10-24)
@@ -1508,6 +1884,21 @@ CLAIM: routers/chat.py has no close_attachment_store and no store.close() today
 RUN:   Grep "store\.close\(\)|def close_attachment_store" src/probos/routers/chat.py
 FOUND: none
 HOLDS: yes (row M4-11's pinned line is unique after §7.2)
+
+CLAIM (A1): `_path_for` has one caller, so moving it into `_locate_sync` changes no other path
+RUN:   Grep "_path_for\(|_save_index_sync|\.io_closed|store\._run|\._io_executor" src/ tests/
+FOUND: filesystem_store.py:278 (write); avatars/telemetry_history.py:52, 68, 109 (another class's own method)
+HOLDS: yes
+
+CLAIM (A1): only the factory and the closer read `_ATTACHMENT_STORE_CACHE`'s values, so no other reader sees the marker
+RUN:   Grep "_ATTACHMENT_STORE_CACHE" (101 hits, 34 files); Grep "_ATTACHMENT_STORE_CACHE(\.get|\[[^\]]*\]\s*(is|==)|\.values|\.items| not in|\)| in )" tests/; Grep "in (chat_router\.|chat\.|chat_mod\.|_chat\.)?_ATTACHMENT_STORE_CACHE|len\(.*_ATTACHMENT_STORE_CACHE" tests/
+FOUND: src: routers/chat.py only; tests: test_bf918_attachment_io.py:197 (updated by A1) and :207 (still true), test_conftest_attachment_store_cache_isolation.py:43 (an id left by an earlier test); every other test hit assigns, pops or clears
+HOLDS: yes
+
+CLAIM (A1): no public runtime flag says shutdown has started
+RUN:   Grep "_shutdown_started" src/probos
+FOUND: runtime.py:1550 (private field), startup/shutdown.py:887, 894
+HOLDS: yes (decision 11 b)
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -1529,14 +1920,17 @@ Blind spots found and settled:
 
 ## 14. Diff Reviewer: properties to verify
 
-**M4** (consumer: every caller of the store, the attachment reaper, `shutdown()` and the runtime lifecycle tests)
-1. In `filesystem_store.py`, every blocking call except `_load_index_sync` goes through `_run`, and `asyncio.to_thread` appears only in `_run`'s closed branch.
-2. Every index save runs while `self._lock` is held, and nothing in the file mutates or reads `_index` outside that lock.
+**M4** (consumers: every caller of the store: the attachment reaper and its `stop()`, the chat, avatar (TTS) and federation routes, crew work through `runtime.attachment_store` and the other callers of `_get_attachment_store`; also `shutdown()` and the runtime lifecycle tests)
+1. In `filesystem_store.py`, every blocking call except the constructor's (`root.resolve()`, `mkdir`, `_load_index_sync`) goes through `_run`, including `write`'s path resolution and existence check (`_locate_sync`, A1), and `asyncio.to_thread` appears only in `_run`'s closed branch.
+2. Every index save runs while `self._lock` is held, and nothing in the file mutates or reads `_index` outside that lock. The lock is released only after the call it guards has ended, also when the caller is cancelled once or more (A1).
 3. `close()` cancels nothing, never blocks, is idempotent, and every store method still works after it.
 4. Exceptions raised on a store thread (ENOSPC, `FileNotFoundError`, other `OSError`) reach the caller unchanged, so `write`'s errno handling still applies.
 5. The `ValueError` for `io_workers < 1` comes before any directory is made.
 6. Shutdown closes the store after the reaper's stop, builds no store, never raises, and keeps the cached instance.
-7. The store's blocking calls read no contextvar.
+7. The store's blocking calls read no contextvar; a closed store's calls still get a copy of the caller's context (`asyncio.to_thread`).
+8. (A1) A cancelled caller of `_run` ends with `CancelledError` only after its call has ended, on the store's threads and after close. A second cancellation while it waits does not end it sooner, and an exception its call raises afterwards is logged, not raised. `AttachmentReaper.stop()` returns after the save it interrupted. A caller waits longer than before only for the remainder of its own call.
+9. (A1) After the closer ran with nothing cached, the store that `_get_attachment_store` first builds for that runtime is closed before it is returned. The closer still builds nothing, the marker is cleared with the cache (`tests/conftest.py`), and no reader of `_ATTACHMENT_STORE_CACHE` other than the factory and the closer can see it.
+10. (A1) Tests: the thread-exit test checks the exact thread object; every store built in `test_bf918_attachment_io.py`, and the `store` fixture of `test_ad720_attachment_store.py`, is closed at teardown; the new cancellation tests synchronise on Events and event-loop turns; the lifecycle detector is unchanged.
 
 **M5** (consumers: every `onSpeechEvent` listener, the drain, the meeting sequencer, `ProfileChatTab`)
 1. With pipelining off, every event `voice.ts` emits is unchanged (no `final` key), and the arbiter's wait ends exactly as before.
@@ -1548,7 +1942,8 @@ Blind spots found and settled:
 
 ## 15. Acceptance criteria
 
-- [ ] M4: the focused check in §4 passes; `check_architecture_principles.py --check` passes; the 11 Python rows of §10 are killed.
+- [ ] M4: the focused check in §4 passes; `check_architecture_principles.py --check` passes; the 19 Python rows of §10 are killed (A1 added M4-12 to M4-19).
+- [ ] M4 A1: a cancelled store caller keeps the lock until its call has ended (the three index saves and the blob write, on the store's threads and after close, and through the real reaper's `stop()`); `write` resolves its path on a store thread; a store first built after the close point is born closed; the thread-exit test passes after `tests/test_ad1242_crew_verifier_trace.py` in one process.
 - [ ] M4: with asyncio's default pool fully held, a write, lookup and read of the store complete (`test_store_io_does_not_wait_for_a_busy_default_pool`, the seam test: the default pool, then the route's store calls, then the store's thread, then the file).
 - [ ] M4: shutdown closes the store after the reaper; a closed store still serves; accepted work is never cancelled.
 - [ ] M5: `npx vitest run src/audio src/components/profile` and `npx tsc -b` pass; the 8 TypeScript rows are killed.
@@ -1565,7 +1960,7 @@ None is needed to build either slice. M4's reach is judged from the live `store_
 (Get-ChildItem "$D\attachments" -File).Count
 ```
 
-The first is the size each write's index save serialises. The second is the number of directory entries each `_find` scans.
+The first is the size each write's index save serialises. The second is the number of directory entries each `_find` scans. A1 needs no live check: the reaper's `stop()` (`shutdown.py:1621`) cancels a running sweep at every shutdown, which is the path A1 repairs, and review round 1's probes are its reproduction.
 
 ## 17. Not verified
 
@@ -1575,11 +1970,20 @@ The first is the size each write's index save serialises. The second is the numb
 - From memory, not checked against the installed Starlette or anyio: `FileResponse` streams the file on anyio's worker threads, not on asyncio's default pool.
 - Whether any runtime lifecycle test checks non-daemon threads without polling after the attachment reaper's first sweep has run (it would see a store thread); `test_issue1452` and `test_issue1419` are in M4's focused check.
 - M7's finding is from reading; no conversation-mode run with pipelining was made.
-- Possible phantom-precheck false positives: `_io_executor`, `_io_closed`, `_io_workers`, `io_closed`, `close_attachment_store`, `_close_attachment_store`, `_endSentenceQueueWait`, `_finalField`, `final` (all introduced here).
+- Possible phantom-precheck false positives: `_io_executor`, `_io_closed`, `_io_workers`, `io_closed`, `close_attachment_store`, `_close_attachment_store`, `_endSentenceQueueWait`, `_finalField`, `final`, and from A1 `_finish_cancelled`, `_locate_sync`, `_CLOSED_BEFORE_BUILD`, `_Gate`, `_turns`, `_close_the_stores_built_here` (all introduced here).
+- A1 was drafted read-only and no test was run; §4's A1 tests-first claims come from reading candidate 1. `_turns()`'s 20 loop turns are an estimate of what a cancellation needs to reach `_run` and the lock. If a case needs more, raise the count for that case and say so.
+- Whether `Path.exists` calls `Path.stat` depends on the Python version (3.12 does). The every-blocking test records `exists` and `stat` separately, so it does not depend on this.
+- At event-loop teardown (`asyncio.run` cancelling every task), a closed store's call task is itself cancelled, so its caller's wait can end before that thread does. Nothing else runs then.
 
 ## 18. For the register (found here, not fixed by this change)
 
-- **R22 (P3, not a regression).** `_find` globs the whole attachment directory for each lookup (`filesystem_store.py:270`; over 1,126 files live), and `GET /api/chat/attachments` does it twice (`exists`, then `get_path`; `chat.py:1253-1255`), as do the TTS route's `write` and `get_path`. M4 moves the cost off the default pool, not off the request. Follow-up: resolve the path from the index's `mime`, falling back to the glob.
+- **R22 (P3, not a regression).** `_find` globs the whole attachment directory for each lookup (`filesystem_store.py:270`; over 1,126 files live), and `GET /api/chat/attachments` does it twice (`exists`, then `get_path`; `chat.py:1253-1255`), and the TTS route does it once, in its `get_path` (`avatars.py:315`) after `write` (`write` builds its path from the MIME and does not glob; corrected in A1). M4 moves the cost off the default pool, not off the request. Follow-up: resolve the path from the index's `mime`, falling back to the glob.
 - **R23 (P3, not a regression).** Every write, unlink and conditional unlink rewrites the whole `.index.json` (962 entries live). The rewrite is now off the event loop (M4) but still happens on every spoken sentence. Follow-up: coalesce saves.
 - **R24 (P3).** `FileResponse`'s streaming of the WAV runs outside the store, on anyio's worker threads (not verified, §17), which sync routes share. M4 covers the lookup only.
 - **R25 (Low, M7's family).** The BF-300 PTT gate (`ProfileChatTab.tsx:563-590`) opens for each gap between two pipelined sentences, because it clears on every `end`. Follow-up with M7: keep it closed on `final: false`.
+- **R26 (Low, no production reach).** `close()` from another thread is unsafe. `_run` has no await between its closed check and its submit, so on the one event loop `close()` cannot interleave, but a `close()` from another thread can (`RuntimeError: cannot schedule new futures after shutdown`, review round 1). Production calls `close()` only from `shutdown()`, on the loop, and every store caller is a coroutine on that loop. Supported lifecycle: one loop. Design if a cross-thread caller appears: catch that `RuntimeError` at submit and fall back to `asyncio.to_thread`.
+- **R27 (Low, tests only).** An alias import or a reload of `probos.routers.chat` has its own `_ATTACHMENT_STORE_CACHE`; the shutdown helper closes only the canonical module's (`sys.modules["probos.routers.chat"]`). Supported lifecycle: the canonical import. Design if needed: move the cache and its marker to the attachments layer (also R29).
+- **R28 (Low, tests only).** About 150 test constructions of the store in 58 files never close it. Idle store threads accumulate per xdist worker (4, 8, 12 measured in review round 1) until garbage collection frees the store. A1 closes the stores of the two M4 test files. Design: a shared closing fixture, adopted file by file. Do not exclude store threads from the lifecycle detector.
+- **R29 (Low).** When `probos.routers.chat` was never imported by shutdown, `_close_attachment_store` returns without a marker. A store first built later through `runtime.attachment_store` (`runtime.py:2240-2248`, which imports the module) is open and never closed. Reach: a runtime without the HTTP routers whose crew work first touches the store after the close point (headless runs, tests); its idle threads end at interpreter exit. Design: R27's move.
+- **R30 (P2, pre-existing since AD-720, not a regression).** `write` writes the final path directly. A crash, or an error such as ENOSPC part-way through, leaves a partial file that every later write of that hash treats as present and acknowledges (`need_write` false); repeated TTS sentences produce repeated hashes. A reader that knows a hash before its write is acknowledged can also read a partial file. The parent wrote the same way (`e973acbe` `:229`). A1's drain removes only the cancelled-write variant. Reach: a disk-full or crash during a write; no supported reader learns a hash before its write is acknowledged (by reading). Design: write to a dot-prefixed temporary file in the root, then `os.replace` (the `{hash}.*` glob and the cold scan skip dotfiles). Schedule it as its own slice of #1626 after M5.
+- **R31 (Low, A1's cost).** A cancelled store caller now ends when its in-flight call ends: at most one queued wait plus one call. An `asyncio.timeout` around a store call can overrun by that much, and `AttachmentReaper.stop()` returns after the interrupted call. A write cancelled after its blob write keeps the blob with no index entry (the index is a hint, AD-733-1), so the age and LRU sweeps miss it until a later write of that hash indexes it. An unlink cancelled after removing its blob keeps the entry until the next conditional unlink drops it (`freed` 0). Both partial states predate M4 for the blob calls (parent `:229`, `:306`, `:358-359`). Design, if live counts show untracked blobs: decision 9's option c.
