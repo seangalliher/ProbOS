@@ -3,11 +3,12 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 (Amendment A1: the order after BF-920, the cascade seam case, the callsign resolution)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 (Amendment A2: four first-delivery consumer defects found by M1's review round 1 and its reframe check)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 (Amendment A3: the DM reservation is given back on cancellation and only by its owner, after M1's review round 2)
 
 **Status:** build-ready. One BF, two milestones (M1 HIGH, M2 STANDARD), batched with BF-922 (#1639): two prompts, one PR, one broad gate. **This prompt builds first in the batch, and the batch lands after BF-920 (#1633)** (section 4). **BF number:** BF-921 (#1636); this contract allocates nothing. **Tier:** M1 **HIGH** (it repairs the shared event-delivery seam `ProbOSRuntime.add_event_listener`, which wakes five listeners that have never received an event; it removes a trust penalty before that penalty can first fire; and it repairs the Counselor's callsign resolution, which lets four handlers' designed crew DMs be sent); M2 STANDARD (removes a handler with no producer; changes one docstring and one log line). The batch is reviewed at HIGH: use the Copilot `Diff Reviewer`. Never lower a tier without the Captain. **Base:** the `origin/main` commit that merges BF-920 (#1633) (its candidate 2 is `bf41e2dd` on `026a682f`); never `cb190f32`. If BF-920 is not merged when the batch starts, do not build: return to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Tests:**
-- New `tests/test_bf921_counselor_event_delivery.py` (M1, 24 functions; 41 cases with parametrization; A2 added six functions and seven cases).
+- New `tests/test_bf921_counselor_event_delivery.py` (M1, 27 functions; 45 cases with parametrization; A2 added six functions and seven cases, A3 three functions and four cases).
 - (A2) Updated pins: `tests/test_reactive_proactive_triggers.py` (M1: `TestReactiveTrigger`'s store double built from `ProcedureStore`, one test added), `tests/test_peer_repetition_credits.py` (M1: the zone-recovery credit test also counts assessments), `tests/test_ad529_contagion_firewall.py` (M1: the quarantine pin replaced).
 - Updated pins: `tests/test_bf206_confab_feedback.py` (M1: the `TestCounselorFeedback` class, which pinned the warning DM and the trust penalty); `tests/test_ad583_wrong_convergence.py` (M1, A1: `test_counselor_wrong_convergence_extreme_sends_dm`, which pinned the dict-registry lookup); `tests/test_ad489_code_of_conduct.py` (M2: the five tests that drove the removed handler); `tests/test_ad522_spc.py` (M2: one test added).
 
@@ -64,6 +65,8 @@ Each DM is a thread in the Counselor's DM channel with that agent (`_send_therap
 
 *Found by A2 (M1's review round 1 drove every woken listener with producer-shaped payloads through the real subscriptions): first delivery exposes four consumer defects that exist on the base.* (1) AD-532e's reactive trigger calls `ProcedureStore.find_matching(intent, threshold=...)`, which has no `threshold` and returns a ranked list (`procedure_store.py:925-982`); every delivered successful completion raised `TypeError`, logged at DEBUG (`dreaming.py:2139-2167`). (2) `_send_therapeutic_dm` checked the hourly cooldown before its awaits and set it after them (`counselor.py:2364-2385` on candidate 1); each listener runs as its own task (`runtime.py:1987`), so four concurrent causes for one agent sent four DMs (the reviewer's run on a booted runtime: four DMs, four threads; sequential, one). The pacing claim above held only for sequential events. (3) `_on_zone_recovery` appended the assessment `assess_agent` had already appended (`counselor.py:1286`, `:2870`): one recovery, two profile entries, one table row. (4) `_on_content_quarantine_recommended` wrote a `"post"` restriction (`counselor.py:1693-1714`) that blocks every thread and reply (`threads.py:458-459`, `messages.py:187-188`) and that nothing lifts (`MessageStore.remove_restriction` has no caller), on the AD-529 firewall's heuristics, which are on by default for every agent below trust 0.65 (`config_models/crew.py:366-373`); its path ran at five flags in an hour whatever the assessment said. The exposure statement above omitted it: it is a mechanical intervention and a sanction. *Decision: fix all four in M1 (sections 7.3b, 7.3c).* D1 is what makes each reachable, so the convergence rule puts them here. (1) to (3) restore what their designs state. (4) follows D3's rule, that no unqualified gauge carries a sanction: the handler assesses, persists and logs `BF-921: Quarantine criteria met for ...`, and applies no restriction and sends no message. This changes no operating control (the handler never ran); the firewall's `[UNVERIFIED]` tagging and its Bridge ALERT, which reach the Captain, still run; restoring the automatic restriction is the decision of the issue that qualifies the firewall and adds a way to lift it (R11). The other woken handlers on first delivery, as that review observed them: profile and assessment writes (trust update, circuit breaker, dream complete, self-monitoring, zone recovery, peer and notebook repetition, gap, trust cascade, retrieval, qualification drift, quarantine); DMs within the hourly cap (trust update, circuit breaker, notebook repetition, gap, qualification drift, contagion, and the four callsign causes); one Ward Room assessment post (circuit breaker); logging only (groupthink, fragmentation, DM convergence, register shift). None writes trust once M2 removes conduct. Two are registered, not fixed: `GAP_IDENTIFIED` has no producer (R9), and the trust-update reassessment runs on every trust outcome from default inputs (R12).
 
+*Found by A3 (M1's review round 2): A2's give-back had two holes, each reached only by an injected fault.* (1) It ran in `except Exception:`, and `asyncio.CancelledError` is a `BaseException`, so a task cancelled during the channel lookup kept an hour it never used. (2) It wrote back the value read before the awaits, so an older attempt that failed after a newer one had reserved and sent erased the newer reservation, and a retry sent a second DM inside the newer hour. *Decision:* the give-back releases only the reservation the attempt still holds, by equality with its own clock reading. Equality is ownership: the sender's check refuses any second reservation sooner than `DM_COOLDOWN_SECONDS` after the first, so a real newer one never holds the same value, and only the sender writes `_dm_cooldowns` (section 12, A3). By phase: before `create_thread` is awaited no thread can exist, so every exit gives the hour back and a cancellation is re-raised; once `create_thread` is awaited, an `Exception` before it returns still gives the hour back (A2, unchanged) and a cancellation keeps it, because `create_thread` commits before its later awaits (`threads.py:498`; awaits at `:534`, `:569`, `:572`, `:618`, `:660`) and a duplicate DM is the defect this BF repairs; once it has returned, the hour stays. The two older holes the round found unchanged since candidate 1 (an exception after the commit inside `create_thread`, a `None` result) need a commit receipt from the Ward Room and are registered (R13, R14).
+
 **D3, the penalty rule (item 2).** No suppression reason carries the trust penalty or a message. The handler is delivered and records: it logs `BF-921: Output suppression recorded for <callsign> (<agent_id>): reason=<r> path=<p>, <n> in the last hour; no trust penalty and no message (gauge not qualified)` and keeps a bounded per-agent hourly history. It sends no DM (a neutral DM per suppression would be noise, and would still present an unqualified judgement to the agent) and makes no profile write (the old ad hoc `confabulation_count` attribute has no reader in `src/`, section 12). Restoring a penalty for a reason is the decision of the issue that qualifies that reason's gauge: AD-1350 (#1637) for `quality_gate`, BF-922 (#1639)'s re-measure for `confabulation_detected`. The tests cover each reason, including `raw_json_output`, a future reason and an empty one.
 
 **D4, `CONDUCT_VIOLATION` (item 3): remove the subscription, the dispatch branch and `_on_conduct_violation` with its penalty; keep the `EventType` member.** Reason: AD-489 specified no producer, and a producer is an agent's judgement of conduct, a new gauge that needs its own AD and its own qualification. Once D1 restores delivery, a kept handler would hand that penalty to the first emitter anyone adds, without a gauge. The member stays because it is declared in the AD-1195 persistence contract (`event_persistence.py:194`, `tests/test_ad1195_event_persistence_contract.py:117`); an unproduced, unconsumed member is inert. The federation standing order's sentence about the trust consequence is the Captain's text and is not edited (section 18, R3). This removes no operating control: the handler never ran (section 1).
@@ -76,7 +79,7 @@ Each DM is a thread in the Counselor's DM channel with that agent (`_send_therap
 
 **BF-920 (#1633) lands first; BF-921 is built on the commit that merges it (A1).** BF-920 removes the Ward Room helper's second emission of `CASCADE_CONFABULATION_DETECTED` (`ward_room/_helpers.py:50-57`), so `SocialVerificationService` is its one emitter. If BF-921 landed first, its filter fix would hand the Counselor every cascade twice: two handlings and two log lines per detection, with the second DM held back only by the hourly cooldown. BF-920 touches no file this prompt edits except `startup/finalize.py`, where its one deletion (`:5914`) lies far below section 7.9's pair (`:3533`), which applies once on BF-920 candidate 2. If BF-920 is not merged when this batch starts, stop and return to the Architect. Section 7.5's cascade case closes BF-920's half-chain: one service emission through the booted runtime, one Counselor handling.
 
-**PR text, BF-921's part** (the orchestrator joins it with BF-922's): "BF-921 (#1636), built on BF-920 (#1633)'s merge. `add_event_listener` and `register_live_event_listener` filtered on `str()` of each `EventType` member (`"EventType.NAME"`), so the Counselor and four other listeners had received none of their events in any session; both now filter on wire values, and a failed NATS subscription is logged. Output suppressions reach the Counselor and are recorded with no trust penalty or message until each reason's gauge is qualified (AD-1350, BF-922). The Counselor's cascade, wrong-convergence, echo and observable-mismatch handlers now resolve agents through `AgentRegistry` (they called a dict API it lacks), so BF-920's single cascade event reaches the Counselor once and the designed DMs can be sent. The `CONDUCT_VIOLATION` handler and penalty (no producer) are removed; the SPC store is marked inert. Four consumer defects that delivery made reachable are fixed (A2): AD-532e's reactive trigger called `ProcedureStore.find_matching` with a `threshold` it lacks; the Counselor's one-DM-an-hour cap let concurrent deliveries through; one zone recovery stored two assessments; and a quarantine recommendation would have restricted an agent from posting with no way to lift it, so it restricts no one until the firewall's gauge is qualified. First-session measures: section 16 of the contract."
+**PR text, BF-921's part** (the orchestrator joins it with BF-922's): "BF-921 (#1636), built on BF-920 (#1633)'s merge. `add_event_listener` and `register_live_event_listener` filtered on `str()` of each `EventType` member (`"EventType.NAME"`), so the Counselor and four other listeners had received none of their events in any session; both now filter on wire values, and a failed NATS subscription is logged. Output suppressions reach the Counselor and are recorded with no trust penalty or message until each reason's gauge is qualified (AD-1350, BF-922). The Counselor's cascade, wrong-convergence, echo and observable-mismatch handlers now resolve agents through `AgentRegistry` (they called a dict API it lacks), so BF-920's single cascade event reaches the Counselor once and the designed DMs can be sent. The `CONDUCT_VIOLATION` handler and penalty (no producer) are removed; the SPC store is marked inert. Four consumer defects that delivery made reachable are fixed (A2): AD-532e's reactive trigger called `ProcedureStore.find_matching` with a `threshold` it lacks; the Counselor's one-DM-an-hour cap let concurrent deliveries through; one zone recovery stored two assessments; and a quarantine recommendation would have restricted an agent from posting with no way to lift it, so it restricts no one until the firewall's gauge is qualified. The cap's reservation is given back when a DM's task is cancelled before its thread is started, and only by the attempt that holds it (A3). First-session measures: section 16 of the contract."
 
 BF-922 (#1639) is batched with this prompt and builds **after** it. Ownership of the suppression block in `_execute_sub_task_chain` (`cognitive_agent.py:5993-6029` on `cb190f32`, unchanged on `bf41e2dd`):
 
@@ -96,7 +99,7 @@ The two SEARCH texts are disjoint. BF-922 M2 calls `_emit_output_suppressed`, wh
 - `_on_confabulation_suppressed`: called only by `_on_event_async` (`counselor.py:1056-1057`).
 - `_resolve_agent_id_from_callsign` (A1, section 7.3a): called by `_on_cascade_confabulation` (`counselor.py:1606`) and, after section 7.3a, by `_on_wrong_convergence_detected`, `_on_ward_room_echo` and `_on_observable_mismatch`; each passes the result only to `_send_therapeutic_dm` as the recipient. No other caller (section 12).
 - The SPC log line: no test pins it (section 11).
-- (A2) `_send_therapeutic_dm`'s bool: every Counselor DM goes through it (eleven call sites on candidate 1; A2 removes the quarantine one and M2 the two conduct ones). Signature and return values are unchanged; a concurrent second call for one agent within the hour now returns False, as a sequential one always did.
+- (A2) `_send_therapeutic_dm`'s bool: every Counselor DM goes through it (eleven call sites on candidate 1; A2 removes the quarantine one and M2 the two conduct ones). Signature and return values are unchanged; a concurrent second call for one agent within the hour now returns False, as a sequential one always did. (A3) A cancelled call still propagates its cancellation; one cancelled before `create_thread` is awaited no longer holds the hour, and a failed or cancelled call never releases a newer call's hour. `_release_dm_reservation` has no caller but the sender.
 - (A2) `assess_agent(tier_credit=...)`: a keyword defaulting to `""`; only `_on_zone_recovery` passes it. The single appended assessment is read by `routers/counselor.py:644-646`, `self_telemetry_domains.py:104` and `CognitiveProfile.drift_trend`.
 - (A2) `ProcedureStore.find_matching`: AD-532e's reactive trigger now calls it as `cognitive_agent.py:1764` and `dreaming.py:2413` do. The quarantine handler's new log line has no other reader; no test pinned the removed `AD-529: Quarantine applied` line (section 12).
 
@@ -107,6 +110,8 @@ The two SEARCH texts are disjoint. BF-922 M2 calls `_emit_output_suppressed`, wh
 ```
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf921_counselor_event_delivery.py tests/test_bf206_confab_feedback.py tests/test_ad583_wrong_convergence.py tests/test_hxi_events.py tests/test_ad637d_system_events_nats.py tests/test_counselor.py tests/test_counselor_activation.py tests/test_counselor_therapeutic.py tests/test_ad489_code_of_conduct.py tests/test_ad659c_optimization_counselor.py tests/test_bf125_working_memory_desync.py tests/test_dreaming.py tests/test_reactive_proactive_triggers.py tests/test_peer_repetition_credits.py tests/test_ad529_contagion_firewall.py tests/test_ad561_intervention_classification.py tests/test_ad541d_guided_reminiscence.py tests/test_ad552_notebook_self_repetition.py tests/test_ad642_communication_benchmarks.py tests/test_ad1229_message_receipts_e2e.py tests/test_graduated_zones.py -n 0 -q
 ```
+
+(A3) Tests first: with A3's test pair (section 7.5) applied to candidate 2 and its code pair (section 7.3c Pair 4) not yet, exactly these 2 fail: `test_a_cancelled_dm_that_started_no_thread_gives_the_hour_back` and `test_an_older_attempt_never_releases_a_newer_reservation[raises]`. `test_a_cancelled_dm_keeps_the_hour_once_its_thread_was_started` and `test_an_older_attempt_never_releases_a_newer_reservation[cancelled]` pass on both sides: they pin what a blanket or unowned give-back would break (rows R27, R28, R30). The focused check above is unchanged; candidate 2 gave 587 passed, so A3's four cases make 591. The M1 commit body adds, after A2's sentence: "A3: an unsent DM's hour also goes back when its task is cancelled before the thread is started, and a failed attempt releases only the reservation it still holds."
 
 A test elsewhere that fails because a listener registered with members now receives events is a real consumer of D2: stop and send it to the Architect; never change its assertion to pass.
 
@@ -766,7 +771,10 @@ REPLACE:
         BF-921 (#1636): the hour is reserved before the awaits. Each event listener runs as its own
         task (``ProbOSRuntime._emit_event_local``), so a check before the awaits and a cooldown set
         after them let concurrent events for one agent all pass and each send a DM. A DM that was
-        not sent gives the reservation back.
+        not sent gives the reservation back, and only while this attempt still holds it
+        (``_release_dm_reservation``). Before ``create_thread`` is awaited no thread can exist, so
+        any exit, a cancellation included, gives the hour back; once it is awaited, a cancellation
+        keeps the hour, because ``create_thread`` commits before its later awaits.
         """
         if not self._ward_room:
             return False
@@ -778,6 +786,7 @@ REPLACE:
             return False
         self._dm_cooldowns[agent_id] = now  # BF-921: reserved before the awaits below
         sent = False
+        thread_started = False
 
         try:
             channel = await self._ward_room.get_or_create_dm_channel(
@@ -787,6 +796,7 @@ REPLACE:
                 callsign_b=callsign,
             )
 
+            thread_started = True  # BF-921: from here a cancellation may follow a committed thread
             await self._ward_room.create_thread(
                 channel_id=channel.id,
                 author_id=self.id,
@@ -810,9 +820,23 @@ REPLACE:
 
         except Exception:
             if not sent:
-                self._dm_cooldowns[agent_id] = last_dm  # BF-921: an unsent DM gives the hour back
+                self._release_dm_reservation(agent_id, now, last_dm)  # BF-921: an unsent DM gives the hour back
             logger.warning("AD-505: Failed to send therapeutic DM to %s", callsign, exc_info=True)
             return False
+        except BaseException:  # BF-921: a cancellation is not an Exception
+            if not thread_started:
+                self._release_dm_reservation(agent_id, now, last_dm)  # BF-921: cancelled before any thread
+            raise  # BF-921: the cancellation propagates
+
+    def _release_dm_reservation(self, agent_id: str, reserved: float, previous: float) -> None:
+        """BF-921 (#1636): give an unsent DM's hour back, only while the attempt that reserved it still holds it.
+
+        Another attempt can reserve only ``DM_COOLDOWN_SECONDS`` after this reservation (the sender's check refuses
+        anything sooner), so a newer reservation always holds a different clock value: equality is ownership. Two
+        readings within one clock tick can be equal, but the second of them is refused, never reserved.
+        """
+        if self._dm_cooldowns.get(agent_id) == reserved:  # BF-921: only the reservation this attempt holds
+            self._dm_cooldowns[agent_id] = previous
 ```
 
 Pair 5 (assess_agent takes the credit):
@@ -2278,6 +2302,95 @@ async def test_a_sent_dm_keeps_the_hour_when_its_record_fails(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_a_cancelled_dm_that_started_no_thread_gives_the_hour_back() -> None:
+    """A3: a task cancelled during the DM channel lookup has sent nothing (no thread can exist yet), so the hour goes
+    back and the cancellation still propagates. A2's give-back ran only for an ``Exception``; ``CancelledError`` is a
+    ``BaseException``, so the agent lost an hour of DMs although none was sent."""
+    counselor, ward_room = await _counselor_with_ward_room()
+    entered = asyncio.Event()
+
+    async def paused_lookup(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await asyncio.Event().wait()  # never set: the task is cancelled here
+
+    ward_room.get_or_create_dm_channel.side_effect = paused_lookup
+    task = asyncio.create_task(counselor._send_therapeutic_dm("agent-kira", "Kira", "cancelled"))
+    await asyncio.wait_for(entered.wait(), 2)
+    assert "agent-kira" in counselor._dm_cooldowns, "premise: the hour was reserved before the awaits"
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ward_room.create_thread.await_count == 0, "premise: the cancelled attempt started no thread"
+
+    ward_room.get_or_create_dm_channel.side_effect = None
+    assert await counselor._send_therapeutic_dm("agent-kira", "Kira", "retry") is True
+    assert ward_room.create_thread.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_dm_keeps_the_hour_once_its_thread_was_started() -> None:
+    """A3: once ``create_thread`` is awaited, a cancellation may land after its commit (``ward_room/threads.py``
+    commits before its later awaits), so the hour stays reserved and a retry sends no second DM. This pins the half
+    of the cleanup that a blanket give-back would break."""
+    counselor, ward_room = await _counselor_with_ward_room()
+    entered = asyncio.Event()
+
+    async def paused_thread(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await asyncio.Event().wait()  # never set: the task is cancelled here
+
+    ward_room.create_thread.side_effect = paused_thread
+    task = asyncio.create_task(counselor._send_therapeutic_dm("agent-kira", "Kira", "cancelled"))
+    await asyncio.wait_for(entered.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert ward_room.create_thread.await_count == 1, "premise: the cancelled attempt had started its thread"
+
+    ward_room.create_thread.side_effect = None
+    assert await counselor._send_therapeutic_dm("agent-kira", "Kira", "retry") is False
+    assert ward_room.create_thread.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["raises", "cancelled"])
+async def test_an_older_attempt_never_releases_a_newer_reservation(fault: str) -> None:
+    """A3: an attempt gives back only the reservation it still holds. A real newer reservation comes at least
+    ``DM_COOLDOWN_SECONDS`` after the older one (the check refuses anything sooner), so it holds a different clock
+    value; the stand-in writes that value directly while the older attempt is in its channel lookup, as a newer
+    attempt that reserved and sent would, so nothing depends on the clock's resolution. A2's give-back wrote the
+    older attempt's stale value over it, and a retry inside the newer hour sent a second DM."""
+    counselor, ward_room = await _counselor_with_ward_room()
+    entered = asyncio.Event()
+    held: list[float] = []
+
+    async def overtaken_lookup(*args: Any, **kwargs: Any) -> Any:
+        held.append(counselor._dm_cooldowns["agent-kira"])
+        counselor._dm_cooldowns["agent-kira"] = held[0] + counselor.DM_COOLDOWN_SECONDS  # the newer reservation
+        entered.set()
+        if fault == "raises":
+            raise RuntimeError("database is locked")
+        await asyncio.Event().wait()  # never set: the task is cancelled here
+
+    ward_room.get_or_create_dm_channel.side_effect = overtaken_lookup
+    task = asyncio.create_task(counselor._send_therapeutic_dm("agent-kira", "Kira", "older"))
+    await asyncio.wait_for(entered.wait(), 2)
+    if fault == "cancelled":
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        assert await task is False
+    newer = held[0] + counselor.DM_COOLDOWN_SECONDS
+    assert newer > held[0] > float("-inf"), "premise: the older attempt held its own, earlier reservation"
+    assert counselor._dm_cooldowns["agent-kira"] == newer, "the older attempt released the newer reservation"
+
+    ward_room.get_or_create_dm_channel.side_effect = None
+    assert await counselor._send_therapeutic_dm("agent-kira", "Kira", "inside the newer hour") is False
+    assert ward_room.create_thread.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_one_delivered_zone_recovery_is_one_assessment_in_the_reloaded_profile(tmp_path) -> None:
     """AD-506b's handler appended the assessment ``assess_agent`` had already appended: one recovery became two
     entries in the persisted profile that clinical history and drift trends read, against one table row (A2). The
@@ -2707,7 +2820,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-921 (2026-10-24), #1636 -- the Counselor receives the events it subscribes to; no output suppression carries a penalty.** `ProbOSRuntime.add_event_listener` and `register_live_event_listener` built their type filter with `str()`, which for an `EventType` member is `"EventType.NAME"`, so every listener that passed members (the Counselor's 24 types, BF-125, AD-532e, AD-534b, AD-659c) had received nothing, locally or over NATS; the filter now holds wire values (`_event_type_filter`), and a failed NATS subscription is logged. Suppressions reach the Counselor through one emitter (`CognitiveAgent._emit_output_suppressed`, payload `path`), and the Counselor records them (one INFO line, an hourly count) with no trust penalty and no message until the reason's gauge is qualified (AD-1350 for `quality_gate`, BF-922 for `confabulation_detected`). The Counselor no longer subscribes to or handles `CONDUCT_VIOLATION`, which nothing emits; the SPC store is marked inert (nothing records observations). A failing Counselor handler is logged at WARNING. The Counselor's cascade, wrong-convergence, echo and observable-mismatch handlers resolve agents through the runtime's `AgentRegistry` (they called a dict API it lacks and would have raised before their first DM), and BF-920's single cascade event reaches the Counselor once. A2 fixes four first-delivery defects of the woken consumers: AD-532e's reactive trigger called `ProcedureStore.find_matching` with a `threshold` it lacks and read its list as a dict; the Counselor's one-DM-an-hour cap let concurrent deliveries through; a zone recovery stored its assessment twice; and a quarantine recommendation would have restricted an agent from posting with nothing to lift it, so it now restricts no one. Built after BF-920 (#1633). New: `tests/test_bf921_counselor_event_delivery.py`. The contract is `prompts/bf-921-counselor-event-delivery-and-suppression-penalty.md`.
+**BF-921 (2026-10-24), #1636 -- the Counselor receives the events it subscribes to; no output suppression carries a penalty.** `ProbOSRuntime.add_event_listener` and `register_live_event_listener` built their type filter with `str()`, which for an `EventType` member is `"EventType.NAME"`, so every listener that passed members (the Counselor's 24 types, BF-125, AD-532e, AD-534b, AD-659c) had received nothing, locally or over NATS; the filter now holds wire values (`_event_type_filter`), and a failed NATS subscription is logged. Suppressions reach the Counselor through one emitter (`CognitiveAgent._emit_output_suppressed`, payload `path`), and the Counselor records them (one INFO line, an hourly count) with no trust penalty and no message until the reason's gauge is qualified (AD-1350 for `quality_gate`, BF-922 for `confabulation_detected`). The Counselor no longer subscribes to or handles `CONDUCT_VIOLATION`, which nothing emits; the SPC store is marked inert (nothing records observations). A failing Counselor handler is logged at WARNING. The Counselor's cascade, wrong-convergence, echo and observable-mismatch handlers resolve agents through the runtime's `AgentRegistry` (they called a dict API it lacks and would have raised before their first DM), and BF-920's single cascade event reaches the Counselor once. A2 fixes four first-delivery defects of the woken consumers: AD-532e's reactive trigger called `ProcedureStore.find_matching` with a `threshold` it lacks and read its list as a dict; the Counselor's one-DM-an-hour cap let concurrent deliveries through; a zone recovery stored its assessment twice; and a quarantine recommendation would have restricted an agent from posting with nothing to lift it, so it now restricts no one. Built after BF-920 (#1633). A3 makes the cap's give-back safe: an unsent DM's hour also goes back when its task is cancelled before the thread is started, and a failed attempt releases only the reservation it still holds. New: `tests/test_bf921_counselor_event_delivery.py`. The contract is `prompts/bf-921-counselor-event-delivery-and-suppression-penalty.md`.
 ```
 
 **`DECISIONS.md`:**
@@ -2726,6 +2839,7 @@ REPLACE:
 - *SPC.* The AD-522 store stays wired and is marked inert: its feed (AD-522e-1) is unbuilt.
 - *Callsign handlers (A1).* The four Counselor handlers that message by callsign resolve through `AgentRegistry` and skip a callsign no registered agent holds. Their DMs (verification prompts; no trust or profile write; at most one Counselor DM per agent an hour) are restored as AD-567f, AD-583, AD-583f and AD-583g designed them, not gated. Order: after BF-920 (#1633), which made the cascade event single.
 - *Woken consumers (A2).* Delivery exposed four consumer defects on the base, fixed here: AD-532e's reactive trigger uses the real `find_matching` (a ranked list; the threshold applied to its score); `_send_therapeutic_dm` reserves the agent's hour before its awaits (one Counselor DM an hour, also under concurrent delivery); one zone recovery is one assessment; AD-529's quarantine recommendation assesses and logs but applies no posting restriction and sends no message until the firewall's gauge is qualified and a restriction can be lifted (D3's rule; R11). Registered: the Counselor's assessment inputs call APIs their dependencies lack, and its trust-update reassessment runs on every trust outcome (R12).
+- *DM reservation (A3).* The hour an unsent DM reserved is given back only by the attempt that holds it (its own clock reading; a newer reservation is always at least the cooldown later), on any exit before `create_thread` is awaited, cancellation included; once `create_thread` is awaited, a cancellation keeps the hour (the thread may be committed). Registered: `create_thread` gives no commit receipt (R13).
 - *Reversal.* Revert the commits; the listeners go deaf again.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -2736,7 +2850,7 @@ REPLACE:
 **#1636 checklist text** (the orchestrator records it on the issue):
 - [ ] (1) Root cause: `add_event_listener` stringified `EventType` members; fixed at the seam; seam test through `ProbOSRuntime.start()` (M1).
 - [ ] (1b) BF-920's cascade reaches the Counselor once through the booted runtime; the four callsign handlers resolve through `AgentRegistry` (M1, A1).
-- [ ] (1c) The woken consumers' first-delivery defects (A2): AD-532e's `find_matching` call, the concurrent DM cap, the duplicate zone-recovery assessment, the quarantine restriction (M1).
+- [ ] (1c) The woken consumers' first-delivery defects (A2): AD-532e's `find_matching` call, the concurrent DM cap (A3: its give-back on cancellation and by owner only), the duplicate zone-recovery assessment, the quarantine restriction (M1).
 - [ ] (2) No suppression reason carries a penalty or message; one test per reason (M1).
 - [ ] (3) `CONDUCT_VIOLATION` subscription, handler and penalty removed (M2).
 - [ ] (4) SPC store marked inert (M2).
@@ -2751,6 +2865,8 @@ REPLACE:
 - `config/standing_orders/federation.md` is not edited (R3). `spc.enabled` stays `True`.
 - The trust network, its event, and every other trust writer are unchanged.
 - (A2) `ProcedureStore`, AD-532e's proactive scan and the AD-534b handler are unchanged. The peer-repetition and notebook handlers keep setting their credit after `assess_agent`'s one append and counting it by hand (`counselor.py:1308-1310`, `:1323`, `:1356-1358`, `:1371`); no other `assess_agent` caller passes `tier_credit`. `_send_therapeutic_dm`'s signature and return values and its callers' messages are unchanged. The AD-529 firewall's scanning, `[UNVERIFIED]` tagging, flag events and Bridge alerts are unchanged; `MessageStore.set_restriction` and `remove_restriction` are unchanged (after A2 nothing calls either). The Counselor's metric gathering and its trust-update reassessment are unchanged (R12).
+
+- (A3) `_send_therapeutic_dm`'s signature, bool result and callers are unchanged, and a cancellation still propagates to its task. The Ward Room's `create_thread` is unchanged (R13).
 
 ## 10. Mutation rows (whole stripped lines, each occurring once in its file after section 7)
 
@@ -2782,11 +2898,17 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf921_counselor_event_de
 | R18 | `src/probos/cognitive/dreaming.py` | `matches = await self._procedure_store.find_matching(intent_type, n_results=1)` | `matches = await self._procedure_store.find_matching(intent_type, threshold=PROCEDURE_MATCH_THRESHOLD)` | `test_a_delivered_task_completion_queries_the_real_procedure_store[matched]`, `[unmatched]`, `TestReactiveTrigger::test_reactive_no_match_flags_candidate` |
 | R19 | `src/probos/cognitive/dreaming.py` | `match = matches[0] if matches and matches[0].get("score", 0.0) >= PROCEDURE_MATCH_THRESHOLD else None` | `match = matches[0] if matches else None` | `TestReactiveTrigger::test_reactive_below_threshold_flags_candidate` |
 | R20 | `src/probos/cognitive/counselor.py` | `self._dm_cooldowns[agent_id] = now  # BF-921: reserved before the awaits below` | `pass` | `test_concurrent_causes_send_one_agent_one_dm_an_hour` |
-| R21 | `src/probos/cognitive/counselor.py` | `self._dm_cooldowns[agent_id] = last_dm  # BF-921: an unsent DM gives the hour back` | `pass` | `test_a_dm_that_was_not_sent_gives_the_hour_back` |
+| R21 | `src/probos/cognitive/counselor.py` | `self._release_dm_reservation(agent_id, now, last_dm)  # BF-921: an unsent DM gives the hour back` | `pass` | `test_a_dm_that_was_not_sent_gives_the_hour_back` |
 | R22 | `src/probos/cognitive/counselor.py` | `sent = True  # BF-921: from here the hour stays reserved` | `pass` | `test_a_sent_dm_keeps_the_hour_when_its_record_fails` |
 | R23 | `src/probos/cognitive/counselor.py` | `tier_credit=tier_credit,` | `tier_credit="",` | `test_one_delivered_zone_recovery_is_one_assessment_in_the_reloaded_profile`, `TestZoneRecoveryHandler::test_amber_to_green_gets_credit` |
 | R24 | `src/probos/cognitive/counselor.py` | `await self._save_profile_and_assessment(agent_id, assessment)  # BF-921: the one append is assess_agent's` | `self.get_or_create_profile(agent_id).add_assessment(assessment); await self._save_profile_and_assessment(agent_id, assessment)` | `test_one_delivered_zone_recovery_is_one_assessment_in_the_reloaded_profile`, `TestZoneRecoveryHandler::test_amber_to_green_gets_credit` |
 | R25 | `src/probos/cognitive/counselor.py` | `"BF-921: Quarantine criteria met for %s (wellness=%.2f, %d flags); no posting "` | `"AD-529: Quarantine criteria met for %s (wellness=%.2f, %d flags); no posting "` | `test_a_quarantine_recommendation_restricts_and_messages_no_one` |
+| R26 | `src/probos/cognitive/counselor.py` | `self._release_dm_reservation(agent_id, now, last_dm)  # BF-921: cancelled before any thread` | `pass` | `test_a_cancelled_dm_that_started_no_thread_gives_the_hour_back` |
+| R27 | `src/probos/cognitive/counselor.py` | `if not thread_started:` | `if True:` | `test_a_cancelled_dm_keeps_the_hour_once_its_thread_was_started` |
+| R28 | `src/probos/cognitive/counselor.py` | `thread_started = True  # BF-921: from here a cancellation may follow a committed thread` | `pass` | `test_a_cancelled_dm_keeps_the_hour_once_its_thread_was_started` |
+| R29 | `src/probos/cognitive/counselor.py` | `raise  # BF-921: the cancellation propagates` | `return False` | `test_a_cancelled_dm_that_started_no_thread_gives_the_hour_back`, `test_a_cancelled_dm_keeps_the_hour_once_its_thread_was_started`, `test_an_older_attempt_never_releases_a_newer_reservation[cancelled]` |
+| R30 | `src/probos/cognitive/counselor.py` | `if self._dm_cooldowns.get(agent_id) == reserved:  # BF-921: only the reservation this attempt holds` | `if True:` | `test_an_older_attempt_never_releases_a_newer_reservation[raises]`, `[cancelled]` |
+| R31 | `src/probos/cognitive/counselor.py` | `self._dm_cooldowns[agent_id] = previous` | `pass` | `test_a_dm_that_was_not_sent_gives_the_hour_back`, `test_a_cancelled_dm_that_started_no_thread_gives_the_hour_back` |
 
 The removed penalty cannot be mutated back in by one line; `test_no_suppression_reason_carries_a_penalty_or_a_message` (five reasons, three suppressions each) is its pin. Likewise BF-920's removed duplicate cascade emit: the cascade seam case's `== events` assertions after its settle window are its pin. Likewise A2's withheld posting restriction: `test_a_quarantine_recommendation_restricts_and_messages_no_one` and `TestCounselorIntegration::test_counselor_quarantine_applies_no_restriction` are its pins.
 
@@ -2926,6 +3048,23 @@ git diff refs/scratch/bf921-cand1 refs/scratch/bf921-cand2 -- src/probos/cogniti
   M2's hunks: candidate 1 :708-712, :1059-1066, :1428-1505; A2's counselor.py SEARCH texts: :1271-1287, :1662-1666, :1693-1714, :2358-2399, :2772-2781, :2866-2871
 ```
 
+### A3 (2026-10-24, candidate 2 `a07fadad`, tree `a89cc881`)
+
+```
+grep -n "_dm_cooldowns" src/probos/cognitive/counselor.py
+  562: init; 2358: read; 2361: the reservation; 2395: the give-back, inside `except Exception:` (2393) only
+read src/probos/ward_room/threads.py:428-664 (ThreadManager.create_thread)
+  commit at 498; awaits before it at 439-442, 450-454, 473, 482, 493; after it at 534, 569, 572, 618, 660;
+  569 and 572 outside any try; 534, 618, 660 inside try/except Exception
+grep -n "ThreadManager(\|db=self._db" src/probos/ward_room/service.py
+  86: self._db = await self._connection_factory.connect(...); 147-148: ThreadManager(db=self._db, ...)
+grep -n "except BaseException" src/probos/cognitive/episode_archive.py
+  481: except BaseException:  # close on every exit, cancellation included, then re-raise (the precedent)
+grep -n "DM_COOLDOWN_SECONDS" tests/
+  test_counselor_therapeutic.py:67, test_ad561_intervention_classification.py:94, test_ad1229_message_receipts_e2e.py:267 set 0
+  (the check then refuses nothing, so ownership has nothing to protect)
+```
+
 ## 12. Absence Verified (2026-10-24)
 
 ```
@@ -3032,6 +3171,30 @@ FOUND: trust.py:97 (score(self), on another class), trust.py:1017 (get_score(sel
 HOLDS: yes
 ```
 
+### A3
+
+```
+CLAIM: only the sender writes _dm_cooldowns in production (the premise of ownership by equality)
+RUN:   rg -n "_dm_cooldowns\[" src/
+FOUND: counselor.py:2361 (reservation), :2395 (give-back); init :562
+HOLDS: yes
+
+CLAIM: WardRoomService.create_thread never returns None (R14)
+RUN:   grep -n "return" src/probos/ward_room/threads.py ; read service.py:413-420
+FOUND: within ThreadManager.create_thread (428-664) only `return thread` (:664), built at :476; the service returns it (:418)
+HOLDS: yes
+
+CLAIM: no Counselor test drives a cancellation of the sender
+RUN:   rg -n "_send_therapeutic_dm.*cancel|CancelledError" tests/ --glob "*counselor*.py"
+FOUND: none
+HOLDS: yes
+
+CLAIM: A3's names are new
+RUN:   rg -n "_release_dm_reservation|test_a_cancelled_dm|test_an_older_attempt" --glob "*.py" ; rg -n "thread_started" src/probos/cognitive/counselor.py
+FOUND: none ; none
+HOLDS: yes
+```
+
 ## 13. Prior Art and Blind Spots
 
 - Bug fix: external prior-art review skipped (ProbOS plumbing). The one outside fact relied on, `str()` of a mixed-in `(str, Enum)` member, is from the Python 3.12 `enum` documentation (`Enum.__str__`, `ReprEnum`).
@@ -3050,7 +3213,7 @@ HOLDS: yes
 8. (A1) The cascade seam case boots a runtime and uses the service startup built (`rt._social_verification`, wired with `emit_event_fn=runtime._emit_event`). It reaches the service only through BF-920's `check_and_alert_cascade_risk` and never calls `emit_event` itself. Its only stand-ins are the service's episodic memory and the Counselor's DM sender, and the handler spy wraps the real `_on_cascade_confabulation`. It asserts one wire event and one handling at medium and at high (not two); at low, no event and no handling, with the case shown to be low and not none; at high, one DM per resolved peer id and no other DM.
 9. (A1) The four callsign handlers resolve through `AgentRegistry.get`/`all`; a value no registered agent holds is never messaged; the replaced dict-registry test says why inline; none of the four writes trust or a profile.
 10. (A2) AD-532e's reactive trigger calls `find_matching(intent_type, n_results=1)`, applies `PROCEDURE_MATCH_THRESHOLD` to that result's `score`, and flags an extraction candidate when there is none or it is below. `TestReactiveTrigger`'s store is `create_autospec(ProcedureStore, instance=True)`, with every result set through `return_value` or `side_effect`. The subscription test uses a real `ProcedureStore` through `add_event_listener`/`emit_event`, matched and unmatched.
-11. (A2) `_send_therapeutic_dm` reserves the agent's hour with no await between the check and the reservation, gives it back only when the DM was not sent, and is otherwise unchanged for its callers. The concurrent test boots a runtime and keeps its sender, DM channel and thread storage; one DM thread results.
+11. (A2, A3) `_send_therapeutic_dm` reserves the agent's hour with no await between the check and the reservation. It gives the hour back only when the DM was not sent and only while that attempt still holds it (`_release_dm_reservation`, by equality with its own reservation): on any `Exception` before `create_thread` returns, and on a cancellation (any other `BaseException`, re-raised) before `create_thread` is awaited; a cancellation once `create_thread` is awaited keeps the hour. The cleanup does not await. It is otherwise unchanged for its callers (signature, bool result; a cancellation still propagates). The concurrent test boots a runtime and keeps its sender, DM channel and thread storage; one DM thread results. The A3 tests write the competing reservation directly and do not depend on the clock's resolution.
 12. (A2) One zone recovery appends one assessment, credited (`tier_credit="self_correction"`) before `add_assessment` runs, so `self_corrections` is 1 and the reloaded profile and the assessment table each hold one. `assess_agent`'s new keyword defaults to `""`; the peer-repetition and notebook handlers are unchanged.
 13. (A2) A quarantine recommendation assesses, persists and logs `BF-921: Quarantine criteria met for`; no restriction is written and no DM sent, and the handler no longer reaches into `ward_room._messages`. The replaced AD-529 pin says why inline.
 
@@ -3065,6 +3228,7 @@ HOLDS: yes
 - BF-921 is built on the commit that merges BF-920 (#1633) (A1).
 - (A2) A delivered successful task completion reaches the real `ProcedureStore` through its real signature, matched and unmatched.
 - (A2) Concurrent deliveries for one agent produce one Counselor DM within the hour, in the booted runtime's real storage.
+- (A3) An attempt cancelled before its thread is started gives its hour back and re-raises; once its thread is started, a cancellation keeps the hour; a failed or cancelled attempt never releases a newer attempt's reservation.
 - (A2) One zone recovery is one assessment in the reloaded profile and one row in the assessment table.
 - (A2) A quarantine recommendation restricts no one and sends no message.
 - Before editing, the tests that pin current behaviour were grepped and each updated pin says why inline.
@@ -3079,6 +3243,8 @@ From `%LOCALAPPDATA%\ProbOS\data\logs\probos.log` after the first vessel session
 - (A1) the counts of `AD-567f: Cascade confabulation medium`, `AD-567f: Cascade confabulation high`, `AD-583g: Ward Room echo detected`, `AD-583f: Observable state mismatch`, `AD-583: Wrong convergence detected` and `AD-505: Sent therapeutic DM to` lines, and that no `Counselor event handler failed for` line names `cascade_confabulation_detected`, `ward_room_echo_detected`, `observable_state_mismatch` or `wrong_convergence_detected`. If most crew reach the hourly DM cap in most hours, file it (R7).
 - (A2) that no callsign has two `AD-505: Sent therapeutic DM to <callsign>` lines less than an hour apart; the count of `BF-921: Quarantine criteria met for` lines (each is a restriction AD-529 would have applied: record them on R11's issue); and, read-only from `counselor.db`'s `assessments` table, the session's rows per agent by `trigger` (record the `trust_update` count per agent on R12's issue).
 
+- (A3) Nothing new to count: review round 2 reached both A3 cases only by an injected fault, and A2's check above (no callsign with two `AD-505: Sent therapeutic DM to` lines less than an hour apart) covers the duplicate half.
+
 ## 17. Not verified
 
 - That a default `SystemConfig()` boot registers at least three crew `CognitiveAgent`s other than the Counselor, each with a callsign no other agent holds, in every test environment (the agent fleet builds them when `utility_agents.enabled`, the default; `wire_agent` sets callsigns, `agent_onboarding.py:192-194`). If not, the seam tests fail at `next(...)` or at `assert len(crew) == peers`, which is a hard stop for the Architect, not a reason to stub.
@@ -3091,6 +3257,8 @@ From `%LOCALAPPDATA%\ProbOS\data\logs\probos.log` after the first vessel session
 - (A2) That the deterministic backend scores the exact indexed text at or above `PROCEDURE_MATCH_THRESHOLD`. Read, not run: the collection uses cosine space (`procedure_store.py:451`), and identical text gives identical vectors (`tests/fixtures/bf662_embedding_fakes.py:15-26`).
 - (A2) The concurrent-DM reproduction rests on the reviewer's executed probe (four concurrent causes: four DMs and four threads; sequential: one) and on the code reading; the new test was not run here.
 - (A2) The live volume of `_on_trust_update` reassessments (R12); section 16 counts it.
+
+- (A3) That a cancellation landing inside `create_thread` before its commit (`threads.py:439-498`) can still leave a thread that the next commit on the shared Ward Room connection (`service.py:86`, `:147-148`) stores. This was read from aiosqlite's design (a statement runs in its worker thread whatever happens to the awaiting task), not run. A3 keeps the hour either way, so this bears on R13's over-suppression, not on a duplicate.
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -3106,3 +3274,6 @@ From `%LOCALAPPDATA%\ProbOS\data\logs\probos.log` after the first vessel session
 - **R10.** (A2) AD-532e's reactive trigger and its startup listener swallow failures at DEBUG (`dreaming.py:2166-2167`, `startup/dreaming.py:342-343`); that is what hid A2's `find_matching` defect. It is not raised here: at one check per agent a minute (`REACTIVE_COOLDOWN_SECONDS`), a persistent failure would log a WARNING per agent a minute. The A2 tests pin the call instead.
 - **R11.** (A2) AD-529's automatic quarantine is withheld (section 7.3c). Restoring it needs a qualified firewall gauge and a way to lift a restriction (`MessageStore.remove_restriction` has no caller; AD-529 built it and wired no caller). That issue decides it, with section 16's count of `BF-921: Quarantine criteria met` lines.
 - **R12.** (A2, file now) The Counselor's deterministic assessment reads APIs its dependencies lack. It calls `TrustNetwork.score(agent_id)`, but the class has `get_score` (`consensus/trust.py:1017`), and it calls `HebbianRouter.get_weights_for`, which is absent from `src/`; each failure is swallowed at DEBUG (`counselor.py:768-783`), so every assessment records the default trust and Hebbian inputs. Its baseline is never captured either (`set_baseline` has no production caller, `counselor.py:735`). With delivery restored, `_on_trust_update` (`counselor.py:1773-1806`) compares each trust outcome with that default baseline. It therefore reassesses an agent the Counselor holds a profile for, whose trust sits 0.15 or more from `TRUST_DEFAULT`, on every trust outcome (`trust.py:534`), appending an assessment and rewriting the whole profile (`CognitiveProfile.assessments` is unbounded). No crew-facing action follows, because default trust and Hebbian inputs cannot lower wellness (`counselor.py:2827-2840`). Repairing the inputs would turn these records into live DMs and Bridge alerts, which needs its own qualification (D3). Test doubles mask the first defect (`tests/test_peer_repetition_credits.py:545`, `_trust_network.score = MagicMock(...)`).
+- **R13.** (A3) `create_thread` gives no commit receipt. `ThreadManager.create_thread` commits at `threads.py:498` and then awaits the cascade and echo checks (`:569`, `:572`) outside any `try`. An exception there reaches the sender after the DM is stored; `sent` is still False, so the hour goes back and a retry sends a second DM (review round 2, injected-only; candidate 1 the same). The mirror is A3's choice for cancellation: once `create_thread` is awaited, a cancellation keeps the hour even if it landed before the commit (at most an hour of over-suppression, never a duplicate). Fix sketch: `create_thread` contains its post-commit work (log and degrade, as `:544`, `:619` and `:661` already do), so an exception out of it always means not stored, and both halves follow it. A Ward Room contract change: its own issue.
+- **R14.** (A3) The sender reports a `create_thread` result of `None` as sent and keeps the hour. No production path returns `None` (section 12, A3); only a test double can (review round 2, injected-only; candidate 1 the same). Fix sketch, only if the Ward Room ever types the result as optional: treat `None` as unsent before `sent = True`.
+- **R15.** (A3) `create_autospec(ProcedureStore, instance=True)` checks call signatures, not result shapes; `TestReactiveTrigger`'s results are hand-written lists (valid today; the unrestricted double before A2 did not check them either). `test_a_delivered_task_completion_queries_the_real_procedure_store` covers the real shape against a real store, matched and unmatched. Fix sketch: build the fixtures' results through a real store on deterministic embeddings, if shape drift is ever suspected.
