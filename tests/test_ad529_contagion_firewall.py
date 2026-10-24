@@ -433,8 +433,15 @@ class TestCounselorIntegration:
         counselor._send_therapeutic_dm.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_counselor_quarantine_applies_restriction(self):
-        """Quarantine + low wellness → post restriction applied."""
+    async def test_counselor_quarantine_applies_no_restriction(self):
+        """Quarantine + low wellness → assessed and logged; no restriction, no DM.
+
+        BF-921 (#1636): this test pinned that the Counselor restricts the agent from posting
+        (``set_restriction(agent_id, "post")``) and tells it so. The Counselor had never received the
+        event; once it does, that restriction blocks every thread and reply and nothing lifts it
+        (``MessageStore.remove_restriction`` has no caller), on a firewall gauge that is not qualified.
+        The handler now assesses, persists and logs, and applies no restriction and sends no message.
+        """
         counselor = self._make_counselor()
         counselor._send_therapeutic_dm = AsyncMock(return_value=True)
         # Mock assessment with low wellness
@@ -456,9 +463,9 @@ class TestCounselorIntegration:
         }
         await counselor._on_content_quarantine_recommended(data)
 
-        counselor._ward_room._messages.set_restriction.assert_awaited_once_with(
-            "agent-test", "post",
-        )
+        counselor._save_profile_and_assessment.assert_awaited_once_with("agent-test", mock_assessment)
+        counselor._ward_room._messages.set_restriction.assert_not_awaited()
+        counselor._send_therapeutic_dm.assert_not_awaited()
 
 
 # ===========================================================================

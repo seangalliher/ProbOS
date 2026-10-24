@@ -736,6 +736,17 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
   - (3) Elastic workers (#1332, AD-1288 #1335, AD-1290 #1337) may fill Reviewer and Builder slots, commissioned by the Chief Engineer under AD-1288's separation of duty and leases. A fresh reviewer has no shared context by construction. Drafting and brake authority stay with persistent identities.
 - *Reversal.* Restore the Utility agent in AD-1299 S2f and route the judgment roles to it. The services, evidence and approvals are unchanged either way.
 
+### BF-921 -- The Counselor receives the events it subscribes to; no output suppression carries a penalty (2026-10-24, #1636)
+
+- *Root cause.* `add_event_listener` stringified `EventType` members with `str()` (`"EventType.NAME"` on Python 3.11+), so member filters matched nothing, locally and as NATS subjects. Fixed at the seam for every caller (`_event_type_filter`), not in the Counselor alone. The leading suspect, `_runtime` being `None`, was refuted. Five dormant listeners now receive events.
+- *Penalty rule.* An output suppression is delivered and recorded only: no reason carries the Counselor's trust penalty or message until its gauge is qualified (`quality_gate`: AD-1350, #1637; `confabulation_detected`: BF-922, #1639). Restoring a penalty is a decision of the qualifying issue.
+- *CONDUCT_VIOLATION.* The subscription, handler and penalty are removed: AD-489 named no producer, and a producer is a new conduct gauge needing its own AD. The `EventType` member and the federation standing order's text stay.
+- *SPC.* The AD-522 store stays wired and is marked inert: its feed (AD-522e-1) is unbuilt.
+- *Callsign handlers (A1).* The four Counselor handlers that message by callsign resolve through `AgentRegistry` and skip a callsign no registered agent holds. Their DMs (verification prompts; no trust or profile write; at most one Counselor DM per agent an hour) are restored as AD-567f, AD-583, AD-583f and AD-583g designed them, not gated. Order: after BF-920 (#1633), which made the cascade event single.
+- *Woken consumers (A2).* Delivery exposed four consumer defects on the base, fixed here: AD-532e's reactive trigger uses the real `find_matching` (a ranked list; the threshold applied to its score); `_send_therapeutic_dm` reserves the agent's hour before its awaits (one Counselor DM an hour, also under concurrent delivery); one zone recovery is one assessment; AD-529's quarantine recommendation assesses and logs but applies no posting restriction and sends no message until the firewall's gauge is qualified and a restriction can be lifted (D3's rule; R11). Registered: the Counselor's assessment inputs call APIs their dependencies lack, and its trust-update reassessment runs on every trust outcome (R12).
+- *DM reservation (A3).* The hour an unsent DM reserved is given back only by the attempt that holds it (its own clock reading; a newer reservation is always at least the cooldown later), on any exit before `create_thread` is awaited, cancellation included; once `create_thread` is awaited, a cancellation keeps the hour (the thread may be committed). Registered: `create_thread` gives no commit receipt (R13).
+- *Reversal.* Revert the commits; the listeners go deaf again.
+
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 
 - *Scope.* Standing-order text and its layout test only; nothing under `src/` changes. No AD or BF number, like the 2026-10-15 profile entries.

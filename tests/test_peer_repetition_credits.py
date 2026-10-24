@@ -557,6 +557,9 @@ class TestZoneRecoveryHandler:
         profile = agent.get_profile("agent-x")
         assert profile is not None
         assert profile.self_corrections == 1
+        # BF-921 (#1636): one recovery is one assessment; the handler appended assess_agent's a second time.
+        assert len(profile.assessments) == 1
+        assert profile.assessments[0].tier_credit == "self_correction"
 
     @pytest.mark.asyncio
     async def test_red_to_amber_no_credit(self) -> None:

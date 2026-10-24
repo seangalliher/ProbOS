@@ -2135,10 +2135,10 @@ class DreamingEngine:
                 return
             self._reactive_cooldowns[agent_id] = now
 
-            # Find matching procedure
-            match = await self._procedure_store.find_matching(
-                intent_type, threshold=PROCEDURE_MATCH_THRESHOLD,
-            )
+            # Find matching procedure. BF-921 (#1636): find_matching takes no threshold and returns a
+            # ranked list; called with one, it raised TypeError (logged at DEBUG) on every delivered completion.
+            matches = await self._procedure_store.find_matching(intent_type, n_results=1)
+            match = matches[0] if matches and matches[0].get("score", 0.0) >= PROCEDURE_MATCH_THRESHOLD else None
             if not match:
                 self._extraction_candidates[intent_type] = now
                 return

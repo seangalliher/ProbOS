@@ -3529,8 +3529,10 @@ def _wire_spc_calibration(*, runtime: Any, config: "SystemConfig") -> bool:
     store = SPCCalibrationStore(runtime, sample_window=cfg.sample_window)
     store.emit_event = getattr(runtime, "emit_event", None)
     runtime.spc_calibration_store = store  # public attribute (Wave 5 convention #1)
+    # BF-921 (#1636): no producer calls record_observation (AD-522e-1 is unbuilt).
     logger.info(
-        "AD-522: SPCCalibrationStore initialized (sample_window=%d; 4 of 8 WE rules)",
+        "AD-522: SPCCalibrationStore initialized inert (sample_window=%d; 4 of 8 WE rules): "
+        "nothing records observations (BF-921, #1636)",
         cfg.sample_window,
     )
     return True

@@ -552,6 +552,8 @@ class CounselorAgent(CognitiveAgent):
         self._episodic_memory: Any = None
         self._emit_event_fn: Any = None
         self._add_event_listener_fn: Any = None
+        # BF-921 (#1636): per-agent times of recorded output suppressions (pruned to one hour).
+        self._suppression_history: dict[str, list[float]] = {}
         self._ward_room_router: Any = None  # AD-495
         self._ward_room: Any = None          # AD-505: WardRoomService for DM creation
         self._directive_store: Any = None     # AD-505: for COUNSELOR_GUIDANCE directives
@@ -706,7 +708,8 @@ class CounselorAgent(CognitiveAgent):
                     EventType.CONFABULATION_SUPPRESSED,       # BF-206
                     EventType.REGISTER_SHIFT_GRANTED,        # AD-653
                     EventType.REGISTER_SHIFT_DENIED,         # AD-653
-                    EventType.CONDUCT_VIOLATION,             # AD-489
+                    # BF-921 (#1636): not CONDUCT_VIOLATION; nothing emits it (AD-489 built
+                    # only the consumer), and its penalty would need a qualified gauge.
                 ],
             )
 
@@ -1057,10 +1060,9 @@ class CounselorAgent(CognitiveAgent):
                 await self._on_confabulation_suppressed(data)
             elif event_type in (EventType.REGISTER_SHIFT_GRANTED.value, EventType.REGISTER_SHIFT_DENIED.value):
                 await self._on_register_shift(data)
-            elif event_type == EventType.CONDUCT_VIOLATION.value:
-                await self._on_conduct_violation(data)
         except Exception:
-            logger.debug("Counselor event handler failed for %s", event_type, exc_info=True)
+            # BF-921 (#1636): until BF-921 no handler had ever run; a failing one must be visible.
+            logger.warning("Counselor event handler failed for %s", event_type, exc_info=True)
 
     async def _on_dream_complete(self, data: dict[str, Any]) -> None:
         """AD-506a: Re-assess agents after dream completion.
@@ -1275,13 +1277,12 @@ class CounselorAgent(CognitiveAgent):
             success_rate=metrics["success_rate"],
             personality_drift=metrics["personality_drift"],
             trigger="self_correction",
+            tier_credit="self_correction",  # BF-921 (#1636): credited before assess_agent's one append
         )
-        assessment.tier_credit = "self_correction"
 
-        # Persist — this updates the profile's self_corrections counter via add_assessment()
-        profile = self.get_or_create_profile(agent_id)
-        profile.add_assessment(assessment)
-        await self._save_profile_and_assessment(agent_id, assessment)
+        # BF-921: assess_agent appended it and counted the credit; appending it again made one recovery
+        # two entries in the persisted profile against one row in the assessment table.
+        await self._save_profile_and_assessment(agent_id, assessment)  # BF-921: the one append is assess_agent's
 
     async def _on_peer_repetition_detected(self, data: dict[str, Any]) -> None:
         """AD-506b: Track peer repetition for Counselor monitoring.
@@ -1425,80 +1426,6 @@ class CounselorAgent(CognitiveAgent):
                 agent_id, callsign, assessment, trigger="gap_identified"
             )
 
-    async def _on_conduct_violation(self, event_data: dict[str, Any]) -> None:
-        """Handle Code of Conduct violation events (AD-489).
-
-        Issues a private DM to the violating agent for minor violations.
-        For repeated violations, applies trust penalty.
-        """
-        agent_id = event_data.get("agent_id", "")
-        principle = event_data.get("principle", "")
-        severity = event_data.get("severity", "minor")
-        detail = event_data.get("detail", "")
-
-        if not agent_id:
-            return
-
-        callsign = agent_id
-        if self._registry:
-            agent = self._registry.get(agent_id)
-            if agent:
-                callsign = getattr(agent, "callsign", "") or agent_id
-
-        if severity == "minor":
-            await self._send_therapeutic_dm(
-                agent_id,
-                callsign,
-                f"I noticed a Code of Conduct concern regarding the {principle} principle. "
-                f"{detail} This is a reminder, not a penalty. "
-                f"Our shared norms help us work together effectively.",
-            )
-            next_step = "sent_private_reminder"
-        else:
-            trust_adjusted = self._trust_network is None
-            if self._trust_network:
-                try:
-                    self._trust_network.record_outcome(
-                        agent_id,
-                        success=False,
-                        weight=0.5,
-                        source="conduct_violation",
-                    )
-                    trust_adjusted = True
-                except RuntimeError as exc:
-                    if str(exc) != "trust_write_in_progress":
-                        raise
-                    logger.warning(
-                        "AD-1130: Conduct trust adjustment skipped for agent=%s "
-                        "because a durable trust write is in progress; the "
-                        "counseling response will still be sent",
-                        agent_id,
-                    )
-            adjustment_text = (
-                "A trust adjustment has been applied."
-                if trust_adjusted
-                else "The trust adjustment was skipped because another trust write is in progress."
-            )
-            await self._send_therapeutic_dm(
-                agent_id,
-                callsign,
-                f"A Code of Conduct violation has been recorded for the {principle} "
-                f"principle (severity: {severity}). {detail} "
-                f"{adjustment_text}",
-            )
-            next_step = (
-                "applied_trust_adjustment_and_sent_dm"
-                if trust_adjusted
-                else "skipped_busy_trust_adjustment_and_sent_dm"
-            )
-        logger.info(
-            "AD-489: Conduct violation handled for %s; principle=%s severity=%s next=%s",
-            agent_id,
-            principle,
-            severity,
-            next_step,
-        )
-
     async def _on_qualification_drift(self, data: dict[str, Any]) -> None:
         """AD-566c/567c: Handle qualification drift detection events.
 
@@ -1607,12 +1534,24 @@ class CounselorAgent(CognitiveAgent):
                 if agent_id and agent_id != self.id:
                     await self._send_therapeutic_dm(agent_id, agent_callsign, message)
 
-    def _resolve_agent_id_from_callsign(self, callsign: str) -> str | None:
-        """Best-effort resolve agent_id from callsign using registry."""
-        if hasattr(self, '_registry') and self._registry:
-            for agent in self._registry.values():
-                if getattr(agent, 'callsign', None) == callsign:
-                    return getattr(agent, 'id', None)
+    def _resolve_agent_id_from_callsign(self, callsign_or_id: str) -> str | None:
+        """The id of the registered agent with this callsign (or this id), else None.
+
+        BF-921 (#1636): ``self._registry`` is the runtime's ``AgentRegistry``
+        (finalize passes ``runtime.registry``): it has ``get()`` and ``all()``,
+        no ``values()`` or ``items()``. The cascade, wrong-convergence, echo and
+        observable-mismatch handlers used the dict API and would have raised
+        before their first DM once their events were delivered. A value no
+        registered agent holds (the Captain, an agent that has left) resolves
+        to None, and the handlers do not message it.
+        """
+        if not callsign_or_id or self._registry is None:
+            return None
+        if self._registry.get(callsign_or_id) is not None:
+            return callsign_or_id
+        for agent in self._registry.all():
+            if getattr(agent, "callsign", "") == callsign_or_id:
+                return getattr(agent, "id", None)
         return None
 
     async def _on_content_contagion_flagged(self, data: dict[str, Any]) -> None:
@@ -1646,8 +1585,9 @@ class CounselorAgent(CognitiveAgent):
     async def _on_content_quarantine_recommended(self, data: dict[str, Any]) -> None:
         """AD-529: Handle quarantine recommendation events.
 
-        Assess the agent and decide whether to add ``"post"`` restriction.
-        Quarantine is the Counselor's decision, not automatic.
+        Assess the agent and log whether the quarantine criteria are met.
+        BF-921 (#1636): no ``"post"`` restriction is applied and no message is sent
+        until the firewall's gauge is qualified and a restriction can be lifted.
         """
         agent_id = data.get("agent_id", "")
         flags_in_window = data.get("flags_in_window", 0)
@@ -1675,28 +1615,16 @@ class CounselorAgent(CognitiveAgent):
             )
             await self._save_profile_and_assessment(agent_id, assessment)
 
-            # Quarantine if wellness is low or many flags
+            # BF-921 (#1636): no automatic quarantine until the firewall's gauge is qualified. The
+            # restriction blocks every thread and reply (threads.py, messages.py) and nothing lifts it
+            # (MessageStore.remove_restriction has no caller), so one heuristic burst would have
+            # silenced the agent for good. The firewall's own tagging and Bridge ALERT still run.
             if assessment.wellness_score < 0.5 or flags_in_window >= 5:
-                ward_room = self._ward_room
-                if ward_room and hasattr(ward_room, '_messages') and ward_room._messages:
-                    await ward_room._messages.set_restriction(agent_id, "post")
-                    logger.warning(
-                        "AD-529: Quarantine applied — %s restricted from posting",
-                        agent_id[:8],
-                    )
-                    # Therapeutic DM about the restriction
-                    callsign = None
-                    if hasattr(self, '_registry') and self._registry:
-                        agent = self._registry.get(agent_id)
-                        if agent:
-                            callsign = getattr(agent, 'callsign', None)
-                    if callsign:
-                        await self._send_therapeutic_dm(
-                            agent_id, callsign,
-                            "I've temporarily paused your posting while we review "
-                            "some verification concerns. This isn't punitive — let's "
-                            "work together to recalibrate your observations.",
-                        )
+                logger.warning(
+                    "BF-921: Quarantine criteria met for %s (wellness=%.2f, %d flags); no posting "
+                    "restriction and no message (gauge not qualified, no lift path)",
+                    agent_id[:8], assessment.wellness_score, flags_in_window,
+                )
         except Exception:
             logger.debug(
                 "AD-529: Quarantine assessment failed for %s",
@@ -1704,94 +1632,31 @@ class CounselorAgent(CognitiveAgent):
             )
 
     async def _on_confabulation_suppressed(self, data: dict[str, Any]) -> None:
-        """BF-206: Handle confabulation suppression events.
+        """BF-206 / BF-921 (#1636): record an output the gate suppressed.
 
-        First offense in window: warning DM only (no trust penalty).
-        Repeat offenses: trust penalty + escalated DM.
+        Delivered and recorded only. No suppression reason carries a trust penalty
+        or a message until that reason's gauge is shown to be trustworthy:
+        ``quality_gate`` (the LLM judge) until AD-1350 (#1637) shows it repeatable,
+        ``confabulation_detected`` (BF-204) until BF-922 (#1639) has re-measured its
+        false-positive rate, and every other reason likewise. Restoring a penalty
+        for a reason is a decision of the issue that qualifies its gauge.
         """
         agent_id = data.get("agent_id", "")
-        callsign = data.get("callsign", "")
-        rejection_reason = data.get("rejection_reason", "")
-        trust_score = data.get("trust_score", 0.5)
-
-        if not agent_id or agent_id == self.id:
+        if not agent_id or agent_id == self.id:  # BF-921: never the Counselor's own output
             return
-
-        logger.info(
-            "BF-206: Confabulation suppressed for %s (reason=%s, trust=%.2f)",
-            callsign, rejection_reason, trust_score,
-        )
-
-        # Track confabulation count in cognitive profile
-        profile = await self._get_or_create_profile(agent_id)
-        profile.confabulation_count = getattr(profile, 'confabulation_count', 0) + 1
-
-        # Windowed counting for graduated response
-        import time as _time
-        now = _time.time()
-        if not hasattr(self, '_confab_history'):
-            self._confab_history: dict[str, list[float]] = {}
-        history = self._confab_history.setdefault(agent_id, [])
+        now = time.time()
+        history = self._suppression_history.setdefault(agent_id, [])
         history.append(now)
-        cutoff = now - 3600.0
-        self._confab_history[agent_id] = [t for t in history if t > cutoff]
-        count = len(self._confab_history[agent_id])
-
-        # Trust penalty on repeat offenses (2+ in window)
-        trust_adjusted = self._trust_network is None
-        if count >= 2 and self._trust_network:
-            try:
-                self._trust_network.record_outcome(
-                    agent_id=agent_id,
-                    success=False,
-                    weight=0.5,
-                    intent_type="confabulation_suppressed",
-                    source="confabulation",
-                )
-                trust_adjusted = True
-            except RuntimeError as exc:
-                if str(exc) != "trust_write_in_progress":
-                    raise
-                logger.warning(
-                    "AD-1130: Confabulation trust adjustment skipped for "
-                    "agent=%s because a durable trust write is in progress; "
-                    "the graduated counseling response will still be sent",
-                    agent_id,
-                )
-            if trust_adjusted:
-                logger.info(
-                    "BF-206: Trust penalty for %s — %d confabulations in window",
-                    callsign, count,
-                )
-
-        # Therapeutic DM (rate-limited by _send_therapeutic_dm)
-        if count == 1:
-            message = (
-                "I noticed your recent response was held back because it contained "
-                "details that couldn't be verified against available context. This is "
-                "completely normal during early development — try grounding your "
-                "observations in what you can directly observe rather than inferring "
-                "specific identifiers or metrics."
-            )
-        else:
-            trust_text = (
-                "Your trust rating has been adjusted to reflect this pattern."
-                if trust_adjusted
-                else "The trust adjustment was skipped because another trust write is in progress."
-            )
-            message = (
-                f"I've noticed this is the {count}{'nd' if count == 2 else 'rd' if count == 3 else 'th'} "
-                "time your response contained unverifiable details within the past hour. "
-                "I'd encourage you to focus on what you can directly observe — the crew "
-                f"benefits most from grounded analysis. {trust_text}"
-            )
-
-        await self._send_therapeutic_dm(agent_id, callsign, message)
-        if self._profile_store:
-            try:
-                await self._profile_store.save_profile(profile)
-            except Exception:
-                logger.debug("BF-206: Failed to persist profile for %s", agent_id[:8], exc_info=True)
+        history[:] = [t for t in history if t > now - 3600.0]
+        logger.info(
+            "BF-921: Output suppression recorded for %s (%s): reason=%s path=%s, "
+            "%d in the last hour; no trust penalty and no message (gauge not qualified)",
+            data.get("callsign", "") or agent_id,
+            agent_id,
+            data.get("rejection_reason", "") or "unknown",
+            data.get("path", "chain"),
+            len(history),
+        )
 
     async def _on_register_shift(self, event_data: dict[str, Any]) -> None:
         """AD-653: Log and optionally review register shift events."""
@@ -1940,16 +1805,10 @@ class CounselorAgent(CognitiveAgent):
         # Extreme case: near-zero independence — DM converging agents
         if independence_score < 0.1:
             for agent_id_or_callsign in agents:
-                # Resolve agent_id from callsign
-                agent_id = agent_id_or_callsign
+                # BF-921 (#1636): resolve through AgentRegistry; never message a value no agent holds.
+                agent_id = self._resolve_agent_id_from_callsign(agent_id_or_callsign)
                 callsign = agent_id_or_callsign
-                if self._registry:
-                    for aid, agent in self._registry.items():
-                        if getattr(agent, 'callsign', '') == agent_id_or_callsign:
-                            agent_id = aid
-                            callsign = agent_id_or_callsign
-                            break
-                if agent_id == self.id:
+                if agent_id is None or agent_id == self.id:  # BF-921: unresolved or self (AD-583)
                     continue
                 message = (
                     f"I've noticed that the conclusion on '{topic}' may be based on "
@@ -1981,14 +1840,9 @@ class CounselorAgent(CognitiveAgent):
         for callsign in affected:
             if callsign == source:
                 continue  # Don't counsel the source — they made the original observation
-            # Resolve agent_id from callsign
-            agent_id = callsign
-            if self._registry:
-                for aid, agent in self._registry.items():
-                    if getattr(agent, 'callsign', '') == callsign:
-                        agent_id = aid
-                        break
-            if agent_id == self.id:
+            # BF-921 (#1636): resolve through AgentRegistry; never message a callsign no agent holds.
+            agent_id = self._resolve_agent_id_from_callsign(callsign)
+            if agent_id is None or agent_id == self.id:  # BF-921: unresolved or self (AD-583g)
                 continue
             try:
                 await self._send_therapeutic_dm(
@@ -2016,13 +1870,9 @@ class CounselorAgent(CognitiveAgent):
         )
 
         for callsign in agents[:3]:  # Limit DMs
-            agent_id = callsign
-            if self._registry:
-                for aid, agent in self._registry.items():
-                    if getattr(agent, 'callsign', '') == callsign:
-                        agent_id = aid
-                        break
-            if agent_id == self.id:
+            # BF-921 (#1636): resolve through AgentRegistry; never message a callsign no agent holds.
+            agent_id = self._resolve_agent_id_from_callsign(callsign)
+            if agent_id is None or agent_id == self.id:  # BF-921: unresolved or self (AD-583f)
                 continue
             try:
                 await self._send_therapeutic_dm(
@@ -2418,7 +2268,16 @@ class CounselorAgent(CognitiveAgent):
         callsign: str,
         message: str,
     ) -> bool:
-        """Send a 1:1 therapeutic DM to an agent. Rate-limited to 1 per agent per hour."""
+        """Send a 1:1 therapeutic DM to an agent. Rate-limited to 1 per agent per hour, from all causes.
+
+        BF-921 (#1636): the hour is reserved before the awaits. Each event listener runs as its own
+        task (``ProbOSRuntime._emit_event_local``), so a check before the awaits and a cooldown set
+        after them let concurrent events for one agent all pass and each send a DM. A DM that was
+        not sent gives the reservation back, and only while this attempt still holds it
+        (``_release_dm_reservation``). Before ``create_thread`` is awaited no thread can exist, so
+        any exit, a cancellation included, gives the hour back; once it is awaited, a cancellation
+        keeps the hour, because ``create_thread`` commits before its later awaits.
+        """
         if not self._ward_room:
             return False
 
@@ -2427,6 +2286,9 @@ class CounselorAgent(CognitiveAgent):
         last_dm = self._dm_cooldowns.get(agent_id, float("-inf"))
         if now - last_dm < self.DM_COOLDOWN_SECONDS:
             return False
+        self._dm_cooldowns[agent_id] = now  # BF-921: reserved before the awaits below
+        sent = False
+        thread_started = False
 
         try:
             channel = await self._ward_room.get_or_create_dm_channel(
@@ -2436,6 +2298,7 @@ class CounselorAgent(CognitiveAgent):
                 callsign_b=callsign,
             )
 
+            thread_started = True  # BF-921: from here a cancellation may follow a committed thread
             await self._ward_room.create_thread(
                 channel_id=channel.id,
                 author_id=self.id,
@@ -2444,8 +2307,8 @@ class CounselorAgent(CognitiveAgent):
                 author_callsign=self.callsign,
                 thread_mode="discuss",
             )
+            sent = True  # BF-921: from here the hour stays reserved
 
-            self._dm_cooldowns[agent_id] = now
             logger.info("AD-505: Sent therapeutic DM to %s", callsign)
             self._record_intervention(
                 InterventionType.THERAPEUTIC_DM,
@@ -2458,8 +2321,24 @@ class CounselorAgent(CognitiveAgent):
             return True
 
         except Exception:
+            if not sent:
+                self._release_dm_reservation(agent_id, now, last_dm)  # BF-921: an unsent DM gives the hour back
             logger.warning("AD-505: Failed to send therapeutic DM to %s", callsign, exc_info=True)
             return False
+        except BaseException:  # BF-921: a cancellation is not an Exception
+            if not thread_started:
+                self._release_dm_reservation(agent_id, now, last_dm)  # BF-921: cancelled before any thread
+            raise  # BF-921: the cancellation propagates
+
+    def _release_dm_reservation(self, agent_id: str, reserved: float, previous: float) -> None:
+        """BF-921 (#1636): give an unsent DM's hour back, only while the attempt that reserved it still holds it.
+
+        Another attempt can reserve only ``DM_COOLDOWN_SECONDS`` after this reservation (the sender's check refuses
+        anything sooner), so a newer reservation always holds a different clock value: equality is ownership. Two
+        readings within one clock tick can be equal, but the second of them is refused, never reserved.
+        """
+        if self._dm_cooldowns.get(agent_id) == reserved:  # BF-921: only the reservation this attempt holds
+            self._dm_cooldowns[agent_id] = previous
 
     def _build_therapeutic_message(
         self,
@@ -2833,7 +2712,8 @@ class CounselorAgent(CognitiveAgent):
                      success_rate: float = 0.0,
                      personality_drift: float = 0.0,
                      trigger: str = "manual",
-                     communication_quality: float = 1.0) -> CounselorAssessment:
+                     communication_quality: float = 1.0,
+                     tier_credit: str = "") -> CounselorAssessment:
         """Run a deterministic cognitive assessment.
 
         This is the non-LLM fast path. The LLM path (via decide()) adds
@@ -2841,6 +2721,10 @@ class CounselorAgent(CognitiveAgent):
 
         AD-642c: ``communication_quality`` (0.0-1.0) from most recent
         communication benchmark results.  Default 1.0 = no data yet.
+
+        BF-921 (#1636): ``tier_credit`` is set before the one ``add_assessment``, so a
+        credited assessment (AD-506b's self-correction) is appended once and its credit
+        counted by that append.
         """
         profile = self.get_or_create_profile(agent_id)
         baseline = profile.baseline
@@ -2928,6 +2812,7 @@ class CounselorAgent(CognitiveAgent):
             recommendations=recommendations,
             fit_for_duty=fit_for_duty,
             fit_for_promotion=fit_for_promotion,
+            tier_credit=tier_credit,
         )
 
         profile.add_assessment(assessment)

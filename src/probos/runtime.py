@@ -265,6 +265,22 @@ class _LiveNATSSubscription(Protocol):
     async def unsubscribe(self) -> None: ...
 
 
+def _event_type_filter(event_types: Iterable[object] | None) -> frozenset[str] | None:
+    """BF-921 (#1636): the wire names of the event types a listener asked for (None: every event).
+
+    ``EventType`` is a ``(str, Enum)``: on Python 3.11+ its ``str()`` is ``"EventType.NAME"``,
+    not its value. Before BF-921 a listener that passed members filtered on names no event
+    carries, locally and as NATS subjects, and received nothing: the Counselor's 24 types,
+    BF-125's GAME_COMPLETED, AD-532e's and AD-534b's dreaming triggers and AD-659c's
+    OPTIMIZATION_PROPOSAL_APPLIED.
+    """
+    if not event_types:
+        return None
+    return frozenset(
+        item.value if isinstance(item, EventType) else str(item) for item in event_types
+    )
+
+
 class _LiveNATSSubscriptionOwner(Protocol):
     async def release_raw_subscription(self, subscription: object) -> bool: ...
 
@@ -1703,7 +1719,7 @@ class ProbOSRuntime:
         specified event types. Falls back to in-memory listener list when
         NATS disconnected.
         """
-        type_filter = frozenset(str(t) for t in event_types) if event_types else None
+        type_filter = _event_type_filter(event_types)
         # Always append to local list (used as fallback when NATS disconnected)
         self._event_listeners.append((fn, type_filter))
 
@@ -1725,7 +1741,7 @@ class ProbOSRuntime:
         event_types: Iterable[str] | None = None,
     ) -> LiveEventListenerHandle:
         """Atomically register one live-only listener and await NATS readiness."""
-        type_filter = frozenset(str(item) for item in event_types) if event_types else None
+        type_filter = _event_type_filter(event_types)  # BF-921: live listeners too
         token = _LiveEventListenerToken(fn, type_filter)
         subscription_owner: _LiveNATSSubscriptionOwner | None = None
         subscription: object | None = None
@@ -1878,11 +1894,23 @@ class ProbOSRuntime:
                     stream="SYSTEM_EVENTS",
                 )
 
+        def _on_subscribed(done: asyncio.Task[None]) -> None:
+            # BF-921 (#1636): a subscription that fails leaves the listener deaf over
+            # NATS; say so instead of discarding the task's exception.
+            self._nats_publish_tasks.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                logger.warning(
+                    "BF-921: NATS event subscription failed for %s; the listener receives "
+                    "none of these events over NATS: %s",
+                    sorted(type_filter) if type_filter else "system.events.>",
+                    done.exception(),
+                )
+
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(_do_subscribe())
             self._nats_publish_tasks.add(task)
-            task.add_done_callback(self._nats_publish_tasks.discard)
+            task.add_done_callback(_on_subscribed)
         except RuntimeError:
             pass  # No event loop — local-only listener
 
