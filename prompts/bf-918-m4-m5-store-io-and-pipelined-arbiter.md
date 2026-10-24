@@ -2072,7 +2072,7 @@ Blind spots found and settled:
 
 **M5** (consumers: every `onSpeechEvent` listener, the drain, the meeting sequencer, `ProfileChatTab`)
 1. With pipelining off, every event `voice.ts` emits is unchanged (no `final` key), and the arbiter's wait ends exactly as before.
-2. Under pipelining, the wait ends on the reply's last sentence's `end`, on a stopped sentence's `end`, on `stopSpeaking` between sentences, on the entry's `dropped`, or on GUARD 2 after 45 s with no non-final `end` of the entry. It never ends on an `end` with `final: false`.
+2. Under pipelining, the wait ends on the first of these: the reply's last sentence's `end`; `stopSpeaking` while a sentence queue runs (the stop hook ends the wait, and a stopped sentence's own `end`, which a real audio element delivers after the stop, finds the wait done: the entry's `done` is idempotent, so whichever comes first ends it and the other is inert); the entry's `dropped`; GUARD 2 after 45 s with no non-final `end` of the entry. It never ends on an `end` with `final: false`.
 3. Each sentence still has exactly one `start` and one `end` (BF-655), and `dropped` is unchanged.
 4. `_endSentenceQueueWait` can never end the wait of a different entry: it holds that entry's own idempotent `done`.
 5. `final` is computed when the `end` fires, not when the sentence is dispatched.
