@@ -178,6 +178,23 @@ def isolated_archive_path(_bf919_isolated_archive):
         pytest.fail(f"BF-919: this test opened a Ship's Archive outside the temporary roots: {refused}", pytrace=False)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _bf919_no_model_download(tmp_path_factory, worker_id):
+    """BF-919 (#1632) M2: no test downloads Chroma's embedding model into the home directory.
+
+    Where the model is not already on disk, Chroma's download directory is pointed beneath a file in this worker's
+    basetemp, so the download fails before it creates anything and the embeddings fall back as CI's
+    ``PROBOS_EMBEDDINGS=local`` does; a model on disk is read as before -- see
+    ``tests/fixtures/model_download_guard.py``. ``PROBOS_EMBEDDINGS`` is deliberately not set here: real-model tests
+    keep running wherever the model is cached (``docs/development/test-suite-optimization-plan.md`` section 6).
+    """
+    from tests.fixtures.model_download_guard import SINKHOLE_NAME, model_download_guard
+
+    guard_dir = tmp_path_factory.mktemp(f"probos_model_guard_{worker_id}", numbered=False)
+    with model_download_guard(guard_dir / SINKHOLE_NAME) as download_path:
+        yield download_path
+
+
 @pytest.fixture(autouse=True)
 def _ad682_clear_module_caches():
     """AD-682: Reset module-level caches that mutate during tests.

@@ -2798,6 +2798,19 @@ def run_failed_start_child(tmp_path: Path) -> Any:
         report_line = next(line for line in completed.stdout.splitlines() if line.startswith("REPORT "))
         report = json.loads(report_line.removeprefix("REPORT "))
         report["parent_saw_exit_at"] = exited_at  # with the child's ``main_done_at``: how long the process took to end
+        if child == _CHILD:
+            # BF-919 (#1632): this child boots a runtime in the inherited home, beyond conftest's in-process guard,
+            # so it enters the same guard itself. The sinkhole proves it did, whether or not the model is on disk.
+            from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+
+            from tests.fixtures.model_download_guard import SINKHOLE_NAME, download_path_for
+
+            downloads = report["model_download"]
+            sinkhole = work / SINKHOLE_NAME
+            assert sinkhole.is_file(), downloads
+            assert Path(downloads["during"]) == download_path_for(
+                Path(downloads["original"]), ONNXMiniLM_L6_V2.EXTRACTED_FOLDER_NAME, sinkhole
+            ), downloads
         return report
 
     return run
