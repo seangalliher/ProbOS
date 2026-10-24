@@ -1530,8 +1530,9 @@ REPLACE:
   }
   // BF-918 M5 (#1626, R12): a sentence queue stopped between two sentences fires no
   // 'end' (nothing is playing) and can still be awaiting the next sentence's
-  // synthesis; end the arbiter's wait for it now. After a pause above, that
-  // sentence's 'end' was final and already ended the wait, and this is a no-op.
+  // synthesis; end the arbiter's wait for it now. After a pause above, that sentence's
+  // 'end' (final) may come before or after this call, because a real audio element
+  // delivers 'pause' asynchronously: the wait's `done` is idempotent, so the later is a no-op.
   const endWait = _endSentenceQueueWait;
   _endSentenceQueueWait = null;
   if (endWait !== null) endWait();
