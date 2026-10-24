@@ -1,10 +1,11 @@
 # BF-919: test boots never open the operator's Ship's Archive, and the suite downloads no embedding model into the home directory
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-23
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 (amendment A1: the booting child `tests/fixtures/failed_start_child.py` enters the model-download guard itself)
 
 **Status:** build-ready after the orchestrator's verification by tool on the then-current `main`. One issue (#1632), two milestones (M1 is the archive, M2 is the model cache), one gate and one PR. **Tier HIGH** (data integrity: test boots opened and migrated the operator's archive). Never lower the tier without the Captain. **Base:** `origin/main` `cb190f32` (BF-918 merged on 2026-10-24; the contract was drafted and verified on `26bec26d`). The orchestrator re-checked by tool: none of the files this contract edits, and none of the test and source paths it names in full, changed between the two (BF-918 added only `tests/fixtures/fake_piper.py` there), so every SEARCH block and the section 0 premises hold. BF-918 did edit `src/probos/runtime.py`, `src/probos/startup/finalize.py` and `src/probos/startup/shutdown.py`, which this contract cites only by bare module name and line in its prose: those line numbers are `26bec26d`'s and have moved by a few lines (for example `finalize.py:3650` is now `:3652`); no pair anchors on them.
 
-**Tests:** M1 adds `tests/fixtures/archive_isolation.py` and `tests/test_bf919_archive_isolation.py` (7 tests). M2 adds `tests/fixtures/model_download_guard.py` and `tests/test_bf919_model_download_guard.py` (5 tests). Both milestones edit `tests/conftest.py`. No production file changes.
+**Tests:** M1 adds `tests/fixtures/archive_isolation.py` and `tests/test_bf919_archive_isolation.py` (7 tests). M2 adds `tests/fixtures/model_download_guard.py` and `tests/test_bf919_model_download_guard.py` (5 tests). Both milestones edit `tests/conftest.py`. M2 also edits `tests/fixtures/failed_start_child.py` and the `run_failed_start_child` fixture in `tests/test_issue1419_failed_start_rollback.py` (§7.7; no new test function). No production file changes.
 
 **Line endings:** working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -23,6 +24,7 @@
 | `lifecycle_config` redirects the archive for its own users only | present | `tests/fixtures/runtime_lifecycle.py:74-90` |
 | Only CI forces `PROBOS_EMBEDDINGS=local` | present | `.github/workflows/ci.yml:40`, `:131`; `tests/test_ci_shards.py:1581` |
 | Chroma's ONNX download directory is a class attribute derived from `Path.home()` | present | `chromadb/utils/embedding_functions/onnx_mini_lm_l6_v2.py:39`, `:293-317` |
+| One booting child inherits the home: `run_failed_start_child` passes `{**os.environ, ...}` with no home variable, and `failed_start_child.py` boots real runtimes (archive explicit through `lifecycle_config`). In an empty home it downloaded Chroma's model (12 entries, 83,178,821 B) despite M2 (found in the build, 2026-10-24) | present | `tests/test_issue1419_failed_start_rollback.py:2774-2784`; `tests/fixtures/failed_start_child.py:104`, `:156`, `:190`; `runtime_lifecycle.py:84-90` |
 | Live: `%LOCALAPPDATA%\ProbOS\archive\` holds `archive.db` | listed read-only 2026-10-23 | Glob; row counts and `user_version` taken from #1632 (not re-read, §19) |
 
 ## 1. Problem
@@ -37,13 +39,13 @@ Separately, a boot on a machine without the sentence-transformers model cached f
 
 **D1: the archive guard (in the envelope).** Ranked:
 1. **Chosen:** a session-level redirect of `probos.config.resolve_archive_db_path`, plus a refusal at `ArchiveStore` construction that is recorded and fails the test.
-2. A production `PROBOS_ARCHIVE_DB_PATH` seam. Deferred: it would add a facade environment-read row (`test_ad1270e1_config_facade.py:567`, `:1598`), and today's booting child processes redirect their own home.
+2. A production `PROBOS_ARCHIVE_DB_PATH` seam. Deferred: it would add a facade environment-read row (`test_ad1270e1_config_facade.py:567`, `:1598`), and today's booting child processes redirect their own home or, in `failed_start_child.py`'s case, set an explicit archive through `lifecycle_config`.
 3. Monkeypatching only the resolver per test. Insufficient alone.
 4. Redirecting HOME and the related variables. Rejected: the Hugging Face cache, the git identity, Playwright and Chroma's import-time path all move.
 5. A default `ArchiveConfig` under tmp. Rejected: it changes default goldens.
 6. A guard in production code. Rejected.
 
-**D2: the model cache (in the envelope; it revises R2-1).** When the model is absent, Chroma's public `DOWNLOAD_PATH` is pointed beneath a file. `PROBOS_EMBEDDINGS` is not set, so real-embedding coverage stays in the local gate (`test-suite-optimization-plan.md:267`, `:298`).
+**D2: the model cache (in the envelope; it revises R2-1).** When the model is absent, Chroma's public `DOWNLOAD_PATH` is pointed beneath a file. `PROBOS_EMBEDDINGS` is not set, so real-embedding coverage stays in the local gate (`test-suite-optimization-plan.md:267`, `:298`). A child interpreter carries none of this. The one booting child that inherits the home, `tests/fixtures/failed_start_child.py`, enters the same guard itself, as it already enters `install_abortive_self_pipe` and `install_codebase_index_memo` "as conftest does" (§7.7, amendment A1). Rejected for it: `PROBOS_EMBEDDINGS=local` in its environment (it would change every machine's child boot and drop the only real-model run of a thread-leak check) and a redirected child home (the Hugging Face cache moves too, so every run would download Chroma's model into the temporary home).
 
 **D3: where the tripwire lives.** Refusal at construction; failure at the per-test teardown and at the session-fixture teardown. Rejected: `pytest_sessionfinish`, which xdist does not report reliably, and a spy on `initialize`, which fires too late and reads a private attribute.
 
@@ -59,6 +61,7 @@ Separately, a boot on a machine without the sentence-transformers model cached f
 - **M2.**
   - `tests/fixtures/model_download_guard.py`: when `<DOWNLOAD_PATH>/onnx/model.onnx` is absent, `DOWNLOAD_PATH` is pointed beneath a file in the worker's basetemp.
   - Conftest enters it once per session per worker. Both are restored on exit.
+  - `tests/fixtures/failed_start_child.py` enters it around its boots, with the sinkhole in its own working directory (under the parent test's `tmp_path`), and reports Chroma's path before and during. `run_failed_start_child` asserts both for every run of that child (§7.7).
 
 ## 4. Consumers of every value this changes
 
@@ -67,6 +70,7 @@ Separately, a boot on a machine without the sentence-transformers model cached f
 | `probos.config.resolve_archive_db_path`, inside the suite | boot (`cognitive_services.py:673`, `:681`), reset and erase (`__main__.py:3205`, `:3223`), backup roots (`backup_inventory.py:229`, `:240`); `test_ad1347_s1_wiring.py:57` replaces it with its own spy for its tests, and monkeypatch restores it | An empty `db_path` resolves to the current test's path; a set `db_path` resolves unchanged |
 | `ArchiveStore.__init__`, inside the suite | every construction (6 test sites, all under tmp_path; the boot; the CLI) | A path outside the temporary roots raises before any I/O and is recorded |
 | `ONNXMiniLM_L6_V2.DOWNLOAD_PATH`, inside the suite | `ONNXMiniLM_L6_V2` via `DefaultEmbeddingFunction` (`embeddings.py:199-201`); `test_ad1347_s1_wiring.py:76` overrides it for its own tests | Unchanged when the model is on disk; otherwise the download step raises `OSError`, which `embeddings.py:205-211` catches |
+| `ONNXMiniLM_L6_V2.DOWNLOAD_PATH` inside `failed_start_child.py`, and its new report key `model_download` | the child's boots (`:104`, `:156`); the key's only reader is `run_failed_start_child` (`test_issue1419_failed_start_rollback.py`), for `_CHILD` runs only (`:2811`, `:2838`, `:2872`, `:2940`); `rollback_child.py` (`:2912`, `:2980`) is untouched | Same rule as the parent; the child's environment and archive are unchanged |
 | New fixtures `_bf919_isolated_archive`, `isolated_archive_path`, `_bf919_no_model_download` | autouse; `test_ad682_fixture_isolation.py:25-30` finds the conftest plugin by attribute (no collision) | none |
 
 ## 5. Tests
@@ -101,6 +105,8 @@ After that, the two new files once more at `-n 4`, which exercises the per-worke
 | C4 | `test_c4_the_guard_writes_its_sinkhole_points_chroma_beneath_it_and_restores_chromas_directory` | Install, the sinkhole file, and restore |
 | C5 | `test_c5_conftest_installed_the_guard_for_this_worker` | Conftest's install is live: the model is on disk, or the path lies under the sinkhole |
 
+**Changed, M2 (A1):** `run_failed_start_child` in `tests/test_issue1419_failed_start_rollback.py` asserts, for every `failed_start_child.py` run (four tests, starting with `test_a_process_that_failed_two_starts_exits_by_itself_and_boots_again`), that the child wrote its sinkhole and that Chroma's path during its boots follows `download_path_for`. The file is already in the focused gate. The behavioural evidence is §18 Run 2b.
+
 **Hard stop:** if A1 fails on the candidate only because the home holds an entry other than the archive, that is a second write into the home. Report it; do not weaken the assertion.
 
 ## 6. Milestones
@@ -108,7 +114,7 @@ After that, the two new files once more at `-n 4`, which exercises the per-worke
 | Milestone | Sections | Commit |
 |---|---|---|
 | M1 (archive) | §7.1 to §7.3 | `BF-919: test boots resolve the Ship's Archive under the worker's temporary root and refuse any other` |
-| M2 (model cache) | §7.4 to §7.6, and §8 | `BF-919: the test suite downloads no embedding model into the home directory` |
+| M2 (model cache) | §7.4 to §7.7, and §8 | `BF-919: the test suite downloads no embedding model into the home directory` |
 
 **M1 opens at §7.1 and M2 opens at §7.4.** §7.6 anchors on text that §7.3 creates, so M1 is built first.
 
@@ -673,6 +679,79 @@ def _bf919_no_model_download(tmp_path_factory, worker_id):
         yield download_path
 ```
 
+### 7.7 `tests/fixtures/failed_start_child.py` and its fixture (M2, amendment A1)
+
+The child inherits the home and runs no conftest, so M2's session guard does not reach it. It enters the guard itself. `rollback_child.py` builds only `BareRuntime` (`:102-107`) and does not change.
+
+**`tests/fixtures/failed_start_child.py`, imports:**
+
+SEARCH:
+```python
+import pytest  # noqa: E402
+
+from probos.cognitive.yeoman import YeomanAgent  # noqa: E402
+from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe  # noqa: E402
+from tests.fixtures.codebase_index_memo import install_codebase_index_memo  # noqa: E402
+from tests.fixtures.runtime_factory import make_runtime  # noqa: E402
+```
+REPLACE:
+```python
+import pytest  # noqa: E402
+from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2  # noqa: E402
+
+from probos.cognitive.yeoman import YeomanAgent  # noqa: E402
+from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe  # noqa: E402
+from tests.fixtures.codebase_index_memo import install_codebase_index_memo  # noqa: E402
+from tests.fixtures.model_download_guard import SINKHOLE_NAME, model_download_guard  # noqa: E402
+from tests.fixtures.runtime_factory import make_runtime  # noqa: E402
+```
+
+**`tests/fixtures/failed_start_child.py`, `main`:**
+
+SEARCH:
+```python
+    with install_codebase_index_memo():
+        report["failures"] = [
+```
+REPLACE:
+```python
+    # BF-919 (#1632): as conftest does in the pytest process. This process inherits the home and none of conftest's
+    # in-process guards, so with no model on disk Chroma's download directory lies beneath a file here and the boot
+    # falls back instead of downloading into the home. The parent checks the sinkhole and the path.
+    report["model_download"] = {"original": str(ONNXMiniLM_L6_V2.DOWNLOAD_PATH)}
+    with install_codebase_index_memo(), model_download_guard(base / SINKHOLE_NAME):
+        report["model_download"]["during"] = str(ONNXMiniLM_L6_V2.DOWNLOAD_PATH)
+        report["failures"] = [
+```
+
+**`tests/test_issue1419_failed_start_rollback.py`, `run_failed_start_child`:**
+
+SEARCH:
+```python
+        report["parent_saw_exit_at"] = exited_at  # with the child's ``main_done_at``: how long the process took to end
+        return report
+```
+REPLACE:
+```python
+        report["parent_saw_exit_at"] = exited_at  # with the child's ``main_done_at``: how long the process took to end
+        if child == _CHILD:
+            # BF-919 (#1632): this child boots a runtime in the inherited home, beyond conftest's in-process guard,
+            # so it enters the same guard itself. The sinkhole proves it did, whether or not the model is on disk.
+            from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+
+            from tests.fixtures.model_download_guard import SINKHOLE_NAME, download_path_for
+
+            downloads = report["model_download"]
+            sinkhole = work / SINKHOLE_NAME
+            assert sinkhole.is_file(), downloads
+            assert Path(downloads["during"]) == download_path_for(
+                Path(downloads["original"]), ONNXMiniLM_L6_V2.EXTRACTED_FOLDER_NAME, sinkhole
+            ), downloads
+        return report
+```
+
+On the tree before A1, every `_CHILD` run fails with `KeyError: 'model_download'`, on any machine.
+
 ## 8. Tracking (tracker pairs; in M2's commit)
 
 Each pair anchors on one line that occurs once in its file and that other entries do not change. BF-918 inserts its `PROGRESS.md` entry under the title line and its `DECISIONS.md` entry before the same heading used below, so both anchors survive it. Set the date to the commit date.
@@ -687,7 +766,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-919 (2026-10-23), closes #1632 -- test boots no longer open the operator's Ship's Archive, and the suite downloads no embedding model into the home directory.** An empty `archive.db_path` resolves under the home directory, outside `data_dir`, so every default-config boot in the suite opened and migrated the operator's archive (BF-883 covered only `data_dir`). `tests/conftest.py` now enters `tests/fixtures/archive_isolation.py` once per session in every xdist worker: an empty `db_path` resolves to each test's own path under `<basetemp>/probos_archive_<worker>`, and `ArchiveStore` refuses, before it opens anything, a file outside the suite's temporary roots or equal to the operator's default; a refusal fails its test (or the session), because the boot only logs it. Where Chroma's ONNX model is not on disk, `tests/fixtures/model_download_guard.py` points Chroma's download directory beneath a file, so a boot falls back as CI does and nothing lands in `~/.cache/chroma`; `PROBOS_EMBEDDINGS` is not set, so real-model tests still run where the model is cached. No production code, environment variable or config default changes. New: the two fixture modules, `tests/test_bf919_archive_isolation.py` and `tests/test_bf919_model_download_guard.py`. The contract is `prompts/bf-919-test-boots-isolate-archive-and-embedding-cache.md`.
+**BF-919 (2026-10-23), closes #1632 -- test boots no longer open the operator's Ship's Archive, and the suite downloads no embedding model into the home directory.** An empty `archive.db_path` resolves under the home directory, outside `data_dir`, so every default-config boot in the suite opened and migrated the operator's archive (BF-883 covered only `data_dir`). `tests/conftest.py` now enters `tests/fixtures/archive_isolation.py` once per session in every xdist worker: an empty `db_path` resolves to each test's own path under `<basetemp>/probos_archive_<worker>`, and `ArchiveStore` refuses, before it opens anything, a file outside the suite's temporary roots or equal to the operator's default; a refusal fails its test (or the session), because the boot only logs it. Where Chroma's ONNX model is not on disk, `tests/fixtures/model_download_guard.py` points Chroma's download directory beneath a file, so a boot falls back as CI does and nothing lands in `~/.cache/chroma`; the one booting child process that inherits the home (`tests/fixtures/failed_start_child.py`) enters the same guard itself, and its fixture checks that it did; `PROBOS_EMBEDDINGS` is not set, so real-model tests still run where the model is cached. No production code, environment variable or config default changes. New: the two fixture modules, `tests/test_bf919_archive_isolation.py` and `tests/test_bf919_model_download_guard.py`. Changed: `tests/fixtures/failed_start_child.py` and its fixture in `tests/test_issue1419_failed_start_rollback.py`. The contract is `prompts/bf-919-test-boots-isolate-archive-and-embedding-cache.md`.
 ```
 
 **`DECISIONS.md`** (inserted before the heading below, which is at `DECISIONS.md:686` on this tree):
@@ -700,9 +779,9 @@ REPLACE:
 ```markdown
 ### BF-919 -- Test boots never open the operator's Ship's Archive, and the suite downloads no embedding model into the home directory (2026-10-23, #1632)
 
-- *Scope.* Test infrastructure only: `tests/conftest.py` (two session fixtures and one autouse function fixture), new `tests/fixtures/archive_isolation.py` and `tests/fixtures/model_download_guard.py`, new `tests/test_bf919_archive_isolation.py` and `tests/test_bf919_model_download_guard.py`. Contract: `prompts/bf-919-test-boots-isolate-archive-and-embedding-cache.md`. Tier HIGH (data integrity).
-- *D1 (decided by the Architect under Delegated AD Execution Mode).* A session-level redirect of `probos.config.resolve_archive_db_path` (every production caller imports it inside the calling function) plus a refusal at `ArchiveStore` construction, recorded and failed at teardown because the boot swallows archive errors. Rejected: redirecting HOME/USERPROFILE/LOCALAPPDATA/XDG (moves the Hugging Face cache, git identity, Playwright and Chroma's import-time path; Windows ignores HOME), a default `ArchiveConfig` under tmp (moves default goldens), a guard in production code. Deferred: a production `PROBOS_ARCHIVE_DB_PATH` seam, if a booting child process ever inherits the real home (today's two give their children their own home).
-- *D2 (revises the R2-1 direction on #1632).* No `PROBOS_EMBEDDINGS=local` in `tests/conftest.py`: CI already forces it, so the local gate is the only place real embeddings run, and `docs/development/test-suite-optimization-plan.md` section 6 rejects it. Chroma's public `DOWNLOAD_PATH` is pointed beneath a file only when its model is not on disk.
+- *Scope.* Test infrastructure only: `tests/conftest.py` (two session fixtures and one autouse function fixture), new `tests/fixtures/archive_isolation.py` and `tests/fixtures/model_download_guard.py`, new `tests/test_bf919_archive_isolation.py` and `tests/test_bf919_model_download_guard.py`; `tests/fixtures/failed_start_child.py` and its fixture in `tests/test_issue1419_failed_start_rollback.py` (amendment A1). Contract: `prompts/bf-919-test-boots-isolate-archive-and-embedding-cache.md`. Tier HIGH (data integrity).
+- *D1 (decided by the Architect under Delegated AD Execution Mode).* A session-level redirect of `probos.config.resolve_archive_db_path` (every production caller imports it inside the calling function) plus a refusal at `ArchiveStore` construction, recorded and failed at teardown because the boot swallows archive errors. Rejected: redirecting HOME/USERPROFILE/LOCALAPPDATA/XDG (moves the Hugging Face cache, git identity, Playwright and Chroma's import-time path; Windows ignores HOME), a default `ArchiveConfig` under tmp (moves default goldens), a guard in production code. Deferred: a production `PROBOS_ARCHIVE_DB_PATH` seam, if a booting child process ever inherits the real home (the federation and quickstart children have their own home; `failed_start_child.py` inherits it but sets an explicit archive through `lifecycle_config`).
+- *D2 (revises the R2-1 direction on #1632).* No `PROBOS_EMBEDDINGS=local` in `tests/conftest.py`: CI already forces it, so the local gate is the only place real embeddings run, and `docs/development/test-suite-optimization-plan.md` section 6 rejects it. Chroma's public `DOWNLOAD_PATH` is pointed beneath a file only when its model is not on disk. A child interpreter carries none of this, so the one booting child that inherits the home (`tests/fixtures/failed_start_child.py`) enters the same guard itself, as it already enters conftest's other session guards. Rejected for it: `PROBOS_EMBEDDINGS=local` in its environment (it changes every machine's child boot) and a redirected child home (the Hugging Face cache moves too, so every run would download Chroma's model).
 - *D3 (the tripwire).* Refusal at construction; the per-test teardown names the offender; the session teardown catches a refusal outside any test. Rejected: `pytest_sessionfinish` (not reliably reported under xdist) and a spy on `initialize` (after the open).
 - *Disclosed effects.* Within the suite, an empty `db_path` resolves to a per-test path that exists only if the test opened the archive; `isolated_archive_path` is a new autouse fixture tests may request. On a machine without the sentence-transformers model, boots take the keyword fallback instead of downloading Chroma's model.
 - *Reversal.* Revert the commits.
@@ -723,7 +802,7 @@ REPLACE:
 - `.github/workflows/ci.yml`, `tests/test_ci_shards.py`, `scripts/run_test_gate.py`, `config-profiles.yaml`, the facade baseline.
 - `tests/fixtures/runtime_lifecycle.py::lifecycle_config`: its explicit redirect stays, and is harmless.
 - AD-1347 S1's own spies (`test_ad1347_s1_wiring.py:44-77`).
-- Child processes: the guards do not cross a process boundary. The booting child fixtures redirect their own home (§11, AV4).
+- Child processes: the conftest guards do not cross a process boundary. The federation and quickstart children redirect their own home. `failed_start_child.py` inherits the home, sets its archive explicitly (`lifecycle_config`) and, after §7.7, enters the model-download guard itself. Its environment is not changed. `rollback_child.py` boots no runtime and is not changed (§12, AV4 and AV8).
 - The Hugging Face cache (still read from the real home, offline); the utility agents' `~/.probos` files; the default repository path of a directly constructed `KnowledgeStore` (§20).
 - Any of BF-918's 33 files.
 
@@ -757,6 +836,7 @@ Each Line cell occurs exactly once in its file after §7. Every mutant leaves on
 | M2-R3 | `tests/fixtures/model_download_guard.py` | `ONNXMiniLM_L6_V2.DOWNLOAD_PATH = chosen` | `pass` | C4 |
 | M2-R4 | `tests/fixtures/model_download_guard.py` | `ONNXMiniLM_L6_V2.DOWNLOAD_PATH = original_value` | `pass` | C4 |
 | M2-R5 | `tests/fixtures/model_download_guard.py` | `sinkhole.write_text("BF-919 (#1632): the test suite downloads no embedding model.\n", encoding="utf-8")` | `pass` | C4 |
+| M2-R6 | `tests/fixtures/failed_start_child.py` | `with install_codebase_index_memo(), model_download_guard(base / SINKHOLE_NAME):` | `with install_codebase_index_memo():` | `test_issue1419_failed_start_rollback.py::test_a_process_that_failed_two_starts_exits_by_itself_and_boots_again` (`assert sinkhole.is_file()`, on any machine). Own command: `d:/ProbOS/.venv/Scripts/python.exe -m pytest -q -n 0 -x -p no:randomly "tests/test_issue1419_failed_start_rollback.py::test_a_process_that_failed_two_starts_exits_by_itself_and_boots_again"`. **Run it in the normal home**, where the model is cached: this mutant has no second guard layer, and in an empty home it would really download. |
 
 ## 11. Verified Against Codebase (2026-10-23, `origin/main` `26bec26d`)
 
@@ -790,6 +870,14 @@ tests/fixtures/runtime_lifecycle.py 74-90 lifecycle_config (explicit archive db_
 tests/fixtures/federation_cluster.py 147-158 child HOME/USERPROFILE/LOCALAPPDATA/XDG under its node dir
 tests/test_ad1137_quickstart_chain.py 195-207 child home under tmp_path, PROBOS_* stripped
 tests/fixtures/failed_start_child.py 104, 156: make_runtime(base, config=lifecycle_config(...))
+  49-54 setdefault NATS/HF_HUB_OFFLINE/overlay (no home, no PROBOS_EMBEDDINGS); 88 import pytest  # noqa: E402; 92 install_codebase_index_memo import
+  189 install_abortive_self_pipe()  # as conftest does; 190 base = Path.cwd(); 198 with install_codebase_index_memo():
+tests/fixtures/rollback_child.py 102-107 _runtime -> BareRuntime(base / "data", config=SystemConfig(...), started=False)
+tests/fixtures/runtime_lifecycle.py 84-90 archive_dir = tmp_path / "archive"; 525-564 BareRuntime (a shutdown double)
+tests/test_issue1419_failed_start_rollback.py 118-119 _CHILD, _ROLLBACK_CHILD; 2756 run_failed_start_child; 2772-2773 work = tmp_path / "work"
+  2774-2784 environment = {**os.environ, ...} (no HOME/USERPROFILE); 2788 cwd=work; 2800 parent_saw_exit_at
+  _CHILD callers 2811, 2838, 2872, 2940; child=_ROLLBACK_CHILD 2912, 2980
+src/probos/knowledge/embeddings.py 170 PROBOS_EMBEDDINGS local short-circuit (not used by A1)
 tests/test_ad682_fixture_isolation.py 15-22 _FakeTmpPathFactory; 25-30 plugin lookup; 99, 116 fixture.__wrapped__
 tests/test_ad1347_s1_wiring.py 57 setattr(probos_config, "resolve_archive_db_path", ...); 76 setattr(ONNXMiniLM_L6_V2, "DOWNLOAD_PATH", ...)
 tests/test_ad487_self_distillation.py 388: <Class>.__init__ = _patched_init  # type: ignore[assignment]   (precedent)
@@ -810,7 +898,8 @@ SEARCH uniqueness: `install_codebase_index_memo` occurs at `tests/conftest.py:13
 | AV1 | No `src` caller binds `resolve_archive_db_path` at module import | Grep `resolve_archive_db_path` in `src` | `config.py:2631` (def); `__main__.py:3205`, `:3223`, `cognitive_services.py:673`, `backup_inventory.py:229`, all indented inside functions | yes |
 | AV2 | No test constructs `ArchiveStore` outside tmp_path | Grep `ArchiveStore\(` in `tests` | `test_ad1341_s1_archive_store.py:52`, `test_ad1341_s1_promotion.py:49`, `test_ad1341_s1_reset_and_erase.py:201`, `:245`, `test_ad524_ships_archive.py:128` (fake), `:158` (tmp_path at `:159`) | yes (statically) |
 | AV3 | No test clears `os.environ` wholesale | Grep `os\.environ.*clear=True`, `patch\.dict\(\s*os\.environ`, `setattr\(os, "environ"` | none | yes |
-| AV4 | Child processes that boot a runtime have their own home or an explicit archive | Glob `tests/fixtures/*child*.py`; Grep `ProbOSRuntime\(\|make_runtime\(` in `tests/fixtures`; Grep `"-m",\s*"probos"` in `tests` | `failed_start_child.py` (lifecycle_config); `rollback_child.py` (BareRuntime, no archive); `federation_cluster_node.py:182` (home from `child_env`); quickstart (own home); `test_bf908_crew_scope_token.py:1346` (`crew-token`, no boot) | yes |
+| AV4 | Child processes that boot a runtime have their own home or an explicit archive | Glob `tests/fixtures/*child*.py`; Grep `ProbOSRuntime\(\|make_runtime\(` in `tests/fixtures`; Grep `"-m",\s*"probos"` in `tests` | `failed_start_child.py` (lifecycle_config); `rollback_child.py` (BareRuntime, no archive); `federation_cluster_node.py:182` (home from `child_env`); quickstart (own home); `test_bf908_crew_scope_token.py:1346` (`crew-token`, no boot) | yes, for the archive |
+| AV8 | Of the booting children, only `failed_start_child.py` inherits the home | the focused gate (28 files) in an empty home, bisected to single files by the orchestrator on candidate 1 (2026-10-24) | 27 files leave 0 entries; `test_issue1419_failed_start_rollback.py` leaves 12 (Chroma's model only); its env dict `:2774-2784` has no home variable; `rollback_child.py` boots nothing (`:102-107`) | yes, for the focused set; the rest of the suite's subprocess families are covered only empirically by §18 Run 3 (cold) |
 | AV5 | The installed chromadb has no environment variable for the ONNX directory | Grep `CHROMA_CACHE_DIR\|cache_dir` in `onnx_mini_lm_l6_v2.py` | none | yes |
 | AV6 | No existing name collides with the new fixtures or modules | Grep `isolated_archive\|_bf919\|archive_isolation\|model_download_guard` in `tests`, `src`, `scripts` | none | yes |
 | AV7 | A default boot writes nothing else under the home directory | src enumeration (§13) and #1632's reproduction (an empty home gained only the archive and `.cache/chroma`) | the desktop lock file (`experience.py:365`; desktop off, `finalize.py:124`); M365 cache (`runtime.py:723`, needs `enabled` and `client_id`); office dirs (`config.py:3771`, off); `KnowledgeStore` (boot passes `data_dir`, `cognitive_services.py:547-548`) | yes; A1 asserts it |
@@ -866,7 +955,8 @@ SEARCH uniqueness: `install_codebase_index_memo` occurs at `tests/conftest.py:13
   - BF-883 and AD-682: per-worker temporary roots, and the AD-682 fake-factory and `__wrapped__` test shape;
   - AD-1347 S1 A3 and A4: a per-test resolver spy and the `DOWNLOAD_PATH` redirect, generalised here to the whole suite;
   - BF-908: the guard is installed for the session, not file by file;
-  - the federation and quickstart fixtures: child processes get their own home.
+  - the federation and quickstart fixtures: child processes get their own home;
+  - `failed_start_child.py`'s own `install_abortive_self_pipe()` / `install_codebase_index_memo()` "as conftest does": a child enters the parent's guards itself (A1).
 - **External, one search.** A docs mirror describes a `CHROMA_CACHE_DIR` setting ([mintlify mirror](https://mintlify.wiki/chroma-core/chroma/integrations/sentence-transformers)). Rejected: the installed chromadb has no such read (AV5). The Go client pre-caches the model for offline tests ([offline runtime bundle](https://go-client.chromadb.dev/offline-runtime-bundle)). Considered and deferred: pre-caching would add a download to set-up, which this BF exists to avoid.
 - **Blind spots absorbed:**
   - the boot swallows archive errors, so a refusal is recorded and failed rather than only raised;
@@ -874,7 +964,8 @@ SEARCH uniqueness: `install_codebase_index_memo` occurs at `tests/conftest.py:13
   - a resolver bound at import is caught by the construction refusal;
   - a mutation campaign could otherwise open the live archive, so every row keeps one guard layer;
   - Chroma ignores `HF_HUB_OFFLINE`;
-  - nested pytest runs write their own conftest.
+  - nested pytest runs write their own conftest;
+  - **missed in the draft and found in the build (A1):** a child interpreter that boots a runtime in the inherited home carries none of the in-process guards. `failed_start_child.py` downloaded Chroma's model into an empty home. The draft's AV4 checked only that the child's archive was explicit.
 - **Considered and deferred:** the production environment seam (D1 option 2); pre-caching models; a ci_divergences row (there is no environment divergence).
 
 ## 16. Diff Reviewer: properties to verify
@@ -888,12 +979,13 @@ SEARCH uniqueness: `install_codebase_index_memo` occurs at `tests/conftest.py:13
 7. On a machine whose Hugging Face cache holds the model, every embedding test runs exactly as before.
 8. **Consumers that must accept the change:** the boot's archive block, `__main__`'s reset and erase, `build_default_roots`, AD-1347 S1's spies and `test_ad682`'s plugin lookup.
 9. No new test can pass vacuously. A1 asserts the empty home, the original resolver pointing into it, and the per-test archive created at `user_version` 1. C4 and C5 assert the installation itself.
+10. `failed_start_child.py` enters `model_download_guard` around every runtime it builds, with its sinkhole in its own working directory. Its environment, its archive and `rollback_child.py` are unchanged. `run_failed_start_child` fails every `_CHILD` run whose child did not write the sinkhole or whose live path breaks `download_path_for`, on a machine with the model and on one without.
 
 ## 17. Acceptance criteria
 
 - §7.1 to §7.6 and §8 are applied in milestone order. Each milestone's focused gate passes at `-n 0`, and the two new files pass at `-n 4`. The precheck is clean, and `gen_ad_ledger.py --check` reports current.
-- Every new test fails on the tree before the change (import). A1 fails on the behaviour when M1-R1 is applied.
-- All 20 rows in §10 are killed in census mode; any row whose named killer does not fail is revised before the merge.
+- Every new test fails on the tree before the change (import). A1 fails on the behaviour when M1-R1 is applied. The §7.7 fixture check fails on candidate 1 (`KeyError: 'model_download'`).
+- All 21 rows in §10 are killed in census mode (M2-R6 with its own command, in the normal home); any row whose named killer does not fail is revised before the merge.
 - The §18 runs hold.
 - The broad gate runs once, run by the orchestrator, with `--receipt`; one PR closes #1632.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -904,11 +996,14 @@ SEARCH uniqueness: `install_codebase_index_memo` occurs at `tests/conftest.py:13
 
 1. **Run 1 (the check discriminates; the tree before the fix).** In a worktree at `origin/main`, with `USERPROFILE` and `HOME` set to an empty `<T>\homeB` (assert 0 entries first), run `pytest -q -n 0 tests/test_ad1346_admission_service_boot.py`. Expect `homeB\AppData\Local\ProbOS\archive\archive.db`, and `.cache\chroma` if the network is reachable (#1632's reproduction).
 2. **Run 2 (the candidate).** The same command plus both new test files, with a fresh empty `<T>\homeC`. Expect 0 entries in `homeC`.
+   - **Run 2b (the booting child).** `pytest -q -n 0 tests/test_issue1419_failed_start_rollback.py`, with a fresh empty `<T>\homeD` and `HF_HOME` unset. Expect 0 entries. Candidate 1 left 12 (Chroma's model, 83,178,821 B; measured 2026-10-24); that measurement is the discriminating run. Any entry after A1 is a hard stop to the Architect.
 3. **Run 3 (the candidate, full gate).**
    - Build `<T>\homeA\AppData\Local\ProbOS\archive\archive.db` as a file copy of `%LOCALAPPDATA%\ProbOS\archive\archive.db`. Copy `%USERPROFILE%\.gitconfig` into `homeA`, if it exists, for the git identity.
    - Record the sha256 of the copy and a listing of every entry under `homeA` (relative path, size, LastWriteTimeUtc), stored outside `homeA`.
-   - Run `scripts/run_test_gate.py --label bf919-acceptance --receipt logs/gates/bf919-acceptance.receipt.json` with `USERPROFILE` and `HOME` set to `homeA`, and `HF_HOME` set to the real `%USERPROFILE%\.cache\huggingface`, so model coverage is kept and the Hugging Face cache writes stay out of `homeA`. The wrapper carries these into its worktree child and the xdist workers (`run_test_gate.py:812-836`).
-   - Expect the copy's sha256 unchanged and the listing identical.
+   - Run `scripts/run_test_gate.py --label bf919-acceptance --receipt logs/gates/bf919-acceptance.receipt.json` with `USERPROFILE` and `HOME` set to `homeA`, and `HF_HOME` set to a fresh empty `<T>\hf_cold` outside `homeA`. No embedding model is then available anywhere, so every boot, in the pytest workers and in every child process, takes the path a machine without the model takes. Run 3 is therefore also the census of child processes that would download on a cold machine. A warm `HF_HOME` hides them, because sentence-transformers loads and Chroma is never reached. The wrapper carries these into its worktree child and the xdist workers (`run_test_gate.py:812-836`).
+   - Expect the copy's sha256 unchanged and the listing identical. Only the hash and the listing are judged. With no model, real-embedding tests take the fallback, so test outcomes are reported but not compared with the gate of record.
+     - An entry under `.cache\chroma` or `AppData\Local\ProbOS` is a hard stop to the Architect.
+     - Any other new entry is reported with its path and the test that made it (bisect as for A1) and registered (R-7). It does not stop this BF.
    - This is acceptance evidence. The gate of record runs in the normal environment; its outcomes should match Run 3's.
 4. **Optional, on the live file.** Before and after Run 3, copy the live archive to a scratch directory and hash the copies; record the live file's length and LastWriteTimeUtc. Expect them unchanged, unless the running vessel itself rebooted during the run.
 5. **Optional, on the tree before the fix.** Repeat Run 2's command with a fresh copy in `homeA'`. A changed hash shows that the Run 3 check discriminates. If the hash does not change, the header write does not alter bytes, and Run 1 is the discriminating evidence. Record which.
@@ -923,12 +1018,16 @@ SEARCH uniqueness: `install_codebase_index_memo` occurs at `tests/conftest.py:13
 - **Listings of the home directory** for `.probos` and `.gitconfig` were denied, which is why §18 says "if it exists".
 - **The cost** of importing chromadb once per worker at session start was not measured.
 - **Inline `python -c` child processes:** one grep found none; other spawn styles were not enumerated.
+- **Child processes beyond the focused gate** (about 74 files call `subprocess.run`) were not traced one by one. Coverage is empirical: AV8 for the focused set, and §18 Run 3 (cold `HF_HOME`) for the whole suite.
+- **A1 was not probed by the Architect.** The fixture check, M2-R6's killer and Run 2b are hand-traced. Candidate 1's 12 entries were measured by the orchestrator.
 
 ## 20. For the register (not fixed here)
 
 - **R-1.** The utility agents write `~/.probos/notes`, `reminders.json` and `todos.json` on their intents (`organizer_agents.py:119`, `:249`; `productivity_agents.py:162`). A test that dispatches those intents to a real agent writes into the real home.
 - **R-2.** `KnowledgeStore` defaults to `~/.probos/knowledge` when constructed directly with an empty `repo_path` (`knowledge/store.py:110`). The boot overrides this; direct test constructions were not enumerated.
 - **R-3.** Under offline mode, huggingface_hub may write `.no_exist` markers into the real `~/.cache/huggingface` (seen in the Captain's cache; the cause is unverified).
-- **R-4.** If a child process that boots a runtime ever inherits the real home, adopt the production environment seam (D1 option 2).
+- **R-4.** `failed_start_child.py` inherits the real home. It is safe for the archive only because `lifecycle_config` sets `db_path`. A future booting child that uses a default config would open the operator's archive with no guard. If one appears, enter `archive_isolation` in that child or adopt the production environment seam (D1 option 2).
+- **R-6.** A shared child-environment or child-guard helper for every child-spawning test (the orchestrator's option 3). Deferred: one booting child inherits the home today.
+- **R-7.** Whatever §18 Run 3 (cold) lists outside the archive and Chroma, one line per source.
 - **R-5.** The docstrings of `lifecycle_config` (`runtime_lifecycle.py:77`) and `test_ad1347_s1_wiring.py:34-35` describe production behaviour. Inside the suite the default is now redirected; a later doc pass may say so.
 
