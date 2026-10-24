@@ -40,18 +40,6 @@ class FakeTrustNetwork:
         return self._recent[:n]
 
 
-class FakeVitalsMonitor:
-    def __init__(self, vitals=None):
-        self._vitals = vitals
-
-    async def scan_now(self):
-        return self._vitals
-
-    @property
-    def latest_vitals(self):
-        return self._vitals
-
-
 class FailingProvider:
     """A provider that always raises."""
 
@@ -181,29 +169,10 @@ class TestTrustProvider:
         assert result.verified is True  # Actually has low scores
 
 
-# ---------------------------------------------------------------------------
-# SystemHealthProvider tests
-# ---------------------------------------------------------------------------
-
-
-class TestHealthProvider:
-    def test_detects_health_claim(self):
-        from probos.cognitive.observable_state import SystemHealthProvider
-        provider = SystemHealthProvider(FakeVitalsMonitor({"system_health": "healthy"}))
-        result = asyncio.run(
-            provider.check("system health shows degraded status", {})
-        )
-        assert result is not None
-        assert result.provider_name == "system_health"
-
-    def test_verifies_system_health(self):
-        from probos.cognitive.observable_state import SystemHealthProvider
-        provider = SystemHealthProvider(FakeVitalsMonitor({"system_health": "healthy"}))
-        result = asyncio.run(
-            provider.check("critical system failure detected", {})
-        )
-        assert result is not None
-        assert result.verified is False  # Healthy, not critical
+# BF-920 (#1633): SystemHealthProvider was removed. It was never registered, and
+# it compared VitalsMonitorAgent's float ``system_health`` to string labels, so
+# every health claim would have read as contradicted. Its two tests fed it the
+# string "healthy", a shape the monitor never produces; they went with the class.
 
 
 # ---------------------------------------------------------------------------

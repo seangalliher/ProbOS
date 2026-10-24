@@ -17,17 +17,44 @@ def resolve_author_department(author_id: str) -> str:
         return ""
 
 
-async def check_and_emit_cascade_risk(
+async def _deliver_bridge_alerts(
+    alerts: list[Any] | None, ward_room_router: Any, tag: str,
+) -> None:
+    """Deliver Bridge alerts through the Ward Room router (BF-920: one path).
+
+    Log-and-degrade per alert: a failed delivery must not stop the other
+    alerts, nor the Ward Room post that triggered the check.
+    """
+    if not alerts or not ward_room_router:
+        return
+    for alert in alerts:
+        try:
+            await ward_room_router.deliver_bridge_alert(alert)
+        except Exception:
+            logger.debug("%s: Bridge alert delivery failed", tag, exc_info=True)
+
+
+async def check_and_alert_cascade_risk(
     social_verification: Any,
-    emit_fn: Callable | None,
     *,
+    bridge_alerts: Any,
+    ward_room_router: Any,
     author_id: str,
     author_callsign: str,
     post_body: str,
     channel_id: str,
     peer_matches: list[dict],
 ) -> None:
-    """Check cascade confabulation risk and emit event if medium/high (AD-567f)."""
+    """Check cascade confabulation risk and raise its Bridge alert (AD-567f).
+
+    BF-920: ``SocialVerificationService.check_cascade_risk`` is the single
+    owner of ``CASCADE_CONFABULATION_DETECTED``. This helper used to emit a
+    second copy through the Ward Room emitter, which forwards to the same
+    runtime bus, so every detection went out twice. It routes the result
+    to the Bridge alert AD-567f designed instead
+    (``BridgeAlertService.check_cascade_risk``: medium and high only),
+    which had no caller.
+    """
     if not peer_matches or not social_verification:
         return
     try:
@@ -38,14 +65,10 @@ async def check_and_emit_cascade_risk(
             channel_id=channel_id,
             peer_matches=peer_matches,
         )
-        if cascade and cascade.risk_level in ("medium", "high"):
+        if cascade and bridge_alerts:
             import dataclasses
-            from probos.events import EventType as _ET
-            if emit_fn:
-                emit_fn(
-                    _ET.CASCADE_CONFABULATION_DETECTED,
-                    dataclasses.asdict(cascade),
-                )
+            alerts = bridge_alerts.check_cascade_risk(dataclasses.asdict(cascade))
+            await _deliver_bridge_alerts(alerts, ward_room_router, "AD-567f")
     except Exception:
         logger.debug("AD-567f: cascade check failed", exc_info=True)
 
@@ -63,7 +86,7 @@ async def check_and_trace_echo(
 ) -> None:
     """AD-583f/583g: Trace echo chain and verify claims on echo detection.
 
-    Called after check_and_emit_cascade_risk() when peer_matches are found.
+    Called after check_and_alert_cascade_risk() when peer_matches are found.
     Runs thread echo analysis and, if echo detected, runs observable state
     verification on the thread content.
     """
@@ -91,15 +114,14 @@ async def check_and_trace_echo(
         # AD-583g: Bridge alert
         if bridge_alerts:
             import dataclasses
-            alerts = bridge_alerts.check_ward_room_echo(
-                dataclasses.asdict(echo_result),
-            )
-            if alerts and ward_room_router:
-                for alert in alerts:
-                    try:
-                        await ward_room_router.deliver_bridge_alert(alert)
-                    except Exception:
-                        logger.debug("AD-583g: Bridge alert delivery failed", exc_info=True)
+            # BF-920: ThreadEchoResult has no affected_callsigns field, so the
+            # alert's "Affected:" list was always empty; merge it in.
+            echo_alert_input = {
+                **dataclasses.asdict(echo_result),
+                "affected_callsigns": [step.callsign for step in echo_result.propagation_chain],
+            }
+            alerts = bridge_alerts.check_ward_room_echo(echo_alert_input)
+            await _deliver_bridge_alerts(alerts, ward_room_router, "AD-583g")
 
         # AD-583f: Observable state verification on echo content
         if observable_state_verifier and echo_result.chain_length >= 3:
@@ -137,11 +159,15 @@ async def check_and_trace_echo(
                             "agents_involved": list(agents_involved),
                         })
                     if bridge_alerts:
-                        bridge_alerts.check_observable_mismatch({
+                        # BF-920: deliver the alert; it used to be built and dropped.
+                        mismatch_alerts = bridge_alerts.check_observable_mismatch({
                             "thread_id": thread_id,
                             "claims_failed": len(failed),
                             "ground_truth_summary": "; ".join(summaries[:3]),
                         })
+                        await _deliver_bridge_alerts(
+                            mismatch_alerts, ward_room_router, "AD-583f",
+                        )
 
     except Exception:
         logger.debug("AD-583f/g: Echo trace failed", exc_info=True)

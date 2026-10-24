@@ -32,7 +32,7 @@ class VerificationResult:
 class StateProvider(Protocol):
     """Protocol for pluggable state verification providers (ISP).
 
-    Each provider handles a narrow domain (games, trust, health).
+    Each provider handles a narrow domain (games, trust).
     Returns None if the claim is outside its domain.
     """
 
@@ -244,83 +244,6 @@ class TrustStateProvider:
                 provider_name=self.name,
                 claim_text=claim_text,
                 verified=has_low,
-                ground_truth_summary=summary,
-                confidence=0.7,
-            )
-
-        return VerificationResult(
-            provider_name=self.name,
-            claim_text=claim_text,
-            verified=None,
-            ground_truth_summary=summary,
-            confidence=0.4,
-        )
-
-
-_HEALTH_KEYWORDS = frozenset({
-    "health", "pool", "degraded", "critical", "failure",
-    "offline", "monitoring",
-})
-
-
-class SystemHealthProvider:
-    """Verify system health claims against VitalsMonitor snapshot."""
-
-    def __init__(self, vitals_monitor: Any) -> None:
-        self._vitals = vitals_monitor
-
-    @property
-    def name(self) -> str:
-        return "system_health"
-
-    async def check(
-        self, claim_text: str, context: dict[str, Any]
-    ) -> VerificationResult | None:
-        words = set(claim_text.lower().split())
-        if not words & _HEALTH_KEYWORDS:
-            return None
-
-        # Try scan_now (async) first, fall back to latest_vitals
-        vitals = None
-        try:
-            if hasattr(self._vitals, "scan_now"):
-                vitals = await self._vitals.scan_now()
-        except Exception:
-            logger.debug("AD-583f: scan_now failed", exc_info=True)
-
-        if vitals is None and hasattr(self._vitals, "latest_vitals"):
-            vitals = self._vitals.latest_vitals
-
-        if not vitals:
-            return VerificationResult(
-                provider_name=self.name,
-                claim_text=claim_text,
-                verified=None,
-                ground_truth_summary="No vitals data available.",
-                confidence=0.2,
-            )
-
-        system_health = vitals.get("system_health", "unknown")
-        pool_health = vitals.get("pool_health", {})
-        summary = f"System health: {system_health}."
-        if pool_health:
-            summary += f" Pool statuses: {pool_health}."
-
-        claim_lower = claim_text.lower()
-        if "failure" in claim_lower or "critical" in claim_lower:
-            is_bad = system_health in ("critical", "failure", "degraded")
-            return VerificationResult(
-                provider_name=self.name,
-                claim_text=claim_text,
-                verified=is_bad,
-                ground_truth_summary=summary,
-                confidence=0.8,
-            )
-        if "degraded" in claim_lower:
-            return VerificationResult(
-                provider_name=self.name,
-                claim_text=claim_text,
-                verified=(system_health == "degraded"),
                 ground_truth_summary=summary,
                 confidence=0.7,
             )
