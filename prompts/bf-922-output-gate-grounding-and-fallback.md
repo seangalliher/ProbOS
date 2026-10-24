@@ -1,14 +1,15 @@
 # BF-922: the chain's output gate (#1639): BF-204 grounds on what the composing call was given, ignores pure-decimal numbers and counts distinct ids; the single-call fallback runs the deterministic checks; the suppression log line names the agent
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24 (Amendment A1: review round 1 of M1 and M2)
 
 **Status:** build-ready. One BF, two milestones (M1 HIGH, M2 HIGH), one PR, one broad gate. **BF-921 (#1636) merged first, as PR #1651 (merge `471d3f7e`)**: the Architect's draft batched the two, and the orchestrator landed BF-921 alone because its review took three rounds; this prompt builds on that merge, and its M2 calls `CognitiveAgent._emit_output_suppressed`, which BF-921 M1 added. **BF number:** BF-922 (#1639); this contract allocates nothing. **Tier:** M1 **HIGH** (it changes what a safety check treats as grounded, in both directions); M2 **HIGH** (it gates an output path that was ungated, with a new suppression and a new event). The change is reviewed at HIGH: use the Copilot `Diff Reviewer`. Never lower a tier without the Captain. **Base:** `origin/main` `471d3f7e` (the BF-921 merge). **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Tests:**
-- New `tests/test_bf922_output_grounding.py` (M1, 15 functions; with the live fixture's parametrization about 40 cases).
+- New `tests/test_bf922_output_grounding.py` (M1, 18 functions; with the parametrizations about 50 cases; Amendment A1 added the lookup-outcome rule and two real-chain lookup tests on a real `WardRoomService`).
 - New fixture `tests/fixtures/bf922_live_grounding_cases.json` (M1; **written by the orchestrator before M1 starts**, from the live vessel read-only, section 6; the Builder never generates or edits it).
-- New `tests/test_bf922_fallback_gate.py` (M2, 7 functions).
-- No existing test is expected to change (section 5); a focused failure is handled by the rule in section 6.
+- New `tests/test_bf922_fallback_gate.py` (M2, 9 functions, 11 cases; A1 added the real-transport seam over the AD-835 suffix and the cache-replay test).
+- Two existing tests change, by Amendment A1: `tests/test_ad1347_s4_chain_lookup.py` (section 7.4c: the lookup result carries its outcome) and `tests/test_ad1325_boundaries.py` (section 7.12: its exact-base bytes exclude the new `LLMResponse` field, as for AD-1327 and BF-901). No other existing test is expected to change (section 5); a focused failure is handled by the rule in section 6.
 
 ## 0. Premise: what is present on this tree
 
@@ -39,11 +40,11 @@
 
 ## 3. Decisions (for #1639)
 
-**D1, the grounding source (item 1).** Ranked: (1, chosen) **what the composing call was given from outside the chain's own model calls**: `composer_world_text(context, prior_results)`, i.e. COMPOSE's `_build_user_prompt` over the prior results without ANALYZE. That covers the thread, QUERY data, memories, lookups, oracle and situation sections, from the same function that renders them, so a section added to COMPOSE later is covered automatically. Plus BF-233's intent ids (`params` thread, channel and author; `_agent_id`; `target_agent_id`; `intent_id`), which are the agent's own input, not model output: a fabricated id cannot coincide with them. (2) Record the exact request text in COMPOSE's result: exact, but it grounds the ANALYZE brief (model output) and changes a result contract that every chain test builds by hand; rejected. (3) Keep the old source and add sections: keeps the analysis laundering hole; rejected. **The check cannot exempt an id the agent was not given:** every grounded run comes from the world text or the intent's ids. The system prompt is not a source: it is standing orders, skills and the crew roster by callsign (`cognitive_agent.py:3001-3046`), with no entity ids. Collection: `shown_hex_runs` reduces the given text to its maximal runs of 6+ hex characters, and a cited id is grounded when it occurs inside a run, which is exactly the old `id in text` test restricted to hex. **Pattern:** `\b(?=[0-9]*[a-f])[0-9a-f]{6,}\b` (at least one letter a-f; a pure-decimal number is not an identifier, accepting that the 2.3% of 8-hex segments that are all digits are no longer checked). **Counting:** distinct ids, threshold still 2. **Regression fixture:** real cited ids and their real rows from the live `ward_room.db`, written by the orchestrator (section 6), each row's id placed where a production renderer shows that kind. It is a placement, not a replay: the live prompts were not retained (`journal` keeps hashes only).
+**D1, the grounding source (item 1).** Ranked: (1, chosen) **what the composing call was given from outside the chain's own model calls**: `composer_world_text(context, prior_results)`, i.e. COMPOSE's `_build_user_prompt` over the prior results without ANALYZE. That covers the thread, QUERY data, memories, lookups, oracle and situation sections, from the same function that renders them, so a section added to COMPOSE later is covered automatically. Plus BF-233's intent ids (`params` thread, channel and author; `_agent_id`; `target_agent_id`; `intent_id`), which are the agent's own input, not model output: a fabricated id cannot coincide with them. (2) Record the exact request text in COMPOSE's result: exact, but it grounds the ANALYZE brief (model output) and changes a result contract that every chain test builds by hand; rejected. (3) Keep the old source and add sections: keeps the analysis laundering hole; rejected. **The check cannot exempt an id the agent was not given:** every grounded run comes from the world text or the intent's ids. **World text holds no output of this chain's model calls, not even echoed back by a retrieval** (Amendment A1, round 1 M1 finding 1): AD-1347's lookup is dispatched with the reference ANALYZE chose, and its not_found and invalid_ref texts repeat that reference (invalid_ref adds the example id `51d91a7d`), so `composer_world_text` keeps the lookup section only when `_ward_room_lookup_outcome` is a record outcome (found; ambiguous, whose reference starts every listed id); COMPOSE's own prompt still shows the text. Earlier model output that world sections quote (the thread's previous replies, the agent's own reflections in its memories) is outside this chain's calls and still grounds (R5). The system prompt is not a source: it is standing orders, skills and the crew roster by callsign (`cognitive_agent.py:3001-3046`), with no entity ids. Collection: `shown_hex_runs` reduces the given text to its maximal runs of 6+ hex characters, and a cited id is grounded when it occurs inside a run, which is exactly the old `id in text` test restricted to hex. **Pattern:** `\b(?=[0-9]*[a-f])[0-9a-f]{6,}\b` (at least one letter a-f; a pure-decimal number is not an identifier, accepting that the 2.3% of 8-hex segments that are all digits are no longer checked). **Counting:** distinct ids, threshold still 2. **Regression fixture:** real cited ids and their real rows from the live `ward_room.db`, written by the orchestrator (section 6), each row's id placed where a production renderer shows that kind. It is a placement, not a replay: the live prompts were not retained (`journal` keeps hashes only).
 
-**D2, the re-measure.** A true replay of the 309 cases is impossible: neither the cognitive journal nor `chain_traces` keeps the rendered prompt. So: (a) **at build time**, the orchestrator applies the new pattern and distinct counting to the logged ids of the 309 cases with `bf204_real.py`'s parser and records on #1639 how many no longer reach the threshold, counting only cases whose logged `n` equals the number of ids logged (the line printed at most 3); (b) **prospectively**, after the merged build has produced at least 100 `BF-204: Grounding check failed` lines (or 7 days of vessel time, whichever comes first), the orchestrator runs the `bf204_real.py` method over the new lines, read-only against `%LOCALAPPDATA%\ProbOS\data\ward_room.db` (immutable), and records on #1639: the total, the all-real share (the false-positive rate), the split by `path=` (chain, single_call_fallback), and for every all-real case which section, if any, gave the id. An all-real case is a finding: either a renderer outside `composer_world_text` or an id the agent took from its own ANALYZE output (D1 excludes it by design). The new line names up to 8 ids and the path, so the probe's parser needs that format (section 7.3). **#1639 stays open until (b) is recorded**, and BF-921's rule keeps `confabulation_detected` penalty-free until then.
+**D2, the re-measure.** A true replay of the 309 cases is impossible: neither the cognitive journal nor `chain_traces` keeps the rendered prompt. So: (a) **at build time**, the orchestrator applies the new pattern and distinct counting to the logged ids of the 309 cases with `bf204_real.py`'s parser and records on #1639 how many no longer reach the threshold, counting only cases whose logged `n` equals the number of ids logged (the line printed at most 3); (b) **prospectively**, after the merged build has produced at least 100 `BF-204: Grounding check failed` lines (or 7 days of vessel time, whichever comes first), the orchestrator runs the `bf204_real.py` method over the new lines, read-only against `%LOCALAPPDATA%\ProbOS\data\ward_room.db` (immutable), and records on #1639: the total, the all-real share (the false-positive rate), the split by `path=` (chain, single_call_fallback), and for every all-real case which section, if any, gave the id. An all-real case is a finding: either a renderer outside `composer_world_text` or an id the agent took from its own ANALYZE output (D1 excludes it by design). The fixture places every row through a production renderer (Amendment A1: 18 post rows through QUERY `thread_metadata` and the router's thread line, 3 channel rows through QUERY `unread_counts`; 0 of the 8 cases could not be placed); which renderer the live agents actually saw is what (b) measures. The new line names up to 8 ids and the path, so the probe's parser needs that format (section 7.3). **#1639 stays open until (b) is recorded**, and BF-921's rule keeps `confabulation_detected` penalty-free until then.
 
-**D3, the fallback gate (item 2). AD-632a's fallback was not designed as an ungated path; it degrades to the pre-chain single call, which predates EVALUATE.** It runs **the deterministic checks only, not the LLM judge.** Reasons: the fallback runs when the model is already failing (3,322 triage failures), so a second model call mostly fails too and adds load at the worst moment; the judge's repeatability is unmeasured (AD-1350, #1637); BF-204's invariant covers the deterministic checks only (the judge is already bypassed for Captain, mention, DM, boot camp and low trust, `evaluate.py:552-626`). **Scope:** every single call that follows a chain which returned no decision for a chain intent (`ward_room_notification`, `proactive_think`): the AD-643a routed chain (triage failure, chain failure, a triage without communication actions, a missing chain) and the AD-632f external chain when its intent is a chain intent. Each such reply is the post the chain would have gated; a single call for any other intent (a DM, a Captain's direct request) is not gated. **Grounding on the fallback:** the request's system prompt and user prompt, which are exactly what that call was given and contain no model output, plus the intent's ids. **Seam test:** a real `decide()` on a `ward_room_notification` with the real AD-643a routing, a triage executor that raises `SubTaskError`, the real fallback flag and `_decide_via_llm`, and a model client that answers once; a reply citing two invented ids is suppressed with `path=single_call_fallback`, and a reply citing given ids is posted.
+**D3, the fallback gate (item 2). AD-632a's fallback was not designed as an ungated path; it degrades to the pre-chain single call, which predates EVALUATE.** It runs **the deterministic checks only, not the LLM judge.** Reasons: the fallback runs when the model is already failing (3,322 triage failures), so a second model call mostly fails too and adds load at the worst moment; the judge's repeatability is unmeasured (AD-1350, #1637); BF-204's invariant covers the deterministic checks only (the judge is already bypassed for Captain, mention, DM, boot camp and low trust, `evaluate.py:552-626`). **Scope:** every single call that follows a chain which returned no decision for a chain intent (`ward_room_notification`, `proactive_think`): the AD-643a routed chain (triage failure, chain failure, a triage without communication actions, a missing chain) and the AD-632f external chain when its intent is a chain intent. Each such reply is the post the chain would have gated; a single call for any other intent (a DM, a Captain's direct request) is not gated. **Grounding on the fallback:** what the answering call was sent: the request's system prompt and user prompt and the AD-835 per-tier suffix that the attempt which answered appended to the system message after the request was built (`LLMResponse.applied_system_suffix`, set by `_call_openai` and kept on cache replays; a failed attempt's suffix never grounds), plus the intent's ids (Amendment A1, round 1 M2 finding 1). That text holds no output of this call; like the chain's world text it can quote earlier replies (the conversation, the agent's own previous posts), which D1 accepts (round 1 M2 finding 2). **Seam test:** a real `decide()` on a `ward_room_notification` with the real AD-643a routing, a triage executor that raises `SubTaskError`, the real fallback flag and `_decide_via_llm`, and a model client that answers once; a reply citing two invented ids is suppressed with `path=single_call_fallback`, and a reply citing given ids is posted.
 
 **D4, the log lines (item 3).** BF-206: `BF-206: Chain output suppressed for <agent_type> <callsign> (<agent_id>) — Evaluate recommended suppress (<reason>)` (the reason stays last, in parentheses). BF-204: `BF-204: Grounding check failed for <agent_type> (agent_id=<id>, callsign=<c>, path=<p>) — <n> ungrounded hex IDs: [<up to 8>]` (the list stays last). BF-191 gains the same fields. Fallback: `BF-922: Single-call fallback output suppressed for <agent_type> <callsign> (<agent_id>) — deterministic check (<reason>)`.
 
@@ -57,6 +58,8 @@ BF-921 (#1636) builds first. In the suppression block of `_execute_sub_task_chai
 
 - EVALUATE's result dict for BF-191/BF-204 is unchanged in keys and values (`OutputRejection.as_evaluate_result`); the BF-206 block reads `recommendation` and `rejection_reason` (`cognitive_agent.py:5999-6001`).
 - `composer_world_text`: EVALUATE only. `_build_user_prompt` is unchanged; COMPOSE's prompt is unchanged.
+- `_query_ward_room_lookup`'s result gains `ward_room_lookup_outcome` whenever a lookup ran (A1). Its readers: `QueryHandler` (merges it, `query.py:552-556`), `_maybe_dispatch_ward_room_lookup` (`cognitive_agent.py:5795-5800`; the lookup chain's results are local to it) and `tests/test_ad1347_s4_chain_lookup.py` (`:141`, `:154`, `:159` compare the whole dict: updated in section 7.4c; `:148`, `:151`, no ref, unchanged). `_ward_room_lookup_outcome` is written by the dispatch only with the text and read by `composer_world_text` only; COMPOSE renders neither key, so AD-1347 S4's compose assertions (`:204-206`, `:248-251`) are unchanged.
+- `LLMResponse.applied_system_suffix` (A1, default `""`): set by `_call_openai`, copied by both cache replays, read by `_gate_fallback_output`. `LLMResponse` is built only in `llm_client.py`; `dataclasses.replace` keeps the field; the one `asdict` consumer, `tests/test_ad1325_boundaries.py:232`, compares exact base bytes and excludes it (section 7.12).
 - The grounding change in EVALUATE: tests that drive `EvaluateHandler` (12 files, section 6). Those that ground ids through `context["context"]` or BF-233's params keep passing (both are still sources); `tests/test_bf204_grounding.py` and `tests/test_bf233_grounding_false_positives.py` were read for this (neither grounds through the analysis nor cites only pure-decimal ids). No test asserts the old log texts (section 11).
 - The fallback's suppressed decision has the BF-206 shape (`llm_output` `[NO_RESPONSE]`, `_suppressed`, `_suppression_reason`); `act()` treats `[NO_RESPONSE]` as no post, as for a chain suppression.
 - `CHAIN_FALLBACK_KEY` (`"_chain_fallback"`): set and popped by `decide()`, read by `_decide_via_llm`. It is not in `_CACHE_KEY_FIELDS` (`cognitive_agent.py:12712`), and nothing renders arbitrary observation keys (section 12).
@@ -87,18 +90,18 @@ BF-921 (#1636) builds first. In the suppression block of `_execute_sub_task_chai
 
 A Builder who finds the fixture missing stops (hard stop) and reports it.
 
-**M1 (HIGH), §7.1 to §7.4.** Commit "BF-922 M1: BF-204 grounds on what COMPOSE was given; pure-decimal numbers and repeats do not count". Before editing, grep the pins: `grep -rn "BF-204\|BF-233\|confabulation_detected\|Grounding check failed" tests/`. Focused check:
+**M1 (HIGH), §7.1 to §7.4c.** Commit "BF-922 M1: BF-204 grounds on what COMPOSE was given; pure-decimal numbers and repeats do not count; a failed lookup's echo grounds nothing". Before editing, grep the pins: `grep -rn "BF-204\|BF-233\|confabulation_detected\|Grounding check failed" tests/` and (A1) `grep -rn "ward_room_lookup" tests/`. Focused check (15 files):
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_output_grounding.py tests/test_bf204_grounding.py tests/test_bf233_grounding_false_positives.py tests/test_ad632e_evaluate_reflect.py tests/test_ad638_boot_camp.py tests/test_ad639_chain_tuning.py tests/test_ad645b_evaluate_brief_alignment.py tests/test_bf190_bf191_route_evaluate.py tests/test_bf184_evaluate_social_bypass.py tests/test_bf187_bf188_dm_captain_delivery.py tests/test_bf901_s2_journal_token_provenance.py tests/test_combo_a_ad655_contrastive.py tests/test_combo_a_ad656_dept_profiles.py tests/test_ad529_contagion_firewall.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_output_grounding.py tests/test_bf204_grounding.py tests/test_bf233_grounding_false_positives.py tests/test_ad632e_evaluate_reflect.py tests/test_ad638_boot_camp.py tests/test_ad639_chain_tuning.py tests/test_ad645b_evaluate_brief_alignment.py tests/test_bf190_bf191_route_evaluate.py tests/test_bf184_evaluate_social_bypass.py tests/test_bf187_bf188_dm_captain_delivery.py tests/test_bf901_s2_journal_token_provenance.py tests/test_combo_a_ad655_contrastive.py tests/test_combo_a_ad656_dept_profiles.py tests/test_ad529_contagion_firewall.py tests/test_ad1347_s4_chain_lookup.py -n 0 -q
 ```
 
 **Rule for a focused failure in an existing test:** if a test fails because it relied on the ANALYZE result as a grounding source, on a pure-decimal or repeated id counting toward the threshold, or on an id that its context never gives the composer, it pinned the defect: update it so the id is given where COMPOSE renders it (or the reply cites distinct hex ids), keep its name, and say why in one inline comment citing BF-922. Any other failure is a hard stop for the Architect.
 
-**M2 (HIGH), §7.5 to §7.7.** Commit "BF-922 M2: the single-call fallback runs the deterministic output checks; the BF-206 line names the agent". Before editing, grep the pins: `grep -rn "AD-632a\|AD-643a\|_decide_via_llm\|Chain output suppressed" tests/`. Focused check:
+**M2 (HIGH), §7.5 to §7.12.** Commit "BF-922 M2: the single-call fallback runs the deterministic output checks on what the answering attempt was sent; the BF-206 line names the agent". Before editing, grep the pins: `grep -rn "AD-632a\|AD-643a\|_decide_via_llm\|Chain output suppressed" tests/` and (A1) `grep -rn "asdict(response)\|system_prompt_suffix\|_cache_key(" tests/`. Focused check (18 files):
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_fallback_gate.py tests/test_bf922_output_grounding.py tests/test_bf206_confab_feedback.py tests/test_bf921_counselor_event_delivery.py tests/test_ad632f_activation_triggers.py tests/test_ad632a_sub_task_foundation.py tests/test_bf688_chain_priority_inheritance.py tests/test_bf901_s2_journal_token_provenance.py tests/test_ad633_predictive_branching.py tests/test_ad573_memory_budget.py tests/test_ad492_cognitive_correlation_ids.py tests/test_graduated_compilation.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_fallback_gate.py tests/test_bf922_output_grounding.py tests/test_bf206_confab_feedback.py tests/test_bf921_counselor_event_delivery.py tests/test_ad632f_activation_triggers.py tests/test_ad632a_sub_task_foundation.py tests/test_bf688_chain_priority_inheritance.py tests/test_bf901_s2_journal_token_provenance.py tests/test_ad633_predictive_branching.py tests/test_ad573_memory_budget.py tests/test_ad492_cognitive_correlation_ids.py tests/test_graduated_compilation.py tests/test_ad835_tier_adaptation.py tests/test_ad1325_boundaries.py tests/test_ad1327_verifier_tier.py tests/test_bf612_empty_content_retry.py tests/test_bf674_llm_endpoint_cooldown.py tests/test_ad1324_router_floor.py -n 0 -q
 ```
 
 **The broad gate is run once for the batch by the main session, not by the Builder.**
@@ -113,8 +116,10 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_fallback_gate.py t
 BF-191 rejects raw intent JSON. BF-204 rejects a reply that cites at least two distinct hex
 identifiers that were not in what the replying call was given from outside the model's own
 output: on the chain, the world sections of the COMPOSE prompt
-(``sub_tasks.compose.composer_world_text``); on the single-call fallback, that request's system
-prompt and user prompt; on both, the intent's own ids (BF-233, :func:`intent_entity_ids`).
+(``sub_tasks.compose.composer_world_text``; a failed Ward Room lookup's echo of the reference
+ANALYZE chose is not one); on the single-call fallback, the text that call sent (the request's
+system prompt and user prompt, and any per-tier suffix the answering attempt appended); on
+both, the intent's own ids (BF-233, :func:`intent_entity_ids`).
 """
 
 from __future__ import annotations
@@ -275,10 +280,18 @@ def composer_world_text(context: dict, prior_results: list[SubTaskResult]) -> st
     What the composing call is given from outside the chain's own model calls: the
     thread, QUERY data, memories, lookups and situation sections. EVALUATE's BF-204
     check grounds on it, so an id an earlier model step invented is not grounded by
-    having been repeated into the brief. The system prompt (standing orders, skills,
-    the crew roster by callsign) carries no entity ids and is not included.
+    having been repeated into the brief. The AD-1347 lookup's text counts only for a
+    record outcome (found; ambiguous, whose reference starts every listed id): a failed
+    lookup's text repeats the reference ANALYZE chose (and, for an invalid one, an
+    example id), which is model output. COMPOSE still shows that text; it grounds
+    nothing. The system prompt (standing orders, skills, the crew roster by callsign)
+    carries no entity ids and is not included.
     """
+    from probos.ward_room.lookup import LOOKUP_AMBIGUOUS, LOOKUP_FOUND  # at use, as query.py imports it
+
     world = [pr for pr in prior_results if pr.sub_task_type != SubTaskType.ANALYZE]
+    if context.get("_ward_room_lookup_outcome") not in (LOOKUP_FOUND, LOOKUP_AMBIGUOUS):
+        context = {key: value for key, value in context.items() if key != "_ward_room_lookup_context"}
     return _build_user_prompt(context, world)
 ```
 
@@ -459,23 +472,31 @@ REPLACE:
 
 The contract is ``prompts/bf-922-output-gate-grounding-and-fallback.md``. The live cases come from
 ``tests/fixtures/bf922_live_grounding_cases.json``, written by the orchestrator read-only from the live vessel: real
-cited ids and their real Ward Room rows. Each row's id is placed where a production renderer shows that kind (a post's
-first 8 hex in the thread rendering, ward_room_router.py; full post and thread ids in the AD-1347 lookup rendering; a
-channel id in a memory line). It is a placement, not a replay: the live prompts were not retained.
+cited ids and their real Ward Room rows. Each row's id is placed through a production renderer that shows that kind:
+the real QUERY step and COMPOSE's real renderer over ``thread_metadata`` (full post and thread ids, the
+ward_room_notification chain) or ``unread_counts`` (channel ids, the proactive_think chain), and a post's first 8 hex in
+the router's thread line (ward_room_router.py). It is a placement, not a replay: the live prompts were not retained.
 
-Stand-in, named: EVALUATE's model client (approves), so a reply that passes the deterministic checks reaches the judge.
+Stand-ins, named: EVALUATE's model client (approves), so a reply that passes the deterministic checks reaches the judge;
+``_WardRoomReads``, the two WardRoomService reads behind those QUERY operations, answering with the case's rows in the
+production shapes (ward_room/threads.py ``get_thread``, ward_room/messages.py ``get_unread_counts``). The lookup tests
+run a real ``WardRoomService`` in ``tmp_path``, the real AD-1347 dispatch and the real chain with real handlers; their
+stand-ins are the model client (``_TwoCalls``: ANALYZE's JSON, then COMPOSE's reply) and the runtime surface
+(``_ChainRuntime``).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.output_grounding import (
     MIN_UNGROUNDED_IDS,
     REJECTION_UNGROUNDED,
@@ -485,9 +506,14 @@ from probos.cognitive.output_grounding import (
     shown_hex_runs,
     ungrounded_ids,
 )
-from probos.cognitive.sub_task import SubTaskResult, SubTaskSpec, SubTaskType
-from probos.cognitive.sub_tasks.compose import composer_world_text
+from probos.cognitive.sub_task import SubTaskExecutor, SubTaskResult, SubTaskSpec, SubTaskType
+from probos.cognitive.sub_tasks import AnalyzeHandler, ComposeHandler, QueryHandler, ReflectHandler
+from probos.cognitive.sub_tasks.compose import _build_user_prompt, composer_world_text
 from probos.cognitive.sub_tasks.evaluate import EvaluateHandler
+from probos.config import SystemConfig
+from probos.config_models.crew import WardRoomConfig
+from probos.types import LLMResponse
+from probos.ward_room.service import WardRoomService
 
 FIXTURE = Path(__file__).parent / "fixtures" / "bf922_live_grounding_cases.json"
 LIVE: dict[str, Any] = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -535,23 +561,60 @@ def _context(**sections: Any) -> dict[str, Any]:
     return context
 
 
-def _placed(case: dict[str, Any]) -> dict[str, Any]:
-    thread_lines: list[str] = []
-    lookup_lines: list[str] = []
-    memory_lines: list[str] = []
-    for row in case["rows"]:
-        if row["kind"] == "post":
-            thread_lines.append(f"[{row['id'][:8]}] {row['author_callsign']}: {row['body']}")
-            lookup_lines.append(f"Post {row['id']} in thread {row['thread_id']}, #{row['channel_name']}, from live.")
-        elif row["kind"] == "thread":
-            lookup_lines.append(f"Thread {row['id']}, #{row['channel_name']}, from live.")
-        else:
-            memory_lines.append(f"- DM channel {row['id']} (#{row['channel_name']})")
-    return _context(
-        context="Thread: live case\n" + "\n".join(thread_lines),
-        _ward_room_lookup_context="\n".join(lookup_lines),
-        _formatted_memories="\n".join(memory_lines),
-    )
+class _WardRoomReads:
+    """The two WardRoomService reads the chains' QUERY steps make, answering with one live case's real rows."""
+
+    def __init__(self, case: dict[str, Any]) -> None:
+        self._rows = case["rows"]
+
+    async def get_thread(self, thread_id: str, **_kwargs: Any) -> dict[str, Any]:
+        posts = [
+            {"id": row["id"], "thread_id": thread_id, "author_callsign": row["author_callsign"],
+             "body": row["body"], "children": []}
+            for row in self._rows if row["kind"] == "post"
+        ]
+        thread = {"id": thread_id, "channel_name": self._rows[0]["channel_name"], "title": "live case"}
+        return {"thread": thread, "posts": posts, "total_post_count": len(posts)}
+
+    async def get_unread_counts(self, agent_id: str) -> dict[str, int]:
+        return {row["id"]: 1 for row in self._rows if row["kind"] == "channel"}
+
+
+class _QueryRuntime:
+    """The one runtime attribute the two QUERY operations read."""
+
+    def __init__(self, ward_room: _WardRoomReads) -> None:
+        self.ward_room = ward_room
+
+
+async def _placed(case: dict[str, Any]) -> tuple[dict[str, Any], list[SubTaskResult]]:
+    """The case's ids where a production renderer shows that kind, through the real QUERY step.
+
+    Posts and threads: the ward_room_notification chain's QUERY ``thread_metadata`` and the router's thread line.
+    Channels: the proactive_think chain's QUERY ``unread_counts``. The spec names only the operation the stand-in
+    answers (a missing service fails the step, and COMPOSE then renders no Prior Data). One case is one chain, so a
+    case that mixed channels with posts, or posts from two threads, is not placeable and fails here.
+    """
+    kinds = {row["kind"] for row in case["rows"]}
+    if "channel" in kinds:
+        assert kinds == {"channel"}, f"{_case_id(case)}: channels with posts are not one chain's QUERY"
+        context = _context(context="Thread: live case")
+        spec = SubTaskSpec(sub_task_type=SubTaskType.QUERY, name="query-situation", context_keys=("unread_counts",))
+    else:
+        threads = {row["thread_id"] if row["kind"] == "post" else row["id"] for row in case["rows"]}
+        assert len(threads) == 1, f"{_case_id(case)}: posts from {len(threads)} threads are not one chain's QUERY"
+        thread_id = threads.pop()
+        lines = [
+            f"[{row['id'][:8]}] {row['author_callsign']}: {row['body']}"
+            for row in case["rows"] if row["kind"] == "post"
+        ]
+        context = _context(context="Thread: live case\n" + "\n".join(lines), params={"thread_id": thread_id})
+        spec = SubTaskSpec(
+            sub_task_type=SubTaskType.QUERY, name="query-thread-context", context_keys=("thread_metadata",),
+        )
+    query = await QueryHandler(_QueryRuntime(_WardRoomReads(case)))(spec, context, [])
+    assert query.success, query.error
+    return context, [query]
 
 
 def _reply(case: dict[str, Any]) -> str:
@@ -636,9 +699,12 @@ async def test_an_id_only_in_the_analysis_is_not_grounded() -> None:
     ["context", "_formatted_memories", "_ward_room_lookup_context", "_ward_room_activity", "_oracle_context"],
 )
 async def test_an_id_in_any_world_section_is_grounded(section: str) -> None:
-    result = await _handler()(_spec(), _context(**{section: "Post 7f3a9c2e in thread b81d04aa"}), [_compose(INVENTED)])
+    sections: dict[str, Any] = {section: "Post 7f3a9c2e in thread b81d04aa"}
+    if section == "_ward_room_lookup_context":
+        sections["_ward_room_lookup_outcome"] = "found"  # BF-922 A1: a lookup's text grounds for a record only
+    result = await _handler()(_spec(), _context(**sections), [_compose(INVENTED)])
 
-    assert result.result.get("rejection_reason") != "confabulation_detected"
+    assert result.success and result.result["recommendation"] == "approve"
 
 
 @pytest.mark.asyncio
@@ -658,9 +724,15 @@ async def test_the_bf204_log_line_names_the_agent_and_the_gate(caplog) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", LIVE["cases"], ids=_case_id)
 async def test_a_live_false_positive_is_grounded_when_given(case: dict[str, Any]) -> None:
-    result = await _handler()(_spec(), _placed(case), [_compose(_reply(case))])
+    """Every id the live reply cites is in what the real renderers gave the composer, and the judge approves it."""
+    context, prior = await _placed(case)
+    reply = _reply(case)
 
-    assert result.result.get("rejection_reason") != "confabulation_detected"
+    assert cited_ids(reply), "premise: the live reply cites ids"
+    assert ungrounded_ids(reply, shown_hex_runs(composer_world_text(context, prior), *intent_entity_ids(context))) == ()
+    result = await _handler()(_spec(), context, [*prior, _compose(reply)])
+
+    assert result.success and result.result["recommendation"] == "approve"
 
 
 @pytest.mark.parametrize(
@@ -682,6 +754,341 @@ def test_the_fixture_holds_real_cases() -> None:
     assert len(LIVE["cases"]) >= 8
     assert any(row["kind"] == "channel" for case in LIVE["cases"] for row in case["rows"])
     assert any(case["cited"] == ["5999983", "5999983"] for case in LIVE["pattern_cases"])
+    for case in LIVE["cases"]:  # BF-922 A1: each case is one chain's QUERY, so every case is placeable
+        kinds = {row["kind"] for row in case["rows"]}
+        assert kinds == {"channel"} or "channel" not in kinds, _case_id(case)
+
+
+# --- the AD-1347 lookup: a record grounds, a failed lookup's echo does not (BF-922 A1) -----------------
+
+LOOKUP_AGENT = "agent-7"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "grounds"),
+    [
+        ("found", True), ("ambiguous", True), ("not_found", False), ("invalid_ref", False),
+        ("refused", False), ("unavailable", False), (None, False),
+    ],
+    ids=["found", "ambiguous", "not_found", "invalid_ref", "refused", "unavailable", "no_outcome"],
+)
+def test_the_lookup_text_grounds_only_for_a_record_outcome(outcome: str | None, grounds: bool) -> None:
+    context: dict[str, Any] = {"_ward_room_lookup_context": "No Ward Room thread or post with id 7f3a9c2e."}
+    if outcome is not None:
+        context["_ward_room_lookup_outcome"] = outcome
+
+    assert ("7f3a9c2e" in composer_world_text(context, [])) is grounds
+    assert "7f3a9c2e" in _build_user_prompt(context, [])  # COMPOSE's own prompt is unchanged
+
+
+@dataclass
+class _ChainRuntime:
+    """The runtime surface the real chain handlers read (as the BF-922 round-1 review's probe built it)."""
+
+    ward_room: WardRoomService
+    config: SystemConfig = field(default_factory=SystemConfig)
+    events: list[tuple[Any, dict[str, Any]]] = field(default_factory=list)
+    boot_camp: Any = None
+    trust_network: Any = None
+    cognitive_journal: Any = None
+    ontology: Any = None
+
+    def emit_event(self, event: Any, data: dict[str, Any]) -> None:
+        self.events.append((event, dict(data)))
+
+
+class _TwoCalls:
+    """ANALYZE's JSON, then COMPOSE's reply; any further call (the judge, REFLECT) fails the test."""
+
+    def __init__(self, reply: str) -> None:
+        self._responses = [
+            json.dumps({
+                "contribution_assessment": "RESPOND",
+                "intended_actions": ["ward_room_reply"],
+                "composition_brief": {"situation": "Status request"},
+            }),
+            reply,
+        ]
+        self.requests: list[Any] = []
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:
+        assert self._responses, "an unexpected model call (the judge or REFLECT)"
+        self.requests.append(request)
+        return LLMResponse(
+            content=self._responses.pop(0), tier="fast", model="test-model",
+            prompt_tokens=5, completion_tokens=5, tokens_used=10, usage_reported=True,
+        )
+
+
+async def _ward_room(tmp_path: Path) -> WardRoomService:
+    """A started Ward Room whose lookup reads an empty archive, so a search completes."""
+    ward = WardRoomService(db_path=str(tmp_path / "wr.db"))
+    await ward.start()
+    archive = tmp_path / "ward_room_archive"
+    archive.mkdir()
+    await ward.start_prune_loop(WardRoomConfig(prune_interval_seconds=3600.0), archive)
+    await ward.stop_prune_loop()
+    return ward
+
+
+async def _chain_after_lookup(
+    ward: WardRoomService, ref: str, reply: str,
+) -> tuple[dict[str, Any], dict[str, Any], _TwoCalls]:
+    """AD-1347's dispatch with ANALYZE's ``ref``, then the real ward_room_notification chain with real handlers."""
+    runtime = _ChainRuntime(ward_room=ward)
+    client = _TwoCalls(reply)
+    agent = CognitiveAgent(
+        agent_id=LOOKUP_AGENT, instructions="Report observed facts.", llm_client=client, runtime=runtime,
+    )
+    agent.agent_type = "science_officer"
+    agent.callsign = "Kira"
+    agent.department = "science"
+    executor = SubTaskExecutor(config=runtime.config.sub_task)
+    executor.register_handler(SubTaskType.QUERY, QueryHandler(runtime))
+    executor.register_handler(SubTaskType.ANALYZE, AnalyzeHandler(llm_client=client, runtime=runtime))
+    executor.register_handler(SubTaskType.COMPOSE, ComposeHandler(llm_client=client, runtime=runtime))
+    executor.register_handler(SubTaskType.EVALUATE, EvaluateHandler(llm_client=client, runtime=runtime))
+    executor.register_handler(SubTaskType.REFLECT, ReflectHandler(llm_client=client, runtime=runtime))
+    agent.set_sub_task_executor(executor)
+    channel = await ward.get_or_create_dm_channel(LOOKUP_AGENT, "peer", "Kira", "Peer")
+    thread = await ward.create_thread(channel.id, "peer", "Status", "What is the status?", author_callsign="Peer")
+    observation: dict[str, Any] = {
+        "intent": "ward_room_notification",
+        "intent_id": "intent-1",
+        "context": "Thread: Status",
+        "_agent_id": LOOKUP_AGENT,
+        "params": {"thread_id": thread.id, "channel_id": channel.id, "author_id": "peer", "is_dm_channel": True},
+    }
+    triage = [SubTaskResult(
+        sub_task_type=SubTaskType.ANALYZE, name="analyze-thread", success=True,
+        result={"intended_actions": ["ward_room_reply", "ward_room_lookup"], "ward_room_lookup_ref": ref},
+    )]
+    await agent._maybe_dispatch_ward_room_lookup(triage, observation)
+    chain = agent._build_chain_for_intent(observation)
+    assert chain is not None and executor.can_execute(chain)
+    decision = await agent._execute_sub_task_chain(chain, observation)
+    assert decision is not None
+    return decision, observation, client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ref", "reply", "outcome", "echoed"),
+    [
+        ("7f3a9c2e-0000-0000-0000-b81d04aabbcc", "Per 7f3a9c2e and b81d04aabbcc, the backlog cleared.",
+         "not_found", ("7f3a9c2e", "b81d04aabbcc")),
+        ("7f3a9c2e b81d04aabbcc", "Per 7f3a9c2e and 51d91a7d, the backlog cleared.",
+         "invalid_ref", ("7f3a9c2e", "51d91a7d")),
+    ],
+    ids=["not_found", "invalid_ref"],
+)
+async def test_a_failed_lookup_echo_does_not_ground_through_the_real_chain(
+    tmp_path: Path, ref: str, reply: str, outcome: str, echoed: tuple[str, ...],
+) -> None:
+    """Round 1, M1 finding 1: the reference is ANALYZE's output and a failed lookup repeats it (an invalid one adds
+    the example id 51d91a7d); M1 candidate 1 posted this reply. COMPOSE still sees the echo; it grounds nothing."""
+    ward = await _ward_room(tmp_path)
+    try:
+        decision, observation, client = await _chain_after_lookup(ward, ref, reply)
+    finally:
+        await ward.stop()
+
+    assert observation["_ward_room_lookup_outcome"] == outcome
+    assert len(client.requests) == 2
+    assert all(cited in client.requests[1].prompt for cited in echoed)  # the echo reached COMPOSE, as before
+    assert decision["_suppressed"] is True
+    assert decision["_suppression_reason"] == "confabulation_detected"
+
+
+async def _lettered_thread(ward: WardRoomService, channel_id: str) -> Any:
+    """A thread by the asking agent whose first 8 and last 12 hex both hold a letter, so both are cited ids."""
+    for _ in range(20):
+        thread = await ward.create_thread(
+            channel_id, LOOKUP_AGENT, "Backlog", "Backlog cleared at 0300.", author_callsign="Kira",
+        )
+        if cited_ids(thread.id[:8]) and cited_ids(thread.id[-12:]):
+            return thread
+    raise AssertionError("no thread id with a letter in both cited segments in 20 tries")
+
+
+@pytest.mark.asyncio
+async def test_a_found_record_grounds_through_the_real_chain(tmp_path: Path) -> None:
+    """The partner of the test above: a record the lookup found is world data, so a reply citing it is posted."""
+    ward = await _ward_room(tmp_path)
+    try:
+        channel = await ward.get_or_create_dm_channel(LOOKUP_AGENT, "peer", "Kira", "Peer")
+        record = await _lettered_thread(ward, channel.id)
+        reply = f"Per {record.id[:8]} and {record.id[-12:]}, the backlog cleared."
+        decision, observation, client = await _chain_after_lookup(ward, record.id, reply)
+    finally:
+        await ward.stop()
+
+    assert observation["_ward_room_lookup_outcome"] == "found"
+    assert len(client.requests) == 2
+    assert not decision.get("_suppressed")
+    assert decision["llm_output"] == reply
+```
+
+### 7.4a `src/probos/cognitive/sub_tasks/query.py` (M1, Amendment A1: the lookup's outcome travels with its text)
+
+Pair 1 (docstring):
+
+SEARCH:
+```python
+    never the asker. The Ward Room decides what the agent may see. Returns
+    ``{"ward_room_lookup": <text>}``: empty when no id was asked for, otherwise the record
+    or one line saying why there is none. Never raises, so the QUERY step stays a success.
+    """
+```
+REPLACE:
+```python
+    never the asker. The Ward Room decides what the agent may see. Returns
+    ``{"ward_room_lookup": <text>}``: empty when no id was asked for, otherwise the record
+    or one line saying why there is none, with ``"ward_room_lookup_outcome"``, the
+    ``LookupResult.outcome`` (BF-922, #1639: BF-204 grounds on the text only for a record,
+    never on a failed lookup's echo of the reference). Never raises, so the QUERY step
+    stays a success.
+    """
+```
+
+Pair 2 (one return, with the outcome):
+
+SEARCH:
+```python
+    requester = context.get("_agent_id", "")
+    ward_room = getattr(runtime, "ward_room", None)
+    if ward_room is None:
+        return {"ward_room_lookup": render_lookup(LookupResult(LOOKUP_UNAVAILABLE, ""))}
+    try:
+        result = await ward_room.lookup_record(requester, ref)
+    except Exception:
+        logger.warning("AD-1347: ward_room_lookup failed for agent %s", requester, exc_info=True)
+        result = LookupResult(LOOKUP_UNAVAILABLE, "")
+    return {"ward_room_lookup": render_lookup(result)}
+```
+REPLACE:
+```python
+    requester = context.get("_agent_id", "")
+    ward_room = getattr(runtime, "ward_room", None)
+    if ward_room is None:
+        result = LookupResult(LOOKUP_UNAVAILABLE, "")
+    else:
+        try:
+            result = await ward_room.lookup_record(requester, ref)
+        except Exception:
+            logger.warning("AD-1347: ward_room_lookup failed for agent %s", requester, exc_info=True)
+            result = LookupResult(LOOKUP_UNAVAILABLE, "")
+    return {"ward_room_lookup": render_lookup(result), "ward_room_lookup_outcome": result.outcome}
+```
+
+### 7.4b `src/probos/cognitive/cognitive_agent.py` (M1, Amendment A1: the dispatch copies the outcome)
+
+Pair 1 (docstring):
+
+SEARCH:
+```python
+        Reads ``ward_room_lookup_ref`` from the latest successful ANALYZE result, runs a
+        one-step QUERY chain (``ward_room_lookup``) and writes the text to
+        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders. Once per chain.
+```
+REPLACE:
+```python
+        Reads ``ward_room_lookup_ref`` from the latest successful ANALYZE result, runs a
+        one-step QUERY chain (``ward_room_lookup``) and writes the text to
+        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders, and its typed
+        outcome to ``observation["_ward_room_lookup_outcome"]`` (BF-922). Once per chain.
+```
+
+Pair 2:
+
+SEARCH:
+```python
+        for r in results:
+            if r.sub_task_type == SubTaskType.QUERY and r.success and r.result:
+                text = r.result.get("ward_room_lookup", "")
+                if isinstance(text, str) and text:
+                    observation["_ward_room_lookup_context"] = text
+                break
+```
+REPLACE:
+```python
+        for r in results:
+            if r.sub_task_type == SubTaskType.QUERY and r.success and r.result:
+                text = r.result.get("ward_room_lookup", "")
+                if isinstance(text, str) and text:
+                    observation["_ward_room_lookup_context"] = text
+                    # BF-922 (#1639): the typed outcome travels with the text. BF-204 grounds on
+                    # a found record, never on a failed lookup's echo of ANALYZE's reference.
+                    outcome = r.result.get("ward_room_lookup_outcome", "")
+                    observation["_ward_room_lookup_outcome"] = outcome if isinstance(outcome, str) else ""
+                break
+```
+
+### 7.4c `tests/test_ad1347_s4_chain_lookup.py` (M1, Amendment A1: the result carries its outcome)
+
+Pair 1:
+
+SEARCH:
+```python
+    assert smuggled == {"ward_room_lookup": "The Ward Room lookup could not confirm who is asking, so it returned nothing."}
+    assert ARCHIVED_BODY in own["ward_room_lookup"]
+    assert outsider["ward_room_lookup"].startswith("No Ward Room thread or post with id ")
+```
+REPLACE:
+```python
+    # BF-922 (#1639): the typed outcome travels with the text, so BF-204 can tell a record from a failed lookup's echo.
+    assert smuggled == {
+        "ward_room_lookup": "The Ward Room lookup could not confirm who is asking, so it returned nothing.",
+        "ward_room_lookup_outcome": "refused",
+    }
+    assert ARCHIVED_BODY in own["ward_room_lookup"] and own["ward_room_lookup_outcome"] == "found"
+    assert outsider["ward_room_lookup"].startswith("No Ward Room thread or post with id ")
+    assert outsider["ward_room_lookup_outcome"] == "not_found"
+```
+
+Pair 2:
+
+SEARCH:
+```python
+    assert await _query_ward_room_lookup(
+        _Runtime(None), _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "aa000001"},
+    ) == {"ward_room_lookup": UNAVAILABLE}
+
+    handled = await QueryHandler(_Runtime(_FailingWardRoom()))(
+        _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "aa000001"}, [],
+    )
+    assert handled.success and handled.result == {"ward_room_lookup": UNAVAILABLE}
+```
+REPLACE:
+```python
+    # BF-922 (#1639): a lookup that ran carries its typed outcome; no ref (above) runs none and carries none.
+    assert await _query_ward_room_lookup(
+        _Runtime(None), _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "aa000001"},
+    ) == {"ward_room_lookup": UNAVAILABLE, "ward_room_lookup_outcome": "unavailable"}
+
+    handled = await QueryHandler(_Runtime(_FailingWardRoom()))(
+        _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "aa000001"}, [],
+    )
+    assert handled.success
+    assert handled.result == {"ward_room_lookup": UNAVAILABLE, "ward_room_lookup_outcome": "unavailable"}
+```
+
+Pair 3:
+
+SEARCH:
+```python
+    assert observation["_ward_room_lookup_fired"] is True
+    assert ARCHIVED_BODY in observation["_ward_room_lookup_context"]
+
+    again: dict = {"_agent_id": FORGE, "_ward_room_lookup_fired": True}
+```
+REPLACE:
+```python
+    assert observation["_ward_room_lookup_fired"] is True
+    assert ARCHIVED_BODY in observation["_ward_room_lookup_context"]
+    assert observation["_ward_room_lookup_outcome"] == "found"  # BF-922: the outcome travels with the text
+
+    again: dict = {"_agent_id": FORGE, "_ward_room_lookup_fired": True}
 ```
 
 ### 7.5 `src/probos/cognitive/cognitive_agent.py` (M2: imports and the key)
@@ -791,7 +1198,7 @@ REPLACE:
         # BF-922 (#1639): a single call that answers for a chain that returned no
         # decision runs the chain's deterministic output checks on its reply.
         if observation.get(CHAIN_FALLBACK_KEY):
-            gated = self._gate_fallback_output(decision, request, observation)
+            gated = self._gate_fallback_output(decision, request, response, observation)
             if gated is not None:
                 return gated
 
@@ -802,19 +1209,25 @@ REPLACE:
         return decision
 
     def _gate_fallback_output(
-        self, decision: dict, request: LLMRequest, observation: dict,
+        self, decision: dict, request: LLMRequest, response: LLMResponse, observation: dict,
     ) -> dict | None:
         """BF-922 (#1639): BF-191 and BF-204 on the single-call fallback's reply.
 
         AD-632a's fallback is the pre-chain single call, which predates EVALUATE;
         BF-204 holds at every trust band and social obligation, so the fallback runs
-        the deterministic checks too, grounded on this request's own text (which holds
-        no model output) and the intent's ids. Not the LLM judge: the fallback runs
-        when the model is already failing, and the judge's repeatability is unmeasured
-        (AD-1350, #1637). Returns BF-206's suppressed decision, or None to post.
+        the deterministic checks too, grounded on what the answering call was sent:
+        this request's system prompt and user prompt, the AD-835 per-tier suffix the
+        attempt that answered appended to the system message after the request was
+        built (``response.applied_system_suffix``; a failed attempt's never counts),
+        and the intent's ids. That text holds no output of this call; like the chain's
+        world text it can quote earlier replies (the conversation, the agent's own
+        previous posts), which BF-922's D1 accepts. Not the LLM judge: the fallback
+        runs when the model is already failing, and the judge's repeatability is
+        unmeasured (AD-1350, #1637). Returns BF-206's suppressed decision, or None to post.
         """
         output = decision.get("llm_output") or ""
-        shown = shown_hex_runs(request.system_prompt or "", request.prompt or "", *intent_entity_ids(observation))
+        given = (request.system_prompt or "", response.applied_system_suffix, request.prompt or "")
+        shown = shown_hex_runs(*given, *intent_entity_ids(observation))
         rejection = deterministic_rejection(output, shown)
         if rejection is None:
             return None
@@ -872,15 +1285,19 @@ client (``_OneShotClient``: one scripted reply), the chain executor (raises on t
 raises), ``_check_procedural_memory`` (no procedure), and ``_build_user_message`` (returns ``THREAD``, so the request's
 text is known). The runtime is ``MagicMock(spec=ProbOSRuntime)`` with a real ``SystemConfig`` and a trust network that
 answers 0.5; any further attribute the routing path reads that a spec'd mock cannot answer is set on the mock here and
-named in this docstring.
+named in this docstring. The transport tests (BF-922 A1) swap in the real ``OpenAICompatibleClient``, whose HTTP clients
+answer through ``httpx.MockTransport`` per host as in tests/test_ad835_tier_adaptation.py, and set
+``runtime.config.cognitive`` to that client's config; only the HTTP endpoints are stand-ins there.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from probos.cognitive.cognitive_agent import (
@@ -890,7 +1307,7 @@ from probos.cognitive.cognitive_agent import (
     _CACHE_MISSES,
     _DECISION_CACHES,
 )
-from probos.cognitive.llm_client import MockLLMClient
+from probos.cognitive.llm_client import MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.sub_task import (
     SubTaskChain,
     SubTaskError,
@@ -899,7 +1316,7 @@ from probos.cognitive.sub_task import (
     SubTaskSpec,
     SubTaskType,
 )
-from probos.config import SystemConfig
+from probos.config import CognitiveConfig, SystemConfig
 from probos.events import EventType
 from probos.runtime import ProbOSRuntime
 from probos.types import LLMRequest, LLMResponse
@@ -913,6 +1330,7 @@ THREAD = (
 INVENTED = "Per post 7f3a9c2e and thread b81d04aa, the backlog cleared."
 GROUNDED = f"Agreed with {POST_ID[:8]}; nothing to add on thread {THREAD_ID[:8]}."
 RAW_JSON = '{"intents": [{"intent": "ward_room_post"}]}'
+GIVEN_BY_TIER = "Reference records available to this tier: post 7f3a9c2e and thread b81d04aa."
 
 
 class _CrewAgent(CognitiveAgent):
@@ -1085,6 +1503,270 @@ async def test_the_chain_suppression_log_line_names_the_agent(caplog) -> None:
         "BF-206: Chain output suppressed for science_officer Kira (agent-1)"
         " — Evaluate recommended suppress (quality_gate)"
     ) in caplog.text
+
+
+# --- the answering attempt's system message (BF-922 A1, round 1 M2 finding 1) ------------------------
+
+
+def _tiered_config(**suffixes: str) -> CognitiveConfig:
+    """Three endpoints, and the AD-835 per-tier system-prompt suffixes named (unnamed tiers keep None)."""
+    return CognitiveConfig(
+        llm_base_url_fast="http://fast.local/v1", llm_model_fast="fast-model",
+        llm_base_url_standard="http://standard.local/v1", llm_model_standard="standard-model",
+        llm_base_url_deep="http://deep.local/v1", llm_model_deep="deep-model",
+        **{f"llm_system_prompt_suffix_{tier}": text for tier, text in suffixes.items()},
+    )
+
+
+async def _over_transport(
+    config: CognitiveConfig, answer: str, sent: list[tuple[str, dict[str, Any]]],
+    *, answering_host: str = "standard.local",
+) -> OpenAICompatibleClient:
+    """The real client; ``answering_host`` answers ``answer`` and every other host returns 503 ("": none answers)."""
+    client = OpenAICompatibleClient(config=config)
+
+    def dispatch(http_request: httpx.Request) -> httpx.Response:
+        sent.append((http_request.url.host, json.loads(http_request.content)))
+        if http_request.url.host != answering_host:
+            return httpx.Response(503, text="temporarily unavailable")
+        return httpx.Response(200, json={
+            "model": "standard-model",
+            "choices": [{"message": {"content": answer}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        })
+
+    for key, existing in list(client._clients.items()):
+        await existing.aclose()
+        client._clients[key] = httpx.AsyncClient(
+            base_url=existing.base_url, transport=httpx.MockTransport(dispatch), timeout=5.0,
+        )
+    return client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("suffixes", "requested_tier", "suppressed"),
+    [
+        ({"standard": GIVEN_BY_TIER}, None, False),
+        ({"standard": GIVEN_BY_TIER, "deep": "A different tier addendum."}, "deep", False),
+        ({"deep": GIVEN_BY_TIER}, "deep", True),
+    ],
+    ids=["serving_tier_suffix", "retry_serving_tier_suffix", "ids_only_in_failed_attempt"],
+)
+async def test_the_fallback_grounds_on_the_answering_attempts_system_message(
+    suffixes: dict[str, str], requested_tier: str | None, suppressed: bool,
+) -> None:
+    """The real client appends the answering attempt's AD-835 suffix after the request is built. Ids given only there
+    ground the reply, directly or after deep and fast fail; ids given only to a failed attempt do not."""
+    sent: list[tuple[str, dict[str, Any]]] = []
+    config = _tiered_config(**suffixes)
+    client = await _over_transport(config, INVENTED, sent)
+    try:
+        agent, runtime = _agent(INVENTED, execute=AsyncMock(side_effect=SubTaskError("triage timed out")))
+        runtime.config.cognitive = config
+        agent._llm_client = client  # the real client, as the round-1 review's probe drove it
+        observation = _observation()
+        if requested_tier is not None:
+            observation["level_llm_tier"] = requested_tier
+        decision = await agent.decide(observation)
+    finally:
+        await client.close()
+
+    host, payload = sent[-1]
+    answered_system = payload["messages"][0]["content"]
+    assert host == "standard.local"
+    if requested_tier is not None:
+        assert sent[0][0] == "deep.local"  # the requested tier failed first
+    if suppressed:
+        assert "7f3a9c2e" in sent[0][1]["messages"][0]["content"]  # the failed attempt was given the ids
+    assert ("7f3a9c2e" in answered_system and "b81d04aa" in answered_system) is not suppressed
+    assert bool(decision.get("_suppressed")) is suppressed
+    assert decision["llm_output"] == ("[NO_RESPONSE]" if suppressed else INVENTED)
+
+
+@pytest.mark.asyncio
+async def test_a_cache_replay_keeps_the_answering_attempts_suffix() -> None:
+    """A replay was produced under its first attempt's suffix; without it the fallback gate would suppress a grounded
+    reply the client served from its cache."""
+    sent: list[tuple[str, dict[str, Any]]] = []
+    client = await _over_transport(_tiered_config(), GROUNDED, sent, answering_host="")
+    request = LLMRequest(prompt="hi", system_prompt="BASE", tier="standard")
+    client._cache[client._cache_key("standard", request.prompt, request.system_prompt)] = LLMResponse(
+        content=GROUNDED, model="standard-model", applied_system_suffix=GIVEN_BY_TIER,
+    )
+    try:
+        replay = await client.complete(request)
+    finally:
+        await client.close()
+
+    assert sent, "premise: the tiers were tried and failed"
+    assert replay.cached is True and replay.content == GROUNDED
+    assert replay.applied_system_suffix == GIVEN_BY_TIER
+```
+
+### 7.9 `src/probos/cognitive/llm_client.py` (M2, Amendment A1: the response reports the suffix it was sent with)
+
+Pair 1 (the rate-limit cache replay):
+
+SEARCH:
+```python
+                        return LLMResponse(
+                            content=cached.content, model=cached.model, tier=tier,
+                            answered_tier=cached.answered_tier, answered_model=cached.answered_model,
+                            tokens_used=cached.tokens_used, cached=True, request_id=request.id,
+                        )
+```
+REPLACE:
+```python
+                        return LLMResponse(
+                            content=cached.content, model=cached.model, tier=tier,
+                            answered_tier=cached.answered_tier, answered_model=cached.answered_model,
+                            applied_system_suffix=cached.applied_system_suffix,  # BF-922: kept on a replay
+                            tokens_used=cached.tokens_used, cached=True, request_id=request.id,
+                        )
+```
+
+Pair 2 (where `_call_openai` appends the suffix):
+
+SEARCH:
+```python
+        if effective_system_suffix:
+            if messages and messages[0].get("role") == "system":
+                base = messages[0].get("content")
+                if isinstance(base, str):
+                    messages[0] = {
+                        **messages[0],
+                        "content": f"{base}\n\n{effective_system_suffix}",
+                    }
+                elif isinstance(base, list):
+                    messages[0] = {
+                        **messages[0],
+                        "content": [*base, {"type": "text", "text": effective_system_suffix}],
+                    }
+            else:
+                messages.insert(0, {"role": "system", "content": effective_system_suffix})
+```
+REPLACE:
+```python
+        # BF-922 (#1639): what this call appended, reported on the response (``applied_system_suffix``)
+        # so a caller can ground on the text the answering attempt was sent; "" when nothing was.
+        applied_suffix = ""
+        if effective_system_suffix:
+            applied_suffix = effective_system_suffix
+            if messages and messages[0].get("role") == "system":
+                base = messages[0].get("content")
+                if isinstance(base, str):
+                    messages[0] = {
+                        **messages[0],
+                        "content": f"{base}\n\n{effective_system_suffix}",
+                    }
+                elif isinstance(base, list):
+                    messages[0] = {
+                        **messages[0],
+                        "content": [*base, {"type": "text", "text": effective_system_suffix}],
+                    }
+                else:
+                    applied_suffix = ""  # a system message of no known shape is sent unchanged
+            else:
+                messages.insert(0, {"role": "system", "content": effective_system_suffix})
+```
+
+Pair 3 (`_call_openai`'s return):
+
+SEARCH:
+```python
+            content_blocks=content_blocks_list,
+            stop_reason=stop_reason_value,
+            answered_model=_echoed_model(data),
+            usage_reported=usage_reported,
+        )
+```
+REPLACE:
+```python
+            content_blocks=content_blocks_list,
+            stop_reason=stop_reason_value,
+            answered_model=_echoed_model(data),
+            usage_reported=usage_reported,
+            applied_system_suffix=applied_suffix,
+        )
+```
+
+Pair 4 (the all-tiers-failed cache replay):
+
+SEARCH:
+```python
+                return LLMResponse(
+                    content=cached.content,
+                    model=cached.model,
+                    answered_tier=cached.answered_tier,
+                    answered_model=cached.answered_model,
+```
+REPLACE:
+```python
+                return LLMResponse(
+                    content=cached.content,
+                    model=cached.model,
+                    answered_tier=cached.answered_tier,
+                    answered_model=cached.answered_model,
+                    applied_system_suffix=cached.applied_system_suffix,  # BF-922: what the answering attempt appended
+```
+
+### 7.10 `src/probos/types.py` (M2, Amendment A1: `LLMResponse.applied_system_suffix`)
+
+SEARCH:
+```python
+    # ``probos.cognitive.token_accounting.charge_completion`` reads this (the agentic loop does not).
+    usage_reported: bool | None = None
+```
+REPLACE:
+```python
+    # ``probos.cognitive.token_accounting.charge_completion`` reads this (the agentic loop does not).
+    usage_reported: bool | None = None
+    # BF-922 (#1639): the per-tier system-prompt suffix (AD-835) this response's call appended to the
+    # system message, as sent. Set by ``OpenAICompatibleClient._call_openai`` for the attempt that
+    # produced the response (a failed attempt's response is discarded with its suffix) and kept on
+    # cache replays; "" when none was appended (the default; the Ollama-native transport, the mock
+    # client, test doubles, errors). The single-call fallback's BF-204 grounds on it.
+    applied_system_suffix: str = ""
+```
+
+### 7.11 `src/probos/cognitive/cognitive_agent.py` (M2, Amendment A1: the `LLMResponse` import)
+
+SEARCH:
+```python
+    IntentResult,
+    LLMRequest,
+    Priority,
+```
+REPLACE:
+```python
+    IntentResult,
+    LLMRequest,
+    LLMResponse,
+    Priority,
+```
+
+### 7.12 `tests/test_ad1325_boundaries.py` (M2, Amendment A1: exact-base bytes exclude the new field)
+
+SEARCH:
+```python
+        # BF-901 appended ``usage_reported`` (default None) the same way; test_bf901_s1_token_accounting
+        # pins its default (test_usage_reported_defaults_to_none).
+        "response": {
+            key: value for key, value in asdict(response).items()
+            if key not in ("answered_tier", "answered_model", "usage_reported")
+        },
+```
+REPLACE:
+```python
+        # BF-901 appended ``usage_reported`` (default None) the same way; test_bf901_s1_token_accounting
+        # pins its default (test_usage_reported_defaults_to_none).
+        # BF-922 appended ``applied_system_suffix`` (default "") the same way; test_bf922_fallback_gate
+        # pins it on the answering attempt and on a cache replay.
+        "response": {
+            key: value for key, value in asdict(response).items()
+            if key not in ("answered_tier", "answered_model", "usage_reported", "applied_system_suffix")
+        },
 ```
 
 ## 8. Tracking
@@ -1101,7 +1783,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-922 (2026-10-24), #1639 -- the chain's output gate: BF-204 grounds on what the composer was given, the single-call fallback is gated, and the suppression line names the agent.** New `probos/cognitive/output_grounding.py` holds BF-191 and BF-204 for both gates. BF-204 now grounds on `composer_world_text` (COMPOSE's own user prompt without the ANALYZE result: the thread, memories, lookups, QUERY and situation sections) plus BF-233's intent ids, no longer on the ANALYZE result; a cited id needs a letter a-f (pure-decimal numbers are not ids) and ids count once. 216 of 309 live BF-204 suppressions cited real Ward Room ids. A single call that answers for a chain intent's chain that returned no decision (a triage or chain failure, AD-632a/AD-643a) runs BF-191 and BF-204 on its reply, grounded on its own request text, not the LLM judge; a rejection is BF-206's suppressed decision with `CONFABULATION_SUPPRESSED` `path=single_call_fallback`. The BF-206, BF-204 and BF-191 lines name the agent. New: `tests/test_bf922_output_grounding.py`, `tests/test_bf922_fallback_gate.py`, `tests/fixtures/bf922_live_grounding_cases.json`. #1639 stays open for the prospective re-measure of the false-positive rate (the contract's D2). The contract is `prompts/bf-922-output-gate-grounding-and-fallback.md`.
+**BF-922 (2026-10-24), #1639 -- the chain's output gate: BF-204 grounds on what the composer was given, the single-call fallback is gated, and the suppression line names the agent.** New `probos/cognitive/output_grounding.py` holds BF-191 and BF-204 for both gates. BF-204 now grounds on `composer_world_text` (COMPOSE's own user prompt without the ANALYZE result: the thread, memories, lookups, QUERY and situation sections) plus BF-233's intent ids, no longer on the ANALYZE result (and on the AD-1347 lookup's text only for a found or ambiguous record: a failed lookup repeats the reference ANALYZE chose); a cited id needs a letter a-f (pure-decimal numbers are not ids) and ids count once. 216 of 309 live BF-204 suppressions cited real Ward Room ids. A single call that answers for a chain intent's chain that returned no decision (a triage or chain failure, AD-632a/AD-643a) runs BF-191 and BF-204 on its reply, grounded on what the answering attempt was sent (its request text and the AD-835 per-tier suffix, carried back as `LLMResponse.applied_system_suffix`), not the LLM judge; a rejection is BF-206's suppressed decision with `CONFABULATION_SUPPRESSED` `path=single_call_fallback`. The BF-206, BF-204 and BF-191 lines name the agent. New: `tests/test_bf922_output_grounding.py`, `tests/test_bf922_fallback_gate.py`, `tests/fixtures/bf922_live_grounding_cases.json`. #1639 stays open for the prospective re-measure of the false-positive rate (the contract's D2). The contract is `prompts/bf-922-output-gate-grounding-and-fallback.md`.
 ```
 
 **`DECISIONS.md`:**
@@ -1114,9 +1796,9 @@ REPLACE:
 ```markdown
 ### BF-922 -- The chain's output gate grounds on what the composer was given, and the fallback is gated (2026-10-24, #1639)
 
-- *Grounding source.* BF-204 grounds on what the composing call was given from outside the chain's own model calls (`composer_world_text`) and on the intent's own ids (BF-233); the ANALYZE result is no longer a source, so a repeated invented id is not grounded. Rejected: recording the exact COMPOSE request (grounds model output; changes a result contract).
+- *Grounding source.* BF-204 grounds on what the composing call was given from outside the chain's own model calls (`composer_world_text`) and on the intent's own ids (BF-233); the ANALYZE result is no longer a source, so a repeated invented id is not grounded. A retrieval's echo of a model-chosen key is not a source either: a failed AD-1347 lookup's text grounds nothing (review round 1). Rejected: recording the exact COMPOSE request (grounds model output; changes a result contract).
 - *Pattern and count.* A cited id is a whole word of 6+ hex with a letter a-f; distinct ids; threshold 2.
-- *Fallback.* AD-632a's fallback degrades to the pre-chain single call, which predates EVALUATE; it was never designed ungated. Every single call that answers a chain intent after its chain returned no decision runs BF-191 and BF-204 on its own request text; not the LLM judge (the model is already failing; the judge is unmeasured, AD-1350).
+- *Fallback.* AD-632a's fallback degrades to the pre-chain single call, which predates EVALUATE; it was never designed ungated. Every single call that answers a chain intent after its chain returned no decision runs BF-191 and BF-204 on what the answering attempt was sent (the request text and its AD-835 suffix, `LLMResponse.applied_system_suffix`); not the LLM judge (the model is already failing; the judge is unmeasured, AD-1350).
 - *Re-measure.* No replay is possible (prompts are not retained); the logged ids are re-scored at build time and the false-positive rate is measured on the merged build's own lines (#1639 stays open for it).
 - *Reversal.* Revert the commits.
 
@@ -1126,9 +1808,9 @@ REPLACE:
 **After both edits:** run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then its `--check`. **`docs/development/roadmap.md`:** no row.
 
 **#1639 checklist text** (the orchestrator records it on the issue):
-- [ ] (1) BF-204 grounds on `composer_world_text` + intent ids; pure-decimal excluded; distinct ids; live-fixture regression and must-still-catch tests (M1).
+- [ ] (1) BF-204 grounds on `composer_world_text` + intent ids; pure-decimal excluded; distinct ids; a failed lookup's echo grounds nothing; live-fixture regression through production renderers and must-still-catch tests (M1).
 - [ ] (1, re-measure a) logged ids re-scored at build time, recorded here (D2).
-- [ ] (2) The single-call fallback runs BF-191 and BF-204 (not the judge); seam test drives a real triage failure (M2).
+- [ ] (2) The single-call fallback runs BF-191 and BF-204 (not the judge) on what the answering attempt was sent; seam tests drive a real triage failure and the real transport's per-tier suffix (M2).
 - [ ] (3) The BF-206 line names the agent type, callsign and id (M2).
 - [ ] (1, re-measure b) false-positive rate on the merged build's own BF-204 lines, recorded here (D2). Closes #1639.
 
@@ -1140,13 +1822,15 @@ REPLACE:
 - A single call for any intent outside `_CHAIN_ELIGIBLE_INTENTS` is not gated. The suppressed decision has BF-206's shape.
 - BF-921's emitter, payload keys and the Counselor's record-only rule are unchanged; this prompt only adds `path="single_call_fallback"` calls.
 - `CONFABULATION_SUPPRESSED` persistence is unchanged (BF-921 R1).
+- AD-1347's lookup, `render_lookup` and COMPOSE's lookup section are unchanged; COMPOSE still shows a failed lookup's text (A1 only stops it grounding).
+- AD-835's suffix application is unchanged; `_call_openai` now reports what it appended, and the Ollama-native transport, which appends none, reports none.
 
 ## 10. Mutation rows (whole stripped lines, each occurring once in its file after section 7)
 
 Tier HIGH. Run each row on the applied tree after an unmutated baseline run passes; restore each file before the next row. Command:
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_output_grounding.py tests/test_bf922_fallback_gate.py tests/test_bf204_grounding.py tests/test_bf233_grounding_false_positives.py -n 0 -x -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_output_grounding.py tests/test_bf922_fallback_gate.py tests/test_bf204_grounding.py tests/test_bf233_grounding_false_positives.py tests/test_ad1347_s4_chain_lookup.py -n 0 -x -q
 ```
 
 | # | File | Line (stripped) | Mutate to | Killed by |
@@ -1158,14 +1842,24 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf922_output_grounding.p
 | G5 | `src/probos/cognitive/output_grounding.py` | `for key in ("thread_id", "channel_id", "author_id"):` | `for key in ():` | `test_the_bf233_intent_ids_are_given`, `test_bf233_grounding_false_positives.py` |
 | G6 | `src/probos/cognitive/sub_tasks/compose.py` | `world = [pr for pr in prior_results if pr.sub_task_type != SubTaskType.ANALYZE]` | `world = list(prior_results)` | `test_the_world_text_leaves_out_the_analysis`, `test_an_id_only_in_the_analysis_is_not_grounded` |
 | G7 | `src/probos/cognitive/sub_tasks/evaluate.py` | `_shown = shown_hex_runs(composer_world_text(context, prior_results), *intent_entity_ids(context))` | `_shown = shown_hex_runs(*intent_entity_ids(context))` | `test_an_id_in_any_world_section_is_grounded`, `test_bf204_grounding.py::test_hex_ids_in_source_no_false_positive` |
+| G8 | `src/probos/cognitive/sub_tasks/compose.py` | `if context.get("_ward_room_lookup_outcome") not in (LOOKUP_FOUND, LOOKUP_AMBIGUOUS):` | `if False:` | `test_a_failed_lookup_echo_does_not_ground_through_the_real_chain`, `test_the_lookup_text_grounds_only_for_a_record_outcome` |
+| G9 | `src/probos/cognitive/sub_tasks/compose.py` | `if context.get("_ward_room_lookup_outcome") not in (LOOKUP_FOUND, LOOKUP_AMBIGUOUS):` | `if True:` | `test_a_found_record_grounds_through_the_real_chain`, `test_the_lookup_text_grounds_only_for_a_record_outcome`, `test_an_id_in_any_world_section_is_grounded` |
+| G10 | `src/probos/cognitive/sub_tasks/query.py` | `return {"ward_room_lookup": render_lookup(result), "ward_room_lookup_outcome": result.outcome}` | `return {"ward_room_lookup": render_lookup(result), "ward_room_lookup_outcome": "found"}` | `test_a_failed_lookup_echo_does_not_ground_through_the_real_chain`, `test_the_asker_is_the_chains_agent_id_never_a_params_agent_id` |
+| G11 | `src/probos/cognitive/cognitive_agent.py` | `observation["_ward_room_lookup_outcome"] = outcome if isinstance(outcome, str) else ""` | `pass` | `test_a_found_record_grounds_through_the_real_chain`, `test_the_helper_reads_the_ref_from_analyze_and_runs_once` |
 | F1 | `src/probos/cognitive/cognitive_agent.py` | `observation[CHAIN_FALLBACK_KEY] = True  # BF-922: the routed chain's fallback` | `pass` | `test_a_triage_failure_fallback_citing_invented_ids_is_suppressed` |
 | F2 | `src/probos/cognitive/cognitive_agent.py` | `observation[CHAIN_FALLBACK_KEY] = True  # BF-922: an external chain's fallback` | `pass` | `test_an_external_chain_fallback_is_gated_for_a_chain_intent` |
 | F3 | `src/probos/cognitive/cognitive_agent.py` | `if observation.get(CHAIN_FALLBACK_KEY):` | `if False:` | `test_a_triage_failure_fallback_citing_invented_ids_is_suppressed` |
-| F4 | `src/probos/cognitive/cognitive_agent.py` | `shown = shown_hex_runs(request.system_prompt or "", request.prompt or "", *intent_entity_ids(observation))` | `shown = shown_hex_runs(request.system_prompt or "")` | `test_a_fallback_reply_citing_given_ids_is_posted` |
+| F4 | `src/probos/cognitive/cognitive_agent.py` | `shown = shown_hex_runs(*given, *intent_entity_ids(observation))` | `shown = shown_hex_runs(given[0])` | `test_a_fallback_reply_citing_given_ids_is_posted` |
 | F5 | `src/probos/cognitive/cognitive_agent.py` | `self._emit_output_suppressed(rejection.reason, observation, path=PATH_FALLBACK)` | `pass` | `test_a_triage_failure_fallback_citing_invented_ids_is_suppressed` |
 | F6 | `src/probos/cognitive/cognitive_agent.py` | `observation.pop(CHAIN_FALLBACK_KEY, None)` | `pass` | `test_a_triage_failure_fallback_citing_invented_ids_is_suppressed` |
 | F7 | `src/probos/cognitive/cognitive_agent.py` | `self.agent_type, getattr(self, "callsign", "") or self.agent_type, self.id, rejection,` | `self.agent_type, "", "", rejection,` | `test_the_chain_suppression_log_line_names_the_agent` |
 | F8 | `src/probos/cognitive/cognitive_agent.py` | `if observation.get("intent") in _CHAIN_ELIGIBLE_INTENTS:  # BF-922: only a chain intent's reply` | `if True:` | none in this suite (an external chain for a non-chain intent is not driven); recorded as surviving, R4 |
+| F9 | `src/probos/cognitive/cognitive_agent.py` | `given = (request.system_prompt or "", response.applied_system_suffix, request.prompt or "")` | `given = (request.system_prompt or "", request.prompt or "")` | `test_the_fallback_grounds_on_the_answering_attempts_system_message` |
+| F10 | `src/probos/cognitive/llm_client.py` | `applied_suffix = effective_system_suffix` | `applied_suffix = ""` | `test_the_fallback_grounds_on_the_answering_attempts_system_message` |
+| F11 | `src/probos/cognitive/llm_client.py` | `applied_system_suffix=applied_suffix,` | `applied_system_suffix="",` | `test_the_fallback_grounds_on_the_answering_attempts_system_message` |
+| F12 | `src/probos/cognitive/llm_client.py` | `applied_system_suffix=cached.applied_system_suffix,  # BF-922: what the answering attempt appended` | `applied_system_suffix="",` | `test_a_cache_replay_keeps_the_answering_attempts_suffix` |
+
+The rate-limit replay's copy (section 7.9 pair 1) has no row: reaching it needs an exhausted rate budget, and it is the same copy as F12's.
 
 ## 11. Verified Against Codebase (2026-10-24, worktree `d922-draft` at `origin/main` `cb190f32`)
 
@@ -1209,6 +1903,24 @@ grep -rn "Chain output suppressed\|Grounding check failed\|rejected raw intent J
 grep -rln "EvaluateHandler\|evaluate import" tests/
   the 12 files in the M1 focused check
 read tests/test_bf901_s2_journal_token_provenance.py:57-114 (the real decide() -> _decide_via_llm harness this M2 test follows)
+Amendment A1 (2026-10-24, read on the M2 candidate 6259630e; these regions are equal on the base):
+read src/probos/cognitive/sub_tasks/query.py:415-440
+  428, 434, 440 return {"ward_room_lookup": ...}; the typed outcome is dropped at 440
+read src/probos/ward_room/lookup.py:375-400
+  not_found echoes {result.ref} (391); invalid_ref echoes it and "such as 51d91a7d" (393); ambiguous names it (385)
+grep -n "substr(id, 1, ?) = ?\|startswith(ref)" src/probos/ward_room/lookup.py
+  178, 182, 357, 360 (every live or archived match starts with the ref)
+grep -n "context_keys=(" src/probos/cognitive/cognitive_agent.py
+  5712, 5775, 5872 (thread_metadata ...), 5908 (unread_counts, trust_score)
+read src/probos/cognitive/sub_tasks/compose.py:457-463 (the first successful QUERY result, rendered "- <key>: <value>")
+read src/probos/ward_room/messages.py:821-836 ({channel_id: count}); src/probos/ward_room/threads.py:707-767 (thread, posts with ids)
+grep -n "effective_system_suffix = tc.get\|response = replace(response, answered_tier=attempt_tier)" src/probos/cognitive/llm_client.py
+  1672, 1833
+read src/probos/cognitive/llm_client.py:2156-2175 (the Ollama-native call takes no suffix), 2320-2341, 2422-2435, 1526-1530, 2001-2010
+grep -rn "asdict(response)" tests/
+  tests/test_ad1325_boundaries.py:232
+read src/probos/cognitive/cognitive_agent.py:12726-12748 (default tier "standard"; level_llm_tier overrides it)
+read tests/test_ad835_tier_adaptation.py:168-218 (deep fails, fast fails, standard serves with its own suffix)
 ```
 
 ## 12. Absence Verified (2026-10-24)
@@ -1233,6 +1945,21 @@ CLAIM: the crew roster in COMPOSE's system prompt carries no ids
 RUN:   read cognitive_agent.py:3001-3046
 FOUND: only "@<callsign>" entries grouped by department
 HOLDS: yes
+
+CLAIM (A1): the single-call fallback's prompt carries no Ward Room lookup text and no model-chosen reference
+RUN:   Grep "_oracle_context|oracle_query_text|_ward_room_lookup|ward_room_lookup_ref" over src/probos (analyze.py's prompt text aside)
+FOUND: _ward_room_lookup_context read only at compose.py:510; ward_room_lookup_ref read only at query.py:426; oracle_query_text only at query.py:251, 325; _oracle_context rendered by the single call (cognitive_agent.py:10622-10634, 10917-10927) and COMPOSE, and its formatter (oracle_service.py:715-753) renders results, never the query
+HOLDS: yes: no exclusion is needed on the fallback
+
+CLAIM (A1): only the dispatch and AD-1347 S4's tests read the lookup QUERY's result dict
+RUN:   Grep "ward_room_lookup" over src/ and tests/
+FOUND: src: query.py:415-461, cognitive_agent.py:5744-5800, 6260, 6379-6380, compose.py:510, analyze.py (prompt text); tests: test_ad1347_s4_chain_lookup.py (whole-dict equality at :141, :148, :151, :154, :159), test_bf922_output_grounding.py:95, :179, and the "N keys" prompt counts in test_ad643a and test_ad645
+HOLDS: yes
+
+CLAIM (A1): no test that wires a sub-task executor drives a chain-intent fallback with a response double lacking a str applied_system_suffix
+RUN:   Grep "_sub_task_executor = |set_sub_task_executor\(" over tests/ (17 files), then "MagicMock\(content=|\.content = |return_value=MagicMock\(\)" over those
+FOUND: ad1156:193, ad1208:127/383/2046 (agentic-loop response classes), ad632a:626 (no executor in that test), fallback_learning:689/710 (_run_llm_fallback, intent "test", executor None)
+HOLDS: yes for those files; the broad gate checks the rest
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -1240,29 +1967,32 @@ HOLDS: yes
 - Bug fix: external prior-art review skipped (ProbOS-specific plumbing; no outside analogue for this check).
 - Internal: BF-204 (the check), BF-233 (its intent-id exemptions, kept), BF-191, BF-206, AD-632a/AD-643a (the fallback), AD-645 (COMPOSE renders the situation sections), AD-1347 (the lookup rendering with full ids), AD-1350 (#1637, why the judge is not used on the fallback), BF-921 (#1636, the emitter and the penalty rule).
 - Blind spots addressed: the ANALYZE laundering hole (D1); the external-chain fallback (D3); a probe parser broken by the new line (section 7.3 note); a fixture of real ids that could carry sensitive bodies (section 6). Considered, deferred: recording the shown-id set per suppression for audit (R2); gating every single call, not only fallbacks (R3).
+- Amendment A1 (review round 1): two more ways text crosses the gate's boundary: a retrieval that echoes the model's request back as world text (AD-1347's not_found and invalid_ref lines), and a transport that adds text after the request is built (AD-835's per-tier suffix). Considered, deferred: an audit of every retrieval keyed on model output (the AD-696 Oracle formatter renders results, not the query).
 
 ## 14. Diff Reviewer: properties to verify
 
 1. EVALUATE's BF-191/BF-204 result dicts are key-for-key what they were; the deterministic checks still run before every bypass and the judge.
-2. Every source BF-204 grounds on is either text COMPOSE renders in its user prompt (computed by the same `_build_user_prompt`, ANALYZE excluded) or one of BF-233's intent ids; no model output is a source.
+2. Every source BF-204 grounds on is either text COMPOSE renders in its user prompt (computed by the same `_build_user_prompt`, ANALYZE excluded, the AD-1347 lookup's text only for a found or ambiguous outcome) or one of BF-233's intent ids; no output of this chain's model calls is a source, directly or echoed back by a retrieval. Earlier model output that a world section quotes still grounds (R5).
 3. A cited id needs a letter a-f; ids are counted once; the threshold is 2; an id inside a given hex run is grounded, as `in` on the text was.
 4. The fallback flag is set only when a chain intent's chain returned no decision (routed, or external for a chain intent), is popped on every exit from the single call (including an exception), and is read only by `_decide_via_llm`.
-5. On the fallback the checks see exactly the request's system prompt and user prompt and the intent's ids; a rejection returns BF-206's decision shape, logs the agent, and emits through `_emit_output_suppressed` with `path="single_call_fallback"`; a pass returns the original decision unchanged, with its strategy ids.
+5. On the fallback the checks see exactly the request's system prompt and user prompt, the AD-835 suffix the answering attempt appended (`LLMResponse.applied_system_suffix`: set by `_call_openai` only, `""` when none was appended or on the Ollama-native transport, kept on both cache replays, never a failed attempt's), and the intent's ids; a rejection returns BF-206's decision shape, logs the agent, and emits through `_emit_output_suppressed` with `path="single_call_fallback"`; a pass returns the original decision unchanged, with its strategy ids.
 6. A single call for a non-chain intent is never gated.
 7. The live fixture is read-only data the tests never write; no test reads `%LOCALAPPDATA%` or `d:\ProbOS\data`.
+8. `LLMResponse.applied_system_suffix` is set only where `_call_openai` appends the suffix; it is `""` by default and on the Ollama-native transport, the mock client and errors; both cache replays copy it; `tests/test_ad1325_boundaries.py` excludes it from its exact-base bytes and nothing else serialises `LLMResponse`.
+9. `ward_room_lookup_outcome` and `_ward_room_lookup_outcome` change nothing COMPOSE renders (AD-1347 S4's compose assertions are unchanged); the outcome is written only together with the text; a missing or unknown outcome grounds nothing; the live fixture's every id is placed through the real QUERY step and COMPOSE renderer, and the live test requires approval.
 
 ## 15. Acceptance criteria
 
-- BF-204's source includes every id the composer was given from the world (posts, threads, channels rendered into its context) and the intent's ids, and nothing a model produced; pure-decimal numbers are not ids; distinct ids are counted.
-- The live-fixture regression passes; two invented hex ids are still suppressed; re-measure (a) is recorded on #1639, (b) is scheduled (D2).
-- The single-call fallback runs BF-191 and BF-204, not the judge; the seam test drives a real triage failure and catches a fabricated-id reply.
+- BF-204's source includes every id the composer was given from the world (posts, threads, channels rendered into its context) and the intent's ids, and nothing this chain's model calls produced, directly or echoed back by a retrieval (a failed AD-1347 lookup's text grounds nothing, shown through the real chain); pure-decimal numbers are not ids; distinct ids are counted.
+- The live-fixture regression passes with every id placed through a production renderer and the judge's approval; two invented hex ids are still suppressed; re-measure (a) is recorded on #1639, (b) is scheduled (D2).
+- The single-call fallback runs BF-191 and BF-204, not the judge, on what the answering attempt was sent (its AD-835 suffix included, a failed attempt's never); the seam tests drive a real triage failure and the real transport, and catch a fabricated-id reply.
 - The BF-206 line names the agent type, callsign and id.
 - Before editing, the tests that pin BF-204, BF-233, AD-632a and AD-643a were grepped; any pin of a defect was updated with an inline reason.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Live acceptance: what is read (read-only)
 
-D2 (b): after at least 100 new `BF-204: Grounding check failed` lines or 7 days of vessel time on the merged build, the `bf204_real.py` method over `%LOCALAPPDATA%\ProbOS\data\logs\probos.log*` and `ward_room.db` (`mode=ro&immutable=1`): total, all-real share, split by `path=`, and for each all-real case the section that gave the id or "none". Also the count of `BF-922: Single-call fallback output suppressed` lines against `AD-643a: Triage phase failed` and `AD-632a: Sub-task chain failed` lines in the same window. Recorded on #1639.
+D2 (b): after at least 100 new `BF-204: Grounding check failed` lines or 7 days of vessel time on the merged build, the `bf204_real.py` method over `%LOCALAPPDATA%\ProbOS\data\logs\probos.log*` and `ward_room.db` (`mode=ro&immutable=1`): total, all-real share, split by `path=`, and for each all-real case the section that gave the id or "none". Also the count of `BF-922: Single-call fallback output suppressed` lines against `AD-643a: Triage phase failed` and `AD-632a: Sub-task chain failed` lines in the same window. Recorded on #1639. For each all-real chain case, also note whether the same agent logged `AD-1347: Ward Room lookup ... not_found` or `invalid_ref` just before (the echoes A1 stopped grounding).
 
 ## 17. Not verified
 
@@ -1270,6 +2000,8 @@ D2 (b): after at least 100 new `BF-204: Grounding check failed` lines or 7 days 
 - That `_build_chain_for_intent` returns a chain with QUERY/ANALYZE steps for the test observation (read: it does for `ward_room_notification`); the triage test asserts `:triage` so a miss fails loudly.
 - Where the live full UUIDs and DM channel ids were rendered (the prompts were not retained); the fixture's placements are by kind, and D2 (b) measures the residue.
 - The fixture's contents (the orchestrator writes them).
+- Amendment A1's tests were not run by the Architect (the bridge runs none). The real-chain lookup tests follow the round-1 reviewer's executed probe (`logs/bf922r1/reviewer_test_production_consumers.py`: two model calls, the DM bypass, BF-206's decision shape); the transport tests follow `reviewer_m2_test_m2_transport_grounding.py` and `tests/test_ad835_tier_adaptation.py` (deep, then fast, then standard).
+- That the found-record test's thread is visible to its own author in a DM channel (AD-621's author rule, `lookup.py:9-11`): read, not run.
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -1277,3 +2009,4 @@ D2 (b): after at least 100 new `BF-204: Grounding check failed` lines or 7 days 
 - **R2.** A suppression records the cited ids in the log only; neither the journal nor events.db can audit what the agent was given (BF-921 R1).
 - **R3.** Single calls outside the fallback (DMs, Captain requests, non-chain intents) still run no deterministic check; whether they should is a design question for its own issue.
 - **R4.** Mutation F8 (the external chain's eligibility condition) survives this suite, and the AD-632f external-chain path has no production producer at all: `rg -n "pending_sub_task_chain" src/` finds only `cognitive_agent.py:1359` (init to `None`), `:3755-3757` (consume). The external chain is reachable from tests only; whether to keep that escape hatch is a question for its own issue.
+- **R5.** Earlier model output that a world section quotes still grounds ids: the thread's previous replies (the agent's own included) and the agent's own unverified reflections in its memories (review round 1, run `bf922-r1-production-consumers-v2`). D1 accepts it (outside this chain's model calls); D2 (b) counts all-real cases by section, which shows how often it matters.
