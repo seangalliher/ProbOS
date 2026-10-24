@@ -62,7 +62,7 @@ npx vitest run src/audio src/components/profile
 npx tsc -b
 ```
 
-Tests-first, on the base `voice.ts` with §7.7 applied: P14, P16, P17, P19 and P20 fail; P15 and P18 pass (P15 guards a regression M5 could introduce, and P18 is the pipelining-off control). P1 to P13 pass.
+Tests-first, on the base `voice.ts` with §7.7 applied: P14, P15, P16, P17, P19 and P20 fail; P18 passes (the pipelining-off control). P1 to P13 pass. P15 fails only at its last assertion, which reads the new `final` field (`[false]`); its earlier assertions pass on the base and pin what M5 must keep (a stop between two sentences frees the arbiter at once). The first draft of this paragraph predicted that P15 passes on the base; the Builder's tests-first run showed it does not.
 
 **Harness rule (from BF-918 §6):** `_flush()` is 40 microtask turns. If a new case needs more because of the call depth (an estimate: none was run), raise the count for that case only and say so in the report. Never add a wall-clock sleep.
 
