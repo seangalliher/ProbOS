@@ -4,7 +4,7 @@
 
 **Status:** build-ready. One BF, three milestones (M1 S3, M2 S2, M3 S1), one batch, one PR, one broad gate. **BF number:** BF-918 (#1626); this contract allocates nothing. **Tier:** S1 STANDARD, S2 STANDARD, **S3 HIGH** (the reaper gains an automatic age-based deletion on the live store, and a delete-capable tool ships); the batch is reviewed at HIGH (use the Copilot `Diff Reviewer`). **Base:** `origin/main` `26bec26d` (the Architect drafted on `eea6e2f4`; BF-914 merged since, and the three generated files and one pin are regenerated on top of it). **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
-**Orchestrator mechanical repairs (2026-10-24; found by applying this contract by tool to `origin/main` `26bec26d` and running its tests; no design decision, and the tree they produce is what the contract now says).** (1) §7.9's `_tool()` registers the loaded module in `sys.modules` while it executes (and `import sys` joins the imports): a dataclass in `scripts/tts_audio_inventory.py` finds its module's namespace there, so without it the four inventory-tool tests failed with an `AttributeError` on Python 3.12. (2) New §7.9a raises the pinned model-field count in `tests/test_ad1270e1_config_facade.py` from 1879 to 1880 (the one new field; the contract listed no pin there). (3) Eight pairs state their SEARCH as a range ("the block from X through Y") instead of a fenced block: §7.20 pairs 2 and 3, §7.21 pairs 2 and 3, §7.22 pairs 3 and 4, §7.26 pair 7 and §7.27 pair 2. A Builder replaces the stated block with the REPLACE; the orchestrator's oracle applies them with a range tool that locates each block by its start and end lines, never by line numbers.
+**Orchestrator mechanical repairs (2026-10-24; found by applying this contract by tool to `origin/main` `26bec26d` and running its tests; no design decision, and the tree they produce is what the contract now says).** (1) §7.9's `_tool()` registers the loaded module in `sys.modules` while it executes (and `import sys` joins the imports): a dataclass in `scripts/tts_audio_inventory.py` finds its module's namespace there, so without it the four inventory-tool tests failed with an `AttributeError` on Python 3.12. (2) New §7.9a raises the pinned model-field count in `tests/test_ad1270e1_config_facade.py` from 1879 to 1880 (the one new field; the contract listed no pin there). (3) Eight pairs state their SEARCH as a range ("the block from X through Y") instead of a fenced block: §7.20 pairs 2 and 3, §7.21 pairs 2 and 3, §7.22 pairs 3 and 4, §7.26 pair 7 and §7.27 pair 2. A Builder replaces the stated block with the REPLACE; the orchestrator's oracle applies them with a range tool that locates each block by its start and end lines, never by line numbers. (4) §7.14 pair 4's comment line moves from before the docstring to after it, as a new pair 4b: the contract's own Builder note asked for that placement, and a tool applying the pairs cannot follow a note, so the oracle's `rhubarb_backend.py` differed from the Builder's until the note became a pair.
 
 **Tests:**
 - New `tests/test_bf918_tts_retention.py` (M1, 11 functions).
@@ -1749,7 +1749,22 @@ async def generate_visemes(
     ffmpeg_binary_path: str | None = None,
     executor: Executor | None = None,
 ) -> list[VisemeFrame]:
+```
+
+Pair 4b of 7 (the comment goes after the docstring's closing `"""`, so the docstring stays the function's first statement):
+
+SEARCH:
+```python
+    contract is preserved (returns ``[]``).
+    """
+    if not audio_path.is_file():
+```
+REPLACE:
+```python
+    contract is preserved (returns ``[]``).
+    """
     # BF-918: ``executor`` is the runtime's voice executor; ``None`` keeps asyncio's default pool.
+    if not audio_path.is_file():
 ```
 
 Pair 5 of 7:
@@ -1808,7 +1823,7 @@ REPLACE:
             )
 ```
 
-The pair 4 comment is placed before the docstring, so the docstring stops being the function's docstring. **Builder:** put that one comment line after the docstring's closing `"""`, not before it. Do not change `_SUPPORTED_SUFFIXES = {".wav", ".ogg"}`: `test_bf292` reads it from the source.
+Pair 4b (orchestrator repair 4) places the pair 4 comment after the docstring's closing `"""`; pair 4 itself used to put it before the docstring and a Builder note asked for it to be moved, which a tool applying the pairs cannot do. Do not change `_SUPPORTED_SUFFIXES = {".wav", ".ogg"}`: `test_bf292` reads it from the source.
 
 ### 7.15 `src/probos/routers/avatars.py` (M2)
 
@@ -4528,7 +4543,7 @@ The live acceptance cannot be met by CI. Only the Captain restarts the vessel; t
 - AD-1341 S2 to S6 and AD-1346 M2, M5, M6, M8 and M10 have no contracts yet. The overlap in §4 is judged from #1601's text and #1632's body.
 - **Expected phantom-precheck false positives**, all from code blocks: the `Inventory`, `PiperOutcome` and fake-process field accesses (new symbols), `Timer` (`threading.Timer`), `OrderedDict`, `SimpleNamespace`, `ThreadPoolExecutor` where already in `src`, and `VisemeFrame` where already in `src`.
 
-**Orchestrator verification (2026-10-24, by tool, on `origin/main` `26bec26d` = BF-914 merged; the consult above ran none of this).** All 58 verbatim pairs apply, each SEARCH once (10 in M1 with §7.9a, 35 in M2, 14 in M3), the eight range pairs apply by their markers, and the six new files are created by tool: the oracle is three scratch commits, M1 `b5a26ed7`, M2 `83bf2cc0` and M3 `aeaca4af` (tree `1db7476e`). **The oracle found what a read-only consult cannot** (the header lists the three repairs): the retention test's tool loader, the facade's pinned field count, and the range pairs a verbatim-pair tool skips. After them: the M1 and M2 focused lists, 20 test files, 1,147 passed; vitest over 33 files, 338 passed, and `tsc -b` clean; the generators move the model-field count 1879 to 1880 and change the three generated files. **Mutation campaign:** the 21 Python rows ran one at a time after an unmutated baseline (110 passed): 21 of 21 killed, none survived, none inert, none invalid; a census run that records every failing test of every mutant found 0 claimed killers that do not fail. The four TypeScript rows, run by hand (baseline 26 passed): 4 of 4 killed. "25 mutants parsed" equals the 21 and 4 rows of section 10. **Tests-first:** the oracle's nine Python test files on `26bec26d`'s source: 14 failed and 376 passed, and four files fail at collection because they import `probos.audio.tts.resident`; the four vitest files: 17 failed and 16 passed.
+**Orchestrator verification (2026-10-24, by tool, on `origin/main` `26bec26d` = BF-914 merged; the consult above ran none of this).** All 59 verbatim pairs apply, each SEARCH once (10 in M1 with §7.9a, 36 in M2 with pair 4b, 14 in M3), the eight range pairs apply by their markers, and the six new files are created by tool: the oracle is three scratch commits, M1 `b00708af`, M2 `8156cadd` and M3 `eb579631` (tree `64a95de5`). **The oracle found what a read-only consult cannot** (the header lists the four repairs): the retention test's tool loader, the facade's pinned field count, and the range pairs a verbatim-pair tool skips. After them: the M1 and M2 focused lists, 20 test files, 1,147 passed; vitest over 33 files, 338 passed, and `tsc -b` clean; the generators move the model-field count 1879 to 1880 and change the three generated files. **Mutation campaign:** the 21 Python rows ran one at a time after an unmutated baseline (110 passed): 21 of 21 killed, none survived, none inert, none invalid; a census run that records every failing test of every mutant found 0 claimed killers that do not fail. The four TypeScript rows, run by hand (baseline 26 passed): 4 of 4 killed. "25 mutants parsed" equals the 21 and 4 rows of section 10. **The three Builders** (`claude-sonnet-5.5`; M2 and M3 built concurrently in separate trees) produced files blob-equal to the oracle's stages: M1's 13, M2's 26 cumulative paths and M3's 6, with 0 mismatches; the one difference found on the way (§7.14 pair 4's comment placement) is repair 4 above. **Tests-first:** the oracle's nine Python test files on `26bec26d`'s source: 14 failed and 376 passed, and four files fail at collection because they import `probos.audio.tts.resident`; the four vitest files: 17 failed and 16 passed.
 
 ## 18. For the register (found here, not fixed by this change)
 
