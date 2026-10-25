@@ -736,6 +736,18 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
   - (3) Elastic workers (#1332, AD-1288 #1335, AD-1290 #1337) may fill Reviewer and Builder slots, commissioned by the Chief Engineer under AD-1288's separation of duty and leases. A fresh reviewer has no shared context by construction. Drafting and brake authority stay with persistent identities.
 - *Reversal.* Restore the Utility agent in AD-1299 S2f and route the judgment roles to it. The services, evidence and approvals are unchanged either way.
 
+### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)
+
+- *Anchor metric.* AD-569's "recent episodes" are read with `recent_for_agent`, not a semantic recall of an empty query, and by the sovereign id: Ward Room authors are slot ids, episodes carry sovereign ids, so the behavioral metrics engine takes the identity registry by late binding. Whether thread-relevant episodes measure grounding better is a metric design question, registered.
+- *Orientation count.* One helper (`count_agent_episodes`) counts the agent's own episodes for both callers; the warm-boot block is a function so the caller is tested on a real store. At stasis recovery the crew is told its own episode count (a fact, not a gauge: no hold).
+- *Counselor trust: recorded, held.* `get_score` is read at the one gather seam and recorded on the profile with the first reading as the captured baseline; the values the assessment receives are unchanged (`TRUST_DEFAULT`, Hebbian 0.0, the default baseline), so `assess_agent`, its DMs, its Bridge alerts and the agent's wellness view are unchanged by construction (BF-921 D3). Rejected: a hold inside `assess_agent` (changes the math for explicit callers) and a per-call-site record (fifteen identical lines, a missed one silent). `_on_trust_update` still compares with the default baseline; the measurement on #1523 decides it with the gauge.
+- *Hebbian.* Not read: no per-agent Hebbian reading is defined; choosing one is a new gauge.
+- *Bound.* A profile keeps its latest 50 assessments and readings (on append and on load); the full history stays in the `assessments` table.
+- *Thread scope (A1).* The behavioral metrics read the crew channels through `list_channels()` and `browse_threads(channels=...)`. DM channels are private to their two parties and are not read (`crew_channel_ids`). A failed read raises to the dream, which skips the step; no zero snapshot is recorded.
+- *Tier 3 hold (A1).* The five behavioral probes store their scores marked inconclusive, which drift statistics exclude. Their history is all zeros, so a first real score would read as critical drift for `__crew__` and reach VitalsMonitor's medical alert. Lifting the hold is the qualifying issue's call.
+- *Cost (A1).* One episode read per owner per computation, yielding between reads; synthesis and convergence detection embed in a worker thread.
+- *Reversal.* Revert the commits; the metrics, the counts and the probe scores return to 0 and the Counselor stops recording readings.
+
 ### BF-921 -- The Counselor receives the events it subscribes to; no output suppression carries a penalty (2026-10-24, #1636)
 
 - *Root cause.* `add_event_listener` stringified `EventType` members with `str()` (`"EventType.NAME"` on Python 3.11+), so member filters matched nothing, locally and as NATS subjects. Fixed at the seam for every caller (`_event_type_filter`), not in the Counselor alone. The leading suspect, `_runtime` being `None`, was refuted. Five dormant listeners now receive events.
