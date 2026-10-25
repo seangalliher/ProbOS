@@ -6,8 +6,10 @@
 
 **Status:** build-ready. Two BFs, one batch, two milestones, one PR, one gate; #1656 and #1657 close with it. **Numbers:** BF-926 (#1656), BF-927 (#1657); this contract allocates nothing. **Tier:** M1 **STANDARD** (BF-927: log text, docstrings, roadmap status words, one new test); M2 **STANDARD** (BF-926: field descriptions, one field deleted, yaml keys, a report-only script). **No behaviour change:** no gate, detector, check or listener starts or stops; the only executable additions are a script nothing gates on and two test files. **Base:** `7ffbda5a` (`origin/main` `8f9fd379` plus BF-924's contract applied); BF-924 (#1654) merges first; the orchestrator re-verifies every SEARCH on the merge SHA, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF. **Fragment SEARCHes:** the roadmap entries (§7.9, §7.10) are single lines of up to 10,000 characters; their SEARCH is a fragment of the line and occurs once in the file.
 
+**Amendment A2 (2026-10-25, `claude-architect`; round 1 of the whole review: F1 P1, F2-F6 resolver, F7 wording).** F1: the AD/BF ledger is regenerated in a third commit, generated files only, after both milestone commits and after any merge of the base (§8, §14.8; BF-924 `34df056c` precedent). F3 fixed in §7.11: a literal `getattr(holder, "entry")(...)` is a call, and an entry method passed or assigned uncalled is an escape; three fixture cases (34 to 37 cases) and rows A7-A9. F5: wording only (an escape cannot make an invoked service less invoked). F2, F4, F6: disclosed in the test docstring, D7 and §14.3, and recorded as R10. F7: the 23 markers say "reads this field/section to act on it", by substitutions S-A/S-B (the marker substring is unchanged); the yaml comments (S-C) and the script's docstring and argparse text say the same; the config API (`routers/config.py:191`, `:211`, `:246`, `:267`) is named as generic I/O. No production behaviour, default, row or pin outside §6's list changes. Applied by tool; round 2 is a delta review.
+
 **Tests:**
-- New `tests/test_bf927_boot_claims.py` (M1: 6 functions, 34 cases).
+- New `tests/test_bf927_boot_claims.py` (M1: 6 functions, 37 cases).
 - New `tests/test_bf926_config_readers.py` (M2: 6 functions, 49 cases).
 - New `scripts/check_config_readers.py` (M2, report-only).
 - Updated pins (M2): `tests/test_ad607_memory_security.py` (default of the deleted field), `tests/test_ad1270e2g_crew_models.py` (pre-move dump of `MemorySecurityConfig`), `tests/test_ad1185_config_profiles.py` (two tests that used the manifest's only conflict edge), `tests/test_ad1270e1_config_facade.py` (field-count pin 1876 to 1875), `tests/fixtures/ad1152_agentic_off_golden.json` (the default-config and observation digests, §7.24, A1).
@@ -36,12 +38,12 @@
 
 ## 2. Solution overview
 
-- **M1 (BF-927).** Each boot line says `built, not invoked` (AD-455 splits into a "RedTeamLead running" line and a "not invoked" line). The six config models' reference summaries, eight roadmap status markers, `vote_on_intent`'s docstring and a Yeoman comment say the same. A new test resolves every caller of each service over `src/probos` with the AST (receiver-resolved, not name-matched) and pins every claim against that state in both directions, on the real boot code, the real models and the real files, plus one booted runtime.
+- **M1 (BF-927).** Each boot line says `built, not invoked` (AD-455 splits into a "RedTeamLead running" line and a "not invoked" line). The six config models' reference summaries, eight roadmap status markers, `vote_on_intent`'s docstring and a Yeoman comment say the same. A new test traces every caller of each service over `src/probos` with the AST (from each construction or typed parameter, not by method name; its approximations are listed, R10) and pins every claim against that state in both directions, on the real boot code, the real models and the real files, plus one booted runtime.
 - **M2 (BF-926).** `enforce_leak_guard` is deleted (model, tracked yaml, the profile manifest row and its conflict edge). Thirty-nine fields carry one phrase, `Inert: no production code reads this`, in their `Field(description=...)` or in their model's docstring summary, so the generated reference shows it. The stale F26 key leaves the tracked yaml. `scripts/check_config_readers.py` lists unread fields, inert fields and yaml keys with no field, and always exits 0. The generated config reference and facade baseline are regenerated once, for both milestones.
 
 ## 3. Decisions (for #1656 and #1657)
 
-**D1, how a field is marked inert.** Ranked: (1, chosen) one constant phrase, `Inert: no production code reads this`, opening the field's `Field(description=...)` (`... this field (BF-926, #1656). <what is true>`) or the first paragraph of the model's docstring (`... this section ...`) when every field of the model is unread; the generator renders exactly those two places (`gen_config_reference.py:145-149`, `:160`), and the report-only check and the guard test find the phrase as a substring; (2) a `json_schema_extra={"inert": True}` flag: the reference would not show it; (3) a comment: invisible to the reference and to any check. The phrase is written literally in each description: a shared constant in `config_models/` would add a module to the facade's surface for a doc string (DRY is held by the guard test instead, which fails on any drift of the phrase).
+**D1, how a field is marked inert.** Ranked: (1, chosen) one constant phrase, `Inert: no production code reads this`, opening the field's `Field(description=...)` (`... this field to act on it (BF-926, #1656). <what is true>`) or the first paragraph of the model's docstring (`... this section to act on it ...`) when every field of the model is unread; "to act on it" (A2) excludes generic config I/O, which dumps and rewrites every field (`routers/config.py:191`, `:211`, `:246`, `:267`); the generator renders exactly those two places (`gen_config_reference.py:145-149`, `:160`), and the report-only check and the guard test find the phrase as a substring; (2) a `json_schema_extra={"inert": True}` flag: the reference would not show it; (3) a comment: invisible to the reference and to any check. The phrase is written literally in each description: a shared constant in `config_models/` would add a module to the facade's surface for a doc string (DRY is held by the guard test instead, which fails on any drift of the phrase).
 
 **D2, mark rather than remove (F17 except the leak guard, F16, AD-753's two fields).** Ranked: (1, chosen) keep each field and mark it: the five F17 fields and the two AD-753 fields describe governance behaviour that #1659 (paused) is meant to build, and the F16 sections describe AD-573/579/670 machinery #1324 tracks; removal would delete the design intent and every operator's value, and would move the facade surface (field count, dump) for no runtime gain. Unknown keys are ignored (section 0), so removal would also load, silently: marking is the visible choice. (2) Remove all: loses the record of what #1659 must wire. (3) Wire: new enforcement capability, #1659's scope and paused. **Candidates for #1659** (the orchestrator posts this list on #1659): `cognitive.use_consensus_for_writes`, `federation.memory_policy` (+ `memory_policy_selective_tags`, and `mobility.apply_memory_policy`, which has no caller), `federation.min_peer_trust_score`, `federation.shared_trust_min_score`, `security.permission_mode`, `security.policy_engine_class` (with `consensus.quorum.vote_on_intent`).
 
@@ -53,7 +55,7 @@
 
 **D6, BF-927 wording.** One phrase, `built, not invoked`, in every claim over a service with no production caller, followed by what is true ("nothing calls check_authorization"); "wired", "initialized", "active" and "enforc..." never appear in such a line. The AD-455 line becomes two lines (`RedTeamLead running` and the three uninvoked services), because one line cannot be true of both states. Ranked: (1, chosen) reword in place, lines kept; (2) remove the lines: hides that the services exist; (3) "observational, no seam wired" for the three detectors: a second phrase the pin would have to know. The finalization summary lines for AD-530 and AD-511 (`finalize.py:4098`, `:4101`) are reworded too: they repeat the claim.
 
-**D7, BF-927's pin: how callers are found.** Ranked: (1, chosen) receiver resolution over `src/probos` with the AST, excluding the service's own module: an instance is followed from its construction (`X = Service(...)`) and from every parameter annotated with its class, through assignments (`runtime.attr = local`, `getattr(runtime, "attr")`) to a holder set; a call is `holder.entry(...)`; a hand-off it cannot type (a holder passed as an argument to anything but a parameter annotated with the class) is an **escape**, which fails the test rather than counting as "not invoked"; a call made inside another service's entry method counts only once that service is invoked (so `ThreatDetector.scan`, called only inside `InputValidator.check`, `input_validator.py:60`, stays not invoked). RedTeamLead is the invoked control, so the "says not invoked over a caller" direction is exercised on the real tree, and a fixture package proves the resolver finds a caller, a typed hand-off and an escape and ignores a decoy `.check(` (§7.11). (2) Name-matching `.check(` / `.scan(`: 70 unrelated hits (section 11). (3) A hand-kept table of call sites: drifts as soon as any unrelated `.check(` is added. **What it cannot see** (in the test's docstring): a method name built at run time, an instance stored in a container, tuple target, `setattr` or `**kwargs` (a `**holder` argument is an escape), an instance returned from a function, a local captured by a nested function, calls inside the service's own module (except the declared `via` delegation, used for `GroundTruthVerifier`, reached only through `GroundTruthRejectionGate.evaluate` in the same module), and callers in `ui/`, `scripts/`, tests or plugins.
+**D7, BF-927's pin: how callers are found.** Ranked: (1, chosen) receiver tracing over `src/probos` with the AST, excluding the service's own module: an instance is followed from its construction (`X = Service(...)`) and from every parameter annotated with its class, through assignments (`runtime.attr = local`, `getattr(runtime, "attr")`) to a holder set; a call is `holder.entry(...)` or `getattr(holder, "entry")(...)` with a literal name (A2); a hand-off it cannot type (a holder passed as an argument to anything but a keyword parameter annotated with the class, or an entry method passed or assigned uncalled, A2) is an **escape**, which, for a service with no resolved caller, fails the test rather than counting as "not invoked" (for an invoked service an escape could only add callers and changes nothing); a call made inside another service's entry method counts only once that service is invoked (so `ThreatDetector.scan`, called only inside `InputValidator.check`, `input_validator.py:60`, stays not invoked). RedTeamLead is the invoked control, so the "says not invoked over a caller" direction is exercised on the real tree, and a fixture package proves the resolver finds a caller and a literal-getattr caller, a typed hand-off, an escape, and an entry method handed on or aliased, and ignores a decoy `.check(` (§7.11). (2) Name-matching `.check(` / `.scan(`: 70 unrelated hits (section 11). (3) A hand-kept table of call sites: drifts as soon as any unrelated `.check(` is added. **What it cannot see** (in the test's docstring): a method name built at run time, an instance or bound entry method stored in a container, tuple target, `setattr`, `return` or `**kwargs` (a `**holder` argument is an escape), an instance returned from a function, a local captured by a nested function, calls inside the service's own module (except the declared `via` delegation, used for `GroundTruthVerifier`, reached only through `GroundTruthRejectionGate.evaluate` in the same module), and callers in `ui/`, `scripts/`, tests or plugins. **Known approximations** (A2, R10): a holder attribute is matched by name, not owner (a false caller, which fails loudly); a positional argument is an escape even into an annotated parameter (fails loudly); a typed parameter is keyed by its callable's short name and the parameter name (a keyword hand-off to another callable with both names alike is exempt: the one silent form left).
 
 **D8, which docs change (BF-927).** Living status claims only: the six config models' summaries (the reference renders them), `roadmap.md:730` (AD-753) and seven status markers in `roadmap-era-5-completed.md` (AD-451, AD-455, AD-511, AD-528, AD-530, AD-676, AD-679; the issue's "roadmap entries that mark them complete" live there, not in `roadmap.md`), status wording only: no number, no row. Not changed, ranked by the alternative of rewriting them: dated records (`progress-era-5-unification.md`, `decisions-era-5-unification.md`, `DECISIONS.md`, `PROGRESS.md` history, `docs/development/yeo-gap-reconciliation-2026-05-20.md:53`, `:177`) are records of what was believed on their date; the Phase 31 design list (`roadmap-era-5-completed.md:307-310`) describes intent, not status (R8). AD-528b's roadmap entry already says *Scoped*.
 
@@ -64,7 +66,7 @@
 - **BF-924 (#1654)** is applied in this tree and merges first. It changed `config_models/emergence.py` (`CounselorConfig`), the yaml `counselor` block, the manifest's `census:` header and `unclassified_flags`, the generated files and the field-count pin (1880 to 1876). This contract's `emergence.py` pair anchors on `GroundTruthConfig`'s head (`:30-31`), not `CounselorConfig`; its census pair replaces BF-924's header text; its count pin replaces BF-924's pin lines.
 - **#1626 M6+M7** edits `ui/`, the BF-918 paragraph of `PROGRESS.md` and BF-918 D7 in `DECISIONS.md`: no pair here touches them.
 - **Tracker anchors:** `PROGRESS.md`'s title line (once, `:1`) and `DECISIONS.md`'s heading `### BF-924 -- Trust inputs read through APIs that exist (2026-10-25, #1654)` (`:739`, once).
-- **PR text (this batch):** "BF-926 (#1656) and BF-927 (#1657). What the ship says about itself now matches what runs. BF-927: ten boot-log lines said AD-455's Security Team, AD-676 risk tiers, AD-679 disclosure routing, AD-511 and AD-530's detectors, AD-451 reconciliation and AD-528/528b ground-truth verification were wired or initialized; nothing calls them, so each line now says 'built, not invoked' (the AD-455 RedTeamLead health monitor does run and says so); their config summaries, roadmap statuses and AD-753's gate docstring say the same, and a test resolves every production caller with the AST and fails if a claim and its caller state disagree either way. BF-926: `security.memory.enforce_leak_guard` promised redaction nothing performed and is deleted (old configs still load); 39 other unread fields carry 'Inert: no production code reads this' in the generated config reference; a stale yaml key is removed; `scripts/check_config_readers.py` lists unread fields and yaml keys with no field, and never fails. No gate, detector or check starts or stops."
+- **PR text (this batch):** "BF-926 (#1656) and BF-927 (#1657). What the ship says about itself now matches what runs. BF-927: ten boot-log lines said AD-455's Security Team, AD-676 risk tiers, AD-679 disclosure routing, AD-511 and AD-530's detectors, AD-451 reconciliation and AD-528/528b ground-truth verification were wired or initialized; nothing calls them, so each line now says 'built, not invoked' (the AD-455 RedTeamLead health monitor does run and says so); their config summaries, roadmap statuses and AD-753's gate docstring say the same, and a test traces production callers with the AST and fails if a claim and its caller state disagree either way (its known approximations are in its docstring). BF-926: `security.memory.enforce_leak_guard` promised redaction nothing performed and is deleted (old configs still load); 39 other fields nothing acts on carry 'Inert: no production code reads this field to act on it' in the generated config reference (the config API still exports them); a stale yaml key is removed; `scripts/check_config_readers.py` lists unread fields and yaml keys with no field, and never fails. No gate, detector or check starts or stops."
 
 ## 5. Consumers of every value this changes
 
@@ -101,13 +103,13 @@ Before editing, grep the pins: `grep -rn "Security Team wired\|ActionRiskRegistr
 - `test_each_description_says_what_its_services_do` (8: AD-455-screening, AD-676, AD-679, AD-753, AD-511, AD-530, AD-451, AD-528): the same assertion with the old summary, roadmap head or docstring;
 - `test_the_booted_vessel_prints_the_reworded_lines` (1): "the boot printed no line starting ('AD-455: RedTeamLead',)".
 
-The 12 `test_each_service_state_is_resolved` cases and the 4 resolver fixture cases pass on both sides (the premise: the states are measured, not edited). A failure for another reason, or any `escapes` state, is a hard stop for the Architect. Focused check:
+The 12 `test_each_service_state_is_resolved` cases and the 7 resolver fixture cases pass on both sides (the premise: the states are measured, not edited). A failure for another reason, or any `escapes` state, is a hard stop for the Architect. **A2 control:** with §7.11's three new fixture cases applied and its two A2 resolver pairs not, exactly 3 cases fail: `[a literal getattr call]` (`'not invoked' == 'invoked'`), `[an entry handed on]` and `[an entry aliased]` (`'not invoked' == 'escapes'`). Focused check:
 
 ```
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf927_boot_claims.py tests/test_ad455_security_team.py tests/test_ad511_autonomy_boundaries.py tests/test_ad530_classification_gate.py tests/test_ad679_selective_disclosure_routing.py tests/test_ad676_action_risk_tiers.py tests/test_ad451_validation_framework.py tests/test_ad528_ground_truth.py tests/test_ad528b_active_rejection.py tests/test_ad528c_trust_feedback.py tests/test_permission_model.py tests/test_quorum_with_permissions.py tests/test_ad1270e2e_operations_models.py tests/test_ad1270e2g_crew_models.py tests/test_ad1270e2h_emergence_models.py tests/test_ad1270e2i_agentic_models.py tests/test_yeoman_agent.py -n 0 -q
 ```
 
-(Collected here without the new file: 1,115; not run. Expect 1,149 collected, all passing; the orchestrator's measured counts supersede these.) `tests/test_config_reference_current.py` and `tests/test_ad1270e1_config_facade.py` are deliberately outside M1's list (D9).
+(Collected here without the new file: 1,115; not run. Expect 1,152 collected, all passing (A2: the measured 1,149 plus three fixture cases); the orchestrator's measured counts supersede these.) `tests/test_config_reference_current.py` and `tests/test_ad1270e1_config_facade.py` are deliberately outside M1's list (D9).
 
 **M2 (STANDARD), §7.12 to §7.24.** First heading: `### 7.12 \`src/probos/config_models/crew.py\` (M2: the leak guard)`. After applying §7.12 to §7.24, regenerate and check, in this order:
 
@@ -126,7 +128,7 @@ The last is the report itself: record its first line in the commit body (it must
 - the same file, `MemorySecurityConfig`'s field line `- {default: 'False', name: enforce_leak_guard}` (`:2441`) deleted;
 - the same file, `schema_sha256` moves for exactly these 15 models: `SystemConfig`, `CognitiveConfig`, `FederationConfig`, `SecurityConfig`, `MemorySecurityConfig`, `WorkingMemoryConfig`, `MemoryBudgetConfig`, `MetabolismConfig`, `PinnedKnowledgeConfig`, `TemporalValidityConfig`, `RiskTierConfig`, `ClassificationGateConfig`, `AutonomyBoundariesConfig`, `ValidationFrameworkConfig`, `GroundTruthConfig` (each changed model, plus `SystemConfig` and `SecurityConfig` as containers; section 12 found no other container). Any other file, model, field line or count, or a `--check` failure, is a hard stop for the Architect.
 
-Commit "BF-926: unread config fields are marked inert or removed, with a report-only reader check (part of #1656)", body ending "security.memory.enforce_leak_guard promised redaction nothing performed and is deleted from the model, the tracked yaml and the profile manifest (its one conflict edge went with it; old configs still load). Thirty-nine unread fields (cognitive.use_consensus_for_writes, four federation fields, security.permission_mode and policy_engine_class, twelve working_memory fields and the memory_budget, metabolism, pinned_knowledge and temporal_validity sections) say 'Inert: no production code reads this' in the generated reference. The stale cognitive.captain_card_refresh_min_interval_seconds key is removed. scripts/check_config_readers.py reports unread fields and yaml keys with no field and always exits 0. The config reference and facade baseline are regenerated for both commits. <the report's first line>". The tracker entries (section 8) go in this commit.
+Commit "BF-926: unread config fields are marked inert or removed, with a report-only reader check (part of #1656)", body ending "security.memory.enforce_leak_guard promised redaction nothing performed and is deleted from the model, the tracked yaml and the profile manifest (its one conflict edge went with it; old configs still load). Thirty-nine fields nothing acts on (cognitive.use_consensus_for_writes, four federation fields, security.permission_mode and policy_engine_class, twelve working_memory fields and the memory_budget, metabolism, pinned_knowledge and temporal_validity sections) say 'Inert: no production code reads this field to act on it' (or 'this section') in the generated reference; the config API still exports and rewrites them. The stale cognitive.captain_card_refresh_min_interval_seconds key is removed. scripts/check_config_readers.py reports unread fields and yaml keys with no field and always exits 0. The config reference and facade baseline are regenerated for both commits. <the report's first line>". The tracker entries (section 8) go in this commit; the ledger goes in the third commit (§8).
 
 Before editing, grep the pins: `grep -rn "enforce_leak_guard\|captain_card_refresh_min_interval_seconds\|use_consensus_for_writes\|min_peer_trust_score\|shared_trust_min_score\|memory_policy\|permission_mode\|policy_engine_class\|field_definitions\|conflict" tests/` and confirm the hits are those of section 12.
 
@@ -514,19 +516,32 @@ whether production code calls them.
 
 Each claim (a boot-log line in ``startup/finalize.py``, a config model's reference summary, a
 roadmap status, a docstring) carries ``NOT_INVOKED`` exactly when the services it names have no
-production caller. Callers are found by resolving the receiver over ``src/probos`` with the AST,
-never by matching a method name, so an unrelated ``.check(`` or ``.scan(`` does not count. The pin
+production caller. Callers are found by tracing each instance over ``src/probos`` with the AST from
+its construction or a parameter annotated with its class, not by matching a method name, so a
+``.check(`` or ``.scan(`` on an untraced receiver does not count. The pin
 fails in both directions: a service that gains a caller while its claim still says it is not
 invoked, and a claim that drops the phrase (or says "wired") over a service nothing calls.
 ``RedTeamLead``, which does run, is the invoked control on the real tree.
 
 What the resolver cannot see, by construction: a method name built at run time
-(``getattr(obj, name)()`` with a computed ``name``); an instance kept in a container, a tuple
-target or ``setattr``; an instance returned from a function; a local captured by a nested
-function; calls inside the service's own module, except the declared ``via`` delegation; callers
-in ``ui/``, ``scripts/``, tests or a plugin loaded at run time. A hand-off it cannot type (a holder
-passed as an argument, ``**holder`` included) is an escape, and an escape fails the test rather
-than counting as "not invoked".
+(``getattr(obj, name)()`` with a computed ``name``); an instance or a bound entry method kept in a
+container, a tuple target, ``setattr`` or a ``return``; an instance returned from a function; a
+local captured by a nested function; calls inside the service's own module, except the declared
+``via`` delegation; callers in ``ui/``, ``scripts/``, tests or a plugin loaded at run time.
+
+A hand-off it cannot type is an escape: a holder passed as an argument (``**holder`` included), or
+an entry method passed or assigned uncalled (``sink(holder.check)``, ``hook = getattr(holder,
+"check")``); ``getattr(holder, "check")()`` with a literal name is a call. For a service with no
+resolved caller an escape fails the test rather than counting as "not invoked"; for an invoked
+service it changes nothing, because it could only add callers.
+
+Known approximations (BF-926/927 review round 1; follow-up R10): a holder attribute is matched by
+its name, not its owner, so once ``runtime.gate`` holds the service any ``other.gate.check()``
+counts as a call (a false caller fails the test; it cannot hide one); a positional argument is an
+escape even into a parameter annotated with the class (spell a typed hand-off as a keyword); a
+typed parameter is keyed by its callable's short name (the class for ``__init__``) and the
+parameter name, so a keyword hand-off to another callable with the same two names is exempt as if
+typed, which can hide a hand-off.
 """
 
 from __future__ import annotations
@@ -735,6 +750,15 @@ def _resolve(service: Service, index: tuple[list, list, list]) -> tuple[list[Sit
             return isinstance(key, ast.Constant) and key.value in attr_holders
         return False
 
+    def is_entry(module: str, scope: str, expr: ast.AST) -> bool:
+        """An entry method on a resolved receiver, called or not: ``holder.check`` or ``getattr(holder, "check")``."""
+        if isinstance(expr, ast.Attribute):
+            return expr.attr in service.entries and is_read(module, scope, expr.value)
+        if isinstance(expr, ast.Call) and _callee(expr.func) == "getattr" and len(expr.args) >= 2:
+            key = expr.args[1]
+            return isinstance(key, ast.Constant) and key.value in service.entries and is_read(module, scope, expr.args[0])
+        return False
+
     changed = True
     while changed:
         changed = False
@@ -758,7 +782,7 @@ def _resolve(service: Service, index: tuple[list, list, list]) -> tuple[list[Sit
         if module.name == service.module:
             continue
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in service.entries and is_read(module.name, scope, func.value):
+        if is_entry(module.name, scope, func):
             sites.append(Site(module.path, node.lineno, scope))  # a resolved call
         callee = _callee(func)
         if callee in _NON_INVOKING:
@@ -766,6 +790,11 @@ def _resolve(service: Service, index: tuple[list, list, list]) -> tuple[list[Sit
         handed = [*node.args, *(keyword.value for keyword in node.keywords if (callee, keyword.arg) not in typed)]
         if any(is_read(module.name, scope, arg) for arg in handed):
             escapes.append(Site(module.path, node.lineno, scope))  # an untyped hand-off
+        if any(is_entry(module.name, scope, arg) for arg in (*node.args, *(keyword.value for keyword in node.keywords))):
+            escapes.append(Site(module.path, node.lineno, scope))  # an entry method handed on
+    for module, scope, node in assigns:
+        if module.name != service.module and node.value is not None and is_entry(module.name, scope, node.value):
+            escapes.append(Site(module.path, node.lineno, scope))  # an entry method aliased
     return sites, escapes
 
 
@@ -862,6 +891,9 @@ _FIXTURE_CASES = {
         "invoked",
     ),
     "an untyped hand-off": ({"hand.py": "def hand(runtime, sink):\n    sink(runtime.gate)\n"}, "escapes"),
+    "a literal getattr call": ({"lit.py": "def use(runtime):\n    return getattr(runtime.gate, 'check')()\n"}, "invoked"),
+    "an entry handed on": ({"cb.py": "def wire(runtime, bus):\n    bus.subscribe(runtime.gate.check)\n"}, "escapes"),
+    "an entry aliased": ({"alias.py": "def wire(runtime):\n    hook = runtime.gate.check\n    return hook\n"}, "escapes"),
 }
 
 
@@ -966,7 +998,7 @@ SEARCH:
 REPLACE:
 ````python
     dag_execution_timeout_seconds: float = 60.0
-    use_consensus_for_writes: bool = Field(default=True, description="Inert: no production code reads this field (BF-926, #1656). Whether a write needs consensus is decided per intent (IntentDescriptor.requires_consensus); a candidate for #1659.")
+    use_consensus_for_writes: bool = Field(default=True, description="Inert: no production code reads this field to act on it (BF-926, #1656). Whether a write needs consensus is decided per intent (IntentDescriptor.requires_consensus); a candidate for #1659.")
     max_concurrent_tasks: int = 8
 ````
 
@@ -981,10 +1013,10 @@ SEARCH:
 ````
 REPLACE:
 ````python
-    memory_policy: str = Field(default="clean_room", description="Inert: no production code reads this field (BF-926, #1656). No transfer path applies it (apply_memory_policy has no caller); the validator still rejects an unknown policy. A candidate for #1659.")
+    memory_policy: str = Field(default="clean_room", description="Inert: no production code reads this field to act on it (BF-926, #1656). No transfer path applies it (apply_memory_policy has no caller); the validator still rejects an unknown policy. A candidate for #1659.")
     # AD-443c: Tag whitelist for SELECTIVE memory policy. Ignored for the
     # other two policies. Empty list with SELECTIVE means no episodes pass.
-    memory_policy_selective_tags: list[str] = Field(default=[], description="Inert: no production code reads this field (BF-926, #1656); it belongs to memory_policy, which nothing applies. A candidate for #1659.")
+    memory_policy_selective_tags: list[str] = Field(default=[], description="Inert: no production code reads this field to act on it (BF-926, #1656); it belongs to memory_policy, which nothing applies. A candidate for #1659.")
 ````
 
 (`default=[]` keeps the existing default form, which the facade baseline records; Pydantic copies a mutable default per instance. A `default_factory` would be a facade contract change outside this BF.)
@@ -1001,11 +1033,11 @@ SEARCH:
 ````
 REPLACE:
 ````python
-    min_peer_trust_score: float = Field(default=0.0, description="Inert: no production code reads this field (BF-926, #1656). This floor ranks or refuses no peer; a candidate for #1659.")
+    min_peer_trust_score: float = Field(default=0.0, description="Inert: no production code reads this field to act on it (BF-926, #1656). This floor ranks or refuses no peer; a candidate for #1659.")
     # AD-607g federation outbound privacy filter. Default ``shared_trust``
     # honors the AD-479b peer-trust ranking surface that W91 shipped.
     memory_access_policy: str = "shared_trust"
-    shared_trust_min_score: float = Field(default=0.5, ge=0.0, le=1.0, description="Inert: no production code reads this field (BF-926, #1656). The shared_trust policy filters by episode classification only, with no trust floor; a candidate for #1659.")
+    shared_trust_min_score: float = Field(default=0.5, ge=0.0, le=1.0, description="Inert: no production code reads this field to act on it (BF-926, #1656). The shared_trust policy filters by episode classification only, with no trust floor; a candidate for #1659.")
 ````
 
 Pair 4 (`SecurityConfig`, AD-753):
@@ -1019,8 +1051,8 @@ SEARCH:
 REPLACE:
 ````python
     # AD-753: unattended permission posture for personal-desktop scope.
-    permission_mode: Literal["manual", "autopilot"] = Field(default="manual", description="Inert: no production code reads this field (BF-926, BF-927; #1656, #1657). The AD-753 gate (vote_on_intent) has no caller, so no mode gates any intent; a candidate for #1659.")
-    policy_engine_class: str = Field(default="NullPolicyEngine", description="Inert: no production code reads this field (BF-926, BF-927; #1656, #1657). No engine is loaded from it and the AD-753 gate has no caller; a candidate for #1659.")
+    permission_mode: Literal["manual", "autopilot"] = Field(default="manual", description="Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). The AD-753 gate (vote_on_intent) has no caller, so no mode gates any intent; a candidate for #1659.")
+    policy_engine_class: str = Field(default="NullPolicyEngine", description="Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). No engine is loaded from it and the AD-753 gate has no caller; a candidate for #1659.")
 ````
 
 ### 7.14 `src/probos/config_models/cognition.py` (M2: F16)
@@ -1051,19 +1083,19 @@ REPLACE:
 class WorkingMemoryConfig(BaseModel):
     """AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours is read; AgentWorkingMemory uses its own defaults for everything else."""
 
-    token_budget: int = Field(default=3000, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    max_recent_actions: int = Field(default=10, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    max_recent_observations: int = Field(default=5, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    max_recent_conversations: int = Field(default=5, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    max_events: int = Field(default=10, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    proactive_budget: int = Field(default=1500, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    token_budget: int = Field(default=3000, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_recent_actions: int = Field(default=10, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_recent_observations: int = Field(default=5, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_recent_conversations: int = Field(default=5, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_events: int = Field(default=10, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    proactive_budget: int = Field(default=1500, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
     stale_threshold_hours: float = Field(default=24.0, description="Read at warm boot: restored working-memory entries older than this are dropped.")
-    conclusion_ttl_seconds: float = Field(default=1800.0, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    max_conclusions: int = Field(default=20, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    duty_budget: int = Field(default=600, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    social_budget: int = Field(default=800, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    ship_budget: int = Field(default=800, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
-    engagement_budget: int = Field(default=800, description="Inert: no production code reads this field (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    conclusion_ttl_seconds: float = Field(default=1800.0, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_conclusions: int = Field(default=20, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    duty_budget: int = Field(default=600, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    social_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    ship_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    engagement_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
 ````
 
 Pair 2:
@@ -1076,7 +1108,7 @@ class MemoryBudgetConfig(BaseModel):
 REPLACE:
 ````python
 class MemoryBudgetConfig(BaseModel):
-    """AD-573: Memory budget accounting across recall tiers. Inert: no production code reads this section (BF-926, #1656): nothing passes it to CognitiveAgent's memory_budget_config, so enabled and the budgets change nothing (#1324)."""
+    """AD-573: Memory budget accounting across recall tiers. Inert: no production code reads this section to act on it (BF-926, #1656): nothing passes it to CognitiveAgent's memory_budget_config, so enabled and the budgets change nothing (#1324)."""
 ````
 
 Pair 3:
@@ -1089,7 +1121,7 @@ class MetabolismConfig(BaseModel):
 REPLACE:
 ````python
 class MetabolismConfig(BaseModel):
-    """AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324)."""
+    """AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section to act on it (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324)."""
 ````
 
 Pair 4:
@@ -1102,7 +1134,7 @@ class PinnedKnowledgeConfig(BaseModel):
 REPLACE:
 ````python
 class PinnedKnowledgeConfig(BaseModel):
-    """AD-579a: Pinned knowledge buffer configuration. Inert: no production code reads this section (BF-926, #1656): nothing passes it to AgentWorkingMemory's pinned_config, so no pinned-knowledge buffer is built (#1324)."""
+    """AD-579a: Pinned knowledge buffer configuration. Inert: no production code reads this section to act on it (BF-926, #1656): nothing passes it to AgentWorkingMemory's pinned_config, so no pinned-knowledge buffer is built (#1324)."""
 ````
 
 Pair 5:
@@ -1115,7 +1147,7 @@ class TemporalValidityConfig(BaseModel):
 REPLACE:
 ````python
 class TemporalValidityConfig(BaseModel):
-    """AD-579b: Temporal validity windows for episodic memory. Inert: no production code reads this section (BF-926, #1656): enabled and default_validity_hours change nothing (#1324)."""
+    """AD-579b: Temporal validity windows for episodic memory. Inert: no production code reads this section to act on it (BF-926, #1656): enabled and default_validity_hours change nothing (#1324)."""
 ````
 
 ### 7.15 `src/probos/cognitive/memory_security.py` (M2, unpinned docstring)
@@ -1242,7 +1274,7 @@ memory_budget:
 ````
 REPLACE:
 ````yaml
-# BF-926 (#1656): inert. No production code reads this section; enabled: true turns nothing on (#1324).
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 memory_budget:
   enabled: true
   total_budget_tokens: 4650
@@ -1256,7 +1288,7 @@ metabolism:
 ````
 REPLACE:
 ````yaml
-# BF-926 (#1656): inert. No production code reads this section; enabled: true turns nothing on (#1324).
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 metabolism:
   enabled: true
   decay_half_life_seconds: 3600.0
@@ -1270,7 +1302,7 @@ pinned_knowledge:
 ````
 REPLACE:
 ````yaml
-# BF-926 (#1656): inert. No production code reads this section; enabled: true turns nothing on (#1324).
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 pinned_knowledge:
   enabled: true
   max_tokens: 150
@@ -1284,7 +1316,7 @@ temporal_validity:
 ````
 REPLACE:
 ````yaml
-# BF-926 (#1656): inert. No production code reads this section; enabled: true turns nothing on (#1324).
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 temporal_validity:
   enabled: true
   default_validity_hours: 0.0
@@ -1367,7 +1399,7 @@ REPLACE:
 ### 7.18 New file: `scripts/check_config_readers.py` (M2)
 
 ````python
-"""BF-926 (#1656): report config fields no production code reads and yaml keys no field declares.
+"""BF-926 (#1656): report config fields no production code reads to act on, and yaml keys no field declares.
 
 REPORT-ONLY: this check warns and never fails. Its exit status is 0 on every input -- a missing
 or malformed yaml file, a source file that does not parse, an unknown or incomplete argument --
@@ -1379,7 +1411,9 @@ A field counts as read when its name occurs in ``src/probos`` outside the declar
 That is a name match, not a resolved receiver (the shape of vulture's dead-code scan), so it
 under-reports: a generic name such as ``enabled`` counts as read wherever any object has that
 attribute. It cannot see a name built at run time, a dump read by key in ``ui/``, or a model
-nested inside a list or dict field.
+nested inside a list or dict field. Generic config I/O is not a reader here: the config API
+(``routers/config.py``) dumps and rewrites every field without naming one, so "unread" and
+"inert" mean that no code names the field to act on it, not that no code touches its value.
 
 A field is inert when its ``Field(description=...)`` or the first paragraph of its model's
 docstring contains ``INERT_MARKER``. Inert fields are listed apart from the unread ones; an inert
@@ -1539,7 +1573,7 @@ def _read_yaml(path: Path, warnings: list[str]) -> Any:
 def main(argv: list[str] | None = None) -> int:
     """Print the report. Returns 0 on every path: a check that cannot run says so and passes."""
     try:
-        parser = argparse.ArgumentParser(description="Report config fields no production code reads (report-only).")
+        parser = argparse.ArgumentParser(description="Report config fields no production code names to act on (report-only).")
         parser.add_argument("--yaml", default=str(DEFAULT_YAML), help="config file whose keys are checked")
         parser.add_argument("--src", default=str(DEFAULT_SOURCE), help="source tree searched for readers")
         args, unknown = parser.parse_known_args(argv)
@@ -1902,7 +1936,7 @@ REPLACE:
 ````markdown
 # ProbOS Progress
 
-**BF-926 and BF-927 (2026-10-25), #1656 and #1657 -- config fields and boot claims say what runs.** BF-927: ten boot-log lines said AD-455's Security Team, AD-676 risk tiers, AD-679 disclosure routing, AD-511 and AD-530's detectors, AD-451 reconciliation and AD-528/528b ground-truth verification were wired or initialized; nothing calls them, so each line now says "built, not invoked" (the AD-455 RedTeamLead health monitor runs and says so). Their config summaries, roadmap statuses and AD-753's gate docstring say the same, and a test resolves production callers with the AST and fails if a claim and its caller state disagree in either direction. BF-926: `security.memory.enforce_leak_guard` promised redaction nothing performed and is deleted (old configs still load; its manifest conflict edge went with it); 39 other unread fields say "Inert: no production code reads this" in the generated config reference; the stale `cognitive.captain_card_refresh_min_interval_seconds` key is removed; `scripts/check_config_readers.py` reports unread fields and yaml keys with no field and always exits 0. No behaviour change. New: `tests/test_bf927_boot_claims.py`, `tests/test_bf926_config_readers.py`, `scripts/check_config_readers.py`. The contract is `prompts/bf-926-927-config-and-boot-claims-match-what-runs.md`.
+**BF-926 and BF-927 (2026-10-25), #1656 and #1657 -- config fields and boot claims say what runs.** BF-927: ten boot-log lines said AD-455's Security Team, AD-676 risk tiers, AD-679 disclosure routing, AD-511 and AD-530's detectors, AD-451 reconciliation and AD-528/528b ground-truth verification were wired or initialized; nothing calls them, so each line now says "built, not invoked" (the AD-455 RedTeamLead health monitor runs and says so). Their config summaries, roadmap statuses and AD-753's gate docstring say the same, and a test traces production callers with the AST and fails if a claim and its caller state disagree in either direction, within the approximations its docstring lists. BF-926: `security.memory.enforce_leak_guard` promised redaction nothing performed and is deleted (old configs still load; its manifest conflict edge went with it); 39 other fields nothing acts on say "Inert: no production code reads this field to act on it" (or "this section") in the generated config reference, and the config API still exports them; the stale `cognitive.captain_card_refresh_min_interval_seconds` key is removed; `scripts/check_config_readers.py` reports unread fields and yaml keys with no field and always exits 0. No behaviour change. New: `tests/test_bf927_boot_claims.py`, `tests/test_bf926_config_readers.py`, `scripts/check_config_readers.py`. The contract is `prompts/bf-926-927-config-and-boot-claims-match-what-runs.md`.
 ````
 
 **`DECISIONS.md`:**
@@ -1915,16 +1949,16 @@ REPLACE:
 ````markdown
 ### BF-926 and BF-927 -- Config fields and boot claims say what runs (2026-10-25, #1656, #1657)
 
-- *Inert, not removed.* An unread field that describes behaviour another issue is meant to build (#1659 governance, #1324 memory machinery) is kept and marked with one phrase, "Inert: no production code reads this", in its field description or its model's docstring summary, the two places the reference renders. Unknown keys are ignored, so removal would also load, silently; marking is the visible choice and keeps the operator's value and the design intent.
+- *Inert, not removed.* A field nothing acts on that describes behaviour another issue is meant to build (#1659 governance, #1324 memory machinery) is kept and marked with one phrase, "Inert: no production code reads this field (or section) to act on it", in its field description or its model's docstring summary, the two places the reference renders; generic config I/O, which exports and rewrites every field, does not count as acting on it. Unknown keys are ignored, so removal would also load, silently; marking is the visible choice and keeps the operator's value and the design intent.
 - *Leak guard deleted.* It promised redaction the guard never performs and the issue forbids marking it inert; its manifest conflict, the only one, went with it, and the parse-time conflict check is proven on a fixture manifest instead.
 - *Report-only reader check.* A separate command, name-based (it under-reports), exit 0 on every input; not a gate phase, because every preflight phase gates on its exit code. Enforcing it is the Captain's decision.
-- *Boot claims pinned to callers.* "Built, not invoked" appears exactly when the AST finds no production caller, resolved by receiver and not by method name; an instance handed somewhere the resolver cannot type fails the test. Dated records (era files, reconciliation reports) are not rewritten.
+- *Boot claims pinned to callers.* "Built, not invoked" appears exactly when the AST finds no production caller, traced from each service's construction or typed parameters and not matched by method name; for a service with no caller, an instance or entry method handed somewhere the resolver cannot type fails the test. The resolver's known approximations are listed in the test's docstring and followed up separately. Dated records (era files, reconciliation reports) are not rewritten.
 - *Reversal.* Revert the commits; the lines say wired again, the fields lose their marker, the leak-guard flag and its conflict return, and the script and tests go.
 
 ### BF-924 -- Trust inputs read through APIs that exist (2026-10-25, #1654)
 ````
 
-**After both edits:** run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then its `--check`. **`docs/development/roadmap.md` Bug Tracker:** no row (BF-916, BF-921, BF-923, BF-924 precedent); §7.9's edit is AD-753's status wording only.
+**After both milestone commits, and again after any merge of the base (A2):** run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, which captures HEAD's commit subjects, then its `--check` and `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1184_ad_ledger.py -n 0 -q`; commit `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` only, as "BF-926 and BF-927 ledger: regenerate the AD and BF ledger (part of #1656 and #1657)" (BF-924's `34df056c` precedent). Any other file in that diff is a hard stop for the Architect. **`docs/development/roadmap.md` Bug Tracker:** no row (BF-916, BF-921, BF-923, BF-924 precedent); §7.9's edit is AD-753's status wording only.
 
 **#1656 checklist text** (the orchestrator records it on the issue):
 - [ ] (F17) `enforce_leak_guard` deleted from the model, tracked yaml and profile manifest; old configs load (M2).
@@ -1994,6 +2028,9 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf926_config_readers.py 
 | A4 | test | `return isinstance(key, ast.Constant) and key.value in attr_holders` | `return False` | `[a resolved caller]` |
 | A5 | test | `sites.append(Site(module.path, node.lineno, scope))  # a resolved call` | `pass` | `test_each_service_state_is_resolved[RedTeamLead]` |
 | A6 | test | `escapes.append(Site(module.path, node.lineno, scope))  # an untyped hand-off` | `pass` | `[an untyped hand-off]` |
+| A7 | test | `return isinstance(key, ast.Constant) and key.value in service.entries and is_read(module, scope, expr.args[0])` | `return False` | `[a literal getattr call]` (A2) |
+| A8 | test | `escapes.append(Site(module.path, node.lineno, scope))  # an entry method handed on` | `pass` | `[an entry handed on]` (A2) |
+| A9 | test | `escapes.append(Site(module.path, node.lineno, scope))  # an entry method aliased` | `pass` | `[an entry aliased]` (A2) |
 
 Unpinned text, no row: the Yeoman comment (§7.3), the `memory_security.py` docstring (§7.15), the yaml comments (§7.16), the manifest comment (§7.17). The resolver's `via` clause survives a mutation on this tree (no service reached through `via` is invoked today): disclosed, no row.
 
@@ -2136,6 +2173,21 @@ CLAIM: no other model nests a model whose schema changes
 RUN:   Grep "WorkingMemoryConfig|MemoryBudgetConfig|MetabolismConfig|PinnedKnowledgeConfig|TemporalValidityConfig|MemorySecurityConfig|FederationConfig\b" src/probos
 FOUND: config.py:2971 (SecurityConfig.memory), 3906, 4041-4047 (SystemConfig); the rest are imports and re-exports
 HOLDS: yes for these; the orchestrator's regenerated diff is the check for the M1 models
+
+CLAIM (A2): no production code references a service entry uncalled or through a literal getattr, so A2's new call and escape forms move no real-tree state
+RUN:   Grep "\.(check_authorization|check_disclosure|filter_permitted|check_recipients|reconcile|run_campaign_now)[^(\w]|getattr\([^)]*[\"'](check|scan|analyze|evaluate|verify|reconcile|check_authorization|check_disclosure|filter_permitted|check_recipients)[\"']" src/probos; Grep "\.(check|scan|analyze|evaluate|verify)[^(\w]" src/probos *.py; Grep "\.(<every entry>|start)\s*$" src/probos *.py
+FOUND: board_reconciler_ticker.py:3 (docstring); admission/service.py:68 `check=found.check` (`found` is an IfExp of module constants, not a holder); ward_room/content_firewall.py:199 `rec.scan.reasons` (an attribute chain, not an argument or assigned value); the rest docstrings, comments, imports; end of line: none
+HOLDS: yes; the 12 state cases confirm it on the built tree (any `escapes` is a hard stop)
+
+CLAIM (A2, F7): production code reads every marked field only through generic config I/O, and no test pins the description text
+RUN:   Grep "model_dump|@router\.(get|put|post)" src/probos/routers/config.py; Grep "reads this|AgentWorkingMemory uses its own default|a candidate for #1659" tests
+FOUND: routers/config.py:191, :211 (GET dumps), :246, :267 (POST dumps and rewrites the yaml); tests: only test_bf926_config_readers.py:49 (a fixture docstring, left)
+HOLDS: yes
+
+CLAIM (A2): S-A/S-B/S-C touch only these occurrences, and the words added name no config.py module identifier (§6 true-leaf scan)
+RUN:   Grep "code reads this field \(" / "code reads this section \(BF" / "No production code reads this section" over the repo; Grep "^(to|act|on|it|acts)\b|^(def|class) (to|act|on|it|acts)\b|import .*\b(to|act|on|it|acts)\b" src/probos/config.py
+FOUND: config.py 7, cognition.py 12 + 4, config/system.yaml 4, config-reference.md 19 + 4 (regenerated), this contract §7.13/§7.14 19 + 4 and §7.16 4; identifiers: none
+HOLDS: yes
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -2150,12 +2202,12 @@ HOLDS: yes for these; the orchestrator's regenerated diff is the check for the M
 
 1. No production behaviour changes: every edited production line is a log format string, a docstring, a comment, a `Field(description=...)` beside an unchanged default, or the deletion of `enforce_leak_guard`; no constructor, call, condition or default changes.
 2. Each boot line, config summary, roadmap status and docstring that names one of the services says `built, not invoked` exactly when the AST finds no production caller, and the RedTeamLead line, whose service runs, does not; the test fails if either side drifts.
-3. The resolver counts a call only on a receiver it traced from a construction or a parameter typed with the class; a holder handed to anything it cannot type makes the test fail; an unrelated `.check(` / `.scan(` never counts.
+3. The resolver counts a call (`holder.entry(...)` or a literal `getattr(holder, "entry")(...)`) only on a receiver it traced from a construction or a parameter typed with the class; for a service with no resolved caller, a holder or an uncalled entry method handed to anything it cannot type makes the test fail; a `.check(` / `.scan(` on an untraced receiver never counts; the approximations the test docstring lists (R10) are the only known exceptions, and each is stated there with its direction.
 4. Every field the contract marks carries the one phrase in the place the reference renders (field description, or the first paragraph of a docstring that is one physical line), and the one read `working_memory` field does not.
 5. A config that still sets `enforce_leak_guard` or the captain-card key loads; neither key remains in the tracked `config/system.yaml`, the manifest or the model; no other tracked yaml line changes except comments.
 6. The manifest declares no conflict, both AD-1185 conflict tests still prove the mechanism through a fixture edge and `load_profile(manifest_path=...)`, and the census header holds measured figures.
 7. `scripts/check_config_readers.py` returns 0 on every input and is not invoked by the gate or any existing check.
-8. The generated reference and facade baseline differ from the base exactly by section 6's hunks; the field-count pin is 1875.
+8. The generated reference and facade baseline differ from the base exactly by section 6's hunks; the field-count pin is 1875; the AD/BF ledger is regenerated after the milestone commits (§8), and `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` pass on the final tree.
 9. Every changed test says inline why; no test was deleted; both new test files pass alone, in file order and shuffled.
 
 ## 15. Acceptance criteria
@@ -2196,3 +2248,4 @@ After the first session on the merged build, from the vessel log under `%LOCALAP
 - **R7.** The reader check under-reports (name match); a receiver-resolved version, like BF-927's resolver, is the follow-up if the Captain decides to enforce it.
 - **R8.** `roadmap-era-5-completed.md:307-310` (Phase 31 design list) describes the Security Team in the present tense; design text, left (D8).
 - **R9.** The AD-1152 OFF golden is no longer the pristine capture its lineage describes. `docs/development/agentic-event-correlation.md:133-139` calls it immutable and says only AD-1152's own leaf is removed before the digest is compared, but BF-924 (A9) and this contract (A1) refreshed `default_config_sha256` for deleted fields. Every added field is popped in the test with a comment (`test_ad1152_*:220-314`); a deleted field leaves no trace in the test. Choosing one rule for a deleted field (refresh plus a test comment naming it, or re-insert its captured default in the test and restore the pristine digest) and correcting the doc is a separate change.
+- **R10.** BF-927's resolver approximations (round 1 F2, F4, F6; disclosed in the test docstring, A2). (a) P2, silent: a typed parameter is keyed by its callable's short name and the parameter name, so a keyword hand-off to a different callable with both names alike is exempt as if typed. (b) P3, loud: holder attributes are matched by name, not owner, so `other.gate.check()` counts once any `runtime.gate` holds the service. (c) P3, loud: a positional argument into an annotated parameter is an escape. One follow-up fixes all three: resolve callees and attribute owners to their definitions through imports, then bind positional arguments by index; it carries the reviewer's six round-1 probes as fixture cases.
