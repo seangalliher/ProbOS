@@ -109,6 +109,8 @@ This is the **public open-source repo** (Apache 2.0). A separate private repo (`
 
 Architect-drafted prompts and roadmap edits must be audited for this leak class before commit. The pre-commit deletion sanity check (per BUILDER-EXECUTION-PLAN.md) does not catch additions; this rule covers the gap. AD-450 (2026-05-01) was the canonical failure of this rule — pricing tiers leaked publicly for ~3 weeks before redaction.
 
+**Third-party licenses (Captain, 2026-10-25).** No copyleft code becomes part of ProbOS. GPL software is allowed only outside ProbOS: a separate process, installed by the operator, reached across a process or network boundary. LGPL and MPL-2.0 libraries are allowed as unmodified dependencies. AGPL is the Captain's case-by-case call. Paid licenses are rejected, and model weights are checked separately. The full policy and the per-component register are in `THIRD_PARTY_LICENSES.md`; record each disposition in the build prompt's License posture section.
+
 ---
 
 ## Where Each Rule Lives
@@ -119,6 +121,7 @@ Architect-drafted prompts and roadmap edits must be audited for this leak class 
 | Engineering Principles, full text | `docs/development/engineering-principles.md` |
 | Architect review checklist, Common Review Flags, prompt drafting, strategy | `docs/development/architect-standards.md` |
 | ProbOS Architecture Reference | `docs/development/architecture-reference.md` |
+| Third-party license policy and register | `THIRD_PARTY_LICENSES.md` |
 | Copilot Diff Reviewer | `.github/agents/diff-reviewer.agent.md` |
 | Claude Code roles and the split workflow | `CLAUDE.md`, `.claude/agents/claude-*.md` |
 | Copilot Builder and Architect | local `.claude/agents/builder.md`, `architect.md` (untracked) |
