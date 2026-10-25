@@ -78,7 +78,7 @@ function makeFake(opts: FakeOpts = {}) {
   /** BF-862: emit an arbitrary SpeechEvent shape (type / agent_id /
    *  utterance_id), so a test can reproduce an event the sequencer's utterance
    *  was NOT minted for. */
-  const fire = (e: { type: SpeechEventType; agent_id?: string; utterance_id?: number; reason?: string }): void => {
+  const fire = (e: { type: SpeechEventType; agent_id?: string; utterance_id?: number; reason?: string; final?: boolean }): void => {
     const full: SpeechEvent = {
       ...e,
       utterance: {} as unknown as SpeechSynthesisUtterance,
@@ -420,6 +420,58 @@ describe('BF-862 terminal-event correlation', () => {
     await tick();
     expect(fake.speakCalls).toHaveLength(2);
     fake.fire({ type: 'end', agent_id: 'b', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
+  });
+});
+
+/** BF-918 M7 (#1626, review round 1): under AD-1071 pipelining every sentence of a
+ *  reply fires an 'end' with the reply's id, and `final: false` says more of it will
+ *  play (M5). The wait for a reply ends on its last sentence, so the speaking id (the
+ *  meeting's echo gate), the label and the reveal hold until then. */
+describe('BF-918 M7: a pipelined reply holds the speaking slot until its last sentence', () => {
+  it('test_bf918_m7_non_final_end_does_not_advance_or_clear_speaking', async () => {
+    const fake = makeFake({ mintIds: true });
+    const p = speakRepliesSequentially([r('alpha'), r('bravo')], fake.deps);
+    await tick();
+    const id = fake.speakCalls[0].utteranceId;
+    fake.fire({ type: 'start', agent_id: 'alpha', utterance_id: id });
+    fake.fire({ type: 'end', agent_id: 'alpha', utterance_id: id, final: false });
+    await tick();
+    await tick();
+    // Before the fix: ['alpha', 'bravo'], with alpha's second sentence still to play.
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha']);
+    expect(fake.speakingChanges).toEqual(['alpha']);
+    expect(fake.utteranceEnds).toEqual([]);
+    fake.fire({ type: 'start', agent_id: 'alpha', utterance_id: id });
+    fake.fire({ type: 'end', agent_id: 'alpha', utterance_id: id, final: true });
+    await tick();
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha', 'bravo']);
+    expect(fake.speakingChanges).toEqual(['alpha', null, 'bravo']);
+    expect(fake.utteranceEnds).toEqual(['alpha']);
+    // A single-call reply's 'end' carries no `final` and still ends its wait.
+    fake.fire({ type: 'end', agent_id: 'bravo', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
+    expect(fake.utteranceEnds).toEqual(['alpha', 'bravo']);
+  });
+
+  it('test_bf918_m7_safety_timeout_still_ends_a_wait_whose_last_sentence_never_ends', async () => {
+    // A stop between two sentences emits no further event (BF-918 R32).
+    vi.useFakeTimers();
+    const fake = makeFake({ mintIds: true, utteranceTimeoutMs: 60000 });
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.speakCalls).toHaveLength(1);
+    fake.fire({ type: 'end', agent_id: 'a', utterance_id: fake.speakCalls[0].utteranceId, final: false });
+    await vi.advanceTimersByTimeAsync(59999);
+    // Before the fix: 2 (the first sentence's 'end' ended the wait).
+    expect(fake.speakCalls).toHaveLength(1);
+    expect(fake.speakingChanges).toEqual(['a']);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.speakCalls).toHaveLength(2);
+    expect(fake.utteranceEnds).toEqual(['a']);
+    fake.fire({ type: 'end', agent_id: 'b', utterance_id: fake.speakCalls[1].utteranceId });
+    await vi.advanceTimersByTimeAsync(0);
     await p;
   });
 });

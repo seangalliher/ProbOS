@@ -245,6 +245,14 @@ const CALL_OPEN_TRIGGER =
 // re-armed on every fresh 'start' is the minimal robust choice.
 const PTT_TTS_WATCHDOG_MS = 45000;
 
+// BF-918 M7 (#1626, R25): under AD-1071 pipelining the PTT gate stays closed between
+// two sentences of one reply, for at most this long after a sentence's 'end' with
+// `final: false`. A stop between two sentences emits no further event, so without a
+// bound the gate would stay closed until BF-655's ceiling. Longer than an ordinary
+// gap (the next sentence is synthesized while this one plays); a gap that outlasts
+// it opens the gate, as every gap did before M7.
+const PTT_SENTENCE_GAP_MS = 5000;
+
 // #1340: identity for ONE mounted chat surface, used to scope the arbiter's
 // unmount flush. Deliberately not `agentId`: this tab can be re-pointed at a
 // different agent without remounting, three call sites render it, and nothing
@@ -579,6 +587,23 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
             'lockout so the Captain is not stranded (a producer end was missed).',
           );
         }, PTT_TTS_WATCHDOG_MS);
+      } else if (event.type === 'end' && event.final === false) {
+        // BF-918 M7 (#1626, R25): an AD-1071 sentence has ended and more of the same
+        // reply will play (M5's `final`). Keep the gate closed across the gap: a press
+        // here used to start a capture that heard the next sentence. The gap is
+        // bounded, because a stop between two sentences emits no further event: with
+        // no next 'start' within PTT_SENTENCE_GAP_MS the gate opens. This replaces
+        // the sentence's BF-655 ceiling; the next 'start' re-arms that one.
+        clearTimeout(ttsWatchdogRef.current ?? undefined);
+        ttsWatchdogRef.current = setTimeout(() => {
+          ttsWatchdogRef.current = null;
+          ttsActiveRef.current = false;
+          setTtsActive(false);
+          console.info(
+            `[ProfileChatTab] BF-918 M7: no next sentence for agent ${agentId} within ` +
+            `${PTT_SENTENCE_GAP_MS}ms; PTT gate reopened.`,
+          );
+        }, PTT_SENTENCE_GAP_MS);
       } else if (event.type === 'end') {
         ttsActiveRef.current = false;
         setTtsActive(false);
@@ -596,6 +621,14 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
         clearTimeout(ttsWatchdogRef.current);
         ttsWatchdogRef.current = null;
       }
+      // BF-918 M7 (#1626, review round 1): the gate ends with its agent's
+      // subscription. A change of `agentId` keeps the composer (AgentProfilePanel and
+      // CompactApp re-point it without a remount), and the next subscription ignores
+      // this agent's events, so a gate left closed here, inside a reply or between
+      // two of its sentences, had no 'end' and no timer left to open it. On unmount
+      // both writes are harmless.
+      ttsActiveRef.current = false; // the composer mic's click guard reads this
+      setTtsActive(false); // the MicIndicator's 'muted' ring reads this
     };
   }, [agentId]);
 
@@ -2194,6 +2227,15 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
             return;
           }
           if (event.type !== 'end') return;
+          // BF-918 M6 (#1626): a newer reply of this arm has taken the turn since this
+          // one was set up, so this reply's turn is over. Completing now would end the
+          // newer turn: `markAgentReplyComplete` completes whichever turn the controller
+          // holds. A superseded listener has nothing left to complete, so any 'end'
+          // retires it (the 'dropped' branch above does the same for its own drop).
+          if (replyTurn !== ourTurn) {
+            retire();
+            return;
+          }
           // BF-767: strict equality. An 'end' with NO agent_id used to match
           // every agent, so an unattributed utterance elsewhere in the app
           // could close this turn.
@@ -2202,6 +2244,15 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
           // we cannot know its id, so that path stays agent-scoped (BF-718 —
           // requiring an id we can never learn would strand the controller).
           if (claimed && event.utterance_id !== ourUtteranceId) return;
+          // BF-918 M7 (#1626): under AD-1071 pipelining every sentence fires an 'end'
+          // with the reply's id, and `final: false` says more of it will play (M5).
+          // Completing on it moved the controller to `silence_pending` mid-reply, so
+          // barge-in stopped working and the silence timer started early. The last
+          // sentence, or a stop while one plays, carries `final: true`; every other
+          // 'end' carries no `final` and completes as before. A stop between two
+          // sentences emits no further 'end': barge-in, its one production cause, moves
+          // the controller itself (GUARD 2's later dispatch is BF-918's R32).
+          if (event.final === false) return;
           complete();
         });
         // BF-918 (review round 3): this arm's end retires the listener, claimed or
