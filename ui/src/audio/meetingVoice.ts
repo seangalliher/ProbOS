@@ -138,6 +138,15 @@ function _speakAndWait(
       if (utteranceId !== undefined
         ? e.utterance_id !== utteranceId
         : e.agent_id !== reply.agent_id) return;
+      // BF-918 M7 (#1626, review round 1): under AD-1071 pipelining every sentence
+      // fires an 'end' with the reply's id, and `final: false` says more of the reply
+      // will play (M5). Finishing on it cleared the speaking id, which is the
+      // meeting's echo gate (ProfileChatTab's `canListen`), while the rest of the
+      // reply played, and moved the label and the reveal on early. The last sentence,
+      // or a stop while one plays, carries `final: true`; every other 'end' carries no
+      // `final`. A stop between two sentences emits no further event: the safety
+      // timeout, sized for the whole reply, ends the wait (BF-918's R32).
+      if (e.type === 'end' && e.final === false) return;
       finish();
     });
     const timeoutMs = deps.utteranceTimeoutMs ?? computeUtteranceTimeout(reply.text);

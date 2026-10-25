@@ -169,10 +169,14 @@ describe('BF-767 conversation-mode completion correlates on the utterance', () =
     act(() => { onAgentReply('Second reply.'); });
     expect(mocks.speakResponseMock).toHaveBeenCalledTimes(2);
 
-    // HEADLINE: exactly ONE completion — turn 1's, for the utterance that
-    // genuinely ended. Turn 2 has not been spoken yet, so it must still be
-    // waiting. Pre-fix this is 2: turn 2 completed on turn 1's death rattle.
-    expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(1);
+    // HEADLINE: NO completion. Turn 2 has not been spoken yet, so it must still be
+    // waiting. Before BF-767 this was 2: turn 2 completed on turn 1's death rattle.
+    // BF-918 M6 (#1626): this used to expect 1, "turn 1's", for the utterance that
+    // genuinely ended. But turn 2 already holds the controller's turn when turn 1's
+    // 'end' lands, and `markAgentReplyComplete` completes whichever turn the
+    // controller holds, so that 1 was turn 2's turn ending on turn 1's audio (the
+    // M6 defect, pinned as the contract). Turn 1's listener now retires instead.
+    expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(0);
   });
 
   it('completes the turn on its own utterance end', async () => {
@@ -180,14 +184,16 @@ describe('BF-767 conversation-mode completion correlates on the utterance', () =
 
     act(() => { onAgentReply('First reply.'); });
     act(() => { onAgentReply('Second reply.'); });
-    expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(1);
+    // BF-918 M6 (#1626): 0, not 1. Turn 1's 'end' lands after turn 2 took the turn,
+    // so completing on it would end turn 2's turn (see the test above).
+    expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(0);
 
     // Turn 2's OWN utterance finishes.
     const secondId = mocks.speakResponseMock.mock.results[1].value as number;
     act(() => {
       fireToAll({ type: 'end', agent_id: AGENT_ID, utterance: {}, utterance_id: secondId });
     });
-    expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(2);
+    expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not complete an agent-scoped turn on a bare end with no agent_id', async () => {
