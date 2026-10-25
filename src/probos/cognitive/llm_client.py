@@ -1526,6 +1526,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                         return LLMResponse(
                             content=cached.content, model=cached.model, tier=tier,
                             answered_tier=cached.answered_tier, answered_model=cached.answered_model,
+                            applied_system_suffix=cached.applied_system_suffix,  # BF-922: kept on a replay
                             tokens_used=cached.tokens_used, cached=True, request_id=request.id,
                         )
                 return LLMResponse(
@@ -2003,6 +2004,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     model=cached.model,
                     answered_tier=cached.answered_tier,
                     answered_model=cached.answered_model,
+                    applied_system_suffix=cached.applied_system_suffix,  # BF-922: what the answering attempt appended
                     tier=tier,
                     tokens_used=cached.tokens_used,
                     cached=True,
@@ -2324,7 +2326,11 @@ class OpenAICompatibleClient(BaseLLMClient):
         # When no system message exists, the suffix becomes a fresh system
         # message at the head. Replaces (does not mutate) ``messages[0]`` so
         # the caller's original message dicts are never altered.
+        # BF-922 (#1639): what this call appended, reported on the response (``applied_system_suffix``)
+        # so a caller can ground on the text the answering attempt was sent; "" when nothing was.
+        applied_suffix = ""
         if effective_system_suffix:
+            applied_suffix = effective_system_suffix
             if messages and messages[0].get("role") == "system":
                 base = messages[0].get("content")
                 if isinstance(base, str):
@@ -2337,6 +2343,8 @@ class OpenAICompatibleClient(BaseLLMClient):
                         **messages[0],
                         "content": [*base, {"type": "text", "text": effective_system_suffix}],
                     }
+                else:
+                    applied_suffix = ""  # a system message of no known shape is sent unchanged
             else:
                 messages.insert(0, {"role": "system", "content": effective_system_suffix})
 
@@ -2432,6 +2440,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             stop_reason=stop_reason_value,
             answered_model=_echoed_model(data),
             usage_reported=usage_reported,
+            applied_system_suffix=applied_suffix,
         )
 
     async def _call_ollama_native(

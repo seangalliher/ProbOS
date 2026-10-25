@@ -747,6 +747,14 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
 - *DM reservation (A3).* The hour an unsent DM reserved is given back only by the attempt that holds it (its own clock reading; a newer reservation is always at least the cooldown later), on any exit before `create_thread` is awaited, cancellation included; once `create_thread` is awaited, a cancellation keeps the hour (the thread may be committed). Registered: `create_thread` gives no commit receipt (R13).
 - *Reversal.* Revert the commits; the listeners go deaf again.
 
+### BF-922 -- The chain's output gate grounds on what the composer was given, and the fallback is gated (2026-10-24, #1639)
+
+- *Grounding source.* BF-204 grounds on what the composing call was given from outside the chain's own model calls (`composer_world_text`) and on the intent's own ids (BF-233); the ANALYZE result is no longer a source, so a repeated invented id is not grounded. A retrieval's echo of a model-chosen key is not a source either: a failed AD-1347 lookup's text grounds nothing (review round 1). Rejected: recording the exact COMPOSE request (grounds model output; changes a result contract).
+- *Pattern and count.* A cited id is a whole word of 6+ hex with a letter a-f; distinct ids; threshold 2.
+- *Fallback.* AD-632a's fallback degrades to the pre-chain single call, which predates EVALUATE; it was never designed ungated. Every single call that answers a chain intent after its chain returned no decision runs BF-191 and BF-204 on what the answering attempt was sent (the request text and its AD-835 suffix, `LLMResponse.applied_system_suffix`); not the LLM judge (the model is already failing; the judge is unmeasured, AD-1350).
+- *Re-measure.* No replay is possible (prompts are not retained); the logged ids are re-scored at build time and the false-positive rate is measured on the merged build's own lines (#1639 stays open for it).
+- *Reversal.* Revert the commits.
+
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 
 - *Scope.* Standing-order text and its layout test only; nothing under `src/` changes. No AD or BF number, like the 2026-10-15 profile entries.

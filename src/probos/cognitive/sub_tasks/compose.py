@@ -578,6 +578,27 @@ def _build_user_prompt(
     return "\n\n".join(parts)
 
 
+def composer_world_text(context: dict, prior_results: list[SubTaskResult]) -> str:
+    """BF-922 (#1639): the user prompt COMPOSE renders, without the ANALYZE result.
+
+    What the composing call is given from outside the chain's own model calls: the
+    thread, QUERY data, memories, lookups and situation sections. EVALUATE's BF-204
+    check grounds on it, so an id an earlier model step invented is not grounded by
+    having been repeated into the brief. The AD-1347 lookup's text counts only for a
+    record outcome (found; ambiguous, whose reference starts every listed id): a failed
+    lookup's text repeats the reference ANALYZE chose (and, for an invalid one, an
+    example id), which is model output. COMPOSE still shows that text; it grounds
+    nothing. The system prompt (standing orders, skills, the crew roster by callsign)
+    carries no entity ids and is not included.
+    """
+    from probos.ward_room.lookup import LOOKUP_AMBIGUOUS, LOOKUP_FOUND  # at use, as query.py imports it
+
+    world = [pr for pr in prior_results if pr.sub_task_type != SubTaskType.ANALYZE]
+    if context.get("_ward_room_lookup_outcome") not in (LOOKUP_FOUND, LOOKUP_AMBIGUOUS):
+        context = {key: value for key, value in context.items() if key != "_ward_room_lookup_context"}
+    return _build_user_prompt(context, world)
+
+
 # ---------------------------------------------------------------------------
 # Mode dispatch table (Open/Closed)
 # ---------------------------------------------------------------------------

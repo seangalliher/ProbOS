@@ -366,6 +366,12 @@ class LLMResponse:
     # stated (test doubles, the mock client, cache replays, errors). The counts are never rewritten; only
     # ``probos.cognitive.token_accounting.charge_completion`` reads this (the agentic loop does not).
     usage_reported: bool | None = None
+    # BF-922 (#1639): the per-tier system-prompt suffix (AD-835) this response's call appended to the
+    # system message, as sent. Set by ``OpenAICompatibleClient._call_openai`` for the attempt that
+    # produced the response (a failed attempt's response is discarded with its suffix) and kept on
+    # cache replays; "" when none was appended (the default; the Ollama-native transport, the mock
+    # client, test doubles, errors). The single-call fallback's BF-204 grounds on it.
+    applied_system_suffix: str = ""
 
 
 class EscalationTier(Enum):

@@ -11,16 +11,23 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 from typing import Any
 
+from probos.cognitive.output_grounding import (
+    PATH_CHAIN,
+    deterministic_rejection,
+    intent_entity_ids,
+    log_rejection,
+    shown_hex_runs,
+)
 from probos.cognitive.sub_task import (
     SubTaskResult,
     SubTaskSpec,
     SubTaskType,
     resolve_chain_priority,
 )
+from probos.cognitive.sub_tasks.compose import composer_world_text
 from probos.types import LLMRequest
 from probos.utils.json_extract import extract_json
 
@@ -461,86 +468,27 @@ class EvaluateHandler:
 
         # === SAFETY CHECKS (always run, 0 tokens) ===
 
-        # BF-191: Deterministic JSON rejection — compose output must be natural language
-        compose_output = _get_compose_output(prior_results)
-        stripped = compose_output.strip()
-        if stripped.startswith("{") and ('"intents"' in stripped[:200] or '"intent"' in stripped[:200]):
-            logger.warning(
-                "BF-191: Evaluate rejected raw intent JSON from %s (%d chars)",
-                context.get("_agent_type", "unknown"),
-                len(compose_output),
-            )
-            return SubTaskResult(
-                sub_task_type=SubTaskType.EVALUATE,
-                name=spec.name,
-                result={
-                    "pass": False,
-                    "score": 0.0,
-                    "criteria": {"format": {"pass": False, "reason": "Raw JSON instead of natural language"}},
-                    "recommendation": "suppress",
-                    "rejection_reason": "raw_json_output",
-                },
-                tokens_used=0,
-                duration_ms=int((time.monotonic() - start) * 1000),
-                success=True,
-                tier_used="",
-            )
-
-        # BF-204: Deterministic grounding pre-check — catch fabricated identifiers
+        # BF-191 + BF-204, shared with the single-call fallback (BF-922, #1639).
         # Runs at ALL trust bands, even social obligation. Safety > obligation.
-        _grounding_source = (context.get("context", "") + " "
-                             + json.dumps(_get_analysis_result(prior_results)))
-
-        # BF-233: Include entity IDs the agent was explicitly given in its input.
-        # Without this, legitimate thread/channel/agent UUIDs from params are
-        # flagged as "ungrounded" confabulations — causing false suppression of
-        # ward room replies. Only IDs from the agent's own input context are
-        # whitelisted; truly fabricated hex IDs are still caught.
-        # Note: Full UUIDs are appended. The regex word-boundary tokenization
-        # extracts hyphen-delimited segments (e.g. "a6ec8b06" from
-        # "a6ec8b06-...-be2f4f7e5ee2"), and the `in` substring check below
-        # matches each segment against the full UUID in _grounding_source.
-        _entity_ids: list[str] = []
-        _params = context.get("params", {})
-        if isinstance(_params, dict):
-            for _k in ("thread_id", "channel_id", "author_id"):
-                _v = _params.get(_k, "")
-                if _v:
-                    _entity_ids.append(str(_v))
-        if context.get("_agent_id"):
-            _entity_ids.append(str(context["_agent_id"]))
-        if context.get("target_agent_id"):
-            _entity_ids.append(str(context["target_agent_id"]))
-        if context.get("intent_id"):
-            _entity_ids.append(str(context["intent_id"]))
-        if _entity_ids:
-            _grounding_source += " " + " ".join(_entity_ids).lower()
-
-        # Hex IDs (6+ chars) in compose output that don't appear in source material
-        _hex_ids = re.findall(r'\b[0-9a-f]{6,}\b', compose_output.lower())
-        _ungrounded_ids = [h for h in _hex_ids if h not in _grounding_source.lower()]
-        if len(_ungrounded_ids) >= 2:
-            logger.warning(
-                "BF-204: Grounding check failed for %s — %d ungrounded hex IDs: %s",
-                context.get("_agent_type", "unknown"),
-                len(_ungrounded_ids),
-                _ungrounded_ids[:3],
+        # BF-204 grounds on what COMPOSE was given from outside the chain's model
+        # calls (not the ANALYZE result: an id an earlier step invented is not
+        # grounded by being repeated) and on the intent's own ids (BF-233).
+        compose_output = _get_compose_output(prior_results)
+        _shown = shown_hex_runs(composer_world_text(context, prior_results), *intent_entity_ids(context))
+        rejection = deterministic_rejection(compose_output, _shown)
+        if rejection is not None:
+            log_rejection(
+                rejection,
+                compose_output,
+                agent_type=context.get("_agent_type", "unknown"),
+                agent_id=context.get("_agent_id", ""),
+                callsign=context.get("_callsign", ""),
+                path=PATH_CHAIN,
             )
             return SubTaskResult(
                 sub_task_type=SubTaskType.EVALUATE,
                 name=spec.name,
-                result={
-                    "pass": False,
-                    "score": 0.0,
-                    "criteria": {
-                        "grounding": {
-                            "pass": False,
-                            "reason": f"Ungrounded identifiers: {_ungrounded_ids[:3]}",
-                        },
-                    },
-                    "recommendation": "suppress",
-                    "rejection_reason": "confabulation_detected",
-                },
+                result=rejection.as_evaluate_result(),
                 tokens_used=0,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 success=True,

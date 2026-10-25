@@ -35,8 +35,16 @@ from probos.types import (
     IntentMessage,
     IntentResult,
     LLMRequest,
+    LLMResponse,
     Priority,
     Skill,
+)
+from probos.cognitive.output_grounding import (  # BF-922
+    PATH_FALLBACK,
+    deterministic_rejection,
+    intent_entity_ids,
+    log_rejection,
+    shown_hex_runs,
 )
 from probos.cognitive.sub_task import CHAIN_PRIORITY_KEY  # BF-688
 from probos.utils import format_duration
@@ -341,6 +349,11 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
     "ward_room_notification",
     "proactive_think",
 })
+
+# BF-922 (#1639): set on the observation while a single call answers for a chain
+# that returned no decision for a chain intent; ``_decide_via_llm`` then runs the
+# chain's deterministic output checks (BF-191, BF-204) on the reply.
+CHAIN_FALLBACK_KEY = "_chain_fallback"
 
 # AD-1028: ContextAssembler token budget. When attention.enabled is False
 # (default), _build_user_message routes its blocks through the bid assembler
@@ -3775,6 +3788,8 @@ class CognitiveAgent(BaseAgent):
                     )
                 return chain_result
             logger.info("AD-632f: Falling back to single-call for %s", self.agent_type)
+            if observation.get("intent") in _CHAIN_ELIGIBLE_INTENTS:  # BF-922: only a chain intent's reply
+                observation[CHAIN_FALLBACK_KEY] = True  # BF-922: an external chain's fallback
 
         # Priority 2: intent-driven routing (AD-643a)
         elif not recreation_turn and self._should_activate_chain(observation):
@@ -3806,9 +3821,13 @@ class CognitiveAgent(BaseAgent):
                 return chain_result
             # chain_result is None → fall through to _decide_via_llm()
             # Skills may already be loaded in observation from intent routing
+            observation[CHAIN_FALLBACK_KEY] = True  # BF-922: the routed chain's fallback
 
         # --- LLM call (cache miss) ---
-        decision = await self._decide_via_llm(observation)
+        try:
+            decision = await self._decide_via_llm(observation)
+        finally:
+            observation.pop(CHAIN_FALLBACK_KEY, None)
 
         # Record strategy outcomes (AD-384)
         applied_strategy_ids = decision.pop("_applied_strategy_ids", [])
@@ -4553,11 +4572,59 @@ class CognitiveAgent(BaseAgent):
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
 
+        # BF-922 (#1639): a single call that answers for a chain that returned no
+        # decision runs the chain's deterministic output checks on its reply.
+        if observation.get(CHAIN_FALLBACK_KEY):
+            gated = self._gate_fallback_output(decision, request, response, observation)
+            if gated is not None:
+                return gated
+
         # Pass strategy IDs back for caller to process
         if applied_strategy_ids:
             decision["_applied_strategy_ids"] = applied_strategy_ids
 
         return decision
+
+    def _gate_fallback_output(
+        self, decision: dict, request: LLMRequest, response: LLMResponse, observation: dict,
+    ) -> dict | None:
+        """BF-922 (#1639): BF-191 and BF-204 on the single-call fallback's reply.
+
+        AD-632a's fallback is the pre-chain single call, which predates EVALUATE;
+        BF-204 holds at every trust band and social obligation, so the fallback runs
+        the deterministic checks too, grounded on what the answering call was sent:
+        this request's system prompt and user prompt, the AD-835 per-tier suffix the
+        attempt that answered appended to the system message after the request was
+        built (``response.applied_system_suffix``; a failed attempt's never counts),
+        and the intent's ids. That text holds no output of this call; like the chain's
+        world text it can quote earlier replies (the conversation, the agent's own
+        previous posts), which BF-922's D1 accepts. Not the LLM judge: the fallback
+        runs when the model is already failing, and the judge's repeatability is
+        unmeasured (AD-1350, #1637). Returns BF-206's suppressed decision, or None to post.
+        """
+        output = decision.get("llm_output") or ""
+        given = (request.system_prompt or "", response.applied_system_suffix, request.prompt or "")
+        shown = shown_hex_runs(*given, *intent_entity_ids(observation))
+        rejection = deterministic_rejection(output, shown)
+        if rejection is None:
+            return None
+        callsign = getattr(self, "callsign", "") or self.agent_type
+        log_rejection(
+            rejection, output,
+            agent_type=self.agent_type, agent_id=self.id, callsign=callsign, path=PATH_FALLBACK,
+        )
+        logger.info(
+            "BF-922: Single-call fallback output suppressed for %s %s (%s) — deterministic check (%s)",
+            self.agent_type, callsign, self.id, rejection.reason,
+        )
+        self._emit_output_suppressed(rejection.reason, observation, path=PATH_FALLBACK)
+        return {
+            "action": "execute",
+            "llm_output": "[NO_RESPONSE]",
+            "tier_used": decision.get("tier_used", ""),
+            "_suppressed": True,
+            "_suppression_reason": rejection.reason,
+        }
 
     async def _resolve_owned_steps_model_context(
         self,
@@ -5688,7 +5755,8 @@ class CognitiveAgent(BaseAgent):
 
         Reads ``ward_room_lookup_ref`` from the latest successful ANALYZE result, runs a
         one-step QUERY chain (``ward_room_lookup``) and writes the text to
-        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders. Once per chain.
+        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders, and its typed
+        outcome to ``observation["_ward_room_lookup_outcome"]`` (BF-922). Once per chain.
         The Ward Room decides what this agent may see; this only carries the id.
         """
         if observation.get("_ward_room_lookup_fired"):
@@ -5737,6 +5805,10 @@ class CognitiveAgent(BaseAgent):
                 text = r.result.get("ward_room_lookup", "")
                 if isinstance(text, str) and text:
                     observation["_ward_room_lookup_context"] = text
+                    # BF-922 (#1639): the typed outcome travels with the text. BF-204 grounds on
+                    # a found record, never on a failed lookup's echo of ANALYZE's reference.
+                    outcome = r.result.get("ward_room_lookup_outcome", "")
+                    observation["_ward_room_lookup_outcome"] = outcome if isinstance(outcome, str) else ""
                 break
 
     @staticmethod
@@ -6032,9 +6104,10 @@ class CognitiveAgent(BaseAgent):
         for eval_r in evaluate_results:
             if eval_r.result.get("recommendation") == "suppress":
                 rejection = eval_r.result.get("rejection_reason", "quality_gate")
+                # BF-922 (#1639): name the agent, so a suppression can be attributed from the log.
                 logger.info(
-                    "BF-206: Chain output suppressed — Evaluate recommended suppress (%s)",
-                    rejection,
+                    "BF-206: Chain output suppressed for %s %s (%s) — Evaluate recommended suppress (%s)",
+                    self.agent_type, getattr(self, "callsign", "") or self.agent_type, self.id, rejection,
                 )
                 # BF-921 (#1636): one emitter for both suppression paths.
                 self._emit_output_suppressed(rejection, observation, path="chain")
