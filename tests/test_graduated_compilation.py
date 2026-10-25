@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from probos.cognitive.llm_client import BaseLLMClient
 from probos.cognitive.procedures import Procedure, ProcedureStep
+from probos.types import LLMResponse
+from tests.test_bf924_compilation_trust import trust_network_at
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,7 +100,11 @@ def _make_cognitive_agent(**overrides):
     agent.meta = AgentMeta()
     agent.state = AgentState.ACTIVE
     agent.trust_score = defaults.get("trust_score", 0.5)
-    agent._trust_score = defaults.get("trust_score", 0.5)
+    # BF-924 (#1654): the clamp reads live trust through the runtime (TrustNetwork.get_score). The
+    # ``_trust_score`` attribute set here before is never set in production, so it masked the defect
+    # (every agent counted as 0.5); a given runtime now carries a real network at this score.
+    if agent._runtime is not None:
+        agent._runtime.trust_network = trust_network_at(agent.id, defaults.get("trust_score", 0.5))
     return agent
 
 
@@ -230,8 +237,9 @@ class TestConsecutiveSuccessTracking:
         await store.record_consecutive_success(proc_id)
         await store.promote_compilation_level(proc_id, 3)
         proc = await store.get(proc_id)
-        # Note: promote updates DB, not the cached Procedure object in get()
-        # Check DB directly
+        # BF-924 (#1654): promote writes the snapshot get() rebuilds from as well as the column. It wrote only the
+        # column (the note here said so), so dispatch, the next promotion step and the teaching gate never saw it.
+        assert proc is not None and proc.compilation_level == 3
         metrics = await store.get_quality_metrics(proc_id)
         assert metrics["consecutive_successes"] == 0  # Reset on promote
 
@@ -373,6 +381,18 @@ class TestLevel2Guided:
         store.record_completion.assert_awaited_once_with("proc-42")
 
 
+def _validator_client(**complete: Any) -> MagicMock:
+    """BF-924 (#1654): an LLM client double with the real interface only (``spec=BaseLLMClient``).
+
+    The validators called ``generate``, which no client has; the ``AsyncMock`` doubles here invented it, so
+    every validation test passed while production passed every Level 3 replay unvalidated. ``complete`` is
+    the client's method; any other name raises ``AttributeError`` as it does in production.
+    """
+    client = MagicMock(spec=BaseLLMClient)
+    client.complete = AsyncMock(**complete)
+    return client
+
+
 # ===========================================================================
 # TestLevel3Validated (10 tests)
 # ===========================================================================
@@ -426,45 +446,45 @@ class TestLevel3Validated:
     @pytest.mark.asyncio
     async def test_validation_timeout_passes(self):
         """Timeout → passes by default (fail-open)."""
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(side_effect=asyncio.TimeoutError())
+        llm_client = _validator_client(side_effect=asyncio.TimeoutError())
         agent = _make_cognitive_agent(llm_client=llm_client)
         proc = _FakeProcedure(postconditions=["something"])
         result = await agent._validate_replay_postconditions(proc, "output", {})
+        assert llm_client.complete.await_count == 1  # BF-924: the call reached the client's real interface
         assert result is True
 
     @pytest.mark.asyncio
     async def test_validation_includes_postconditions(self):
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(return_value="YES looks good")
+        llm_client = _validator_client(return_value=LLMResponse(content="YES looks good"))
         agent = _make_cognitive_agent(llm_client=llm_client)
         proc = _FakeProcedure(postconditions=["all widgets created"])
         await agent._validate_replay_postconditions(proc, "output", {})
-        prompt = llm_client.generate.call_args[0][0]
+        assert llm_client.complete.await_count == 1
+        prompt = llm_client.complete.await_args.args[0].prompt
         assert "all widgets created" in prompt
 
     @pytest.mark.asyncio
     async def test_validation_includes_step_expected_outputs(self):
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(return_value="YES")
+        llm_client = _validator_client(return_value=LLMResponse(content="YES"))
         agent = _make_cognitive_agent(llm_client=llm_client)
         proc = _FakeProcedure(
             steps=[_FakeStep(step_number=1, expected_output="file exists")]
         )
         await agent._validate_replay_postconditions(proc, "output", {})
-        prompt = llm_client.generate.call_args[0][0]
+        assert llm_client.complete.await_count == 1
+        prompt = llm_client.complete.await_args.args[0].prompt
         assert "file exists" in prompt
 
     @pytest.mark.asyncio
     async def test_validation_includes_invariants(self):
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(return_value="YES")
+        llm_client = _validator_client(return_value=LLMResponse(content="YES"))
         agent = _make_cognitive_agent(llm_client=llm_client)
         proc = _FakeProcedure(
             steps=[_FakeStep(step_number=1, invariants=["no data loss"])]
         )
         await agent._validate_replay_postconditions(proc, "output", {})
-        prompt = llm_client.generate.call_args[0][0]
+        assert llm_client.complete.await_count == 1
+        prompt = llm_client.complete.await_args.args[0].prompt
         assert "no data loss" in prompt
 
     @pytest.mark.asyncio
@@ -489,20 +509,20 @@ class TestLevel3Validated:
 class TestLevel3StepValidation:
     @pytest.mark.asyncio
     async def test_validate_step_postcondition_passes(self):
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(return_value="YES matches")
+        llm_client = _validator_client(return_value=LLMResponse(content="YES matches"))
         agent = _make_cognitive_agent(llm_client=llm_client)
         step = _FakeStep(expected_output="data processed")
         result = await agent._validate_step_postcondition(step, "data processed successfully")
+        assert llm_client.complete.await_count == 1  # BF-924: the call reached the client's real interface
         assert result is True
 
     @pytest.mark.asyncio
     async def test_validate_step_postcondition_fails(self):
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(return_value="NO doesn't match")
+        llm_client = _validator_client(return_value=LLMResponse(content="NO doesn't match"))
         agent = _make_cognitive_agent(llm_client=llm_client)
         step = _FakeStep(expected_output="data processed")
         result = await agent._validate_step_postcondition(step, "error occurred")
+        assert llm_client.complete.await_count == 1
         assert result is False
 
     @pytest.mark.asyncio
@@ -514,11 +534,22 @@ class TestLevel3StepValidation:
 
     @pytest.mark.asyncio
     async def test_validate_step_llm_failure_passes(self):
-        llm_client = AsyncMock()
-        llm_client.generate = AsyncMock(side_effect=Exception("LLM down"))
+        llm_client = _validator_client(side_effect=Exception("LLM down"))
         agent = _make_cognitive_agent(llm_client=llm_client)
         step = _FakeStep(expected_output="something")
         result = await agent._validate_step_postcondition(step, "output")
+        assert llm_client.complete.await_count == 1
+        assert result is True  # Fail-open
+
+    @pytest.mark.asyncio
+    async def test_validate_step_error_reply_passes(self):
+        """BF-924 (#1654): the client returns an error reply rather than raising (``llm_client.py:2092``); AD-535
+        passes a failed validation call by default, so an error reply is not a NO."""
+        llm_client = _validator_client(return_value=LLMResponse(content="", error="All LLM tiers unavailable"))
+        agent = _make_cognitive_agent(llm_client=llm_client)
+        step = _FakeStep(expected_output="something")
+        result = await agent._validate_step_postcondition(step, "output")
+        assert llm_client.complete.await_count == 1
         assert result is True  # Fail-open
 
     @pytest.mark.asyncio
@@ -632,7 +663,7 @@ class TestLevel4Autonomous:
         runtime = MagicMock()
         runtime.procedure_store = store
         agent._runtime = runtime
-        agent._trust_score = 0.6
+        runtime.trust_network = trust_network_at(agent.id, 0.6)  # BF-924: was a hand-set _trust_score
 
         result = await agent._check_procedural_memory({
             "intent": "test", "params": {"message": "hello"},
@@ -661,7 +692,7 @@ class TestLevel4Autonomous:
             runtime = MagicMock()
             runtime.procedure_store = store
             agent._runtime = runtime
-            agent._trust_score = 0.6
+            runtime.trust_network = trust_network_at(agent.id, 0.6)  # BF-924: was a hand-set _trust_score
 
             await agent._check_procedural_memory({
                 "intent": "test", "params": {"message": "hello"},

@@ -582,7 +582,8 @@ def test_overlapping_compilation_level_writes_complete(tmp_path: Path) -> None:
         "p2": {"compilation_level": 3, "consecutive_successes": 0},
         "p3": {"compilation_level": 2, "consecutive_successes": 1},
     }, "premise: the seeds must differ from the targets, or the writes below prove nothing"
-    assert seen["results"] == [None, None, None], seen["results"]
+    # BF-924 (#1654, A5): promote_compilation_level says whether the row was promoted (D24); this unconditional one was
+    assert seen["results"] == [True, None, None], seen["results"]
     assert _committed_row(db, "p1", *columns) == {"compilation_level": 3, "consecutive_successes": 0}
     assert _committed_row(db, "p2", *columns) == {"compilation_level": 1, "consecutive_successes": 0}
     assert _committed_row(db, "p3", *columns) == {"compilation_level": 2, "consecutive_successes": 0}

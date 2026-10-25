@@ -192,9 +192,9 @@ def _engine(memory: Any, **kwargs: Any) -> DreamingEngine:
     trust = TrustNetwork(prior_alpha=2.0, prior_beta=2.0, decay_rate=0.999)
     config = kwargs.pop("config", None) or _dream_config()
     engine = DreamingEngine(router, trust, memory, config, **kwargs)
-    # Startup binds the records store late (startup/finalize.py), and the fallback-learning queue and the
-    # observed-thread set are created inside that setter, not in ``__init__``: a bare engine has no queue for
-    # Step 7d to drain. Binding it the way startup does keeps the engine as production builds it.
+    # Startup binds the records store late (startup/finalize.py) when Ship's Records is enabled. BF-924 (#1654): the
+    # fallback-learning queue and the observed-thread set are the constructor's now, not that setter's (startup
+    # skipped it with Records disabled, and Step 7d then had no queue); binding it keeps the engine as startup does.
     engine.set_records_store(None)
     return engine
 

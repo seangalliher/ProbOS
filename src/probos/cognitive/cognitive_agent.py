@@ -1848,8 +1848,8 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("record_applied failed", exc_info=True)
 
-        # AD-535: Trust-tier clamping
-        trust_score = getattr(self, "_trust_score", 0.5)
+        # AD-535: Trust-tier clamping (BF-924: the agent's live trust)
+        trust_score = self._compilation_trust_score()
         max_level = self._max_compilation_level_for_trust(trust_score)
         # AD-537: Promoted procedures can reach Level 5 (Expert)
         if procedure.compilation_level >= 5 and self._procedure_store:
@@ -1904,6 +1904,7 @@ class CognitiveAgent(BaseAgent):
                 "cached": True,
                 "procedure_id": procedure.id,
                 "procedure_name": procedure.name,
+                "compilation_level": effective_level,  # BF-924 (#1654, A6): the level executed (4 or 5), which the accounting credits
             }
             if is_compound:
                 result_dict["compound"] = True
@@ -2106,7 +2107,12 @@ class CognitiveAgent(BaseAgent):
                         "Compound step %d validation failed — aborting compound replay",
                         step.step_number,
                     )
-                    return {"success": True, "result": text_fallback, "compound_dispatched": False, "compound_aborted": True}
+                    # BF-924 (#1654): a rejected step is a failed replay; the lifecycle reads compound_aborted and
+                    # failed_step (it never read this result's success, which said True).
+                    return {
+                        "success": False, "result": text_fallback, "compound_dispatched": False,
+                        "compound_aborted": True, "failed_step": step.step_number,
+                    }
 
         assembled = "\n\n".join(results)
         return {
@@ -2519,6 +2525,9 @@ class CognitiveAgent(BaseAgent):
                 "Level 3 validation failed for procedure %s — falling back to LLM",
                 procedure.name,
             )
+            # BF-924 (#1654): a NO is a failed replay. AD-535 demotes on any failure and resets the count; the LLM
+            # still serves the intent. Unreachable until D15: the validator never answered.
+            await self._record_compilation_outcome(procedure.id, False)
             return None
 
         is_compound = any(
@@ -2588,12 +2597,18 @@ class CognitiveAgent(BaseAgent):
             if not llm_client:
                 return True
 
+            # BF-924 (#1654): the client's interface is complete(LLMRequest) -> LLMResponse, as the agent's other
+            # helper calls use it. generate() exists on no client: the AttributeError was caught below as
+            # "passing by default", so every Level 3 replay passed with no request made.
+            validation_request = LLMRequest(prompt=validation_prompt, tier=self._resolve_tier(), max_tokens=100)
             response = await asyncio.wait_for(
-                llm_client.generate(validation_prompt, max_tokens=100),
+                llm_client.complete(validation_request, priority=Priority.NORMAL),
                 timeout=COMPILATION_VALIDATION_TIMEOUT_SECONDS,
             )
+            if response.error is not None:  # BF-924 (#1654): an error reply is a failed call; AD-535 passes it by default
+                raise RuntimeError(response.error)
 
-            answer = response.strip().upper()
+            answer = response.content.strip().upper()
             return answer.startswith("YES")
 
         except (asyncio.TimeoutError, Exception) as exc:
@@ -2628,13 +2643,22 @@ class CognitiveAgent(BaseAgent):
             llm_client = getattr(self, "_llm_client", None)
             if not llm_client:
                 return True
+            # BF-924 (#1654): complete(LLMRequest), the client's interface; generate() exists on no client
+            step_request = LLMRequest(prompt=prompt, tier=self._resolve_tier(), max_tokens=50)
             response = await asyncio.wait_for(
-                llm_client.generate(prompt, max_tokens=50),
+                llm_client.complete(step_request, priority=Priority.NORMAL),
                 timeout=COMPILATION_VALIDATION_TIMEOUT_SECONDS,
             )
-            return response.strip().upper().startswith("YES")
-        except Exception:
-            return True  # Fail-open
+            if response.error is not None:  # BF-924 (#1654): an error reply is a failed step call; AD-535 passes it by default
+                raise RuntimeError(response.error)
+            return response.content.strip().upper().startswith("YES")
+        except Exception as exc:
+            # BF-924 (#1654): said at WARNING, as the replay validator does; the silent pass hid the defect
+            logger.warning(
+                "Level 3 step validation call failed for step %s: %s — passing by default",
+                step.step_number, exc,
+            )
+            return True  # Fail-open (AD-535)
 
     def _diagnose_procedure_health(
         self, procedure_id: str, procedure_name: str, metrics: dict
@@ -2660,6 +2684,24 @@ class CognitiveAgent(BaseAgent):
                 metrics.get("effective_rate", 0.0),
             )
 
+    def _compilation_trust_score(self) -> float:
+        """BF-924 (#1654): the live trust the AD-535/536 compilation clamp uses.
+
+        Read with ``TrustNetwork.get_score(self.id)``, as BF-263's rank read does. The
+        ``_trust_score`` attribute read before is assigned nowhere, so every agent counted as 0.5.
+        A read that fails (the runtime, its ``trust_network`` attribute or ``get_score``), or a value
+        that is not a score in [0, 1] (NaN, an infinity, a corrupt record), logs a WARNING and returns
+        0.0: an unknown trust takes the Ensign cap (Level 2) and never unlocks replay or Level 5.
+        """
+        try:
+            score = float(self._runtime.trust_network.get_score(self.id))
+            if not 0.0 <= score <= 1.0:  # BF-924 (#1654): NaN fails both bounds, so it is refused too
+                raise ValueError(f"trust score {score!r} is not in [0, 1]")
+            return score
+        except Exception:
+            logger.warning("BF-924 (#1654): trust read failed for %s; procedure compilation held to Level 2", self.id, exc_info=True)
+            return 0.0  # BF-924: unknown trust takes the Ensign cap (Level 2)
+
     def _max_compilation_level_for_trust(self, trust_score: float) -> int:
         """AD-535: Return the maximum compilation level allowed for the given trust score.
 
@@ -2682,6 +2724,83 @@ class CognitiveAgent(BaseAgent):
         if promotion_status == "approved" and trust_score >= TRUST_COMMANDER:
             return 5  # Expert level unlocked for promoted procedures
         return base
+
+    async def _record_compilation_outcome(
+        self, procedure_id: str | None, success: bool, *, executed_level: int | None = None,
+    ) -> None:
+        """AD-535: count a success toward promotion, or demote (else reset the count) on a failure.
+
+        BF-924 (#1654): moved unchanged from ``handle_intent``'s post-execution step so that every replay outcome
+        reaches it exactly once: that step, a dispatched compound replay (which returns before it) and a Level 3
+        validation that answered NO (which hands the intent to the LLM, so no procedure reaches that step).
+        A5: once per outcome means one per-procedure accounting effect; a Level 3 NO's intent also reaches the
+        post-execution call, with no procedure id, which does nothing. The promotion is conditional on the level
+        and the count read here, because another agent's intent may demote, reset or promote the shared procedure
+        across these awaits; only a committed promotion is logged and may request AD-536 promotion.
+        A6: a success counts only toward the level it was executed at (``executed_level``, the decision's
+        ``compilation_level``): the store counts it only while the procedure is still at that level, and the
+        promotion goes from that level. A Guided run that completes after another agent's promotion, or a clamped
+        run below the stored level, earns no count; a success with no level is not counted. A failure is
+        unconditional: it can only lower the level.
+        """
+        _proc_id_for_promo = procedure_id
+        if _proc_id_for_promo and self._procedure_store:
+            _store = self._procedure_store
+            if success:
+                try:
+                    if executed_level is None:  # BF-924 (#1654, A6): every replay decision names it; a success without one earns nothing
+                        logger.debug("BF-924 (#1654): a success of %s named no executed level; not counted", _proc_id_for_promo)
+                        return
+                    new_count = await _store.record_consecutive_success(
+                        _proc_id_for_promo, expected_level=executed_level,  # BF-924 (#1654, A6): only at that level
+                    )
+                    if new_count is None:  # BF-924 (#1654, A6): the level moved after this outcome was dispatched
+                        return
+                    from probos.config import (
+                        COMPILATION_PROMOTION_THRESHOLD,
+                        COMPILATION_MAX_LEVEL,
+                    )
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and new_count >= COMPILATION_PROMOTION_THRESHOLD:
+                        _ts = self._compilation_trust_score()  # BF-924 (#1654): the live trust, as in the clamp
+                        # AD-536: Check if promoted procedure can reach Level 5
+                        _promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                        max_allowed = self._max_compilation_level_for_promoted(_ts, _promo_status)
+                        next_level = executed_level + 1  # BF-924 (#1654, A6): from the level this success ran at
+                        if next_level <= min(max_allowed, COMPILATION_MAX_LEVEL):
+                            _level_committed = await _store.promote_compilation_level(
+                                _proc_id_for_promo, next_level,
+                                expected_level=executed_level,  # BF-924 (#1654, A5, A6): the level this success was counted at
+                                min_consecutive=COMPILATION_PROMOTION_THRESHOLD,  # BF-924 (#1654, A5): the count too
+                            )
+                            if _level_committed:  # BF-924 (#1654, A5): only a committed promotion is announced
+                                logger.info(
+                                    "Procedure '%s' promoted to Level %d after %d consecutive successes",
+                                    proc.name, next_level, new_count,
+                                )
+                                # AD-536: Check if procedure is eligible for institutional promotion
+                                from probos.config import PROMOTION_MIN_COMPILATION_LEVEL
+                                promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                                if next_level >= PROMOTION_MIN_COMPILATION_LEVEL and promo_status == "private":
+                                    await self._request_procedure_promotion(_proc_id_for_promo)
+                except Exception:
+                    pass
+            else:
+                try:
+                    from probos.config import COMPILATION_DEMOTION_LEVEL
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and proc.compilation_level > COMPILATION_DEMOTION_LEVEL:
+                        await _store.demote_compilation_level(
+                            _proc_id_for_promo, COMPILATION_DEMOTION_LEVEL
+                        )
+                        logger.info(
+                            "Procedure '%s' demoted to Level %d after failure",
+                            proc.name, COMPILATION_DEMOTION_LEVEL,
+                        )
+                    else:
+                        await _store.reset_consecutive_successes(_proc_id_for_promo)
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # AD-536: Procedure Promotion Helpers
@@ -2765,8 +2884,8 @@ class CognitiveAgent(BaseAgent):
 
         try:
             agent_type = getattr(self, "agent_type", "")
-            agent_id = getattr(self, "_agent_id", agent_type)
-            callsign = getattr(self, "_callsign", agent_type)
+            agent_id = self.id  # BF-924 (#1654): the author is the agent; no agent has an _agent_id attribute
+            callsign = self.callsign or agent_type  # BF-924 (#1654): no agent has a _callsign attribute
 
             # Post to appropriate channel
             department = ""
@@ -7582,6 +7701,7 @@ class CognitiveAgent(BaseAgent):
             self._augmentation_skills_used = []
 
         # AD-534c: compound procedure dispatch
+        _replay_failure: dict[str, Any] | None = None  # BF-924 (#1654): set when a compound step was rejected
         if decision.get("compound") and decision.get("procedure"):
             compound_result = await self._execute_compound_replay(
                 decision["procedure"], decision.get("llm_output", ""),
@@ -7596,6 +7716,10 @@ class CognitiveAgent(BaseAgent):
                         await _store.record_completion(decision["procedure_id"])
                     except Exception:
                         pass
+                # BF-924 (#1654): the shared AD-535 accounting, which this early return skipped, so a compound
+                # procedure never counted a success: it stalled at Level 3, paying its validation calls every run.
+                # A6: credited only to the level the replay was executed at (3, 4 or 5, named by the decision).
+                await self._record_compilation_outcome(decision["procedure_id"], True, executed_level=decision.get("compilation_level"))
 
                 # Emit task execution event (AD-532e)
                 _rt = getattr(self, '_runtime', None)
@@ -7623,6 +7747,15 @@ class CognitiveAgent(BaseAgent):
                     result=compound_result["result"],
                     confidence=self.confidence,
                 )
+            if compound_result.get("compound_aborted"):
+                # BF-924 (#1654): a step the Level 3 validator rejected is a failed replay, not a degradation: no
+                # act() on the unchanged cached decision. The failure takes the cached-failure path below
+                # (record_fallback, demotion, AD-534b's service recovery and its execution_failure event).
+                _replay_failure = {
+                    "success": False,
+                    "error": f"Compound step {compound_result.get('failed_step')} output failed Level 3 validation",
+                    "result": None,  # BF-924 (#1654, A5): a complete envelope; the Counselor's report() keeps a dict only with result
+                }
             # Degradation: compound_dispatched=False — use text fallback in normal act() flow
             decision["llm_output"] = compound_result["result"]
             decision["compound"] = False  # prevent re-entry
@@ -7631,7 +7764,7 @@ class CognitiveAgent(BaseAgent):
             {**decision, "intent": "proactive_think"}
             if recreation_turn is not None else decision
         )
-        result = await self.act(action_decision)
+        result = _replay_failure if _replay_failure is not None else await self.act(action_decision)
         report = await self.report(result)
         if recreation_turn is not None and recreation_turns is not None:
             from probos.cognitive.dm_sanity_gate import DmSanityGate
@@ -7752,53 +7885,9 @@ class CognitiveAgent(BaseAgent):
                 except Exception:
                     pass
 
-        # AD-535: Compilation level promotion/demotion
-        _proc_id_for_promo = decision.get("procedure_id")
-        if _proc_id_for_promo and self._procedure_store:
-            _store = self._procedure_store
-            if success:
-                try:
-                    new_count = await _store.record_consecutive_success(_proc_id_for_promo)
-                    from probos.config import (
-                        COMPILATION_PROMOTION_THRESHOLD,
-                        COMPILATION_MAX_LEVEL,
-                    )
-                    proc = await _store.get(_proc_id_for_promo)
-                    if proc and new_count >= COMPILATION_PROMOTION_THRESHOLD:
-                        _ts = getattr(self, "_trust_score", 0.5)
-                        # AD-536: Check if promoted procedure can reach Level 5
-                        _promo_status = await _store.get_promotion_status(_proc_id_for_promo)
-                        max_allowed = self._max_compilation_level_for_promoted(_ts, _promo_status)
-                        next_level = proc.compilation_level + 1
-                        if next_level <= min(max_allowed, COMPILATION_MAX_LEVEL):
-                            await _store.promote_compilation_level(_proc_id_for_promo, next_level)
-                            logger.info(
-                                "Procedure '%s' promoted to Level %d after %d consecutive successes",
-                                proc.name, next_level, new_count,
-                            )
-                            # AD-536: Check if procedure is eligible for institutional promotion
-                            from probos.config import PROMOTION_MIN_COMPILATION_LEVEL
-                            promo_status = await _store.get_promotion_status(_proc_id_for_promo)
-                            if next_level >= PROMOTION_MIN_COMPILATION_LEVEL and promo_status == "private":
-                                await self._request_procedure_promotion(_proc_id_for_promo)
-                except Exception:
-                    pass
-            else:
-                try:
-                    from probos.config import COMPILATION_DEMOTION_LEVEL
-                    proc = await _store.get(_proc_id_for_promo)
-                    if proc and proc.compilation_level > COMPILATION_DEMOTION_LEVEL:
-                        await _store.demote_compilation_level(
-                            _proc_id_for_promo, COMPILATION_DEMOTION_LEVEL
-                        )
-                        logger.info(
-                            "Procedure '%s' demoted to Level %d after failure",
-                            proc.name, COMPILATION_DEMOTION_LEVEL,
-                        )
-                    else:
-                        await _store.reset_consecutive_successes(_proc_id_for_promo)
-                except Exception:
-                    pass
+        # AD-535: Compilation level promotion/demotion (BF-924 (#1654): one helper, shared with the compound and NO paths)
+        # BF-924 (#1654, A6): a success is credited only to the level the decision was executed at (2 to 5)
+        await self._record_compilation_outcome(decision.get("procedure_id"), success, executed_level=decision.get("compilation_level"))
 
         # AD-534b: Service recovery — re-run LLM on cached execution failure
         llm_decision = None
@@ -7809,6 +7898,13 @@ class CognitiveAgent(BaseAgent):
             try:
                 llm_decision = await self._run_llm_fallback(observation)
                 if llm_decision is not None:
+                    # BF-924 (#1654, A5): what the normal path adds after decide() (AD-398's intent, BF-177's duty), so
+                    # act() takes the branch the replay's act() took: the Counselor, Surgeon, Builder, Architect and
+                    # Scout branch on the intent (the Scout also on the duty); without it the Counselor discarded a
+                    # recovered answer.
+                    llm_decision["intent"] = action_decision.get("intent", intent.intent)  # BF-924 (#1654, A5): AD-398
+                    if observation.get("params", {}).get("duty"):
+                        llm_decision["duty"] = observation["params"]["duty"]  # BF-924 (#1654, A5): BF-177
                     llm_result = await self.act(llm_decision)
                     llm_report = await self.report(llm_result)
                     llm_success = llm_report.get("success", False)
@@ -7822,7 +7918,8 @@ class CognitiveAgent(BaseAgent):
                             "type": "execution_failure",
                             "procedure_id": _proc_id,
                             "procedure_name": _proc_name,
-                            "reason": "Procedure replay succeeded in formatting but failed in execution",
+                            # BF-924 (#1654): a rejected compound step names itself; Step 7d's rewrite quotes the reason
+                            "reason": (_replay_failure or {}).get("error") or "Procedure replay succeeded in formatting but failed in execution",
                         }
             except Exception:
                 logger.debug("LLM fallback recovery failed", exc_info=True)

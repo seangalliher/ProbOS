@@ -2647,8 +2647,8 @@ def _lifecycle_state(
     """A procedure's ``(is_active, is_archived, compilation_level)``: its columns, then its JSON snapshot (R6-1).
 
     An independent reader of ``procedures.db``. ``restore_procedure`` commits the columns and swallows a refused
-    ``content_snapshot`` UPDATE, and ``demote_compilation_level`` writes the column only; both leave the snapshot that
-    ``ProcedureStore.get`` rebuilds a procedure from apart from the columns.
+    ``content_snapshot`` UPDATE, which leaves the snapshot that ``ProcedureStore.get`` rebuilds a procedure from
+    apart from the columns. (``demote_compilation_level`` wrote the column only until BF-924 made it write both.)
     """
     reader = sqlite3.connect(db_path)
     try:
@@ -2732,7 +2732,10 @@ async def test_restore_with_a_refused_snapshot_publishes_no_active_entry_at_a_st
         await store.save(procedure)
         # Control: while ``p`` is active at level 4 the lookup below finds it, so its later absence is the entry's.
         assert [match["id"] for match in await store.find_matching(description, min_compilation_level=2)] == ["p"]
-        await store.demote_compilation_level("p", 1)  # the column only: the snapshot keeps saying level 4
+        # BF-924 (#1654): demote_compilation_level now writes the snapshot too, so the premise is set as a row demoted
+        # before BF-924 left it: the column at Level 1, the snapshot still at Level 4.
+        await store._db.execute("UPDATE procedure_records SET compilation_level = 1 WHERE id = ?", ("p",))
+        await store._db.commit()
         archived = await store.archive_stale_procedures(now=1_000.0 + (LIFECYCLE_ARCHIVE_DAYS + 1) * 86_400)
         assert [entry["id"] for entry in archived] == ["p"]  # premise: unused at Level 1 for long enough, so archived
         procedures_db.arm(

@@ -1073,22 +1073,39 @@ class ProcedureStore:
         """Record that a procedure replay failed and fell back to LLM."""
         await self._increment_counter(procedure_id, "total_fallbacks")
 
-    async def record_consecutive_success(self, procedure_id: str) -> int:
-        """AD-535: Increment consecutive_successes counter. Return new count."""
+    async def record_consecutive_success(
+        self, procedure_id: str, *, expected_level: int | None = None,
+    ) -> int | None:
+        """AD-535: Increment consecutive_successes counter. Return new count.
+
+        BF-924 (#1654, A6): with ``expected_level`` (the level the outcome was executed at), the same statement
+        increments only while the snapshot's level (what ``get`` returns, as ``promote_compilation_level`` reads it)
+        is still that level, and the method returns ``None`` when it is not: a success earned at one level never
+        counts toward another level's threshold. Every writer that moves the snapshot's level also resets the count,
+        so the count at a level holds only successes executed at that level. Without ``expected_level`` the
+        increment is unconditional, as before. The count is read in the same write block: it is this increment's.
+        """
         if not self._db:
             return 0
-        async with self._index_write():
-            await self._db.execute(
-                "UPDATE procedure_records SET consecutive_successes = consecutive_successes + 1, "
-                "updated_at = ? WHERE id = ?",
-                (time.time(), procedure_id),
-            )
-            await self._db.commit()
-        cursor = await self._db.execute(
-            "SELECT consecutive_successes FROM procedure_records WHERE id = ?",
-            (procedure_id,),
+        sql = (
+            "UPDATE procedure_records SET consecutive_successes = consecutive_successes + 1, "
+            "updated_at = ? WHERE id = ?"
         )
-        row = await cursor.fetchone()
+        params: list[Any] = [time.time(), procedure_id]
+        if expected_level is not None:
+            sql += " AND COALESCE(json_extract(content_snapshot, '$.compilation_level'), 1) = ?"  # BF-924 (A6): the executed level
+            params.append(expected_level)
+        async with self._index_write():
+            cursor = await self._db.execute(sql, tuple(params))
+            counted = bool(cursor.rowcount and cursor.rowcount > 0)
+            await self._db.commit()
+            cursor = await self._db.execute(
+                "SELECT consecutive_successes FROM procedure_records WHERE id = ?",
+                (procedure_id,),
+            )
+            row = await cursor.fetchone()
+        if expected_level is not None and not counted:
+            return None  # BF-924 (#1654, A6): the level moved after the outcome was dispatched; nothing counted
         return row[0] if row else 0
 
     async def reset_consecutive_successes(self, procedure_id: str) -> None:
@@ -1102,30 +1119,67 @@ class ProcedureStore:
             )
             await self._db.commit()
 
-    async def promote_compilation_level(self, procedure_id: str, new_level: int) -> None:
-        """AD-535: Promote procedure to a higher compilation level. Reset consecutive_successes."""
+    async def promote_compilation_level(
+        self,
+        procedure_id: str,
+        new_level: int,
+        *,
+        expected_level: int | None = None,
+        min_consecutive: int | None = None,
+    ) -> bool:
+        """AD-535: Promote procedure to a higher compilation level. Reset consecutive_successes.
+
+        BF-924 (#1654): the level goes to the column and to the JSON snapshot in one statement, as
+        ``decay_stale_procedures`` writes both. ``get`` rebuilds a procedure from the snapshot, and the
+        dispatch, the next promotion step and the teaching gate read its level: the column-only write
+        left every promotion invisible to them. The other counters are not touched (no re-save).
+
+        BF-924 (#1654, A5): with ``expected_level`` (the level ``get`` returned to the caller) and
+        ``min_consecutive`` (the promotion threshold), the same statement applies only while the snapshot's
+        level is still ``expected_level`` and the count still reaches ``min_consecutive``, so a demotion, a
+        reset or a promotion another intent committed since the caller's reads wins. Returns whether the row
+        was promoted. With neither argument the write is unconditional, as before.
+        """
         if not self._db:
-            return
+            return False
+        sql = (
+            "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
+            "content_snapshot = json_set(content_snapshot, '$.compilation_level', ?), "  # BF-924: promote
+            "updated_at = ? WHERE id = ?"
+        )
+        params: list[Any] = [new_level, new_level, time.time(), procedure_id]
+        if expected_level is not None:
+            sql += " AND COALESCE(json_extract(content_snapshot, '$.compilation_level'), 1) = ?"  # BF-924: as get reads it
+            params.append(expected_level)
+        if min_consecutive is not None:
+            sql += " AND COALESCE(consecutive_successes, 0) >= ?"  # BF-924: the count still reaches it
+            params.append(min_consecutive)
         async with self._index_write():
-            await self._db.execute(
-                "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
-                "updated_at = ? WHERE id = ?",
-                (new_level, time.time(), procedure_id),
-            )
+            cursor = await self._db.execute(sql, tuple(params))
+            promoted = bool(cursor.rowcount and cursor.rowcount > 0)
             await self._db.commit()
-        proc = await self.get(procedure_id)
-        if proc:
-            logger.info("Procedure '%s' promoted to Level %d", proc.name, new_level)
+        if promoted:
+            proc = await self.get(procedure_id)
+            if proc:
+                logger.info("Procedure '%s' promoted to Level %d", proc.name, new_level)
+        return promoted
 
     async def demote_compilation_level(self, procedure_id: str, new_level: int) -> None:
-        """AD-535: Demote procedure to a lower compilation level. Reset consecutive_successes."""
+        """AD-535: Demote procedure to a lower compilation level. Reset consecutive_successes.
+
+        BF-924 (#1654): the level goes to the column and to the JSON snapshot in one statement, as
+        ``decay_stale_procedures`` writes both. ``get`` rebuilds a procedure from the snapshot and the
+        dispatch reads its level: the column-only write left a demoted procedure dispatched at its old
+        level. The other counters are not touched (no re-save).
+        """
         if not self._db:
             return
         async with self._index_write():
             await self._db.execute(
                 "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
+                "content_snapshot = json_set(content_snapshot, '$.compilation_level', ?), "  # BF-924: demote
                 "updated_at = ? WHERE id = ?",
-                (new_level, time.time(), procedure_id),
+                (new_level, new_level, time.time(), procedure_id),
             )
             await self._db.commit()
         proc = await self.get(procedure_id)

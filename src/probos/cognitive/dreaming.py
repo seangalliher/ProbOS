@@ -163,6 +163,10 @@ class DreamingEngine:
         self._addressed_degradations: dict[str, float] = {}  # AD-532b: procedure_id -> timestamp
         self._extraction_candidates: dict[str, float] = {}  # AD-532e: intent_type -> timestamp
         self._reactive_cooldowns: dict[str, float] = {}  # AD-532e: agent_id -> last reactive check
+        # BF-924 (#1654): created here, not in set_records_store(), which startup skips when Ship's Records is
+        # disabled (startup/finalize.py:5417-5418); neither the fallback queue nor Step 7e's thread set needs Records.
+        self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing
+        self._observed_threads: set[str] = set()  # AD-537: already-observed thread IDs
         # AD-690: late-bound after finalize phase (knowledge_edges adopted at runtime.py:1615)
         self._knowledge_edges: Any = None
         self._rejection_cache: Any = None
@@ -183,8 +187,6 @@ class DreamingEngine:
         """BF-106: Late-bind records store. No-op if already set via constructor."""
         if self._records_store is None:
             self._records_store = records_store
-        self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing
-        self._observed_threads: set[str] = set()  # AD-537: already-observed thread IDs
 
     def set_confidence_tracker(self, tracker: Any) -> None:
         """AD-444: Late-bind confidence tracker."""
@@ -1881,9 +1883,8 @@ class DreamingEngine:
             if not diagnosis:
                 continue
 
-            # Anti-loop guard: skip if addressed recently
-            last_attempt = self._addressed_degradations.get(proc_id, 0.0)
-            if now - last_attempt < EVOLUTION_COOLDOWN_SECONDS:
+            # Anti-loop guard: skip if addressed recently (BF-924: claimed before the parent load awaits)
+            if not self._claim_evolution_attempt(proc_id, now):  # BF-924 (#1654): Step 7b
                 continue
 
             # Load full procedure
@@ -1995,6 +1996,18 @@ class DreamingEngine:
             except Exception:
                 logger.debug("AD-579c: Failed to expire episode %s", episode_id[:8], exc_info=True)
 
+    def _claim_evolution_attempt(self, proc_id: str, now: float) -> bool:
+        """BF-924 (#1654): AD-532b's 72 h anti-loop window, checked and claimed in one step.
+
+        No ``await`` separates the check from the claim, so two triggers that overlap (two agents' completions,
+        each its own listener task, or a completion during the dream cycle) cannot both pass it. The exits after
+        the claim record the attempt as before; an attempt that raises keeps the claim.
+        """
+        if now - self._addressed_degradations.get(proc_id, 0.0) < EVOLUTION_COOLDOWN_SECONDS:
+            return False
+        self._addressed_degradations[proc_id] = now  # BF-924 (#1654): claimed in the step that checked it
+        return True
+
     async def _attempt_procedure_evolution(
         self,
         parent: Any,  # Procedure
@@ -2009,9 +2022,8 @@ class DreamingEngine:
         proc_id = parent.id
         now = time.time()
 
-        # Anti-loop guard
-        last_attempt = self._addressed_degradations.get(proc_id, 0.0)
-        if now - last_attempt < EVOLUTION_COOLDOWN_SECONDS:
+        # Anti-loop guard (BF-924: claimed before the confirmation awaits)
+        if not self._claim_evolution_attempt(proc_id, now):  # BF-924 (#1654): the reactive and proactive paths
             return False
 
         # LLM confirmation gate (proactive only)
@@ -2233,6 +2245,10 @@ class DreamingEngine:
                         proc_id[:8],
                     )
                     continue
+
+                # BF-924 (#1654): claim the window before the first await. The check above stays read-only, so a
+                # negative_veto inside the window is still counted as skipped and flags nothing, as before.
+                self._addressed_degradations[proc_id] = now  # BF-924 (#1654): Step 7d claims it before its first await
 
                 # Load procedure
                 parent = await self._procedure_store.get(proc_id)
