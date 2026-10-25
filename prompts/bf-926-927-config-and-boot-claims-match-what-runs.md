@@ -8,8 +8,10 @@
 
 **Amendment A2 (2026-10-25, `claude-architect`; round 1 of the whole review: F1 P1, F2-F6 resolver, F7 wording).** F1: the AD/BF ledger is regenerated in a third commit, generated files only, after both milestone commits and after any merge of the base (§8, §14.8; BF-924 `34df056c` precedent). F3 fixed in §7.11: a literal `getattr(holder, "entry")(...)` is a call, and an entry method passed or assigned uncalled is an escape; three fixture cases (34 to 37 cases) and rows A7-A9. F5: wording only (an escape cannot make an invoked service less invoked). F2, F4, F6: disclosed in the test docstring, D7 and §14.3, and recorded as R10. F7: the 23 markers say "reads this field/section to act on it", by substitutions S-A/S-B (the marker substring is unchanged); the yaml comments (S-C) and the script's docstring and argparse text say the same; the config API (`routers/config.py:191`, `:211`, `:246`, `:267`) is named as generic I/O. No production behaviour, default, row or pin outside §6's list changes. Applied by tool; round 2 is a delta review.
 
+**Amendment A3 (2026-10-25, `claude-architect`; round 2, the delta review of A2: R2-1 P2, R2-2 P3 an A2 regression, R2-3 and R2-4 P3 text, R2-5 P3).** R2-2 fixed in §7.11: `getattr` and the other `_NON_INVOKING` names count only as the builtin, a bare name its module binds nowhere and no star import could bind (`_bound_names`, `_builtin`, `_Module.bound`); a qualified or shadowed lookup is an ordinary callable, so a holder passed to it, or a holder attribute it names with a literal, is an escape (`is_read`, `is_entry` and the exemption alike). R2-1 folded in: `x.__call__(...)` is read as `x(...)`, so `holder.check.__call__()` is a call. Five fixture cases (37 to 42) and rows A10-A16. R2-5 disclosed as approximation (d), with the import-alias form it implies (silent); the test docstring, D7, §14.3 and R10 list (a)-(d) with their directions and the cannot-see forms A3's census found (`:=`, `for`, `with ... as`, an expression receiver, `holder.__getattribute__`, a replaced builtin). R2-3: §5(b), D1, section 12 and the `DECISIONS.md` bullet name source introspection (the fleet-built codebase index and skill) as a runtime reader that shows descriptions and acts on none. R2-4: R7, §13, §2 and the `DECISIONS.md` bullet describe BF-927 as holder tracing. No production line, default, generated file, golden, pin or ledger heading moves; only the M1 test file, this contract and one `DECISIONS.md` bullet change. Applied by tool; round 3 is a delta review.
+
 **Tests:**
-- New `tests/test_bf927_boot_claims.py` (M1: 6 functions, 37 cases).
+- New `tests/test_bf927_boot_claims.py` (M1: 6 functions, 42 cases).
 - New `tests/test_bf926_config_readers.py` (M2: 6 functions, 49 cases).
 - New `scripts/check_config_readers.py` (M2, report-only).
 - Updated pins (M2): `tests/test_ad607_memory_security.py` (default of the deleted field), `tests/test_ad1270e2g_crew_models.py` (pre-move dump of `MemorySecurityConfig`), `tests/test_ad1185_config_profiles.py` (two tests that used the manifest's only conflict edge), `tests/test_ad1270e1_config_facade.py` (field-count pin 1876 to 1875), `tests/fixtures/ad1152_agentic_off_golden.json` (the default-config and observation digests, §7.24, A1).
@@ -38,12 +40,12 @@
 
 ## 2. Solution overview
 
-- **M1 (BF-927).** Each boot line says `built, not invoked` (AD-455 splits into a "RedTeamLead running" line and a "not invoked" line). The six config models' reference summaries, eight roadmap status markers, `vote_on_intent`'s docstring and a Yeoman comment say the same. A new test traces every caller of each service over `src/probos` with the AST (from each construction or typed parameter, not by method name; its approximations are listed, R10) and pins every claim against that state in both directions, on the real boot code, the real models and the real files, plus one booted runtime.
+- **M1 (BF-927).** Each boot line says `built, not invoked` (AD-455 splits into a "RedTeamLead running" line and a "not invoked" line). The six config models' reference summaries, eight roadmap status markers, `vote_on_intent`'s docstring and a Yeoman comment say the same. A new test traces every caller of each service over `src/probos` with the AST (an entry method from each construction or typed parameter, not by method name; a module-level function by its name; its approximations are listed, R10) and pins every claim against that state in both directions, on the real boot code, the real models and the real files, plus one booted runtime.
 - **M2 (BF-926).** `enforce_leak_guard` is deleted (model, tracked yaml, the profile manifest row and its conflict edge). Thirty-nine fields carry one phrase, `Inert: no production code reads this`, in their `Field(description=...)` or in their model's docstring summary, so the generated reference shows it. The stale F26 key leaves the tracked yaml. `scripts/check_config_readers.py` lists unread fields, inert fields and yaml keys with no field, and always exits 0. The generated config reference and facade baseline are regenerated once, for both milestones.
 
 ## 3. Decisions (for #1656 and #1657)
 
-**D1, how a field is marked inert.** Ranked: (1, chosen) one constant phrase, `Inert: no production code reads this`, opening the field's `Field(description=...)` (`... this field to act on it (BF-926, #1656). <what is true>`) or the first paragraph of the model's docstring (`... this section to act on it ...`) when every field of the model is unread; "to act on it" (A2) excludes generic config I/O, which dumps and rewrites every field (`routers/config.py:191`, `:211`, `:246`, `:267`); the generator renders exactly those two places (`gen_config_reference.py:145-149`, `:160`), and the report-only check and the guard test find the phrase as a substring; (2) a `json_schema_extra={"inert": True}` flag: the reference would not show it; (3) a comment: invisible to the reference and to any check. The phrase is written literally in each description: a shared constant in `config_models/` would add a module to the facade's surface for a doc string (DRY is held by the guard test instead, which fails on any drift of the phrase).
+**D1, how a field is marked inert.** Ranked: (1, chosen) one constant phrase, `Inert: no production code reads this`, opening the field's `Field(description=...)` (`... this field to act on it (BF-926, #1656). <what is true>`) or the first paragraph of the model's docstring (`... this section to act on it ...`) when every field of the model is unread; "to act on it" (A2) excludes generic config I/O, which dumps and rewrites every field (`routers/config.py:191`, `:211`, `:246`, `:267`), and source introspection, which shows an agent a field's initializer, `description=` included (`codebase_index.py:736-745`, `codebase_skill.py:49-50`; A3); the generator renders exactly those two places (`gen_config_reference.py:145-149`, `:160`), and the report-only check and the guard test find the phrase as a substring; (2) a `json_schema_extra={"inert": True}` flag: the reference would not show it; (3) a comment: invisible to the reference and to any check. The phrase is written literally in each description: a shared constant in `config_models/` would add a module to the facade's surface for a doc string (DRY is held by the guard test instead, which fails on any drift of the phrase).
 
 **D2, mark rather than remove (F17 except the leak guard, F16, AD-753's two fields).** Ranked: (1, chosen) keep each field and mark it: the five F17 fields and the two AD-753 fields describe governance behaviour that #1659 (paused) is meant to build, and the F16 sections describe AD-573/579/670 machinery #1324 tracks; removal would delete the design intent and every operator's value, and would move the facade surface (field count, dump) for no runtime gain. Unknown keys are ignored (section 0), so removal would also load, silently: marking is the visible choice. (2) Remove all: loses the record of what #1659 must wire. (3) Wire: new enforcement capability, #1659's scope and paused. **Candidates for #1659** (the orchestrator posts this list on #1659): `cognitive.use_consensus_for_writes`, `federation.memory_policy` (+ `memory_policy_selective_tags`, and `mobility.apply_memory_policy`, which has no caller), `federation.min_peer_trust_score`, `federation.shared_trust_min_score`, `security.permission_mode`, `security.policy_engine_class` (with `consensus.quorum.vote_on_intent`).
 
@@ -55,7 +57,7 @@
 
 **D6, BF-927 wording.** One phrase, `built, not invoked`, in every claim over a service with no production caller, followed by what is true ("nothing calls check_authorization"); "wired", "initialized", "active" and "enforc..." never appear in such a line. The AD-455 line becomes two lines (`RedTeamLead running` and the three uninvoked services), because one line cannot be true of both states. Ranked: (1, chosen) reword in place, lines kept; (2) remove the lines: hides that the services exist; (3) "observational, no seam wired" for the three detectors: a second phrase the pin would have to know. The finalization summary lines for AD-530 and AD-511 (`finalize.py:4098`, `:4101`) are reworded too: they repeat the claim.
 
-**D7, BF-927's pin: how callers are found.** Ranked: (1, chosen) receiver tracing over `src/probos` with the AST, excluding the service's own module: an instance is followed from its construction (`X = Service(...)`) and from every parameter annotated with its class, through assignments (`runtime.attr = local`, `getattr(runtime, "attr")`) to a holder set; a call is `holder.entry(...)` or `getattr(holder, "entry")(...)` with a literal name (A2); a hand-off it cannot type (a holder passed as an argument to anything but a keyword parameter annotated with the class, or an entry method passed or assigned uncalled, A2) is an **escape**, which, for a service with no resolved caller, fails the test rather than counting as "not invoked" (for an invoked service an escape could only add callers and changes nothing); a call made inside another service's entry method counts only once that service is invoked (so `ThreatDetector.scan`, called only inside `InputValidator.check`, `input_validator.py:60`, stays not invoked). RedTeamLead is the invoked control, so the "says not invoked over a caller" direction is exercised on the real tree, and a fixture package proves the resolver finds a caller and a literal-getattr caller, a typed hand-off, an escape, and an entry method handed on or aliased, and ignores a decoy `.check(` (§7.11). (2) Name-matching `.check(` / `.scan(`: 70 unrelated hits (section 11). (3) A hand-kept table of call sites: drifts as soon as any unrelated `.check(` is added. **What it cannot see** (in the test's docstring): a method name built at run time, an instance or bound entry method stored in a container, tuple target, `setattr`, `return` or `**kwargs` (a `**holder` argument is an escape), an instance returned from a function, a local captured by a nested function, calls inside the service's own module (except the declared `via` delegation, used for `GroundTruthVerifier`, reached only through `GroundTruthRejectionGate.evaluate` in the same module), and callers in `ui/`, `scripts/`, tests or plugins. **Known approximations** (A2, R10): a holder attribute is matched by name, not owner (a false caller, which fails loudly); a positional argument is an escape even into an annotated parameter (fails loudly); a typed parameter is keyed by its callable's short name and the parameter name (a keyword hand-off to another callable with both names alike is exempt: the one silent form left).
+**D7, BF-927's pin: how callers are found.** Ranked: (1, chosen) holder tracing over `src/probos` with the AST, excluding the service's own module: an instance is followed from its construction (`X = Service(...)`) and from every parameter annotated with its class, through assignments (`runtime.attr = local`, the builtin `getattr(runtime, "attr")`) to a holder set; a call is `holder.entry(...)`, `holder.entry.__call__(...)` (A3) or the builtin `getattr(holder, "entry")(...)` with a literal name (A2); `getattr` and the other exempt names count as builtins only when their module binds the name nowhere and has no star import (A3), so a qualified or shadowed lookup (`lookup.getattr`, `builtins.getattr`, a `def` or parameter named `getattr`) is an ordinary callable: a holder passed to it, or a holder attribute it names with a literal, is an escape, never a call; a hand-off it cannot type (a holder passed as an argument to anything but a keyword parameter annotated with the class, or an entry method passed or assigned uncalled, A2) is an **escape**, which, for a service with no resolved caller, fails the test rather than counting as "not invoked" (for an invoked service an escape could only add callers and changes nothing); a call made inside another service's entry method counts only once that service is invoked (so `ThreatDetector.scan`, called only inside `InputValidator.check`, `input_validator.py:60`, stays not invoked). A module-level function (`vote_on_intent`) is matched by its name, approximation (d). RedTeamLead is the invoked control, so the "says not invoked over a caller" direction is exercised on the real tree, and a fixture package proves the resolver finds a caller, a literal-getattr caller and a `__call__` caller, a typed hand-off, an escape, an entry method handed on or aliased, a qualified or shadowed lookup as an escape, and ignores a decoy `.check(` (§7.11). (2) Name-matching `.check(` / `.scan(`: 70 unrelated hits (section 11). (3) A hand-kept table of call sites: drifts as soon as any unrelated `.check(` is added. **What it cannot see** (in the test's docstring): a method name built at run time or looked up through the instance's own methods (`holder.__getattribute__("check")()`), an instance or bound entry method stored in a container, tuple target, `setattr`, `return` or `**kwargs` (a `**holder` argument is an escape), an instance bound by `:=`, `for` or `with ... as` or reached through an expression (`(a or holder).check()`, a conditional), an instance returned from a function, a local captured by a nested function, a builtin replaced at run time, calls inside the service's own module (except the declared `via` delegation, used for `GroundTruthVerifier`, reached only through `GroundTruthRejectionGate.evaluate` in the same module), and callers in `ui/`, `scripts/`, tests or plugins. **Known approximations** (A2, A3, R10): (a) a typed parameter is keyed by its callable's short name and the parameter name (a keyword hand-off to another callable with both names alike is exempt: silent); (b) a holder attribute is matched by name, not owner (a false caller: loud); (c) a positional argument is an escape even into an annotated parameter (loud); (d) a module-level function is matched by its short name, so any `x.vote_on_intent()` counts (loud), and a call through an import alias is not followed (silent). The silent approximations are (a) and (d)'s alias; the "cannot see" forms are silent by construction; section 12's A3 census found none of A3's new forms on a BF-927 holder.
 
 **D8, which docs change (BF-927).** Living status claims only: the six config models' summaries (the reference renders them), `roadmap.md:730` (AD-753) and seven status markers in `roadmap-era-5-completed.md` (AD-451, AD-455, AD-511, AD-528, AD-530, AD-676, AD-679; the issue's "roadmap entries that mark them complete" live there, not in `roadmap.md`), status wording only: no number, no row. Not changed, ranked by the alternative of rewriting them: dated records (`progress-era-5-unification.md`, `decisions-era-5-unification.md`, `DECISIONS.md`, `PROGRESS.md` history, `docs/development/yeo-gap-reconciliation-2026-05-20.md:53`, `:177`) are records of what was believed on their date; the Phase 31 design list (`roadmap-era-5-completed.md:307-310`) describes intent, not status (R8). AD-528b's roadmap entry already says *Scoped*.
 
@@ -72,7 +74,7 @@
 
 **(a) Boot-log lines (M1).** Readers, enumerated: no test matches any old text (section 12); no script, `ui/` string or doc quotes them; the live `probos.log` (the Captain, the orchestrator's live check, section 16). The new lines print at the same points under the same conditions (section 6 tests the boot).
 
-**(b) Descriptions and docstrings (M1, M2).** Readers: `gen_config_reference.py` (summary paragraph and `Field(description=...)`; regenerated); `check_config_facade.py` (`model_json_schema()` includes both, `:976-981`, so each changed model's and each container's `schema_sha256` moves; regenerated); the report-only check and both new tests (the phrases). No runtime reader: `model_json_schema` and `.description` occur nowhere in `src/probos` (section 12). The facade's per-field `default` is rendered from `model_fields` (`:950-953`), so `x: int = 3000` becoming `Field(default=3000, ...)` leaves every field entry unchanged.
+**(b) Descriptions and docstrings (M1, M2).** Readers: `gen_config_reference.py` (summary paragraph and `Field(description=...)`; regenerated); `check_config_facade.py` (`model_json_schema()` includes both, `:976-981`, so each changed model's and each container's `schema_sha256` moves; regenerated); the report-only check and both new tests (the phrases). At run time two readers show the text and neither acts on it (section 12, A3): source introspection, the fleet-built `CodebaseIndex` (`startup/agent_fleet.py:333-334`), which unparses each `BaseModel` field's whole initializer, `description=` included, into its config schema (`cognitive/codebase_index.py:736-745`) and returns it through the codebase skill's `get_config_schema` (`cognitive/codebase_skill.py:49-50`), and whose `read_source` returns any source text, docstrings included; and generic config I/O (`routers/config.py`, D1). The changed text therefore reaches an agent that asks for the schema (round 2 measured 19 changed field strings and 247 more serialized bytes, accepted by the real skill); `model_json_schema` and a field's `.description` are read nowhere in `src/probos`. The facade's per-field `default` is rendered from `model_fields` (`:950-953`), so `x: int = 3000` becoming `Field(default=3000, ...)` leaves every field entry unchanged.
 
 **(c) `enforce_leak_guard` (M2).** Readers before: none in `src` (section 12). Pins: `tests/test_ad607_memory_security.py:165`, `tests/test_ad1270e2g_crew_models.py:185` (dump), `tests/test_ad1185_config_profiles.py:680` (the conflict fixture), `docs/development/config-profiles.yaml:225-233`, `:462-468`, the facade baseline (`:2441`, regenerated), `config/system.yaml:977`, `cognitive/memory_security.py:10` (docstring). Each is changed in §7.12-§7.23. `DECISIONS.md:1555` mentions it historically: unchanged.
 
@@ -103,13 +105,13 @@ Before editing, grep the pins: `grep -rn "Security Team wired\|ActionRiskRegistr
 - `test_each_description_says_what_its_services_do` (8: AD-455-screening, AD-676, AD-679, AD-753, AD-511, AD-530, AD-451, AD-528): the same assertion with the old summary, roadmap head or docstring;
 - `test_the_booted_vessel_prints_the_reworded_lines` (1): "the boot printed no line starting ('AD-455: RedTeamLead',)".
 
-The 12 `test_each_service_state_is_resolved` cases and the 7 resolver fixture cases pass on both sides (the premise: the states are measured, not edited). A failure for another reason, or any `escapes` state, is a hard stop for the Architect. **A2 control:** with §7.11's three new fixture cases applied and its two A2 resolver pairs not, exactly 3 cases fail: `[a literal getattr call]` (`'not invoked' == 'invoked'`), `[an entry handed on]` and `[an entry aliased]` (`'not invoked' == 'escapes'`). Focused check:
+The 12 `test_each_service_state_is_resolved` cases and the 12 resolver fixture cases pass on both sides (the premise: the states are measured, not edited). A failure for another reason, or any `escapes` state, is a hard stop for the Architect. **A2 control:** with §7.11's three new fixture cases applied and its two A2 resolver pairs not, exactly 3 cases fail: `[a literal getattr call]` (`'not invoked' == 'invoked'`), `[an entry handed on]` and `[an entry aliased]` (`'not invoked' == 'escapes'`). **A3 control:** on the A2 file, with A3's fixture-case pair applied and its other §7.11 pairs not, exactly 5 cases fail: `[an entry called through __call__]` (`'not invoked' == 'invoked'`); `[a qualified getattr]`, `[a shadowed getattr]` and `[a getattr parameter reading a holder]` (`'invoked' == 'escapes'`); `[a qualified hasattr]` (`'not invoked' == 'escapes'`). With every A3 pair applied, all 42 pass and the 12 states are those of A2 (any change is a hard stop). Focused check:
 
 ```
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf927_boot_claims.py tests/test_ad455_security_team.py tests/test_ad511_autonomy_boundaries.py tests/test_ad530_classification_gate.py tests/test_ad679_selective_disclosure_routing.py tests/test_ad676_action_risk_tiers.py tests/test_ad451_validation_framework.py tests/test_ad528_ground_truth.py tests/test_ad528b_active_rejection.py tests/test_ad528c_trust_feedback.py tests/test_permission_model.py tests/test_quorum_with_permissions.py tests/test_ad1270e2e_operations_models.py tests/test_ad1270e2g_crew_models.py tests/test_ad1270e2h_emergence_models.py tests/test_ad1270e2i_agentic_models.py tests/test_yeoman_agent.py -n 0 -q
 ```
 
-(Collected here without the new file: 1,115; not run. Expect 1,152 collected, all passing (A2: the measured 1,149 plus three fixture cases); the orchestrator's measured counts supersede these.) `tests/test_config_reference_current.py` and `tests/test_ad1270e1_config_facade.py` are deliberately outside M1's list (D9).
+(Collected here without the new file: 1,115; not run. Expect 1,157 collected, all passing (A3: the measured 1,152 plus five fixture cases); the orchestrator's measured counts supersede these.) `tests/test_config_reference_current.py` and `tests/test_ad1270e1_config_facade.py` are deliberately outside M1's list (D9).
 
 **M2 (STANDARD), §7.12 to §7.24.** First heading: `### 7.12 \`src/probos/config_models/crew.py\` (M2: the leak guard)`. After applying §7.12 to §7.24, regenerate and check, in this order:
 
@@ -516,32 +518,47 @@ whether production code calls them.
 
 Each claim (a boot-log line in ``startup/finalize.py``, a config model's reference summary, a
 roadmap status, a docstring) carries ``NOT_INVOKED`` exactly when the services it names have no
-production caller. Callers are found by tracing each instance over ``src/probos`` with the AST from
-its construction or a parameter annotated with its class, not by matching a method name, so a
-``.check(`` or ``.scan(`` on an untraced receiver does not count. The pin
+production caller. An entry method's callers are found by tracing each instance over
+``src/probos`` with the AST from its construction or a parameter annotated with its class, so a
+``.check(`` or ``.scan(`` on an untraced receiver does not count; a module-level function
+(``vote_on_intent``) is matched by its name (approximation (d)). The pin
 fails in both directions: a service that gains a caller while its claim still says it is not
 invoked, and a claim that drops the phrase (or says "wired") over a service nothing calls.
 ``RedTeamLead``, which does run, is the invoked control on the real tree.
 
 What the resolver cannot see, by construction: a method name built at run time
-(``getattr(obj, name)()`` with a computed ``name``); an instance or a bound entry method kept in a
-container, a tuple target, ``setattr`` or a ``return``; an instance returned from a function; a
-local captured by a nested function; calls inside the service's own module, except the declared
-``via`` delegation; callers in ``ui/``, ``scripts/``, tests or a plugin loaded at run time.
+(``getattr(obj, name)()`` with a computed ``name``) or looked up through the instance's own
+methods (``holder.__getattribute__("check")()``); an instance or a bound entry method kept in a
+container, a tuple target, ``setattr`` or a ``return``; an instance bound by ``:=``, ``for`` or
+``with ... as``, or reached through an expression (``(a or holder).check()``, a conditional); an
+instance returned from a function; a local captured by a nested function; a builtin replaced at
+run time; calls inside the service's own module, except the declared ``via`` delegation; callers
+in ``ui/``, ``scripts/``, tests or a plugin loaded at run time.
 
-A hand-off it cannot type is an escape: a holder passed as an argument (``**holder`` included), or
-an entry method passed or assigned uncalled (``sink(holder.check)``, ``hook = getattr(holder,
-"check")``); ``getattr(holder, "check")()`` with a literal name is a call. For a service with no
-resolved caller an escape fails the test rather than counting as "not invoked"; for an invoked
-service it changes nothing, because it could only add callers.
+A call is ``holder.check(...)``, ``holder.check.__call__(...)`` or ``getattr(holder, "check")(...)``
+with a literal name. A hand-off it cannot type is an escape: a holder passed as an argument
+(``**holder`` included), or an entry method passed or assigned uncalled (``sink(holder.check)``,
+``hook = getattr(holder, "check")``). ``getattr`` and the other ``_NON_INVOKING`` names count only
+as the builtin: a bare name its module binds nowhere (no ``def``, assignment, parameter or import
+of it, and no star import; a binding in any function distrusts it in the whole module). Any other
+spelling (``lookup.getattr(...)``, ``builtins.getattr``, a shadowing ``def getattr``) is an
+ordinary callable, so a holder passed to it, or a holder attribute it names with a literal
+(``lookup.getattr(runtime, "gate")``), is an escape, never a call. For a service with no resolved
+caller an escape fails the test rather than counting as "not invoked"; for an invoked service it
+changes nothing, because it could only add callers.
 
-Known approximations (BF-926/927 review round 1; follow-up R10): a holder attribute is matched by
-its name, not its owner, so once ``runtime.gate`` holds the service any ``other.gate.check()``
-counts as a call (a false caller fails the test; it cannot hide one); a positional argument is an
-escape even into a parameter annotated with the class (spell a typed hand-off as a keyword); a
-typed parameter is keyed by its callable's short name (the class for ``__init__``) and the
-parameter name, so a keyword hand-off to another callable with the same two names is exempt as if
-typed, which can hide a hand-off.
+Known approximations (BF-926/927 review rounds 1 and 2; follow-up R10). A silent one can hide a
+caller; a loud one adds a false caller or escape, which fails the test.
+(a) Silent: a typed parameter is keyed by its callable's short name (the class for ``__init__``)
+and the parameter name, so a keyword hand-off to another callable with the same two names is
+exempt as if typed.
+(b) Loud: a holder attribute is matched by its name, not its owner, so once ``runtime.gate`` holds
+the service any ``other.gate.check()`` counts as a call.
+(c) Loud: a positional argument is an escape even into a parameter annotated with the class (spell
+a typed hand-off as a keyword).
+(d) A module-level function is matched by its short name: loud, any ``x.vote_on_intent()`` counts
+as a call; silent, a call through an import alias (``from ... import vote_on_intent as vote``) is
+not followed.
 """
 
 from __future__ import annotations
@@ -598,6 +615,7 @@ class _Module:
     name: str
     path: str
     tree: ast.Module
+    bound: frozenset[str]  # every name the module binds, in any scope (A3)
 
 
 SERVICES: tuple[Service, ...] = (
@@ -668,7 +686,8 @@ def _parse_package(root: Path, package: str) -> tuple[_Module, ...]:
         parts = [package, *relative.with_suffix("").parts]
         if parts[-1] == "__init__":
             parts.pop()
-        modules.append(_Module(".".join(parts), relative.as_posix(), ast.parse(path.read_text(encoding="utf-8"))))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        modules.append(_Module(".".join(parts), relative.as_posix(), tree, _bound_names(tree)))
     return tuple(modules)
 
 
@@ -703,6 +722,29 @@ def _callee(expr: ast.AST | None) -> str:
     return ""
 
 
+def _bound_names(tree: ast.Module) -> frozenset[str]:
+    """Every name the module binds, in any scope (a star import adds ``"*"``): a builtin of that name is not trusted there."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            names.add(node.name or "")
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names.add(node.id)
+        elif isinstance(node, ast.alias):
+            names.add(node.asname or node.name.partition(".")[0])
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names.add(node.rest)
+    return frozenset(names)
+
+
+def _builtin(func: ast.AST, bound: frozenset[str]) -> str:
+    """The builtin a call's ``func`` names, or ``""``: only a bare name its module never binds is trusted."""
+    name = _callee(func)
+    return name if isinstance(func, ast.Name) and name not in bound and "*" not in bound else ""
+
+
 def _resolve_function(service: Service, index: tuple[list, list, list]) -> tuple[list[Site], list[Site]]:
     assigns, calls, _ = index
     sites: list[Site] = []
@@ -727,6 +769,7 @@ def _resolve(service: Service, index: tuple[list, list, list]) -> tuple[list[Sit
     if not service.entries:
         return _resolve_function(service, index)
     assigns, calls, functions = index
+    bound = {module.name: module.bound for module, _, _ in calls}  # a lookup is a call, so its module is here
     attr_holders: set[str] = set()
     name_holders: set[tuple[str, str, str]] = set()
     typed: set[tuple[str, str]] = set()  # (callable, parameter) annotated with the service class
@@ -745,16 +788,16 @@ def _resolve(service: Service, index: tuple[list, list, list]) -> tuple[list[Sit
             return (module, scope, expr.id) in name_holders
         if isinstance(expr, ast.Attribute):
             return expr.attr in attr_holders
-        if isinstance(expr, ast.Call) and _callee(expr.func) == "getattr" and len(expr.args) >= 2:
+        if isinstance(expr, ast.Call) and _builtin(expr.func, bound[module]) == "getattr" and len(expr.args) >= 2:
             key = expr.args[1]
             return isinstance(key, ast.Constant) and key.value in attr_holders
         return False
 
     def is_entry(module: str, scope: str, expr: ast.AST) -> bool:
-        """An entry method on a resolved receiver, called or not: ``holder.check`` or ``getattr(holder, "check")``."""
+        """An entry method on a resolved receiver, called or not: ``holder.check`` or the builtin ``getattr(holder, "check")``."""
         if isinstance(expr, ast.Attribute):
             return expr.attr in service.entries and is_read(module, scope, expr.value)
-        if isinstance(expr, ast.Call) and _callee(expr.func) == "getattr" and len(expr.args) >= 2:
+        if isinstance(expr, ast.Call) and _builtin(expr.func, bound[module]) == "getattr" and len(expr.args) >= 2:
             key = expr.args[1]
             return isinstance(key, ast.Constant) and key.value in service.entries and is_read(module, scope, expr.args[0])
         return False
@@ -782,10 +825,15 @@ def _resolve(service: Service, index: tuple[list, list, list]) -> tuple[list[Sit
         if module.name == service.module:
             continue
         func = node.func
+        while isinstance(func, ast.Attribute) and func.attr == "__call__":
+            func = func.value  # ``x.__call__(...)`` calls ``x``
         if is_entry(module.name, scope, func):
             sites.append(Site(module.path, node.lineno, scope))  # a resolved call
         callee = _callee(func)
-        if callee in _NON_INVOKING:
+        key = node.args[1] if callee == "getattr" and len(node.args) >= 2 else None
+        if isinstance(key, ast.Constant) and key.value in attr_holders and _builtin(func, bound[module.name]) != "getattr":
+            escapes.append(Site(module.path, node.lineno, scope))  # a getattr that may not be the builtin
+        if _builtin(func, bound[module.name]) in _NON_INVOKING:
             continue
         handed = [*node.args, *(keyword.value for keyword in node.keywords if (callee, keyword.arg) not in typed)]
         if any(is_read(module.name, scope, arg) for arg in handed):
@@ -894,6 +942,17 @@ _FIXTURE_CASES = {
     "a literal getattr call": ({"lit.py": "def use(runtime):\n    return getattr(runtime.gate, 'check')()\n"}, "invoked"),
     "an entry handed on": ({"cb.py": "def wire(runtime, bus):\n    bus.subscribe(runtime.gate.check)\n"}, "escapes"),
     "an entry aliased": ({"alias.py": "def wire(runtime):\n    hook = runtime.gate.check\n    return hook\n"}, "escapes"),
+    "an entry called through __call__": ({"dunder.py": "def use(runtime):\n    return runtime.gate.check.__call__()\n"}, "invoked"),
+    "a qualified getattr": ({"qual.py": "def use(runtime, lookup):\n    return lookup.getattr(runtime.gate, 'check')()\n"}, "escapes"),
+    "a shadowed getattr": (
+        {"shadow.py": "def getattr(value, name):\n    return lambda: None\n\n\ndef use(runtime):\n    return getattr(runtime.gate, 'check')()\n"},
+        "escapes",
+    ),
+    "a getattr parameter reading a holder": (
+        {"param.py": "def use(runtime, getattr):\n    held = getattr(runtime, 'gate')\n    return held.check()\n"},
+        "escapes",
+    ),
+    "a qualified hasattr": ({"probe.py": "def use(runtime, obj):\n    return obj.hasattr(runtime.gate, 'check')\n"}, "escapes"),
 }
 
 
@@ -1949,10 +2008,10 @@ REPLACE:
 ````markdown
 ### BF-926 and BF-927 -- Config fields and boot claims say what runs (2026-10-25, #1656, #1657)
 
-- *Inert, not removed.* A field nothing acts on that describes behaviour another issue is meant to build (#1659 governance, #1324 memory machinery) is kept and marked with one phrase, "Inert: no production code reads this field (or section) to act on it", in its field description or its model's docstring summary, the two places the reference renders; generic config I/O, which exports and rewrites every field, does not count as acting on it. Unknown keys are ignored, so removal would also load, silently; marking is the visible choice and keeps the operator's value and the design intent.
+- *Inert, not removed.* A field nothing acts on that describes behaviour another issue is meant to build (#1659 governance, #1324 memory machinery) is kept and marked with one phrase, "Inert: no production code reads this field (or section) to act on it", in its field description or its model's docstring summary, the two places the reference renders; generic config I/O, which exports and rewrites every field, and source introspection, which shows an agent a field's source (the codebase index), do not count as acting on it. Unknown keys are ignored, so removal would also load, silently; marking is the visible choice and keeps the operator's value and the design intent.
 - *Leak guard deleted.* It promised redaction the guard never performs and the issue forbids marking it inert; its manifest conflict, the only one, went with it, and the parse-time conflict check is proven on a fixture manifest instead.
 - *Report-only reader check.* A separate command, name-based (it under-reports), exit 0 on every input; not a gate phase, because every preflight phase gates on its exit code. Enforcing it is the Captain's decision.
-- *Boot claims pinned to callers.* "Built, not invoked" appears exactly when the AST finds no production caller, traced from each service's construction or typed parameters and not matched by method name; for a service with no caller, an instance or entry method handed somewhere the resolver cannot type fails the test. The resolver's known approximations are listed in the test's docstring and followed up separately. Dated records (era files, reconciliation reports) are not rewritten.
+- *Boot claims pinned to callers.* "Built, not invoked" appears exactly when the AST finds no production caller, traced from each service's construction or typed parameters rather than matched by method name (a module-level function is matched by its name); for a service with no caller, an instance or entry method handed somewhere the resolver cannot type fails the test. The resolver's known approximations are listed in the test's docstring and followed up separately. Dated records (era files, reconciliation reports) are not rewritten.
 - *Reversal.* Revert the commits; the lines say wired again, the fields lose their marker, the leak-guard flag and its conflict return, and the script and tests go.
 
 ### BF-924 -- Trust inputs read through APIs that exist (2026-10-25, #1654)
@@ -2031,8 +2090,15 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf926_config_readers.py 
 | A7 | test | `return isinstance(key, ast.Constant) and key.value in service.entries and is_read(module, scope, expr.args[0])` | `return False` | `[a literal getattr call]` (A2) |
 | A8 | test | `escapes.append(Site(module.path, node.lineno, scope))  # an entry method handed on` | `pass` | `[an entry handed on]` (A2) |
 | A9 | test | `escapes.append(Site(module.path, node.lineno, scope))  # an entry method aliased` | `pass` | `[an entry aliased]` (A2) |
+| A10 | test | `while isinstance(func, ast.Attribute) and func.attr == "__call__":` | `while False:` | `[an entry called through __call__]` (A3) |
+| A11 | test | `return name if isinstance(func, ast.Name) and name not in bound and "*" not in bound else ""` | `return name if isinstance(func, ast.Name) else ""` | `[a shadowed getattr]`, `[a getattr parameter reading a holder]` (A3) |
+| A12 | test | the same line | `return name if name not in bound and "*" not in bound else ""` | `[a qualified getattr]`, `[a qualified hasattr]` (A3) |
+| A13 | test | `if _builtin(func, bound[module.name]) in _NON_INVOKING:` | `if callee in _NON_INVOKING:` | `[a qualified hasattr]`, `[a qualified getattr]`, `[a shadowed getattr]` (A3) |
+| A14 | test | `escapes.append(Site(module.path, node.lineno, scope))  # a getattr that may not be the builtin` | `pass` | `[a getattr parameter reading a holder]` (A3) |
+| A15 | test | `names.add(node.name or "")` | `pass` | `[a shadowed getattr]` (A3) |
+| A16 | test | `names.add(node.arg)` | `pass` | `[a getattr parameter reading a holder]` (A3) |
 
-Unpinned text, no row: the Yeoman comment (§7.3), the `memory_security.py` docstring (§7.15), the yaml comments (§7.16), the manifest comment (§7.17). The resolver's `via` clause survives a mutation on this tree (no service reached through `via` is invoked today): disclosed, no row.
+Unpinned text, no row: the Yeoman comment (§7.3), the `memory_security.py` docstring (§7.15), the yaml comments (§7.16), the manifest comment (§7.17). The resolver's `via` clause survives a mutation on this tree (no service reached through `via` is invoked today): disclosed, no row. A3: `_bound_names`'s `ast.Name` (assignment, `del`, `for`, `with`, `:=`), `ast.alias` (import, star import) and `MatchMapping` branches are pinned by no fixture case (the `def` and parameter branches are, A15 and A16); a mutation there survives: disclosed, no row.
 
 **M2 rows (killer: `tests/test_bf926_config_readers.py`).** For every field and section row, the mutation replaces `Inert: no production code reads this` with `Unread` in that line; the killer is `test_the_real_config_reports_each_bf926_field_as_inert[<path>]` for that path (a section row kills every case of its section).
 
@@ -2112,10 +2178,10 @@ FOUND: cognitive_agent.py:1415, 3747 (kwargs.get; nothing passes it); agent_work
 RUN:   Grep the F16/F17 names in ui/src -> 0
 HOLDS: yes
 
-CLAIM: nothing at run time reads a field description or a model schema
-RUN:   Grep "model_json_schema|model_fields\[.*\]\.description" src/probos
-FOUND: 0
-HOLDS: yes
+CLAIM (A3, replacing "nothing at run time reads a field description or a model schema", which round 2 disproved): no production code acts on a field description or a model schema; the runtime readers show the text and branch on none of it
+RUN:   Grep "model_json_schema|model_fields\[.*\]\.description" src/probos; Grep "get_config_schema|_config_schema\b|json_schema_extra" src/probos; Grep "(info|field|field_info|finfo)\.description\b|model_fields" src/probos
+FOUND: 0; codebase_index.py:149, 228, 320-322 (the getter), 686, 747, 759 and codebase_skill.py:16, 49-50 (get_config_schema's only caller): source introspection, built by agent_fleet.py:333-334, unparses each BaseModel field's initializer, description included (codebase_index.py:736-745), and returns it to an agent; read_source (codebase_skill.py:40-44) returns any source text; config_profiles.py:162-174 reads aliases, not descriptions; the rest are model_fields_set uses and comments. Generic config I/O: routers/config.py (D1)
+HOLDS: yes, as narrowed: round 2 measured 19 changed field strings (+247 serialized bytes) returned by the real skill, which accepts them; the reach is information shown to an agent
 
 CLAIM: no config model forbids unknown keys except two untouched ones
 RUN:   Grep "model_config|extra=" src/probos/config.py; src/probos/config_models
@@ -2179,6 +2245,15 @@ RUN:   Grep "\.(check_authorization|check_disclosure|filter_permitted|check_reci
 FOUND: board_reconciler_ticker.py:3 (docstring); admission/service.py:68 `check=found.check` (`found` is an IfExp of module constants, not a holder); ward_room/content_firewall.py:199 `rec.scan.reasons` (an attribute chain, not an argument or assigned value); the rest docstrings, comments, imports; end of line: none
 HOLDS: yes; the 12 state cases confirm it on the built tree (any `escapes` is a hard stop)
 
+CLAIM (A3): no production module binds getattr, hasattr or isinstance or star-imports, no exempt builtin takes a BF-927 holder, nothing calls an entry through __call__, and nothing imports vote_on_intent, so A3 moves no real-tree state
+RUN:   Grep "(def (getattr|hasattr|isinstance)\b|\b(getattr|hasattr|isinstance)\s*=[^=]|\bas (getattr|hasattr|isinstance)\b|import \*|builtins\.(getattr|hasattr|isinstance)|\.(getattr|hasattr)\()" src/probos; Grep "[(,]\s*\*{0,2}(getattr|hasattr|isinstance)\s*[,:)=]|for (getattr|hasattr|isinstance)\b|class (getattr|hasattr|isinstance)\b" src/probos
+FOUND: 0; validation_framework.py:169 (docstring prose)
+RUN:   Grep "\b(id|type|repr|bool|len|str|isinstance|hasattr)\(\s*[\w.]*\b(classification_gate|_risk_registry|_disclosure_router|threat_detector|trust_integrity_monitor|input_validator|red_team_lead|reconciliation_escalator|ground_truth_verifier|ground_truth_rejection_gate|_threat|risk_registry|disclosure_router)\b" src/probos; the same with (detector|trust_integrity|gate|verifier|escalator|router|registry|validator|lead) as a whole argument
+FOUND: finalize.py:4329 len(risk_registry.list_actions()) (a call's result, not the holder); the second: same-named locals in unrelated modules (agent_stop.py, agentic_dispatch.py, crew_orchestrator.py, dm_sanity_gate.py, ...), none traced from a BF-927 construction
+RUN:   Grep "\.__call__\(" src/probos; Grep "(:=|\bwith\b|\bfor\b|lambda).*\b(<the holder names>)\b" src/probos; Grep "\b(or|else|and)\s+[\w.]*\b(<the holder names>)\b" src/probos; Grep "__getattribute__|__getattr__\(" src/probos; Grep "vote_on_intent" src/probos
+FOUND: routers/browser_stream.py:81 super().__call__ (not an entry); shutdown.py:1290 steps(..., runtime.red_team_lead) (a call argument: an escape on RedTeamLead, invoked); shutdown.py:1289 and finalize.py:4721 (conditions, not flows); signed_transport.py:177 and loop_host.py:453 (__getattr__ definitions); quorum.py:189 (the def), config.py:2976 and yeoman.py:121 (text)
+HOLDS: yes; the 12 state cases confirm it on the built tree (any change is a hard stop)
+
 CLAIM (A2, F7): production code reads every marked field only through generic config I/O, and no test pins the description text
 RUN:   Grep "model_dump|@router\.(get|put|post)" src/probos/routers/config.py; Grep "reads this|AgentWorkingMemory uses its own default|a candidate for #1659" tests
 FOUND: routers/config.py:191, :211 (GET dumps), :246, :267 (POST dumps and rewrites the yaml); tests: only test_bf926_config_readers.py:49 (a fixture docstring, left)
@@ -2192,17 +2267,17 @@ HOLDS: yes
 
 ## 13. Prior Art and Blind Spots
 
-- **External (one search, 2026-10-25).** vulture finds dead code by recording defined and used names over the AST, ignoring scopes, at 60 % confidence for attributes; it under-reports for the same reason this check does, and its whitelist is the analogue of the inert marker. Adapted: the check is a scope-free name match and says so; the BF-927 pin, where a false "not invoked" would be a false claim, resolves receivers instead. ([vulture](https://pypi.org/project/vulture/2.9))
+- **External (one search, 2026-10-25).** vulture finds dead code by recording defined and used names over the AST, ignoring scopes, at 60 % confidence for attributes; it under-reports for the same reason this check does, and its whitelist is the analogue of the inert marker. Adapted: the check is a scope-free name match and says so; the BF-927 pin, where a false "not invoked" would be a false claim, traces each service's holders from their construction instead, with R10's approximations. ([vulture](https://pypi.org/project/vulture/2.9))
 - **`docs/research/reference-projects.md` (date used 2026-10-25):** no listed project addresses dead configuration or boot-claim truth; none was examined, so no row changes. AG-UI (*never*) is not relevant: considered, deferred.
 - **Internal:** #1324's work item 2 (the event producer/consumer check, D5); AD-1270a's capability-truth inventory (`gen_capability_truth.py`), which separates *present* from *activated* for declared capabilities; this BF does the same for config fields and boot lines without touching its declarations. AD-1234 (#1117), the precedent for deleting a field whose mechanism does not exist.
 - **Blind spots addressed:** RedTeamLead does run (the AD-455 line could not just be negated); the manifest's only conflict depended on the deleted flag (D3); the reference never rendered `security.memory` (R1); string literals in `config.py` descriptions feed the true-leaf scan (section 6); multi-line docstring summaries render with runs of spaces (§7.4); the `/disclosure-clearances` route reports "active" (R2); AD-528c's subscribed listener (R3).
-- **Considered, deferred:** making the reader check receiver-resolved (R7); a gate phase for it (D5).
+- **Considered, deferred:** making the reader check owner-resolved (R7); a gate phase for it (D5).
 
 ## 14. Diff Reviewer: properties to verify
 
 1. No production behaviour changes: every edited production line is a log format string, a docstring, a comment, a `Field(description=...)` beside an unchanged default, or the deletion of `enforce_leak_guard`; no constructor, call, condition or default changes.
 2. Each boot line, config summary, roadmap status and docstring that names one of the services says `built, not invoked` exactly when the AST finds no production caller, and the RedTeamLead line, whose service runs, does not; the test fails if either side drifts.
-3. The resolver counts a call (`holder.entry(...)` or a literal `getattr(holder, "entry")(...)`) only on a receiver it traced from a construction or a parameter typed with the class; for a service with no resolved caller, a holder or an uncalled entry method handed to anything it cannot type makes the test fail; a `.check(` / `.scan(` on an untraced receiver never counts; the approximations the test docstring lists (R10) are the only known exceptions, and each is stated there with its direction.
+3. The resolver counts a call (`holder.entry(...)`, `holder.entry.__call__(...)` or a builtin `getattr(holder, "entry")(...)` with a literal name) only on a receiver it traced from a construction or a parameter typed with the class; `getattr` and the other exempt names count as builtins only where their module binds the name nowhere and has no star import, so a qualified or shadowed lookup is an ordinary callable (a holder or holder attribute reaching it is an escape, never a call); for a service with no resolved caller, a holder or an uncalled entry method handed to anything it cannot type makes the test fail; a `.check(` / `.scan(` on an untraced receiver never counts. The only known exceptions are the forms the docstring lists under "cannot see" and approximations (a)-(d) (R10), each stated with its direction (silent: (a) and (d)'s import alias; loud: (b), (c) and (d)'s short-name match). Each A3 fixture case fails on the A2 resolver and passes on A3's; the 12 production states are unchanged.
 4. Every field the contract marks carries the one phrase in the place the reference renders (field description, or the first paragraph of a docstring that is one physical line), and the one read `working_memory` field does not.
 5. A config that still sets `enforce_leak_guard` or the captain-card key loads; neither key remains in the tracked `config/system.yaml`, the manifest or the model; no other tracked yaml line changes except comments.
 6. The manifest declares no conflict, both AD-1185 conflict tests still prove the mechanism through a fixture edge and `load_profile(manifest_path=...)`, and the census header holds measured figures.
@@ -2245,7 +2320,7 @@ After the first session on the merged build, from the vessel log under `%LOCALAP
 - **R4.** `MemorySecurityConfig.dp_min_cohort_size` (`crew.py:125`) looks unread (the federation path reads `FederationConfig.dp_min_cohort_size`, `federation_recall_agent.py:164`); the name-based report counts it as read because the names match. A hand check for #1659.
 - **R5.** `config/node-1.yaml:56` and `config/node-2.yaml:56` set the inert `use_consensus_for_writes: true`.
 - **R6.** `docs/development/yeo-gap-reconciliation-2026-05-20.md:53`, `:177` record AD-753's read-only bypass as shipped "at the gate"; the gate has no caller. Dated reports are not rewritten (D8).
-- **R7.** The reader check under-reports (name match); a receiver-resolved version, like BF-927's resolver, is the follow-up if the Captain decides to enforce it.
+- **R7.** The reader check under-reports (name match); a version that resolves each read to its owning model is the follow-up if the Captain decides to enforce it. BF-927's resolver is not that: it traces holders, with R10's approximations (attributes are matched by name, not owner).
 - **R8.** `roadmap-era-5-completed.md:307-310` (Phase 31 design list) describes the Security Team in the present tense; design text, left (D8).
 - **R9.** The AD-1152 OFF golden is no longer the pristine capture its lineage describes. `docs/development/agentic-event-correlation.md:133-139` calls it immutable and says only AD-1152's own leaf is removed before the digest is compared, but BF-924 (A9) and this contract (A1) refreshed `default_config_sha256` for deleted fields. Every added field is popped in the test with a comment (`test_ad1152_*:220-314`); a deleted field leaves no trace in the test. Choosing one rule for a deleted field (refresh plus a test comment naming it, or re-insert its captured default in the test and restore the pristine digest) and correcting the doc is a separate change.
-- **R10.** BF-927's resolver approximations (round 1 F2, F4, F6; disclosed in the test docstring, A2). (a) P2, silent: a typed parameter is keyed by its callable's short name and the parameter name, so a keyword hand-off to a different callable with both names alike is exempt as if typed. (b) P3, loud: holder attributes are matched by name, not owner, so `other.gate.check()` counts once any `runtime.gate` holds the service. (c) P3, loud: a positional argument into an annotated parameter is an escape. One follow-up fixes all three: resolve callees and attribute owners to their definitions through imports, then bind positional arguments by index; it carries the reviewer's six round-1 probes as fixture cases.
+- **R10.** BF-927's resolver approximations (round 1 F2, F4, F6; round 2 R2-5; disclosed in the test docstring, A2 and A3). (a) P2, silent: a typed parameter is keyed by its callable's short name and the parameter name, so a keyword hand-off to a different callable with both names alike is exempt as if typed. (b) P3, loud: holder attributes are matched by name, not owner, so `other.gate.check()` counts once any `runtime.gate` holds the service. (c) P3, loud: a positional argument into an annotated parameter is an escape. (d) P3 (R2-5): the module-function path (`vote_on_intent`) matches the callee's short name, so an unrelated `x.vote_on_intent()` counts as a call (loud), and a call through an import alias is not followed (silent; nothing imports `vote_on_intent` today, section 12). Fixed in A3, not deferred: R2-1 (`holder.check.__call__()` classified quiet) and R2-2 (a qualified or shadowed `getattr` counted as a call, an A2 regression). One follow-up fixes (a)-(d): resolve callees, attribute owners and imported names (aliases included) to their definitions through imports, then bind positional arguments by index; it carries the reviewer's six round-1 probes and round 2's `vote_on_intent` probe as fixture cases.
