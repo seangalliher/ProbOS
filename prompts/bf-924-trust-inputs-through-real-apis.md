@@ -855,7 +855,7 @@ async def test_overlapping_completions_of_one_procedure_make_one_evolution_attem
         tasks = [asyncio.create_task(engine.on_task_execution_complete(payload)) for payload in payloads]
 
         async def settled() -> None:  # one attempt in flight and the other refused, or both in flight
-            while not (sum(task.done() for task in tasks) == 1 or llm.confirmations() == 2):
+            while not (sum(task.done() for task in tasks) >= 1 or llm.confirmations() == 2):
                 await asyncio.sleep(0.01)
 
         await asyncio.wait_for(settled(), timeout=10)
