@@ -5688,7 +5688,8 @@ class CognitiveAgent(BaseAgent):
 
         Reads ``ward_room_lookup_ref`` from the latest successful ANALYZE result, runs a
         one-step QUERY chain (``ward_room_lookup``) and writes the text to
-        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders. Once per chain.
+        ``observation["_ward_room_lookup_context"]``, which COMPOSE renders, and its typed
+        outcome to ``observation["_ward_room_lookup_outcome"]`` (BF-922). Once per chain.
         The Ward Room decides what this agent may see; this only carries the id.
         """
         if observation.get("_ward_room_lookup_fired"):
@@ -5737,6 +5738,10 @@ class CognitiveAgent(BaseAgent):
                 text = r.result.get("ward_room_lookup", "")
                 if isinstance(text, str) and text:
                     observation["_ward_room_lookup_context"] = text
+                    # BF-922 (#1639): the typed outcome travels with the text. BF-204 grounds on
+                    # a found record, never on a failed lookup's echo of ANALYZE's reference.
+                    outcome = r.result.get("ward_room_lookup_outcome", "")
+                    observation["_ward_room_lookup_outcome"] = outcome if isinstance(outcome, str) else ""
                 break
 
     @staticmethod

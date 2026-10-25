@@ -1,0 +1,316 @@
+{
+  "source": "BF-922 (#1639): live BF-204 cases from probos.log* (309 lines), each cited id resolved read-only against ward_room.db; generated 2026-10-24 by make-bf922-fixture.py sha256 1768d9bd4ba0979b85703f04a7a67617a1090248bdf6ba02d4b2ba0cf570a7d0; post bodies are blank on purpose (they do not affect grounding, and no live Ward Room text belongs in the public repository); the pattern cases hold 4 of the 5 the prompt names: the training_officer decimal-only case logs n=5 but only 3 ids and is excluded by the rule that n must equal the ids logged",
+  "cases": [
+    {
+      "logged_at": "2026-10-11 23:12:49",
+      "agent_type": "diagnostician",
+      "n": 4,
+      "cited": [
+        "80593080",
+        "69f519b3",
+        "6becd643"
+      ],
+      "rows": [
+        {
+          "cited": "80593080",
+          "kind": "channel",
+          "id": "80593080-6384-48b0-b3f7-196b6b119107",
+          "channel_name": "dm-diagnost-patholog"
+        },
+        {
+          "cited": "69f519b3",
+          "kind": "channel",
+          "id": "69f519b3-db87-4a48-8026-3b5353ced1b9",
+          "channel_name": "dm-diagnost-surgeon_"
+        },
+        {
+          "cited": "6becd643",
+          "kind": "channel",
+          "id": "6becd643-1da9-434c-819c-9933c42992f2",
+          "channel_name": "dm-diagnost-pharmaci"
+        }
+      ]
+    },
+    {
+      "logged_at": "2026-08-14 04:58:27",
+      "agent_type": "builder",
+      "n": 3,
+      "cited": [
+        "22aa3dd9b81c",
+        "b090ebe5",
+        "05b2bd92121b"
+      ],
+      "rows": [
+        {
+          "cited": "22aa3dd9b81c",
+          "kind": "post",
+          "id": "dbf38387-a6a4-48e6-adf4-22aa3dd9b81c",
+          "thread_id": "b1fba6b3-d991-434e-90ac-06cf5645eb2d",
+          "channel_name": "Engineering",
+          "author_callsign": "Reed",
+          "body": ""
+        },
+        {
+          "cited": "b090ebe5",
+          "kind": "post",
+          "id": "b090ebe5-3f40-414e-9a8b-05b2bd92121b",
+          "thread_id": "b1fba6b3-d991-434e-90ac-06cf5645eb2d",
+          "channel_name": "Engineering",
+          "author_callsign": "Ezri",
+          "body": ""
+        },
+        {
+          "cited": "05b2bd92121b",
+          "kind": "post",
+          "id": "b090ebe5-3f40-414e-9a8b-05b2bd92121b",
+          "thread_id": "b1fba6b3-d991-434e-90ac-06cf5645eb2d",
+          "channel_name": "Engineering",
+          "author_callsign": "Ezri",
+          "body": ""
+        }
+      ]
+    },
+    {
+      "logged_at": "2026-08-24 10:12:42",
+      "agent_type": "architect",
+      "n": 2,
+      "cited": [
+        "3d933e9e",
+        "b1132682e87c"
+      ],
+      "rows": [
+        {
+          "cited": "3d933e9e",
+          "kind": "post",
+          "id": "3d933e9e-b0c4-468e-92bd-b1132682e87c",
+          "thread_id": "93cb28f7-6773-4f99-967c-c0d026ac757c",
+          "channel_name": "Science",
+          "author_callsign": "Wesley",
+          "body": ""
+        },
+        {
+          "cited": "b1132682e87c",
+          "kind": "post",
+          "id": "3d933e9e-b0c4-468e-92bd-b1132682e87c",
+          "thread_id": "93cb28f7-6773-4f99-967c-c0d026ac757c",
+          "channel_name": "Science",
+          "author_callsign": "Wesley",
+          "body": ""
+        }
+      ]
+    },
+    {
+      "logged_at": "14:06:40 (a rotated log with no date)",
+      "agent_type": "engineering_officer",
+      "n": 2,
+      "cited": [
+        "0723959a",
+        "ffede35f4f4f"
+      ],
+      "rows": [
+        {
+          "cited": "0723959a",
+          "kind": "post",
+          "id": "0723959a-8892-4a4a-b92c-ffede35f4f4f",
+          "thread_id": "ab9aca83-2706-48b0-b0d8-cb668c91ca88",
+          "channel_name": "Engineering",
+          "author_callsign": "Reed",
+          "body": ""
+        },
+        {
+          "cited": "ffede35f4f4f",
+          "kind": "post",
+          "id": "0723959a-8892-4a4a-b92c-ffede35f4f4f",
+          "thread_id": "ab9aca83-2706-48b0-b0d8-cb668c91ca88",
+          "channel_name": "Engineering",
+          "author_callsign": "Reed",
+          "body": ""
+        }
+      ]
+    },
+    {
+      "logged_at": "13:53:37 (a rotated log with no date)",
+      "agent_type": "counselor",
+      "n": 2,
+      "cited": [
+        "00c0cbf9",
+        "b1a126397442"
+      ],
+      "rows": [
+        {
+          "cited": "00c0cbf9",
+          "kind": "post",
+          "id": "00c0cbf9-d4a9-4419-8dfc-b1a126397442",
+          "thread_id": "1e9d7cac-2e62-4c61-9321-743be48c4d26",
+          "channel_name": "Medical",
+          "author_callsign": "Chapel",
+          "body": ""
+        },
+        {
+          "cited": "b1a126397442",
+          "kind": "post",
+          "id": "00c0cbf9-d4a9-4419-8dfc-b1a126397442",
+          "thread_id": "1e9d7cac-2e62-4c61-9321-743be48c4d26",
+          "channel_name": "Medical",
+          "author_callsign": "Chapel",
+          "body": ""
+        }
+      ]
+    },
+    {
+      "logged_at": "16:13:25 (a rotated log with no date)",
+      "agent_type": "counselor",
+      "n": 4,
+      "cited": [
+        "b28ee23f",
+        "e9a3b2073f20",
+        "8a66bf93"
+      ],
+      "rows": [
+        {
+          "cited": "b28ee23f",
+          "kind": "post",
+          "id": "b28ee23f-b15d-4619-a123-e9a3b2073f20",
+          "thread_id": "5014d171-2628-49b9-87ea-c316735bf8e8",
+          "channel_name": "Medical",
+          "author_callsign": "Vance",
+          "body": ""
+        },
+        {
+          "cited": "e9a3b2073f20",
+          "kind": "post",
+          "id": "b28ee23f-b15d-4619-a123-e9a3b2073f20",
+          "thread_id": "5014d171-2628-49b9-87ea-c316735bf8e8",
+          "channel_name": "Medical",
+          "author_callsign": "Vance",
+          "body": ""
+        },
+        {
+          "cited": "8a66bf93",
+          "kind": "post",
+          "id": "8a66bf93-bca0-48f8-a68d-f09a107a77ba",
+          "thread_id": "5014d171-2628-49b9-87ea-c316735bf8e8",
+          "channel_name": "Medical",
+          "author_callsign": "Meridian",
+          "body": ""
+        }
+      ]
+    },
+    {
+      "logged_at": "10:53:09 (a rotated log with no date)",
+      "agent_type": "counselor",
+      "n": 3,
+      "cited": [
+        "ac634b5a13ec",
+        "0db63b66",
+        "678dfafb819b"
+      ],
+      "rows": [
+        {
+          "cited": "ac634b5a13ec",
+          "kind": "post",
+          "id": "0659b8a8-2063-4a82-9e5a-ac634b5a13ec",
+          "thread_id": "3af0ff80-a5bc-49e6-a5db-770d0a2d1702",
+          "channel_name": "Science",
+          "author_callsign": "Atlas",
+          "body": ""
+        },
+        {
+          "cited": "0db63b66",
+          "kind": "post",
+          "id": "0db63b66-2c39-4564-bbc4-678dfafb819b",
+          "thread_id": "3af0ff80-a5bc-49e6-a5db-770d0a2d1702",
+          "channel_name": "Science",
+          "author_callsign": "Lyra",
+          "body": ""
+        },
+        {
+          "cited": "678dfafb819b",
+          "kind": "post",
+          "id": "0db63b66-2c39-4564-bbc4-678dfafb819b",
+          "thread_id": "3af0ff80-a5bc-49e6-a5db-770d0a2d1702",
+          "channel_name": "Science",
+          "author_callsign": "Lyra",
+          "body": ""
+        }
+      ]
+    },
+    {
+      "logged_at": "12:41:45 (a rotated log with no date)",
+      "agent_type": "pharmacist",
+      "n": 5,
+      "cited": [
+        "c71f7ab2",
+        "40ec53be",
+        "0a33213a"
+      ],
+      "rows": [
+        {
+          "cited": "c71f7ab2",
+          "kind": "post",
+          "id": "c71f7ab2-e9d5-4ad1-ac4f-4de1b0ed24e7",
+          "thread_id": "1ce6b514-9b54-41d3-a403-b7c1419173cf",
+          "channel_name": "Medical",
+          "author_callsign": "Meridian",
+          "body": ""
+        },
+        {
+          "cited": "40ec53be",
+          "kind": "post",
+          "id": "40ec53be-54ce-4825-a75d-cf1e89df1ffa",
+          "thread_id": "1ce6b514-9b54-41d3-a403-b7c1419173cf",
+          "channel_name": "Medical",
+          "author_callsign": "Vance",
+          "body": ""
+        },
+        {
+          "cited": "0a33213a",
+          "kind": "post",
+          "id": "0a33213a-3d55-419c-a65f-fbcb21175de0",
+          "thread_id": "1ce6b514-9b54-41d3-a403-b7c1419173cf",
+          "channel_name": "Medical",
+          "author_callsign": "Ezri",
+          "body": ""
+        }
+      ]
+    }
+  ],
+  "pattern_cases": [
+    {
+      "logged_at": "2026-10-22 13:05:30",
+      "agent_type": "systems_analyst",
+      "n": 2,
+      "cited": [
+        "5999983",
+        "5999983"
+      ]
+    },
+    {
+      "logged_at": "2026-09-25 22:44:25",
+      "agent_type": "diagnostician",
+      "n": 2,
+      "cited": [
+        "20260926",
+        "20260926"
+      ]
+    },
+    {
+      "logged_at": "2026-10-18 18:25:29",
+      "agent_type": "pathologist",
+      "n": 2,
+      "cited": [
+        "fc315548",
+        "fc315548"
+      ]
+    },
+    {
+      "logged_at": "2026-08-14 11:25:21",
+      "agent_type": "security_officer",
+      "n": 2,
+      "cited": [
+        "54a27cbf",
+        "54a27cbf"
+      ]
+    }
+  ]
+}

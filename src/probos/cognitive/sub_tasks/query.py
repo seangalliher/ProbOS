@@ -421,7 +421,10 @@ async def _query_ward_room_lookup(
     copies it here) and the asking agent from ``_agent_id`` only: a ``params`` agent id is
     never the asker. The Ward Room decides what the agent may see. Returns
     ``{"ward_room_lookup": <text>}``: empty when no id was asked for, otherwise the record
-    or one line saying why there is none. Never raises, so the QUERY step stays a success.
+    or one line saying why there is none, with ``"ward_room_lookup_outcome"``, the
+    ``LookupResult.outcome`` (BF-922, #1639: BF-204 grounds on the text only for a record,
+    never on a failed lookup's echo of the reference). Never raises, so the QUERY step
+    stays a success.
     """
     ref = _ctx(context, "ward_room_lookup_ref")
     if not isinstance(ref, str) or not ref.strip():
@@ -431,13 +434,14 @@ async def _query_ward_room_lookup(
     requester = context.get("_agent_id", "")
     ward_room = getattr(runtime, "ward_room", None)
     if ward_room is None:
-        return {"ward_room_lookup": render_lookup(LookupResult(LOOKUP_UNAVAILABLE, ""))}
-    try:
-        result = await ward_room.lookup_record(requester, ref)
-    except Exception:
-        logger.warning("AD-1347: ward_room_lookup failed for agent %s", requester, exc_info=True)
         result = LookupResult(LOOKUP_UNAVAILABLE, "")
-    return {"ward_room_lookup": render_lookup(result)}
+    else:
+        try:
+            result = await ward_room.lookup_record(requester, ref)
+        except Exception:
+            logger.warning("AD-1347: ward_room_lookup failed for agent %s", requester, exc_info=True)
+            result = LookupResult(LOOKUP_UNAVAILABLE, "")
+    return {"ward_room_lookup": render_lookup(result), "ward_room_lookup_outcome": result.outcome}
 
 
 # ---------------------------------------------------------------------------

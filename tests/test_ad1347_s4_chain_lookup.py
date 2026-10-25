@@ -138,9 +138,14 @@ async def test_the_asker_is_the_chains_agent_id_never_a_params_agent_id(tmp_path
     own = await _query_ward_room_lookup(_Runtime(wr), _SPEC, {"ward_room_lookup_ref": ref, "_agent_id": FORGE})
     outsider = await _query_ward_room_lookup(_Runtime(wr), _SPEC, {"ward_room_lookup_ref": ref, "_agent_id": CHAPEL})
 
-    assert smuggled == {"ward_room_lookup": "The Ward Room lookup could not confirm who is asking, so it returned nothing."}
-    assert ARCHIVED_BODY in own["ward_room_lookup"]
+    # BF-922 (#1639): the typed outcome travels with the text, so BF-204 can tell a record from a failed lookup's echo.
+    assert smuggled == {
+        "ward_room_lookup": "The Ward Room lookup could not confirm who is asking, so it returned nothing.",
+        "ward_room_lookup_outcome": "refused",
+    }
+    assert ARCHIVED_BODY in own["ward_room_lookup"] and own["ward_room_lookup_outcome"] == "found"
     assert outsider["ward_room_lookup"].startswith("No Ward Room thread or post with id ")
+    assert outsider["ward_room_lookup_outcome"] == "not_found"
     await wr.stop()
 
 
@@ -149,14 +154,16 @@ async def test_no_ref_means_no_read_and_a_failing_ward_room_reads_as_unavailable
     assert await _query_ward_room_lookup(
         _Runtime(None), _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "   "},
     ) == {"ward_room_lookup": ""}
+    # BF-922 (#1639): a lookup that ran carries its typed outcome; no ref (above) runs none and carries none.
     assert await _query_ward_room_lookup(
         _Runtime(None), _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "aa000001"},
-    ) == {"ward_room_lookup": UNAVAILABLE}
+    ) == {"ward_room_lookup": UNAVAILABLE, "ward_room_lookup_outcome": "unavailable"}
 
     handled = await QueryHandler(_Runtime(_FailingWardRoom()))(
         _SPEC, {"_agent_id": FORGE, "ward_room_lookup_ref": "aa000001"}, [],
     )
-    assert handled.success and handled.result == {"ward_room_lookup": UNAVAILABLE}
+    assert handled.success
+    assert handled.result == {"ward_room_lookup": UNAVAILABLE, "ward_room_lookup_outcome": "unavailable"}
 
 
 async def test_the_helper_reads_the_ref_from_analyze_and_runs_once(tmp_path: Path) -> None:
@@ -173,6 +180,7 @@ async def test_the_helper_reads_the_ref_from_analyze_and_runs_once(tmp_path: Pat
     assert observation["ward_room_lookup_ref"] == pruned_id[:8]
     assert observation["_ward_room_lookup_fired"] is True
     assert ARCHIVED_BODY in observation["_ward_room_lookup_context"]
+    assert observation["_ward_room_lookup_outcome"] == "found"  # BF-922: the outcome travels with the text
 
     again: dict = {"_agent_id": FORGE, "_ward_room_lookup_fired": True}
     await agent._maybe_dispatch_ward_room_lookup(triage, again)
