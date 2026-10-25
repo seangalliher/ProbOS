@@ -1,15 +1,24 @@
 # BF-923: the behavioral-metric and orientation callers read the episodic store through APIs it has (#1652); the Counselor reads real trust, records it with a captured baseline and a bounded history, and keeps every crew-facing result held (BF-921 D3)
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A1, after review round 1)
 
-**Status:** build-ready. One BF, two milestones (M1 STANDARD, M2 HIGH), one gate; #1652 closes after both. **BF number:** BF-923 (#1652); this contract allocates nothing. **Tier:** M1 **STANDARD** (three read paths to the episodic store; one crew-facing text, AD-567g's stasis line, appears with a true value; one ship-level metric becomes non-zero); M2 **HIGH** (the Counselor's wellness gate decides DMs and Bridge alerts for every crew member; M2's only safety property is a hold, and a defect in the hold releases an unqualified gauge onto the crew). Review the batch at HIGH: use the Copilot `Diff Reviewer`. Never lower a tier without the Captain. **Base:** written against `origin/main` `471d3f7e` (BF-921 merge, PR #1651). BF-922 (#1639) merges first; it touches none of this contract's files (section 4); the orchestrator re-verifies every SEARCH on the new base. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
+**Status:** build-ready. One BF, two milestones (M1 STANDARD, M2 HIGH), one gate; #1652 closes after both. **BF number:** BF-923 (#1652); this contract allocates nothing. **Tier:** M1 **HIGH** (raised from STANDARD by Amendment A1: three read paths to the episodic store and the producer's Ward Room scope; one crew-facing text, AD-567g's stasis line, appears with a true value; the ship-level behavioral metrics become non-zero, and the five Tier 3 probes that read them are held from drift, a safety property: a defect in the hold releases an unqualified gauge onto VitalsMonitor's medical alert); M2 **HIGH** (the Counselor's wellness gate decides DMs and Bridge alerts for every crew member; M2's only safety property is a hold, and a defect in the hold releases an unqualified gauge onto the crew). Review the batch at HIGH: use the Copilot `Diff Reviewer`. Never lower a tier without the Captain. **Base:** written against `origin/main` `471d3f7e` (BF-921 merge, PR #1651). BF-922 (#1639) merges first; it touches none of this contract's files (section 4); the orchestrator re-verifies every SEARCH on the new base. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Tests:**
-- New `tests/test_bf923_episodic_recall_callers.py` (M1, 9 functions).
+- New `tests/test_bf923_episodic_recall_callers.py` (M1, 17 functions, 21 cases: the original 9 functions, and 8 functions with 12 cases added by Amendment A1).
 - New `tests/test_bf923_counselor_assessment_inputs.py` (M2, 9 functions, 10 cases).
-- Updated pins: `tests/test_behavioral_metrics.py` (M1: the two unrestricted `AsyncMock` stores), `tests/test_counselor_activation.py` (M2: three `TestGatherAgentMetrics` tests that pinned `score` and `get_weights_for`), `tests/test_peer_repetition_credits.py` (M2: three `MagicMock` trust networks with `score`).
+- Updated pins: `tests/test_behavioral_metrics.py` (M1: the two unrestricted `AsyncMock` stores, and A1: `MockWardRoom.list_channels`), `tests/test_counselor_activation.py` (M2: three `TestGatherAgentMetrics` tests that pinned `score` and `get_weights_for`), `tests/test_peer_repetition_credits.py` (M2: three `MagicMock` trust networks with `score`).
 
 **Text repairs after the first oracle run (the orchestrator, 2026-10-25; the Architect's other text is unchanged).** The contract applied by tool passed all its pairs, and its tests passed except one: `test_the_booted_runtime_reads_crew_authors_episodes` (section 17's unverified premise). Section 7.7's test now passes a real `EpisodicMemory` to the runtime (a default boot has none) and selects crew by `did` (utility agents hold asset tags that `get_by_slot` cannot resolve); no stub. Section 17 records the premise as verified by run.
+
+**Amendment A1 (`claude-architect`, 2026-10-25, after review round 1).** M1's review found three things: the producer never reached the repaired read (`browse_threads(agent_id="", channels=None)` lists no thread); per-thread author reads stall the event loop once it does; and fresh crew never enter the proactive orientation window. A1 adds:
+- D10 to D12: the crew-channel scope without DMs, the Tier 3 hold, and the cost;
+- sections 7.7a to 7.7d, and new tests in 7.7;
+- M1 raised to HIGH;
+- three filings in section 18: the fresh-crew defect, the emergence engine's twin, and the department lookup by slot id.
+
+M2's code and tests are unchanged; section 8's tracker text, which M2's commit carries, gains A1's sentences.
 
 ## 0. Premise: what is present on this tree
 
@@ -24,6 +33,7 @@
 | Wellness formula `:2827-2840` | `:2774-2787` | yes (moved) |
 | Masking doubles `test_behavioral_metrics.py:579`, `test_peer_repetition_credits.py:545` | `:579-581` and `:627-628`; `:544-545`, `:569-570`, `:596-597` | yes; five, and three more pins in `test_counselor_activation.py:213-252` |
 | **New, found here:** Ward Room posts carry the author's slot id, episodes the sovereign id | `proactive.py:2994` (`author_id=agent.id`), `ward_room/threads.py:579` and `:588` (`agent_ids=[sovereign_id]`) | the metric stays 0 with any agent-scoped read unless the id is resolved (D1) |
+| **New, found in review round 1:** the producer's thread read | `behavioral_metrics.py:132-137` on M1's candidate: `browse_threads(agent_id="", channels=None, limit=100, since=since)`; `ward_room/threads.py:332-341` reads `channels=None` as that agent's memberships | no thread reaches any of the five metrics; fixed by D10 |
 
 ## 1. Problem
 
@@ -31,13 +41,22 @@
 - `BehavioralMetricsEngine._compute_anchor_grounded_emergence` therefore returns `grounded_rate` 0.0, `independence_score` 0.0 and `analyzed_threads` 0 on every dream. Verifying the fix found a second defect on the same path: the thread's `unique_authors` are Ward Room `author_id`s, which are slot ids (`proactive.py:2994`), while the authors' episodes are stored under the sovereign id (`ward_room/threads.py:579`, `:588`; `messages.py:341`). An agent-scoped read by the slot id finds nothing, so a signature fix alone would leave the metric at 0. The engine has no identity registry.
 - The two orientation callers pass `episodic_memory_count=0` for every crew member. Effect, now verified (the issue left it open): `render_warm_boot_orientation` prints "You have N episodic memories from before stasis." only when the count is above 0 (`orientation.py:413-416`), so at every stasis recovery no crew member has been told it has memories. The proactive supplement renders no count (`orientation.py` reads `episodic_memory_count` only at `:348`, `:354`, `:413`; the proactive renderers start at `:441`), so the proactive caller's count has no visible effect.
 
+**Item 1b (review round 1; reproduced on the base).** The production producer never reaches the read.
+- `compute_behavioral_metrics` calls `ward_room.browse_threads(agent_id="", channels=None, limit=100, since=since)`, and `browse_threads` reads `channels=None` as that agent's memberships (`ward_room/threads.py:332-341`). So it returns `[]`, and the engine returns its empty snapshot (`behavioral_metrics.py:193`) before any of the five metrics runs.
+- The live qualification store holds 289 runs of the collective behavioral tests (2026-04-07 to 2026-04-13) with 0 threads analysed in every one (the orchestrator's read-only count).
+- The issue's premise ("0 because the call raises") was incomplete; this BF fixes both (D10).
+- `emergence_metrics.py:390` makes the same call (R10).
+
 **Item 2 (F-461, R12 of BF-921).** `_gather_agent_metrics` (`counselor.py:755-805`) calls `self._trust_network.score(agent_id)`; `TrustNetwork` has `get_score` (`consensus/trust.py:1017`), and `score` is `TrustRecord`'s property (`trust.py:97`). It calls `self._hebbian_router.get_weights_for(agent_id)`, which no class defines. Both fail at DEBUG, so every production assessment has `current_trust = TRUST_DEFAULT` and `hebbian_avg = 0.0`; with the never-captured baseline (`CognitiveBaseline()` defaults: trust `TRUST_DEFAULT`, Hebbian 0.0), the trust drift and the Hebbian drift are always 0.0. `CognitiveProfile.assessments` is unbounded and the whole list is rewritten into `profile_json` on every assessment (`counselor.py:182`, `:228`, `:382`).
 
 **What a naive repair would do.** `assess_agent` turns a trust drift below -0.2 into a concern, subtracts 1.5 times the drop from wellness and marks the agent unfit below 0.3 (`counselor.py:2740-2744`, `:2776`, `:2789`). Fourteen handlers gather and assess (`counselor.py:957`, `:1078`, `:1132`, `:1176`, `:1271`, `:1311`, `:1359`, `:1414`, `:1461`, `:1484`, `:1606`, `:1699`, `:1743`, `:1919`) plus the API (`routers/counselor.py:167`); their results send DMs (`_maybe_send_therapeutic_dm`, `:2402-2413`, below 0.5 or unfit) and Bridge alerts (`_alert_bridge`, unfit), and the agent reads its own `wellness_score`, `trust_drift`, `hebbian_drift`, `concerns`, `fit_for_duty`, `alert_level` and `trust_drift_trend` through its introspective telemetry (`self_telemetry_domains.py:81-104`, `introspective_telemetry.py:275-279`). Real trust readings against any baseline would make all of these live for the first time. BF-921's D3 holds that no unqualified gauge drives a crew-facing action.
 
 ## 2. Solution overview
 
-- **M1.** The anchor metric reads each author's recent episodes with `recent_for_agent` after resolving the Ward Room slot id to the sovereign id through an identity registry the runtime late-binds (`set_identity_registry`, the engine's existing late-bind pattern). Failures are counted and reported once per computation at WARNING. One helper, `count_agent_episodes(episodic_memory, agent)` in `cognitive/orientation.py`, gives both orientation callers the agent's own count through `count_for_agent` (as `proactive.py:2699` already does). The warm-boot block moves unchanged into `_orient_crew_after_stasis(*, runtime)` in `startup/finalize.py` so the count is tested through the caller.
+- **M1.** The anchor metric reads each author's recent episodes with `recent_for_agent` after resolving the Ward Room slot id to the sovereign id through an identity registry the runtime late-binds (`set_identity_registry`, the engine's existing late-bind pattern). Failures are counted and reported once per computation at WARNING. One helper, `count_agent_episodes(episodic_memory, agent)` in `cognitive/orientation.py`, gives both orientation callers the agent's own count through `count_for_agent` (as `proactive.py:2699` already does). The warm-boot block moves unchanged into `_orient_crew_after_stasis(*, runtime)` in `startup/finalize.py` so the count is tested through the caller. Amendment A1 adds three changes:
+- The producer reads the crew channels explicitly: `list_channels()` filtered by `crew_channel_ids`, no DMs (D10).
+- The five Tier 3 behavioral probes keep their scores and are held from drift (D11).
+- Each owner's episodes are read once per computation, with a yield between reads, and synthesis and convergence detection embed in a worker thread (D12).
 - **M2.** `_gather_agent_metrics` reads trust with `get_score` and records each reading on the profile (`trust_observations`, bounded), with the first reading as the captured baseline (`observed_baseline`). The values it returns to the assessment stay exactly what production has always used (`TRUST_DEFAULT`, Hebbian 0.0), so `assess_agent`, its DMs, its Bridge alerts and the agent's own wellness view are unchanged: the hold sits at the one seam where real values enter, and the assessment's math is untouched for every explicit caller. The Hebbian read is removed (no per-agent reading is defined). The profile keeps the latest 50 assessments and readings. The measurement that must precede any action becomes an unchecked entry on #1523 (section 18).
 
 ## 3. Decisions (for #1652)
@@ -58,23 +77,69 @@
 
 **D8, `_on_trust_update`'s trigger.** Unchanged: it still compares `new_score` with `profile.baseline.trust_score` (`counselor.py:1695-1698`), the default. Moving it to the captured baseline would end R12's churn but can also add reassessments where none happen today (an agent captured at 0.8 that falls to 0.6: today 0.1 from the default, no reassessment; against the capture 0.2, a reassessment), and each reassessment can DM on today's live inputs (confidence, personality drift, communication quality). D3 puts that in the measurement (section 18). The churn's storage cost is bounded by D7.
 
-**D9, scope.** One contract, two milestones, one gate (the Architect's consult of 2026-10-25 00:44Z). In scope because they are on the paths being repaired: the slot-to-sovereign resolution (without it M1 fixes nothing), the failure logging at each repaired read (the DEBUG swallows hid both defects), and the warm-boot extraction (the only way to test the caller). Not in scope, registered: the AD-583f verifier wiring that never reaches the engine (R1), the Counselor's success-rate input (R2).
+**D9, scope.** One contract, two milestones, one gate (the Architect's consult of 2026-10-25 00:44Z). In scope because they are on the paths being repaired: the slot-to-sovereign resolution (without it M1 fixes nothing), the failure logging at each repaired read (the DEBUG swallows hid both defects), and the warm-boot extraction (the only way to test the caller). Not in scope, registered: the AD-583f verifier wiring that never reaches the engine (R1), the Counselor's success-rate input (R2). Amendment A1 adds D10 to D12 to the scope: without D10 the milestone changes nothing in production, and D11 and D12 are the hold and the cost of what D10 activates. Filed, not fixed: the emergence engine's twin (R10), fresh crew outside the proactive orientation window (R11), and the department lookup by slot id (R12).
+
+**D10, the producer's thread scope (Amendment A1).**
+- **Ranked options:**
+  1. **Chosen.** List the channels through the public `list_channels()` (the admin view, `ward_room/channels.py:129-133`) and pass the crew channels to `browse_threads(channels=...)`, as `routers/wardroom.py:444-450` does for an all-channel browse. The filter is one pure function, `crew_channel_ids`, in `ward_room/channels.py` beside the DM-name helpers, so the emergence engine's fix (R10) can reuse it.
+  2. A new `WardRoomService.browse_crew_threads`: one owner for the privacy rule, but a new method on the shared service seam beside its BF-903 visitor checks, for two callers. R10 may promote the helper.
+  3. A synthetic membership in every channel: manufactures an identity and writes to the Ward Room.
+- **Scope:** ship, department and custom channels; never `dm`.
+  - A DM channel is private to its two parties: crew pairs and every Captain DM, all created with `channel_type="dm"` (`channels.py:251`, `capability_request_notifier.py:119`, `proactive.py:4875`, `task_completion_notifier.py:132`; section 12).
+  - AD-569 measures crew-wide collaboration ("observable collaboration quality", `prompts/archive/ad-569-behavioral-metrics.md:11`).
+  - The Ward Room has no private custom channel (section 12).
+  - Archived channels are read: they carry no privacy, and the 72 h lookback bounds them.
+- **Why this is within the envelope:** no private content is read, so no privacy control is weakened.
+- **Unchanged:** `limit=100` and `since` (`thread_lookback_hours`) stay as in AD-569.
+- **Failure:** a failed list or browse logs one WARNING and raises. The dream's step 13 catches it (`cognitive/dreaming.py:1683-1684`) and the dream continues. No zero snapshot is recorded, because a failed read is not a zero measurement.
+
+**D11, the Tier 3 hold (Amendment A1; BF-921 D3).**
+- **The premise.** With D10 the snapshot carries real values for the first time. The five probes (`behavioral_probes.py`) are collective tests for `__crew__`, run weekly by the drift scheduler and on demand. Every stored result so far is 0, so the first real score has |z| = √19 ≈ 4.36 in the default window of 20: critical drift for `__crew__`.
+- **What a critical `__crew__` report reaches:**
+  - the Counselor's `_on_qualification_drift`, which assesses `__crew__` on default inputs: wellness 1.0, no DM (executed by the reviewer for the anchor test; the handler reads `test_name` only for its log line);
+  - **VitalsMonitor**, which counts every critical report in the drift scheduler's `latest_reports` (`agents/medical/vitals_monitor.py:184-188`) and broadcasts a `medical_alert` intent on every 5 s heartbeat (`:49`, `:345-367`; no cooldown) until the next weekly drift run replaces the report. The Diagnostician (`diagnostician.py:59`), a crew agent, handles each alert with an LLM diagnosis.
+- **Ranked options:**
+  1. **Chosen.** Hold at the probe seam. Each result keeps its score and is stored with `inconclusive=HELD_FROM_DRIFT` (True). The drift detector filters inconclusive results before its statistics (`drift_detector.py:150`), so no signal, event, Counselor assessment or medical alert follows these five tests. The scores stay in the qualification store for the measurement, and `error` stays None, so baselines are set as before (`qualification.py:548`). It stretches BF-711's flag from "measured nothing" to "not a verdict yet"; the comment says so.
+  2. Hold `__crew__` reports at the drift scheduler: also silences the emergence engine's collective tests, and changes a shared seam.
+  3. Reset the five tests' history: a live-data migration, and week-to-week variation of an unqualified gauge would still drive the alert.
+- **Why this is within the envelope:** a flat history has a standard deviation of 0, so z is 0 (`drift_detector.py:181-182`). No drift has ever fired on these tests, so the hold removes no alert and weakens no control. Lifting it is R14's call.
+
+**D12, the cost of the activated path (Amendment A1).**
+- **Changes:**
+  1. One `recent_for_agent` read per resolved owner per computation. A failed read is kept, so it fails each of that owner's threads without a second read, and the aggregate WARNING is unchanged.
+  2. `await asyncio.sleep(0)` after each owner read, so the loop runs between whole-collection scans and its longest pause is one fetch. The reviewer's reuse run still showed a 1.35 s gap without it: an awaited synchronous body does not yield.
+  3. Synthesis detection and the convergence loop (`_count_convergence_events`, the moved loop) run in a worker thread through `asyncio.to_thread`.
+- **Rejected:**
+  - a batched read: a new episodic API (R13);
+  - a bound on authors: changes AD-569's measure;
+  - offloading inside `recent_for_agent`: `episodic.py`, every caller (R13).
+- **Remaining cost:** one whole-collection fetch per distinct author per dream, about 0.67 s per 3,000 episodes (reviewer-measured) and linear in store size. The proactive loop already makes such reads each cycle (`proactive.py:1837`, `:1962`, `:2693`).
+- **On the loop:** frame diversity and the trigger metric stay on the loop. They embed only for authors whose department resolves, and none does (R12).
 
 ## 4. Interaction with the queue
 
-**BF-922 (#1639) merges first.** It changes `cognitive_agent.py`, `sub_tasks/compose.py`, `sub_tasks/evaluate.py`, `sub_tasks/query.py`, `llm_client.py`, `types.py`, `output_grounding.py` (new) and some tests. This contract edits none of them: its files are `cognitive/behavioral_metrics.py`, `runtime.py`, `cognitive/orientation.py`, `proactive.py`, `startup/finalize.py`, `cognitive/counselor.py`, three existing tests, two new tests, `PROGRESS.md` and `DECISIONS.md`. The new tests import `Episode` from `probos.types` (an import only). If BF-922's merge moved any SEARCH text here, the orchestrator re-verifies and re-anchors without changing a REPLACE; a changed REPLACE returns to the Architect.
+**BF-922 (#1639) merges first.** It changes `cognitive_agent.py`, `sub_tasks/compose.py`, `sub_tasks/evaluate.py`, `sub_tasks/query.py`, `llm_client.py`, `types.py`, `output_grounding.py` (new) and some tests. This contract edits none of them: its files are `cognitive/behavioral_metrics.py`, `cognitive/behavioral_probes.py` (A1), `ward_room/channels.py` (A1), `runtime.py`, `cognitive/orientation.py`, `proactive.py`, `startup/finalize.py`, `cognitive/counselor.py`, three existing tests, two new tests, `PROGRESS.md` and `DECISIONS.md`. The new tests import `Episode` from `probos.types` (an import only). If BF-922's merge moved any SEARCH text here, the orchestrator re-verifies and re-anchors without changing a REPLACE; a changed REPLACE returns to the Architect.
 
 **Tracker anchors.** `PROGRESS.md`'s title line and `DECISIONS.md`'s heading `### BF-921 -- The Counselor receives the events it subscribes to; no output suppression carries a penalty (2026-10-24, #1636)` (line 739 on this tree) both stay unique whatever BF-922 inserts.
 
-**PR text, BF-923's part:** "BF-923 (#1652). Three callers passed `agent_id` to `EpisodicMemory.recall`, which takes none, and swallowed the `TypeError`: the behavioral metrics' anchor-grounded emergence was 0 on every dream and every crew orientation counted 0 memories. The metric now reads each author's recent episodes by the sovereign id its episodes carry (Ward Room authors are slot ids; the runtime late-binds the identity registry), and both orientation callers count the agent's own episodes, so at stasis recovery each crew member is told how many memories it has (AD-567g's line, never printed before). The Counselor read trust with a method `TrustNetwork` lacks and Hebbian weights with one nothing defines; it now reads trust with `get_score` and records each reading and the first as a captured baseline, while every assessment, DM, Bridge alert and the agent's own wellness view stay exactly as before until the trust gauge is qualified (BF-921 D3; the measurement is on #1523). The Hebbian read is removed, and a profile keeps its latest 50 assessments."
+**PR text, BF-923's part:** "BF-923 (#1652). Three callers passed `agent_id` to `EpisodicMemory.recall`, which takes none, and swallowed the `TypeError`: the behavioral metrics' anchor-grounded emergence was 0 on every dream and every crew orientation counted 0 memories. The metric now reads each author's recent episodes by the sovereign id its episodes carry (Ward Room authors are slot ids; the runtime late-binds the identity registry), and both orientation callers count the agent's own episodes, so at stasis recovery each crew member is told how many memories it has (AD-567g's line, never printed before). The behavioral metrics had listed no Ward Room thread at all (`browse_threads` reads `channels=None` as one agent's memberships); they now read the crew channels, never DMs, each author once per computation and with embeddings off the event loop, and the five Tier 3 probes that read them keep their scores but are held from drift until qualified (BF-921 D3). The Counselor read trust with a method `TrustNetwork` lacks and Hebbian weights with one nothing defines; it now reads trust with `get_score` and records each reading and the first as a captured baseline, while every assessment, DM, Bridge alert and the agent's own wellness view stay exactly as before until the trust gauge is qualified (BF-921 D3; the measurement is on #1523). The Hebbian read is removed, and a profile keeps its latest 50 assessments."
 
 ## 5. Consumers of every value this changes
 
-**(a) The anchor metric** (`anchor_grounded_rate`, `anchor_independence_score`, `anchor_analyzed_threads`), from its one producer call (`dreaming.py:1663`; `compute_behavioral_metrics` has no other caller, section 12):
+**(a) The behavioral snapshot** (Amendment A1: D10 gives the producer real threads, so every metric below the empty-snapshot return at `behavioral_metrics.py:193` now runs). It comes from one producer call (`dreaming.py:1663`; `compute_behavioral_metrics` has no other caller, section 12). The anchor metric is `anchor_grounded_rate`, `anchor_independence_score` and `anchor_analyzed_threads`.
+- **What moves:** synthesis (`synthesis_rate`, `synthesis_threads`), the anchor metric, `convergence_events` and `unverified`, `threads_analyzed`, and the composite.
+- **What stays:** frame diversity and the trigger rate stay 0 (their department lookup receives slot ids, R12); convergence correctness stays None (no verifier, R1).
+- **Readers:**
 - `BehavioralSnapshot` → `behavioral_quality_score`, the mean of four or five terms of which `anchor_grounded_rate` is one (`behavioral_metrics.py:202-213`): it rises when threads are grounded.
 - `dreaming.py:1668-1682` (a DEBUG line), `:1704` → `_step_15_reflection_promotion` → `[Reflection] Dream cycle emergence snapshot: ... behavioral_quality=<x>.` episode text with no owner (`dreaming.py:2976-2986`), and the dream report (`:1803-1807`, `types.py:914-918`).
 - `routers/system.py:682-708` (`/behavioral-metrics` and its history): Captain-facing.
-- `AnchorGroundedEmergenceProbe` (`behavioral_probes.py:229-250`), a Tier 3 collective test for `__crew__` with `passed=True` always and the grounded rate as score, run weekly by the drift scheduler (`drift_detector.py:345-357`; `drift_check_tiers` default `[1, 2, 3]`, `config.py:3619`). After a history of zeros, the first non-zero score has |z| = √n for n earlier samples (window 20, `config.py:3617`): `warning` from n = 4 (the Counselor logs only, `counselor.py:1503-1507`), `critical` from n = 9 (`config.py:3615`): the Counselor assesses `__crew__` once on default inputs (no agent: confidence 0.8, every drift 0, wellness 1.0), so `_maybe_send_therapeutic_dm` returns at its first line (`counselor.py:2410-2411`). No crew member is messaged. Disclosed effect E1.
+- **The five Tier 3 probes** (`behavioral_probes.py`: `frame_diversity`, `synthesis_detection`, `cross_dept_trigger_rate`, `convergence_correctness`, `anchor_grounded_emergence`). Each is a collective test for `__crew__` with `passed=True` always, run weekly by the drift scheduler (`drift_detector.py:345-357`; `drift_check_tiers` default `[1, 2, 3]`, `config.py:3619`) and on demand (`run_now`, `:402-414`).
+  - **Without a hold:** after a history of zeros, the first non-zero score has |z| = √n for n earlier samples (window 20, `config.py:3617`), so it is critical from n = 9 (`config.py:3615`); the live history is all zeros. A critical `__crew__` report reaches:
+    1. the Counselor's `_on_qualification_drift` (`counselor.py:1468-1542`), which assesses `__crew__` on default inputs (no agent: wellness 1.0), so `_maybe_send_therapeutic_dm` returns at its first line (`counselor.py:2449-2450`) and no Bridge alert is on that path. This holds for all five tests: the handler reads `test_name` only to log.
+    2. VitalsMonitor, which counts critical reports (`vitals_monitor.py:184-188`) and broadcasts `medical_alert` on every 5 s heartbeat (`:49`, `:345-367`) to the Diagnostician (`diagnostician.py:59`): an LLM diagnosis each time, until the next weekly drift run. Its recommended treatment is not dispatched (section 12).
+  - **D11 holds all five.** Each result is stored with its score and `inconclusive=True`, which `drift_detector.py:150` drops before its statistics, so neither path follows.
+  - **Disclosed effect E1 (revised by A1):** the scores appear in the qualification store and in the snapshot's display readers (dream report, reflection text, `/behavioral-metrics`, the HXI panel `BehavioralMetricsPanel.tsx`). No drift event, assessment, DM, Bridge alert or medical alert follows them.
+- **Cost (disclosed effect E6, A1).** Step 13 now reads threads and episodes. It makes one whole-collection fetch per distinct author per dream (about 0.67 s per 3,000 episodes, reviewer-measured, linear in store size), with the loop running between fetches; synthesis and convergence embeddings run in a worker thread (D12). The dream's wall time grows by both.
 - `BEHAVIORAL_METRICS_UPDATED`: emitted only when `emit_event_fn` is passed (`behavioral_metrics.py:247-260`); the dream path passes none (`dreaming.py:1663-1667`). Unchanged.
 
 **(b) The orientation count** (`episodic_memory_count`): `build_orientation` copies it into `OrientationContext` (`orientation.py:220`); `render_warm_boot_orientation` prints it when above 0 (`:413-416`): **disclosed effect E2**, at stasis recovery each crew member with episodes reads "You have N episodic memories from before stasis." for the first time, a true statement about its own memory (AD-567g's design; not a judgement, so no hold). The cold-start renderer (`:348-354`) receives its count from `agent_onboarding.py:393`, not from these callers. The proactive renderers print no count: no visible change (E3).
@@ -87,15 +152,26 @@
 
 ## 6. Milestones and tests
 
-**M1 (STANDARD), §7.1 to §7.7.** First heading: `### 7.1 \`src/probos/cognitive/behavioral_metrics.py\` (M1)`. Commit "BF-923 M1: the anchor metric and the orientation counts read the episodic store through APIs it has", body ending "Ward Room authors are slot ids and episodes carry sovereign ids, so the runtime late-binds the identity registry into the behavioral metrics engine. At stasis recovery each crew member is told its own episode count (AD-567g's line, printed for the first time)."
+**M1 (HIGH: raised from STANDARD by Amendment A1, whose D11 hold is a safety property), §7.1 to §7.7d.** First heading: `### 7.1 \`src/probos/cognitive/behavioral_metrics.py\` (M1)`. Commit "BF-923 M1: the behavioral metrics read the crew's threads and their authors' episodes; the orientation counts read the episodic store through APIs it has", body ending "The producer listed no thread (browse_threads reads channels=None as one agent's memberships); it now reads the crew channels, never DMs. Ward Room authors are slot ids and episodes carry sovereign ids, so the runtime late-binds the identity registry into the behavioral metrics engine; each author is read once per computation, and synthesis and convergence embed off the event loop. The five Tier 3 behavioral probes keep their scores and are held from drift until qualified (BF-921 D3). At stasis recovery each crew member is told its own episode count (AD-567g's line, printed for the first time)."
 
-Before editing, grep the pins: `grep -rn "_compute_anchor_grounded_emergence\|mock_memory.recall\|episodic_memory_count\|Warm boot orientation\|render_warm_boot_orientation" tests/`.
+Before editing, grep the pins: `grep -rn "_compute_anchor_grounded_emergence\|mock_memory.recall\|episodic_memory_count\|Warm boot orientation\|render_warm_boot_orientation\|browse_threads\|list_channels\|_compute_convergence_correctness\|inconclusive" tests/`.
 
-Tests first: with §7.6 and §7.7 applied and §7.1 to §7.5 not, exactly these 9 fail: `test_the_anchor_metric_reads_each_authors_recent_episodes` (`assert 0 == 1` on `analyzed_threads`), `test_a_slot_author_is_read_by_the_sovereign_id_its_episodes_carry` (`AttributeError: ... 'set_identity_registry'`), `test_a_failing_store_is_reported_once_at_warning` (no WARNING record), `test_the_booted_runtime_reads_crew_authors_episodes` (`assert 0 == 1`), `test_count_agent_episodes_counts_the_agents_own_episodes` and `test_a_failing_count_is_logged_at_warning_and_reports_none` (`ImportError: count_agent_episodes`), `test_the_proactive_supplement_is_built_with_the_agents_episode_count` (`assert 0 == 2`), `test_the_warm_boot_orientation_tells_each_agent_its_own_episode_count` (`ImportError: _orient_crew_after_stasis`), and `TestAnchorGroundedEmergence`'s `test_anchor_analysis_with_memory` in `test_behavioral_metrics.py` (the autospec rejects `recall(query=, agent_id=, limit=)`, which is swallowed: `assert 0 == 1`). `test_the_old_call_is_rejected_by_the_real_recall` (the issue's reproduction) and `test_anchor_insufficient_episodes` pass on both sides. Focused check:
+Tests first: with §7.6, §7.7 and §7.7d applied and §7.1 to §7.5 and §7.7a to §7.7c not, exactly 21 cases fail: Amendment A1's 12 (after this list) and these 9: `test_the_anchor_metric_reads_each_authors_recent_episodes` (`assert 0 == 1` on `analyzed_threads`), `test_a_slot_author_is_read_by_the_sovereign_id_its_episodes_carry` (`AttributeError: ... 'set_identity_registry'`), `test_a_failing_store_is_reported_once_at_warning` (no WARNING record), `test_the_booted_runtime_reads_crew_authors_episodes` (`assert 0 == 1`), `test_count_agent_episodes_counts_the_agents_own_episodes` and `test_a_failing_count_is_logged_at_warning_and_reports_none` (`ImportError: count_agent_episodes`), `test_the_proactive_supplement_is_built_with_the_agents_episode_count` (`assert 0 == 2`), `test_the_warm_boot_orientation_tells_each_agent_its_own_episode_count` (`ImportError: _orient_crew_after_stasis`), and `TestAnchorGroundedEmergence`'s `test_anchor_analysis_with_memory` in `test_behavioral_metrics.py` (the autospec rejects `recall(query=, agent_id=, limit=)`, which is swallowed: `assert 0 == 1`). `test_the_old_call_is_rejected_by_the_real_recall` (the issue's reproduction) and `test_anchor_insufficient_episodes` pass on both sides. Amendment A1's 12 cases fail on the base and on M1's round-1 candidate:
+- `test_the_dream_metrics_read_the_crew_channels_and_not_dms`: no thread is fetched.
+- `test_a_failing_ward_room_read_is_logged_at_warning_and_raised`: `DID NOT RAISE`.
+- `test_each_author_is_read_once_per_computation`: base, `analyzed_threads` 0; candidate, 20 reads.
+- `test_a_failing_author_fails_only_its_threads_and_is_read_once`: base, `analyzed_threads` 0; candidate, two reads of `a-bad`.
+- `test_the_author_reads_yield_to_the_event_loop`: no new loop turn between reads.
+- `test_synthesis_embeds_off_the_event_loop` and `test_convergence_embeds_off_the_event_loop`: `seen[-1] > seen[0]`.
+- `test_the_behavioral_probes_are_held_from_drift`, 5 cases: `inconclusive is True`.
+
+`TestComputeBehavioralMetrics`' three tests pass on both sides (their `MockWardRoom` ignores `channels`). Focused check:
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf923_episodic_recall_callers.py tests/test_behavioral_metrics.py tests/test_orientation.py tests/test_ad576_llm_unavailability.py tests/test_bf235_stale_identity_cache.py tests/test_proactive.py tests/test_dreaming.py tests/test_bf138_sovereign_id_completion.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf923_episodic_recall_callers.py tests/test_behavioral_metrics.py tests/test_orientation.py tests/test_ad576_llm_unavailability.py tests/test_bf235_stale_identity_cache.py tests/test_proactive.py tests/test_dreaming.py tests/test_bf138_sovereign_id_completion.py tests/test_ad583f_observable_state.py tests/test_ad566c_drift_detection.py tests/test_ad566e_collective_tests.py tests/test_ward_room.py tests/test_ward_room_dms.py -n 0 -q
 ```
+
+(Round 1: 291 passed without the five added files; the Builder records the new count. Expect 12 more cases in `test_bf923_episodic_recall_callers.py`.)
 
 (`TestAnchorGroundedEmergence` is the class at `tests/test_behavioral_metrics.py:559`.)
 
@@ -197,6 +273,10 @@ REPLACE:
         grounded_count = 0
         analyzed = 0
         failures = 0
+        # BF-923 (#1652): one read per owner per computation. recent_for_agent fetches the whole
+        # collection, so reading per thread repeated that fetch for every thread an author posted in.
+        # A failed read is kept too, so it fails each of that owner's threads without a second read.
+        owner_reads: dict[str, Any] = {}
 
         for thread in threads:
             agent_ids = list(thread["unique_authors"])
@@ -210,7 +290,15 @@ REPLACE:
                     # call raised), and a Ward Room author is a slot id while its episodes carry
                     # the sovereign id.
                     owner_id = resolve_sovereign_id_from_slot(agent_id, self._identity_registry)
-                    eps = await episodic_memory.recent_for_agent(owner_id, k=10)
+                    if owner_id not in owner_reads:
+                        try:
+                            owner_reads[owner_id] = await episodic_memory.recent_for_agent(owner_id, k=10)
+                        except Exception as exc:
+                            owner_reads[owner_id] = exc
+                        await asyncio.sleep(0)  # BF-923: each read is a synchronous full scan; let the loop run between reads
+                    eps = owner_reads[owner_id]
+                    if isinstance(eps, Exception):
+                        raise eps
                     if eps:
                         all_episodes.extend(eps)
 
@@ -586,12 +674,14 @@ Every store here is a real ``EpisodicMemory`` unless a test is about a failing s
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, create_autospec
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
@@ -852,7 +942,7 @@ async def test_the_proactive_supplement_is_built_with_the_agents_episode_count(t
     agent.agent_type = "scout"
     agent.is_alive = True
     agent.sovereign_id = "sov-a"
-    agent._birth_timestamp = time.time() - 60
+    agent._birth_timestamp = time.time() - 60  # set by hand: fresh runtime crew lack it (filed, section 18 R11); this tests the count inside the window
 
     try:
         context = await loop._gather_context(agent, 0.6)
@@ -907,6 +997,653 @@ async def test_the_warm_boot_orientation_tells_each_agent_its_own_episode_count(
     assert "You have 1 episodic memories from before stasis." in counselor.orientation_text
     assert "STASIS RECORD" in architect.orientation_text
     assert "episodic memories from before stasis" not in architect.orientation_text
+
+
+# --- Amendment A1: the producer's thread read, its cost, and the Tier 3 hold ---------------------------
+
+
+class _Ticker:
+    """Counts event-loop turns. Work that holds the loop shows as no new turns while it runs."""
+
+    def __init__(self) -> None:
+        self.ticks = 0
+        self._task: asyncio.Task[None] | None = None
+
+    async def _spin(self) -> None:
+        while True:
+            self.ticks += 1
+            await asyncio.sleep(0)
+
+    async def __aenter__(self) -> _Ticker:
+        self._task = asyncio.create_task(self._spin())
+        await asyncio.sleep(0)
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        assert self._task is not None
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+
+
+@pytest.mark.asyncio
+async def test_the_dream_metrics_read_the_crew_channels_and_not_dms(tmp_path) -> None:
+    """The producer on a real Ward Room. ``browse_threads`` reads ``channels=None`` as the given agent's
+    memberships, so ``agent_id=""`` read no thread and no metric ran. A DM is private to its two parties."""
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+    from probos.ward_room import WardRoomService
+
+    ward = WardRoomService(db_path=str(tmp_path / "ward.db"))
+    await ward.start()
+    memory = await _store(tmp_path, {"author-a": 2, "author-b": 2})
+    try:
+        crew_channel = next(c for c in await ward.list_channels() if c.channel_type == "ship")
+        dm_channel = await ward.get_or_create_dm_channel("author-a", "author-b")
+        thread_ids: dict[str, str] = {}
+        for label, channel in (("crew", crew_channel), ("dm", dm_channel)):
+            thread = await ward.create_thread(channel.id, "author-a", f"BF-923 {label} thread", "An opening observation.")
+            await ward.create_post(thread.id, "author-b", f"{label}: a second observation.")
+            await ward.create_post(thread.id, "author-a", f"{label}: a third observation.")
+            await ward.create_post(thread.id, "author-b", f"{label}: a fourth observation.")
+            thread_ids[label] = thread.id
+        engine = BehavioralMetricsEngine()
+        with patch("probos.cognitive.behavioral_metrics.embed_text", return_value=[0.5] * 10), \
+                patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.5), \
+                patch.object(ward, "get_thread", wraps=ward.get_thread) as get_thread:
+            snapshot = await engine.compute_behavioral_metrics(ward_room=ward, episodic_memory=memory)
+    finally:
+        await memory.stop()
+        await ward.stop()
+
+    read = {call.args[0] for call in get_thread.await_args_list}
+    assert thread_ids["crew"] in read
+    assert thread_ids["dm"] not in read  # never fetched, so never analysed
+    assert snapshot.threads_analyzed == 1
+    assert snapshot.anchor_analyzed_threads == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failing_ward_room_read_is_logged_at_warning_and_raised(caplog) -> None:
+    """The dream's step 13 catches it and continues (cognitive/dreaming.py:1683); no zero snapshot is kept."""
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+    from probos.ward_room import WardRoomService
+
+    ward = create_autospec(WardRoomService, instance=True)
+    ward.list_channels.side_effect = RuntimeError("ward room offline")
+    engine = BehavioralMetricsEngine()
+
+    with caplog.at_level(logging.WARNING, logger="probos.cognitive.behavioral_metrics"):
+        with pytest.raises(RuntimeError, match="ward room offline"):
+            await engine.compute_behavioral_metrics(ward_room=ward)
+
+    assert "BF-923 (#1652): the Ward Room read failed" in caplog.text
+    assert engine.latest_snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_each_author_is_read_once_per_computation(tmp_path) -> None:
+    """``recent_for_agent`` fetches the whole collection; a read per thread repeated it for every thread an
+    author posted in (13.4 s for 10 threads on a 3,000-episode store, review round 1)."""
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+
+    memory = await _store(tmp_path, {"author-a": 2, "author-b": 2})
+    try:
+        engine = BehavioralMetricsEngine(BehavioralMetricsConfig(anchor_independence_min_episodes=4))
+        threads = [_thread("author-a", "author-b", thread_id=f"bf923-t{i}") for i in range(10)]
+        with patch.object(memory, "recent_for_agent", wraps=memory.recent_for_agent) as read:
+            result = await engine._compute_anchor_grounded_emergence(threads, memory)
+    finally:
+        await memory.stop()
+
+    assert result["analyzed_threads"] == 10
+    assert sorted(call.args[0] for call in read.await_args_list) == ["author-a", "author-b"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_author_fails_only_its_threads_and_is_read_once(caplog) -> None:
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+
+    def read(owner_id: str, k: int = 5, **_: Any) -> list[Any]:
+        if owner_id == "a-bad":
+            raise RuntimeError("shard offline")
+        return [MagicMock(), MagicMock()]
+
+    engine = BehavioralMetricsEngine(BehavioralMetricsConfig(anchor_independence_min_episodes=2))
+    memory = create_autospec(EpisodicMemory, instance=True)
+    memory.recent_for_agent.side_effect = read
+    threads = [
+        _thread("a1", "a2", thread_id="bf923-ok"),
+        _thread("a1", "a-bad", thread_id="bf923-bad-1"),
+        _thread("a2", "a-bad", thread_id="bf923-bad-2"),
+    ]
+
+    with patch("probos.cognitive.social_verification.compute_anchor_independence", return_value=0.6), \
+            caplog.at_level(logging.WARNING, logger="probos.cognitive.behavioral_metrics"):
+        result = await engine._compute_anchor_grounded_emergence(threads, memory)
+
+    assert result["analyzed_threads"] == 1
+    assert [call.args[0] for call in memory.recent_for_agent.await_args_list].count("a-bad") == 1
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "anchor analysis failed for 2 of 3 threads" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_the_author_reads_yield_to_the_event_loop() -> None:
+    """Each read is a synchronous full scan; the loop runs between reads, so its longest pause is one read."""
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+
+    engine = BehavioralMetricsEngine(BehavioralMetricsConfig(anchor_independence_min_episodes=2))
+    memory = create_autospec(EpisodicMemory, instance=True)
+    seen: list[int] = []
+    async with _Ticker() as ticker:
+        def read(owner_id: str, k: int = 5, **_: Any) -> list[Any]:
+            seen.append(ticker.ticks)
+            return [MagicMock(), MagicMock()]
+
+        memory.recent_for_agent.side_effect = read
+        with patch("probos.cognitive.social_verification.compute_anchor_independence", return_value=0.6):
+            result = await engine._compute_anchor_grounded_emergence([_thread("a1", "a2")], memory)
+
+    assert result["analyzed_threads"] == 1
+    assert len(seen) == 2
+    assert seen[1] > seen[0]
+
+
+@pytest.mark.asyncio
+async def test_synthesis_embeds_off_the_event_loop() -> None:
+    """Synthesis embeds the thread and every post with the synchronous embedder; the loop keeps running."""
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+    from probos.ward_room import WardRoomService
+    from probos.ward_room.models import WardRoomChannel
+
+    now = time.time()
+    ward = create_autospec(WardRoomService, instance=True)
+    ward.list_channels.return_value = [
+        WardRoomChannel(id="ch-1", name="All Hands", channel_type="ship", department="", created_by="system", created_at=now),
+    ]
+    ward.browse_threads.return_value = [
+        SimpleNamespace(id="bf923-t1", channel_id="ch-1", channel_name="All Hands", title="BF-923 thread"),
+    ]
+    ward.get_thread.return_value = {"posts": [
+        {"id": f"p{i}", "author_id": f"a{i % 2}", "author_callsign": "", "body": f"observation {i}", "created_at": now - 10.0 * i}
+        for i in range(4)
+    ]}
+    engine = BehavioralMetricsEngine()
+    seen: list[int] = []
+    async with _Ticker() as ticker:
+        def slow_embed(text: str) -> list[float]:
+            seen.append(ticker.ticks)
+            time.sleep(0.02)
+            return [0.5] * 10
+
+        with patch("probos.cognitive.behavioral_metrics.embed_text", side_effect=slow_embed), \
+                patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.5), \
+                patch.object(engine, "_compute_convergence_correctness", AsyncMock(return_value={
+                    "total": 0, "correct": 0, "incorrect": 0, "unverified": 0, "correctness_rate": None,
+                })):
+            snapshot = await engine.compute_behavioral_metrics(ward_room=ward)
+
+    assert snapshot.threads_analyzed == 1
+    assert len(seen) == 5  # the thread and its four posts
+    assert seen[-1] > seen[0]
+
+
+@pytest.mark.asyncio
+async def test_convergence_embeds_off_the_event_loop() -> None:
+    from probos.cognitive.behavioral_metrics import BehavioralMetricsEngine
+
+    engine = BehavioralMetricsEngine()
+    seen: list[int] = []
+    async with _Ticker() as ticker:
+        def slow_embed(text: str) -> list[float]:
+            seen.append(ticker.ticks)
+            time.sleep(0.02)
+            return [0.5] * 10
+
+        with patch("probos.cognitive.behavioral_metrics.embed_text", side_effect=slow_embed), \
+                patch("probos.cognitive.behavioral_metrics._cosine_similarity", return_value=0.9):
+            result = await engine._compute_convergence_correctness([_thread("a1", "a2", "a3")])
+
+    assert result["total"] == 1
+    assert len(seen) == 3  # one post per author
+    assert seen[-1] > seen[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "probe_class",
+    [
+        "FrameDiversityProbe",
+        "SynthesisDetectionProbe",
+        "CrossDeptTriggerProbe",
+        "ConvergenceCorrectnessProbe",
+        "AnchorGroundedEmergenceProbe",
+    ],
+)
+async def test_the_behavioral_probes_are_held_from_drift(tmp_path, probe_class: str) -> None:
+    """BF-921 D3: each probe's history is a run of zeros, so a first real score would read as critical drift
+    for ``__crew__`` (a Counselor assessment, VitalsMonitor's medical alert). The score is kept; drift skips it."""
+    import dataclasses
+
+    from probos.cognitive import behavioral_probes
+    from probos.cognitive.behavioral_metrics import BehavioralSnapshot
+    from probos.cognitive.drift_detector import DriftDetector
+    from probos.cognitive.qualification import QualificationStore, TestResult
+    from probos.config import QualificationConfig
+
+    probe = getattr(behavioral_probes, probe_class)()
+    snapshot = BehavioralSnapshot(
+        timestamp=time.time(),
+        threads_analyzed=4,
+        frame_diversity_score=0.6,
+        synthesis_rate=0.6,
+        cross_dept_trigger_rate=0.6,
+        convergence_correctness_rate=0.6,
+        anchor_grounded_rate=0.6,
+    )
+    runtime = SimpleNamespace(_behavioral_metrics_engine=SimpleNamespace(latest_snapshot=snapshot))
+    result = await probe.run("__crew__", runtime)
+    assert result.score == 0.6
+    assert result.inconclusive is True
+
+    store = QualificationStore(data_dir=tmp_path)
+    await store.start()
+    try:
+        now = time.time()
+        for subject in ("__crew__", "bf923-control"):
+            for i in range(19):  # the live history: every run scored 0
+                await store.save_result(TestResult(
+                    agent_id=subject, test_name=probe.name, tier=3, score=0.0, passed=True,
+                    timestamp=now - 3600.0 * (i + 1), duration_ms=0.0,
+                ))
+        await store.save_result(result)
+        await store.save_result(dataclasses.replace(result, agent_id="bf923-control", inconclusive=False))
+        detector = DriftDetector(store, QualificationConfig())
+        held = await detector.analyze_agent("__crew__", [probe.name])
+        unheld = await detector.analyze_agent("bf923-control", [probe.name])
+    finally:
+        await store.stop()
+
+    assert unheld.overall_severity == "critical"  # the premise: what the first real score would raise
+    assert held.overall_severity == "normal"
+    assert not held.drift_detected
+```
+
+### 7.7a `src/probos/cognitive/behavioral_metrics.py` (M1, Amendment A1: the crew-channel scope; synthesis and convergence off the event loop)
+
+These pairs are disjoint from §7.1's. The one-read-per-owner change is in §7.1's pair 2.
+
+Pair 1:
+
+SEARCH:
+```python
+import logging
+import time
+from collections import defaultdict, deque
+```
+REPLACE:
+```python
+import asyncio
+import logging
+import time
+from collections import defaultdict, deque
+```
+
+Pair 2:
+
+SEARCH:
+```python
+        # 1. Retrieve qualifying threads
+        since = now - (cfg.thread_lookback_hours * 3600)
+        threads = await ward_room.browse_threads(
+            agent_id="",
+            channels=None,
+            limit=100,
+            since=since,
+        )
+```
+REPLACE:
+```python
+        # 1. Retrieve qualifying threads
+        since = now - (cfg.thread_lookback_hours * 3600)
+        # BF-923 (#1652): browse_threads reads channels=None as the given agent's memberships, so
+        # agent_id="" read no thread and every metric stayed 0. Read the crew channels explicitly;
+        # a DM is private to its two parties and stays out (crew_channel_ids).
+        from probos.ward_room.channels import crew_channel_ids
+
+        try:
+            channel_ids = crew_channel_ids(await ward_room.list_channels())
+            threads = await ward_room.browse_threads(
+                agent_id="",
+                channels=channel_ids,
+                limit=100,
+                since=since,
+            )
+        except Exception:
+            logger.warning(
+                "BF-923 (#1652): the Ward Room read failed; no behavioral snapshot this cycle",
+                exc_info=True,
+            )
+            raise  # BF-923: the dream logs it and skips step 13 (cognitive/dreaming.py:1683)
+```
+
+Pair 3:
+
+SEARCH:
+```python
+        frame_result = self._compute_frame_diversity(qualifying_threads, get_department)
+        synthesis_result = self._compute_synthesis_detection(qualifying_threads)
+        trigger_result = self._compute_cross_dept_triggers(qualifying_threads, get_department)
+```
+REPLACE:
+```python
+        frame_result = self._compute_frame_diversity(qualifying_threads, get_department)
+        # BF-923 (#1652): synthesis embeds every post synchronously (ONNX); run it off the event loop.
+        synthesis_result = await asyncio.to_thread(self._compute_synthesis_detection, qualifying_threads)
+        trigger_result = self._compute_cross_dept_triggers(qualifying_threads, get_department)
+```
+
+Pair 4:
+
+SEARCH:
+```python
+    async def _compute_convergence_correctness(
+        self,
+        threads: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Metric 4: Convergence Correctness.
+
+        Detect convergence (multiple agents saying similar things) and track
+        whether converged conclusions have verifiable outcomes. AD-583f
+        populates correctness via ObservableStateVerifier (satisfies AD-569d).
+        """
+        cfg = self._config
+        convergence_events = 0
+
+        for thread in threads:
+            posts = thread["posts"]
+            if len(posts) < cfg.convergence_min_agreeing + 1:
+                continue
+
+            # Group posts by author and embed
+            author_embeddings: dict[str, list[float]] = {}
+            for post in posts:
+                author = post.get("author_id", "")
+                body = post.get("body", "")
+                if not author or not body or author in author_embeddings:
+                    continue
+                author_embeddings[author] = embed_text(body[:1000])
+
+            if len(author_embeddings) < cfg.convergence_min_agreeing:
+                continue
+
+            # Check for pairwise convergence
+            authors = list(author_embeddings.keys())
+            agreeing_pairs = 0
+            total_pairs = 0
+            for i in range(len(authors)):
+                for j in range(i + 1, len(authors)):
+                    sim = _cosine_similarity(
+                        author_embeddings[authors[i]],
+                        author_embeddings[authors[j]],
+                    )
+                    total_pairs += 1
+                    if sim >= cfg.convergence_similarity_threshold:
+                        agreeing_pairs += 1
+
+            if total_pairs > 0 and agreeing_pairs / total_pairs >= 0.5:
+                convergence_events += 1
+
+        # AD-583f: Verify converging claims against observable state
+```
+REPLACE:
+```python
+    def _count_convergence_events(self, threads: list[dict[str, Any]]) -> int:
+        """Metric 4's detection: threads in which most pairs of authors post similar text.
+
+        BF-923 (#1652): the loop moved unchanged out of ``_compute_convergence_correctness``. It embeds
+        one post per author per thread synchronously (ONNX), so that method runs it in a worker thread.
+        """
+        cfg = self._config
+        convergence_events = 0
+
+        for thread in threads:
+            posts = thread["posts"]
+            if len(posts) < cfg.convergence_min_agreeing + 1:
+                continue
+
+            # Group posts by author and embed
+            author_embeddings: dict[str, list[float]] = {}
+            for post in posts:
+                author = post.get("author_id", "")
+                body = post.get("body", "")
+                if not author or not body or author in author_embeddings:
+                    continue
+                author_embeddings[author] = embed_text(body[:1000])
+
+            if len(author_embeddings) < cfg.convergence_min_agreeing:
+                continue
+
+            # Check for pairwise convergence
+            authors = list(author_embeddings.keys())
+            agreeing_pairs = 0
+            total_pairs = 0
+            for i in range(len(authors)):
+                for j in range(i + 1, len(authors)):
+                    sim = _cosine_similarity(
+                        author_embeddings[authors[i]],
+                        author_embeddings[authors[j]],
+                    )
+                    total_pairs += 1
+                    if sim >= cfg.convergence_similarity_threshold:
+                        agreeing_pairs += 1
+
+            if total_pairs > 0 and agreeing_pairs / total_pairs >= 0.5:
+                convergence_events += 1
+
+        return convergence_events
+
+    async def _compute_convergence_correctness(
+        self,
+        threads: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Metric 4: Convergence Correctness.
+
+        Detect convergence (multiple agents saying similar things) and track
+        whether converged conclusions have verifiable outcomes. AD-583f
+        populates correctness via ObservableStateVerifier (satisfies AD-569d).
+        """
+        # BF-923 (#1652): the detection embeds synchronously; run it off the event loop.
+        convergence_events = await asyncio.to_thread(self._count_convergence_events, threads)
+
+        # AD-583f: Verify converging claims against observable state
+```
+
+### 7.7b `src/probos/ward_room/channels.py` (M1, Amendment A1: the crew channels)
+
+Pair 1:
+
+SEARCH:
+```python
+from typing import Any, Callable, Awaitable
+```
+REPLACE:
+```python
+from typing import Any, Callable, Awaitable, Iterable
+```
+
+Pair 2:
+
+SEARCH:
+```python
+def dm_channel_keys(name: str) -> tuple[str, str] | None:
+    """AD-1229: the two keys of a ``dm-<key>-<key>`` channel name, or None for any other name."""
+    parts = name.split("-")
+    if len(parts) != 3 or parts[0] != "dm" or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+```
+REPLACE:
+```python
+def dm_channel_keys(name: str) -> tuple[str, str] | None:
+    """AD-1229: the two keys of a ``dm-<key>-<key>`` channel name, or None for any other name."""
+    parts = name.split("-")
+    if len(parts) != 3 or parts[0] != "dm" or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+def crew_channel_ids(channels: Iterable[WardRoomChannel]) -> list[str]:
+    """BF-923 (#1652): the ids of the channels a ship-level measurement may read: every type but ``dm``.
+
+    Ship, department and custom channels are open to the crew. A DM channel (between two crew members,
+    or a crew member and the Captain) is private to its two parties; every writer creates it with
+    ``channel_type="dm"`` (``get_or_create_dm_channel`` and the three Captain-DM writers).
+    """
+    return [channel.id for channel in channels if channel.channel_type != "dm"]
+```
+
+### 7.7c `src/probos/cognitive/behavioral_probes.py` (M1, Amendment A1: the hold, D11)
+
+Pair 1:
+
+SEARCH:
+```python
+CREW_AGENT_ID = "__crew__"
+```
+REPLACE:
+```python
+CREW_AGENT_ID = "__crew__"
+
+# BF-923 (#1652), BF-921 D3: the five behavioral gauges were 0 on every run until BF-923 gave the
+# engine its threads, so their history is a run of zeros and the first real score reads as critical
+# drift for ``__crew__``, which reaches the Counselor and VitalsMonitor's medical alert. Until the
+# gauges are qualified, each result is stored with its score but marked inconclusive, which the drift
+# detector excludes (drift_detector.py:150). This stretches BF-711's flag from "measured nothing" to
+# "not a verdict yet". Lifting the hold is the qualifying issue's call.
+HELD_FROM_DRIFT = True
+```
+
+Pair 2:
+
+SEARCH:
+```python
+            tier=3,
+            score=snapshot.frame_diversity_score,
+            passed=True,
+```
+REPLACE:
+```python
+            tier=3,
+            score=snapshot.frame_diversity_score,
+            passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
+```
+
+Pair 3:
+
+SEARCH:
+```python
+            tier=3,
+            score=snapshot.synthesis_rate,
+            passed=True,
+```
+REPLACE:
+```python
+            tier=3,
+            score=snapshot.synthesis_rate,
+            passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
+```
+
+Pair 4:
+
+SEARCH:
+```python
+            tier=3,
+            score=snapshot.cross_dept_trigger_rate,
+            passed=True,
+```
+REPLACE:
+```python
+            tier=3,
+            score=snapshot.cross_dept_trigger_rate,
+            passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
+```
+
+Pair 5:
+
+SEARCH:
+```python
+            tier=3,
+            score=score,
+            passed=True,
+```
+REPLACE:
+```python
+            tier=3,
+            score=score,
+            passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
+```
+
+Pair 6:
+
+SEARCH:
+```python
+            tier=3,
+            score=snapshot.anchor_grounded_rate,
+            passed=True,
+```
+REPLACE:
+```python
+            tier=3,
+            score=snapshot.anchor_grounded_rate,
+            passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
+```
+
+### 7.7d `tests/test_behavioral_metrics.py` (M1, Amendment A1: the Ward Room double lists its channels)
+
+Pair 1:
+
+SEARCH:
+```python
+from probos.events import EventType
+```
+REPLACE:
+```python
+from probos.events import EventType
+from probos.ward_room.models import WardRoomChannel
+```
+
+Pair 2:
+
+SEARCH:
+```python
+class MockWardRoom:
+    def __init__(self, threads_data: list[dict]):
+        self._threads = threads_data
+
+    async def browse_threads(self, agent_id="", channels=None, limit=50, since=0.0):
+        return [td["thread"] for td in self._threads]
+```
+REPLACE:
+```python
+class MockWardRoom:
+    def __init__(self, threads_data: list[dict]):
+        self._threads = threads_data
+
+    async def list_channels(self, agent_id=None):
+        # BF-923 (#1652): the engine lists the channels and browses the crew ones explicitly
+        # (browse_threads reads channels=None as one agent's memberships).
+        return [WardRoomChannel(id="ch-1", name="Engineering", channel_type="department",
+                                department="engineering", created_by="system", created_at=0.0)]
+
+    async def browse_threads(self, agent_id="", channels=None, limit=50, since=0.0):
+        return [td["thread"] for td in self._threads]
 ```
 
 ### 7.8 `src/probos/cognitive/counselor.py` (M2)
@@ -1551,7 +2288,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-923 (2026-10-25), #1652 -- the episodic recall callers and the Counselor's assessment inputs read APIs their dependencies have.** Three callers passed `agent_id` to `EpisodicMemory.recall`, which takes none, and swallowed the `TypeError`. The behavioral metrics' anchor-grounded emergence now reads each Ward Room author's recent episodes (`recent_for_agent`) by the sovereign id its episodes carry (the runtime late-binds the identity registry: authors are slot ids), and reports failures once at WARNING. Both orientation callers count the agent's own episodes (`count_agent_episodes`, `count_for_agent`); the stasis-recovery orientation moved into `_orient_crew_after_stasis` and now tells each crew member its episode count, a line AD-567g designed and no one had seen. The Counselor read trust with `TrustNetwork.score` (absent) and Hebbian weights with `get_weights_for` (never defined): it now reads trust with `get_score` and records each reading on the profile (`trust_observations`) with the first as the captured baseline (`observed_baseline`), while every assessment keeps `TRUST_DEFAULT` and the default baseline, so no wellness change, DM, Bridge alert or wellness-view change follows a reading until the gauge is qualified (BF-921 D3; the measurement is on #1523). The Hebbian read is removed. A profile keeps its latest 50 assessments and readings. New: `tests/test_bf923_episodic_recall_callers.py`, `tests/test_bf923_counselor_assessment_inputs.py`. The contract is `prompts/bf-923-episodic-recall-callers-and-counselor-assessment-inputs.md`.
+**BF-923 (2026-10-25), #1652 -- the episodic recall callers and the Counselor's assessment inputs read APIs their dependencies have.** Three callers passed `agent_id` to `EpisodicMemory.recall`, which takes none, and swallowed the `TypeError`. The behavioral metrics' anchor-grounded emergence now reads each Ward Room author's recent episodes (`recent_for_agent`) by the sovereign id its episodes carry (the runtime late-binds the identity registry: authors are slot ids), and reports failures once at WARNING. Both orientation callers count the agent's own episodes (`count_agent_episodes`, `count_for_agent`); the stasis-recovery orientation moved into `_orient_crew_after_stasis` and now tells each crew member its episode count, a line AD-567g designed and no one had seen. The Counselor read trust with `TrustNetwork.score` (absent) and Hebbian weights with `get_weights_for` (never defined): it now reads trust with `get_score` and records each reading on the profile (`trust_observations`) with the first as the captured baseline (`observed_baseline`), while every assessment keeps `TRUST_DEFAULT` and the default baseline, so no wellness change, DM, Bridge alert or wellness-view change follows a reading until the gauge is qualified (BF-921 D3; the measurement is on #1523). The Hebbian read is removed. A profile keeps its latest 50 assessments and readings. Amendment A1: the producer had listed no thread (`browse_threads` reads `channels=None` as one agent's memberships), so every behavioral metric was 0 whatever the read. It now reads the crew channels (never DMs, `crew_channel_ids`) and each author once per computation, with synthesis and convergence embedding off the event loop. The five Tier 3 behavioral probes keep their scores but are held from drift until the gauges are qualified (BF-921 D3), so no Counselor assessment or medical alert follows them. New: `tests/test_bf923_episodic_recall_callers.py`, `tests/test_bf923_counselor_assessment_inputs.py`. The contract is `prompts/bf-923-episodic-recall-callers-and-counselor-assessment-inputs.md`.
 ```
 
 **`DECISIONS.md`:**
@@ -1569,7 +2306,10 @@ REPLACE:
 - *Counselor trust: recorded, held.* `get_score` is read at the one gather seam and recorded on the profile with the first reading as the captured baseline; the values the assessment receives are unchanged (`TRUST_DEFAULT`, Hebbian 0.0, the default baseline), so `assess_agent`, its DMs, its Bridge alerts and the agent's wellness view are unchanged by construction (BF-921 D3). Rejected: a hold inside `assess_agent` (changes the math for explicit callers) and a per-call-site record (fifteen identical lines, a missed one silent). `_on_trust_update` still compares with the default baseline; the measurement on #1523 decides it with the gauge.
 - *Hebbian.* Not read: no per-agent Hebbian reading is defined; choosing one is a new gauge.
 - *Bound.* A profile keeps its latest 50 assessments and readings (on append and on load); the full history stays in the `assessments` table.
-- *Reversal.* Revert the commits; the metric and the counts return to 0 and the Counselor stops recording readings.
+- *Thread scope (A1).* The behavioral metrics read the crew channels through `list_channels()` and `browse_threads(channels=...)`. DM channels are private to their two parties and are not read (`crew_channel_ids`). A failed read raises to the dream, which skips the step; no zero snapshot is recorded.
+- *Tier 3 hold (A1).* The five behavioral probes store their scores marked inconclusive, which drift statistics exclude. Their history is all zeros, so a first real score would read as critical drift for `__crew__` and reach VitalsMonitor's medical alert. Lifting the hold is the qualifying issue's call.
+- *Cost (A1).* One episode read per owner per computation, yielding between reads; synthesis and convergence detection embed in a worker thread.
+- *Reversal.* Revert the commits; the metrics, the counts and the probe scores return to 0 and the Counselor stops recording readings.
 
 ### BF-921 -- The Counselor receives the events it subscribes to; no output suppression carries a penalty (2026-10-24, #1636)
 ```
@@ -1579,6 +2319,8 @@ REPLACE:
 **#1652 checklist text** (the orchestrator records it on the issue):
 - [ ] (1) The anchor metric reads each author's recent episodes by sovereign id; failures reported at WARNING (M1).
 - [ ] (1b) Both orientation callers count the agent's own episodes; the stasis orientation states it (M1).
+- [ ] (1c) The behavioral metrics read the crew channels (no DMs); each author is read once per computation; the five Tier 3 probes are held from drift (M1, Amendment A1).
+- [ ] (1d) Filed: the emergence engine's twin scope defect (R10), fresh crew outside the proactive orientation window (R11), the department lookup by slot id (R12).
 - [ ] (2) The Counselor reads trust with `get_score` and records it with a captured baseline; every assessment, DM, Bridge alert and wellness view held (M2).
 - [ ] (2b) The Hebbian read removed; a profile keeps its latest 50 assessments and readings (M2).
 - [ ] (2c) The measurement before any action: posted on #1523 (section 18, R0).
@@ -1586,7 +2328,10 @@ REPLACE:
 
 ## 9. What this does NOT change
 
-- `EpisodicMemory`, `MockEpisodicMemory`, the Ward Room and the identity registry are not edited. `compute_anchor_independence` and the other four behavioral metrics are unchanged; `BEHAVIORAL_METRICS_UPDATED` is still not emitted on the dream path.
+- `EpisodicMemory`, `MockEpisodicMemory` and the identity registry are not edited. The Ward Room gains one pure function (`crew_channel_ids`) and no service change.
+- The five metrics' formulas and `compute_anchor_independence` are unchanged. Synthesis and convergence detection run the same code in a worker thread (`_count_convergence_events` is the moved loop). `BEHAVIORAL_METRICS_UPDATED` is still not emitted on the dream path.
+- The drift detector, the qualification store, the Counselor's drift handler and VitalsMonitor are unchanged (D11 sits in the probes).
+- The emergence engine (`emergence_metrics.py:390`) keeps its defect (R10).
 - `OrientationService`, its renderers and their texts are unchanged; the warm-boot block's behaviour is unchanged except for the count (its gate stays in `finalize_startup`; its failure still logs at DEBUG).
 - `assess_agent`, `profile.baseline`, `set_baseline`, `CounselorAssessment`, the wellness formula, the thresholds (`config.py:233-238`), `_maybe_send_therapeutic_dm`, `_alert_bridge`, every handler and its trigger (D8), the self-telemetry whitelist and `TrustNetwork` are unchanged. `_hebbian_router` stays injected (R3).
 - The `assessments` table and `CounselorProfileStore` are unchanged.
@@ -1609,7 +2354,7 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf923_counselor_assessme
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
 | R1 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `owner_id = resolve_sovereign_id_from_slot(agent_id, self._identity_registry)` | `owner_id = agent_id` | `test_a_slot_author_is_read_by_the_sovereign_id_its_episodes_carry`, `test_the_booted_runtime_reads_crew_authors_episodes` |
-| R2 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `eps = await episodic_memory.recent_for_agent(owner_id, k=10)` | `eps = await episodic_memory.recall(query="", agent_id=owner_id, limit=10)` | `test_the_anchor_metric_reads_each_authors_recent_episodes`, `test_anchor_analysis_with_memory` |
+| R2 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `owner_reads[owner_id] = await episodic_memory.recent_for_agent(owner_id, k=10)` | `owner_reads[owner_id] = await episodic_memory.recall(query="", agent_id=owner_id, limit=10)` | `test_the_anchor_metric_reads_each_authors_recent_episodes`, `test_anchor_analysis_with_memory` |
 | R3 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `self._identity_registry = identity_registry` | `pass` | `test_a_slot_author_is_read_by_the_sovereign_id_its_episodes_carry` |
 | R4 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `failures += 1  # BF-923: counted, reported once below` | `pass` | `test_a_failing_store_is_reported_once_at_warning` |
 | R5 | 1 | `src/probos/runtime.py` | `self._behavioral_metrics_engine.set_identity_registry(self.identity_registry)` | `pass` | `test_the_booted_runtime_reads_crew_authors_episodes` |
@@ -1629,6 +2374,18 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf923_counselor_assessme
 | R19 | 2 | `src/probos/cognitive/counselor.py` | `"trust_observations": [list(entry) for entry in self.trust_observations],` | `"trust_observations": [],` | `test_the_readings_survive_the_profile_store` |
 | R20 | 2 | `src/probos/cognitive/counselor.py` | `profile.observed_baseline = CognitiveBaseline.from_dict(data["observed_baseline"])` | `pass` | `test_the_readings_survive_the_profile_store` |
 | R21 | 2 | `src/probos/cognitive/counselor.py` | `logger.warning("BF-923: trust read failed for %s; nothing recorded", agent_id, exc_info=True)` | `logger.debug("BF-923: trust read failed for %s; nothing recorded", agent_id, exc_info=True)` | `test_a_failing_trust_read_is_logged_at_warning_and_records_nothing` |
+| R22 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `channels=channel_ids,` | `channels=None,` | `test_the_dream_metrics_read_the_crew_channels_and_not_dms` |
+| R23 | 1 | `src/probos/ward_room/channels.py` | `return [channel.id for channel in channels if channel.channel_type != "dm"]` | `return [channel.id for channel in channels]` | `test_the_dream_metrics_read_the_crew_channels_and_not_dms` |
+| R24 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `raise  # BF-923: the dream logs it and skips step 13 (cognitive/dreaming.py:1683)` | `return BehavioralSnapshot(timestamp=now, threads_analyzed=0)` | `test_a_failing_ward_room_read_is_logged_at_warning_and_raised` |
+| R25 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `"BF-923 (#1652): the Ward Room read failed; no behavioral snapshot this cycle",` | `"the Ward Room read failed",` | `test_a_failing_ward_room_read_is_logged_at_warning_and_raised` |
+| R26 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `if owner_id not in owner_reads:` | `if True:` | `test_each_author_is_read_once_per_computation`, `test_a_failing_author_fails_only_its_threads_and_is_read_once` |
+| R27 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `owner_reads[owner_id] = exc` | `raise` | `test_a_failing_author_fails_only_its_threads_and_is_read_once` |
+| R28 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `await asyncio.sleep(0)  # BF-923: each read is a synchronous full scan; let the loop run between reads` | `pass` | `test_the_author_reads_yield_to_the_event_loop` |
+| R29 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `synthesis_result = await asyncio.to_thread(self._compute_synthesis_detection, qualifying_threads)` | `synthesis_result = self._compute_synthesis_detection(qualifying_threads)` | `test_synthesis_embeds_off_the_event_loop` |
+| R30 | 1 | `src/probos/cognitive/behavioral_metrics.py` | `convergence_events = await asyncio.to_thread(self._count_convergence_events, threads)` | `convergence_events = self._count_convergence_events(threads)` | `test_convergence_embeds_off_the_event_loop` |
+| R31 | 1 | `src/probos/cognitive/behavioral_probes.py` | `HELD_FROM_DRIFT = True` | `HELD_FROM_DRIFT = False` | `test_the_behavioral_probes_are_held_from_drift` |
+
+R22 to R31 are Amendment A1's. They run under the M1 command above, now at HIGH. The five `inconclusive=HELD_FROM_DRIFT,` lines are identical, so no row targets one of them; the parametrized hold test fails for any probe that loses its line.
 
 R13 and R14 mutate the same line; run them as separate rows. The removed Hebbian read cannot be mutated back in one line; `test_the_hebbian_router_is_not_read` and `TestGatherAgentMetrics::test_hebbian_from_router` pin it (an autospec router raises on `get_weights_for`, and `mock_calls` would show any real read).
 
@@ -1697,6 +2454,33 @@ grep -n "^# ProbOS Progress" PROGRESS.md                 -> 1
 
 `create_autospec` checks call signatures, not result shapes; each changed caller has a real-store or real-network test for the shape.
 
+**Amendment A1 (2026-10-25, worktree `bf923-consult1` at M2's candidate `a0620929`, tree `eea1b487`).**
+
+```
+read src/probos/ward_room/threads.py:319-373        -> browse_threads: channels=None -> SELECT channel_id FROM memberships WHERE agent_id = ?; [] when none
+read src/probos/ward_room/service.py:267-295, 390-396 -> list_channels(agent_id=None) admin view; browse_threads(agent_id, channels, ...) after _require_visitor
+read src/probos/ward_room/channels.py:1-41, 58-163  -> dm_channel_name/dm_channel_keys module helpers; default channels; list_channels(None) returns every channel
+grep -n "channel_type" src/probos/ward_room/models.py -> 17: "ship" | "department" | "custom" | "dm"
+read src/probos/routers/wardroom.py:444-450          -> list_channels() then browse_threads("_anonymous", channels=all_ch_ids, ...)
+read src/probos/cognitive/emergence_metrics.py:388-395 -> browse_threads(agent_id="", channels=None, limit=50, since=since) (R10)
+read src/probos/cognitive/dreaming.py:1655-1684       -> step 13 catches any exception at DEBUG and continues
+read src/probos/cognitive/behavioral_metrics.py:18-31, 119-268, 274-470, 475-552, 558-640 -> imports (no asyncio); scope; metrics; convergence loop; anchor loop
+read src/probos/cognitive/episodic.py:4109-4157, 4261-4280 -> recent_for_agent / count_for_agent: _collection.get(...) of the whole collection, synchronous
+read src/probos/cognitive/behavioral_probes.py:1-251   -> CREW_AGENT_ID; five probes build TestResult(..., tier=3, score=..., passed=True, ...)
+read src/probos/cognitive/qualification.py:70-92, 162-268, 496-575 -> TestResult.inconclusive (BF-711); save_result writes it; get_history newest first; baseline when error is None
+read src/probos/cognitive/drift_detector.py:80-245, 330-370, 461-491 -> inconclusive filtered after get_history; std 0 -> z 0; collective reports emit QUALIFICATION_DRIFT_DETECTED
+read src/probos/agents/medical/vitals_monitor.py:49, 176-189, 345-367 -> interval 5.0; critical drift reports counted; medical_alert broadcast each heartbeat
+read src/probos/agents/medical/diagnostician.py:14-59 -> handles medical_alert with an LLM diagnosis
+read src/probos/cognitive/counselor.py:1468-1542, 2441-2452 -> drift handler; DM only when unfit or wellness below yellow
+read src/probos/startup/finalize.py:5404-5413          -> set_get_department(lambda aid: runtime.ontology.get_agent_department(aid)) (R12)
+read src/probos/ontology/departments.py:65-73, 91-105; src/probos/substrate/identity.py:17-20 -> keyed by agent_type; slot id {agent_type}_{pool_name}_{index}_{hash8}
+read src/probos/config_models/emergence.py:325-352     -> lookback 72 h, contributors 2, posts 3, synthesis posts 4, convergence min 2, anchor min 3
+read src/probos/config.py:3596-3619                    -> QualificationConfig: weekly interval, warning 2.0, critical 3.0, min samples 3, window 20
+read tests/test_behavioral_metrics.py:1-80, 555-713    -> MockWardRoom without list_channels; three compute tests; probe tests assert no inconclusive
+read tests/test_ad583f_observable_state.py:342-363     -> engine._compute_convergence_correctness(threads) under asyncio.run (unchanged signature)
+read logs/bf923r1/reviewer_m1_test_thread_scope.py     -> real WardRoomService(db_path=...) thread and post pattern
+```
+
 ## 12. Absence Verified (2026-10-25)
 
 ```
@@ -1749,6 +2533,41 @@ CLAIM: no test pins the old recall call or the old count
 RUN:   grep "agent_id=_sid|recall\(\"\", agent_id" tests/
 FOUND: 0 (count_for_agent hits are other features' doubles)
 HOLDS: yes
+
+CLAIM (A1): every DM channel is created with channel_type "dm"
+RUN:   grep 'channel_type="dm"' src/probos
+FOUND: capability_request_notifier.py:119, proactive.py:4875, ward_room/channels.py:251, task_completion_notifier.py:132 (4); create_channel's other callers assignment.py:190 and routers/wardroom.py:260 pass "custom"
+HOLDS: yes
+
+CLAIM (A1): the Ward Room has no read-restricted non-DM channel
+RUN:   grep -i "private|restricted|invite" src/probos/ward_room
+FOUND: messages.py:188, threads.py:459, both "Author is restricted from posting" (2)
+HOLDS: yes
+
+CLAIM (A1): only the drift detector reads TestResult.inconclusive, and the HXI shows none
+RUN:   grep "inconclusive" src/probos ; grep "inconclusive" ui/src
+FOUND: reader drift_detector.py:150; definitions and writers qualification.py:92, 348, 366, 440, 544; communication_benchmarks.py (its own field); ui/src 0
+HOLDS: yes
+
+CLAIM (A1): the snapshot's fields have no reader beyond dreaming, the probes and the API
+RUN:   grep "behavioral_quality|synthesis_rate|anchor_grounded" src/probos ; grep "_behavioral_metrics_engine|latest_snapshot" src/probos
+FOUND: types.py, dreaming.py, behavioral_metrics.py, behavioral_probes.py (4 files); routers/system.py:685-708; collective_tests.py and vitals_monitor.py read other engines
+HOLDS: yes
+
+CLAIM (A1): QUALIFICATION_DRIFT_DETECTED has one handler, and the Diagnostician's treatment is not dispatched
+RUN:   grep "QUALIFICATION_DRIFT" src/probos ; grep "treatment_intent" src/probos
+FOUND: events.py:215, event_persistence.py:360, counselor.py:719, :1082, drift_detector.py:462, :482; treatment_intent diagnostician.py:30 (prompt), experience/panels.py:693 (display)
+HOLDS: yes
+
+CLAIM (A1): compute_behavioral_metrics has one production caller and three test calls
+RUN:   grep -c "compute_behavioral_metrics" in *.py
+FOUND: behavioral_metrics.py 1 (def), dreaming.py 1, tests/test_behavioral_metrics.py 3
+HOLDS: yes
+
+CLAIM (A1): the proactive loop already makes whole-collection reads each cycle
+RUN:   grep "count_for_agent\(|recent_for_agent\(" src/probos/proactive.py
+FOUND: 1837, 1962, 2693 (3)
+HOLDS: yes
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -1756,6 +2575,13 @@ HOLDS: yes
 - Bug fix; the external review was one search, on the hold's pattern. **Absorbed:** shadow mode, a new signal run on live inputs and logged but never acted on, promoted only on explicit criteria ([AWS SageMaker shadow variants](https://docs.aws.amazon.com/sagemaker/latest/dg/model-shadow-deployment.html); [Atlan, shadow deployment](https://atlan.com/know/shadow-deployment-for-ml-models/)). M2 is that: readings recorded, decisions on today's inputs, and section 18's entry names the promotion criteria. **Absorbed as a stated limit:** shadow evaluation measures what the gauge would have done, not how the crew would respond ([Qwak](https://www.qwak.com/post/shadow-deployment-vs-canary-release-of-machine-learning-models)); a later staged release is the qualifying issue's choice. `docs/research/reference-projects.md`: not consulted (ProbOS plumbing; no project there covers it).
 - Internal: AD-503 (gather), AD-495 (trust-update reassessment), AD-505 (DMs), AD-566c/e (drift), AD-567g (orientation), AD-569 (metrics), AD-441/BF-138 (sovereign ids), BF-907 (trust key form), BF-921 D3.
 - Blind spots addressed: the slot/sovereign id mismatch (D1); the drift detector's `__crew__` reaction to a metric leaving zero (E1); the confidence baseline that a naive capture would make live (D6); the trust-update trigger that a captured baseline would widen (D8). Considered, deferred: thread-relevant anchor episodes (R5); a batched episode count (R7).
+- Amendment A1 addresses blind spots found in review and in the A1 pass:
+  - the producer's thread scope (D10; the issue's premise was incomplete);
+  - the VitalsMonitor medical-alert path that a critical `__crew__` drift reaches, which section 5 had missed (D11);
+  - the activated cost: per-thread author reads and synchronous embeddings (D12);
+  - the department lookup by slot id (R12).
+
+  No external search: this is ProbOS plumbing with no outside analogue, and `docs/research/reference-projects.md` was not consulted for the same reason.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -1767,6 +2593,11 @@ HOLDS: yes
 6. A profile never holds more than `COUNSELOR_PROFILE_HISTORY_LIMIT` assessments or readings, after append or after load, and keeps the latest; a profile saved before the build loads.
 7. The hold test compares a Counselor with a real low trust reading against one with no trust network on two gathering paths, with only the DM sender and the Bridge alert replaced by spies, and compares the agent's own wellness view.
 8. Every replaced double says inline what it used to accept and why; no test was deleted.
+9. (A1) The producer lists channels with `list_channels()` and browses exactly the ids `crew_channel_ids` returns. No `dm` channel's thread is fetched. A failed list or browse logs one WARNING, raises, and records no snapshot.
+10. (A1) Each resolved owner is read at most once per computation. A failed read fails each of that owner's threads without a second read, and the aggregate WARNING counts failed threads as before. The loop runs between owner reads.
+11. (A1) Synthesis detection and the convergence loop run in a worker thread and touch no state but their arguments and the engine's config. Their results equal the base's for equal inputs. `_count_convergence_events` is the removed loop, unchanged.
+12. (A1) Every result of the five behavioral probes carries `inconclusive=True` and the score it carried before. With a history of zeros, a held non-zero result raises no drift signal; the same result unheld is critical (the premise).
+13. (A1) M2's files (`cognitive/counselor.py` and its three test files) are byte-identical to round 1; only section 8's tracker text changed in M2's commit.
 
 ## 15. Acceptance criteria
 
@@ -1774,6 +2605,9 @@ HOLDS: yes
 - On a real store, both orientation callers pass the agent's own episode count; at stasis recovery an agent with episodes is told the count.
 - The Counselor reads trust with `get_score` on a real `TrustNetwork`, records it with a captured baseline, and, with a reading that would make the agent unfit, produces the same assessment, no DM, no Bridge alert and the same wellness view as a Counselor with no trust network.
 - The Hebbian router is not read. A profile keeps at most 50 assessments and readings.
+- (A1) Through `compute_behavioral_metrics` on a real Ward Room, a crew-channel thread is analysed and a DM thread is not fetched; a failed Ward Room read is logged at WARNING and records no snapshot.
+- (A1) Each author is read once per computation; synthesis and convergence detection do not hold the event loop.
+- (A1) The five Tier 3 behavioral probes keep their scores and raise no drift against a history of zeros.
 - The measurement entry is posted on #1523 before #1652 closes.
 - Before editing, the tests that pin current behaviour were grepped, and each updated pin says why inline.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -1781,8 +2615,13 @@ HOLDS: yes
 ## 16. Live acceptance: what is read after the first session (read-only)
 
 From `%LOCALAPPDATA%\ProbOS\data` after the first vessel session on the merged build, record on #1652:
-- (M1) after the first dream: the `/behavioral-metrics` snapshot's `anchor_analyzed_threads` and `anchor_grounded_rate` (expected above 0 when qualifying threads exist); the count of `BF-923 (#1652): anchor analysis failed` and `BF-923: episode count failed` lines (expected 0).
-- (M1) at the next drift check: any `AD-566c: Warning qualification drift for __crew__ on anchor_grounded_emergence` or `AD-567c: Critical drift for __crew__ on anchor_grounded_emergence` line (E1; expected at most one, no DM).
+- (M1) After the first dream:
+  - the `/behavioral-metrics` snapshot's `threads_analyzed`, `synthesis_rate`, `convergence_events`, `anchor_analyzed_threads` and `anchor_grounded_rate` (expected above 0 when qualifying crew threads exist; `frame_diversity_score` and `cross_dept_trigger_rate` expected 0, R12);
+  - the count of `BF-923 (#1652): anchor analysis failed`, `BF-923 (#1652): the Ward Room read failed` and `BF-923: episode count failed` lines (expected 0);
+  - the dream's duration against the previous dreams (E6).
+- (M1) At the next drift check:
+  - the five behavioral tests' newest rows in `qualification_results.db` (expected non-zero scores with `inconclusive` 1);
+  - no `drift for __crew__ on` line for any of them, and no `qualification_drift` medical alert attributable to them (D11; expected 0).
 - (M1) the first stasis recovery's boot time against the previous one (E4, R7).
 - (M2) the count of `BF-923: trust read failed` lines (expected 0); read-only from `counselor.db` `cognitive_profiles.profile_json`: the number of profiles with `observed_baseline` set and their `trust_observations` lengths; the `AD-505: Sent therapeutic DM to` count against BF-921's first-session count (expected no change attributable to BF-923).
 
@@ -1795,6 +2634,10 @@ From `%LOCALAPPDATA%\ProbOS\data` after the first vessel session on the merged b
 - That `TrustNetwork().record_outcome(..., success=False, weight=5.0)` lowers the score below 0.8 with default dampening (read from `trust.py:372-410`; the test asserts it).
 - The boot-time cost of one `count_for_agent` scan per crew agent at stasis recovery on a large store (E4); section 16 reads it.
 - The live volume of trust readings per profile (bounded at 50).
+- (A1) The added cost on a real vessel. The reviewer measured one whole fetch at about 0.67 s for 3,000 episodes. The live store size and the synthesis/convergence embedding time are not measured (about one embedding per post, plus one per author, per qualifying thread, for up to 100 threads). Section 16 reads the dream duration.
+- (A1) That ONNX embedding calls from the worker thread and from the loop's thread can overlap safely. ONNX Runtime documents `InferenceSession.run` as thread-safe; this was read, not run. The worker runs one computation at a time.
+- (A1) That SQLite accepts `channel_id IN ()` when a Ward Room has no crew channel. SQLite allows an empty IN list; not run here. A started Ward Room always has its default channels (`channels.py:58-127`).
+- (A1) The new tests were written in a read-only consult and not run; the Builder's tests-first run is their first execution. The VitalsMonitor and Diagnostician path of D11 was traced by reading, not executed.
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -1806,3 +2649,10 @@ From `%LOCALAPPDATA%\ProbOS\data` after the first vessel session on the merged b
 - **R5.** The anchor metric reads each author's ten most recent episodes, not the episodes relevant to the thread (AD-569's wording). Whether thread-relevant episodes (`recall_for_agent(owner, title, k)`) measure grounding better is a metric design question.
 - **R6.** `tests/test_bf235_stale_identity_cache.py:197-225` copies the warm-boot loop inline instead of calling it; it can now call `_orient_crew_after_stasis`.
 - **R7.** `count_for_agent` scans every episode's metadata (`episodic.py:4261-4280`). The proactive loop already calls it each cycle (`proactive.py:2699`); BF-923 adds one call per cycle inside the orientation window and one per crew agent at stasis recovery. If section 16 shows a slower stasis boot, a batched per-agent count is the fix.
+- **R8 (review round 1, M2, P3, injected-only).** The Hebbian "not read" pins (`tests/test_bf923_counselor_assessment_inputs.py:136-146`, `tests/test_counselor_activation.py:230-240`) assert `mock_calls == []` on a `create_autospec(HebbianRouter)`. The autospec raises `AttributeError` for `get_weights_for`, the old guarded lookup would catch it, and a failed lookup never enters `mock_calls`, so reintroducing the old lookup passes both. Fix: record attribute lookups and assert `get_weights_for` is never requested.
+- **R9 (review round 1, M2, P3, injected-only).** `test_trust_observations_keep_the_latest_readings` (`:178-190`) asserts length 50 and sorted timestamps, so keeping the first 50 passes. Fix: a controlled clock and the exact final 50 entries.
+- **R10 (file as a new BF; the orchestrator files and numbers it).** The emergence engine has the same scope defect: `emergence_metrics.py:390` calls `browse_threads(agent_id="", channels=None, limit=50, since=since)`, so its metrics see no thread (live: `convergence_rate` 0 threads in all 319 runs). Its consumers include groupthink and fragmentation warnings that drive Counselor and Bridge actions, so the fix needs its own BF-921 D3 analysis and hold. It can reuse `crew_channel_ids`.
+- **R11 (file as a new BF).** Fresh crew never enter the proactive orientation window. Their certificate is attached late (`startup/communication.py:910-921`), which sets `sovereign_id` but not `_birth_timestamp`; the non-deferred path sets it (`agent_onboarding.py:446-460`). So `proactive.py:1777-1781` computes an infinite age and skips the orientation supplement for every first-boot crew member (16 of 16 on the reviewer's fresh boot). Reviewer's design: hydrate temporal context from the certificate when it is attached (`set_temporal_context`), with a fresh-runtime caller test. Disclose that first-boot crew then see the proactive orientation supplement.
+- **R12 (file as a new BF).** The dream's department lookup receives slot ids. `startup/finalize.py:5411-5413` binds `runtime.ontology.get_agent_department(aid)`, keyed by agent type (`ontology/departments.py:65-73`), but the behavioral engine passes Ward Room `author_id`s, which are slot ids (`{agent_type}_{pool}_{index}_{hash8}`, `substrate/identity.py:20`). Every lookup returns None, so frame diversity and the cross-department trigger rate stay 0; `dreaming.py:1032-1034` passes callsigns to the same lookup. Fixing it activates two more held gauges and their on-loop embeddings (move them off the loop as D12 does).
+- **R13 (register; joins R7).** Each remaining whole-collection read (`recent_for_agent`, `count_for_agent`, `episodic.py:4124`, `:4268`) holds the loop for one fetch: about 0.67 s per 3,000 episodes, linear in store size. A batched or indexed per-owner read in `EpisodicMemory`, or a paged `to_thread` fetch (`_iter_collection_pages`, `episodic.py:361-409`), is the fix for every caller.
+- **R14 (post on #1523, unchecked; the orchestrator assigns the F-number).** "BF-923 A1 (#1652): **qualify the five behavioral gauges before drift acts on them.** Their results are stored with real scores and `inconclusive=True` (`behavioral_probes.py` `HELD_FROM_DRIFT`), so no drift signal, Counselor assessment or medical alert follows them. Before the hold is lifted, over at least five weeks of dreams, read-only: each gauge's distribution and week-to-week variation; what a held run would have produced in drift (z, severity) and in VitalsMonitor alerts. Promotion criteria, decided by the issue that lifts the hold: whether the April zero history is reset or marked inconclusive first; whether `__crew__` drift reaches VitalsMonitor at all; thresholds per gauge."
