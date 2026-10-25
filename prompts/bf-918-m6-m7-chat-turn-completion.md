@@ -592,6 +592,8 @@ describe('BF-918 M6 and M7: a reply completes its turn on its own last sentence'
 
   it('C24 (M7, review round 1): in a meeting the open mic stays refused until the reply\'s last sentence ends', async () => {
     let submits = 0;
+    // The meeting's own gate: C9 (callAudioEnabled) above leaves the call audio muted in the shared store.
+    useStore.setState({ callAudioEnabled: true });
     const meeting = renderHook(() => useMeetingVoice({ meetingActive: true, scopeKey: 'c24', owner: 'c24' }));
     // ProfileChatTab's meeting arm passes this predicate (AD-922's echo gate).
     const dispose = armConversationMode({
