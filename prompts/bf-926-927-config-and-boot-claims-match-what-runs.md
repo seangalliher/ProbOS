@@ -2,13 +2,15 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25
 
+**Amendment A1 (2026-10-25, `claude-architect`; on `origin/main` `5e3cc991`, after BF-924's PR #1665).** §7.12's deletion of `security.memory.enforce_leak_guard` moves the default `SystemConfig()` dump, which the AD-1152 OFF golden pins (`tests/fixtures/ad1152_agentic_off_golden.json:17` `default_config_sha256`, `:15` `observation_sha256`; `tests/test_ad1152_agentic_correlation.py:215-218`, `:500`, `:514-516`, `:569-570`). The draft missed it: section 12's census grepped counts, not digests. Added: §7.24 (the two derived digests, refreshed by tool), the AD-1152 file on M2's focused list, its three cases in M2's tests-first count (45 to 48), a row in section 5(d), a digest census in section 12 and R9. Binding control, campaign of record (`logs/bf926r1/`, base `5e3cc991`): the base source with exactly `config["security"]["memory"]["enforce_leak_guard"]` popped passes the three cases against §7.24's values; `main`'s fixture fails them at `default_config_sha256`; the unmodified test fails them against §7.24's values. Applied by tool with no review round (BF-924 brake 6, option B), in M2's commit. No other pair changes.
+
 **Status:** build-ready. Two BFs, one batch, two milestones, one PR, one gate; #1656 and #1657 close with it. **Numbers:** BF-926 (#1656), BF-927 (#1657); this contract allocates nothing. **Tier:** M1 **STANDARD** (BF-927: log text, docstrings, roadmap status words, one new test); M2 **STANDARD** (BF-926: field descriptions, one field deleted, yaml keys, a report-only script). **No behaviour change:** no gate, detector, check or listener starts or stops; the only executable additions are a script nothing gates on and two test files. **Base:** `7ffbda5a` (`origin/main` `8f9fd379` plus BF-924's contract applied); BF-924 (#1654) merges first; the orchestrator re-verifies every SEARCH on the merge SHA, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF. **Fragment SEARCHes:** the roadmap entries (§7.9, §7.10) are single lines of up to 10,000 characters; their SEARCH is a fragment of the line and occurs once in the file.
 
 **Tests:**
 - New `tests/test_bf927_boot_claims.py` (M1: 6 functions, 34 cases).
 - New `tests/test_bf926_config_readers.py` (M2: 6 functions, 49 cases).
 - New `scripts/check_config_readers.py` (M2, report-only).
-- Updated pins (M2): `tests/test_ad607_memory_security.py` (default of the deleted field), `tests/test_ad1270e2g_crew_models.py` (pre-move dump of `MemorySecurityConfig`), `tests/test_ad1185_config_profiles.py` (two tests that used the manifest's only conflict edge), `tests/test_ad1270e1_config_facade.py` (field-count pin 1876 to 1875).
+- Updated pins (M2): `tests/test_ad607_memory_security.py` (default of the deleted field), `tests/test_ad1270e2g_crew_models.py` (pre-move dump of `MemorySecurityConfig`), `tests/test_ad1185_config_profiles.py` (two tests that used the manifest's only conflict edge), `tests/test_ad1270e1_config_facade.py` (field-count pin 1876 to 1875), `tests/fixtures/ad1152_agentic_off_golden.json` (the default-config and observation digests, §7.24, A1).
 
 ## 0. Premise: what is present on this tree
 
@@ -81,6 +83,7 @@
 | facade `canonical_dump_sha256`, 15 `schema_sha256` (section 6) | | moved | regenerated |
 | manifest `census:` (`config-profiles.yaml:21-25`) | 449 / 225 / 224 / 85 / 140 | 448 / 224 / 224 / 85 / 139 (only `default_false` is test-pinned, `test_ad1185_*:857-859`) | §7.17 pair 3, re-measured by the orchestrator |
 | `test_ad1270e2g_*` `EXPECTED_DUMPS["MemorySecurityConfig"]` | 6 keys | 5 | §7.20 |
+| `ad1152_agentic_off_golden.json` `default_config_sha256` / `observation_sha256` (`:17` / `:15`; `test_ad1152_*:514`, `:516`, `:569-570`) | `4fde4128…` / `649c58d0…` | `16cbb4bc…` / `7361f61b…` | §7.24 (A1) |
 | `test_ad1270e2*` bound tables (`EXPECTED_BOUND_COUNTS`) | | unchanged (a description is not a bound; `enforce_leak_guard` had none) | none |
 
 **(e) The report-only script (M2).** No consumer: nothing imports or gates on it; the two tests load it by path.
@@ -106,7 +109,7 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf927_boot_claims.py tes
 
 (Collected here without the new file: 1,115; not run. Expect 1,149 collected, all passing; the orchestrator's measured counts supersede these.) `tests/test_config_reference_current.py` and `tests/test_ad1270e1_config_facade.py` are deliberately outside M1's list (D9).
 
-**M2 (STANDARD), §7.12 to §7.23.** First heading: `### 7.12 \`src/probos/config_models/crew.py\` (M2: the leak guard)`. After applying §7.12 to §7.23, regenerate and check, in this order:
+**M2 (STANDARD), §7.12 to §7.24.** First heading: `### 7.12 \`src/probos/config_models/crew.py\` (M2: the leak guard)`. After applying §7.12 to §7.24, regenerate and check, in this order:
 
 ```
 d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_config_reference.py
@@ -129,21 +132,22 @@ Before editing, grep the pins: `grep -rn "enforce_leak_guard\|captain_card_refre
 
 **Doubles (M2): none.** The real-tree cases run the check on `SystemConfig`, `src/probos` and the tracked `config/system.yaml`. The fixture model, source tree and yaml are the check's inputs. The re-based AD-1185 tests use a fixture manifest through `load_profile`'s real `manifest_path` parameter (`config_profiles.py:575`), not a patched reader.
 
-**Tests first:** with §7.18 to §7.23 applied (the script is needed to collect the new file) and §7.12 to §7.17 not, exactly **45** cases fail:
+**Tests first:** with §7.18 to §7.24 applied (the script is needed to collect the new file) and §7.12 to §7.17 not, exactly **48** cases fail:
 - `test_the_real_config_reports_each_bf926_field_as_inert` (39): `assert path in report.inert` (no marker yet);
 - `test_the_leak_guard_flag_is_gone_and_a_config_that_sets_it_still_loads`: `assert "enforce_leak_guard" not in MemorySecurityConfig.model_fields`;
 - `test_the_tracked_yaml_carries_no_key_bf926_removed`: `assert "cognitive.captain_card_refresh_min_interval_seconds" not in report.orphan_yaml_keys`;
 - `test_memory_security_config_defaults_observational` (`test_ad607_*:161`): the new `not in model_fields` line;
 - `test_system_config_dump_is_unchanged_for_the_moved_model[MemorySecurityConfig]` and `test_constructing_with_no_arguments_matches_the_pre_move_dump[MemorySecurityConfig]` (`test_ad1270e2g_*:443`, `:544`): the dump still has the key;
 - `test_committed_baseline_records_the_measured_surface` (`test_ad1270e1_*`): `assert 1876 == 1875`.
+- `test_default_off_matches_pinned_base` (`test_ad1152_*:506`): `AssertionError: default_config_sha256` at `:514`; `test_default_off_golden_pins_only_descriptor_owner_platform[linux]` and `[win32]` (`:521`): the `_json_bytes` comparison at `:569` (first difference at byte 26, inside the digest). The dump still has the field; from §7.12 on, all three pass (A1).
 
 The fixture report case, the 7 exit-status cases and both re-based AD-1185 tests pass on both sides. After §7.12-§7.17 and before regeneration, `test_identity_matches_the_e1_baseline[MemorySecurityConfig]` and the e1 checks fail until the baseline is regenerated; after regeneration everything passes. Focused check:
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf926_config_readers.py tests/test_ad607_memory_security.py tests/test_ad1270e2g_crew_models.py tests/test_ad1185_config_profiles.py tests/test_ad1270e1_config_facade.py tests/test_config_reference_current.py tests/test_ad1270e2b_cognition_models.py tests/test_ad1270e2i_agentic_models.py tests/test_ad443_mobility.py tests/test_ad573_memory_budget.py tests/test_ad579a_pinned_knowledge.py tests/test_ad579b_temporal_validity.py tests/test_ad670_memory_metabolism.py tests/test_ad1234_captain_card_contract.py tests/test_ad739_captain_card.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf926_config_readers.py tests/test_ad607_memory_security.py tests/test_ad1270e2g_crew_models.py tests/test_ad1185_config_profiles.py tests/test_ad1270e1_config_facade.py tests/test_ad1152_agentic_correlation.py tests/test_config_reference_current.py tests/test_ad1270e2b_cognition_models.py tests/test_ad1270e2i_agentic_models.py tests/test_ad443_mobility.py tests/test_ad573_memory_budget.py tests/test_ad579a_pinned_knowledge.py tests/test_ad579b_temporal_validity.py tests/test_ad670_memory_metabolism.py tests/test_ad1234_captain_card_contract.py tests/test_ad739_captain_card.py -n 0 -q
 ```
 
-(Collected here without the new file: 1,075; not run. Expect 1,124 collected, all passing after regeneration.) `test_ad1270e2i_*::test_the_remaining_true_leaf_set_is_pinned` scans `config.py` class bodies with docstrings and comments stripped but **string literals kept** (`:496-519`): a description that names a module-level `config.py` identifier (`yaml`, `os`, `math`, `Path`, a config class or constant) could change a class's leaf status. The three `config.py` classes edited here (`CognitiveConfig`, `FederationConfig`, `SecurityConfig`) are not in `REMAINING_TRUE_LEAVES` (`:160-177`), and adding identifiers can only remove a leaf, so the pin holds; the descriptions in §7.13 avoid those identifiers anyway.
+(Collected here without the new file: 1,116 with A1's 41 AD-1152 cases; not run. Expect 1,165 collected, all passing after regeneration.) `test_ad1270e2i_*::test_the_remaining_true_leaf_set_is_pinned` scans `config.py` class bodies with docstrings and comments stripped but **string literals kept** (`:496-519`): a description that names a module-level `config.py` identifier (`yaml`, `os`, `math`, `Path`, a config class or constant) could change a class's leaf status. The three `config.py` classes edited here (`CognitiveConfig`, `FederationConfig`, `SecurityConfig`) are not in `REMAINING_TRUE_LEAVES` (`:160-177`), and adding identifiers can only remove a leaf, so the pin holds; the descriptions in §7.13 avoid those identifiers anyway.
 
 **The broad gate is run once for the batch by the main session, not by the Builder.** New tests must pass alone, in file order and shuffled: both new files hold only read-only process caches (`functools.lru_cache` over parsed source and one report) and restore the one logger they touch.
 
@@ -1862,6 +1866,28 @@ REPLACE:
     assert counts["field_definitions"] == 1875  # AD-1206 intentionally adds github_repository.
 ````
 
+### 7.24 `tests/fixtures/ad1152_agentic_off_golden.json` (M2: the default-config digest, A1)
+
+The AD-1152 OFF golden pins the SHA-256 of `SystemConfig().model_dump()` (`test_ad1152_*:215-218`, `:500`) and of the whole observation (`:516`, `:570`); §7.12's deletion moves both. Each test-side addition is popped at `:220-314`; a deleted field is refreshed here, as BF-924 did. Both values are derived and the test checks them in full: applied by tool, no review round, in M2's commit (not M1's: M1 keeps the field). Only lines 15 and 17 change; `base_commit` (`:510`, asserted against a constant) and `base_source_blobs` (read by no test) are capture records, unchanged. Before committing, against the scratch tree's `src`: `tests/test_ad1152_agentic_correlation.py -n 0 -q` gives 41 passed on M1 with `main`'s fixture and 41 passed on M2 plus this section (the base-source control cannot see keys that the first-key failure masked). Either failing is a hard stop for the Architect.
+
+SEARCH:
+````json
+  "observation_sha256": "649c58d03cc796ba45e8d36e0f0c93c3836a3ab2b733a985f714e0dc06e28e9e",
+````
+REPLACE:
+````json
+  "observation_sha256": "7361f61b2a6b2a71b248b68beffdb032f35e4fca923d54856890ab8a10eb8083",
+````
+
+SEARCH:
+````json
+    "default_config_sha256": "4fde4128e18d3d45b60aa4bfba99d10cd62c39d330ce580ee15fd4c1beb64589",
+````
+REPLACE:
+````json
+    "default_config_sha256": "16cbb4bc1731a561deb81bed945bb15a20269c6988e6e20c10a022722ee248e4",
+````
+
 ## 8. Tracking
 
 Anchors: `PROGRESS.md`'s title line and `DECISIONS.md`'s heading `### BF-924 -- Trust inputs read through APIs that exist (2026-10-25, #1654)`. The entries go in M2's commit. Set the date to the commit date.
@@ -2090,10 +2116,21 @@ RUN:   Grep "conflict" docs/development/config-profiles.yaml
 FOUND: every row "conflicts_with: []" except :462-468
 HOLDS: yes
 
-CLAIM: only the facade test pins the counts this moves
+CLAIM: only the facade test pins the counts this moves (counts only; digests and dumps are the next claim, A1)
 RUN:   Grep "\b(1876|1887|1875|1886|449|448|225|224|140|139)\b" tests/test_ad1*.py; Grep "census|[0-9]{3,4} fields" docs/development/config-reference.md
 FOUND: test_ad1270e1_config_facade.py:1557-1558 only (others are unrelated numbers); the reference has no census
 HOLDS: yes (BF-924's A1-3/A1-4 enumeration of the facade and census pins still applies)
+
+CLAIM (A1): the only digest, schema or whole-model-dump pins this contract moves are the facade baseline (regenerated), test_ad1270e2g's EXPECTED_DUMPS (§7.20) and the AD-1152 golden (§7.24)
+RUN:   Grep "enforce_leak_guard" over the repo (prompts excluded)
+FOUND: system.yaml:977, DECISIONS.md:1557 (history), config-facade-baseline.yaml:2441, config-profiles.yaml:225, 228, 463, crew.py:122, test_ad1185:680, test_ad1270e2g:185, test_ad607:165; each changed in §7.12-§7.23
+RUN:   Grep -i "sha256\(.*(dump|schema|config)|(dump|schema)_sha|config_sha|digest\(.*config" over tests, scripts, src, docs, config
+FOUND: check_config_facade.py and config-facade-baseline.yaml (regenerated); test_ad1152:500 and its fixture :17 (§7.24); test_ad1135_setup_cli:690-1028 and test_ad1135_setup_chain:340-351 (one file's bytes before and after one run); test_ad1196:234 (a helper over its own values); command_policy.py:1875 (CommandPolicyConfig, untouched)
+RUN:   Grep "model_json_schema" over tests, scripts, src (*.py)
+FOUND: check_config_facade.py:976 (regenerated); test_ad1270e1:184-185, test_ad666:1020, test_config.py:75, test_ad1192_owned_steps_store:2027, 2032: none over a model touched here
+RUN:   Grep "SystemConfig\(\)\.model_dump|config\.model_dump\(" tests; Grep "_golden\.json|_baseline\.json" tests
+FOUND: test_ad1270e2*: per-model sub-dicts (only e2g owns MemorySecurityConfig); test_ad1185:104-107, 124-127 (pairs computed in one process, :99-102); test_ad1206:1091 (RepairConfig); test_ad1258:1384 and test_ad1270f:732 (before and after in one process); test_ad1152:217 (§7.24); goldens ad1179, ad1200, ad1240 x2 pin tool definitions and request bodies, which no field description reaches (claim above) and no default but the deleted field changes
+HOLDS: yes, given §7.24's two confirming runs
 
 CLAIM: no other model nests a model whose schema changes
 RUN:   Grep "WorkingMemoryConfig|MemoryBudgetConfig|MetabolismConfig|PinnedKnowledgeConfig|TemporalValidityConfig|MemorySecurityConfig|FederationConfig\b" src/probos
@@ -2158,3 +2195,4 @@ After the first session on the merged build, from the vessel log under `%LOCALAP
 - **R6.** `docs/development/yeo-gap-reconciliation-2026-05-20.md:53`, `:177` record AD-753's read-only bypass as shipped "at the gate"; the gate has no caller. Dated reports are not rewritten (D8).
 - **R7.** The reader check under-reports (name match); a receiver-resolved version, like BF-927's resolver, is the follow-up if the Captain decides to enforce it.
 - **R8.** `roadmap-era-5-completed.md:307-310` (Phase 31 design list) describes the Security Team in the present tense; design text, left (D8).
+- **R9.** The AD-1152 OFF golden is no longer the pristine capture its lineage describes. `docs/development/agentic-event-correlation.md:133-139` calls it immutable and says only AD-1152's own leaf is removed before the digest is compared, but BF-924 (A9) and this contract (A1) refreshed `default_config_sha256` for deleted fields. Every added field is popped in the test with a comment (`test_ad1152_*:220-314`); a deleted field leaves no trace in the test. Choosing one rule for a deleted field (refresh plus a test comment naming it, or re-insert its captured default in the test and restore the pristine digest) and correcting the doc is a separate change.
