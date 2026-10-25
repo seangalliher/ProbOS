@@ -17,6 +17,7 @@ Hutchins (1995) distributed cognition, Shaffer et al. (2016) ENA.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import defaultdict, deque
@@ -93,10 +94,16 @@ class BehavioralMetricsEngine:
         self._config = config or BehavioralMetricsConfig()
         self._snapshots: deque[BehavioralSnapshot] = deque(maxlen=self._config.max_snapshots)
         self._verifier = observable_state_verifier
+        self._identity_registry: Any = None  # BF-923 (#1652): slot id -> sovereign id for episode reads
 
     def set_observable_verifier(self, verifier: Any) -> None:
         """AD-583f: Late-bind observable state verifier."""
         self._verifier = verifier
+
+    def set_identity_registry(self, identity_registry: Any) -> None:
+        """BF-923 (#1652): late-bind the registry that maps a Ward Room author's slot id to the
+        sovereign id its episodes carry (BF-138). Without one, each author is read by its own id."""
+        self._identity_registry = identity_registry
 
     @property
     def latest_snapshot(self) -> BehavioralSnapshot | None:
@@ -123,12 +130,25 @@ class BehavioralMetricsEngine:
 
         # 1. Retrieve qualifying threads
         since = now - (cfg.thread_lookback_hours * 3600)
-        threads = await ward_room.browse_threads(
-            agent_id="",
-            channels=None,
-            limit=100,
-            since=since,
-        )
+        # BF-923 (#1652): browse_threads reads channels=None as the given agent's memberships, so
+        # agent_id="" read no thread and every metric stayed 0. Read the crew channels explicitly;
+        # a DM is private to its two parties and stays out (crew_channel_ids).
+        from probos.ward_room.channels import crew_channel_ids
+
+        try:
+            channel_ids = crew_channel_ids(await ward_room.list_channels())
+            threads = await ward_room.browse_threads(
+                agent_id="",
+                channels=channel_ids,
+                limit=100,
+                since=since,
+            )
+        except Exception:
+            logger.warning(
+                "BF-923 (#1652): the Ward Room read failed; no behavioral snapshot this cycle",
+                exc_info=True,
+            )
+            raise  # BF-923: the dream logs it and skips step 13 (cognitive/dreaming.py:1683)
 
         # 2. Collect thread data with posts
         qualifying_threads: list[dict[str, Any]] = []
@@ -191,7 +211,8 @@ class BehavioralMetricsEngine:
 
         # 3. Compute each metric
         frame_result = self._compute_frame_diversity(qualifying_threads, get_department)
-        synthesis_result = self._compute_synthesis_detection(qualifying_threads)
+        # BF-923 (#1652): synthesis embeds every post synchronously (ONNX); run it off the event loop.
+        synthesis_result = await asyncio.to_thread(self._compute_synthesis_detection, qualifying_threads)
         trigger_result = self._compute_cross_dept_triggers(qualifying_threads, get_department)
         convergence_result = await self._compute_convergence_correctness(qualifying_threads)
         anchor_result = await self._compute_anchor_grounded_emergence(
@@ -466,15 +487,11 @@ class BehavioralMetricsEngine:
     # Metric 4: Convergence Correctness
     # ------------------------------------------------------------------
 
-    async def _compute_convergence_correctness(
-        self,
-        threads: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Metric 4: Convergence Correctness.
+    def _count_convergence_events(self, threads: list[dict[str, Any]]) -> int:
+        """Metric 4's detection: threads in which most pairs of authors post similar text.
 
-        Detect convergence (multiple agents saying similar things) and track
-        whether converged conclusions have verifiable outcomes. AD-583f
-        populates correctness via ObservableStateVerifier (satisfies AD-569d).
+        BF-923 (#1652): the loop moved unchanged out of ``_compute_convergence_correctness``. It embeds
+        one post per author per thread synchronously (ONNX), so that method runs it in a worker thread.
         """
         cfg = self._config
         convergence_events = 0
@@ -512,6 +529,21 @@ class BehavioralMetricsEngine:
 
             if total_pairs > 0 and agreeing_pairs / total_pairs >= 0.5:
                 convergence_events += 1
+
+        return convergence_events
+
+    async def _compute_convergence_correctness(
+        self,
+        threads: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Metric 4: Convergence Correctness.
+
+        Detect convergence (multiple agents saying similar things) and track
+        whether converged conclusions have verifiable outcomes. AD-583f
+        populates correctness via ObservableStateVerifier (satisfies AD-569d).
+        """
+        # BF-923 (#1652): the detection embeds synchronously; run it off the event loop.
+        convergence_events = await asyncio.to_thread(self._count_convergence_events, threads)
 
         # AD-583f: Verify converging claims against observable state
         if self._verifier and convergence_events > 0:
@@ -569,9 +601,16 @@ class BehavioralMetricsEngine:
         except ImportError:
             return {"grounded_rate": 0.0, "independence_score": 0.0, "analyzed_threads": 0}
 
+        from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+
         independence_scores: list[float] = []
         grounded_count = 0
         analyzed = 0
+        failures = 0
+        # BF-923 (#1652): one read per owner per computation. recent_for_agent fetches the whole
+        # collection, so reading per thread repeated that fetch for every thread an author posted in.
+        # A failed read is kept too, so it fails each of that owner's threads without a second read.
+        owner_reads: dict[str, Any] = {}
 
         for thread in threads:
             agent_ids = list(thread["unique_authors"])
@@ -581,11 +620,19 @@ class BehavioralMetricsEngine:
             try:
                 all_episodes: list[Any] = []
                 for agent_id in agent_ids[:5]:
-                    eps = await episodic_memory.recall(
-                        query="",
-                        agent_id=agent_id,
-                        limit=10,
-                    )
+                    # BF-923 (#1652): AD-569's "recent episodes". recall() takes no agent_id (every
+                    # call raised), and a Ward Room author is a slot id while its episodes carry
+                    # the sovereign id.
+                    owner_id = resolve_sovereign_id_from_slot(agent_id, self._identity_registry)
+                    if owner_id not in owner_reads:
+                        try:
+                            owner_reads[owner_id] = await episodic_memory.recent_for_agent(owner_id, k=10)
+                        except Exception as exc:
+                            owner_reads[owner_id] = exc
+                        await asyncio.sleep(0)  # BF-923: each read is a synchronous full scan; let the loop run between reads
+                    eps = owner_reads[owner_id]
+                    if isinstance(eps, Exception):
+                        raise eps
                     if eps:
                         all_episodes.extend(eps)
 
@@ -600,11 +647,20 @@ class BehavioralMetricsEngine:
                     grounded_count += 1
 
             except Exception:
+                failures += 1  # BF-923: counted, reported once below
                 logger.debug(
                     "AD-569: Anchor analysis failed for thread %s",
                     thread.get("thread_id"),
+                    exc_info=True,
                 )
                 continue
+
+        if failures:
+            logger.warning(
+                "BF-923 (#1652): anchor analysis failed for %d of %d threads; the anchor metric covers the rest",
+                failures,
+                len(threads),
+            )
 
         mean_independence = (
             sum(independence_scores) / len(independence_scores)

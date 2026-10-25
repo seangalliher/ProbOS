@@ -125,6 +125,28 @@ def derive_watch_section(hour: int | None = None) -> str:
         return "first"
 
 
+async def count_agent_episodes(episodic_memory: Any, agent: Any) -> int:
+    """BF-923 (#1652): how many episodes the agent owns, for its orientation (0 when unknown).
+
+    Episodes carry the agent's sovereign id (AD-441, BF-138); an agent without one is counted by
+    its slot id, as the orientation callers always resolved it. Before BF-923 both callers passed
+    ``agent_id`` to ``EpisodicMemory.recall``, which takes none, and swallowed the ``TypeError``,
+    so every count was 0.
+    """
+    if not episodic_memory:
+        return 0
+    owner_id = getattr(agent, "sovereign_id", None) or agent.id
+    try:
+        return await episodic_memory.count_for_agent(owner_id)
+    except Exception:
+        logger.warning(
+            "BF-923: episode count failed for %s; the orientation reports none",
+            owner_id,
+            exc_info=True,
+        )
+        return 0
+
+
 class OrientationService:
     """Builds structured orientation context for agent cognitive grounding."""
 

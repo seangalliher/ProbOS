@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Iterable
 
 from probos.ward_room.models import WardRoomChannel
 
@@ -39,6 +39,16 @@ def dm_channel_keys(name: str) -> tuple[str, str] | None:
     if len(parts) != 3 or parts[0] != "dm" or not parts[1] or not parts[2]:
         return None
     return parts[1], parts[2]
+
+
+def crew_channel_ids(channels: Iterable[WardRoomChannel]) -> list[str]:
+    """BF-923 (#1652): the ids of the channels a ship-level measurement may read: every type but ``dm``.
+
+    Ship, department and custom channels are open to the crew. A DM channel (between two crew members,
+    or a crew member and the Captain) is private to its two parties; every writer creates it with
+    ``channel_type="dm"`` (``get_or_create_dm_channel`` and the three Captain-DM writers).
+    """
+    return [channel.id for channel in channels if channel.channel_type != "dm"]
 
 
 class ChannelManager:
