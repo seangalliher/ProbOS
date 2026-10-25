@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from probos.cognitive.procedures import Procedure
+from tests.test_bf924_compilation_trust import trust_network_at
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +96,10 @@ def _make_cognitive_agent(**overrides):
     agent.meta = AgentMeta()
     agent.state = AgentState.ACTIVE
     agent.trust_score = defaults.get("trust_score", 0.5)
-    agent._trust_score = defaults.get("trust_score", 0.5)
+    # BF-924 (#1654): the clamp reads live trust through the runtime; the hand-set ``_trust_score``
+    # here before is never set in production. A given runtime now carries a real network at this score.
+    if agent._runtime is not None:
+        agent._runtime.trust_network = trust_network_at(agent.id, defaults.get("trust_score", 0.5))
     return agent
 
 

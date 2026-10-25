@@ -1848,8 +1848,8 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("record_applied failed", exc_info=True)
 
-        # AD-535: Trust-tier clamping
-        trust_score = getattr(self, "_trust_score", 0.5)
+        # AD-535: Trust-tier clamping (BF-924: the agent's live trust)
+        trust_score = self._compilation_trust_score()
         max_level = self._max_compilation_level_for_trust(trust_score)
         # AD-537: Promoted procedures can reach Level 5 (Expert)
         if procedure.compilation_level >= 5 and self._procedure_store:
@@ -2659,6 +2659,24 @@ class CognitiveAgent(BaseAgent):
                 metrics.get("completion_rate", 0.0),
                 metrics.get("effective_rate", 0.0),
             )
+
+    def _compilation_trust_score(self) -> float:
+        """BF-924 (#1654): the live trust the AD-535/536 compilation clamp uses.
+
+        Read with ``TrustNetwork.get_score(self.id)``, as BF-263's rank read does. The
+        ``_trust_score`` attribute read before is assigned nowhere, so every agent counted as 0.5.
+        A read that fails (the runtime, its ``trust_network`` attribute or ``get_score``), or a value
+        that is not a score in [0, 1] (NaN, an infinity, a corrupt record), logs a WARNING and returns
+        0.0: an unknown trust takes the Ensign cap (Level 2) and never unlocks replay or Level 5.
+        """
+        try:
+            score = float(self._runtime.trust_network.get_score(self.id))
+            if not 0.0 <= score <= 1.0:  # BF-924 (#1654): NaN fails both bounds, so it is refused too
+                raise ValueError(f"trust score {score!r} is not in [0, 1]")
+            return score
+        except Exception:
+            logger.warning("BF-924 (#1654): trust read failed for %s; procedure compilation held to Level 2", self.id, exc_info=True)
+            return 0.0  # BF-924: unknown trust takes the Ensign cap (Level 2)
 
     def _max_compilation_level_for_trust(self, trust_score: float) -> int:
         """AD-535: Return the maximum compilation level allowed for the given trust score.
@@ -7765,7 +7783,7 @@ class CognitiveAgent(BaseAgent):
                     )
                     proc = await _store.get(_proc_id_for_promo)
                     if proc and new_count >= COMPILATION_PROMOTION_THRESHOLD:
-                        _ts = getattr(self, "_trust_score", 0.5)
+                        _ts = self._compilation_trust_score()  # BF-924 (#1654): the live trust, as in the clamp
                         # AD-536: Check if promoted procedure can reach Level 5
                         _promo_status = await _store.get_promotion_status(_proc_id_for_promo)
                         max_allowed = self._max_compilation_level_for_promoted(_ts, _promo_status)

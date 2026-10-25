@@ -486,7 +486,7 @@ async def test_fallback_rewrite_prompt_quotes_no_held_out_turn(world: _World) ->
     # rewrite would already have read it. e1 is that turn's episode, and it sits at a held-out position.
     w = world
     w.memory.episodes[1] = replace(w.memory.episodes[1], correlation_id=_FALLBACK_TURN)
-    w.engine.set_records_store(None)  # startup binds it, and with it the fallback queue that Step 7d drains
+    w.engine.set_records_store(None)  # startup binds it with Records on; the queue Step 7d drains is the constructor's (BF-924)
     inputs = {episode.id: episode.user_input for episode in w.memory.episodes}
 
     # Premises: five episodes; e1 alone is from the turn the event names (its response is the one quoted); and,

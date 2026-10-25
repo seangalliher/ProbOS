@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from probos.cognitive.procedures import Procedure, ProcedureStep
+from tests.test_bf924_compilation_trust import trust_network_at
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,7 +98,11 @@ def _make_cognitive_agent(**overrides):
     agent.meta = AgentMeta()
     agent.state = AgentState.ACTIVE
     agent.trust_score = defaults.get("trust_score", 0.5)
-    agent._trust_score = defaults.get("trust_score", 0.5)
+    # BF-924 (#1654): the clamp reads live trust through the runtime (TrustNetwork.get_score). The
+    # ``_trust_score`` attribute set here before is never set in production, so it masked the defect
+    # (every agent counted as 0.5); a given runtime now carries a real network at this score.
+    if agent._runtime is not None:
+        agent._runtime.trust_network = trust_network_at(agent.id, defaults.get("trust_score", 0.5))
     return agent
 
 
@@ -632,7 +637,7 @@ class TestLevel4Autonomous:
         runtime = MagicMock()
         runtime.procedure_store = store
         agent._runtime = runtime
-        agent._trust_score = 0.6
+        runtime.trust_network = trust_network_at(agent.id, 0.6)  # BF-924: was a hand-set _trust_score
 
         result = await agent._check_procedural_memory({
             "intent": "test", "params": {"message": "hello"},
@@ -661,7 +666,7 @@ class TestLevel4Autonomous:
             runtime = MagicMock()
             runtime.procedure_store = store
             agent._runtime = runtime
-            agent._trust_score = 0.6
+            runtime.trust_network = trust_network_at(agent.id, 0.6)  # BF-924: was a hand-set _trust_score
 
             await agent._check_procedural_memory({
                 "intent": "test", "params": {"message": "hello"},
