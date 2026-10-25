@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1891
-  field_definitions: 1880
+  canonical_dump_leaves: 1887
+  field_definitions: 1876
   incidental: 13
   own_models: 228
   owned: 296
   public_names: 309
-canonical_dump_sha256: fc24f1a120358b11e0e81844cefc867c0e705d698ba2778df79a3f70af6ba9c3
+canonical_dump_sha256: bbf47ad58a4316e1906cd1efff1ec25594b81c66dd6ff5b096a9fbd18aa16969
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -1324,14 +1324,10 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 291ee4ffe326798ad17fb483f5e00412d4703e4d39713a0f53890367fdf3f389
+    schema_sha256: 49520476ec22781ac072400fab49280779d5bd5dbf85a49bab5d9656e0705abc
     fields:
-    - {default: 'True', name: enabled}
-    - {default: '90', name: profile_retention_days}
     - {default: '0.15', name: trust_delta_threshold}
     - {default: '50', name: sweep_max_agents}
-    - {default: 'True', name: alert_on_red}
-    - {default: 'False', name: alert_on_yellow}
   CreativeExpressionConfig:
     qualname: CreativeExpressionConfig
     bases:
@@ -3415,7 +3411,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: ba3ec2db7253d6a570d6259c61b1a91ba160701998cb6a02c20ca5bf102f59b6
+    schema_sha256: dc10c4795616d785b6c6860834ef150fab29c53abd48d9052f3950c44abc82aa
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

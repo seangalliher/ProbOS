@@ -1553,7 +1553,9 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1347 S1 adds AgentWorkConfig's seven fields and SystemConfig.agent_work (1869 -> 1877).
     # BF-914 adds channels.discord.allow_all_users and channels.slack.allow_all_users (1877 -> 1879).
     # BF-918 adds attachments.tts_audio_retention_seconds (1879 -> 1880).
-    assert counts["field_definitions"] == 1880  # AD-1206 intentionally adds github_repository.
+    # BF-924 (#1654) removes CounselorConfig's four unread fields: enabled, profile_retention_days,
+    # alert_on_red and alert_on_yellow (1880 -> 1876).
+    assert counts["field_definitions"] == 1876  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 309  # AD-1347 S1 (#1627): AgentWorkConfig
     assert len(baseline["models"]) == 229  # AD-1347 S1 (#1627): AgentWorkConfig

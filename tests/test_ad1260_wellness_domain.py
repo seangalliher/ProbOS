@@ -58,7 +58,13 @@ class _FakeTrust:
     def get_events_for_agent(self, agent_id: str, n: int = 5) -> list[Any]:
         return []
 
-    def all_scores(self) -> dict[str, float]:
+    def get_history(self, agent_id: str, limit: int = 20) -> list[float]:
+        # BF-924 (#1654): TrustNetwork's method; the profile route calls it without a guard now.
+        return []
+
+    def all_scores(self, crew_only: bool = False) -> dict[str, float]:
+        # BF-924 (#1654): TrustNetwork.all_scores takes crew_only (no caller passes it today); the
+        # seam test in tests/test_bf924_trust_inputs.py pins this double to the real signature.
         return dict(self.scores)
 
 

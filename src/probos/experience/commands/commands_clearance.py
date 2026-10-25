@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -34,6 +35,18 @@ async def cmd_grant(runtime: "ProbOSRuntime", console: Console, args: str) -> No
         console.print("    duration_hours: 0 = until revoked (default)")
         console.print("  revoke <grant_id>")
         console.print("  list [--all]   — Show active grants (--all includes revoked/expired)")
+
+
+def _grant_time(timestamp: float) -> str | None:
+    """BF-924 (#1654): a grant time as ``MM-DD HH:MM`` (UTC), or None when the platform cannot represent it.
+
+    ``datetime.fromtimestamp`` raises OverflowError for an infinity and OSError (Windows) or ValueError for a
+    finite time outside the platform's range; one such row made ``/grant list`` raise and hide every grant.
+    """
+    try:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%m-%d %H:%M")
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 async def _grant_issue(runtime: "ProbOSRuntime", console: Console, args: str) -> None:
@@ -79,13 +92,17 @@ async def _grant_issue(runtime: "ProbOSRuntime", console: Console, args: str) ->
         console.print(f"[red]Invalid tier '{tier_str}'. Valid: {valid}[/red]")
         return
 
-    # Parse duration
+    # Parse duration (BF-924: a duration that is not finite, or whose expiry cannot be shown as a date, is refused;
+    # "nan" became a grant until revoked, and "inf" or a huge number stored an expiry that made /grant list raise)
     try:
         duration_hours = float(duration_hours_str)
     except ValueError:
         console.print(f"[red]Invalid duration: {duration_hours_str}[/red]")
         return
     expires_at = (time.time() + duration_hours * 3600) if duration_hours > 0 else None
+    if not math.isfinite(duration_hours) or (expires_at is not None and _grant_time(expires_at) is None):
+        console.print(f"[red]Invalid duration: {duration_hours_str}[/red]")
+        return
 
     grant = await store.issue_grant(
         target_agent_id=agent_id,
@@ -138,6 +155,22 @@ async def _grant_revoke(runtime: "ProbOSRuntime", console: Console, args: str) -
         console.print(f"[red]Failed to revoke grant {grant.id[:8]}.[/red]")
 
 
+def _grant_target_callsign(runtime: "ProbOSRuntime", target_agent_id: str) -> str:
+    """BF-924 (#1654): the live callsign of a grant's target, or "" when it cannot be named.
+
+    ``_grant_issue`` stores the sovereign id, or the slot id when no identity registry is bound, so
+    the target is found by its birth certificate either way. It is named by the callsign registry's
+    live callsign for its agent type (a naming ceremony can replace the birth callsign).
+    """
+    identity_reg = getattr(runtime, "identity_registry", None)
+    if identity_reg is None:
+        return ""
+    cert = identity_reg.get_by_uuid(target_agent_id) or identity_reg.get_by_slot(target_agent_id)
+    if cert is None:
+        return ""
+    return runtime.callsign_registry.get_callsign(cert.agent_type) or cert.callsign
+
+
 async def _grant_list(runtime: "ProbOSRuntime", console: Console, args: str) -> None:
     """List clearance grants."""
     show_all = "--all" in (args or "")
@@ -165,17 +198,13 @@ async def _grant_list(runtime: "ProbOSRuntime", console: Console, args: str) -> 
 
     now = time.time()
     for g in grants:
-        # Resolve callsign for display
-        agent_display = g.target_agent_id[:12]
-        if hasattr(runtime, 'callsign_registry'):
-            for agent in runtime.callsign_registry.list_all():
-                if agent.get("agent_id") == g.target_agent_id:
-                    agent_display = agent.get("callsign", agent_display)
-                    break
+        # Resolve callsign for display (BF-924: no CallsignRegistry has list_all; every grant raised)
+        agent_display = _grant_target_callsign(runtime, g.target_agent_id) or g.target_agent_id[:12]
 
-        issued_str = datetime.fromtimestamp(g.issued_at, tz=timezone.utc).strftime("%m-%d %H:%M")
+        # BF-924: a time the platform cannot show degrades in its own row; the status still reads the raw value
+        issued_str = _grant_time(g.issued_at) or "out of range"
         if g.expires_at:
-            expires_str = datetime.fromtimestamp(g.expires_at, tz=timezone.utc).strftime("%m-%d %H:%M")
+            expires_str = _grant_time(g.expires_at) or "out of range"
         else:
             expires_str = "—"
 
