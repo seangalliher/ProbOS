@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: BF-923 (#1652): the most assessments and trust readings a profile keeps. The profile is rewritten
+#: whole on every assessment (``CounselorProfileStore.save_profile``); the full history stays in the
+#: ``assessments`` table. Readers take the last 3 (AD-506b), 5 (``drift_trend``) or 10 (AD-903).
+COUNSELOR_PROFILE_HISTORY_LIMIT = 50
+
 
 # ---------------------------------------------------------------------------
 # Cognitive Profile — the Counselor's assessment record per agent
@@ -176,10 +181,14 @@ class CognitiveProfile:
     # AD-567c: Anchor quality
     anchor_quality: float = 0.0             # Mean anchor confidence from latest AnchorProfile
     weakest_anchor_dimension: str = ""      # For targeted metacognitive coaching
+    # BF-923 (#1652): trust readings, recorded and not assessed until the gauge is qualified (#1523)
+    observed_baseline: CognitiveBaseline | None = None  # the first reading
+    trust_observations: list[list[float]] = field(default_factory=list)  # [timestamp, score], latest last
 
     def add_assessment(self, assessment: CounselorAssessment) -> None:
-        """Append an assessment and update alert level."""
+        """Append an assessment and update alert level (BF-923: the latest ``COUNSELOR_PROFILE_HISTORY_LIMIT`` are kept)."""
         self.assessments.append(assessment)
+        del self.assessments[:-COUNSELOR_PROFILE_HISTORY_LIMIT]
         self.last_assessed = assessment.timestamp
         # Update alert level based on latest assessment
         if not assessment.fit_for_duty:
@@ -243,6 +252,8 @@ class CognitiveProfile:
             "reminiscence_sessions": self.reminiscence_sessions,
             "anchor_quality": self.anchor_quality,
             "weakest_anchor_dimension": self.weakest_anchor_dimension,
+            "observed_baseline": self.observed_baseline.to_dict() if self.observed_baseline else None,
+            "trust_observations": [list(entry) for entry in self.trust_observations],
         }
 
     @classmethod
@@ -271,7 +282,15 @@ class CognitiveProfile:
         if "baseline" in data:
             profile.baseline = CognitiveBaseline.from_dict(data["baseline"])
         if "assessments" in data:
-            profile.assessments = [CounselorAssessment.from_dict(a) for a in data["assessments"]]
+            # BF-923 (#1652): a profile saved before the bound loads its latest entries only.
+            recent = data["assessments"][-COUNSELOR_PROFILE_HISTORY_LIMIT:]
+            profile.assessments = [CounselorAssessment.from_dict(a) for a in recent]
+        if data.get("observed_baseline"):
+            profile.observed_baseline = CognitiveBaseline.from_dict(data["observed_baseline"])
+        profile.trust_observations = [
+            [float(when), float(score)]
+            for when, score in (data.get("trust_observations") or [])[-COUNSELOR_PROFILE_HISTORY_LIMIT:]
+        ]
         return profile
 
 
@@ -756,32 +775,30 @@ class CounselorAgent(CognitiveAgent):
         """Pull metrics from runtime services for an agent.
 
         Gracefully degrades — returns sensible defaults when services unavailable.
+
+        BF-923 (#1652): trust is read with ``TrustNetwork.get_score`` (the ``score`` called before is
+        ``TrustRecord``'s property, not the network's, so every read failed) and each reading is
+        recorded on the profile (``_record_trust_observation``). The returned ``trust_score`` stays
+        ``TRUST_DEFAULT``, as every production assessment has had it, so no wellness change, DM or
+        Bridge alert follows a reading until the trust gauge is qualified (BF-921 D3; the measurement
+        is on #1523). ``hebbian_avg`` stays 0.0 and the Hebbian router is not read: no per-agent
+        Hebbian reading is defined (the ``get_weights_for`` called before never existed).
         """
         metrics: dict[str, float] = {
-            "trust_score": TRUST_DEFAULT,
+            "trust_score": TRUST_DEFAULT,  # BF-923: held until the trust gauge is qualified (#1523)
             "confidence": 0.8,
-            "hebbian_avg": 0.0,
+            "hebbian_avg": 0.0,  # BF-923: not read (no per-agent Hebbian reading is defined)
             "success_rate": 0.0,
             "personality_drift": 0.0,
         }
 
-        # Trust score
+        # Trust score: read and recorded, not assessed (BF-923)
+        observed_trust: float | None = None
         if self._trust_network:
             try:
-                score = self._trust_network.score(agent_id)
-                if score is not None:
-                    metrics["trust_score"] = score
+                observed_trust = float(self._trust_network.get_score(agent_id))
             except Exception:
-                logger.debug("Failed to get trust for %s", agent_id, exc_info=True)
-
-        # Hebbian average weight
-        if self._hebbian_router:
-            try:
-                weights = self._hebbian_router.get_weights_for(agent_id)
-                if weights:
-                    metrics["hebbian_avg"] = sum(weights.values()) / len(weights)
-            except Exception:
-                logger.debug("Failed to get Hebbian for %s", agent_id, exc_info=True)
+                logger.warning("BF-923: trust read failed for %s; nothing recorded", agent_id, exc_info=True)
 
         # Agent meta (confidence, success_rate)
         if self._registry:
@@ -802,7 +819,29 @@ class CounselorAgent(CognitiveAgent):
             except Exception:
                 logger.debug("Failed to get crew profile for %s", agent_id, exc_info=True)
 
+        if observed_trust is not None:
+            self._record_trust_observation(agent_id, observed_trust, metrics)
         return metrics
+
+    def _record_trust_observation(
+        self, agent_id: str, observed_trust: float, metrics: dict[str, float],
+    ) -> None:
+        """BF-923 (#1652): record one trust reading; the first one is the captured baseline.
+
+        A record only: ``assess_agent`` reads ``profile.baseline`` and the held metrics, never these,
+        so an assessment, its DM and its Bridge alert are as before until the gauge is qualified.
+        """
+        profile = self.get_or_create_profile(agent_id)
+        now = time.time()
+        if profile.observed_baseline is None:
+            profile.observed_baseline = CognitiveBaseline(
+                trust_score=observed_trust,
+                confidence=metrics["confidence"],
+                success_rate=metrics["success_rate"],
+                captured_at=now,
+            )
+        profile.trust_observations.append([now, observed_trust])
+        del profile.trust_observations[:-COUNSELOR_PROFILE_HISTORY_LIMIT]
 
     # -- AD-503: Wellness sweep --
 

@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
@@ -211,22 +211,33 @@ class TestGatherAgentMetrics:
         assert metrics["personality_drift"] == 0.0
 
     def test_trust_from_network(self) -> None:
+        # BF-923 (#1652): this pinned TrustNetwork.score, which the network lacks (it is TrustRecord's
+        # property), through a MagicMock that accepted it; production read nothing. The read is now
+        # get_score on a real network; the reading is recorded on the profile, and the returned
+        # trust_score stays TRUST_DEFAULT until the gauge is qualified (BF-921 D3).
         from probos.cognitive.counselor import CounselorAgent
+        from probos.consensus.trust import TrustNetwork
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-        trust = MagicMock()
-        trust.score.return_value = 0.85
+        trust = TrustNetwork()
+        trust.create_with_prior("agent-1", alpha=8.5, beta=1.5)
         agent._trust_network = trust
         metrics = agent._gather_agent_metrics("agent-1")
-        assert metrics["trust_score"] == 0.85
+        assert metrics["trust_score"] == 0.5
+        profile = agent.get_profile("agent-1")
+        assert profile.trust_observations[-1][1] == pytest.approx(0.85)
+        assert profile.observed_baseline.trust_score == pytest.approx(0.85)
 
     def test_hebbian_from_router(self) -> None:
+        # BF-923 (#1652): this pinned HebbianRouter.get_weights_for, which never existed, through a
+        # MagicMock that accepted it. No per-agent Hebbian reading is defined, so none is taken.
         from probos.cognitive.counselor import CounselorAgent
+        from probos.mesh.routing import HebbianRouter
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-        router = MagicMock()
-        router.get_weights_for.return_value = {"a": 0.4, "b": 0.6}
+        router = create_autospec(HebbianRouter, instance=True)
         agent._hebbian_router = router
         metrics = agent._gather_agent_metrics("agent-1")
-        assert metrics["hebbian_avg"] == pytest.approx(0.5)
+        assert metrics["hebbian_avg"] == 0.0
+        assert router.mock_calls == []
 
     def test_registry_meta(self) -> None:
         from probos.cognitive.counselor import CounselorAgent
@@ -242,14 +253,17 @@ class TestGatherAgentMetrics:
         assert metrics["success_rate"] == 0.88
 
     def test_graceful_on_exception(self) -> None:
+        # BF-923 (#1652): the double now has TrustNetwork's signature (get_score), not the absent score.
         from probos.cognitive.counselor import CounselorAgent
+        from probos.consensus.trust import TrustNetwork
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-        trust = MagicMock()
-        trust.score.side_effect = RuntimeError("boom")
+        trust = create_autospec(TrustNetwork, instance=True)
+        trust.get_score.side_effect = RuntimeError("boom")
         agent._trust_network = trust
         metrics = agent._gather_agent_metrics("agent-1")
-        # Should fall back to default
+        # Should fall back to default, and record nothing
         assert metrics["trust_score"] == 0.5
+        assert agent.get_profile("agent-1") is None
 
 
 # ---------------------------------------------------------------------------

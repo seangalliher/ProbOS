@@ -7,12 +7,13 @@ import json
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import pytest_asyncio
 
 from probos.cognitive.llm_client import BaseLLMClient
+from probos.consensus.trust import TrustNetwork
 from probos.events import EventType
 
 
@@ -541,8 +542,9 @@ class TestZoneRecoveryHandler:
         from probos.cognitive.counselor import CounselorAgent
 
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-        agent._trust_network = MagicMock()
-        agent._trust_network.score = MagicMock(return_value=0.7)
+        # BF-923 (#1652): TrustNetwork's signature; the MagicMock's score was an API the network lacks.
+        agent._trust_network = create_autospec(TrustNetwork, instance=True)
+        agent._trust_network.get_score.return_value = 0.7
         agent._hebbian_router = None
         agent._registry = None
         agent._crew_profiles = None
@@ -566,8 +568,9 @@ class TestZoneRecoveryHandler:
         from probos.cognitive.counselor import CounselorAgent
 
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-        agent._trust_network = MagicMock()
-        agent._trust_network.score = MagicMock(return_value=0.7)
+        # BF-923 (#1652): TrustNetwork's signature; the MagicMock's score was an API the network lacks.
+        agent._trust_network = create_autospec(TrustNetwork, instance=True)
+        agent._trust_network.get_score.return_value = 0.7
         agent._hebbian_router = None
         agent._registry = None
         agent._crew_profiles = None
@@ -593,8 +596,9 @@ class TestPeerRepetitionHandler:
         from probos.cognitive.counselor import CounselorAgent
 
         agent = CounselorAgent(llm_client=AsyncMock(spec=BaseLLMClient))
-        agent._trust_network = MagicMock()
-        agent._trust_network.score = MagicMock(return_value=0.7)
+        # BF-923 (#1652): TrustNetwork's signature; the MagicMock's score was an API the network lacks.
+        agent._trust_network = create_autospec(TrustNetwork, instance=True)
+        agent._trust_network.get_score.return_value = 0.7
         agent._hebbian_router = None
         agent._registry = None
         agent._crew_profiles = None
