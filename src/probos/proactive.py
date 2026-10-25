@@ -40,7 +40,7 @@ from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
-from probos.cognitive.orientation import OrientationContext, derive_watch_section
+from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
 
@@ -1777,14 +1777,8 @@ class ProactiveCognitiveLoop:
                     _birth = getattr(agent, '_birth_timestamp', None)
                     _age = (time.time() - _birth) if _birth else float('inf')
                     if _age < _ocfg.orientation.orientation_window_seconds:
-                        _ep_count = 0
-                        if hasattr(rt, 'episodic_memory') and rt.episodic_memory:
-                            try:
-                                _sid = getattr(agent, 'sovereign_id', None) or agent.id
-                                _eps = await rt.episodic_memory.recall("", agent_id=_sid, k=1)
-                                _ep_count = len(_eps) if _eps else 0
-                            except Exception:
-                                pass
+                        # BF-923 (#1652): the agent's own count; recall() takes no agent_id, so it was always 0.
+                        _ep_count = await count_agent_episodes(getattr(rt, 'episodic_memory', None), agent)
                         _ctx = self._orientation_service.build_orientation(
                             agent,
                             lifecycle_state=getattr(rt, '_lifecycle_state', 'restart'),

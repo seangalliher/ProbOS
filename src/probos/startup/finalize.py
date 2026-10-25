@@ -3987,6 +3987,71 @@ def _wire_model_routing(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _orient_crew_after_stasis(*, runtime: Any) -> int:
+    """AD-567g: warm-boot orientation for each crew agent after stasis; returns how many were set.
+
+    BF-923 (#1652): moved out of ``finalize_startup`` unchanged except for the episode count, which
+    is now the agent's own (``count_agent_episodes``). Before BF-923 the count came from
+    ``EpisodicMemory.recall(..., agent_id=...)``, which takes no ``agent_id``; the ``TypeError`` was
+    swallowed, so every count was 0 and no crew member read "You have N episodic memories from
+    before stasis."
+    """
+    from probos.cognitive.orientation import count_agent_episodes
+
+    oriented = 0
+    try:
+        # AD-513: Build crew names lookup for orientation
+        _all_crew_names: dict[str, str] = {}
+        if hasattr(runtime, 'callsign_registry') and runtime.callsign_registry:
+            _all_crew_names = runtime.callsign_registry.all_callsigns()
+
+        # BF-144: Compute authoritative stasis timestamps (once, before agent loop)
+        _shutdown_str = ""
+        _resume_str = ""
+        if runtime._previous_session and "shutdown_time_utc" in runtime._previous_session:
+            _shutdown_str = datetime.fromtimestamp(
+                runtime._previous_session["shutdown_time_utc"], tz=timezone.utc
+            ).strftime("%Y-%m-%d %H:%M:%S UTC")
+            _resume_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        for agent in runtime.registry.all():
+            if is_crew_agent(agent, runtime.ontology):
+                _ep_count = await count_agent_episodes(runtime.episodic_memory, agent)  # BF-923 (#1652)
+                _trust = 0.5
+                if runtime.trust_network:
+                    try:
+                        _trust = runtime.trust_network.get_score(agent.id)
+                    except Exception:
+                        pass
+                # AD-513: Crew names excluding self
+                _crew_names = sorted(
+                    cs for at, cs in _all_crew_names.items()
+                    if cs and at != agent.agent_type
+                )
+                _ctx = runtime._orientation_service.build_orientation(
+                    agent,
+                    lifecycle_state="stasis_recovery",
+                    stasis_duration=runtime._stasis_duration,
+                    stasis_shutdown_utc=_shutdown_str,       # BF-144
+                    stasis_resume_utc=_resume_str,           # BF-144
+                    episodic_memory_count=_ep_count,
+                    trust_score=_trust,
+                    crew_names=_crew_names,
+                )
+                _rendered = runtime._orientation_service.render_warm_boot_orientation(_ctx)
+                agent.set_orientation(_rendered, _ctx)
+                oriented += 1  # BF-923: one per crew agent oriented
+                logger.debug(
+                    "BF-235: %s orientation set — callsign=%s",
+                    agent.agent_type,
+                    getattr(agent, 'callsign', '?'),
+                )
+        logger.info("AD-567g: Warm boot orientation set for crew agents")
+    except Exception:
+        logger.debug("AD-567g: Warm boot orientation failed", exc_info=True)
+    return oriented
+
+
 async def finalize_startup(
     *,
     runtime: Any,  # ProbOSRuntime — passed as Any to avoid circular import
@@ -6274,62 +6339,7 @@ async def finalize_startup(
     if (hasattr(runtime, '_orientation_service') and runtime._orientation_service
             and runtime._lifecycle_state == "stasis_recovery"
             and config.orientation.warm_boot_orientation):
-        try:
-            # AD-513: Build crew names lookup for orientation
-            _all_crew_names: dict[str, str] = {}
-            if hasattr(runtime, 'callsign_registry') and runtime.callsign_registry:
-                _all_crew_names = runtime.callsign_registry.all_callsigns()
-
-            # BF-144: Compute authoritative stasis timestamps (once, before agent loop)
-            _shutdown_str = ""
-            _resume_str = ""
-            if runtime._previous_session and "shutdown_time_utc" in runtime._previous_session:
-                _shutdown_str = datetime.fromtimestamp(
-                    runtime._previous_session["shutdown_time_utc"], tz=timezone.utc
-                ).strftime("%Y-%m-%d %H:%M:%S UTC")
-                _resume_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-            for agent in runtime.registry.all():
-                if is_crew_agent(agent, runtime.ontology):
-                    _ep_count = 0
-                    if runtime.episodic_memory:
-                        try:
-                            _sid = getattr(agent, 'sovereign_id', None) or agent.id
-                            _eps = await runtime.episodic_memory.recall("", agent_id=_sid, k=1)
-                            _ep_count = len(_eps) if _eps else 0
-                        except Exception:
-                            pass
-                    _trust = 0.5
-                    if runtime.trust_network:
-                        try:
-                            _trust = runtime.trust_network.get_score(agent.id)
-                        except Exception:
-                            pass
-                    # AD-513: Crew names excluding self
-                    _crew_names = sorted(
-                        cs for at, cs in _all_crew_names.items()
-                        if cs and at != agent.agent_type
-                    )
-                    _ctx = runtime._orientation_service.build_orientation(
-                        agent,
-                        lifecycle_state="stasis_recovery",
-                        stasis_duration=runtime._stasis_duration,
-                        stasis_shutdown_utc=_shutdown_str,       # BF-144
-                        stasis_resume_utc=_resume_str,           # BF-144
-                        episodic_memory_count=_ep_count,
-                        trust_score=_trust,
-                        crew_names=_crew_names,
-                    )
-                    _rendered = runtime._orientation_service.render_warm_boot_orientation(_ctx)
-                    agent.set_orientation(_rendered, _ctx)
-                    logger.debug(
-                        "BF-235: %s orientation set — callsign=%s",
-                        agent.agent_type,
-                        getattr(agent, 'callsign', '?'),
-                    )
-            logger.info("AD-567g: Warm boot orientation set for crew agents")
-        except Exception:
-            logger.debug("AD-567g: Warm boot orientation failed", exc_info=True)
+        await _orient_crew_after_stasis(runtime=runtime)  # BF-923 (#1652): extracted, count repaired
 
     # BF-101/102 Enhancement: Batched auto-welcome for newly commissioned crew
     # Skip on cold start (reset) — the "Fresh Start" announcement handles it.

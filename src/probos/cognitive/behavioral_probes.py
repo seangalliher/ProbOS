@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 
 CREW_AGENT_ID = "__crew__"
 
+# BF-923 (#1652), BF-921 D3: the five behavioral gauges were 0 on every run until BF-923 gave the
+# engine its threads, so their history is a run of zeros and the first real score reads as critical
+# drift for ``__crew__``, which reaches the Counselor and VitalsMonitor's medical alert. Until the
+# gauges are qualified, each result is stored with its score but marked inconclusive, which the drift
+# detector excludes (drift_detector.py:150). This stretches BF-711's flag from "measured nothing" to
+# "not a verdict yet". Lifting the hold is the qualifying issue's call.
+HELD_FROM_DRIFT = True
+
 
 def _skip_result(test_name: str, reason: str) -> TestResult:
     """Return a skip-passing TestResult."""
@@ -26,6 +34,9 @@ def _skip_result(test_name: str, reason: str) -> TestResult:
         tier=3,
         score=0.0,
         passed=True,
+        # BF-923 A2 (#1652): a skip measured nothing (BF-711), so it stays out of drift whatever
+        # HELD_FROM_DRIFT says; its error stays None, so it still sets the first baseline.
+        inconclusive=True,
         timestamp=time.time(),
         duration_ms=0.0,
         details={"skipped": True, "reason": reason},
@@ -65,6 +76,7 @@ class FrameDiversityProbe:
             tier=3,
             score=snapshot.frame_diversity_score,
             passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
             timestamp=time.time(),
             duration_ms=0.0,
             details={
@@ -108,6 +120,7 @@ class SynthesisDetectionProbe:
             tier=3,
             score=snapshot.synthesis_rate,
             passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
             timestamp=time.time(),
             duration_ms=0.0,
             details={
@@ -151,6 +164,7 @@ class CrossDeptTriggerProbe:
             tier=3,
             score=snapshot.cross_dept_trigger_rate,
             passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
             timestamp=time.time(),
             duration_ms=0.0,
             details={
@@ -195,6 +209,7 @@ class ConvergenceCorrectnessProbe:
             tier=3,
             score=score,
             passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
             timestamp=time.time(),
             duration_ms=0.0,
             details={
@@ -240,6 +255,7 @@ class AnchorGroundedEmergenceProbe:
             tier=3,
             score=snapshot.anchor_grounded_rate,
             passed=True,
+            inconclusive=HELD_FROM_DRIFT,  # BF-923 (#1652): held from drift until qualified
             timestamp=time.time(),
             duration_ms=0.0,
             details={

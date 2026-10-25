@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 
@@ -27,8 +27,10 @@ from probos.cognitive.behavioral_metrics import (
     BehavioralMetricsEngine,
     BehavioralSnapshot,
 )
+from probos.cognitive.episodic import EpisodicMemory
 from probos.config import BehavioralMetricsConfig, SystemConfig
 from probos.events import EventType
+from probos.ward_room.models import WardRoomChannel
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +54,12 @@ class MockThread:
 class MockWardRoom:
     def __init__(self, threads_data: list[dict]):
         self._threads = threads_data
+
+    async def list_channels(self, agent_id=None):
+        # BF-923 (#1652): the engine lists the channels and browses the crew ones explicitly
+        # (browse_threads reads channels=None as one agent's memberships).
+        return [WardRoomChannel(id="ch-1", name="Engineering", channel_type="department",
+                                department="engineering", created_by="system", created_at=0.0)]
 
     async def browse_threads(self, agent_id="", channels=None, limit=50, since=0.0):
         return [td["thread"] for td in self._threads]
@@ -576,9 +584,12 @@ class TestAnchorGroundedEmergence:
             "title": "Analysis",
         }]
 
-        mock_memory = AsyncMock()
+        # BF-923 (#1652): built from EpisodicMemory, so a call the store does not accept fails here.
+        # The unrestricted AsyncMock this replaces accepted recall(query=, agent_id=, limit=), which
+        # raises TypeError on the real store; that is how the metric stayed 0 with this test green.
+        mock_memory = create_autospec(EpisodicMemory, instance=True)
         mock_ep = MagicMock()
-        mock_memory.recall = AsyncMock(return_value=[mock_ep, mock_ep])
+        mock_memory.recent_for_agent.return_value = [mock_ep, mock_ep]
 
         with patch(
             "probos.cognitive.social_verification.compute_anchor_independence",
@@ -588,6 +599,8 @@ class TestAnchorGroundedEmergence:
             assert result["analyzed_threads"] == 1
             assert result["independence_score"] == 0.6
             assert result["grounded_rate"] == 1.0
+        mock_memory.recent_for_agent.assert_any_await("a1", k=10)
+        mock_memory.recent_for_agent.assert_any_await("a2", k=10)
 
     @pytest.mark.asyncio
     async def test_anchor_no_memory(self):
@@ -624,8 +637,9 @@ class TestAnchorGroundedEmergence:
             "title": "Analysis",
         }]
 
-        mock_memory = AsyncMock()
-        mock_memory.recall = AsyncMock(return_value=[MagicMock()])  # Only 1 episode per agent = 2 total < 5
+        # BF-923 (#1652): built from EpisodicMemory (the AsyncMock accepted a recall() call that raises).
+        mock_memory = create_autospec(EpisodicMemory, instance=True)
+        mock_memory.recent_for_agent.return_value = [MagicMock()]  # Only 1 episode per agent = 2 total < 5
 
         result = await engine._compute_anchor_grounded_emergence(threads, mock_memory)
         assert result["analyzed_threads"] == 0

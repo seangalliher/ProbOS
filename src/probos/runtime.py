@@ -3175,6 +3175,9 @@ class ProbOSRuntime:
         self._notebook_quality_engine = dream_result.notebook_quality_engine  # AD-555
         self._retrieval_practice_engine = dream_result.retrieval_practice_engine  # AD-541c
         self._behavioral_metrics_engine = dream_result.behavioral_metrics_engine  # AD-569
+        if self._behavioral_metrics_engine is not None:
+            # BF-923 (#1652): Ward Room authors are slot ids; their episodes carry sovereign ids.
+            self._behavioral_metrics_engine.set_identity_registry(self.identity_registry)
         self.task_scheduler = dream_result.task_scheduler
         self._flush_task = dream_result.flush_task
         self.dreaming_engine = dream_result.dreaming_engine  # AD-690: needed by finalize wiring
