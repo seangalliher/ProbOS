@@ -41,14 +41,41 @@ See the wake-word disposition table in `prompts/WAVE-137-DISPATCH.md` §2.
 
 When adding a new third-party component:
 
-1. Verify the license is permissive (MIT / Apache-2.0 / BSD / CC0 /
-   MPL-2.0 / CC-BY-4.0). Reject AGPL/GPL and any paid-license deps.
+1. Classify the license against the policy below, and reject any
+   paid-license dependency (see Porcupine above).
 2. Add an entry above with the project URL, author, license, and pointer
    to local installation docs.
 3. If the component ships a binary (model weights, ONNX file, etc.), do
    NOT bundle it in this repo — document operator-side installation.
 4. Surface the disposition in the relevant build prompt's License posture
    section before drafting deliverables.
+
+## License policy (Captain, 2026-10-25)
+
+ProbOS stays Apache-2.0, so no copyleft code may become part of ProbOS
+itself. Copyleft software can still be used across a clear boundary.
+
+| License class | Allowed how |
+|---|---|
+| Permissive (MIT, Apache-2.0, BSD, CC0, ISC) | As a normal dependency. |
+| Weak copyleft (LGPL, MPL-2.0) | As a normal dependency (pip / npm), **unmodified**, loaded at runtime, never copied into the repo. A modified file or library carries copyleft duties, so don't modify it. |
+| Strong copyleft (GPL-2.0 / GPL-3.0) | **Only outside ProbOS:** run as a separate process (a subprocess, a local service or another machine), installed by the operator (the gitignored `tools/` pattern used for Piper, rhubarb and ffmpeg), and called across a process or network boundary. Never imported into the ProbOS process, vendored, linked or committed. |
+| AGPL | Case by case, by the Captain. Default: consume an operator-run service over its API only; never modify and serve it. |
+| Paid or key-gated licenses | Rejected. |
+
+Also:
+
+- **Keep the boundary arm's-length.** Two programs that exchange intimate
+  internal data structures can count as one work despite a process
+  boundary. A simple request/response API (audio in, audio out) is fine;
+  a plugin built around a GPL program's internals is not.
+- **Model weights are licensed separately from code.** Check them on their
+  own: CC-BY needs attribution here; non-commercial weights are not used
+  by default.
+- **Record the disposition** in the build prompt's License posture section,
+  including which boundary a copyleft component sits behind.
+
+This is project policy, not legal advice.
 
 ## pypdf (AD-720a-1)
 

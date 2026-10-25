@@ -73,6 +73,12 @@ Projects appear here only as technical design references. Positioning against th
 |---|---|---|---|
 | Microsoft MXC | 2026-10-15 | checked | AD-1334 (#1556) and AD-1335 (#1557), from the README and the v1.0.0 release notes; the per-backend docs are not yet read (AD-1334, Decision 1). Earlier: AD-995 (#939, 2026-06-13) |
 
+## Speech and voice (interval: 180 days)
+
+| Project | Last reviewed | Depth | Where recorded |
+|---|---|---|---|
+| Kokoro / misaki / HeadTTS / mlx-audio | 2026-10-25 | checked | AD-738g (#1662) Prior Art |
+
 ## Research lines (interval: 180 days)
 
 | Project | Last reviewed | Depth | Where recorded |
