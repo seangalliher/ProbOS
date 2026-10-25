@@ -61,6 +61,11 @@ def _make_counselor(**kwargs: Any) -> CounselorAgent:
     agent._episodic_memory = None
     agent._add_event_listener_fn = None
     agent._profile_store = None
+    # BF-924 (#1654): __init__ sets the Counselor's CounselorConfig, which _on_trust_update and
+    # _run_wellness_sweep read; this builder skips __init__, so it sets the default config itself.
+    from probos.config import CounselorConfig
+
+    agent._counselor_config = CounselorConfig()
     # DM_COOLDOWN_SECONDS = 0 for tests: time.monotonic() on fresh CI
     # runners can be < 3600, causing the cooldown check (now - 0.0 < DM_COOLDOWN_SECONDS)
     # to falsely reject DMs when last_dm defaults to 0.0.

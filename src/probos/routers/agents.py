@@ -256,8 +256,7 @@ async def agent_profile(agent_id: str, runtime: Any = Depends(get_runtime)) -> d
         rank = Rank.from_trust(trust_score).value
         from probos.earned_agency import agency_from_rank
         agency_level = agency_from_rank(Rank.from_trust(trust_score)).value
-        if hasattr(runtime.trust_network, 'get_history'):
-            trust_history = runtime.trust_network.get_history(agent.id, limit=20)
+        trust_history = runtime.trust_network.get_history(agent.id, limit=20)  # BF-924 (#1654): the guard here hid that the method did not exist
 
     # Hebbian connections
     hebbian_connections: list[dict[str, Any]] = []

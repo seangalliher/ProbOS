@@ -199,12 +199,10 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AgentTierConfig': {   'crew_
                                   'retention_days': 14,
                                   'max_rows': 500000,
                                   'prune_interval_seconds': 3600.0},
-    'CounselorConfig': {   'enabled': True,
-                           'profile_retention_days': 90,
-                           'trust_delta_threshold': 0.15,
-                           'sweep_max_agents': 50,
-                           'alert_on_red': True,
-                           'alert_on_yellow': False},
+    # BF-924 (#1654): enabled, profile_retention_days, alert_on_red and alert_on_yellow had no reader
+    # and were removed after the move.
+    'CounselorConfig': {   'trust_delta_threshold': 0.15,
+                           'sweep_max_agents': 50},
     'EarnedAgencyConfig': {   'enabled': False,
                               'initiative_trust_thresholds': {   'responsive': 0.3,
                                                                  'contributory': 0.5,

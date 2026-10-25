@@ -23,6 +23,10 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _OUTPUT = _REPO_ROOT / "docs" / "development" / "config-reference.md"
+# BF-924 (#1654): document this checkout's models, as check_config_facade.py and check_config_profiles.py
+# do. In a worktree, the venv's editable install otherwise resolves ``probos`` to another checkout.
+if str(_REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 # Written into the file so a reader who lands on it from search knows it is
 # generated and where to change it.

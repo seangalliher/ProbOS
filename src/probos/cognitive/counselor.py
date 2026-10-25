@@ -25,6 +25,7 @@ from probos.config import (
     COUNSELOR_TRUST_PROMOTION,
     COUNSELOR_WELLNESS_FIT,
     COUNSELOR_WELLNESS_YELLOW,
+    CounselorConfig,
     TRUST_DEFAULT,
 )
 from probos.events import EventType
@@ -560,6 +561,9 @@ class CounselorAgent(CognitiveAgent):
     def __init__(self, **kwargs: Any) -> None:
         # AD-503: Extract counselor-specific kwargs before super().__init__
         self._profile_store: CounselorProfileStore | None = kwargs.pop("profile_store", None)
+        # BF-924 (#1654): the operator's CounselorConfig (startup passes config.counselor). A Counselor
+        # built without one uses the model defaults, which are the values this class hard-coded before.
+        self._counselor_config: CounselorConfig = kwargs.pop("counselor_config", None) or CounselorConfig()
         kwargs.setdefault("pool", "bridge")
         super().__init__(**kwargs)
         self._cognitive_profiles: dict[str, CognitiveProfile] = {}
@@ -966,11 +970,14 @@ class CounselorAgent(CognitiveAgent):
             "proposed_dsl": proposed_dict,
         }
 
-    async def _run_wellness_sweep(self, max_agents: int = 50) -> list[CounselorAssessment]:
+    async def _run_wellness_sweep(self, max_agents: int | None = None) -> list[CounselorAssessment]:
         """Iterate crew agents, gather metrics, assess, persist.
 
-        Skips non-crew agents and the counselor itself.
+        Skips non-crew agents and the counselor itself. BF-924 (#1654): at most ``max_agents``, by
+        default ``CounselorConfig.sweep_max_agents`` (50, the bound hard-coded before).
         """
+        if max_agents is None:
+            max_agents = self._counselor_config.sweep_max_agents
         results: list[CounselorAssessment] = []
         if not self._registry:
             return results
@@ -1732,8 +1739,9 @@ class CounselorAgent(CognitiveAgent):
         if not profile:
             return
         delta = abs(new_score - profile.baseline.trust_score)
-        # Only react to significant changes (configurable via counselor config)
-        if delta < 0.15:
+        # BF-924 (#1654): CounselorConfig.trust_delta_threshold (0.15, the constant before). The baseline
+        # stays the default one until the trust gauge is qualified (BF-923 D8, DECISIONS.md).
+        if delta < self._counselor_config.trust_delta_threshold:
             return
         metrics = self._gather_agent_metrics(agent_id)
         assessment = self.assess_agent(

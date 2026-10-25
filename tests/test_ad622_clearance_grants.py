@@ -324,7 +324,10 @@ class TestShellCommands:
 
         mock_runtime = MagicMock()
         mock_runtime.clearance_grant_store = mock_store
-        mock_runtime.callsign_registry.list_all.return_value = []
+        # BF-924 (#1654): ``list_all`` was invented by the MagicMock; no CallsignRegistry has it, and the
+        # real command raised AttributeError for any grant. The list names a target through the identity
+        # registry; with none bound it shows the id (tests/test_bf924_trust_inputs.py covers both).
+        mock_runtime.identity_registry = None
 
         console = Console(file=StringIO())
         await cmd_grant(mock_runtime, console, "list")

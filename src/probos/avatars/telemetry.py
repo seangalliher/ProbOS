@@ -16,8 +16,9 @@ Signal derivation rules (mirrored from
   - ``trust_delta``  = ``runtime.trust_network.get_history(agent_id, limit=2)``
                        ``hist[-1] - hist[-2]`` when ``len(hist) >= 2``,
                        else ``0.0`` + ``"insufficient_trust_history"``.
-                       Method existence is guarded via ``hasattr`` — mirrors
-                       the call-site at ``routers/agents.py:91``.
+                       BF-924 (#1654): ``TrustNetwork.get_history`` (the
+                       agent's last trust scores); a read that raises
+                       degrades like a short history.
   - ``working_state`` = ``"blocked"`` when ``agent.state == AgentState.DEGRADED``,
                        ``"responding"`` when ``load > 0``, else ``"idle"``.
   - ``load``         = v1 approximation: ``1.0 if mouth_active else 0.0``
@@ -355,11 +356,11 @@ class AvatarTelemetrySnapshot:
     Note on ``load``: v1 approximates ``load = 1.0 if mouth_active else 0.0``
     (no canonical per-agent backend source at HEAD).
 
-    Note on ``trust_delta``: v1 reads ``runtime.trust_network.get_history(
-    agent_id, limit=2)`` behind a ``hasattr`` guard mirroring
-    ``routers/agents.py:91``. When the method is absent OR history < 2
-    entries → ``trust_delta=0.0`` + degraded reason
-    ``"insufficient_trust_history"``. No magnitude smoothing, no decay.
+    Note on ``trust_delta``: reads ``runtime.trust_network.get_history(
+    agent_id, limit=2)`` (BF-924: the ``hasattr`` guard that hid its absence is
+    gone). When the read raises OR history < 2 entries → ``trust_delta=0.0`` +
+    degraded reason ``"insufficient_trust_history"``. No magnitude smoothing,
+    no decay.
     """
 
     agent_id: str
@@ -716,11 +717,11 @@ async def build_telemetry_snapshot(
             reasons.append("dsl_invalid")
             _warn("dsl_invalid", agent_id, "dsl_summary")
 
-    # 4. Trust delta — guarded mirror of routers/agents.py:91.
+    # 4. Trust delta — the last two trust scores (BF-924: TrustNetwork.get_history).
     trust_delta = 0.0
     trust_network = getattr(runtime, "trust_network", None)
     history: list[float] = []
-    if trust_network is not None and hasattr(trust_network, "get_history"):
+    if trust_network is not None:
         try:
             raw = trust_network.get_history(agent_id, limit=2)
             history = list(raw) if raw is not None else []
