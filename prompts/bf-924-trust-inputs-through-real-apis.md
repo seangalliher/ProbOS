@@ -3,12 +3,14 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A1, after the oracle run)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A2, after review round 1 of M1 and M2)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A4, after review round 3 of M1 and M2: the round-three brake, continue)
 
 **Status:** build-ready. One BF, two milestones, one PR, one gate; #1654 closes with it. **BF number:** BF-924 (#1654); this contract allocates nothing. **Tier:** M1 **HIGH** (the AD-535/536 trust clamp: it decides how much an agent may replay without the LLM, and its failure mode is fail-closed by design); M2 **STANDARD** (no safety property: every wired value defaults to the constant it replaces, F05 is Captain-only, F04's effect is the Captain's profile history and, in the backend avatar projection and the crew context, a pitch factor and a rule name, which the Captain's Self Image tab shows; the Captain's voice playback and VRM do not read it, A2 D13, A3 D19). Review the batch at HIGH because M1 is: use the Copilot `Diff Reviewer`. **Base:** written against `ba45c61f` (BF-923's branch head on `origin/main` `7808d182`); BF-923 merges first as a merge commit with this tree; the orchestrator re-verifies every SEARCH on the merge SHA, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Tests:**
 - New `tests/test_bf924_compilation_trust.py` (M1: 18 functions, 26 cases; A2 corrects the original count, 5 functions and 6 cases, and adds 6 functions and 10 cases; A3 adds 7 functions and 10 cases).
 - A3 updated pins (M1): `tests/test_graduated_compilation.py` (seven validator tests whose doubles invented `generate` now use a `BaseLLMClient`-specced double and assert the call reached `complete`; one new case), `tests/test_ad1326_dreaming_challenger.py` and `tests/test_ad1326_challenger_e2e.py` (comments on the Records setter). M2: `tests/test_bf924_trust_inputs.py`'s list helper requires the printed table.
+- A4 (M1): 5 functions and 6 cases appended to `tests/test_bf924_compilation_trust.py` (the compound replay lifecycle through a real `IntentBus`, `AgentRegistry` and target agent, and a Level 3 NO through `handle_intent`); no other test file changes.
 - New `tests/test_bf924_trust_inputs.py` (M2: 13 functions, 20 cases; A2 adds 2 functions and 5 cases).
 - A2 updated pins (M1): `tests/test_graduated_compilation.py` (`test_promote_compilation_level` asserts the level `get` returns), `tests/test_ad1326_procedure_ledger.py` (a restore test built its premise through the column-only demote).
 - Updated pins, M1: `tests/test_graduated_compilation.py` (factory and two inline sites set `_trust_score` by hand), `tests/test_level_5_dispatch.py` (factory). M2: `tests/test_ad722_avatar_telemetry.py` (docstring of the no-method double), `tests/test_ad1260_wellness_domain.py` (`_FakeTrust` gains `get_history`), `tests/test_ad622_clearance_grants.py` (`list_all` invented by a `MagicMock`), `tests/test_counselor_activation.py` (defaults of removed fields), `tests/test_ad1270e2h_emergence_models.py` (the pre-move dump of `CounselorConfig`), `tests/test_ad642_communication_benchmarks.py` (a hand-set `_config` nothing reads), `tests/test_counselor_therapeutic.py` (A1: its `__new__` builder sets `_counselor_config`), `tests/test_ad1270e1_config_facade.py` (A1: the field-count pin, 1880 to 1876).
@@ -36,6 +38,14 @@
 4. D18 (M1 finding 3, pre-existing): `DreamingEngine` creates its fallback queue and observed-thread set in its constructor, so they no longer depend on Ship's Records, and `set_records_store` resets neither (E13).
 5. D19 (M2): E6's Captain-visible effect on the Self Image tab is disclosed and R11 narrowed to the voice playback and VRM (finding 1); the positive grant-list tests require the printed table (finding 2, R24); finding 3 is R14.
 6. Tests: 11 new M1 cases (10 in `tests/test_bf924_compilation_trust.py`, 1 in `tests/test_graduated_compilation.py`), seven strengthened validator tests, the D9 test's comment and two AD-1326 test comments corrected (§7.4d, §7.4e); no new M2 case. Mutation rows R24 to R36; the M1 focused list gains seven files. No generated file, hash, field-count pin, event payload or persisted schema changes.
+
+**Amendment A4 (2026-10-25, after review round 3: M1 NOT READY on two P2 with ordinary reach and one P3 text, a whole review; M2 no defect, a delta review; `logs/bf924r3/review-bf924-m1-r3.md`, `review-bf924-m2-r3.md`; the round-three brake: continue).** Every earlier pair stands; A4 only adds pairs (new §7.4f; §7.2's imports and five appended functions). A4:
+1. D20 (M1 finding 1, a regression in effect): a compound step the Level 3 validator rejects is a failed replay: no `act()` on the cached decision; it takes the cached-failure path (`record_fallback`, AD-535's demotion, AD-534b's recovery, an `execution_failure` event naming the step) (E14).
+2. D21 (M1 finding 2, pre-existing): AD-535's promotion and demotion step moves unchanged into `_record_compilation_outcome`, which a dispatched compound replay now calls once before its early return, so compound procedures graduate (E15).
+3. D22 (found by A4's sweep, pre-existing, reachable since D15): a Level 3 overall NO demotes the procedure to Level 2 and resets its count, as AD-535 specifies for any failure; the LLM still serves the intent (E16).
+4. D23 (M1 finding 3, text): the configured chiefs exist; R17's defect is that the approver's name is used as its agent id. D16, E11, section 12 and R17 are corrected.
+5. The result paths of the Level 3 to 5 replay and validation chain are enumerated in section 3 (16 rows), each with what the lifecycle did and does; four rows (three defects) were wrong, all at the handoff from a replay result to the accounting.
+6. Tests: 5 functions and 6 cases appended to the new M1 file. Mutation rows R37 to R42. No generated file, hash, field-count pin, event payload shape or persisted schema changes; M2 is unchanged.
 
 ## 0. Premise: what is present on this tree
 
@@ -117,9 +127,9 @@
 
 **D14 (A2), review round 1 M2 G3: the generator's import.** `scripts/gen_config_reference.py:177` imports `probos.config` with no anchor, so in a worktree with no `PYTHONPATH` the venv's editable install supplies another checkout's models; its siblings insert their own `src` (`check_config_profiles.py:60-62`, `check_config_facade.py`). Chosen: the same lines in the generator (§7.23), and section 6's commands are run with `PYTHONPATH` pinned. Under the gate's environment the path is already first, so the output is byte-identical and `tests/test_config_reference_current.py` (a subprocess with the inherited environment) is unaffected. Of the six scripts that import `probos`, four already anchor; `gen_capability_truth.py` is not run by this change (R12).
 
-**D15 (A3), review round 2 M1 finding 1: Level 3 validation reaches the client.** `_validate_replay_postconditions` and `_validate_step_postcondition` (`cognitive_agent.py:2592`, `:2632` on the candidate) called `llm_client.generate(prompt, max_tokens=...)`. Every client implements `complete(LLMRequest, *, priority) -> LLMResponse` (`BaseLLMClient`, `llm_client.py:243-247`; `OpenAICompatibleClient` `:265`, `:1458`; `MockLLMClient` `:2684`, `:2907`), and no LLM client defines `generate` (section 12). The `AttributeError` was caught as "passing by default", so every Level 3 replay reported `validated=True` with no request (reviewer: `complete_calls 0` once the ladder reached Level 3). The phantom call is in AD-535's own text (`prompts/archive/ad-535-graduated-compilation.md:351`); D10 made it ordinary execution (E8). Ranked: (1, chosen) both validators build `LLMRequest(prompt=..., tier=self._resolve_tier(), max_tokens=100)` (50 for a step) and call `complete(request, priority=Priority.NORMAL)`, reading `LLMResponse.content`, as the agent's own helper calls do (`:7150-7157`, `:7377-7384`, `:12680-12686`) and AD-532e's confirmation gate does (`procedures.py:232-241`); `agent_id` and `work_item_id` stay None, as in `decide`'s own requests (`:4485-4508`; AD-1324's armed-only fields); the prompts, the timeout and the token limits are unchanged; (2) hold Level 3 until a validator is real (D10 caps the ladder at 2, or Level 3 is dispatched Guided): a dispatch rule AD-535 does not have, and the ladder D10 restores would stop at its first step; (3) a separate issue: the ladder BF-924 makes reachable would treat an unvalidated replay as validated from the merge. **Failure semantics.** Ranked: (1, chosen) keep AD-535's fail-open for a failed call (`prompts/archive/ad-535-graduated-compilation.md:363`, acceptance `:666`): a call that raises, times out or returns an error reply (the client returns `LLMResponse(error=...)` rather than raising, `llm_client.py:1532-1535`, `:2092-2098`) passes by default, with a WARNING in both validators (the step validator passed silently, which is how the defect stayed hidden); an answer that is not YES fails validation and the intent goes to the LLM (AD-535's NO path, a `validation_failure` near-miss). Fail-open weakens no control: after three more successes Level 4 replays the same procedure with no validation at all, and the decision's `validated` key has no reader (section 12); (2) fall back to the LLM on a failed call: a second call to the provider that just failed, a `validation_failure` near-miss (and evolution evidence) made of infrastructure noise, and a change to AD-535's acceptance. **Doubles.** The `AsyncMock().generate` doubles exist only in `test_graduated_compilation.py` (section 12); they become `MagicMock(spec=BaseLLMClient)` with `complete`, and each asserts that the request reached `complete` (§7.3 Pairs 6 to 8); the end-to-end cases use a real `OpenAICompatibleClient` with only `complete` replaced (§7.2). A suite-wide seam test over every LLM-client double, as §7.20's for `TrustNetwork`, is R20. **Enumeration:** every other method called on the Level 3 to 5 dispatch and post-execution path exists on its object (19 definitions, section 12); two attribute reads do not (D16). **E10.**
+**D15 (A3), review round 2 M1 finding 1: Level 3 validation reaches the client.** `_validate_replay_postconditions` and `_validate_step_postcondition` (`cognitive_agent.py:2592`, `:2632` on the candidate) called `llm_client.generate(prompt, max_tokens=...)`. Every client implements `complete(LLMRequest, *, priority) -> LLMResponse` (`BaseLLMClient`, `llm_client.py:243-247`; `OpenAICompatibleClient` `:265`, `:1458`; `MockLLMClient` `:2684`, `:2907`), and no LLM client defines `generate` (section 12). The `AttributeError` was caught as "passing by default", so every Level 3 replay reported `validated=True` with no request (reviewer: `complete_calls 0` once the ladder reached Level 3). The phantom call is in AD-535's own text (`prompts/archive/ad-535-graduated-compilation.md:351`); D10 made it ordinary execution (E8). Ranked: (1, chosen) both validators build `LLMRequest(prompt=..., tier=self._resolve_tier(), max_tokens=100)` (50 for a step) and call `complete(request, priority=Priority.NORMAL)`, reading `LLMResponse.content`, as the agent's own helper calls do (`:7150-7157`, `:7377-7384`, `:12680-12686`) and AD-532e's confirmation gate does (`procedures.py:232-241`); `agent_id` and `work_item_id` stay None, as in `decide`'s own requests (`:4485-4508`; AD-1324's armed-only fields); the prompts, the timeout and the token limits are unchanged; (2) hold Level 3 until a validator is real (D10 caps the ladder at 2, or Level 3 is dispatched Guided): a dispatch rule AD-535 does not have, and the ladder D10 restores would stop at its first step; (3) a separate issue: the ladder BF-924 makes reachable would treat an unvalidated replay as validated from the merge. **Failure semantics.** Ranked: (1, chosen) keep AD-535's fail-open for a failed call (`prompts/archive/ad-535-graduated-compilation.md:363`, acceptance `:666`): a call that raises, times out or returns an error reply (the client returns `LLMResponse(error=...)` rather than raising, `llm_client.py:1532-1535`, `:2092-2098`) passes by default, with a WARNING in both validators (the step validator passed silently, which is how the defect stayed hidden); an answer that is not YES fails validation and the intent goes to the LLM (AD-535's NO path, a `validation_failure` near-miss; A4: the overall validator's NO also demotes the procedure, D22, and a compound step's NO is a failed replay, D20). Fail-open weakens no control: after three more successes Level 4 replays the same procedure with no validation at all, and the decision's `validated` key has no reader (section 12); (2) fall back to the LLM on a failed call: a second call to the provider that just failed, a `validation_failure` near-miss (and evolution evidence) made of infrastructure noise, and a change to AD-535's acceptance. **Doubles.** The `AsyncMock().generate` doubles exist only in `test_graduated_compilation.py` (section 12); they become `MagicMock(spec=BaseLLMClient)` with `complete`, and each asserts that the request reached `complete` (§7.3 Pairs 6 to 8); the end-to-end cases use a real `OpenAICompatibleClient` with only `complete` replaced (§7.2). A suite-wide seam test over every LLM-client double, as §7.20's for `TrustNetwork`, is R20. **Enumeration:** every other method called on the Level 3 to 5 dispatch and post-execution path exists on its object (19 definitions, section 12); two attribute reads do not (D16). **E10.**
 
-**D16 (A3), found here on the path D10 opened: the promotion request's author.** `_announce_promotion_request` (`cognitive_agent.py:2757-2838`) posts as `getattr(self, "_agent_id", agent_type)` and `getattr(self, "_callsign", agent_type)` (`:2786-2787`); no agent has either attribute (section 12), so the thread and the DM channel named the agent type. Before D10 no run reached it: the promotion step read the snapshot's Level 2, so `next_level >= PROMOTION_MIN_COMPILATION_LEVEL` (4, `config.py:275`) never held. With D10 a Lieutenant's procedure reaches Level 4 after six successes, and one with at least 10 completions at an effective rate of at least 0.7 (`config.py:276-277`) is marked `pending` and announced (E11). No test reaches either method (section 12). Ranked: (1, chosen) `self.id` and `self.callsign or agent_type` (BaseAgent's own fields, `substrate/agent.py:39`), and disclose the request (E11); (2) register only: from the merge, the Ward Room shows promotion requests authored by an agent type; (3) also route the department-chief approver: `_DEPARTMENT_CHIEFS` (`:2708-2715`) names chiefs no agent is, and the ontology has no chief lookup (section 12): AD-536 design, R17. Within the envelope: AD-536's designed request; approval stays with `procedure approve`.
+**D16 (A3), found here on the path D10 opened: the promotion request's author.** `_announce_promotion_request` (`cognitive_agent.py:2757-2838`) posts as `getattr(self, "_agent_id", agent_type)` and `getattr(self, "_callsign", agent_type)` (`:2786-2787`); no agent has either attribute (section 12), so the thread and the DM channel named the agent type. Before D10 no run reached it: the promotion step read the snapshot's Level 2, so `next_level >= PROMOTION_MIN_COMPILATION_LEVEL` (4, `config.py:275`) never held. With D10 a Lieutenant's procedure reaches Level 4 after six successes, and one with at least 10 completions at an effective rate of at least 0.7 (`config.py:276-277`) is marked `pending` and announced (E11). No test reaches either method (section 12). Ranked: (1, chosen) `self.id` and `self.callsign or agent_type` (BaseAgent's own fields, `substrate/agent.py:39`), and disclose the request (E11); (2) register only: from the merge, the Ward Room shows promotion requests authored by an agent type; (3) also route the department-chief approver: `_DEPARTMENT_CHIEFS` (`:2708-2715`) maps a department to a lowercase name, which `_announce_promotion_request` passes to `get_or_create_dm_channel` as the approver's agent id, so the chief's registered agent is not a member of the DM; the chiefs exist (`config/ontology/organization.yaml:393`, `:405`, `:421`) and the ontology resolves them (`get_post_for_agent(agent_type).reports_to`, then `get_agents_for_post`, `ontology/service.py:165`, `:177`): resolver work in AD-536's routing, R17 (A4, D23, corrects A3's "names chiefs no agent is" and "no chief lookup"). Within the envelope: AD-536's designed request; approval stays with `procedure approve`.
 
 **D17 (A3), review round 2 M1 finding 2 (pre-existing): AD-532b's 72 h window is claimed where it is checked.** `_attempt_procedure_evolution` checks `_addressed_degradations` (`dreaming.py:2013-2015`) and records it after the confirmation `await` (`:2025-2030`); Step 7b checks at `:1885-1887` and records after the parent load and the recall (`:1911`, `:1919`, `:1936`); Step 7d checks at `:2220-2223` and records after them (`:2265`, `:2280`). The local event dispatch runs each listener as its own task (`runtime.py:1987`), so two agents' completions, each past its own 60 s cooldown, both passed the check: two confirmation calls (review round 2; the same on the base). E9 states the 72 h bound, so BF-924 enforces it. Ranked: (1, chosen) one synchronous helper, `_claim_evolution_attempt(proc_id, now)`, checks the window and writes the claim with no `await` between, called by Step 7b and by `_attempt_procedure_evolution` (the reactive trigger and the proactive scan); Step 7d keeps its read-only check, so a `negative_veto` inside the window is still counted as skipped and flags nothing, and claims with the same write right after it, with no `await` between; the state stays `_addressed_degradations` (per engine, in memory, as today); the proactive scan's pre-check (`:2471-2474`) stays read-only, since `_attempt_procedure_evolution` claims. Every exit that recorded before still records (a negative or failed confirmation `:2029`, no evidence `:2047`, a refused challenger plan `:2055`, an evolution `:2073`, and Step 7b's and 7d's equivalents); an attempt that raises keeps its claim (before: unrecorded and retried at the next trigger), and Step 7b's missing-parent exit keeps it (E12). AD-532e's and AD-534's existing tests: 17 reads and writes of `_addressed_degradations` in 7 test files, none asserting an entry is absent (section 12); their presence and `>= before` assertions hold, since the claim writes the same `now` the early exits write. (2) a per-procedure `asyncio.Lock` held across the confirmation: correct, but holds a lock across an LLM call and adds state the window already expresses; (3) narrow E9 to serial deliveries: leaves an ordinary-reach finding unfixed; (4) a separate issue: E9 is BF-924's own disclosure, and the fix is in the methods E9 names.
 
@@ -127,12 +137,43 @@
 
 **D19 (A3), review round 2 M2: the Self Image tab, the list test, a zero expiry.** Finding 1 (P3, a repair regression in the disclosure): D13 counted the Self Image tab among the readers of `deriveAgentSignals`' zero, but it renders the backend snapshot (D13 as corrected), so E6 has a Captain-visible effect: the tab shows the real delta, the modulated pitch and the rule name. No code changes; the text is corrected wherever it appears (the header, D6, D13, §5b, §4's PR text, both tracker entries, §9, §12, §13, property 14, R11). Finding 2 (P3, a repair regression in a test): A2's `[-1]` split let the positive list test read the issue command's own confirmation as the table; the helper now returns the whole output, the tests that expect a table take it through `_listed_table`, which fails when none printed, and the refused-issue tests read the whole output as before (R24). Ranked for finding 2: (1, chosen) separate the output from the table and assert the table where one is expected; (2) restore `[1]` and catch `IndexError` in the refused cases: an exception as control flow in a test helper; (3) assert the title inline in each positive test: the same check three times. Finding 3 (P3, injected only, not a regression): a stored `expires_at == 0` reads as permanent and Active in `/grant list` while both active-grant readers exclude it; only a hand-written row stores 0 (`/grant issue ... 0` stores None): R14.
 
+**D20 (A4), review round 3 M1 finding 1 (P2, ordinary, a regression in effect): a rejected compound step is a failed replay.** `_execute_compound_replay` returns `compound_aborted` when a Level 3 step's validator answers NO (`cognitive_agent.py:2099-2109` on the candidate); the lifecycle reads only `compound_dispatched` (`:7624`), so the abort took the degradation branch (`:7659-7661`), ran `act()` on the unchanged cached decision (`:7667`), reported success, recorded a completion and counted it toward promotion: three rejections reached Level 4, where validation stops (reviewer: levels `2, 2, 3, 3, 3, 4`, no recovery call). D15 made the NO reachable. AD-535 aborts the compound replay on a step NO (`prompts/archive/ad-535-graduated-compilation.md:383`) and demotes on any failure (`:37`, `:53`). Ranked: (1, chosen) the abort is a failed cached replay: the lifecycle skips `act()` and takes the existing cached-failure path with a failure result naming the step: `record_fallback` (`:7772`), AD-535's demotion (`:7819-7834`), AD-534b's service recovery (`:7836-7862`) and, when recovered, the `execution_failure` learning event, whose `rejection_reason` names the step (`:7854-7859`). Other agents already ran the earlier steps, which is why it is an execution failure and not a near-miss (AD-534b's split, `dreaming.py:2317-2319`). The abort result now says `success: False` and carries `failed_step`; (2) treat it as a near-miss on the LLM path, as a Level 3 overall NO is: the compound replay runs in the lifecycle after `decide` returned, so there is no LLM path to fall back to without a second decision site, and steps were executed, which a near-miss denies; (3) set the result's `success` to False only: the caller never read it (reviewer, finding 1). **E14.**
+
+**D21 (A4), review round 3 M1 finding 2 (P2, ordinary, pre-existing, exposed by D10 and D15): a dispatched compound replay reaches AD-535's accounting once.** The compound branch records the completion, emits its event and returns (`:7624-7658`) before the post-execution promotion step (`:7788-7834`), so no compound procedure ever counted a success: at Level 3 it stayed there, paying one 100-token call and one 50-token call per validated step every run (reviewer: six Level 3 completions, count 0), and at Level 4 it never reached Level 5. Ranked: (1, chosen) move the post-execution step unchanged into `_record_compilation_outcome(procedure_id, success)` and call it from its old site, from the compound branch after its completion write (once: the branch returns) and from D22's NO path; the compound branch's completion write, event and result are unchanged (pinned by `test_multi_agent_replay_dispatch.py:799-856`); (2) let the compound success fall through the shared post-execution path: it changes the compound event's payload (`compound_dispatched`, `steps_dispatched`, pinned at `:855`), writes the completion twice unless the branch's write goes, and adds episode, working-memory and Ward Room effects to a path that has none (R21); (3) a second copy of the step in the branch: two copies of the ladder. A step whose dispatch failed is replaced by its text and counts, as AD-534c designed and as the completion already counted it (`:2084-2097`, R23); at Level 3 the step validator judges that text. **E15.**
+
+**D22 (A4), found by the sweep (pre-existing, reachable since D15): a Level 3 NO is a failure for the ladder.** The overall validator's NO returns `None` (`:2510-2522`), so the intent takes the LLM path with no `procedure_id` and the post-execution step never sees the procedure: the count was neither reset nor the level demoted, and three YES answers that were not consecutive still promoted the procedure. AD-535 resets the count on any failure and demotes to Level 2 (`ad-535-graduated-compilation.md:37`, `:53`) and specified the NO as a fall-through through service recovery (`:263`). Ranked: (1, chosen) `_build_validated_decision` calls `_record_compilation_outcome(procedure.id, False)` before returning `None`: the stored Level 3 procedure (an effective Level 3 is a stored Level 3: the caps are 2, 4 and 5) is demoted to Level 2 with its count reset; the LLM still serves the intent; the `validation_failure` near-miss, its learning event and `used_procedure: False` (D9) are unchanged; a failed validation call still passes by default (D15) and touches nothing; (2) reset the count and keep Level 3: a procedure the validator keeps rejecting pays a validation call and an LLM decision every run, against AD-535's rule; (3) register it: the ladder D10 activates would promote on non-consecutive successes. **E16.**
+
+**D23 (A4), review round 3 M1 finding 3 (P3, text): R17's premise.** D16 option (3), E11, section 12 and R17 said the configured chiefs do not exist (a case-sensitive search for `laforge` in `config/`). They exist: `config/ontology/organization.yaml:393`, `:405`, `:421` assign LaForge, Bones and Worf, and the ontology resolves a chief through `get_post_for_agent(agent_type).reports_to` and `get_agents_for_post(post_id)` (`ontology/service.py:165`, `:177`). The defect is the addressing: `_DEPARTMENT_CHIEFS` (`cognitive_agent.py:2723-2730` on the candidate) holds lowercase names, and `_announce_promotion_request` passes that name to `get_or_create_dm_channel` as the approver's agent id (`:2838-2841`), so the DM's member is the literal `laforge`, which the chief's registered agent is not (reviewer: real configuration, ontology, registry and Ward Room). Text only; the routing stays R17 (corrected).
+
+**The result paths of the Level 3 to 5 replay and validation chain (A4).** Lines are the candidate's (`cb201c20`). "Accounting" is the post-execution step, `_record_compilation_outcome` after A4.
+
+| # | Path | Where | Lifecycle on the candidate | After A4 |
+|---|---|---|---|---|
+| 1 | Level 2 Guided (stored 2, or clamped), success | `:1869-1871`, `:2449-2472`; `:7777-7786`; `:7788-7818` | `act()` on the LLM decision; completion; count; promotion to 3 within the cap; `used_procedure: False` (D9) | unchanged |
+| 2 | Level 2 Guided, failure | `:7783-7784`; `:7819-7834` | fallback; demotion of a stored level above 2 (a clamped run), else reset; no recovery (not cached) | unchanged |
+| 3 | Level 3, overall NO | `:2510-2522` | `None`; `validation_failure` near-miss; LLM decision; no procedure accounting; count untouched | **D22**: demoted to 2 with the count reset, once; the rest unchanged |
+| 4 | Level 3, overall call raised, timed out or returned an error reply | `:2599-2610` | passes by default with a WARNING: row 5 or 7 to 11 | unchanged |
+| 5 | Level 3 single-step, overall YES, `act()` succeeds | `:2524-2541`; `:7667`; `:7764-7818` | completion; count; promotion to 4 | unchanged |
+| 6 | Level 3, 4 or 5 cached replay whose `act()` fails (an override, or `action: error`) | `:6599-6600`; `:7769-7772`; `:7819-7834`; `:7836-7862` | fallback; demotion; recovery; `execution_failure` event when recovered; `used_procedure: True` | unchanged |
+| 7 | Level 3 compound, degraded (no bus or registry `:2027-2029`; a role unresolved `:2042-2056`) | `:7659-7661` | text through `act()`: row 5's accounting; an unresolved role also emits `compound_agent_unavailable` | unchanged (AD-534c's single-agent text replay, validated by the overall check as row 5 is) |
+| 8 | Level 3 compound, a step NO | `:2099-2109`; `:7659-7667` | `compound_aborted` ignored; `act()` on the cached decision; success; completion; count; promotion (Level 4 after three) | **D20**: row 6's path with no `act()` on the replay; the reason names the step |
+| 9 | Level 3 compound, a step's dispatch failed or raised | `:2082-2097` | the step text is substituted and validated: row 8 or rows 10 and 11 | unchanged |
+| 10 | Level 3 compound, a step validation call failed | `:2643-2652` | passes by default with a WARNING; the replay continues | unchanged |
+| 11 | Level 3 compound, every step accepted | `:2111-2117`; `:7624-7658` | completion; compound event; return before the count: never promoted, validation calls every run | **D21**: accounting once, before the return |
+| 12 | Level 4 or 5 single-step, success | `:1877-1912`; `:7764-7818` | completion; count; Level 5 for approved and Commander; AD-536 request on reaching 4 | unchanged |
+| 13 | Level 4 or 5 compound, dispatched (failed steps substituted, AD-534c) | `:1896-1910`; `:7624-7658` | completion; return before the count: never reaches 5 | **D21**: accounting once |
+| 14 | Level 4 or 5 compound, degraded | `:7659-7661` | row 12 | unchanged |
+| 15 | Level 4 or above, formatting raised | `:1914-1928` | `format_exception` near-miss; LLM decision; no accounting | unchanged (a near-miss: no replay was formed) |
+| 16 | A raise in the accounting | `:7817-7818`, `:7833-7834` | swallowed (metrics never block the intent) | unchanged (the same `except` in the helper) |
+
+No row calls the accounting twice in one intent: row 11 and row 13 return after their call; row 3 hands the intent to an LLM decision that carries no `procedure_id`; every other row reaches only the shared site.
+
 ## 4. Interaction with the queue
 
 - **BF-923 (#1652)** is this base. Its Counselor changes (sections 3, 5(c), 7.8 of `prompts/bf-923-episodic-recall-callers-and-counselor-assessment-inputs.md`) are in this tree; this contract's `counselor.py` pairs anchor on the import block, `__init__`, `_run_wellness_sweep`'s head and `_on_trust_update`'s threshold, none of which BF-923 changed. No pair touches `_gather_agent_metrics`, `_record_trust_observation`, `CognitiveProfile`, `behavioral_*`, `orientation.py`, `proactive.py`, `runtime.py`, `startup/finalize.py` or `ward_room/channels.py`.
 - **#1626 M6+M7** edits `ui/` only. No pair here is in `ui/`; the UI readers of `trustHistory` and `trust_delta` are read, not changed.
 - **Tracker anchors:** `PROGRESS.md`'s title line (once) and `DECISIONS.md`'s heading `### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)` (line 739, once).
-- **PR text, BF-924's part:** "BF-924 (#1654). Trust inputs were read through APIs that don't exist. The AD-535/536 procedure-compilation clamp read an attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`get_score`, as Rank does): Ensigns are held to Guided (Level 2), a Commander's approved procedure can reach Level 5, and an unreadable trust (a failed read, or a value that is not a score in [0, 1]) is held to Level 2 with a WARNING. Promotion and demotion now write the level `ProcedureStore.get` reads, so they take effect: they had moved only an index column, and dispatch, the next promotion step and the teaching gate never saw them. With the ladder working, Level 3 validation now calls the LLM client's real interface: it called a method no client has, so every Level 3 replay passed unvalidated (a failed call still passes by default, now with a WARNING). A Lieutenant's procedure that reaches Level 4 now requests institutional promotion, posted as the agent. Overlapping completions make at most one evolution attempt per procedure per 72 h, and fallback evidence reaches the dream cycle when Ship's Records is disabled. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar telemetry's trust delta is real: the Captain's Self Image tab shows it with the modulated pitch and rule (the HXI's own voice playback and VRM do not read it yet). `/grant list` no longer raises, names a grant's target by its live callsign and shows every row even when one time cannot be shown as a date; `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown. The Counselor reads `trust_delta_threshold` and `sweep_max_agents` from its config (defaults unchanged); the four `CounselorConfig` fields nothing read are removed."
+- **PR text, BF-924's part:** "BF-924 (#1654). Trust inputs were read through APIs that don't exist. The AD-535/536 procedure-compilation clamp read an attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`get_score`, as Rank does): Ensigns are held to Guided (Level 2), a Commander's approved procedure can reach Level 5, and an unreadable trust (a failed read, or a value that is not a score in [0, 1]) is held to Level 2 with a WARNING. Promotion and demotion now write the level `ProcedureStore.get` reads, so they take effect: they had moved only an index column, and dispatch, the next promotion step and the teaching gate never saw them. With the ladder working, Level 3 validation now calls the LLM client's real interface: it called a method no client has, so every Level 3 replay passed unvalidated (a failed call still passes by default, now with a WARNING). A Lieutenant's procedure that reaches Level 4 now requests institutional promotion, posted as the agent. Overlapping completions make at most one evolution attempt per procedure per 72 h, and fallback evidence reaches the dream cycle when Ship's Records is disabled. Compound procedures now graduate: a dispatched compound replay counts toward promotion; a compound step the Level 3 validator rejects is a failed replay that the LLM recovers, with the procedure demoted to Guided; and a Level 3 NO demotes the procedure too, as AD-535 specifies. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar telemetry's trust delta is real: the Captain's Self Image tab shows it with the modulated pitch and rule (the HXI's own voice playback and VRM do not read it yet). `/grant list` no longer raises, names a grant's target by its live callsign and shows every row even when one time cannot be shown as a date; `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown. The Counselor reads `trust_delta_threshold` and `sweep_max_agents` from its config (defaults unchanged); the four `CounselorConfig` fields nothing read are removed."
 
 ## 5. Consumers of every value this changes
 
@@ -148,10 +189,13 @@
 | **E4** | a failed read, or a value that is not a score in [0, 1] (A2), logs `BF-924 (#1654): trust read failed for <id>; procedure compilation held to Level 2` at WARNING with its traceback, once per trust read: once per procedure match, twice when the promotion step also reads (review round 1: 1, 1, 2, 2, 2 records over five intents; no throttle, R13) |
 | **E8 (A2, D10)** | from the merge, a promotion or a demotion changes the level `get` returns, so dispatch follows it. A Lieutenant's (trust from 0.5) Guided procedure is dispatched as Level 3 (deterministic replay plus one LLM validation call, `:2495-2538`; A3, D15: that call was never made until A3, E10) after 3 consecutive successes and as Level 4 (zero-token replay) after 3 more; a Commander's approved Level 4 procedure reaches Level 5 and can be taught; any failure demotes a procedure above Level 2 to Guided for real. Ensigns stay at Level 2 (M1). Live: no active procedure is at Level 3 or above by column (D4); a row whose snapshot already differs from its column keeps its snapshot's level until its next promotion or demotion (R10, D4(c)) |
 | **E9 (A2, D9; A3, D17)** | an Ensign's successful Guided run of a matched procedure emits `used_procedure: False`, as every stored Level 2 run does, so AD-532e's reactive check may run for it: at most once per agent per 60 s, only for an unhealthy diagnosis with at least 5 selections, at most one evolution attempt per procedure per 72 h shared with the dream cycle, each attempt one LLM confirmation call (review round 1: one attempt and one call for a degraded procedure). A3: the 72 h bound holds under overlapping deliveries too (each listener runs as its own task, `runtime.py:1987`): the window is claimed in the step that checks it, before the first `await`; review round 2 measured two confirmation calls for two agents' overlapping completions without the claim |
-| **E10 (A3, D15)** | a Level 3 dispatch makes its validation call: one LLM request (`max_tokens=100`, the agent's tier) per Level 3 replay of a procedure with a postcondition, a step expected output or an invariant, and one (`max_tokens=50`) per expected output of a compound Level 3 step. YES replays; any other answer sends the intent to the LLM path with a `validation_failure` near-miss (a fallback learning event when that run succeeds, AD-534b); a call that raises, times out or returns an error reply passes by default with a WARNING (AD-535). Before, no request was made and every replay passed. A procedure with none of the three is replayed without a call, as before. Live: no active procedure is at Level 3 today (D4) |
-| **E11 (A3, D16)** | a Lieutenant's procedure that D10 promotes to Level 4 now requests AD-536 institutional promotion (`cognitive_agent.py:7797-7801`), which no run reached before: with at least 10 completions at an effective rate of at least 0.7, its status becomes `pending` (`procedure_store.py:1395-1403`) and a promotion-request thread is posted in the Ward Room (All Hands for high or critical criticality, else the department's channel, else the first channel), with a DM to the routed approver; approval stays with `procedure approve`. The thread's author is now the agent (`self.id`, its callsign); it was the agent type. The DM to a department chief goes to a name no agent has (R17) |
+| **E10 (A3, D15)** | a Level 3 dispatch makes its validation call: one LLM request (`max_tokens=100`, the agent's tier) per Level 3 replay of a procedure with a postcondition, a step expected output or an invariant, and one (`max_tokens=50`) per expected output of a compound Level 3 step. YES replays; any other answer sends the intent to the LLM path with a `validation_failure` near-miss (a fallback learning event when that run succeeds, AD-534b) and, since A4, demotes the procedure to Level 2 (E16); a compound step's non-YES answer is a failed replay instead (E14); a call that raises, times out or returns an error reply passes by default with a WARNING (AD-535). Before, no request was made and every replay passed. A procedure with none of the three is replayed without a call, as before. Live: no active procedure is at Level 3 today (D4) |
+| **E11 (A3, D16)** | a Lieutenant's procedure that D10 promotes to Level 4 now requests AD-536 institutional promotion (`cognitive_agent.py:7797-7801`), which no run reached before: with at least 10 completions at an effective rate of at least 0.7, its status becomes `pending` (`procedure_store.py:1395-1403`) and a promotion-request thread is posted in the Ward Room (All Hands for high or critical criticality, else the department's channel, else the first channel), with a DM to the routed approver; approval stays with `procedure approve`. The thread's author is now the agent (`self.id`, its callsign); it was the agent type. The DM to a department chief is addressed with the chief's lowercase name as its agent id, so the chief's registered agent is not its member (A4, D23: the chiefs exist; R17) |
 | **E12 (A3, D17)** | the 72 h window is claimed before the first `await`: an attempt that raises keeps its claim (before: unrecorded, and retried at the next trigger, at most once per agent per 60 s), and Step 7b's missing-parent exit keeps it; every recorded outcome (a negative or failed confirmation, no evidence, a refused challenger plan, an evolution) records as before |
 | **E13 (A3, D18)** | with Ship's Records disabled (`records.enabled: false`), a fallback learning event reaches Step 7d and Step 7e scans threads; before, the handler dropped the event with `AttributeError` and Step 7e raised on its first thread. With Records enabled nothing changes (the setter no longer resets the queue; startup calls it once) |
+| **E14 (A4, D20)** | a compound Level 3 step that the validator answers with anything but YES (a failed call still passes) is a failed replay: no action on the rejected replay; one `record_fallback`; the procedure is demoted to Level 2 (count reset); AD-534b's recovery makes one LLM decision, whose answer is returned; the completion event reports `used_procedure: True` and the recovered success; when recovered, an `execution_failure` learning event names the step, and Step 7d answers it as any execution failure (with AD-1326's challenger built, `startup/dreaming.py:168`, a challenger plan; without one, a FIX evolution and the parent's deactivation, `dreaming.py:2317-2325`). With no recovery the intent fails with the step named. Before: success with the unvalidated text, a completion and promotion (Level 4 after three rejections). Live: no active procedure is at Level 3 (D4) |
+| **E15 (A4, D21)** | a dispatched compound replay counts toward promotion once per run: a Level 3 compound procedure reaches Level 4 after three dispatched successes, which ends its validation calls (E10); a Commander's approved Level 4 one reaches Level 5; reaching Level 4 can request AD-536 promotion (E11). A step whose dispatch failed still degrades to its text and counts (AD-534c; at Level 3 the step validator judges that text; R23). The compound branch's completion write, event and result are unchanged. Before: no compound procedure ever counted a success |
+| **E16 (A4, D22)** | a Level 3 overall NO demotes the procedure to Level 2 and resets its count; the LLM serves the intent, and the `validation_failure` near-miss, its learning event and `used_procedure: False` (D9) are unchanged. Before (since D15): the count was untouched, so three YES answers that were not consecutive promoted it |
 
 **The Level 2 path and AD-534 / dream-time evolution (enumerated).** Writers of the four counters (`procedure_store.py:1052-1074`): selection and applied are recorded before the clamp (`cognitive_agent.py:1831`, `:1847`), unchanged; completion or fallback is recorded once per decision, by the cached branch (`:7732-7741`) or the guided branch (`:7744-7753`), the same counters. So the clamp changes which branch records, not what is recorded: one selection, one applied and one completion-or-fallback per run, either way. Readers of those counters: `diagnose_procedure_health` (`procedures.py:289-320`, thresholds on the four rates), called by the agent at `:1817` (the quality gate, before the clamp, unchanged) and `:1887` (Level ≥ 4 only: an Ensign's run no longer reaches it, so fewer AD-534 WARNING lines; log-only, `:2639-2646`), and by dreaming at `dreaming.py:1880` (`_evolve_degraded_procedures`), `:2151` (reactive), `:2464` (sweep), plus the gap predictor's own rule at `dreaming.py:1303-1310` and `gap_predictor.py:580`. All read `get_quality_metrics` (`procedure_store.py:1135-1162`) only; none reads the dispatch level, `cached` or `guided_by_procedure` (`guided_by_procedure` has two readers, both in `cognitive_agent.py`: `:2468` writes it, `:7744` reads it). So the counters move only with the outcomes of the Guided runs. **Corrected (A2, review round 1 finding 1):** the completion event differs. `TASK_EXECUTION_COMPLETE` reports `used_procedure` from `cached` (`:7852-7859`), which a Guided decision does not set, and AD-532e's reactive check (`dreaming.py:2117-2164`) runs for a run that used no replay. An Ensign's Guided run therefore enters that check, as every stored Level 2 run already does (E9, D9); the earlier "no evolution by itself" compared the counters, not the event. Two behaviours differ for an Ensign's run: the AD-534b service recovery (`:7805`) runs only for a failed *cached* replay, and `:1887`'s log-only diagnosis does not run.
 
@@ -174,7 +218,7 @@
 
 ## 6. Milestones and tests
 
-**M1 (HIGH), §7.1 to §7.4.** First heading: `### 7.1 \`src/probos/cognitive/cognitive_agent.py\` (M1)`. Commit "BF-924 M1: the procedure-compilation trust clamp reads the agent's live trust (part of #1654)", body ending "AD-535/536 read a _trust_score attribute nothing sets, so every agent counted as 0.5. The clamp and the promotion step now read TrustNetwork.get_score(self.id), as the rank read does; an unreadable trust logs a WARNING and takes the Ensign cap (Level 2). Ensigns run stored Level 3 and 4 procedures as Guided; a Commander's approved procedure can reach Level 5. Level 3 validation calls the LLM client's complete(), which it never reached; the 72 h evolution window is claimed before its first await; the dreaming fallback queue no longer depends on Ship's Records; a promotion request is posted as the agent."
+**M1 (HIGH), §7.1 to §7.4.** First heading: `### 7.1 \`src/probos/cognitive/cognitive_agent.py\` (M1)`. Commit "BF-924 M1: the procedure-compilation trust clamp reads the agent's live trust (part of #1654)", body ending "AD-535/536 read a _trust_score attribute nothing sets, so every agent counted as 0.5. The clamp and the promotion step now read TrustNetwork.get_score(self.id), as the rank read does; an unreadable trust logs a WARNING and takes the Ensign cap (Level 2). Ensigns run stored Level 3 and 4 procedures as Guided; a Commander's approved procedure can reach Level 5. Level 3 validation calls the LLM client's complete(), which it never reached; the 72 h evolution window is claimed before its first await; the dreaming fallback queue no longer depends on Ship's Records; a promotion request is posted as the agent. Every replay outcome reaches AD-535's promotion step once: a dispatched compound replay counts, a rejected compound step is a failed replay the LLM recovers, and a Level 3 NO demotes."
 
 Before editing, grep the pins: `grep -rn "_trust_score\|_max_compilation_level_for\|_check_procedural_memory\|promote_compilation_level" tests/`. The hand-set `_trust_score` in `test_graduated_compilation.py` and `test_level_5_dispatch.py` is replaced (§7.3, §7.4). `test_teaching_protocol.py:93` also sets it, but none of its tests reaches the clamp (it does not call `_check_procedural_memory`); it is left, now dead (R7).
 
@@ -193,7 +237,7 @@ Tests first: with §7.2 to §7.4 applied and §7.1 not, exactly 6 cases fail:
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_compilation_trust.py tests/test_graduated_compilation.py tests/test_level_5_dispatch.py tests/test_replay_dispatch.py tests/test_multi_agent_replay_dispatch.py tests/test_fallback_learning.py tests/test_ad573_memory_budget.py tests/test_teaching_protocol.py tests/test_promotion_approval.py tests/test_promotion_integration.py tests/test_procedure_store.py tests/test_ad1326_procedure_ledger.py tests/test_bf891_procedure_store_lock.py tests/test_reactive_proactive_triggers.py tests/test_procedure_evolution.py tests/test_bf106_dreaming_di.py tests/test_ad1326_dreaming_challenger.py tests/test_ad1326_challenger_e2e.py tests/test_dream_step_7e.py tests/test_dream_step_7f.py tests/test_ad541c_retrieval_practice.py -n 0 -q
 ```
 
-(Collected on `ba45c61f` without the new file: 270, all passing. Expect 277 passed. A1: the orchestrator's measured counts supersede this line; A1 adds and removes no M1 case.) A2: the oracle measured 276 for the ten original files (the new file had 5 functions and 6 cases, not 6 and 7); A2 adds 10 cases, so expect 286 for those ten, plus the four files A2 adds (`test_procedure_store.py`, `test_ad1326_procedure_ledger.py`, `test_bf891_procedure_store_lock.py`, `test_reactive_proactive_triggers.py`: the consumers of the two store methods and of the completion event), whose collected count the orchestrator measures. A3: the orchestrator measured 540 for these fourteen files on the M1 candidate; A3 adds 11 cases there (10 in the new file, 1 in `test_graduated_compilation.py`), so expect 551, plus the seven files A3 adds (`test_procedure_evolution.py`, `test_bf106_dreaming_di.py`, `test_ad1326_dreaming_challenger.py`, `test_ad1326_challenger_e2e.py`, `test_dream_step_7e.py`, `test_dream_step_7f.py`, `test_ad541c_retrieval_practice.py`: the readers of the evolution window, the Records setter's callers and the `__new__` factories that set the two moved fields), whose collected count the orchestrator measures.
+(Collected on `ba45c61f` without the new file: 270, all passing. Expect 277 passed. A1: the orchestrator's measured counts supersede this line; A1 adds and removes no M1 case.) A2: the oracle measured 276 for the ten original files (the new file had 5 functions and 6 cases, not 6 and 7); A2 adds 10 cases, so expect 286 for those ten, plus the four files A2 adds (`test_procedure_store.py`, `test_ad1326_procedure_ledger.py`, `test_bf891_procedure_store_lock.py`, `test_reactive_proactive_triggers.py`: the consumers of the two store methods and of the completion event), whose collected count the orchestrator measures. A3: the orchestrator measured 540 for these fourteen files on the M1 candidate; A3 adds 11 cases there (10 in the new file, 1 in `test_graduated_compilation.py`), so expect 551, plus the seven files A3 adds (`test_procedure_evolution.py`, `test_bf106_dreaming_di.py`, `test_ad1326_dreaming_challenger.py`, `test_ad1326_challenger_e2e.py`, `test_dream_step_7e.py`, `test_dream_step_7f.py`, `test_ad541c_retrieval_practice.py`: the readers of the evolution window, the Records setter's callers and the `__new__` factories that set the two moved fields), whose collected count the orchestrator measured: 125, so the 21-file M1 list collects 676 and all of them pass. A4 appends 6 cases to the new file: expect 682 collected and passed for the 21-file list; the M2 list is unchanged (1,035).
 
 **A2 tests first.** On the candidate's source (`cad8396f`), with only A2's test changes applied (§7.2's additions, §7.3 Pair 5, §7.4b, §7.20's additions), exactly 13 of the new and changed cases fail:
 - M1 (8): `test_a_trust_that_is_not_a_score_is_held_to_level_2_and_warned[nan]`, `[above-one]`, `[inf]` (`assert None is True` on `guided_by_procedure`: a Level 4 replay); `test_an_infinite_trust_does_not_promote_an_approved_procedure_to_level_5` (`[5] == [4]`); `test_a_runtime_whose_trust_network_cannot_be_read_is_held_to_level_2_and_warned` (`RuntimeError: trust network unavailable` raised by `decide`: the defect itself, so the expected failure, not a hard stop); `test_a_commanders_promotion_to_level_5_reaches_get_and_the_teaching_route` (`4 == 5` on the level `get` returns); `test_a_demoted_procedure_is_dispatched_at_its_demoted_level` (`4 == 2` on the level `get` returns); `TestConsecutiveSuccessTracking::test_promote_compilation_level` (`2 == 3`).
@@ -205,7 +249,16 @@ Pass on both sides: the three cases of `test_a_clamped_guided_run_reaches_the_re
 - `test_bf924_compilation_trust.py` (10): `test_a_level_3_replay_is_validated_through_the_client_interface[yes]` (`assert 0 == 1` on `complete.await_count`) and `[no]` (`assert 0 == 2`); `test_a_failed_level_3_validation_call_passes_by_default_and_warns[raises]` and `[error-reply]` (`assert 0 == 1`); `test_a_lieutenants_promotion_to_level_4_requests_institutional_promotion_as_the_agent` (`('test_replay', 'test_replay') == (<agent id>, 'Wesley')`); `test_overlapping_completions_of_one_procedure_make_one_evolution_attempt` (`assert 2 == 1`); `test_a_completion_during_a_dream_step_does_not_attempt_the_procedure_again[7b]` (`assert 1 == 0`) and `[7d]` (`TimeoutError` at the parent-load wait after 10 s: on the candidate the queue does not exist, so Step 7d raises before its load; with §7.4c Pair 1 alone applied it fails `assert 1 == 0`); `test_a_fallback_reaches_step_7d_when_ships_records_is_disabled` (`AttributeError: 'DreamingEngine' object has no attribute '_fallback_learning_queue'`, from `_process_fallback_learning`) and `test_step_7e_runs_when_ships_records_is_disabled` (the same for `'_observed_threads'`): the defect itself, the expected failure, not a hard stop.
 - `test_graduated_compilation.py` (8): `test_validation_timeout_passes`, `test_validation_includes_postconditions`, `test_validation_includes_step_expected_outputs`, `test_validation_includes_invariants`, `test_validate_step_postcondition_passes`, `test_validate_step_postcondition_fails`, `test_validate_step_llm_failure_passes` and `test_validate_step_error_reply_passes`, each `assert 0 == 1` on `complete.await_count` (the candidate calls `generate`, which the `BaseLLMClient`-specced double does not have).
 
-No M2 case fails on the candidate (the table is printed); R24 checks the strengthened helper. Every other case of these files passes on both sides; a failure for another reason is a hard stop for the Architect. On the base, for the oracle's staged run: the M1 stage fails 32 (A2's 14 and these 18, each the same way); the M2 stage fails 24, as before.
+No M2 case fails on the candidate (the table is printed); R24 checks the strengthened helper. Every other case of these files passes on both sides; a failure for another reason is a hard stop for the Architect. On the base, for the oracle's staged run: the M1 stage fails 31 (A2's 14 and 17 of these 18, each the same way: `test_a_completion_during_a_dream_step_does_not_attempt_the_procedure_again[7b]` passes on the base, where an Ensign's replay reports `used_procedure=True` and the reactive check never runs); the M2 stage fails 24, as before (the orchestrator measured 31 of 676 and 24 of 1,035).
+
+**A4 tests first.** On the candidate's source (`cb201c20`; M2 changes neither `cognitive_agent.py` nor the new test file), with only A4's test changes applied (§7.2's import pair and five appended functions), exactly 6 cases fail, all in `tests/test_bf924_compilation_trust.py`:
+- `test_a_rejected_compound_step_is_a_failed_replay_that_the_llm_recovers`: `assert 0 == 1` on `run.ordinary` (the candidate acts on the rejected replay and makes no recovery call);
+- `test_a_rejected_compound_step_without_recovery_fails_and_never_acts_on_the_replay`: `assert 1 == 0` on `act.await_count`;
+- `test_dispatched_compound_replays_count_toward_promotion_once_per_run[yes]` and `[error-reply]`: `[(3, 0), (3, 0), (3, 0), (3, 0)] == [(3, 1), (3, 2), (4, 0), (4, 1)]`;
+- `test_a_commanders_approved_compound_procedure_reaches_level_5`: `[4, 4, 4] == [4, 4, 5]`;
+- `test_a_level_3_no_demotes_the_procedure_and_resets_its_count`: `(3, 2) == (2, 0)`.
+
+Every premise assertion passes on the candidate (step 1 delivered and rejected; every step delivered with no ordinary call; Level 4 makes no validation call; the validation request, then the LLM decision); a failure at a premise, or any other case of the 21 files failing, is a hard stop for the Architect. On the base, for the oracle's staged run: the M1 stage fails 37 (A3's 31 and these 6: the two rejection cases and the Level 3 NO case at their premise, because the base's validators call `generate` and make no request; the two counting cases at the same assertion as on the candidate; the Commander case at `[4, 4, 4] == [4, 4, 5]`, because the base reads trust 0.5); the M2 stage fails 24, as before.
 
 **M2 (STANDARD), §7.5 to §7.22.** First heading: `### 7.5 \`src/probos/consensus/trust.py\` (M2)`. After applying §7.5 to §7.22, regenerate and check, in this order:
 
@@ -223,7 +276,7 @@ The regenerated `docs/development/config-reference.md` and `docs/development/con
 - the same file, the `SystemConfig` row (`:3418`, the model that contains `CounselorConfig`): `schema_sha256` `ba3ec2db...` to `dc10c4795616d785b6c6860834ef150fab29c53abd48d9052f3950c44abc82aa`, nothing else;
 - `config-reference.md`, the `counselor` section (`:1289-1294`): the four rows of the removed fields deleted; the description line ("Counselor cognitive wellness configuration (AD-503).", the docstring's first line) and the two remaining rows unchanged.
 
-The three hashes are the values for §7.11 applied byte for byte (the schema includes the docstring). Any other file, hunk or value, or a `--check` failure, is a hard stop for the Architect. Commit "BF-924 M2: trust history, /grant list and the Counselor's config read real APIs (part of #1654)", body ending "TrustNetwork.get_history returns the agent's last trust scores, so profile trust history and the avatar trust delta are real; both hasattr guards are removed. /grant list names a target through its birth certificate and live callsign. The Counselor takes CounselorConfig by constructor injection and reads trust_delta_threshold and sweep_max_agents (defaults unchanged); enabled, profile_retention_days, alert_on_red and alert_on_yellow had no reader and are removed." The tracker entries (section 8) go in this commit.
+The three hashes are the values for §7.11 applied byte for byte (the schema includes the docstring). Any other file, hunk or value, or a `--check` failure, is a hard stop for the Architect. Commit "BF-924 M2: trust history, /grant list and the Counselor's config read real APIs (part of #1654)", body ending "TrustNetwork.get_history returns the agent's last trust scores, so profile trust history and the avatar trust delta are real; both hasattr guards are removed. /grant list names a target through its birth certificate and live callsign. The Counselor takes CounselorConfig by constructor injection and reads trust_delta_threshold and sweep_max_agents (defaults unchanged); enabled, profile_retention_days, alert_on_red and alert_on_yellow had no reader and are removed." The tracker entries (section 8) go in the tracker commit that follows M2's, with the regenerated AD ledger (the orchestrator applies them by tool and commits them separately, as for BF-921 to BF-923).
 
 Before editing, grep the pins: `grep -rn "get_history\|list_all\|CounselorConfig\|trust_delta_threshold\|sweep_max_agents\|alert_on_\|profile_retention_days\|_run_wellness_sweep" tests/`. The 13 `runtime.trust_network.get_history.return_value = []` fixtures (`test_ad1052a_*:131` and 12 more, section 11) now name a real method and stay.
 
@@ -444,11 +497,15 @@ import pytest
 from probos.cognitive.dreaming import DreamingEngine
 from probos.cognitive.llm_client import BaseLLMClient, MockLLMClient, OpenAICompatibleClient
 from probos.cognitive.procedure_store import ProcedureStore
+from probos.cognitive.procedures import ProcedureStep
 from probos.config import COMPILATION_PROMOTION_THRESHOLD, TRUST_COMMANDER, DreamingConfig
 from probos.consensus.trust import TrustNetwork
 from probos.events import EventType
+from probos.mesh.intent import IntentBus
+from probos.mesh.signal import SignalManager
 from probos.routers.procedures import TeachRequest, teach_procedure
-from probos.types import LLMRequest, LLMResponse, Priority
+from probos.substrate.registry import AgentRegistry
+from probos.types import AgentState, LLMRequest, LLMResponse, Priority
 from tests.test_fallback_learning import _make_cognitive_agent as _make_lifecycle_agent
 from tests.test_fallback_learning import _make_dreaming_engine, _make_intent, _make_procedure
 from tests.test_fallback_learning import _make_store_mock as _make_lifecycle_store
@@ -1101,6 +1158,199 @@ async def test_step_7e_runs_when_ships_records_is_disabled() -> None:
     stats = await engine._process_observational_learning()
 
     assert stats == {"observed": 0, "scanned": 1}  # a DM thread is scanned and skipped (the teaching path)
+
+
+# --- A4 (review round 3): every result of a Level 3 to 5 replay reaches AD-535's accounting once -----------
+
+_STEP_POOL = "bf924-step-worker"
+
+
+async def _compound_rig(
+    tmp_path, level: int, step_reply: LLMResponse, *, score: float = 0.5, approved: bool = False,
+) -> SimpleNamespace:
+    """A stored two-step compound procedure at ``level`` whose steps reach a real target agent through a real
+    ``IntentBus`` and ``AgentRegistry``, as the reviewer's probe built it (review round 3).
+
+    Only the agent's ``OpenAICompatibleClient.complete`` is replaced (by ``_compound_run``): the overall validation
+    (100 tokens) answers YES, each step validation (50 tokens) gets ``step_reply``, and any other request (a Guided
+    or recovery decision) is an ordinary LLM decision. The client is never contacted.
+    """
+    r = await _store_rig(tmp_path, score, level)
+    r.client = OpenAICompatibleClient(base_url="http://127.0.0.1:9/v1")
+    r.agent._llm_client = r.client  # replaced after construction, as the probe did
+    r.bus, registry = IntentBus(SignalManager()), AgentRegistry()
+    r.runtime.intent_bus, r.runtime.registry = r.bus, registry
+    r.target = ReplayTestAgent(llm_client=MockLLMClient(), runtime=r.runtime, pool=_STEP_POOL)
+    r.target.state = AgentState.ACTIVE
+    await registry.register(r.target)
+    r.bus.subscribe(r.target.id, r.target.handle_intent, intent_names=["compound_step_replay"])
+    r.proc.steps = [
+        ProcedureStep(
+            step_number=n, action=f"perform operation {n}", expected_output=f"operation {n} complete",
+            agent_role=_STEP_POOL, resolved_agent_type=_STEP_POOL,
+        )
+        for n in (1, 2)
+    ]
+    await r.store.save(r.proc)
+    if approved:  # after the re-save, as the Captain approves a stored procedure
+        await r.store.approve_promotion(r.proc.id, "captain", "directive-bf924")
+    r.requests, r.delivered = [], []
+    send_original = r.bus.send
+
+    async def send(intent, **kwargs):
+        r.delivered.append(intent)
+        return await send_original(intent, **kwargs)
+
+    async def complete(request: LLMRequest, *, priority: Priority = Priority.NORMAL) -> LLMResponse:
+        r.requests.append(request)
+        if request.max_tokens == 50:
+            return step_reply
+        if request.max_tokens == 100:
+            return LLMResponse(content="YES")
+        return LLMResponse(content="an LLM decision")
+
+    r.send, r.complete = send, complete
+    return r
+
+
+async def _compound_run(r) -> SimpleNamespace:
+    """One matched intent through ``handle_intent``, and what the client, the bus, the store and the events saw."""
+    calls, deliveries = len(r.requests), len(r.delivered)
+    with patch.object(r.client, "complete", new=r.complete), patch.object(r.bus, "send", new=r.send):
+        result = await _handle_on_store(r.agent)
+    turn = r.requests[calls:]
+    metrics = await r.store.get_quality_metrics(r.proc.id)
+    loaded = await r.store.get(r.proc.id)
+    return SimpleNamespace(
+        result=result, level=loaded.compilation_level, consecutive=metrics["consecutive_successes"],
+        completions=metrics["total_completions"], fallbacks=metrics["total_fallbacks"],
+        delivered=len(r.delivered) - deliveries,
+        validations=[request.max_tokens for request in turn if request.max_tokens in (50, 100)],
+        ordinary=sum(request.max_tokens not in (50, 100) for request in turn),
+        event=[args[1] for args in r.events if args[0] is EventType.TASK_EXECUTION_COMPLETE][-1],
+    )
+
+
+def _fallback_events(r) -> list[dict]:
+    return [args[1] for args in r.events if args[0] is EventType.PROCEDURE_FALLBACK_LEARNING]
+
+
+async def _close_compound_rig(r) -> None:
+    r.bus.unsubscribe(r.target.id)
+    await r.client.close()
+    await r.store.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_compound_step_is_a_failed_replay_that_the_llm_recovers(tmp_path) -> None:
+    """Finding 1 (review round 3): the step validator's NO returned ``compound_aborted``, which the lifecycle
+    ignored: it ran ``act()`` on the unchanged cached decision, reported success and counted it toward promotion
+    (three rejections reached Level 4). A rejected step is now a failed replay: no ``act()`` on the replay,
+    ``record_fallback``, AD-535's demotion and AD-534b's service recovery, whose event names the step."""
+    r = await _compound_rig(tmp_path, 3, LLMResponse(content="NO"))
+    try:
+        run = await _compound_run(r)
+
+        assert (run.delivered, run.validations) == (1, [100, 50])  # premise: step 1 ran and its validator said NO
+        assert run.ordinary == 1  # the service recovery's LLM decision
+        assert run.result is not None and run.result.success is True
+        assert "[Procedure Replay" not in str(run.result.result)  # the recovered answer, not the rejected replay
+        assert (run.completions, run.fallbacks) == (0, 1)
+        assert (run.level, run.consecutive) == (2, 0)
+        assert (run.event["used_procedure"], run.event["success"]) == (True, True)
+        assert [
+            (event["fallback_type"], event["procedure_id"], event["rejection_reason"]) for event in _fallback_events(r)
+        ] == [("execution_failure", r.proc.id, "Compound step 1 output failed Level 3 validation")]
+    finally:
+        await _close_compound_rig(r)
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_compound_step_without_recovery_fails_and_never_acts_on_the_replay(tmp_path) -> None:
+    """Finding 1 (review round 3): when the recovery yields no decision, the intent fails with the step named, and
+    ``act()`` never runs on the rejected replay (it ran once, and reported success, before A4)."""
+    r = await _compound_rig(tmp_path, 3, LLMResponse(content="NO"))
+    try:
+        act = AsyncMock(wraps=r.agent.act)
+        with patch.object(r.agent, "act", new=act), \
+                patch.object(r.agent, "_run_llm_fallback", new=AsyncMock(return_value=None)):
+            run = await _compound_run(r)
+
+        assert (run.delivered, run.validations) == (1, [100, 50])  # premise: step 1 ran and its validator said NO
+        assert act.await_count == 0
+        assert run.result is not None and run.result.success is False
+        assert run.result.error == "Compound step 1 output failed Level 3 validation"
+        assert (run.completions, run.fallbacks, run.level) == (0, 1, 2)
+        assert (run.event["used_procedure"], run.event["success"]) == (True, False)
+        assert _fallback_events(r) == []  # AD-534b emits the learning event only for a recovered run
+    finally:
+        await _close_compound_rig(r)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "step_reply",
+    [LLMResponse(content="YES"), LLMResponse(content="", error="All LLM tiers unavailable")],
+    ids=["yes", "error-reply"],
+)
+async def test_dispatched_compound_replays_count_toward_promotion_once_per_run(tmp_path, step_reply) -> None:
+    """Finding 2 (review round 3): a dispatched compound replay recorded its completion and returned before
+    AD-535's promotion step, so it never counted a success: the procedure stayed at Level 3, paying three
+    validation calls a run. A failed step-validation call passes by default (AD-535), so it counts as YES does."""
+    r = await _compound_rig(tmp_path, 3, step_reply)
+    try:
+        runs = [await _compound_run(r) for _ in range(COMPILATION_PROMOTION_THRESHOLD + 1)]
+
+        assert all((run.delivered, run.ordinary) == (2, 0) for run in runs)  # premise: every step dispatched
+        assert all(run.result is not None and run.result.success is True for run in runs)
+        assert [(run.level, run.consecutive) for run in runs] == [(3, 1), (3, 2), (4, 0), (4, 1)]
+        assert [run.validations for run in runs] == [[100, 50, 50]] * 3 + [[]]  # Level 4 makes no validation call
+        assert [run.completions for run in runs] == [1, 2, 3, 4]  # the compound branch's own write, once a run
+        assert sum(args[0] is EventType.TASK_EXECUTION_COMPLETE for args in r.events) == 4
+        assert all(run.event.get("compound_dispatched") is True for run in runs)
+    finally:
+        await _close_compound_rig(r)
+
+
+@pytest.mark.asyncio
+async def test_a_commanders_approved_compound_procedure_reaches_level_5(tmp_path) -> None:
+    """Finding 2 at Level 4 (review round 3): the same early return kept an approved compound procedure from
+    AD-536's Level 5, which a single-step procedure reaches after three successes."""
+    r = await _compound_rig(tmp_path, 4, LLMResponse(content="YES"), score=0.7, approved=True)
+    try:
+        assert r.runtime.trust_network.get_score(r.agent.id) >= TRUST_COMMANDER  # premise: Commander trust
+        runs = [await _compound_run(r) for _ in range(COMPILATION_PROMOTION_THRESHOLD)]
+
+        assert all((run.delivered, run.validations, run.ordinary) == (2, [], 0) for run in runs)  # premise: Level 4
+        assert [run.level for run in runs] == [4, 4, 5]
+    finally:
+        await _close_compound_rig(r)
+
+
+@pytest.mark.asyncio
+async def test_a_level_3_no_demotes_the_procedure_and_resets_its_count(tmp_path) -> None:
+    """D22 (A4): a NO hands the intent to the LLM (D15) and left the count untouched, so three YES answers that
+    were not consecutive still promoted. AD-535 demotes on any failure and resets the count; the near-miss event
+    and the completion event's ``used_procedure`` (D9) are unchanged."""
+    r, client, complete = await _level_3_rig(tmp_path, LLMResponse(content="NO: nothing was checked"))
+    try:
+        for _ in range(COMPILATION_PROMOTION_THRESHOLD - 1):
+            await r.store.record_consecutive_success(r.proc.id)
+        with patch.object(client, "complete", complete):
+            result = await _handle_on_store(r.agent)
+
+        assert result is not None and result.success is True  # the LLM served the intent
+        assert complete.await_count == 2  # premise: the validation request, then the LLM decision
+        loaded = await r.store.get(r.proc.id)
+        metrics = await r.store.get_quality_metrics(r.proc.id)
+        assert (loaded.compilation_level, metrics["consecutive_successes"]) == (2, 0)
+        assert [
+            args[1]["used_procedure"] for args in r.events if args[0] is EventType.TASK_EXECUTION_COMPLETE
+        ] == [False]
+        assert [event["fallback_type"] for event in _fallback_events(r)] == ["validation_failure"]
+    finally:
+        await client.close()
+        await r.store.stop()
 ````
 
 ### 7.3 `tests/test_graduated_compilation.py` (M1: the hand-set `_trust_score`)
@@ -1718,6 +1968,287 @@ SEARCH:
 REPLACE:
 ````python
     w.engine.set_records_store(None)  # startup binds it with Records on; the queue Step 7d drains is the constructor's (BF-924)
+````
+
+### 7.4f `src/probos/cognitive/cognitive_agent.py` (M1, A4, D20 to D22: every replay outcome reaches AD-535's accounting once)
+
+Pair 1 (D20: the abort result says what happened; mirrors A4-1):
+
+SEARCH:
+````python
+                if not step_valid:
+                    logger.info(
+                        "Compound step %d validation failed — aborting compound replay",
+                        step.step_number,
+                    )
+                    return {"success": True, "result": text_fallback, "compound_dispatched": False, "compound_aborted": True}
+````
+REPLACE:
+````python
+                if not step_valid:
+                    logger.info(
+                        "Compound step %d validation failed — aborting compound replay",
+                        step.step_number,
+                    )
+                    # BF-924 (#1654): a rejected step is a failed replay; the lifecycle reads compound_aborted and
+                    # failed_step (it never read this result's success, which said True).
+                    return {
+                        "success": False, "result": text_fallback, "compound_dispatched": False,
+                        "compound_aborted": True, "failed_step": step.step_number,
+                    }
+````
+
+Pair 2 (D22: a Level 3 NO demotes; mirrors A4-2):
+
+SEARCH:
+````python
+            logger.info(
+                "Level 3 validation failed for procedure %s — falling back to LLM",
+                procedure.name,
+            )
+            return None
+````
+REPLACE:
+````python
+            logger.info(
+                "Level 3 validation failed for procedure %s — falling back to LLM",
+                procedure.name,
+            )
+            # BF-924 (#1654): a NO is a failed replay. AD-535 demotes on any failure and resets the count; the LLM
+            # still serves the intent. Unreachable until D15: the validator never answered.
+            await self._record_compilation_outcome(procedure.id, False)
+            return None
+````
+
+Pair 3 (D21: the promotion step as one helper; mirrors A4-3):
+
+SEARCH:
+````python
+        if promotion_status == "approved" and trust_score >= TRUST_COMMANDER:
+            return 5  # Expert level unlocked for promoted procedures
+        return base
+````
+REPLACE:
+````python
+        if promotion_status == "approved" and trust_score >= TRUST_COMMANDER:
+            return 5  # Expert level unlocked for promoted procedures
+        return base
+
+    async def _record_compilation_outcome(self, procedure_id: str | None, success: bool) -> None:
+        """AD-535: count a success toward promotion, or demote (else reset the count) on a failure.
+
+        BF-924 (#1654): moved unchanged from ``handle_intent``'s post-execution step so that every replay outcome
+        reaches it exactly once: that step, a dispatched compound replay (which returns before it) and a Level 3
+        validation that answered NO (which hands the intent to the LLM, so no procedure reaches that step).
+        """
+        _proc_id_for_promo = procedure_id
+        if _proc_id_for_promo and self._procedure_store:
+            _store = self._procedure_store
+            if success:
+                try:
+                    new_count = await _store.record_consecutive_success(_proc_id_for_promo)
+                    from probos.config import (
+                        COMPILATION_PROMOTION_THRESHOLD,
+                        COMPILATION_MAX_LEVEL,
+                    )
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and new_count >= COMPILATION_PROMOTION_THRESHOLD:
+                        _ts = self._compilation_trust_score()  # BF-924 (#1654): the live trust, as in the clamp
+                        # AD-536: Check if promoted procedure can reach Level 5
+                        _promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                        max_allowed = self._max_compilation_level_for_promoted(_ts, _promo_status)
+                        next_level = proc.compilation_level + 1
+                        if next_level <= min(max_allowed, COMPILATION_MAX_LEVEL):
+                            await _store.promote_compilation_level(_proc_id_for_promo, next_level)
+                            logger.info(
+                                "Procedure '%s' promoted to Level %d after %d consecutive successes",
+                                proc.name, next_level, new_count,
+                            )
+                            # AD-536: Check if procedure is eligible for institutional promotion
+                            from probos.config import PROMOTION_MIN_COMPILATION_LEVEL
+                            promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                            if next_level >= PROMOTION_MIN_COMPILATION_LEVEL and promo_status == "private":
+                                await self._request_procedure_promotion(_proc_id_for_promo)
+                except Exception:
+                    pass
+            else:
+                try:
+                    from probos.config import COMPILATION_DEMOTION_LEVEL
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and proc.compilation_level > COMPILATION_DEMOTION_LEVEL:
+                        await _store.demote_compilation_level(
+                            _proc_id_for_promo, COMPILATION_DEMOTION_LEVEL
+                        )
+                        logger.info(
+                            "Procedure '%s' demoted to Level %d after failure",
+                            proc.name, COMPILATION_DEMOTION_LEVEL,
+                        )
+                    else:
+                        await _store.reset_consecutive_successes(_proc_id_for_promo)
+                except Exception:
+                    pass
+````
+
+Pair 4 (D21: the post-execution step calls the helper; mirrors A4-4):
+
+SEARCH:
+````python
+        # AD-535: Compilation level promotion/demotion
+        _proc_id_for_promo = decision.get("procedure_id")
+        if _proc_id_for_promo and self._procedure_store:
+            _store = self._procedure_store
+            if success:
+                try:
+                    new_count = await _store.record_consecutive_success(_proc_id_for_promo)
+                    from probos.config import (
+                        COMPILATION_PROMOTION_THRESHOLD,
+                        COMPILATION_MAX_LEVEL,
+                    )
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and new_count >= COMPILATION_PROMOTION_THRESHOLD:
+                        _ts = self._compilation_trust_score()  # BF-924 (#1654): the live trust, as in the clamp
+                        # AD-536: Check if promoted procedure can reach Level 5
+                        _promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                        max_allowed = self._max_compilation_level_for_promoted(_ts, _promo_status)
+                        next_level = proc.compilation_level + 1
+                        if next_level <= min(max_allowed, COMPILATION_MAX_LEVEL):
+                            await _store.promote_compilation_level(_proc_id_for_promo, next_level)
+                            logger.info(
+                                "Procedure '%s' promoted to Level %d after %d consecutive successes",
+                                proc.name, next_level, new_count,
+                            )
+                            # AD-536: Check if procedure is eligible for institutional promotion
+                            from probos.config import PROMOTION_MIN_COMPILATION_LEVEL
+                            promo_status = await _store.get_promotion_status(_proc_id_for_promo)
+                            if next_level >= PROMOTION_MIN_COMPILATION_LEVEL and promo_status == "private":
+                                await self._request_procedure_promotion(_proc_id_for_promo)
+                except Exception:
+                    pass
+            else:
+                try:
+                    from probos.config import COMPILATION_DEMOTION_LEVEL
+                    proc = await _store.get(_proc_id_for_promo)
+                    if proc and proc.compilation_level > COMPILATION_DEMOTION_LEVEL:
+                        await _store.demote_compilation_level(
+                            _proc_id_for_promo, COMPILATION_DEMOTION_LEVEL
+                        )
+                        logger.info(
+                            "Procedure '%s' demoted to Level %d after failure",
+                            proc.name, COMPILATION_DEMOTION_LEVEL,
+                        )
+                    else:
+                        await _store.reset_consecutive_successes(_proc_id_for_promo)
+                except Exception:
+                    pass
+
+        # AD-534b: Service recovery — re-run LLM on cached execution failure
+````
+REPLACE:
+````python
+        # AD-535: Compilation level promotion/demotion (BF-924 (#1654): one helper, shared with the compound and NO paths)
+        await self._record_compilation_outcome(decision.get("procedure_id"), success)
+
+        # AD-534b: Service recovery — re-run LLM on cached execution failure
+````
+
+Pair 5 (D21: a dispatched compound replay counts once; mirrors A4-5):
+
+SEARCH:
+````python
+        # AD-534c: compound procedure dispatch
+        if decision.get("compound") and decision.get("procedure"):
+            compound_result = await self._execute_compound_replay(
+                decision["procedure"], decision.get("llm_output", ""),
+                compilation_level=decision.get("compilation_level", 4),
+            )
+
+            if compound_result.get("compound_dispatched"):
+                # Record procedure completion (AD-534b metrics)
+                _store = self._procedure_store
+                if _store:
+                    try:
+                        await _store.record_completion(decision["procedure_id"])
+                    except Exception:
+                        pass
+````
+REPLACE:
+````python
+        # AD-534c: compound procedure dispatch
+        _replay_failure: dict[str, Any] | None = None  # BF-924 (#1654): set when a compound step was rejected
+        if decision.get("compound") and decision.get("procedure"):
+            compound_result = await self._execute_compound_replay(
+                decision["procedure"], decision.get("llm_output", ""),
+                compilation_level=decision.get("compilation_level", 4),
+            )
+
+            if compound_result.get("compound_dispatched"):
+                # Record procedure completion (AD-534b metrics)
+                _store = self._procedure_store
+                if _store:
+                    try:
+                        await _store.record_completion(decision["procedure_id"])
+                    except Exception:
+                        pass
+                # BF-924 (#1654): the shared AD-535 accounting, which this early return skipped, so a compound
+                # procedure never counted a success: it stalled at Level 3, paying its validation calls every run.
+                await self._record_compilation_outcome(decision["procedure_id"], True)
+````
+
+Pair 6 (D20: a rejected step takes the cached-failure path, with no act(); mirrors A4-6):
+
+SEARCH:
+````python
+            # Degradation: compound_dispatched=False — use text fallback in normal act() flow
+            decision["llm_output"] = compound_result["result"]
+            decision["compound"] = False  # prevent re-entry
+
+        action_decision = (
+            {**decision, "intent": "proactive_think"}
+            if recreation_turn is not None else decision
+        )
+        result = await self.act(action_decision)
+````
+REPLACE:
+````python
+            if compound_result.get("compound_aborted"):
+                # BF-924 (#1654): a step the Level 3 validator rejected is a failed replay, not a degradation: no
+                # act() on the unchanged cached decision. The failure takes the cached-failure path below
+                # (record_fallback, demotion, AD-534b's service recovery and its execution_failure event).
+                _replay_failure = {
+                    "success": False,
+                    "error": f"Compound step {compound_result.get('failed_step')} output failed Level 3 validation",
+                }
+            # Degradation: compound_dispatched=False — use text fallback in normal act() flow
+            decision["llm_output"] = compound_result["result"]
+            decision["compound"] = False  # prevent re-entry
+
+        action_decision = (
+            {**decision, "intent": "proactive_think"}
+            if recreation_turn is not None else decision
+        )
+        result = _replay_failure if _replay_failure is not None else await self.act(action_decision)
+````
+
+Pair 7 (D20: the learning event names the rejected step; mirrors A4-7):
+
+SEARCH:
+````python
+                        self._last_fallback_info = {
+                            "type": "execution_failure",
+                            "procedure_id": _proc_id,
+                            "procedure_name": _proc_name,
+                            "reason": "Procedure replay succeeded in formatting but failed in execution",
+                        }
+````
+REPLACE:
+````python
+                        self._last_fallback_info = {
+                            "type": "execution_failure",
+                            "procedure_id": _proc_id,
+                            "procedure_name": _proc_name,
+                            # BF-924 (#1654): a rejected compound step names itself; Step 7d's rewrite quotes the reason
+                            "reason": (_replay_failure or {}).get("error") or "Procedure replay succeeded in formatting but failed in execution",
+                        }
 ````
 
 ### 7.5 `src/probos/consensus/trust.py` (M2)
@@ -2620,7 +3151,7 @@ if str(_REPO_ROOT / "src") not in sys.path:
 
 ## 8. Tracking
 
-Anchors: `PROGRESS.md`'s title line and `DECISIONS.md`'s heading `### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)`. The entries go in M2's commit. Set the date to the commit date.
+Anchors: `PROGRESS.md`'s title line and `DECISIONS.md`'s heading `### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)`. The entries go in the tracker commit that follows M2's (the orchestrator applies them by tool, then regenerates the ledger). Set the date to the commit date.
 
 **`PROGRESS.md`:**
 
@@ -2632,7 +3163,7 @@ REPLACE:
 ````markdown
 # ProbOS Progress
 
-**BF-924 (2026-10-25), #1654 -- trust inputs are read through APIs that exist.** The AD-535/536 procedure-compilation clamp read a `_trust_score` attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`TrustNetwork.get_score`, as Rank does): Ensigns run stored Level 3 and 4 procedures as Guided (Level 2), a Commander's approved procedure can be promoted to Level 5, and an unreadable trust (a failed read, or a value that is not a score in [0, 1]) is held to Level 2 with a WARNING. Promotion and demotion now write the level `ProcedureStore.get` reads: they had moved only an index column, so dispatch, the next promotion step and the teaching gate never saw them. With the ladder working, Level 3 validation calls the LLM client's real interface (it called a method no client has, so every Level 3 replay passed unvalidated; a failed call still passes by default, now with a WARNING), a Lieutenant's procedure that reaches Level 4 requests institutional promotion posted as the agent itself, overlapping completions make at most one evolution attempt per procedure per 72 h, and fallback evidence reaches the dream cycle with Ship's Records disabled. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar telemetry's `trust_delta` is real (the Captain's Self Image tab shows it with the modulated pitch and rule; the HXI's voice playback and VRM do not read it yet); both `hasattr` guards that hid its absence are removed. `/grant list` raised for any grant (`CallsignRegistry.list_all` never existed); it names a target through its birth certificate and live callsign and shows every row even when one time cannot be shown as a date; `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown. The Counselor takes `CounselorConfig` by constructor injection and reads `trust_delta_threshold` and `sweep_max_agents` (defaults unchanged); `enabled`, `profile_retention_days`, `alert_on_red` and `alert_on_yellow` had no reader and are removed. New: `tests/test_bf924_compilation_trust.py`, `tests/test_bf924_trust_inputs.py`. The contract is `prompts/bf-924-trust-inputs-through-real-apis.md`.
+**BF-924 (2026-10-25), #1654 -- trust inputs are read through APIs that exist.** The AD-535/536 procedure-compilation clamp read a `_trust_score` attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`TrustNetwork.get_score`, as Rank does): Ensigns run stored Level 3 and 4 procedures as Guided (Level 2), a Commander's approved procedure can be promoted to Level 5, and an unreadable trust (a failed read, or a value that is not a score in [0, 1]) is held to Level 2 with a WARNING. Promotion and demotion now write the level `ProcedureStore.get` reads: they had moved only an index column, so dispatch, the next promotion step and the teaching gate never saw them. With the ladder working, Level 3 validation calls the LLM client's real interface (it called a method no client has, so every Level 3 replay passed unvalidated; a failed call still passes by default, now with a WARNING), a Lieutenant's procedure that reaches Level 4 requests institutional promotion posted as the agent itself, overlapping completions make at most one evolution attempt per procedure per 72 h, and fallback evidence reaches the dream cycle with Ship's Records disabled. Compound procedures graduate too: a dispatched compound replay counts toward promotion; a compound step the Level 3 validator rejects is a failed replay that the LLM recovers, with the procedure demoted to Guided; and a Level 3 NO demotes the procedure, as AD-535 specifies. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar telemetry's `trust_delta` is real (the Captain's Self Image tab shows it with the modulated pitch and rule; the HXI's voice playback and VRM do not read it yet); both `hasattr` guards that hid its absence are removed. `/grant list` raised for any grant (`CallsignRegistry.list_all` never existed); it names a target through its birth certificate and live callsign and shows every row even when one time cannot be shown as a date; `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown. The Counselor takes `CounselorConfig` by constructor injection and reads `trust_delta_threshold` and `sweep_max_agents` (defaults unchanged); `enabled`, `profile_retention_days`, `alert_on_red` and `alert_on_yellow` had no reader and are removed. New: `tests/test_bf924_compilation_trust.py`, `tests/test_bf924_trust_inputs.py`. The contract is `prompts/bf-924-trust-inputs-through-real-apis.md`.
 ````
 
 **`DECISIONS.md`:**
@@ -2648,10 +3179,11 @@ REPLACE:
 - *Compilation clamp.* AD-535/536 read the agent's live trust through `get_score`, the gauge that already sets Rank and agency; no BF-921 D3 hold, because the gauge is already the live one and the clamp only restricts Ensigns and opens AD-536's designed Level 5 path. An unreadable trust is held to Level 2 (fail closed) with a WARNING. Rejected: the chain-only `observation["_trust_score"]`, and a cached copy of the score.
 - *Compilation levels persist where they are read.* `promote_compilation_level` and `demote_compilation_level` write the JSON snapshot `get` rebuilds a procedure from, in the same statement as the column, as decay already did; `get` is unchanged (AD-1326 D14). Before, promotions and demotions moved only the column, so AD-535's ladder and its demotion valve never changed dispatch. The completion event's `used_procedure` keeps its AD-532e meaning (a replay was used): a Guided run, clamped or stored, is an LLM run and enters the reactive check.
 - *Level 3 validation and the evolution window.* Both validators call `complete(LLMRequest)` and read `LLMResponse.content`; they called `generate`, which no client has, so every Level 3 replay passed with no request. A failed call or an error reply still passes by default (AD-535), now with a WARNING: Level 4 replays the same procedure with no validation at all, and falling back would call the provider that just failed. AD-532b's 72 h window is claimed in the step that checks it, before the first `await`, on every path that reads it, so overlapping completions make one attempt; the dreaming engine creates its fallback queue and observed-thread set itself rather than in the Records setter. A promotion request is posted as the agent; routing it to a department chief is left to its own change.
+- *Every replay outcome reaches the ladder once.* AD-535's promotion and demotion step is one helper with three callers: the post-execution step, a dispatched compound replay (which returns before that step) and a Level 3 NO (which hands the intent to the LLM). A compound step the validator rejects is a failed replay (`record_fallback`, demotion, AD-534b's recovery, an `execution_failure` event naming the step), not a degradation: other agents already ran the earlier steps. A step whose dispatch failed still degrades to its text and counts, as AD-534c designed. Rejected: letting the compound success fall through the shared path (it changes the compound event and adds episode and Ward Room effects); resetting the count without demoting on a NO (AD-535 demotes on any failure).
 - *Trust history.* `TrustNetwork.get_history` maps the in-memory event log to scores, one owner of the mapping; the callers' `hasattr` guards, which hid its absence, are removed. Its consumers are the Captain's profile history, the backend avatar projection (which the Captain's Self Image tab displays: the delta, the pitch factor and the rule) and the crew context; the HXI's voice playback and VRM still use their own zero trust delta. The avatar divergence's trust write does not depend on it.
 - *Grant list.* A grant's target is a sovereign id, so the list names it through the birth certificate and the live callsign, not a callsign list. A time the platform cannot show as a date degrades to "out of range" in its own row, and the issue command refuses a duration that would store one.
 - *Counselor config.* Two fields are read, with defaults equal to the constants they replace; the four unread fields are removed rather than wired. Today's Bridge alerts follow no single red/yellow rule, so wiring `alert_on_*` would either silence alerts or invent them; an alert-silencing switch is the Captain's call. Unknown keys are ignored, so old configs load.
-- *Reversal.* Revert the commits; the clamp returns to 0.5 for every agent, the history to empty, the grant list to raising, promotion and demotion to the column only, Level 3 validation to passing unvalidated, the evolution window to check-then-record, the fallback queue to the Records setter, and the config to unread.
+- *Reversal.* Revert the commits; the clamp returns to 0.5 for every agent, the history to empty, the grant list to raising, promotion and demotion to the column only, Level 3 validation to passing unvalidated, the evolution window to check-then-record, the fallback queue to the Records setter, compound replays to uncounted successes and accepted step rejections, a Level 3 NO to no demotion, and the config to unread.
 
 ### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)
 ````
@@ -2659,7 +3191,7 @@ REPLACE:
 **After both edits:** run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then its `--check`. **`docs/development/roadmap.md`:** no row (BF-916, BF-921 and BF-923 precedent).
 
 **#1654 checklist text** (the orchestrator records it on the issue):
-- [ ] (F02) The clamp and the promotion step read live trust; Ensign capped at Level 2, Commander reaches Level 5, an unreadable trust held to Level 2 (M1). A2: a value outside [0, 1] counts as unreadable; promotion and demotion reach `ProcedureStore.get` (D10). A3: Level 3 validation calls the real client (D15); a promotion request is posted as the agent (D16); one evolution attempt per procedure per 72 h under overlapping completions (D17); fallback evidence kept with Records off (D18).
+- [ ] (F02) The clamp and the promotion step read live trust; Ensign capped at Level 2, Commander reaches Level 5, an unreadable trust held to Level 2 (M1). A2: a value outside [0, 1] counts as unreadable; promotion and demotion reach `ProcedureStore.get` (D10). A3: Level 3 validation calls the real client (D15); a promotion request is posted as the agent (D16); one evolution attempt per procedure per 72 h under overlapping completions (D17); fallback evidence kept with Records off (D18). A4: compound replays reach the AD-535 accounting (a rejected step is a failed replay; a dispatched success counts), and a Level 3 NO demotes (D20 to D22).
 - [ ] (F02) The read-only count before the build posted (D4).
 - [ ] (F04) `TrustNetwork.get_history`; profile history and avatar `trust_delta` real; the doubles pinned by a seam test (M2).
 - [ ] (F05) `/grant list` works with grants present, through the real registries (M2). A2: every row, including a stored expiry the platform cannot show; `/grant issue` refuses such a duration.
@@ -2668,7 +3200,7 @@ REPLACE:
 
 ## 9. What this does NOT change
 
-- `_max_compilation_level_for_trust`, `_max_compilation_level_for_promoted`, the compilation thresholds (`config.py:266-275`), the dispatch levels and the demotion rule are unchanged. The procedure store changes only in `promote_compilation_level` and `demote_compilation_level`, which also write the snapshot's level (A2, D10); `get`, `save`, the semantic index, `_migrate_qualifying_procedures` and the rows whose column and snapshot already differ are unchanged (R10). The `TASK_EXECUTION_COMPLETE` payload is unchanged (D9). Dreaming changes only in claiming AD-532b's window in the step that checks it (D17) and in creating its fallback queue and observed-thread set in its constructor (D18); the cooldowns, the confirmation gate, the evolution functions and every recorded outcome are unchanged. The Level 3 validators change only their call (D15): the prompts, the timeout, the token limits and AD-535's fail-open rule are unchanged. AD-536's approver routing, the promotion eligibility rules and `_teach_procedure` are unchanged (R17, R18).
+- `_max_compilation_level_for_trust`, `_max_compilation_level_for_promoted`, the compilation thresholds (`config.py:266-275`), the dispatch levels and the demotion rule are unchanged. The procedure store changes only in `promote_compilation_level` and `demote_compilation_level`, which also write the snapshot's level (A2, D10); `get`, `save`, the semantic index, `_migrate_qualifying_procedures` and the rows whose column and snapshot already differ are unchanged (R10). The `TASK_EXECUTION_COMPLETE` payload is unchanged (D9). Dreaming changes only in claiming AD-532b's window in the step that checks it (D17) and in creating its fallback queue and observed-thread set in its constructor (D18); the cooldowns, the confirmation gate, the evolution functions and every recorded outcome are unchanged. The Level 3 validators change only their call (D15): the prompts, the timeout, the token limits and AD-535's fail-open rule are unchanged. AD-536's approver routing, the promotion eligibility rules and `_teach_procedure` are unchanged (R17, R18). A4: the promotion and demotion step moves unchanged into `_record_compilation_outcome` (three callers; the demotion rule is unchanged and now also applies to a Level 3 NO, D22); `_execute_compound_replay`'s resolution, dispatch, degradation and validation, both validators, the thresholds, AD-534b's recovery, the compound branch's completion write, event and result, and every event payload's shape are unchanged; the abort result now says `success: False` and carries `failed_step`.
 - The other live-trust reads in `CognitiveAgent` (`:2870`, `:3351`, `:6042`, `:6230`, `:9123`, `:11455`) are not consolidated (R1).
 - `TrustNetwork`'s event log, its size and its persistence are unchanged; `get_events_for_agent` and `standing_interests.py:701` are unchanged.
 - The avatar modulation rules, thresholds and divergence logic are unchanged; no `ui/` file is touched (A2, A3: the HXI's voice playback and VRM keep their own zero trust delta, R11; the Self Image tab already renders the backend snapshot, D13 as corrected).
@@ -2727,6 +3259,12 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py te
 | R34 | 1 | `src/probos/cognitive/dreaming.py` | `self._addressed_degradations[proc_id] = now  # BF-924 (#1654): Step 7d claims it before its first await` | `pass` | `test_a_completion_during_a_dream_step_does_not_attempt_the_procedure_again[7d]` |
 | R35 | 1 | `src/probos/cognitive/dreaming.py` | `self._fallback_learning_queue: list[dict[str, Any]] = []  # AD-534b: fallback evidence for dream-time processing` | `self._bf924_mutant_queue: list[dict[str, Any]] = []` | `test_a_fallback_reaches_step_7d_when_ships_records_is_disabled`, `test_a_completion_during_a_dream_step_does_not_attempt_the_procedure_again[7d]` |
 | R36 | 1 | `src/probos/cognitive/dreaming.py` | `self._observed_threads: set[str] = set()  # AD-537: already-observed thread IDs` | `self._bf924_mutant_threads: set[str] = set()` | `test_step_7e_runs_when_ships_records_is_disabled` |
+| R37 | 1 | `src/probos/cognitive/cognitive_agent.py` | `await self._record_compilation_outcome(decision["procedure_id"], True)` | `pass` | `test_dispatched_compound_replays_count_toward_promotion_once_per_run[yes]`, `[error-reply]`, `test_a_commanders_approved_compound_procedure_reaches_level_5` |
+| R38 | 1 | `src/probos/cognitive/cognitive_agent.py` | `result = _replay_failure if _replay_failure is not None else await self.act(action_decision)` | `result = await self.act(action_decision)` | `test_a_rejected_compound_step_is_a_failed_replay_that_the_llm_recovers`, `test_a_rejected_compound_step_without_recovery_fails_and_never_acts_on_the_replay` |
+| R39 | 1 | `src/probos/cognitive/cognitive_agent.py` | `if compound_result.get("compound_aborted"):` | `if False:` | `test_a_rejected_compound_step_is_a_failed_replay_that_the_llm_recovers`, `test_a_rejected_compound_step_without_recovery_fails_and_never_acts_on_the_replay` |
+| R40 | 1 | `src/probos/cognitive/cognitive_agent.py` | `await self._record_compilation_outcome(procedure.id, False)` | `pass` | `test_a_level_3_no_demotes_the_procedure_and_resets_its_count` |
+| R41 | 1 | `src/probos/cognitive/cognitive_agent.py` | `await self._record_compilation_outcome(decision.get("procedure_id"), success)` | `pass` | `test_a_demoted_procedure_is_dispatched_at_its_demoted_level`, `test_a_commanders_approved_procedure_is_promoted_to_level_5`, `test_a_rejected_compound_step_is_a_failed_replay_that_the_llm_recovers` |
+| R42 | 1 | `src/probos/cognitive/cognitive_agent.py` | `"reason": (_replay_failure or {}).get("error") or "Procedure replay succeeded in formatting but failed in execution",` | `"reason": "Procedure replay succeeded in formatting but failed in execution",` | `test_a_rejected_compound_step_is_a_failed_replay_that_the_llm_recovers` |
 
 The removed `hasattr` guards and the removed config fields cannot be mutated back in one line; R8, R9 and `test_the_removed_counselor_fields_are_gone_and_old_configs_still_load` pin them.
 
@@ -2735,6 +3273,8 @@ A1 adds no source line, so no mutation row. Its three pins are checked by deleti
 A2: rows R17 to R20 run with the M1 command and R21 to R23 with the M2 command, as above. Finding 4 (the attribute read inside the `try`) cannot be mutated back in one line; `test_a_runtime_whose_trust_network_cannot_be_read_is_held_to_level_2_and_warned` pins it. R20 mutates a line BF-924 does not change: it checks that D9's test fails if the completion event's rule changes. D14 is checked once, not mutated: from the oracle tree with `PYTHONPATH` unset, `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_config_reference.py --check` reports the reference current; with §7.23's four added lines deleted it reports it stale (it then documents `D:\ProbOS\src`'s models, which still carry the four removed fields); restore after.
 
 A3: R24 runs with the M2 command; R25 to R36 run with the M1 command. R25 and R27 put the defect itself back (`generate`). R32 and R33 replace a claim's check with `if False:`, so that path neither checks nor claims the window; R31 keeps the check and drops the claim; R34 drops Step 7d's claim. R35 and R36 rename a constructor attribute, as if only the Records setter still created it. Not mutated: the step validator's WARNING (a log line no test reads) and Step 7d's read-only check before the `negative_veto` branch (unchanged code; property 17).
+
+A4: R37 to R42 run with the M1 command. R37 puts finding 2 back; R38 and R39 put finding 1 back (the abort acts on the cached decision); R40 removes D22; R41 removes the shared site's call, so no single-step outcome reaches the ladder; R42 restores the generic recovery reason. R2's line moved into `_record_compilation_outcome` unchanged and still occurs once: rerun R2. Not mutated: the abort result's `"success": False` (no reader; it was True and unread) and the helper's moved body, which R2's and R41's killers exercise.
 
 ## 11. Verified Against Codebase (2026-10-25, worktree `bf924-draft` at `ba45c61f`)
 
@@ -2846,6 +3386,22 @@ read tests/test_graduated_compilation.py:1-100, :340-600; tests/test_bf924_compi
 read commands_clearance.py:176-224; grep -n "expires_at" clearance_grants.py -> readers :88, :100, :175
 read ui/src/components/profile/SelfImageTab.tsx:270-281, :440-459; grep -n "avatar-telemetry|trust_delta|applied_modulation|pitch|fired_rules" SelfImageTab.tsx -> :100 (fetch), :138 (stream), :277-278 (backend snapshot to the panels), :455, :484, :488
 read logs/bf924r2/test_validation_interface.py, test_event_cost.py, test_fallback_initialization.py (the reviewer's probes)
+A4 (2026-10-25, consult worktree `bf924-consult` at the M2 candidate `e941b868`, parent the M1 candidate `cb201c20`):
+git diff --stat cb201c20 e941b868 -- src/probos/cognitive/cognitive_agent.py tests/test_bf924_compilation_trust.py -> empty (M2 touches neither)
+read logs/bf924r3/review-bf924-m1-r3.md, test_compound_reach.py, orchestrator-rerun-compound.txt (all-YES levels 2,2,3,3,3,3,3,3,3 with count 0 at Level 3; all-NO 2,2,3,3,3,4,4,4,4 with no ordinary call)
+read cognitive_agent.py:1722-1928 (dispatch), :2012-2117 (compound replay; abort :2109), :2495-2652 (validated decision, NO :2510-2522; validators), :2711-2717, :6597-6623 (act, report), :7617-7667 (compound branch, degradation, act), :7764-7905 (accounting, recovery, events)
+grep -n "compound_aborted" src tests -> cognitive_agent.py:2109 (the write); test_graduated_compilation.py:608 (2)
+grep -n "\.(record_consecutive_success|promote_compilation_level|demote_compilation_level|reset_consecutive_successes)\(" src/probos -> cognitive_agent.py:7794, :7807, :7824, :7832 (4, the ladder's only writes, all in the post-execution step)
+grep -n "_execute_compound_replay\(|_build_validated_decision\(" src/probos -> one caller each (:7619, :1875)
+grep -n "used_procedure|fallback_type|execution_failure" dreaming.py -> :2133 (reactive skip), :2229-2238, :2317-2325 (execution_failure deactivates the parent when no challenger plan); startup/dreaming.py:168 (build_procedure_challenger)
+grep -n "^COMPILATION_|^PROMOTION_MIN" config.py -> :266-277 (threshold 3, demotion level 2, max 5, Level 3 minimum 0.5, promotion request from Level 4)
+grep -n "callsign: \"(LaForge|Bones|Worf)\"" config/ontology/organization.yaml -> :393, :405, :421
+grep -n "def get_post_for_agent|def get_agents_for_post" src/probos/ontology/service.py -> :165, :177
+read cognitive_agent.py:2723-2730 (_DEPARTMENT_CHIEFS), :2764-2770 (routing), :2829-2841 (the DM: the approver's name passed as its agent id)
+read prompts/archive/ad-535-graduated-compilation.md :37, :53 (any failure demotes and resets), :263 (the NO falls through via service recovery), :383 (a step NO aborts)
+read tests/test_multi_agent_replay_dispatch.py:93-166, :764-946, :1046-1155 (compound handle_intent pins: one completion :824; one event with compound_dispatched :852-856); tests/test_graduated_compilation.py:73-98, :395-438, :505-610; tests/test_bf924_compilation_trust.py:1-678
+read tests/test_ad1343_stop_seam_inventory.py:84-111 (public coroutines only; a new private helper is outside it)
+grep -n "_record_compilation_outcome|_replay_failure|failed_step" src -> 0
 ```
 
 ## 12. Absence Verified (2026-10-25)
@@ -2969,7 +3525,7 @@ HOLDS: yes
 CLAIM (A3): the chief names in _DEPARTMENT_CHIEFS are no agent's, and the ontology has no chief lookup
 RUN:   Grep "\b(laforge|number_one|obrien)\b" config; Grep "laforge" src; Grep "def \w*chief\w*\(" src/probos/ontology; gh issue list --state all --search "_announce_promotion_request OR DEPARTMENT_CHIEFS OR \"promotion request\" approver"
 FOUND: config 0; src 2 (cognitive_agent.py, the map; security/autonomy_boundaries.py:98, a regex); ontology 0; no issue (3 unrelated results)
-HOLDS: yes (R17)
+HOLDS: no (corrected by A4, D23): the search was case-sensitive; see the A4 claim at the end of this section (R17 corrected)
 
 CLAIM (A3): the 72 h window is checked at four sites and written at nine; no test asserts an entry is absent
 RUN:   Grep "_addressed_degradations" src; Grep "_addressed_degradations" tests
@@ -2995,6 +3551,26 @@ CLAIM (A3): LLMRequest has no user_message field and its prompt has no default, 
 RUN:   read types.py:306-332; Grep "handle_consultation_request" src; gh issue list --state all --search "consultation LLMRequest user_message"
 FOUND: fields prompt (no default), system_prompt, tier, temperature, top_p, max_tokens, id, tools, tool_choice, messages, agent_id, work_item_id, min_tier, tier_choice_reason, exact_tier; cognitive_agent.py:8723-8727 passes user_message and no prompt; the handler is registered at :1666; no issue
 HOLDS: yes
+
+CLAIM (A4, corrects A3): the chiefs exist and the ontology resolves them; _DEPARTMENT_CHIEFS addresses them by a lowercase name used as an agent id
+RUN:   Grep "callsign: \"(LaForge|Bones|Worf)\"" config/ontology/organization.yaml; Grep "def get_post_for_agent|def get_agents_for_post" src/probos/ontology/service.py; read cognitive_agent.py:2723-2730, :2829-2841
+FOUND: :393 LaForge, :405 Bones, :421 Worf; service.py:165, :177; the map's values are lowercase names, passed to get_or_create_dm_channel(agent_id, approver_id, ...) as approver_id
+HOLDS: yes (D23, R17)
+
+CLAIM (A4): only one test reads compound_aborted; the lifecycle reads only compound_dispatched
+RUN:   Grep "compound_aborted" src, tests; read cognitive_agent.py:7617-7661
+FOUND: src 1 (cognitive_agent.py:2109, the write); tests 1 (test_graduated_compilation.py:608); the lifecycle tests compound_result.get("compound_dispatched") only (:7624)
+HOLDS: yes (D20)
+
+CLAIM (A4): the ladder's four writes have one site, which no compound path and no Level 3 NO reaches
+RUN:   Grep "\.(record_consecutive_success|promote_compilation_level|demote_compilation_level|reset_consecutive_successes)\(" src/probos
+FOUND: 4, all at cognitive_agent.py:7794-7832, after the compound branch's return (:7652-7658); the NO path's LLM decision carries no procedure_id (:2510-2522)
+HOLDS: yes (D21, D22)
+
+CLAIM (A4): no test drives a compound replay through handle_intent at Level 3, or reads the ladder after a compound replay
+RUN:   Grep "compilation_level=3" tests; Grep "_make_compound_procedure\([^)]" tests; read test_multi_agent_replay_dispatch.py:93-122, :764-946
+FOUND: compilation_level=3 in tests: test_graduated_compilation.py :404-:433 (_build_validated_decision called directly), :579, :607 (_execute_compound_replay called directly), and files off the dispatch path; no _make_compound_procedure override (its factory is Level 4); the handle_intent compound tests use a mock store
+HOLDS: yes
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -3004,6 +3580,7 @@ HOLDS: yes
 - Considered, deferred: consolidating the six live-trust reads (R1); a persisted trust history (R6); config bounds (R4).
 - A2 (review round 1): the column and snapshot copies of a procedure's level (D10; AD-1326 D14 had seen it and kept `get`); the completion event's meaning for a Guided run (D9; AD-535 Part 8, AD-532e's event); `float()` accepting NaN and infinities (D11); a time the platform cannot show (D12); the HXI's own zero trust delta (D13); a generator resolving `probos` through the editable install (D14). No external search: ProbOS plumbing. Considered, deferred: R9 to R13.
 - A3 (review round 2): AD-535's own text named `generate` (Part 5), so the defect was in the spec; AD-536's promotion request and its approver routing, newly reachable through D10; the check-then-act gap in AD-532b's guard (asyncio switches tasks only at an `await`, so a check and a write with none between cannot interleave); the Records setter as a hidden initialiser; the Self Image tab's direct read of the backend snapshot. No external search: ProbOS plumbing; `docs/research/reference-projects.md` not consulted (judged 2026-10-25). Considered, deferred: R14 to R20.
+- A4 (review round 3): the result side of the path D10 opened, enumerated (the result paths, section 3). AD-535's abort and any-failure rules and AD-534b's split between execution failure and near-miss decide each row. No external search: ProbOS plumbing; `docs/research/reference-projects.md` not consulted (judged 2026-10-25). Considered, deferred: R21 to R24.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -3026,6 +3603,11 @@ HOLDS: yes
 17. (A3, D17) On every path that reads AD-532b's window (Step 7b; `_attempt_procedure_evolution`, for the reactive trigger and the proactive scan; Step 7d), no `await` separates the check from the claim; a `negative_veto` inside the window is still counted as skipped and flags nothing; every exit that recorded before records as before; two overlapping triggers for one procedure make one attempt.
 18. (A3, D18) A constructor-built `DreamingEngine` has its fallback queue and observed-thread set; `set_records_store` binds only the store and resets nothing; no `__new__` factory needed a change.
 19. (A3, D19) Each positive `/grant list` test fails when no table printed; the refused-issue tests still read the whole output.
+20. (A4, D20) A compound Level 3 step that the validator answers with anything but YES: no `act()` on the cached decision; one `record_fallback` and no `record_completion`; demotion to Level 2 (count reset); AD-534b's recovery runs once; recovered: success with the LLM's answer and one `execution_failure` event whose reason names the step; not recovered: the intent fails with that reason and no learning event; `used_procedure: True` either way. A failed step-validation call still passes by default.
+21. (A4, D21) A dispatched compound replay (Level 3 with every step accepted or passed by default; Level 4; Level 5) records its completion once (the branch's existing write) and reaches the AD-535 accounting exactly once: the count, promotion at the threshold within the trust caps, AD-536's request on reaching Level 4; the compound event and result are unchanged; the degradation paths are unchanged.
+22. (A4, D22) A Level 3 overall NO demotes the stored procedure to Level 2 and resets its count, once; the LLM still serves the intent; the `validation_failure` near-miss, its learning event and `used_procedure: False` are unchanged; a failed overall validation call passes by default and touches no counter.
+23. (A4) `_record_compilation_outcome` is the post-execution block moved unchanged (stripped lines equal, the `_proc_id_for_promo` assignment aside); it has exactly three callers; no intent calls it twice; each row of section 3's result-path table matches the code.
+24. (A4, D23) No text claims the configured chiefs do not exist; R17 names the name-as-agent-id addressing and the ontology queries that resolve a chief.
 
 ## 15. Acceptance criteria
 
@@ -3034,6 +3616,7 @@ HOLDS: yes
 - Through the real `/grant` command and registries, `/grant list` names a grant's target with grants present, with and without an identity registry, and shows every row when one stored expiry cannot be shown as a date; `/grant issue` refuses such a duration (A2).
 - Through real Counselors (one on a booted runtime), `trust_delta_threshold` and `sweep_max_agents` come from the config; the removed fields are gone and old configs load; the config reference and facade baseline are regenerated and checked.
 - A3: through `decide` on a real store and a real `OpenAICompatibleClient` (only `complete` replaced), a Level 3 replay makes its validation request: YES replays, NO goes to the LLM, and a failed call or an error reply passes by default with a WARNING. Through `handle_intent`, a Lieutenant's promotion to Level 4 requests institutional promotion authored by the agent. Two agents' overlapping completions, and a completion during Step 7b or 7d, make one evolution attempt per procedure. With no Records setter, a real fallback reaches Step 7d and Step 7e scans. Every positive `/grant list` test requires the printed table.
+- A4: through `handle_intent` with a real `IntentBus`, `AgentRegistry` and target agent, a real store and a real `OpenAICompatibleClient` (only `complete` replaced): a compound step the Level 3 validator rejects is a failed replay (no action on the replay, one fallback, demotion to Level 2, the LLM's recovered answer and an `execution_failure` event naming the step; with no recovery the intent fails naming the step); dispatched compound replays count once a run and promote at the threshold (Level 3 to 4, and a Commander's approved Level 4 to 5); a Level 3 NO demotes the procedure to Level 2 and resets its count while the LLM serves the intent.
 - The count in D4 is posted on #1654 before the build.
 - Before editing, the tests that pin current behaviour were grepped, and each updated pin says why inline.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -3049,6 +3632,7 @@ HOLDS: yes
   - one `/grant list` with a grant present (expected a table naming the target).
   - A2: D4(c)'s count again; the count of `Procedure '...' demoted to Level 2` lines, and for one demoted procedure that its next dispatch made an LLM call (Guided) rather than a cached replay (E8); the count of `Procedure evolved` lines against earlier sessions (E9).
   - A3: the count of `Level 3 validation call failed` and `Level 3 step validation call failed` WARNINGs (expected 0 with a healthy provider); the count of `[Promotion Request]` threads and of `pending` procedures (E11); with Records disabled only, the count of `Fallback learning handler failed` lines (expected 0).
+  - A4: the count of `Compound step ... validation failed — aborting compound replay` lines and of `Level 3 validation failed for procedure` lines, each followed by a `Procedure '...' demoted to Level 2 after failure` line for the same procedure (expected 0 of each while no active procedure is at Level 3, D4).
 
 ## 17. Not verified
 
@@ -3063,6 +3647,7 @@ HOLDS: yes
 - A2: section 6's census of the 219 masked tests is the reviewer's measurement, not rerun; A2's range check keeps `float(MagicMock()) == 1.0` in range (read, not run).
 - A3: written in a read-only consult and not run: the 11 new M1 cases, the seven strengthened validator tests, the two comment-only test edits and the M2 helper. In particular: that `decide` completes its LLM path with a real `OpenAICompatibleClient` whose `complete` alone is replaced (the `[no]` case; the reviewer's probe took only the replay branch); that `OpenAICompatibleClient(base_url=...)` opens no connection before `complete` (the probe constructed and closed one); that re-saving a stored procedure keeps it matchable; that `classify_criticality` rates the test procedure below high (the thread goes to All Hands either way, the DM to `captain`); that `evolve_fix_from_fallback` with no episodes and a NO reply does not raise out of Step 7d; that a dream step's first `store.get` is its parent load (read: `list_active` and `get_quality_metrics` do not call `get`); that `MagicMock(spec=BaseLLMClient)` is truthy (the validators return early on a falsy client).
 - A3: the new Level 3 traffic's provider behaviour (which tier answers, token use) and the WARNING volume under a provider outage were not measured; E10 rests on the code. CI's SQLite build is still unread (A2).
+- A4: written in a read-only consult and not run: the 6 new cases and the seven code pairs. In particular: that AD-534b's recovery makes exactly one `complete` call through `_decide_via_llm` and returns a decision whose `act()` succeeds (the probe measured one ordinary call per Guided run, `logs/bf924r3/orchestrator-rerun-compound.txt`); that the recovered answer does not contain `[Procedure Replay`; that `patch.object(agent, "act", AsyncMock(wraps=agent.act))` passes every other call through; that patching `IntentBus.send` again for each run keeps the subscription; that `request_promotion` at three completions posts nothing in `_store_rig`'s Ward Room double (if it raises, the helper's `except` swallows it, as before); that approving after the re-save keeps the procedure matchable; and how a real provider answers the step prompt.
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -3082,7 +3667,11 @@ HOLDS: yes
 - **R14 (A3).** A stored `expires_at == 0` reads as permanent (`—`) and Active in `/grant list` (`commands_clearance.py:206`, `:213` test truthiness), while both active-grant readers compare numbers and exclude it (`clearance_grants.py:100`, `:175`). Injected only (`/grant issue ... 0` stores None) and byte-identical to before A2 (review round 2, M2 finding 3). Fix: `is not None` in both display tests.
 - **R15 (A3).** `_compilation_trust_score` is range-checked float coercion, as D11 specified: an injected `True`, `"0.8"` or `MagicMock()` reads as 1.0, 0.8 and 1.0 with no WARNING (review round 2, property 1). `TrustNetwork.get_score` returns a float on every path, so only an injected double reaches it.
 - **R16 (A3).** A `content_snapshot` that is a JSON array, string or null survives D10's `json_set` with no exception; the column changes and `get` stays None (review round 2, property 2). Corrupt rows only.
-- **R17 (A3).** AD-536's approver routing: `_DEPARTMENT_CHIEFS` (`cognitive_agent.py:2708-2715`) names chiefs no agent is (0 hits in `config/`), so a low- or medium-criticality promotion request DMs an id no agent has, and the department channel is matched by department id against channel names; the ontology has no chief lookup. Newly reachable through D10 (E11). A chief resolver is AD-536 design work: file it when the discovery budget allows.
+- **R17 (A3).** AD-536's approver routing: `_DEPARTMENT_CHIEFS` (`cognitive_agent.py:2708-2715`) maps a department to a lowercase name (`laforge`, `bones`, `worf`, ...) that `_announce_promotion_request` passes to `get_or_create_dm_channel` as the approver's agent id (`:2838-2841` on the candidate), so a low- or medium-criticality request opens a DM whose member is that literal name, not the chief's registered agent; the department channel is matched by department id against channel names. The chiefs exist (`config/ontology/organization.yaml:393`, `:405`, `:421`; A3's case-sensitive search missed them, A4 D23), and the ontology resolves them: `get_post_for_agent(agent_type).reports_to`, then `get_agents_for_post(post_id)` (`ontology/service.py:165`, `:177`), as review round 3 executed. Newly reachable through D10 (E11). A chief resolver is AD-536 design work: file it when the discovery budget allows.
 - **R18 (A3).** `_teach_procedure` (`cognitive_agent.py:2906-2907`) reads the same `_callsign` / `_agent_id` attributes no agent has; it has no production caller (section 12).
 - **R19 (A3).** AD-594's `handle_consultation_request` builds `LLMRequest(system_prompt=..., user_message=..., tier="fast")` (`cognitive_agent.py:8723-8727`); `LLMRequest` has no `user_message` and its `prompt` has no default (`types.py:307-331`), so every consultation raises `TypeError`, logs "AD-594: LLM call failed" and returns the fallback answer. The handler is registered (`:1666`). An independently reachable production defect off BF-924's path: file it now (filing policy).
 - **R20 (A3).** A suite-wide seam test that pins every LLM-client double to `BaseLLMClient`, as §7.20's does for `TrustNetwork`: the `AsyncMock()` clients outside this change are not on the Level 3 path; D15 pins the validator doubles by `spec`.
+- **R21 (A4).** A dispatched compound replay returns before the shared tail (`cognitive_agent.py:7652-7658` against `:7685-7932` on the candidate): no action episode, working-memory record, conclusion, AD-492 correlation clear, result metadata or Ward Room self-post. Pre-existing AD-534c shape; A4 adds only the ladder (D21); the compound event and result are pinned (`test_multi_agent_replay_dispatch.py:799-856`).
+- **R22 (A4).** Compound detection differs by level: Level 3 by `resolved_agent_type` with at least two steps (`:2524-2526`), Level 4 and 5 by `agent_role` (`:1897-1899`), dispatch by `agent_role` (`:2036`). A procedure with one field and not the other changes shape between levels (resolved types without roles is compound at Level 3 and dispatches nothing). Every combination reaches the ladder once after A4; one rule is AD-534c/535 design.
+- **R23 (A4).** At Level 4 and 5 a step whose dispatch failed or raised is replaced by its text and the replay counts as dispatched (`:2084-2097`); A4 makes it count toward promotion, as it already counted as a completion. Treating a failed dispatch as a failed replay is AD-534c design.
+- **R24 (A4).** Agents whose `report` override drops `success` (`integrations/m365_connector.py:277`, `:376`, `:540`, `:639`, `:738` return `{"agent", "result"}`) make every cached replay a failure for the ladder (`report.get("success", False)`, `cognitive_agent.py:7762`): demoted, never promoted. Read, not run; whether those agents hold procedures is unmeasured.
