@@ -520,10 +520,10 @@ class TestCounselorIntegration:
         counselor._trust_network.get_score.return_value = 0.7
         counselor._hebbian_router = MagicMock()
         counselor._hebbian_router.get_weight.return_value = 0.5
-        counselor._config = MagicMock()
-        counselor._config.trust_delta_threshold = 0.15
-        counselor._config.alert_on_red = True
-        counselor._config.alert_on_yellow = False
+        # BF-924 (#1654): ``_config`` was never a Counselor attribute (nothing read it). The Counselor's
+        # config is ``_counselor_config``, set by ``__init__``, which this builder skips.
+        from probos.config import CounselorConfig
+        counselor._counselor_config = CounselorConfig()
         counselor._ward_room = None
         counselor._ward_room_router = None
         counselor._intervention_targets = set()

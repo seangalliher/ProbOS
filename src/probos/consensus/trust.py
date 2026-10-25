@@ -1036,6 +1036,17 @@ class TrustNetwork:
         filtered = [e for e in self._event_log if e.agent_id == key]
         return filtered[-n:]
 
+    def get_history(self, agent_id: str, limit: int = 20) -> list[float]:
+        """BF-924 (#1654): the agent's last ``limit`` trust scores, oldest first.
+
+        Each is the ``new_score`` of one of the agent's events in the in-memory event log
+        (``get_events_for_agent``: the ship's last 500 events, empty at boot). Read by the Captain's
+        agent profile (``trustHistory``) and the avatar telemetry's ``trust_delta``.
+        """
+        if limit <= 0:
+            return []
+        return [event.new_score for event in self.get_events_for_agent(agent_id, n=limit)]
+
     def get_events_since(self, timestamp: float) -> list[TrustEvent]:
         """Return all trust events since a given monotonic timestamp."""
         return [e for e in self._event_log if e.timestamp >= timestamp]

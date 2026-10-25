@@ -1286,12 +1286,8 @@ Counselor cognitive wellness configuration (AD-503).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `True` | — |  |
-| `profile_retention_days` | `int` | `90` | — |  |
 | `trust_delta_threshold` | `float` | `0.15` | — |  |
 | `sweep_max_agents` | `int` | `50` | — |  |
-| `alert_on_red` | `bool` | `True` | — |  |
-| `alert_on_yellow` | `bool` | `False` | — |  |
 
 ## `circuit_breaker`
 

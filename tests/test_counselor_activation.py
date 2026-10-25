@@ -624,12 +624,11 @@ class TestCounselorConfig:
     def test_default_values(self) -> None:
         from probos.config import CounselorConfig
         cfg = CounselorConfig()
-        assert cfg.enabled is True
-        assert cfg.profile_retention_days == 90
+        # BF-924 (#1654): the four fields nothing read are removed; the two left are read by the
+        # Counselor and default to the values it hard-coded before.
+        assert set(CounselorConfig.model_fields) == {"trust_delta_threshold", "sweep_max_agents"}
         assert cfg.trust_delta_threshold == 0.15
         assert cfg.sweep_max_agents == 50
-        assert cfg.alert_on_red is True
-        assert cfg.alert_on_yellow is False
 
     def test_system_config_has_counselor(self) -> None:
         from probos.config import SystemConfig, CounselorConfig

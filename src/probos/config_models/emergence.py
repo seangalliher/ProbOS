@@ -249,14 +249,15 @@ class MedicalConfig(BaseModel):
 
 
 class CounselorConfig(BaseModel):
-    """Counselor cognitive wellness configuration (AD-503)."""
+    """Counselor cognitive wellness configuration (AD-503).
 
-    enabled: bool = True
-    profile_retention_days: int = 90
-    trust_delta_threshold: float = 0.15
-    sweep_max_agents: int = 50
-    alert_on_red: bool = True
-    alert_on_yellow: bool = False
+    BF-924 (#1654): both fields are read by ``CounselorAgent`` and default to the values it hard-coded
+    before. ``enabled``, ``profile_retention_days``, ``alert_on_red`` and ``alert_on_yellow`` had no
+    reader and were removed; a config that still sets them loads (unknown keys are ignored).
+    """
+
+    trust_delta_threshold: float = 0.15  # |new trust - baseline| below this: no trust-update reassessment
+    sweep_max_agents: int = 50  # crew assessed per wellness sweep
 
 
 class TraitAdaptiveConfig(BaseModel):

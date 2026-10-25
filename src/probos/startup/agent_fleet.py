@@ -190,6 +190,7 @@ async def create_agent_fleet(
             "counselor", "counselor", target_size=1,
             agent_ids=ids, llm_client=llm_client, runtime=runtime,
             profile_store=counselor_profile_store,
+            counselor_config=config.counselor,  # BF-924 (#1654): the operator's CounselorConfig
         )
 
     # Bridge crew — Yeoman (AD-766: Captain's personal assistant, singleton)

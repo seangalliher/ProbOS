@@ -80,7 +80,11 @@ class _FakeTrustNetwork:
 
 
 class _FakeTrustNetworkNoHistoryMethod:
-    """Mirrors a trust-network shape that lacks ``get_history`` (hasattr → False)."""
+    """A trust network whose history read raises (AttributeError): the snapshot still degrades.
+
+    BF-924 (#1654): no real TrustNetwork lacks ``get_history`` now; the ``hasattr`` guard this double
+    once exercised hid that the method did not exist. It now exercises the read's ``except``.
+    """
 
     def get_score(self, agent_id: str) -> float:
         return 0.5
