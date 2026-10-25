@@ -2,12 +2,14 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A1, after the oracle run)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A2, after review round 1 of M1 and M2)
 
-**Status:** build-ready. One BF, two milestones, one PR, one gate; #1654 closes with it. **BF number:** BF-924 (#1654); this contract allocates nothing. **Tier:** M1 **HIGH** (the AD-535/536 trust clamp: it decides how much an agent may replay without the LLM, and its failure mode is fail-closed by design); M2 **STANDARD** (no safety property: every wired value defaults to the constant it replaces, F05 is Captain-only, F04's effect is a display and a voice pitch). Review the batch at HIGH because M1 is: use the Copilot `Diff Reviewer`. **Base:** written against `ba45c61f` (BF-923's branch head on `origin/main` `7808d182`); BF-923 merges first as a merge commit with this tree; the orchestrator re-verifies every SEARCH on the merge SHA, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
+**Status:** build-ready. One BF, two milestones, one PR, one gate; #1654 closes with it. **BF number:** BF-924 (#1654); this contract allocates nothing. **Tier:** M1 **HIGH** (the AD-535/536 trust clamp: it decides how much an agent may replay without the LLM, and its failure mode is fail-closed by design); M2 **STANDARD** (no safety property: every wired value defaults to the constant it replaces, F05 is Captain-only, F04's effect is the Captain's profile history and, in the backend avatar projection and the crew context, a pitch factor and a rule name; the Captain's playback does not read it, A2 D13). Review the batch at HIGH because M1 is: use the Copilot `Diff Reviewer`. **Base:** written against `ba45c61f` (BF-923's branch head on `origin/main` `7808d182`); BF-923 merges first as a merge commit with this tree; the orchestrator re-verifies every SEARCH on the merge SHA, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF.
 
 **Tests:**
-- New `tests/test_bf924_compilation_trust.py` (M1: 6 functions, 7 cases).
-- New `tests/test_bf924_trust_inputs.py` (M2: 11 functions, 15 cases).
+- New `tests/test_bf924_compilation_trust.py` (M1: 11 functions, 16 cases; A2 corrects the original count, 5 functions and 6 cases, and adds 6 functions and 10 cases).
+- New `tests/test_bf924_trust_inputs.py` (M2: 13 functions, 20 cases; A2 adds 2 functions and 5 cases).
+- A2 updated pins (M1): `tests/test_graduated_compilation.py` (`test_promote_compilation_level` asserts the level `get` returns), `tests/test_ad1326_procedure_ledger.py` (a restore test built its premise through the column-only demote).
 - Updated pins, M1: `tests/test_graduated_compilation.py` (factory and two inline sites set `_trust_score` by hand), `tests/test_level_5_dispatch.py` (factory). M2: `tests/test_ad722_avatar_telemetry.py` (docstring of the no-method double), `tests/test_ad1260_wellness_domain.py` (`_FakeTrust` gains `get_history`), `tests/test_ad622_clearance_grants.py` (`list_all` invented by a `MagicMock`), `tests/test_counselor_activation.py` (defaults of removed fields), `tests/test_ad1270e2h_emergence_models.py` (the pre-move dump of `CounselorConfig`), `tests/test_ad642_communication_benchmarks.py` (a hand-set `_config` nothing reads), `tests/test_counselor_therapeutic.py` (A1: its `__new__` builder sets `_counselor_config`), `tests/test_ad1270e1_config_facade.py` (A1: the field-count pin, 1880 to 1876).
 
 **Amendment A1 (2026-10-25, after the oracle run on `8f9fd379`: 32 labels applied, the union of the focused lists 4 failed / 1,302 passed).** Every original pair stands; A1 changes only:
@@ -17,6 +19,14 @@
 4. §7.13 gains a second pair: the manifest's `census:` header, re-measured on this tree (decision A1-4).
 5. Section 6's expected generated diff is corrected to the exact hunks the oracle produced; the tests-first list gains the field-count pin (19 cases); the collected counts are the oracle's.
 6. D4 records the live count (posted on #1654): no active procedure is at Level 3 or above, so F02 restricts no stored procedure today.
+
+**Amendment A2 (2026-10-25, after review round 1: M1 NOT READY on four P2, M2 NOT READY on one P2 and two P3; `logs/bf924r1/review-m1-r1.md`, `review-m2-r1.md`).** Every earlier pair stands except the helper body in §7.1 Pair 2. A2:
+1. D11 (findings 3, 4): the helper reads the trust network inside its `try` and refuses a value outside [0, 1] (NaN, an infinity) with the same WARNING and 0.0.
+2. D10 (finding 2, pre-existing): `ProcedureStore.promote_compilation_level` and `demote_compilation_level` write the level to the JSON snapshot `get` reads, in the same statement as the column (new §7.4a); `get` is unchanged. **E8:** promotions and demotions take effect for dispatch.
+3. D9 (finding 1): the completion event is unchanged; §5a's "no evolution by itself" is corrected; **E9** discloses that an Ensign's Guided run enters AD-532e's reactive check as every stored Level 2 run does; a producer-to-consumer test pins it.
+4. D12 (G1): `/grant list` degrades per row for a time the platform cannot show; `/grant issue` refuses such a duration (§7.8 Pairs 3 to 6).
+5. D13 (G2): E6 no longer names the Captain's playback as a consumer. D14 (G3): `scripts/gen_config_reference.py` anchors to its own `src` (new §7.23).
+6. Tests: 10 new M1 cases and 5 new M2 cases; two updated pins (§7.3 Pair 5, new §7.4b); section 6's census of the two inline compound tests is corrected; the M1 focused list gains four files. No generated file, hash or field-count pin changes.
 
 ## 0. Premise: what is present on this tree
 
@@ -42,7 +52,7 @@
 
 ## 2. Solution overview
 
-- **M1.** One helper, `CognitiveAgent._compilation_trust_score()`, reads `self._runtime.trust_network.get_score(self.id)` as the rank read does (`:3351`); both sites use it. A failed or impossible read logs a WARNING and returns 0.0, which takes the Ensign cap (Level 2). No hold (D3). Two test factories that hand-set `_trust_score` now give their runtime a real `TrustNetwork` at that score.
+- **M1.** One helper, `CognitiveAgent._compilation_trust_score()`, reads `self._runtime.trust_network.get_score(self.id)` as the rank read does (`:3351`); both sites use it. A failed or impossible read logs a WARNING and returns 0.0, which takes the Ensign cap (Level 2). No hold (D3). Two test factories that hand-set `_trust_score` now give their runtime a real `TrustNetwork` at that score. A2: a value that is not a score in [0, 1] is a failed read too (D11), and `promote_compilation_level` / `demote_compilation_level` write the level to the snapshot `get` reads as well as to the column (D10).
 - **M2.** `TrustNetwork.get_history(agent_id, limit=20) -> list[float]` maps `get_events_for_agent` to `new_score`; both callers drop their guards. `/grant list` names a target through its birth certificate and the live callsign. `CounselorAgent` takes the operator's `CounselorConfig` by constructor injection (`agent_fleet.py`) and reads `trust_delta_threshold` and `sweep_max_agents`; the other four fields are removed from the model, `system.yaml` and the profile manifest; the config reference and the facade baseline are regenerated.
 
 ## 3. Decisions (for #1654)
@@ -61,11 +71,12 @@
    - (b) `SELECT id, name, compilation_level, origin_agent_ids FROM procedure_records WHERE is_active = 1 AND is_negative = 0 AND compilation_level >= 3`, then count, in Python, the rows whose `origin_agent_ids` (a JSON list) intersects E. This is the requested number.
    - Post on #1654 before the build: the Ensign count, (a) by level, and (b). `trust.db` is written at shutdown (`trust.py:336-345`), so a running vessel's file can lag its memory; say whether the vessel was running.
    - **Done (A1):** the count is posted on #1654: no active procedure is at Level 3 or above, so (b) is 0 and F02 restricts no stored procedure today. E1 to E3 apply to procedures promoted from now on.
+   - **(c), A2 (D10), read-only, before the merge:** in `procedures/procedures.db`, `SELECT compilation_level, json_extract(content_snapshot, '$.compilation_level') AS snapshot_level, COUNT(*) FROM procedure_records WHERE is_active = 1 AND compilation_level IS NOT json_extract(content_snapshot, '$.compilation_level') GROUP BY 1, 2`: the active rows whose column and snapshot already disagree (dispatch reads the snapshot; the counts above read the column). Post on #1654. It is R10's evidence and does not block the merge: D10 repairs no existing row.
 
 **D5, the F05 repair.** Ranked: (1, chosen) one helper, `_grant_target_callsign`, resolving the stored id by certificate (`get_by_uuid`, else `get_by_slot`: `_grant_issue` stores the sovereign id, or the slot id when no identity registry is bound) and naming it with `callsign_registry.get_callsign(cert.agent_type)`, the live callsign, falling back to the birth callsign; the id prefix as before when nothing resolves; (2) add `CallsignRegistry.list_all()`: a new API for one caller that would still compare slot ids with a sovereign id and never match; (3) iterate `all_callsigns()` and `resolve()` each: per-grant O(n) and the same id-form mismatch.
 
 **D6, the F04 repair.** Ranked: (1, chosen) add `TrustNetwork.get_history(agent_id, limit=20) -> list[float]`, the `new_score` of `get_events_for_agent(agent_id, n=limit)`, oldest first, `[]` for `limit <= 0` (`filtered[-0:]` would return all): one owner of the mapping; the callers' contract (`limit`, a list of floats the UI validates in [0, 1], `useProfileResource.ts:54`) holds unchanged; the three avatar doubles already have this signature; the 13 `runtime.trust_network.get_history.return_value = []` fixtures stay meaningful. Both `hasattr` guards are removed: they are what hid the defect; telemetry keeps its `try` (its never-raise contract, `telemetry.py:7-11`). (2) Call `get_events_for_agent` in both callers: the mapping three times (`standing_interests.py:701` already does it), and the doubles and fixtures would pin a dead name. (3) A persisted history: scope (R6).
-**Doubles audit (5 files named by the issue, plus one found):** the three avatar `_FakeTrustNetwork`s match the new method; `test_bf711_*:110 _Store.get_history(agent_id, test_name, limit)` and `test_ad566c_*:54 MockQualificationStore.get_history` double the qualification store (`qualification.py:255`) and are out of scope; `test_ad1260_*:45 _FakeTrust` reaches the route and gains the method, and its `all_scores` gains `crew_only` (A1-1); `test_ad1259_*:70 _FakeTrustNetwork` never reaches either caller (its two `agent_profile` calls, `:238`, `:348`, use runtimes without a trust network) and is unchanged. A seam test pins the four doubles that stand for `TrustNetwork` on these paths: every public method each defines exists on `TrustNetwork` with the same parameter names and kinds (defaults are not compared: callers pass them). **Effect:** no hold (Captain-facing display, a ±3 % voice pitch and a rule name; section 5b).
+**Doubles audit (5 files named by the issue, plus one found):** the three avatar `_FakeTrustNetwork`s match the new method; `test_bf711_*:110 _Store.get_history(agent_id, test_name, limit)` and `test_ad566c_*:54 MockQualificationStore.get_history` double the qualification store (`qualification.py:255`) and are out of scope; `test_ad1260_*:45 _FakeTrust` reaches the route and gains the method, and its `all_scores` gains `crew_only` (A1-1); `test_ad1259_*:70 _FakeTrustNetwork` never reaches either caller (its two `agent_profile` calls, `:238`, `:348`, use runtimes without a trust network) and is unchanged. A seam test pins the four doubles that stand for `TrustNetwork` on these paths: every public method each defines exists on `TrustNetwork` with the same parameter names and kinds (defaults are not compared: callers pass them). **Effect:** no hold (A2, D13: the Captain's profile history plus, in the backend avatar projection and the crew context only, not the Captain's playback, a ±3 % voice pitch and a rule name; section 5b).
 
 **D7, `CounselorConfig` field by field.**
 - `trust_delta_threshold`: wired into `_on_trust_update` (`counselor.py:1736`); default 0.15 = today. The comparison stays against `profile.baseline.trust_score`, the default baseline (BF-923 D8); BF-923's `_gather_agent_metrics` hold, `trust_observations` and `observed_baseline` are untouched.
@@ -85,35 +96,49 @@
 
 **A1-4, the manifest's `census:` header.** Only `default_false` is pinned (`test_ad1185_*:857-859`), but the block is one measurement under one `measured_at_commit`. Measured on this tree (section 11): base 452 booleans, 226 default False, 226 default True, 85 armed, 141 never armed; after BF-924's removals 449, 225, 224, 85, 140. The committed header says 445, 226, 225, 85, 136: three figures had already drifted before this change. Ranked: (1, chosen) write all five post-change measurements and name this candidate in `measured_at_commit` (§7.13 pair 2): a header that mixes measured and stale figures under one commit is a false record, and the pair touches only lines BF-924 must already touch; (2) move only `default_false` (226 to 225): passes the test, leaves the drifted figures; (3) move every figure by BF-924's delta (445 to 442, 225 to 223, 136 to 135): carries the drift forward as if measured. The drift's cause is on the register (R8).
 
+**D9 (A2), review round 1 finding 1: an Ensign's Guided run and AD-532e's reactive trigger.** `TASK_EXECUTION_COMPLETE` (`cognitive_agent.py:7852-7859` on the candidate) reports `used_procedure` from `cached`, and `dreaming.py:2121` skips the reactive check only when it is true. A Guided decision is not cached because the LLM ran (AD-535 Part 8, `prompts/archive/ad-535-graduated-compilation.md:480`), and AD-532e defines the event as a task "via LLM path" with `used_procedure` "True if procedural replay was used (no reactive needed)" (`events.py:1054`, `:1060`; `prompts/archive/ad-532e-reactive-proactive-triggers.md:90-96`, `:138`). Every Guided run therefore already enters the check, and every stored Level 2 run does today (Level 2 is the highest level of any active procedure on the vessel, D4). The clamp turns an Ensign's run of a stored Level 3 or 4 procedure into a Guided run; the reviewer measured exactly that (equal counters, `used_procedure` False at 0.3 and True at 0.5, one reactive attempt and one confirmation call at 0.3). Ranked: (1, chosen) keep the field and its rule, disclose E9, correct §5a, and pin with a producer-to-consumer test that the clamped run reaches the check as a stored Level 2 run does and a replay does not (§7.2); (2) make `used_procedure` true for `guided_by_procedure` too: it changes today's behaviour for every Level 2 run, removes the reactive trigger from every live procedure, changes a payload read outside its module, and decides an AD-532e question outside this issue (R9); (3) a new payload field with a consumer decision: new contract surface with no consumer need; (4) set `used_procedure` only when the clamp lowered the level (the base's event in every case): puts a trust-dependent meaning into a field that means "a replay was used", through a new decision key. Cost bound (E9): only a successful run; at most once per agent per 60 s (`REACTIVE_COOLDOWN_SECONDS`, `config.py:254`); only for a matched procedure with at least 5 selections and an unhealthy diagnosis (`dreaming.py:2147-2155`); at most one attempt per procedure per 72 h (`EVOLUTION_COOLDOWN_SECONDS`, `config.py:251`), shared with dream-time evolution through `_addressed_degradations` (`:2013-2015`); each attempt one LLM confirmation call (`:2018-2030`), and if confirmed the evolution calls that the dream cycle's Step 7b (`_evolve_degraded_procedures`, `:1863-1979`, called at `:694`) makes for the same diagnosis without confirmation. No control is weakened.
+
+**D10 (A2), review round 1 finding 2 (pre-existing): promotion and demotion reach `get`.** `promote_compilation_level` and `demote_compilation_level` (`procedure_store.py:1105-1133`) update only the `compilation_level` column; `get` (`:814-832`) rebuilds the procedure from `content_snapshot`. So the dispatch (`cognitive_agent.py:1837`, `:1855`, `:1861`), the next promotion step (`:7781`, `:7787`), the demotion check (`:7804-7805`), both teaching gates (`commands_procedure.py:412`, `routers/procedures.py:167`), an evolved procedure's inherited level (`procedures.py:842`, `:925-940`, `:1357`), the diagnostic context (`diagnostic_context.py:329`) and the index entry `sync_routing_index` rewrites from `get` (`procedure_store.py:785-791`) never saw a promotion or a demotion. Measured through the real `handle_intent` on a real store: promoted to index 5, loaded 4, teaching refused; and five failures at trust 0.5 left the index at 2 while every run replayed at Level 4 with no LLM call (`logs/bf924r1/orchestrator-rerun-lifecycle.txt:24`, `:41`). AD-535 specified the in-memory update (`prompts/archive/ad-535-graduated-compilation.md:99`); decay (`:1623-1639`), `deactivate` (`:1271-1287`), archive and restore write the snapshot with the column. AD-1326 D14 rejected merging the column into `get` (40 callers) and named this a legacy defect outside its issue (`prompts/ad-1326-procedure-challenger-champion.md:235`); it was never filed (section 12). Why here: M1's E2, E3 and §5a's demotion row are claims about promotion, and without this the Level 5 that M1 makes reachable is a column no consumer reads. Ranked: (1, chosen) both methods write the snapshot's level in the same UPDATE (`json_set`, inside BF-891's `_index_write`, so a failure rolls both back; no read-modify-write, no swallowed failure, no re-save through `INSERT OR REPLACE`, counters untouched), `get` unchanged (D14 stands); (2) `get` takes the level from the column: changes what about 40 callers see for every row ever promoted, demoted or migrated, and leaves the snapshot and the index rebuild (`_rebuild_chroma_from_sqlite`, from the snapshot) stale; (3) a separate issue: the defect is reached through M1's own Level 5 and the fix is two statements in the methods M1's step calls; (4) register only: leaves E3 false. The index's metadata level is not written: `find_matching` uses it only as the `min_compilation_level` filter (`:945-948`) and returns SQLite's columns (`:974-979`), and production promotes from at least 2 and demotes to 2, so the filter's answer cannot change. Rows that already differ and `_migrate_qualifying_procedures` (`:1208`, column only) are R10. **E8.** Within the envelope: it restores AD-535's design, makes the demotion valve effective and rewrites no data at merge.
+
+**D11 (A2), findings 3 and 4: the helper's guard.** `float(nan)` does not raise and fails both comparisons, so NaN took the Level 4 cap with no WARNING; `+inf` passed `>= TRUST_COMMANDER` and promoted an approved procedure to Level 5; the `trust_network` attribute was read before the `try`, so a raising attribute failed `decide`. Chosen: read `self._runtime.trust_network.get_score(self.id)` inside the `try` and refuse a value with `not 0.0 <= score <= 1.0` (true for NaN) through the same WARNING and 0.0. Out of range is refused, not clamped: `get_score` is `alpha / (alpha + beta)` (`trust.py:97-99`, `:1017-1022`), in [0, 1] for every record the network writes; a value outside comes from a corrupt record (`create_with_prior` does not validate, `:358-370`) or a double, and clamping 1.5 to 1.0 would give it the Commander's Level 5, against D2. No range check at all leaves 2.0 unlocking Level 5. `float(MagicMock())` is 1.0, in range, so section 6's masked tests are unaffected. The WARNING text is unchanged (E4, R5); its traceback names the value.
+
+**D12 (A2), review round 1 M2 G1: `/grant list` and a time the platform cannot show.** `datetime.fromtimestamp` raises OverflowError for an infinity and OSError (Windows) or ValueError for a finite time outside the platform's range; `_grant_list` formatted every row unguarded, so one such row made the command raise and the shell print an error instead of the table (`experience/shell.py:326`, `:343`); `_grant_issue` admitted `inf` and any huge duration, and `nan` (`nan > 0` is False) became a grant until revoked. Chosen: one helper, `_grant_time`, for both cells; a time it cannot show reads "out of range" in its own row; the Status keeps reading the raw value (`inf` is Active, as `get_active_grants_sync`, `clearance_grants.py:95-103`, and the store's `expires_at > ?`, `:88`, `:175`, treat it); and `/grant issue` refuses a non-finite duration or one whose expiry `_grant_time` cannot show ("Invalid duration", nothing stored). No fixed maximum in hours: the representable range is the platform's, and one function decides both admission and display, so what is admitted can always be listed on that host. SQLite stores `inf` as REAL and returns it; a bound NaN is stored as NULL. The grant check and `list_grants(active_only)` compare numbers and are unchanged; `_grant_issue` is the only writer of this store's expiry (section 12). Inside M2: it is F05's acceptance and section 14 property 6. The admission check strengthens an access control.
+
+**D13 (A2), review round 1 M2 G2: E6's consumers.** The Captain's playback is not one: `deriveAgentSignals` (`ui/src/components/profile/avatarSignals.ts:44-46`) hardcodes `trust_delta = 0`, and that is what `voiceModulation.ts:109-111`, `CrewVRM.tsx:159-162` and `SelfImageTab.tsx:455` read. The backend projection (`telemetry.py:720-738`, `apply_voice_modulation` `:452-457`) and the crew context (interoception, on in `config/system.yaml:1631`) carry the new pitch factor and rule name. E6 is corrected in the header, D6, §5b and DECISIONS; wiring the HXI is UI work (R11), not claimed.
+
+**D14 (A2), review round 1 M2 G3: the generator's import.** `scripts/gen_config_reference.py:177` imports `probos.config` with no anchor, so in a worktree with no `PYTHONPATH` the venv's editable install supplies another checkout's models; its siblings insert their own `src` (`check_config_profiles.py:60-62`, `check_config_facade.py`). Chosen: the same lines in the generator (§7.23), and section 6's commands are run with `PYTHONPATH` pinned. Under the gate's environment the path is already first, so the output is byte-identical and `tests/test_config_reference_current.py` (a subprocess with the inherited environment) is unaffected. Of the six scripts that import `probos`, four already anchor; `gen_capability_truth.py` is not run by this change (R12).
+
 ## 4. Interaction with the queue
 
 - **BF-923 (#1652)** is this base. Its Counselor changes (sections 3, 5(c), 7.8 of `prompts/bf-923-episodic-recall-callers-and-counselor-assessment-inputs.md`) are in this tree; this contract's `counselor.py` pairs anchor on the import block, `__init__`, `_run_wellness_sweep`'s head and `_on_trust_update`'s threshold, none of which BF-923 changed. No pair touches `_gather_agent_metrics`, `_record_trust_observation`, `CognitiveProfile`, `behavioral_*`, `orientation.py`, `proactive.py`, `runtime.py`, `startup/finalize.py` or `ward_room/channels.py`.
 - **#1626 M6+M7** edits `ui/` only. No pair here is in `ui/`; the UI readers of `trustHistory` and `trust_delta` are read, not changed.
 - **Tracker anchors:** `PROGRESS.md`'s title line (once) and `DECISIONS.md`'s heading `### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)` (line 739, once).
-- **PR text, BF-924's part:** "BF-924 (#1654). Trust inputs were read through APIs that don't exist. The AD-535/536 procedure-compilation clamp read an attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`get_score`, as Rank does): Ensigns are held to Guided (Level 2), a Commander's approved procedure can reach Level 5, and an unreadable trust is held to Level 2 with a WARNING. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar's trust delta is real. `/grant list` no longer raises and names a grant's target by its live callsign. The Counselor reads `trust_delta_threshold` and `sweep_max_agents` from its config (defaults unchanged); the four `CounselorConfig` fields nothing read are removed."
+- **PR text, BF-924's part:** "BF-924 (#1654). Trust inputs were read through APIs that don't exist. The AD-535/536 procedure-compilation clamp read an attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`get_score`, as Rank does): Ensigns are held to Guided (Level 2), a Commander's approved procedure can reach Level 5, and an unreadable trust (a failed read, or a value that is not a score in [0, 1]) is held to Level 2 with a WARNING. Promotion and demotion now write the level `ProcedureStore.get` reads, so they take effect: they had moved only an index column, and dispatch, the next promotion step and the teaching gate never saw them. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar telemetry's trust delta is real (the HXI's own voice and avatar signals do not read it yet). `/grant list` no longer raises, names a grant's target by its live callsign and shows every row even when one time cannot be shown as a date; `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown. The Counselor reads `trust_delta_threshold` and `sweep_max_agents` from its config (defaults unchanged); the four `CounselorConfig` fields nothing read are removed."
 
 ## 5. Consumers of every value this changes
 
-**(a) F02: the clamp's trust value and every dispatch that follows it.** States of the read: *measured* (a float), *errored* (`get_score` raised) and *absent* (no runtime or trust network) → 0.0 with a WARNING; *timed out* does not occur (an in-memory dict read, `trust.py:1017-1022`); *skipped* does not occur (read whenever a procedure is loaded).
+**(a) F02: the clamp's trust value and every dispatch that follows it.** States of the read: *measured* (a float), *errored* (`get_score`, the runtime or its `trust_network` attribute raised), *invalid* (A2, D11: not a score in [0, 1]: NaN, an infinity, a corrupt record) and *absent* (no runtime or trust network) → 0.0 with a WARNING; *timed out* does not occur (an in-memory dict read, `trust.py:1017-1022`); *skipped* does not occur (read whenever a procedure is loaded).
 
 | Reader | Effect of a real score |
 |---|---|
 | `_max_compilation_level_for_trust` (`:1853`) | trust < 0.5 → 2; else 4 (unchanged function) |
 | `_max_compilation_level_for_promoted` (`:1858`, only for a stored Level ≥ 5) | 5 only for `approved` and trust ≥ 0.7 |
 | dispatch `:1864-1877` | ≤1 None; 2 `_build_guided_decision` (LLM with hints, `:2449-2472`); 3 validated replay; ≥4 zero-token replay. **E1:** an Ensign executing a stored Level 3 or 4 procedure now runs Guided: an LLM call with the procedure as hints, its output LLM-written, its tokens spent. Level 5 dispatch equals Level 4 (`test_level_5_dispatch.py:159-179`), so a Commander's dispatch is unchanged |
-| promotion `:7768-7783` | **E2:** an Ensign's consecutive successes no longer promote a procedure above Level 2 (`next_level <= min(max_allowed, 5)`, `:7773`), and Ensigns no longer reach Level 4, so they no longer request institutional promotion (`:7782-7783`). **E3:** a Commander's (≥ 0.7) `approved` Level 4 procedure is promoted to Level 5 after `COMPILATION_PROMOTION_THRESHOLD` (3) successes; Level 5 makes the Captain's `/procedure teach` and the teach route available (`commands_procedure.py:412`, `routers/procedures.py:167`); the agent's own `_teach_procedure` has no caller (section 12) |
-| demotion `:7786-7799` | unchanged rule: any failure of a procedure-associated decision demotes a stored level above 2 to 2, a Guided run's failure as a replay's did before. The clamp itself writes no level |
-| **E4** | a failed read logs `BF-924 (#1654): trust read failed for <id>; procedure compilation held to Level 2` at WARNING per procedure match |
+| promotion `:7768-7783` | **E2:** an Ensign's consecutive successes no longer promote a procedure above Level 2 (`next_level <= min(max_allowed, 5)`, `:7773`), and Ensigns no longer reach Level 4, so they no longer request institutional promotion (`:7782-7783`). **E3:** a Commander's (≥ 0.7) `approved` Level 4 procedure is promoted to Level 5 after `COMPILATION_PROMOTION_THRESHOLD` (3) successes; Level 5 makes the Captain's `/procedure teach` and the teach route available (`commands_procedure.py:412`, `routers/procedures.py:167`); the agent's own `_teach_procedure` has no caller (section 12). A2 (D10): the promoted level is the level `get` returns, so dispatch and both teaching gates see it; before, only the index column moved (E8) |
+| demotion `:7786-7799` | unchanged rule: any failure of a procedure-associated decision demotes a stored level above 2 to 2, a Guided run's failure as a replay's did before. The clamp itself writes no level. A2 (D10): the demotion now reaches `get`, so the demoted procedure is dispatched Guided; before, only the index column moved and it kept replaying (E8) |
+| **E4** | a failed read, or a value that is not a score in [0, 1] (A2), logs `BF-924 (#1654): trust read failed for <id>; procedure compilation held to Level 2` at WARNING with its traceback, once per trust read: once per procedure match, twice when the promotion step also reads (review round 1: 1, 1, 2, 2, 2 records over five intents; no throttle, R13) |
+| **E8 (A2, D10)** | from the merge, a promotion or a demotion changes the level `get` returns, so dispatch follows it. A Lieutenant's (trust from 0.5) Guided procedure is dispatched as Level 3 (deterministic replay plus one LLM validation call, `:2495-2538`) after 3 consecutive successes and as Level 4 (zero-token replay) after 3 more; a Commander's approved Level 4 procedure reaches Level 5 and can be taught; any failure demotes a procedure above Level 2 to Guided for real. Ensigns stay at Level 2 (M1). Live: no active procedure is at Level 3 or above by column (D4); a row whose snapshot already differs from its column keeps its snapshot's level until its next promotion or demotion (R10, D4(c)) |
+| **E9 (A2, D9)** | an Ensign's successful Guided run of a matched procedure emits `used_procedure: False`, as every stored Level 2 run does, so AD-532e's reactive check may run for it: at most once per agent per 60 s, only for an unhealthy diagnosis with at least 5 selections, at most one evolution attempt per procedure per 72 h shared with the dream cycle, each attempt one LLM confirmation call (review round 1: one attempt and one call for a degraded procedure) |
 
-**The Level 2 path and AD-534 / dream-time evolution (enumerated).** Writers of the four counters (`procedure_store.py:1052-1074`): selection and applied are recorded before the clamp (`cognitive_agent.py:1831`, `:1847`), unchanged; completion or fallback is recorded once per decision, by the cached branch (`:7732-7741`) or the guided branch (`:7744-7753`), the same counters. So the clamp changes which branch records, not what is recorded: one selection, one applied and one completion-or-fallback per run, either way. Readers of those counters: `diagnose_procedure_health` (`procedures.py:289-320`, thresholds on the four rates), called by the agent at `:1817` (the quality gate, before the clamp, unchanged) and `:1887` (Level ≥ 4 only: an Ensign's run no longer reaches it, so fewer AD-534 WARNING lines; log-only, `:2639-2646`), and by dreaming at `dreaming.py:1880` (`_evolve_degraded_procedures`), `:2151` (reactive), `:2464` (sweep), plus the gap predictor's own rule at `dreaming.py:1303-1310` and `gap_predictor.py:580`. All read `get_quality_metrics` (`procedure_store.py:1135-1162`) only; none reads the dispatch level, `cached` or `guided_by_procedure` (`guided_by_procedure` has two readers, both in `cognitive_agent.py`: `:2468` writes it, `:7744` reads it). So the change sets off no diagnosis and no evolution by itself; the counters move only with the outcomes of the Guided runs. Two behaviours differ for an Ensign's run: the AD-534b service recovery (`:7805`) runs only for a failed *cached* replay, and `:1887`'s log-only diagnosis does not run.
+**The Level 2 path and AD-534 / dream-time evolution (enumerated).** Writers of the four counters (`procedure_store.py:1052-1074`): selection and applied are recorded before the clamp (`cognitive_agent.py:1831`, `:1847`), unchanged; completion or fallback is recorded once per decision, by the cached branch (`:7732-7741`) or the guided branch (`:7744-7753`), the same counters. So the clamp changes which branch records, not what is recorded: one selection, one applied and one completion-or-fallback per run, either way. Readers of those counters: `diagnose_procedure_health` (`procedures.py:289-320`, thresholds on the four rates), called by the agent at `:1817` (the quality gate, before the clamp, unchanged) and `:1887` (Level ≥ 4 only: an Ensign's run no longer reaches it, so fewer AD-534 WARNING lines; log-only, `:2639-2646`), and by dreaming at `dreaming.py:1880` (`_evolve_degraded_procedures`), `:2151` (reactive), `:2464` (sweep), plus the gap predictor's own rule at `dreaming.py:1303-1310` and `gap_predictor.py:580`. All read `get_quality_metrics` (`procedure_store.py:1135-1162`) only; none reads the dispatch level, `cached` or `guided_by_procedure` (`guided_by_procedure` has two readers, both in `cognitive_agent.py`: `:2468` writes it, `:7744` reads it). So the counters move only with the outcomes of the Guided runs. **Corrected (A2, review round 1 finding 1):** the completion event differs. `TASK_EXECUTION_COMPLETE` reports `used_procedure` from `cached` (`:7852-7859`), which a Guided decision does not set, and AD-532e's reactive check (`dreaming.py:2117-2164`) runs for a run that used no replay. An Ensign's Guided run therefore enters that check, as every stored Level 2 run already does (E9, D9); the earlier "no evolution by itself" compared the counters, not the event. Two behaviours differ for an Ensign's run: the AD-534b service recovery (`:7805`) runs only for a failed *cached* replay, and `:1887`'s log-only diagnosis does not run.
 
 **(b) F04: `get_history` and the values it makes real.** States: *measured* (≥ 2 events); *fewer than 2 events* → `insufficient_trust_history` as today (the event log is in memory, 500 events ship-wide, empty at boot: `trust.py:265`); *errored* → telemetry's `except` gives `[]` (degraded as today); the route does not catch (as for `get_score` today).
 
 | Value | Reader | Effect |
 |---|---|---|
 | `trustHistory` (`routers/agents.py:383`) | `ui/src/hooks/useProfileResource.ts:54` (validates floats in [0, 1]: `new_score` is a Beta mean), `ui/src/components/profile/ProfileHealthTab.tsx:41-44` (sparkline when more than one) | **E5:** the Captain's profile shows the last 20 trust scores |
-| `trust_delta` (`telemetry.py:734`) | `apply_voice_modulation` (`:452-457`, ±0.2 from `ui/src/audio/modulation_manifest.json:3-4`; factors 1.03 / 0.97, `:8-9`) | **E6:** when the last two scores differ by more than 0.2, the pitch moves 3 % and `high_trust_pitch` or `low_trust_pitch` enters `fired_rules` |
-| `applied_modulation` | the voice the Captain hears (UI); the agent's interoception `pitch=` (`cognitive_agent.py:6903-6905`, gated by `avatar_telemetry.inject_into_agent_context`, default False `config.py:2023`, **true** in `config/system.yaml:1631`); the divergence note (`:6950-6956`) lists the applied rules | **E6 (crew-visible):** an agent can read its pitch factor and a rule name `low_trust_pitch` / `high_trust_pitch` in its own context; a factual display of a qualified gauge, no action |
+| `trust_delta` (`telemetry.py:734`) | `apply_voice_modulation` (`:452-457`, ±0.2 from `ui/src/audio/modulation_manifest.json:3-4`; factors 1.03 / 0.97, `:8-9`) | **E6:** in the backend projection (A2, D13), when the last two scores differ by more than 0.2, the pitch moves 3 % and `high_trust_pitch` or `low_trust_pitch` enters `fired_rules` |
+| `applied_modulation` | the backend avatar projection (A2, D13: not the Captain's playback, whose `deriveAgentSignals` hardcodes `trust_delta = 0`, `ui/src/components/profile/avatarSignals.ts:44-46`); the agent's interoception `pitch=` (`cognitive_agent.py:6903-6905`, gated by `avatar_telemetry.inject_into_agent_context`, default False `config.py:2023`, **true** in `config/system.yaml:1631`); the divergence note (`:6950-6956`) lists the applied rules | **E6 (crew-visible):** an agent can read its pitch factor and a rule name `low_trust_pitch` / `high_trust_pitch` in its own context; a factual display of a qualified gauge, no action |
 | divergence (`divergence_detector.py:390-633`) | `compute_divergence` scores only `intent_*` rules (`:320-334`); `_applied_direction` uses operational rules only when no intent rule fired (`:281-301`), and a parsed intent always fires its rule (`telemetry.py:470-495`; every v1 emotion has one, `modulation_manifest.json:19-26`) | sign, magnitude, the trust write (`:589-612`) and the Hebbian update (`:624-631`) unchanged |
 | `records_writer._classify` (`records_writer.py:87-122`) | reads divergence magnitude, working state, silence | unchanged |
 | `SelfPerceptionProjection.modulation_pitch_factor` (`self_perception.py:125`) | `project_self_perception` has no caller (section 12) | none |
@@ -130,7 +155,7 @@
 
 Before editing, grep the pins: `grep -rn "_trust_score\|_max_compilation_level_for\|_check_procedural_memory\|promote_compilation_level" tests/`. The hand-set `_trust_score` in `test_graduated_compilation.py` and `test_level_5_dispatch.py` is replaced (§7.3, §7.4). `test_teaching_protocol.py:93` also sets it, but none of its tests reaches the clamp (it does not call `_check_procedural_memory`); it is left, now dead (R7).
 
-**Named doubles and what they mask (M1).** `test_ad573_memory_budget.py:157-164` replaces `_check_procedural_memory` whole, so it never reaches the clamp. `MagicMock` runtimes in `test_replay_dispatch.py`, `test_multi_agent_replay_dispatch.py`, `test_fallback_learning.py` and the inline sites `test_graduated_compilation.py:545`, `:573`: `runtime.trust_network.get_score(...)` returns a `MagicMock`, which `float()` reads as 1.0, so each such test now runs the clamp at Senior trust. It masks nothing they assert: each dispatches a non-`approved` procedure, where every trust ≥ 0.5 caps at 4 (the grep `approved` over these files finds only `test_level_5_dispatch.py`, whose factory §7.4 repairs, and `test_teaching_protocol.py`). `ReplayTestAgent`, `_make_store_mock` and `_make_runtime_with_store` (`test_replay_dispatch.py:28`, `:63`, `:87`) and the lifecycle helpers of `test_fallback_learning.py:28-115` are reused: the store doubles return chosen procedures (they mask the semantic match, not the clamp); `_recall_relevant_memories` and `_store_action_episode` are patched as `test_fallback_learning.py:237-239` does (memory recall and episode storage, not on the changed path). `_UnreadableTrustNetwork` stands for a failing store. In the two failure cases `_build_guided_decision` is a spy: it replaces only the Guided LLM call, so the only trust read is the clamp's.
+**Named doubles and what they mask (M1).** `test_ad573_memory_budget.py:157-164` replaces `_check_procedural_memory` whole, so it never reaches the clamp. `MagicMock` runtimes in `test_replay_dispatch.py`, `test_multi_agent_replay_dispatch.py`, `test_fallback_learning.py` and the `_check_procedural_memory` callers of `test_graduated_compilation.py` that assign their own runtime: `runtime.trust_network.get_score(...)` returns a `MagicMock`, which `float()` reads as 1.0, so each such test now runs the clamp at Senior trust. (A2 correction, review round 1 property 4: the two inline sites named here before, `test_graduated_compilation.py:545` and `:573` at the base, are `test_compound_level_3_step_validation` and `test_compound_level_3_step_failure_aborts`; they call `_execute_compound_replay` directly and never reach the clamp. The reviewer gave the masked runtimes real networks: at 0.5 all 219 tests pass; at 0.3, 26 fail, each a replay, compound-dispatch or recovery expectation turning Guided, and none needs the mock's Senior score. A2's range check keeps 1.0 in range.) It masks nothing they assert: each dispatches a non-`approved` procedure, where every trust ≥ 0.5 caps at 4 (the grep `approved` over these files finds only `test_level_5_dispatch.py`, whose factory §7.4 repairs, and `test_teaching_protocol.py`). `ReplayTestAgent`, `_make_store_mock` and `_make_runtime_with_store` (`test_replay_dispatch.py:28`, `:63`, `:87`) and the lifecycle helpers of `test_fallback_learning.py:28-115` are reused: the store doubles return chosen procedures (they mask the semantic match, not the clamp); `_recall_relevant_memories` and `_store_action_episode` are patched as `test_fallback_learning.py:237-239` does (memory recall and episode storage, not on the changed path). `_UnreadableTrustNetwork` stands for a failing store. In the two failure cases `_build_guided_decision` is a spy: it replaces only the Guided LLM call, so the only trust read is the clamp's.
 
 Tests first: with §7.2 to §7.4 applied and §7.1 not, exactly 6 cases fail:
 - `test_an_ensign_runs_a_stored_level_4_procedure_as_guided`: `assert None is True` on `guided_by_procedure` (a cached replay);
@@ -142,10 +167,16 @@ Tests first: with §7.2 to §7.4 applied and §7.1 not, exactly 6 cases fail:
 `test_a_lieutenant_still_replays_a_stored_level_4_procedure` passes on both sides (the premise). A failure for another reason (an exception before the asserted line) is a hard stop for the Architect. Focused check:
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_compilation_trust.py tests/test_graduated_compilation.py tests/test_level_5_dispatch.py tests/test_replay_dispatch.py tests/test_multi_agent_replay_dispatch.py tests/test_fallback_learning.py tests/test_ad573_memory_budget.py tests/test_teaching_protocol.py tests/test_promotion_approval.py tests/test_promotion_integration.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_compilation_trust.py tests/test_graduated_compilation.py tests/test_level_5_dispatch.py tests/test_replay_dispatch.py tests/test_multi_agent_replay_dispatch.py tests/test_fallback_learning.py tests/test_ad573_memory_budget.py tests/test_teaching_protocol.py tests/test_promotion_approval.py tests/test_promotion_integration.py tests/test_procedure_store.py tests/test_ad1326_procedure_ledger.py tests/test_bf891_procedure_store_lock.py tests/test_reactive_proactive_triggers.py -n 0 -q
 ```
 
-(Collected on `ba45c61f` without the new file: 270, all passing. Expect 277 passed. A1: the orchestrator's measured counts supersede this line; A1 adds and removes no M1 case.)
+(Collected on `ba45c61f` without the new file: 270, all passing. Expect 277 passed. A1: the orchestrator's measured counts supersede this line; A1 adds and removes no M1 case.) A2: the oracle measured 276 for the ten original files (the new file had 5 functions and 6 cases, not 6 and 7); A2 adds 10 cases, so expect 286 for those ten, plus the four files A2 adds (`test_procedure_store.py`, `test_ad1326_procedure_ledger.py`, `test_bf891_procedure_store_lock.py`, `test_reactive_proactive_triggers.py`: the consumers of the two store methods and of the completion event), whose collected count the orchestrator measures.
+
+**A2 tests first.** On the candidate's source (`cad8396f`), with only A2's test changes applied (§7.2's additions, §7.3 Pair 5, §7.4b, §7.20's additions), exactly 13 of the new and changed cases fail:
+- M1 (8): `test_a_trust_that_is_not_a_score_is_held_to_level_2_and_warned[nan]`, `[above-one]`, `[inf]` (`assert None is True` on `guided_by_procedure`: a Level 4 replay); `test_an_infinite_trust_does_not_promote_an_approved_procedure_to_level_5` (`[5] == [4]`); `test_a_runtime_whose_trust_network_cannot_be_read_is_held_to_level_2_and_warned` (`RuntimeError: trust network unavailable` raised by `decide`: the defect itself, so the expected failure, not a hard stop); `test_a_commanders_promotion_to_level_5_reaches_get_and_the_teaching_route` (`4 == 5` on the level `get` returns); `test_a_demoted_procedure_is_dispatched_at_its_demoted_level` (`4 == 2` on the level `get` returns); `TestConsecutiveSuccessTracking::test_promote_compilation_level` (`2 == 3`).
+- M2 (5): `test_grant_list_shows_every_row_when_one_expiry_cannot_be_shown[inf]` (`OverflowError` from `_grant_list`) and `[past-time_t]` (`OSError: [Errno 22] Invalid argument` on Windows, `ValueError` or `OverflowError` elsewhere); `test_grant_issue_refuses_a_duration_that_cannot_be_an_expiry[nan]` (`assert [ClearanceGrant(...)] == []`), `[inf]` (`OverflowError`) and `[1e13]` (`OSError` on Windows), the last two from the listing after the admitted grant.
+
+Pass on both sides: the three cases of `test_a_clamped_guided_run_reaches_the_reactive_trigger_as_a_stored_level_2_run_does` (D9 pins today's event), `test_restore_with_a_refused_snapshot_publishes_no_active_entry_at_a_stale_level` (its premise is now set directly) and the two existing grant tests. On the base, for the oracle's staged run: the M1 stage (§7.1 and §7.4a not applied) fails 14 cases (the original 6; the M1 cases above except the infinite-trust promotion test, which passes because the base never reaches Level 5; the Commander teaching test fails at its column premise `[4] == [5]`; and `[ensign-clamped-to-guided]`, which the base serves as a replay); the M2 stage fails 24 (the original 19 and the 5 above, each on `list_all`).
 
 **M2 (STANDARD), §7.5 to §7.22.** First heading: `### 7.5 \`src/probos/consensus/trust.py\` (M2)`. After applying §7.5 to §7.22, regenerate and check, in this order:
 
@@ -156,7 +187,7 @@ d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_config_facade.py --check
 d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_config_profiles.py --check
 ```
 
-The regenerated `docs/development/config-reference.md` and `docs/development/config-facade-baseline.yaml` go in M2's commit. Their diff is exactly these hunks (A1: measured by the oracle on the applied tree, `logs/bf924r1/generated-config-diff.txt`):
+The regenerated `docs/development/config-reference.md` and `docs/development/config-facade-baseline.yaml` go in M2's commit (A2, D14: run all four from the scratch tree with `PYTHONPATH` set to its `src`, as every focused run here is; §7.23 also anchors `gen_config_reference.py` to its own `src`, as its two siblings already are; A2 changes no generated file). Their diff is exactly these hunks (A1: measured by the oracle on the applied tree, `logs/bf924r1/generated-config-diff.txt`):
 - `config-facade-baseline.yaml`, `surface_counts` (at `:50-51`): `canonical_dump_leaves` 1891 to 1887 and `field_definitions` 1880 to 1876; `aliased_fields` 1, `incidental` 13, `own_models` 228, `owned` 296 and `public_names` 309 unchanged;
 - the same file, `canonical_dump_sha256` (`:56`): `fc24f1a1...` to `bbf47ad58a4316e1906cd1efff1ec25594b81c66dd6ff5b096a9fbd18aa16969`;
 - the same file, the `CounselorConfig` row (`:1322-1334`): `schema_sha256` `291ee4ff...` to `49520476ec22781ac072400fab49280779d5bd5dbf85a49bab5d9656e0705abc`, and the four field lines `enabled`, `profile_retention_days`, `alert_on_red`, `alert_on_yellow` deleted; `trust_delta_threshold` and `sweep_max_agents` unchanged;
@@ -181,7 +212,7 @@ Tests first: with §7.14 to §7.22 applied and §7.5 to §7.13 not (and nothing 
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py tests/test_trust.py tests/test_trust_events.py tests/test_ad722_avatar_telemetry.py tests/test_ad722b4_fleet_telemetry.py tests/test_ad722b_websocket_push.py tests/test_api_profile.py tests/test_ad1260_wellness_domain.py tests/test_ad1259_one_source_of_truth.py tests/test_ad622_clearance_grants.py tests/test_counselor.py tests/test_counselor_activation.py tests/test_counselor_therapeutic.py tests/test_ad642_communication_benchmarks.py tests/test_bf923_counselor_assessment_inputs.py tests/test_ad1270e2h_emergence_models.py tests/test_ad1270e1_config_facade.py tests/test_ad1185_config_profiles.py tests/test_config_reference_current.py -n 0 -q
 ```
 
-(Collected on `ba45c61f` without the new file: 1,015; not run here. Expect 1,030 collected; the orchestrator computes the pass and skip counts by tool. A1: the oracle collected 1,306 for the union of both lists (29 files); A1 adds and removes no case, so expect 1,306 collected and 1,306 passed for the union.)
+(Collected on `ba45c61f` without the new file: 1,015; not run here. Expect 1,030 collected; the orchestrator computes the pass and skip counts by tool. A1: the oracle collected 1,306 for the union of both lists (29 files); A1 adds and removes no case, so expect 1,306 collected and 1,306 passed for the union. A2: the oracle measured 1,030 for this list; A2 adds 5 cases, so expect 1,035; the union becomes 1,321 plus the four files A2 adds to the M1 list.)
 
 **The broad gate is run once for #1654 by the main session, not by the Builder.**
 
@@ -218,12 +249,15 @@ REPLACE:
 
         Read with ``TrustNetwork.get_score(self.id)``, as BF-263's rank read does. The
         ``_trust_score`` attribute read before is assigned nowhere, so every agent counted as 0.5.
-        A read that fails, or a runtime without a trust network, logs a WARNING and returns 0.0:
-        an unknown trust takes the Ensign cap (Level 2) and never unlocks replay or Level 5.
+        A read that fails (the runtime, its ``trust_network`` attribute or ``get_score``), or a value
+        that is not a score in [0, 1] (NaN, an infinity, a corrupt record), logs a WARNING and returns
+        0.0: an unknown trust takes the Ensign cap (Level 2) and never unlocks replay or Level 5.
         """
-        trust_network = getattr(self._runtime, "trust_network", None)
         try:
-            return float(trust_network.get_score(self.id))
+            score = float(self._runtime.trust_network.get_score(self.id))
+            if not 0.0 <= score <= 1.0:  # BF-924 (#1654): NaN fails both bounds, so it is refused too
+                raise ValueError(f"trust score {score!r} is not in [0, 1]")
+            return score
         except Exception:
             logger.warning("BF-924 (#1654): trust read failed for %s; procedure compilation held to Level 2", self.id, exc_info=True)
             return 0.0  # BF-924: unknown trust takes the Ensign cap (Level 2)
@@ -259,15 +293,20 @@ so every agent counted as a Lieutenant. Each test drives the clamp through its p
 from __future__ import annotations
 
 import logging
+import math
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from probos.cognitive.llm_client import MockLLMClient
-from probos.config import COMPILATION_PROMOTION_THRESHOLD
+from probos.cognitive.procedure_store import ProcedureStore
+from probos.config import COMPILATION_PROMOTION_THRESHOLD, TRUST_COMMANDER
 from probos.consensus.trust import TrustNetwork
+from probos.events import EventType
+from probos.routers.procedures import TeachRequest, teach_procedure
 from tests.test_fallback_learning import _make_cognitive_agent as _make_lifecycle_agent
-from tests.test_fallback_learning import _make_intent, _make_procedure
+from tests.test_fallback_learning import _make_dreaming_engine, _make_intent, _make_procedure
 from tests.test_fallback_learning import _make_store_mock as _make_lifecycle_store
 from tests.test_replay_dispatch import (
     ReplayTestAgent,
@@ -426,6 +465,222 @@ async def test_an_ensigns_successes_do_not_promote_it_past_level_2() -> None:
     assert result is not None and result.success is True
     store.record_completion.assert_awaited_once_with(proc.id)
     store.promote_compilation_level.assert_not_awaited()
+
+
+# --- A2 (review round 1): a real ProcedureStore, the trust guard and the completion event ----------------
+
+
+class _KnownMatchStore(ProcedureStore):
+    """A real ``ProcedureStore`` whose semantic ranking is fixed: every active procedure matches at 0.9.
+
+    Only ChromaDB is left out (``_init_chroma`` opens nothing, ``find_matching`` ranks from SQLite);
+    persistence, ``get``, the counters, promotion and the promotion status are the real store's.
+    """
+
+    async def _init_chroma(self) -> None:
+        return None
+
+    async def find_matching(self, query, *, n_results=5, min_compilation_level=0, exclude_negative=True):
+        if not exclude_negative:
+            return []  # the negative-procedure check: no anti-pattern is stored
+        entries = await self.list_active(min_compilation_level=min_compilation_level)
+        return [{**entry, "score": 0.9} for entry in entries][:n_results]
+
+
+async def _store_rig(tmp_path, score: float, level: int, *, approved: bool = False) -> SimpleNamespace:
+    """A ``ReplayTestAgent`` at trust ``score`` whose runtime holds a real store with one procedure at ``level``."""
+    store = _KnownMatchStore(tmp_path / "procedures")
+    await store.start()
+    proc = _make_procedure(id="proc-bf924-store", compilation_level=level)
+    await store.save(proc)
+    if approved:
+        await store.approve_promotion(proc.id, "captain", "directive-bf924")
+    events: list[tuple] = []
+    runtime = SimpleNamespace(
+        procedure_store=store, trust_network=TrustNetwork(), cognitive_journal=None, episodic_memory=None,
+        emit_event=lambda *args, **kwargs: events.append(args),
+        ward_room=SimpleNamespace(
+            get_or_create_dm_channel=AsyncMock(return_value=SimpleNamespace(id="dm-bf924")),
+            create_thread=AsyncMock(),
+        ),
+    )
+    llm = MockLLMClient()
+    agent = ReplayTestAgent(llm_client=llm, runtime=runtime)
+    runtime.trust_network = trust_network_at(agent.id, score)
+    return SimpleNamespace(store=store, proc=proc, agent=agent, runtime=runtime, llm=llm, events=events)
+
+
+async def _handle_on_store(agent, *, succeed: bool = True):
+    """One matched intent through ``handle_intent``; ``succeed=False`` makes the action fail and skips the recovery."""
+    intent = _make_intent(target_agent_id=agent.id)
+    with patch.object(
+        agent, "_recall_relevant_memories", new=AsyncMock(side_effect=lambda _intent, observation: observation),
+    ), patch.object(agent, "_store_action_episode", new=AsyncMock()):
+        if succeed:
+            return await agent.handle_intent(intent)
+        with patch.object(agent, "act", new=AsyncMock(return_value={"success": False, "error": "chosen failure"})), \
+                patch.object(agent, "_run_llm_fallback", new=AsyncMock(return_value=None)):
+            return await agent.handle_intent(intent)
+
+
+class _FixedScoreTrustNetwork:
+    """Returns one score for every agent: a Beta mean is never infinite, so an infinity can only come from a double."""
+
+    def __init__(self, score: float) -> None:
+        self._score = score
+
+    def get_score(self, agent_id: str) -> float:
+        return self._score
+
+
+class _RuntimeWithUnreadableTrustNetwork:
+    """A runtime whose ``trust_network`` attribute read raises; every other attribute is the wrapped runtime's."""
+
+    def __init__(self, inner: SimpleNamespace) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+    @property
+    def trust_network(self):
+        raise RuntimeError("trust network unavailable")
+
+
+def _warned(caplog) -> bool:
+    return any(record.levelno == logging.WARNING and "BF-924" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("score", [float("nan"), 2.0, math.inf], ids=["nan", "above-one", "inf"])
+async def test_a_trust_that_is_not_a_score_is_held_to_level_2_and_warned(tmp_path, score, caplog) -> None:
+    """Finding 3 (review round 1): NaN failed both comparisons and took the Level 4 cap; 2.0 and infinity passed."""
+    r = await _store_rig(tmp_path, 0.5, 4)
+    try:
+        # A real TrustNetwork holds the finite cases (a corrupt Beta record); a Beta mean is never infinite.
+        r.runtime.trust_network = (
+            _FixedScoreTrustNetwork(score) if math.isinf(score) else trust_network_at(r.agent.id, score)
+        )
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.cognitive_agent"):
+            decision = await r.agent.decide(dict(_OBSERVATION))
+
+        assert decision.get("guided_by_procedure") is True
+        assert decision.get("compilation_level") == 2
+        assert decision.get("cached") is not True
+        assert _warned(caplog)
+    finally:
+        await r.store.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_infinite_trust_does_not_promote_an_approved_procedure_to_level_5(tmp_path) -> None:
+    """Finding 3 (review round 1): ``inf >= TRUST_COMMANDER`` promoted an approved Level 4 procedure to Level 5."""
+    r = await _store_rig(tmp_path, 0.8, 4, approved=True)
+    try:
+        r.runtime.trust_network = _FixedScoreTrustNetwork(math.inf)
+        results = [await _handle_on_store(r.agent) for _ in range(COMPILATION_PROMOTION_THRESHOLD)]
+
+        assert all(result is not None and result.success is True for result in results)  # premise: the step ran
+        assert [entry["compilation_level"] for entry in await r.store.list_active()] == [4]
+    finally:
+        await r.store.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_whose_trust_network_cannot_be_read_is_held_to_level_2_and_warned(tmp_path, caplog) -> None:
+    """Finding 4 (review round 1): the attribute was read before the ``try``, so its failure failed ``decide``."""
+    r = await _store_rig(tmp_path, 0.6, 4)
+    try:
+        r.agent._runtime = _RuntimeWithUnreadableTrustNetwork(r.runtime)
+        with caplog.at_level(logging.WARNING, logger="probos.cognitive.cognitive_agent"):
+            decision = await r.agent.decide(dict(_OBSERVATION))
+
+        assert decision.get("guided_by_procedure") is True
+        assert decision.get("cached") is not True
+        assert _warned(caplog)
+    finally:
+        await r.store.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_commanders_promotion_to_level_5_reaches_get_and_the_teaching_route(tmp_path) -> None:
+    """D10 (review round 1, finding 2): a promotion moved only the index column; ``get`` and teaching read the snapshot."""
+    r = await _store_rig(tmp_path, 0.7, 4, approved=True)
+    try:
+        assert r.runtime.trust_network.get_score(r.agent.id) >= TRUST_COMMANDER  # premise: Commander trust, exactly
+        results = [await _handle_on_store(r.agent) for _ in range(COMPILATION_PROMOTION_THRESHOLD)]
+        assert all(result is not None and result.success is True for result in results)
+        assert [entry["compilation_level"] for entry in await r.store.list_active()] == [5]  # premise: the column
+
+        loaded = await r.store.get(r.proc.id)
+        metrics = await r.store.get_quality_metrics(r.proc.id)
+        reply = await teach_procedure(
+            TeachRequest(procedure_id=r.proc.id, target_callsign="Learner"), runtime=r.runtime,
+        )
+
+        assert loaded is not None and loaded.compilation_level == 5
+        assert (metrics["total_completions"], metrics["consecutive_successes"]) == (3, 0)  # counters kept
+        assert reply.get("success") is True, reply
+        r.runtime.ward_room.create_thread.assert_awaited_once()
+    finally:
+        await r.store.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_demoted_procedure_is_dispatched_at_its_demoted_level(tmp_path) -> None:
+    """D10 (review round 1, finding 2): a failure demoted only the index column, so the procedure kept replaying."""
+    r = await _store_rig(tmp_path, 0.5, 4)
+    try:
+        failed = await _handle_on_store(r.agent, succeed=False)
+        assert failed is not None and failed.success is False  # premise: the failure branch ran
+        loaded = await r.store.get(r.proc.id)
+        assert loaded is not None and loaded.compilation_level == 2
+
+        decision = await r.agent.decide(dict(_OBSERVATION))
+
+        assert decision.get("guided_by_procedure") is True
+        assert decision.get("cached") is not True
+    finally:
+        await r.store.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("score", "stored_level", "used_procedure", "attempts"),
+    [(0.3, 4, False, 1), (0.5, 2, False, 1), (0.5, 4, True, 0)],
+    ids=["ensign-clamped-to-guided", "lieutenant-stored-guided", "lieutenant-replay"],
+)
+async def test_a_clamped_guided_run_reaches_the_reactive_trigger_as_a_stored_level_2_run_does(
+    tmp_path, score, stored_level, used_procedure, attempts,
+) -> None:
+    """D9 (review round 1, finding 1): AD-532e's reactive check takes a Guided run, clamped or stored, as an LLM run.
+
+    The completion event reports ``used_procedure`` from ``cached`` (AD-532e), and a Guided decision is not cached
+    because the LLM ran (AD-535). Producer and consumer are real; the store is real but for its ranking.
+    """
+    r = await _store_rig(tmp_path, score, stored_level)
+    try:
+        # Degraded (effective rate 0.4) yet above the dispatch gate (0.3), so the reactive check diagnoses it.
+        for n in range(10):
+            await r.store.record_selection(r.proc.id)
+            await r.store.record_applied(r.proc.id)
+            await (r.store.record_completion if n < 4 else r.store.record_fallback)(r.proc.id)
+
+        result = await _handle_on_store(r.agent)
+        assert result is not None and result.success is True
+        payloads = [args[1] for args in r.events if args[0] is EventType.TASK_EXECUTION_COMPLETE]
+        assert len(payloads) == 1  # premise: the real lifecycle emitted one completion
+
+        engine = _make_dreaming_engine(procedure_store=r.store, llm_client=MockLLMClient())
+        engine.episodic_memory.recall_by_intent = AsyncMock(return_value=[])  # no evidence: the attempt stops there
+        attempt = AsyncMock(wraps=engine._attempt_procedure_evolution)
+        engine._attempt_procedure_evolution = attempt
+        await engine.on_task_execution_complete(payloads[0])
+
+        assert payloads[0]["used_procedure"] is used_procedure
+        assert attempt.await_count == attempts
+    finally:
+        await r.store.stop()
 ````
 
 ### 7.3 `tests/test_graduated_compilation.py` (M1: the hand-set `_trust_score`)
@@ -505,6 +760,26 @@ REPLACE:
             await agent._check_procedural_memory({
 ````
 
+Pair 5 (A2, D10: the level `get` returns after a promotion):
+
+SEARCH:
+````python
+        await store.promote_compilation_level(proc_id, 3)
+        proc = await store.get(proc_id)
+        # Note: promote updates DB, not the cached Procedure object in get()
+        # Check DB directly
+        metrics = await store.get_quality_metrics(proc_id)
+````
+REPLACE:
+````python
+        await store.promote_compilation_level(proc_id, 3)
+        proc = await store.get(proc_id)
+        # BF-924 (#1654): promote writes the snapshot get() rebuilds from as well as the column. It wrote only the
+        # column (the note here said so), so dispatch, the next promotion step and the teaching gate never saw it.
+        assert proc is not None and proc.compilation_level == 3
+        metrics = await store.get_quality_metrics(proc_id)
+````
+
 ### 7.4 `tests/test_level_5_dispatch.py` (M1: the hand-set `_trust_score`)
 
 Pair 1:
@@ -543,6 +818,111 @@ REPLACE:
     if agent._runtime is not None:
         agent._runtime.trust_network = trust_network_at(agent.id, defaults.get("trust_score", 0.5))
     return agent
+````
+
+### 7.4a `src/probos/cognitive/procedure_store.py` (M1, A2, D10: promotion and demotion reach `get`)
+
+Pair 1 (promotion):
+
+SEARCH:
+````python
+    async def promote_compilation_level(self, procedure_id: str, new_level: int) -> None:
+        """AD-535: Promote procedure to a higher compilation level. Reset consecutive_successes."""
+        if not self._db:
+            return
+        async with self._index_write():
+            await self._db.execute(
+                "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
+                "updated_at = ? WHERE id = ?",
+                (new_level, time.time(), procedure_id),
+            )
+````
+REPLACE:
+````python
+    async def promote_compilation_level(self, procedure_id: str, new_level: int) -> None:
+        """AD-535: Promote procedure to a higher compilation level. Reset consecutive_successes.
+
+        BF-924 (#1654): the level goes to the column and to the JSON snapshot in one statement, as
+        ``decay_stale_procedures`` writes both. ``get`` rebuilds a procedure from the snapshot, and the
+        dispatch, the next promotion step and the teaching gate read its level: the column-only write
+        left every promotion invisible to them. The other counters are not touched (no re-save).
+        """
+        if not self._db:
+            return
+        async with self._index_write():
+            await self._db.execute(
+                "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
+                "content_snapshot = json_set(content_snapshot, '$.compilation_level', ?), "  # BF-924: promote
+                "updated_at = ? WHERE id = ?",
+                (new_level, new_level, time.time(), procedure_id),
+            )
+````
+
+Pair 2 (demotion):
+
+SEARCH:
+````python
+    async def demote_compilation_level(self, procedure_id: str, new_level: int) -> None:
+        """AD-535: Demote procedure to a lower compilation level. Reset consecutive_successes."""
+        if not self._db:
+            return
+        async with self._index_write():
+            await self._db.execute(
+                "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
+                "updated_at = ? WHERE id = ?",
+                (new_level, time.time(), procedure_id),
+            )
+````
+REPLACE:
+````python
+    async def demote_compilation_level(self, procedure_id: str, new_level: int) -> None:
+        """AD-535: Demote procedure to a lower compilation level. Reset consecutive_successes.
+
+        BF-924 (#1654): the level goes to the column and to the JSON snapshot in one statement, as
+        ``decay_stale_procedures`` writes both. ``get`` rebuilds a procedure from the snapshot and the
+        dispatch reads its level: the column-only write left a demoted procedure dispatched at its old
+        level. The other counters are not touched (no re-save).
+        """
+        if not self._db:
+            return
+        async with self._index_write():
+            await self._db.execute(
+                "UPDATE procedure_records SET compilation_level = ?, consecutive_successes = 0, "
+                "content_snapshot = json_set(content_snapshot, '$.compilation_level', ?), "  # BF-924: demote
+                "updated_at = ? WHERE id = ?",
+                (new_level, new_level, time.time(), procedure_id),
+            )
+````
+
+### 7.4b `tests/test_ad1326_procedure_ledger.py` (M1, A2, D10: a premise built through the column-only demote)
+
+Pair 1 (the helper's docstring):
+
+SEARCH:
+````python
+    An independent reader of ``procedures.db``. ``restore_procedure`` commits the columns and swallows a refused
+    ``content_snapshot`` UPDATE, and ``demote_compilation_level`` writes the column only; both leave the snapshot that
+    ``ProcedureStore.get`` rebuilds a procedure from apart from the columns.
+````
+REPLACE:
+````python
+    An independent reader of ``procedures.db``. ``restore_procedure`` commits the columns and swallows a refused
+    ``content_snapshot`` UPDATE, which leaves the snapshot that ``ProcedureStore.get`` rebuilds a procedure from
+    apart from the columns. (``demote_compilation_level`` wrote the column only until BF-924 made it write both.)
+````
+
+Pair 2 (the premise):
+
+SEARCH:
+````python
+        await store.demote_compilation_level("p", 1)  # the column only: the snapshot keeps saying level 4
+````
+REPLACE:
+````python
+        # BF-924 (#1654): demote_compilation_level now writes the snapshot too, so the premise is set as a row demoted
+        # before BF-924 left it: the column at Level 1, the snapshot still at Level 4.
+        await store._db.execute("UPDATE procedure_records SET compilation_level = 1 WHERE id = ?", ("p",))
+        await store._db.commit()
 ````
 
 ### 7.5 `src/probos/consensus/trust.py` (M2)
@@ -692,6 +1072,94 @@ REPLACE:
 ````python
         # Resolve callsign for display (BF-924: no CallsignRegistry has list_all; every grant raised)
         agent_display = _grant_target_callsign(runtime, g.target_agent_id) or g.target_agent_id[:12]
+````
+
+Pair 3 (A2, D12: import):
+
+SEARCH:
+````python
+import logging
+import time
+from datetime import datetime, timezone
+````
+REPLACE:
+````python
+import logging
+import math
+import time
+from datetime import datetime, timezone
+````
+
+Pair 4 (A2, D12: one formatter for grant times):
+
+SEARCH:
+````python
+async def _grant_issue(runtime: "ProbOSRuntime", console: Console, args: str) -> None:
+    """Issue a clearance grant: <callsign> <tier> [scope] [duration_hours] [reason...]."""
+````
+REPLACE:
+````python
+def _grant_time(timestamp: float) -> str | None:
+    """BF-924 (#1654): a grant time as ``MM-DD HH:MM`` (UTC), or None when the platform cannot represent it.
+
+    ``datetime.fromtimestamp`` raises OverflowError for an infinity and OSError (Windows) or ValueError for a
+    finite time outside the platform's range; one such row made ``/grant list`` raise and hide every grant.
+    """
+    try:
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%m-%d %H:%M")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+async def _grant_issue(runtime: "ProbOSRuntime", console: Console, args: str) -> None:
+    """Issue a clearance grant: <callsign> <tier> [scope] [duration_hours] [reason...]."""
+````
+
+Pair 5 (A2, D12: refuse a duration that cannot be an expiry):
+
+SEARCH:
+````python
+    # Parse duration
+    try:
+        duration_hours = float(duration_hours_str)
+    except ValueError:
+        console.print(f"[red]Invalid duration: {duration_hours_str}[/red]")
+        return
+    expires_at = (time.time() + duration_hours * 3600) if duration_hours > 0 else None
+````
+REPLACE:
+````python
+    # Parse duration (BF-924: a duration that is not finite, or whose expiry cannot be shown as a date, is refused;
+    # "nan" became a grant until revoked, and "inf" or a huge number stored an expiry that made /grant list raise)
+    try:
+        duration_hours = float(duration_hours_str)
+    except ValueError:
+        console.print(f"[red]Invalid duration: {duration_hours_str}[/red]")
+        return
+    expires_at = (time.time() + duration_hours * 3600) if duration_hours > 0 else None
+    if not math.isfinite(duration_hours) or (expires_at is not None and _grant_time(expires_at) is None):
+        console.print(f"[red]Invalid duration: {duration_hours_str}[/red]")
+        return
+````
+
+Pair 6 (A2, D12: a row degrades on its own):
+
+SEARCH:
+````python
+        issued_str = datetime.fromtimestamp(g.issued_at, tz=timezone.utc).strftime("%m-%d %H:%M")
+        if g.expires_at:
+            expires_str = datetime.fromtimestamp(g.expires_at, tz=timezone.utc).strftime("%m-%d %H:%M")
+        else:
+            expires_str = "—"
+````
+REPLACE:
+````python
+        # BF-924: a time the platform cannot show degrades in its own row; the status still reads the raw value
+        issued_str = _grant_time(g.issued_at) or "out of range"
+        if g.expires_at:
+            expires_str = _grant_time(g.expires_at) or "out of range"
+        else:
+            expires_str = "—"
 ````
 
 ### 7.9 `src/probos/cognitive/counselor.py` (M2)
@@ -1012,6 +1480,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import math
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -1117,12 +1586,19 @@ def test_the_trust_network_doubles_match_the_real_class(module_name: str, class_
 # --- F05: /grant list -----------------------------------------------------------------------------
 
 
-async def _grant_then_list(tmp_path, *, with_identity: bool):
-    """Issue a grant and list grants through the real command, on real stores and registries."""
+async def _grant_then_list(
+    tmp_path, *, with_identity: bool, issue: str = "issue Crusher full", stored_expiry: float | None = None,
+):
+    """Issue a grant and list grants through the real command, on real stores and registries.
+
+    ``issue`` is the issue command's arguments. ``stored_expiry`` adds a second grant to the same target
+    through the store itself, standing for a row stored before BF-924's duration check (A2, D12).
+    """
     from rich.console import Console
 
     from probos.clearance_grants import ClearanceGrantStore
     from probos.crew_profile import CallsignRegistry
+    from probos.earned_agency import RecallTier
     from probos.experience.commands.commands_clearance import cmd_grant
     from probos.identity import AgentIdentityRegistry
 
@@ -1148,13 +1624,17 @@ async def _grant_then_list(tmp_path, *, with_identity: bool):
         )
         out = StringIO()
         console = Console(file=out, width=240)
-        await cmd_grant(runtime, console, "issue Crusher full")
+        await cmd_grant(runtime, console, issue)
+        if stored_expiry is not None:
+            await store.issue_grant(
+                target_agent_id=cert.agent_uuid, recall_tier=RecallTier.BASIC, expires_at=stored_expiry,
+            )
         grants = await store.list_grants()
         await cmd_grant(runtime, console, "list")
     finally:
         await store.stop()
         await identity.stop()
-    return slot, cert, grants, out.getvalue().split("Clearance Grants", 1)[1]
+    return slot, cert, grants, out.getvalue().split("Clearance Grants", 1)[-1]
 
 
 @pytest.mark.asyncio
@@ -1173,6 +1653,32 @@ async def test_grant_list_without_an_identity_registry_shows_the_target_id(tmp_p
 
     assert [grant.target_agent_id for grant in grants] == [slot]
     assert slot[:12] in table
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_expiry", [math.inf, 3.6e13], ids=["inf", "past-time_t"])
+async def test_grant_list_shows_every_row_when_one_expiry_cannot_be_shown(tmp_path, stored_expiry) -> None:
+    """G1 (review round 1): one expiry ``datetime.fromtimestamp`` cannot convert made ``/grant list`` raise and
+    hide every grant. The status still reads the raw value, so an infinite expiry is Active."""
+    _slot, _cert, grants, table = await _grant_then_list(tmp_path, with_identity=True, stored_expiry=stored_expiry)
+
+    assert len(grants) == 2  # premise: the command's grant and the stored one are both active
+    assert "Crusher" in table
+    assert "out of range" in table
+    assert table.count("Active") == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duration", ["inf", "nan", "1e13"])
+async def test_grant_issue_refuses_a_duration_that_cannot_be_an_expiry(tmp_path, duration) -> None:
+    """G1 (review round 1): ``inf`` and ``1e13`` hours stored an expiry the list could not show; ``nan`` (``nan > 0``
+    is False) stored a grant until revoked."""
+    _slot, _cert, grants, output = await _grant_then_list(
+        tmp_path, with_identity=True, issue=f"issue Crusher full general {duration}",
+    )
+
+    assert grants == []
+    assert f"Invalid duration: {duration}" in output
 
 
 # --- F10: CounselorConfig -------------------------------------------------------------------------
@@ -1285,6 +1791,23 @@ REPLACE:
     assert counts["field_definitions"] == 1876  # AD-1206 intentionally adds github_repository.
 ````
 
+### 7.23 `scripts/gen_config_reference.py` (M2, A2, D14: import this checkout's models)
+
+SEARCH:
+````python
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_OUTPUT = _REPO_ROOT / "docs" / "development" / "config-reference.md"
+````
+REPLACE:
+````python
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_OUTPUT = _REPO_ROOT / "docs" / "development" / "config-reference.md"
+# BF-924 (#1654): document this checkout's models, as check_config_facade.py and check_config_profiles.py
+# do. In a worktree, the venv's editable install otherwise resolves ``probos`` to another checkout.
+if str(_REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "src"))
+````
+
 ## 8. Tracking
 
 Anchors: `PROGRESS.md`'s title line and `DECISIONS.md`'s heading `### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)`. The entries go in M2's commit. Set the date to the commit date.
@@ -1299,7 +1822,7 @@ REPLACE:
 ````markdown
 # ProbOS Progress
 
-**BF-924 (2026-10-25), #1654 -- trust inputs are read through APIs that exist.** The AD-535/536 procedure-compilation clamp read a `_trust_score` attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`TrustNetwork.get_score`, as Rank does): Ensigns run stored Level 3 and 4 procedures as Guided (Level 2), a Commander's approved procedure can be promoted to Level 5, and an unreadable trust is held to Level 2 with a WARNING. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar's `trust_delta` is real; both `hasattr` guards that hid its absence are removed. `/grant list` raised for any grant (`CallsignRegistry.list_all` never existed); it names a target through its birth certificate and live callsign. The Counselor takes `CounselorConfig` by constructor injection and reads `trust_delta_threshold` and `sweep_max_agents` (defaults unchanged); `enabled`, `profile_retention_days`, `alert_on_red` and `alert_on_yellow` had no reader and are removed. New: `tests/test_bf924_compilation_trust.py`, `tests/test_bf924_trust_inputs.py`. The contract is `prompts/bf-924-trust-inputs-through-real-apis.md`.
+**BF-924 (2026-10-25), #1654 -- trust inputs are read through APIs that exist.** The AD-535/536 procedure-compilation clamp read a `_trust_score` attribute nothing sets, so every agent counted as a Lieutenant; it now reads the agent's live trust (`TrustNetwork.get_score`, as Rank does): Ensigns run stored Level 3 and 4 procedures as Guided (Level 2), a Commander's approved procedure can be promoted to Level 5, and an unreadable trust (a failed read, or a value that is not a score in [0, 1]) is held to Level 2 with a WARNING. Promotion and demotion now write the level `ProcedureStore.get` reads: they had moved only an index column, so dispatch, the next promotion step and the teaching gate never saw them. `TrustNetwork.get_history` now exists, so the Captain's profile shows trust history and the avatar telemetry's `trust_delta` is real (the HXI's playback does not read it yet); both `hasattr` guards that hid its absence are removed. `/grant list` raised for any grant (`CallsignRegistry.list_all` never existed); it names a target through its birth certificate and live callsign and shows every row even when one time cannot be shown as a date; `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown. The Counselor takes `CounselorConfig` by constructor injection and reads `trust_delta_threshold` and `sweep_max_agents` (defaults unchanged); `enabled`, `profile_retention_days`, `alert_on_red` and `alert_on_yellow` had no reader and are removed. New: `tests/test_bf924_compilation_trust.py`, `tests/test_bf924_trust_inputs.py`. The contract is `prompts/bf-924-trust-inputs-through-real-apis.md`.
 ````
 
 **`DECISIONS.md`:**
@@ -1313,10 +1836,11 @@ REPLACE:
 ### BF-924 -- Trust inputs read through APIs that exist (2026-10-25, #1654)
 
 - *Compilation clamp.* AD-535/536 read the agent's live trust through `get_score`, the gauge that already sets Rank and agency; no BF-921 D3 hold, because the gauge is already the live one and the clamp only restricts Ensigns and opens AD-536's designed Level 5 path. An unreadable trust is held to Level 2 (fail closed) with a WARNING. Rejected: the chain-only `observation["_trust_score"]`, and a cached copy of the score.
-- *Trust history.* `TrustNetwork.get_history` maps the in-memory event log to scores, one owner of the mapping; the callers' `hasattr` guards, which hid its absence, are removed. Its consumers are displays and a voice pitch; the avatar divergence's trust write does not depend on it.
-- *Grant list.* A grant's target is a sovereign id, so the list names it through the birth certificate and the live callsign, not a callsign list.
+- *Compilation levels persist where they are read.* `promote_compilation_level` and `demote_compilation_level` write the JSON snapshot `get` rebuilds a procedure from, in the same statement as the column, as decay already did; `get` is unchanged (AD-1326 D14). Before, promotions and demotions moved only the column, so AD-535's ladder and its demotion valve never changed dispatch. The completion event's `used_procedure` keeps its AD-532e meaning (a replay was used): a Guided run, clamped or stored, is an LLM run and enters the reactive check.
+- *Trust history.* `TrustNetwork.get_history` maps the in-memory event log to scores, one owner of the mapping; the callers' `hasattr` guards, which hid its absence, are removed. Its consumers are the Captain's profile history, the backend avatar projection and the crew context; the HXI's playback still uses its own zero trust delta. The avatar divergence's trust write does not depend on it.
+- *Grant list.* A grant's target is a sovereign id, so the list names it through the birth certificate and the live callsign, not a callsign list. A time the platform cannot show as a date degrades to "out of range" in its own row, and the issue command refuses a duration that would store one.
 - *Counselor config.* Two fields are read, with defaults equal to the constants they replace; the four unread fields are removed rather than wired. Today's Bridge alerts follow no single red/yellow rule, so wiring `alert_on_*` would either silence alerts or invent them; an alert-silencing switch is the Captain's call. Unknown keys are ignored, so old configs load.
-- *Reversal.* Revert the commits; the clamp returns to 0.5 for every agent, the history to empty, the grant list to raising and the config to unread.
+- *Reversal.* Revert the commits; the clamp returns to 0.5 for every agent, the history to empty, the grant list to raising, promotion and demotion to the column only, and the config to unread.
 
 ### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)
 ````
@@ -1324,20 +1848,20 @@ REPLACE:
 **After both edits:** run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then its `--check`. **`docs/development/roadmap.md`:** no row (BF-916, BF-921 and BF-923 precedent).
 
 **#1654 checklist text** (the orchestrator records it on the issue):
-- [ ] (F02) The clamp and the promotion step read live trust; Ensign capped at Level 2, Commander reaches Level 5, an unreadable trust held to Level 2 (M1).
+- [ ] (F02) The clamp and the promotion step read live trust; Ensign capped at Level 2, Commander reaches Level 5, an unreadable trust held to Level 2 (M1). A2: a value outside [0, 1] counts as unreadable; promotion and demotion reach `ProcedureStore.get` (D10).
 - [ ] (F02) The read-only count before the build posted (D4).
 - [ ] (F04) `TrustNetwork.get_history`; profile history and avatar `trust_delta` real; the doubles pinned by a seam test (M2).
-- [ ] (F05) `/grant list` works with grants present, through the real registries (M2).
+- [ ] (F05) `/grant list` works with grants present, through the real registries (M2). A2: every row, including a stored expiry the platform cannot show; `/grant issue` refuses such a duration.
 - [ ] (F10) `trust_delta_threshold` and `sweep_max_agents` read; four fields removed; config reference and facade baseline regenerated (M2).
 - [ ] First live session after merge: section 16's counts recorded on #1654.
 
 ## 9. What this does NOT change
 
-- `_max_compilation_level_for_trust`, `_max_compilation_level_for_promoted`, the compilation thresholds (`config.py:266-275`), the dispatch levels, the demotion rule, the procedure store and dreaming are unchanged.
+- `_max_compilation_level_for_trust`, `_max_compilation_level_for_promoted`, the compilation thresholds (`config.py:266-275`), the dispatch levels and the demotion rule are unchanged. The procedure store changes only in `promote_compilation_level` and `demote_compilation_level`, which also write the snapshot's level (A2, D10); `get`, `save`, the semantic index, `_migrate_qualifying_procedures` and the rows whose column and snapshot already differ are unchanged (R10). Dreaming and the `TASK_EXECUTION_COMPLETE` payload are unchanged (D9).
 - The other live-trust reads in `CognitiveAgent` (`:2870`, `:3351`, `:6042`, `:6230`, `:9123`, `:11455`) are not consolidated (R1).
 - `TrustNetwork`'s event log, its size and its persistence are unchanged; `get_events_for_agent` and `standing_interests.py:701` are unchanged.
-- The avatar modulation rules, thresholds and divergence logic are unchanged; no `ui/` file is touched.
-- `CallsignRegistry`, the identity registry and `_grant_issue`/`_grant_revoke` are unchanged.
+- The avatar modulation rules, thresholds and divergence logic are unchanged; no `ui/` file is touched (A2: the HXI's playback keeps its own zero trust delta, R11).
+- `CallsignRegistry`, the identity registry, `ClearanceGrantStore` and `_grant_revoke` are unchanged; `_grant_issue` changes only in refusing a duration that is not finite or whose expiry cannot be shown (A2, D12).
 - `_gather_agent_metrics`, its BF-921 D3 hold, `trust_observations`, `observed_baseline`, `profile.baseline`, `assess_agent`, `_alert_bridge` and every handler but the threshold line are unchanged (BF-923 D4, D8).
 
 ## 10. Mutation rows (whole stripped lines, each occurring once in its file after section 7)
@@ -1358,7 +1882,7 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py te
 |---|---|---|---|---|---|
 | R1 | 1 | `src/probos/cognitive/cognitive_agent.py` | `trust_score = self._compilation_trust_score()` | `trust_score = 0.5` | `test_an_ensign_runs_a_stored_level_4_procedure_as_guided`, `test_clamping_applied_in_check_procedural_memory` |
 | R2 | 1 | `src/probos/cognitive/cognitive_agent.py` | `_ts = self._compilation_trust_score()  # BF-924 (#1654): the live trust, as in the clamp` | `_ts = 0.5` | `test_a_commanders_approved_procedure_is_promoted_to_level_5`, `test_an_ensigns_successes_do_not_promote_it_past_level_2` |
-| R3 | 1 | `src/probos/cognitive/cognitive_agent.py` | `return float(trust_network.get_score(self.id))` | `return 0.5` | the Ensign and Commander tests |
+| R3 | 1 | `src/probos/cognitive/cognitive_agent.py` | `score = float(self._runtime.trust_network.get_score(self.id))` (A2) | `score = 0.5` | the Ensign and Commander tests |
 | R4 | 1 | `src/probos/cognitive/cognitive_agent.py` | `return 0.0  # BF-924: unknown trust takes the Ensign cap (Level 2)` | `return 0.5` | `test_an_unreadable_trust_is_held_to_level_2_and_warned[raises]`, `[absent]` |
 | R5 | 1 | `src/probos/cognitive/cognitive_agent.py` | `logger.warning("BF-924 (#1654): trust read failed for %s; procedure compilation held to Level 2", self.id, exc_info=True)` | the same with `logger.debug` | `test_an_unreadable_trust_is_held_to_level_2_and_warned` |
 | R6 | 2 | `src/probos/consensus/trust.py` | `return [event.new_score for event in self.get_events_for_agent(agent_id, n=limit)]` | `return []` | `test_get_history_returns_the_agents_scores_oldest_first`, the route and telemetry tests |
@@ -1372,10 +1896,19 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py te
 | R14 | 2 | `src/probos/cognitive/counselor.py` | `max_agents = self._counselor_config.sweep_max_agents` | `max_agents = 50` | `test_the_sweep_bound_comes_from_the_config` |
 | R15 | 2 | `src/probos/cognitive/counselor.py` | `self._counselor_config: CounselorConfig = kwargs.pop("counselor_config", None) or CounselorConfig()` | `self._counselor_config: CounselorConfig = CounselorConfig()` | `test_the_sweep_bound_comes_from_the_config`, the threshold tests |
 | R16 | 2 | `src/probos/startup/agent_fleet.py` | `counselor_config=config.counselor,  # BF-924 (#1654): the operator's CounselorConfig` | `counselor_config=None,` | `test_the_booted_counselor_takes_the_operators_config` (outside the M2 command: run it alone, `tests/test_bf924_trust_inputs.py::test_the_booted_counselor_takes_the_operators_config`) |
+| R17 | 1 | `src/probos/cognitive/cognitive_agent.py` | `if not 0.0 <= score <= 1.0:  # BF-924 (#1654): NaN fails both bounds, so it is refused too` | `if False:` | `test_a_trust_that_is_not_a_score_is_held_to_level_2_and_warned` (3 cases), `test_an_infinite_trust_does_not_promote_an_approved_procedure_to_level_5` |
+| R18 | 1 | `src/probos/cognitive/procedure_store.py` | `"content_snapshot = json_set(content_snapshot, '$.compilation_level', ?), "  # BF-924: promote` | `"content_snapshot = json_set(content_snapshot, '$.bf924_mutant', ?), "  # BF-924: promote` | `test_a_commanders_promotion_to_level_5_reaches_get_and_the_teaching_route`, `TestConsecutiveSuccessTracking::test_promote_compilation_level` |
+| R19 | 1 | `src/probos/cognitive/procedure_store.py` | `"content_snapshot = json_set(content_snapshot, '$.compilation_level', ?), "  # BF-924: demote` | `"content_snapshot = json_set(content_snapshot, '$.bf924_mutant', ?), "  # BF-924: demote` | `test_a_demoted_procedure_is_dispatched_at_its_demoted_level` |
+| R20 | 1 | `src/probos/cognitive/cognitive_agent.py` | `"used_procedure": decision.get("cached", False),` | `"used_procedure": decision.get("cached", False) or decision.get("guided_by_procedure", False),` | `test_a_clamped_guided_run_reaches_the_reactive_trigger_as_a_stored_level_2_run_does[ensign-clamped-to-guided]`, `[lieutenant-stored-guided]` |
+| R21 | 2 | `src/probos/experience/commands/commands_clearance.py` | `except (OverflowError, OSError, ValueError):` | `except ZeroDivisionError:` | `test_grant_list_shows_every_row_when_one_expiry_cannot_be_shown` (both cases) |
+| R22 | 2 | `src/probos/experience/commands/commands_clearance.py` | `if not math.isfinite(duration_hours) or (expires_at is not None and _grant_time(expires_at) is None):` | `if False:` | `test_grant_issue_refuses_a_duration_that_cannot_be_an_expiry` (3 cases) |
+| R23 | 2 | `src/probos/experience/commands/commands_clearance.py` | `expires_str = _grant_time(g.expires_at) or "out of range"` | `expires_str = datetime.fromtimestamp(g.expires_at, tz=timezone.utc).strftime("%m-%d %H:%M")` | `test_grant_list_shows_every_row_when_one_expiry_cannot_be_shown` (both cases) |
 
 The removed `hasattr` guards and the removed config fields cannot be mutated back in one line; R8, R9 and `test_the_removed_counselor_fields_are_gone_and_old_configs_still_load` pin them.
 
 A1 adds no source line, so no mutation row. Its three pins are checked by deletion instead (run each alone on the applied, regenerated tree, restore after): delete `, crew_only: bool = False` from §7.15's `all_scores` (expect `test_the_trust_network_doubles_match_the_real_class[tests.test_ad1260_wellness_domain-_FakeTrust]` to fail on `all_scores`); delete `agent._counselor_config = CounselorConfig()` from §7.21 (expect `test_trust_update_sends_dm_when_unfit` to fail with `AttributeError`); set the census header's `default_false` back to 226 (expect `test_the_measured_census_matches_the_manifest_header`). Command: `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py tests/test_counselor_therapeutic.py tests/test_ad1185_config_profiles.py -n 0 -x -q`.
+
+A2: rows R17 to R20 run with the M1 command and R21 to R23 with the M2 command, as above. Finding 4 (the attribute read inside the `try`) cannot be mutated back in one line; `test_a_runtime_whose_trust_network_cannot_be_read_is_held_to_level_2_and_warned` pins it. R20 mutates a line BF-924 does not change: it checks that D9's test fails if the completion event's rule changes. D14 is checked once, not mutated: from the oracle tree with `PYTHONPATH` unset, `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_config_reference.py --check` reports the reference current; with §7.23's four added lines deleted it reports it stale (it then documents `D:\ProbOS\src`'s models, which still carry the four removed fields); restore after.
 
 ## 11. Verified Against Codebase (2026-10-25, worktree `bf924-draft` at `ba45c61f`)
 
@@ -1455,6 +1988,26 @@ probe logs/bf924r1/test_census_probe.py (gitignored scratch; imported D:\ProbOS-
   base  boolean 452, default_false 226 (= checker), default_true 226, armed 85, never_armed 141
   after boolean 449, default_false 225, default_true 224, armed 85, never_armed 140 (counselor booleans: enabled True, alert_on_red True, alert_on_yellow False)
 git rev-parse HEAD -> ba45c61f5550e110aab4b00441d78f3f590ba513
+A2 (2026-10-25, worktree bf924-consult; git rev-parse HEAD HEAD^{tree} -> cad8396f27baeadb0947d8fabde28192fa5744fd, c1c33802ed61d50b04754d5fed6f485fbed82025):
+read logs/bf924r1/review-m1-r1.md, review-m2-r1.md, probe-test_event_boundary.py, probe-test_lifecycle.py, probe-test_boundary.py, probe-test_cost_and_faults.py, orchestrator-rerun-event.txt, orchestrator-rerun-lifecycle.txt
+read cognitive_agent.py:2663-2700 (helper: getattr before the try), :1804-1871 (gate, selection, get, clamp, dispatch), :2449-2538 (Guided sets no "cached"; Validated sets it), :7744-7861 (counters; promotion :7781-7798; demotion :7802-7816; event :7852-7859 "used_procedure": decision.get("cached", False))
+grep -n "used_procedure" src -> events.py:1060; cognitive_agent.py:7624, :7857; dreaming.py:2121 (4; one reader)
+grep -n "TASK_EXECUTION_COMPLETE|on_task_execution_complete" src -> 8 (events 190, 1055; event_persistence 417; cognitive_agent 7619, 7852; dreaming 2117; startup/dreaming 341, 347)
+read dreaming.py:2117-2167 (reactive trigger), :1998-2077 (anti-loop guard, confirmation), :1863-1979 (dream-time scan, called :694)
+grep -n "^REACTIVE_COOLDOWN_SECONDS|^EVOLUTION_COOLDOWN_SECONDS|^PROCEDURE_MIN_SELECTIONS|^TEACHING_MIN_COMPILATION_LEVEL" config.py -> 254 (60); 251 (259200); 245 (5); 289 (5)
+read prompts/archive/ad-532e-reactive-proactive-triggers.md:80-149; prompts/archive/ad-535-graduated-compilation.md:80-105, :476-493
+read procedure_store.py:28-50, :168-201 (_index_write rolls back), :629-812 (save, chroma payload, sync_routing_index, routing_state), :814-832 (get), :925-986 (find_matching), :1076-1133 (promote, demote: column only), :1261-1297 (deactivate), :1588-1662 (decay: column, snapshot, chroma)
+grep -n "\.(promote|demote)_compilation_level\(" src -> cognitive_agent.py:7789, :7806 (2)
+grep -n "compilation_level" commands_procedure.py routers/procedures.py procedures.py diagnostic_context.py -> 412; 167; 842, 925, 940, 1357; 329
+read prompts/ad-1326-procedure-challenger-champion.md:229-236, :4139-4145 (D14)
+grep -n "promote_compilation_level|demote_compilation_level" tests -> 22 hits; real-store calls in test_graduated_compilation.py (236, 246, 706, 727, 750-751, 763), test_bf891_procedure_store_lock.py:572-573, test_ad1326_procedure_ledger.py:2735
+read tests/test_ad1326_procedure_ledger.py:2640-2758; tests/test_graduated_compilation.py:33-43, :200-249, :686-770; tests/test_bf891_procedure_store_lock.py:560-589, :859-867; tests/test_fallback_learning.py:27-150; tests/test_replay_dispatch.py:25-107
+read routers/procedures.py:1-30, :150-218 (teach route); clearance_grants.py:78-176; commands_clearance.py:1-200; git diff 82e795b0 cad8396f -- commands_clearance.py (M2 changed only the helper and the Agent column)
+grep -n "cmd_grant|except Exception" experience/shell.py -> 326; 343
+read ui/src/components/profile/avatarSignals.ts:30-54; grep -n "trust_delta|trustDelta" ui/src (tests excluded) -> 17 hits, one assignment (avatarSignals.ts:46)
+read scripts/gen_config_reference.py:1-40, :168-186; scripts/check_config_profiles.py:50-64
+grep -n "json_set\(|json_extract\(" src -> json_set 0; json_extract in semantic_store.py, workforce.py, profile_qualification_store.py
+read trust.py:88-112, :358-370, :1017-1035
 ```
 
 ## 12. Absence Verified (2026-10-25)
@@ -1514,6 +2067,46 @@ CLAIM (A1-4): only default_false in the census block is pinned, and nothing else
 RUN:   Grep "measured_at_commit|\"census\"|'census'" scripts tests src; Grep "\b(173|172|226|225|445|136|85)\b" config-profiles.yaml, test_ad1185, check_config_profiles.py; Grep "22[56] default|frozen=17[23]" docs tests scripts
 FOUND: test_ad1185_config_profiles.py:859 only; config-profiles.yaml:19-23 only; docs/development/agentic-event-correlation.md:165 (a dated, historical 429 / 204 / 225 census, not a pin)
 HOLDS: yes
+
+CLAIM (A2): promote and demote have two production callers, both in the post-execution step
+RUN:   Grep "\.(promote|demote)_compilation_level\(" src
+FOUND: cognitive_agent.py:7789, :7806
+HOLDS: yes
+
+CLAIM (A2): no issue tracks the column-only promote/demote
+RUN:   gh issue list --state all --search "promote_compilation_level OR demote_compilation_level OR \"content_snapshot\""; Grep "promote_compilation|demote_compilation|promotion.{0,40}(inert|never take)" over #1523's comments
+FOUND: #1523 only; 0 matches in it (its F-29 and F-46 concern deactivate's swallowed snapshot UPDATE)
+HOLDS: yes
+
+CLAIM (A2): apart from A2's tests, no test drives handle_intent on a real ProcedureStore, and only two tests touch the column-only write
+RUN:   Grep "ProcedureStore\(" tests (22 files); Grep "handle_intent\(" over them (ad1326_*, ad572, ad579c, ad657, bf921, procedure_*, promotion_*, graduated, bf891); Grep "snapshot.{0,60}compilation_level|compilation_level.{0,60}snapshot|not the cached Procedure" tests
+FOUND: 0 handle_intent; test_ad1326_procedure_ledger.py:2650 (docstring) and :2735 (premise), test_graduated_compilation.py:238 (a comment): §7.4b, §7.3 Pair 5
+HOLDS: yes
+
+CLAIM (A2): dreaming.py:2121 is the only reader of used_procedure
+RUN:   Grep "used_procedure" src
+FOUND: events.py:1060 (field); cognitive_agent.py:7624, :7857 (writers); dreaming.py:2121
+HOLDS: yes
+
+CLAIM (A2): _grant_issue is the only writer of a clearance-grant expiry; only _grant_list formats one
+RUN:   Grep "issue_grant\(|expires_at" over clearance_grants.py, routers/*.py, commands_clearance.py; Grep "clearance_grant_store|ClearanceGrantStore" src
+FOUND: commands_clearance.py:90 is the only issue_grant through the clearance store (the routers' calls go to the tool-permission, skill, intent, department and MCP stores); readers compare numbers (clearance_grants.py:88, :100, :175); the formatting is commands_clearance.py:187-189
+HOLDS: yes
+
+CLAIM (A2): the HXI's playback never receives the backend trust_delta
+RUN:   Grep "trust_delta|trustDelta" ui/src (tests excluded)
+FOUND: one assignment, avatarSignals.ts:46 (const trust_delta = 0); readers voiceModulation.ts:109-111, CrewVRM.tsx:159-162, SelfImageTab.tsx:455
+HOLDS: yes (the reviewer also executed the selector and the modulator)
+
+CLAIM (A2): two of the six scripts that import probos have no anchor to their own src
+RUN:   Grep "^\s*(from probos|import probos)" scripts; Grep "sys\.path\.insert" scripts
+FOUND: 6 files; 4 anchor (check_config_facade, check_config_profiles, diagnose_llm, tts_audio_inventory); gen_config_reference.py (§7.23) and gen_capability_truth.py (R12) do not
+HOLDS: yes
+
+CLAIM (A2): no json_set call exists yet
+RUN:   Grep "json_set\(|json_extract\(" src
+FOUND: json_set 0; json_extract in knowledge/semantic_store.py:333-384, workforce.py, profile_qualification_store.py:124-169
+HOLDS: yes (json_set's availability: section 17)
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -1521,25 +2114,30 @@ HOLDS: yes
 - Bug fix in ProbOS plumbing (dead reads behind `getattr` defaults and `hasattr` guards); no outside analogue, so no external search, and `docs/research/reference-projects.md` was not consulted. Internal: AD-535/536/537 (compilation levels, promotion, teaching), BF-263 (trust by `self.id`), BF-907 (slot keys), AD-722/722a (avatar telemetry, divergence), AD-622 (grants), AD-503 (Counselor config), BF-921 D3 and BF-923 D8.
 - Blind spots addressed: the grant target's id form (D5; a callsign list could never match); the avatar's crew-visible pitch and rule text (E6, which the issue's "Captain-facing" missed: `system.yaml:1631` turns interoception on); the divergence trust write, shown independent of `trust_delta` (5b); the Level 2 path's counters, shown identical to the replay path's (5a); `float(MagicMock())` running the masked tests at Senior trust (section 6); the Counselor's non-uniform alert paths (D7); the profile manifest's frozen flag row and the two generated docs (D7).
 - Considered, deferred: consolidating the six live-trust reads (R1); a persisted trust history (R6); config bounds (R4).
+- A2 (review round 1): the column and snapshot copies of a procedure's level (D10; AD-1326 D14 had seen it and kept `get`); the completion event's meaning for a Guided run (D9; AD-535 Part 8, AD-532e's event); `float()` accepting NaN and infinities (D11); a time the platform cannot show (D12); the HXI's own zero trust delta (D13); a generator resolving `probos` through the editable install (D14). No external search: ProbOS plumbing. Considered, deferred: R9 to R13.
 
 ## 14. Diff Reviewer: properties to verify
 
-1. Both trust reads of the compilation clamp (the dispatch cap and the promotion cap) come from one helper that returns `float(get_score(self.id))` from the runtime's trust network, and 0.0 with one WARNING when the network is absent or the read raises. No other site's behaviour changes.
+1. Both trust reads of the compilation clamp (the dispatch cap and the promotion cap) come from one helper that returns `float(get_score(self.id))` read through `self._runtime.trust_network` inside its `try`, and 0.0 with one WARNING when the runtime, its trust network or `get_score` fails or the value is not in [0, 1] (NaN, an infinity, a corrupt record; A2). No other site's behaviour changes.
 2. For trust below 0.5, no stored procedure is dispatched above Level 2 and no promotion goes above Level 2; for trust from 0.5, dispatch and promotion are as before except that an `approved` procedure with trust from 0.7 can be promoted to Level 5. The clamp writes no stored level.
 3. `TrustNetwork.get_history(agent_id, limit)` returns the agent's last `limit` event scores oldest first, `[]` for a non-positive limit or an unknown agent, and reads only the event log.
 4. The profile route and the avatar telemetry call `get_history` unguarded; telemetry still never raises.
 5. Every test double that stands for `TrustNetwork` on the two `get_history` paths has only `TrustNetwork` methods, with the same parameter names and kinds, and a test fails if one drifts; `_FakeTrust.all_scores` returns the same scores with or without `crew_only` (A1-1).
-6. `/grant list` never raises for a stored grant; it shows the live callsign of a target whose certificate resolves by uuid or slot, else the id prefix as before.
+6. `/grant list` never raises for a stored grant: a time the platform cannot show reads "out of range" in its own row and the Status reads the raw value (A2); it shows the live callsign of a target whose certificate resolves by uuid or slot, else the id prefix as before. `/grant issue` refuses a duration that is not finite or whose expiry cannot be shown, and stores nothing (A2).
 7. The Counselor's trust-update threshold and default sweep bound come from the `CounselorConfig` startup passes; with the default config every result is as before; an explicit `max_agents` still wins. Nothing else in `counselor.py` changes, BF-923's gather hold included.
 8. `CounselorConfig` has exactly the two read fields; a config with the removed keys loads; the tracked `system.yaml`, the profile manifest (its frozen rows and its `census:` header), the facade baseline and the config reference agree with the model; the generated diffs are exactly section 6's hunks; the field-count pin is 1876.
 9. Every replaced test double or pin says inline what it masked or why it changed; no test was deleted.
 10. No production line was added for Counselors built without `__init__` (no class-level default, no `getattr` fallback); the one test builder that reaches a reader sets `_counselor_config` itself (A1-2).
+11. (A2, D10) `promote_compilation_level` and `demote_compilation_level` write the level to the column and to the JSON snapshot in one statement under `_index_write`; afterwards `get` returns the new level; counters other than `consecutive_successes` and every other snapshot field are unchanged; `get`, `save`, the semantic index and `_migrate_qualifying_procedures` are unchanged. Every consumer of `get`'s level (dispatch, the promotion step, the demotion check, both teaching gates, evolution's inherited level, the diagnostic context, `sync_routing_index`) now follows promotions and demotions, and none relied on the column-only write except AD-1326's restore test, whose premise is now set directly.
+12. (A2, D9) The `TASK_EXECUTION_COMPLETE` payload is unchanged: an Ensign's clamped Guided run emits `used_procedure: False` and reaches AD-532e's reactive check exactly as a stored Level 2 Guided run does; a replay emits `True` and does not; the check's cost is bounded as E9 states.
+13. (A2, D14) `gen_config_reference.py` imports its own checkout's `src`; under the canonical environment its output is byte-identical; no generated file changes.
+14. (A2, D13) No text claims the Captain's playback receives the backend trust delta.
 
 ## 15. Acceptance criteria
 
-- Through `decide` on a real agent with a real `TrustNetwork`: an Ensign runs a stored Level 4 procedure as Guided, a Lieutenant replays it, and an unreadable trust is held to Level 2 with a WARNING. Through `handle_intent`: a Commander's approved Level 4 procedure is promoted to Level 5; an Ensign's successes do not promote a Level 2 procedure.
+- Through `decide` on a real agent with a real `TrustNetwork`: an Ensign runs a stored Level 4 procedure as Guided, a Lieutenant replays it, and an unreadable trust is held to Level 2 with a WARNING. Through `handle_intent`: a Commander's approved Level 4 procedure is promoted to Level 5; an Ensign's successes do not promote a Level 2 procedure. A2: a NaN, infinite or out-of-range trust and an unreadable `trust_network` attribute are held to Level 2 with a WARNING, and an infinite trust promotes nothing; on a real `ProcedureStore`, a Commander's promotion to Level 5 is what `get` returns and the teaching route accepts, a demoted procedure is dispatched Guided, and an Ensign's Guided completion reaches AD-532e's reactive check as a stored Level 2 run's does.
 - Through the real route and telemetry, profile trust history and avatar `trust_delta` come from `TrustNetwork.get_history`; the four doubles are pinned to the real class.
-- Through the real `/grant` command and registries, `/grant list` names a grant's target with grants present, with and without an identity registry.
+- Through the real `/grant` command and registries, `/grant list` names a grant's target with grants present, with and without an identity registry, and shows every row when one stored expiry cannot be shown as a date; `/grant issue` refuses such a duration (A2).
 - Through real Counselors (one on a booted runtime), `trust_delta_threshold` and `sweep_max_agents` come from the config; the removed fields are gone and old configs load; the config reference and facade baseline are regenerated and checked.
 - The count in D4 is posted on #1654 before the build.
 - Before editing, the tests that pin current behaviour were grepped, and each updated pin says why inline.
@@ -1554,6 +2152,7 @@ HOLDS: yes
   - from `procedures/procedures.db`, D4(a) again, and any procedure now at Level 5 (expected only `approved` ones of Commander+ executors);
   - the count of `Procedure '...' promoted to Level` log lines for Level 3 against earlier sessions (E2 expects fewer, from Ensigns);
   - one `/grant list` with a grant present (expected a table naming the target).
+  - A2: D4(c)'s count again; the count of `Procedure '...' demoted to Level 2` lines, and for one demoted procedure that its next dispatch made an LLM call (Guided) rather than a cached replay (E8); the count of `Procedure evolved` lines against earlier sessions (E9).
 
 ## 17. Not verified
 
@@ -1564,6 +2163,8 @@ HOLDS: yes
 - ~~That `check_config_facade.py --update-baseline` changes only the `CounselorConfig` row~~ (A1: wrong; the oracle's run gives section 6's hunks, and its `--check` passed with no review metadata).
 - A1: the four repaired cases and the rest of the union were not rerun here (this was an edit-only run); the census figures were measured here by a scratch probe on this tree's `src` (section 11), not by the oracle.
 - That the operator's local `config/system.yaml` on the Captain's machine is not customised in the counselor block; if it is, the merge conflicts there, and either result loads (unknown keys are ignored).
+- A2: written in a read-only consult and not run: the 10 new M1 cases, the 5 new M2 cases, the changed promote test and the AD-1326 premise. In particular: that `json_set` is available in the venv's SQLite (the JSON1 functions are in use, `json_extract`, but this tree has no `json_set` call); that `ReplayTestAgent` completes `handle_intent` on a `SimpleNamespace` runtime with a real store (the reviewer's probes did, `logs/bf924r1/probe-test_lifecycle.py`); that `decide` tolerates trust 2.0 at the other six trust reads (it tolerated `None` and `"x"` in round 1); that Rich prints `out of range` and `Invalid duration: <value>` unwrapped at width 240; that the AD-1326 test's direct write through `store._db` needs no lock; that `10.0 * 0.7` gives a network score of exactly 0.7 (the test asserts it as a premise).
+- A2: section 6's census of the 219 masked tests is the reviewer's measurement, not rerun; A2's range check keeps `float(MagicMock()) == 1.0` in range (read, not run).
 
 ## 18. For the register (found here, not fixed by this change)
 
@@ -1575,3 +2176,8 @@ HOLDS: yes
 - **R6.** Trust history is the in-memory event log (500 events ship-wide, empty at boot), so a quiet agent's profile history is short or evicted. A persisted history is design work.
 - **R8 (A1).** `docs/development/config-profiles.yaml`'s `census:` header had drifted before this change (445 / 225 / 136 written, 452 / 226 / 141 measured at the base): only `default_false` is pinned (`test_ad1185_*:859`), so the other figures go stale whenever a boolean is added. Pinning the whole block to the instrument (or generating it) is a separate change.
 - **R7.** `tests/test_teaching_protocol.py:93` still sets the dead `_trust_score`; `tests/test_ad1259_one_source_of_truth.py:70` `_FakeTrustNetwork` lacks `get_history` but reaches neither caller. The procedure tests' `MagicMock` runtimes run the clamp at trust 1.0 (section 6): a future test that asserts rank-dependent dispatch must give its runtime `trust_network_at(...)`.
+- **R9 (A2).** AD-532e's reactive trigger predates AD-535's Guided level; whether a Guided run (stored at Level 2, or clamped) should be exempt from the reactive check, as a replay is, is an AD-532e design question. BF-924 keeps today's rule (D9); changing it changes every Level 2 run.
+- **R10 (A2).** `ProcedureStore._migrate_qualifying_procedures` (`procedure_store.py:1198-1219`) raises Level 1 to 2 in the column only, and the semantic index keeps metadata level 1, so a migrated procedure is never matched by `min_compilation_level=2` (`:945-948`) and `get` reports Level 1 (read). Rows promoted or demoted before BF-924 keep a snapshot level that differs from their column (D4(c) counts them). A one-time repair and the migration fix are a data change with their own review.
+- **R11 (A2).** The HXI's avatar signals take `trust_delta` from `deriveAgentSignals` (`ui/src/components/profile/avatarSignals.ts:44-46`), which hardcodes 0, so the Captain's voice pitch, the VRM expression and the Self Image value never move with trust; the backend projection carries the real value since BF-924. Wiring it is UI work.
+- **R12 (A2).** `scripts/gen_capability_truth.py` imports `probos` with no anchor to its own `src` (`:43-45`, `:54`, `:82`), the gap §7.23 closes in `gen_config_reference.py`.
+- **R13 (A2).** A persistent trust-read fault logs one WARNING with a traceback per trust read (once per procedure match, twice when the promotion step also reads); there is no throttle (review round 1, property 5). Live expectation 0 (section 16); a throttle is warranted only if it fires.
