@@ -7,6 +7,7 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A5, after review round 4 of M1: the second round-three brake, continue)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A6, after review round 5 of M1: the third round-three brake, continue)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A7, after review round 6 of M1: the fourth round-three brake, split)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A9, after the broad gate on `79bec52b` failed three cases of the AD-1152 default-off golden: apply by tool, no review round)
 
 **Status:** build-ready (A7: the reduced candidate). One BF, two milestones, one PR, one gate; the PR says "Part of #1654" and leaves the issue open for slice 2, the ladder's activation, which is parked (D30, D31). **BF number:** BF-924 (#1654); this contract allocates nothing. **Tier:** M1 **HIGH** (the AD-535/536 trust clamp: it decides how much an agent may replay without the LLM, and its failure mode is fail-closed by design); M2 **STANDARD** (no safety property: every wired value defaults to the constant it replaces, F05 is Captain-only, F04's effect is the Captain's profile history and, in the backend avatar projection and the crew context, a pitch factor and a rule name, which the Captain's Self Image tab shows; the Captain's voice playback and VRM do not read it, A2 D13, A3 D19). Review the batch at HIGH because M1 is: use the Copilot `Diff Reviewer`. **Base:** the current `origin/main` (BF-923 merged; `24e19614` changed none of BF-924's files); the orchestrator re-verifies every SEARCH on it, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF. **A7 scope:** M1 is the clamp and its helper (D1 to D3, D11), D9's disclosure and test, and the dreaming repairs D17 and D18; promotion and demotion still move only the column, as on the base. M2 is unchanged. **Tests (A7):** Amendment A7 item 5 supersedes the M1 bullets below.
 
@@ -77,6 +78,8 @@
 6. Findings 3 to 5: R27's "it only lowers the level" is withdrawn (R27, R31); the "since the level was set" claim leaves with section 12's A6 block (R32); the "Tests 18" label leaves with section 12's A5 block.
 7. Sections 3 and 5 keep slice 2's decisions and effects as its record, labelled; they describe no change of this candidate.
 8. Round seven: M1 a WHOLE review of the reduced candidate (section 14, property 32); M2 no review if its patch-id is unchanged and its focused list passes. The brake allows this one round; any later round needs a new decision.
+
+**Amendment A9 (2026-10-25, after the broad gate on `79bec52b`: 3 failed, 50,484 passed, 152 skipped, all three in `tests/test_ad1152_agentic_correlation.py`; `logs/bf924r8/gate-failure-excerpt.txt`).** M2's removal of four `CounselorConfig` fields moves the digest of the default `SystemConfig()` dump that the AD-1152 golden pins; the contract did not name that consumer. A9 adds §7.24 (the two hashes, as AD-1315, AD-1325 and AD-1327 refreshed them), puts `tests/test_ad1152_agentic_correlation.py` on M2's focused list (20 files, 1,076), raises M2's tests-first set from 19 to 22, and adds section 12's A9 census. A7's "on the base its stage fails 24" becomes 27 (computed, not measured). M1 and M2's source are unchanged; M2's patch-id changes only by the fixture. Applied and verified by tool, with no review round (the test compares the whole observation byte for byte, and the base dump minus the four removed keys hashes to the new `default_config_sha256`); then the broad gate again.
 
 ## 0. Premise: what is present on this tree
 
@@ -303,11 +306,11 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_compilation_trust.
 - A2's 5: `test_a_trust_that_is_not_a_score_is_held_to_level_2_and_warned[nan]`, `[above-one]`, `[inf]` and `test_a_runtime_whose_trust_network_cannot_be_read_is_held_to_level_2_and_warned` (`assert None is True` on `guided_by_procedure`: the base reads 0.5 and replays at Level 4); `test_a_clamped_guided_run_reaches_the_reactive_trigger_as_a_stored_level_2_run_does[ensign-clamped-to-guided]` (the base serves a replay: `used_procedure` True and no attempt);
 - A3's 4: `test_overlapping_completions_of_one_procedure_make_one_evolution_attempt` (`assert 0 == 1`: on the base both runs are replays, so the reactive check never runs); `test_a_completion_during_a_dream_step_does_not_attempt_the_procedure_again[7d]` (`TimeoutError` at the parent-load wait: the queue does not exist, so Step 7d raises before its load); `test_a_fallback_reaches_step_7d_when_ships_records_is_disabled` and `test_step_7e_runs_when_ships_records_is_disabled` (`AttributeError` for `_fallback_learning_queue` and `_observed_threads`: the defect itself, the expected failure, not a hard stop).
 
-Pass on both sides: `test_a_lieutenant_still_replays_a_stored_level_4_procedure`, `test_an_infinite_trust_does_not_promote_an_approved_procedure_to_level_5` (the base never reaches Level 5), `[lieutenant-stored-guided]`, `[lieutenant-replay]`, `[7b]` (on the base an Ensign's run is a replay and the reactive check never runs), and every other case of the 21 files. A failure at a premise or for another reason is a hard stop for the Architect. These figures are computed from A2's and A3's base receipts (14 and 31) less the removed cases, not measured. On the reduced candidate the 21-file M1 list collects 668 (649 without the new file: A3's 676 less its 26 new-file cases and its one new `test_graduated_compilation.py` case; plus 19) and all pass; the M2 list is unchanged (1,035; on the base its stage fails 24). The Commander pin's call is A1's `(proc.id, 5)`.
+Pass on both sides: `test_a_lieutenant_still_replays_a_stored_level_4_procedure`, `test_an_infinite_trust_does_not_promote_an_approved_procedure_to_level_5` (the base never reaches Level 5), `[lieutenant-stored-guided]`, `[lieutenant-replay]`, `[7b]` (on the base an Ensign's run is a replay and the reactive check never runs), and every other case of the 21 files. A failure at a premise or for another reason is a hard stop for the Architect. These figures are computed from A2's and A3's base receipts (14 and 31) less the removed cases, not measured. On the reduced candidate the 21-file M1 list collects 668 (649 without the new file: A3's 676 less its 26 new-file cases and its one new `test_graduated_compilation.py` case; plus 19) and all pass; the M2 list is the 20-file list of A9 (1,076; on the base its stage fails 27: A7's 24 and A9's 3). The Commander pin's call is A1's `(proc.id, 5)`.
 
 Blob checks on the reduced candidate: `src/probos/cognitive/procedure_store.py`, `tests/test_ad1326_procedure_ledger.py` and `tests/test_bf891_procedure_store_lock.py` equal the base's; `src/probos/cognitive/dreaming.py`, `tests/test_ad1326_dreaming_challenger.py`, `tests/test_ad1326_challenger_e2e.py` and `tests/test_level_5_dispatch.py` equal the M1 candidate `5aa7a25b`'s; `src/probos/cognitive/cognitive_agent.py` differs from the base only by §7.1 Pairs 1 to 3. The reviewer's pre-M1 control (`logs/bf924r6/test_r6_pre_m1_activation.py`, loading `_store_rig` from the reduced §7.2 file) passes: rows `(2,2,1), (2,2,2), (3,2,0), (3,2,1), (3,2,2), (3,2,0)` and six Guided requests.
 
-**M2 (STANDARD), §7.5 to §7.22.** First heading: `### 7.5 \`src/probos/consensus/trust.py\` (M2)`. After applying §7.5 to §7.22, regenerate and check, in this order:
+**M2 (STANDARD), §7.5 to §7.24.** First heading: `### 7.5 \`src/probos/consensus/trust.py\` (M2)`. After applying §7.5 to §7.24, regenerate and check, in this order:
 
 ```
 d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_config_reference.py
@@ -329,19 +332,20 @@ Before editing, grep the pins: `grep -rn "get_history\|list_all\|CounselorConfig
 
 **Named doubles and what they mask (M2).** The route test reuses `test_api_profile.py`'s `mock_runtime` (a `MagicMock(spec=ProbOSRuntime)`) and replaces its `trust_network` `MagicMock`, which invented `get_history`, with a real `TrustNetwork`. The telemetry test reuses `test_ad722_avatar_telemetry.py`'s `_make_runtime` and replaces its `_FakeTrustNetwork` with a real one. F05 uses a real `AgentIdentityRegistry`, `ClearanceGrantStore`, `CallsignRegistry` and `AgentRegistry`; the one stand-in is the registered agent, a `SimpleNamespace` with `id`, `agent_type`, `pool` and `is_alive`, the only attributes `CallsignRegistry.resolve` and `AgentRegistry.register` read (`crew_profile.py:726-731`, `substrate/registry.py:29-37`). F10 uses real `CounselorAgent`s and `AgentRegistry`s; the sweep's crew are `SimpleNamespace`s with the attributes the sweep reads; one test boots a real `ProbOSRuntime`.
 
-Tests first: with §7.14 to §7.22 applied and §7.5 to §7.13 not (and nothing regenerated), exactly 19 cases fail:
+Tests first: with §7.14 to §7.22 and §7.24 applied and §7.5 to §7.13 not (and nothing regenerated), exactly 22 cases fail:
 - the new file's 15: `test_get_history_*` (2, `AttributeError: 'TrustNetwork' object has no attribute 'get_history'`); `test_the_profile_route_returns_the_trust_history` (`assert [] == [...]`); `test_the_avatar_trust_delta_is_the_last_trust_change` (`0.0 == approx(...)`); `test_the_trust_network_doubles_match_the_real_class` (4 cases, `get_history is not a TrustNetwork method`); `test_grant_list_*` (2, `AttributeError: 'CallsignRegistry' object has no attribute 'list_all'`); `test_the_trust_update_threshold_comes_from_the_config` (2: `assert 1 == 0` and `assert 0 == 1`); `test_the_sweep_bound_comes_from_the_config` (`assert 3 == 2`); `test_the_booted_counselor_takes_the_operators_config` (the eligible crew count `== 2` fails); `test_the_removed_counselor_fields_are_gone_and_old_configs_still_load` (the field set);
 - `TestCounselorConfig::test_default_values` (the field set);
 - `test_system_config_dump_is_unchanged_for_the_moved_model[CounselorConfig]` and `test_constructing_with_no_arguments_matches_the_pre_move_dump[CounselorConfig]` (the dump);
 - A1: `test_committed_baseline_records_the_measured_surface` (`assert 1880 == 1876`: the committed baseline is not yet regenerated).
+- A9: `test_default_off_matches_pinned_base` and `test_default_off_golden_pins_only_descriptor_owner_platform[linux]`, `[win32]` (`AssertionError: default_config_sha256`: the refreshed golden pins the dump without the four removed fields).
 
 `test_cmd_grant_list_renders`, the `test_ad1260_*` and `test_ad642_*` pins, the no-method telemetry test, every `test_counselor_therapeutic.py` case (§7.21 sets an attribute nothing reads before §7.9) and `test_the_measured_census_matches_the_manifest_header` (header and model both 226 before §7.11 and §7.13) pass on both sides. The `[test_ad1260_wellness_domain-_FakeTrust]` seam case still fails first on `get_history` (it precedes `all_scores` in the class body). Focused check:
 
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py tests/test_trust.py tests/test_trust_events.py tests/test_ad722_avatar_telemetry.py tests/test_ad722b4_fleet_telemetry.py tests/test_ad722b_websocket_push.py tests/test_api_profile.py tests/test_ad1260_wellness_domain.py tests/test_ad1259_one_source_of_truth.py tests/test_ad622_clearance_grants.py tests/test_counselor.py tests/test_counselor_activation.py tests/test_counselor_therapeutic.py tests/test_ad642_communication_benchmarks.py tests/test_bf923_counselor_assessment_inputs.py tests/test_ad1270e2h_emergence_models.py tests/test_ad1270e1_config_facade.py tests/test_ad1185_config_profiles.py tests/test_config_reference_current.py -n 0 -q
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf924_trust_inputs.py tests/test_trust.py tests/test_trust_events.py tests/test_ad722_avatar_telemetry.py tests/test_ad722b4_fleet_telemetry.py tests/test_ad722b_websocket_push.py tests/test_api_profile.py tests/test_ad1260_wellness_domain.py tests/test_ad1259_one_source_of_truth.py tests/test_ad622_clearance_grants.py tests/test_counselor.py tests/test_counselor_activation.py tests/test_counselor_therapeutic.py tests/test_ad642_communication_benchmarks.py tests/test_bf923_counselor_assessment_inputs.py tests/test_ad1270e2h_emergence_models.py tests/test_ad1270e1_config_facade.py tests/test_ad1185_config_profiles.py tests/test_config_reference_current.py tests/test_ad1152_agentic_correlation.py -n 0 -q
 ```
 
-(Collected on `ba45c61f` without the new file: 1,015; not run here. Expect 1,030 collected; the orchestrator computes the pass and skip counts by tool. A1: the oracle collected 1,306 for the union of both lists (29 files); A1 adds and removes no case, so expect 1,306 collected and 1,306 passed for the union. A2: the oracle measured 1,030 for this list; A2 adds 5 cases, so expect 1,035; the union becomes 1,321 plus the four files A2 adds to the M1 list. A3 adds no M2 case: expect 1,035.)
+(Collected on `ba45c61f` without the new file: 1,015; not run here. Expect 1,030 collected; the orchestrator computes the pass and skip counts by tool. A1: the oracle collected 1,306 for the union of both lists (29 files); A1 adds and removes no case, so expect 1,306 collected and 1,306 passed for the union. A2: the oracle measured 1,030 for this list; A2 adds 5 cases, so expect 1,035; the union becomes 1,321 plus the four files A2 adds to the M1 list. A3 adds no M2 case: expect 1,035. A9 adds `tests/test_ad1152_agentic_correlation.py` (41 cases): expect 1,076 collected and passed for the 20-file list.)
 
 **The broad gate is run once for #1654 by the main session, not by the Builder.**
 
@@ -2129,6 +2133,28 @@ if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
 ````
 
+### 7.24 `tests/fixtures/ad1152_agentic_off_golden.json` (M2, A9: the default-config digest after §7.11)
+
+SEARCH:
+````json
+  "observation_sha256": "7c11abbd661ba480b0f9b5557a881c1813ed8f30d0ff59127d9f520bd0b0c032",
+````
+REPLACE:
+````json
+  "observation_sha256": "649c58d03cc796ba45e8d36e0f0c93c3836a3ab2b733a985f714e0dc06e28e9e",
+````
+
+SEARCH:
+````json
+    "default_config_sha256": "149a63292ffd30448f94346195781ec6ebf5c28de4df9c2ba34055788d004643",
+````
+REPLACE:
+````json
+    "default_config_sha256": "4fde4128e18d3d45b60aa4bfba99d10cd62c39d330ce580ee15fd4c1beb64589",
+````
+
+`base_commit`, `production_pristine`, `base_source_blobs` and every other line are unchanged (`src/probos/config.py` is not changed by M2; §7.11 changes `config_models/emergence.py`).
+
 ## 8. Tracking
 
 Anchors: `PROGRESS.md`'s title line and `DECISIONS.md`'s heading `### BF-923 -- Episodic recall callers and the Counselor's assessment inputs (2026-10-25, #1652)`. The entries go in the tracker commit that follows M2's (the orchestrator applies them by tool, then regenerates the ledger). Set the date to the commit date.
@@ -2558,6 +2584,19 @@ CLAIM: no producer creates a snapshot above Level 2, so the ladder above Level 2
 RUN:   Grep "compilation_level\s*=\s*[^=]" src/probos; Grep "comp_level =|max_level =" src/probos/cognitive/procedures.py
 FOUND: 23 hits. Producers: procedures.py:150 (from a stored dict), :587 (1), :714 and :728 (2 if teaching, else 1), :842 and :1357 (the parent's level), :940 (the parents' highest level less one, at least 1, :925), :1091 and :1218 (1), :1489 (2). Writers: procedure_store.py:1146 and :1179 (promote and demote; on the base the column only), :1262 (migrate, the column), :1679 (decay, the column's level less one), :1831 (restore, 1). The rest are filters, a docstring (:660) or the Level 4/5 decision (cognitive_agent.py:7708)
 HOLDS: yes, with D4: no active procedure at Level 3 or above
+```
+
+### A9: verified and enumerated (2026-10-25, `79bec52b`)
+
+```
+CLAIM: the AD-1152 golden is the only config-digest pin besides the facade baseline
+RUN:   Grep "default_config_sha256|config_sha256|canonical_dump_sha256|dump_sha256" over tests docs scripts src config
+FOUND: 5 files: config-facade-baseline.yaml (regenerated, §6), check_config_facade.py, test_ad1270e1_config_facade.py (§7.22), tests/fixtures/ad1152_agentic_off_golden.json and test_ad1152_agentic_correlation.py (§7.24)
+HOLDS: yes; the other SystemConfig() dump tests (the ad1270e2* files) passed in the gate on 79bec52b
+CLAIM: the new default_config_sha256 comes from the four removed fields only
+RUN:   base source: the AD-1152 test with counselor.{enabled, profile_retention_days, alert_on_red, alert_on_yellow} popped from `config` right after the test builds it, against the refreshed fixture (its own digest and whole-observation comparisons)
+FOUND: 3 passed; the same edit against the old fixture fails 3 at default_config_sha256 (the four pops move the digest); the unmodified test against the refreshed fixture on the base source fails 3 at the same key
+HOLDS: yes; 4fde4128e18d3d45b60aa4bfba99d10cd62c39d330ce580ee15fd4c1beb64589 is the base's default dump minus the four removed fields
 ```
 
 ## 13. Prior Art and Blind Spots
