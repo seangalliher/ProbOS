@@ -2,11 +2,13 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-24
 
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-25 (Amendment A1, after review round 1: §3 decisions 8 to 10)
+
 **Status:** ready for the Builder. **Base:** `origin/main` `026a682f` (BF-918 M4 and M5 merged, PR #1647). **Issue:** #1626 (BF-918). No new AD or BF number: both are slices of BF-918.
 
 | Milestone | Slices | Finding | Tier | Files | Test files |
 |---|---|---|---|---|---|
-| M6+M7 (one milestone) | M6: an older reply's `end` no longer completes a newer reply's turn in the same arm. M7: with pipelining on, a reply's turn completes on its last sentence's `end`, and the BF-300 PTT gate stays closed between its sentences (R25's ordinary-reach half) | M4/M5 contract decisions 1 and 2; BF-918 §18 R25 | **HIGH** | `ui/src/components/profile/ProfileChatTab.tsx`, `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`, `ui/src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx`, `PROGRESS.md`, `DECISIONS.md` | `ProfileChatTab.bf918.test.tsx` (10 cases appended: C13 to C21, C16 twice), `ProfileChatTab.bf767.test.tsx` (2 tests updated) |
+| M6+M7 (one milestone) | M6: an older reply's `end` no longer completes a newer reply's turn in the same arm. M7: with pipelining on, a reply's turn completes on its last sentence's `end`, and the BF-300 PTT gate stays closed between its sentences (R25's ordinary-reach half) | M4/M5 contract decisions 1 and 2; BF-918 §18 R25 | **HIGH** | `ui/src/components/profile/ProfileChatTab.tsx`, `ui/src/audio/meetingVoice.ts`, `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`, `ui/src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx`, `ui/src/audio/__tests__/meetingVoice.test.ts`, `PROGRESS.md`, `DECISIONS.md` | `ProfileChatTab.bf918.test.tsx` (14 cases appended: C13 to C24, C16 and C22 twice), `ProfileChatTab.bf767.test.tsx` (2 tests updated), `meetingVoice.test.ts` (2 cases appended) |
 
 **Tier.** HIGH, the parent's tier (BF-918 is HIGH; a slice is never lowered without the Captain). On its own merits too: the change decides when the conversation controller leaves `agent_speaking`, which turns barge-in off and starts the 30 s release timer, and it changes the echo guard of the composer mic.
 
@@ -22,6 +24,11 @@ Reach (by reading): `_onTranscript` accepts a transcript in any state but `inact
 
 **R25 (the same family).** The BF-300 PTT gate (`ProfileChatTab.tsx:563-590`) clears on every `end`, so it opens in each gap between two sentences of one reply. The MicIndicator drops its `muted` ring (`:3005`) and a mic press in the gap is accepted (`:2785`); the capture it starts records the next sentence, which is the echo loop BF-300 exists to prevent (#774). The BF-718 in-flight key clear (`:1385-1393`) also acts on every sentence's `end` (decision 4: registered, not fixed).
 
+**Review round 1 (A1).** Two defects of the same family, found through the production parents:
+
+- **An agent change.** The gate's effect (`ProfileChatTab.tsx:571-625`, deps `[agentId]`) clears its timer in the cleanup but leaves `ttsActiveRef` and `ttsActive` as they were. `AgentProfilePanel` (`:740`) and `CompactApp` (`:229`) re-point the same composer at another agent without a remount, and the new subscription ignores the old agent's events (`:573`), so a gate held at the change stays closed with no timer: the new agent's MicIndicator shows `muted` and its mic press is refused (`:2828`) until that agent speaks. M7 made it ordinary (every gap of a pipelined reply holds the gate); during a sentence the base already did it.
+- **The meeting's echo gate.** `meetingVoice.ts` `_speakAndWait` (`:105-154`) ends its wait on the first attributed `end`, which under pipelining is the first sentence's (`final: false`). `speakRepliesSequentially` (`:177-190`) then clears the speaking id and `useMeetingVoice` (`:164-168`) publishes `speakingAgentId = null`, which is the meeting arm's `canListen` (`ProfileChatTab.tsx:1117`, `:2071`): the open mic accepts and submits what it hears while sentences 2 to n play, and the speaking label and the BF-621 reveal advance early. Pre-existing since M5 gave `final` (reproduced on base and candidate alike); M5's consumer enumeration named `ProfileChatTab` only, and §9 listed the meeting path as unchanged.
+
 ## 2. Solution
 
 **M6.** In the reply listener's `end` branch, first: if a newer reply of this arm has taken the turn (`replyTurn !== ourTurn`), retire the listener and return without completing. It comes before the identity checks: a superseded listener has nothing left to complete, so any `end` may retire it.
@@ -29,6 +36,8 @@ Reach (by reading): `_onTranscript` accepts a transcript in any state but `inact
 **M7.** After the identity checks, an `end` with `final === false` returns without completing. The last sentence's `end` (`final: true`), and every non-pipelined `end` (no `final`), still completes. A stop while a sentence plays fires that sentence's `end` with `final: true` (`_finalField` reads `_activeUtteranceId`, which `stopSpeaking` clears first, `voice.ts:942`). A stop between two sentences fires no further `end`; its only production cause is the controller's own barge-in (§12), which moves the controller to `listening` itself.
 
 **PTT gate (R25's ordinary-reach half).** An `end` with `final === false` keeps the gate closed and replaces the sentence's BF-655 ceiling with a gap ceiling, `PTT_SENTENCE_GAP_MS = 5000`. The next sentence's `start` re-arms the 45 s ceiling as now. With no next `start` within 5 s (a stop between two sentences, or a gap longer than that) the gate opens, as every gap did before M7. The last sentence's `end` clears it as now.
+
+**A1.** The gate's effect cleanup also opens the gate (`ttsActiveRef` and `ttsActive` to `false`) after clearing its timer: the gate ends with its agent's subscription. `_speakAndWait` ignores an `end` with `final === false` after its attribution check, as the arbiter (`voice.ts:471`) and the reply listener do; `dropped`, the safety timeout and the attribution rules are unchanged.
 
 ## 3. Decisions (for #1626; ranked where there were options)
 
@@ -39,10 +48,13 @@ Reach (by reading): `_onTranscript` accepts a transcript in any state but `inact
 5. **The gap ceiling** (option a). (a) `PTT_SENTENCE_GAP_MS = 5000` on the gate's existing watchdog ref (chosen): a stop between two sentences reopens the gate within 5 s, and a gap longer than 5 s degrades to the base behaviour, never worse. (b) Keep the gate closed under BF-655's 45 s ceiling only: rejected; a barge-in between two sentences (likely, blind spot 1) would show `muted` and refuse the composer mic for up to 45 s while the conversation mic listens. (c) Clear the gate on the controller's barge-in transition: rejected; it couples the PTT gate to the conversation arm and misses GUARD 2's path. The value is from reading, not from a measured gap: the next sentence is synthesized while the current one plays (`runPrefetchQueue`, lookahead 1), so an ordinary gap is the play-start latency. Revisit against the live `bf918:sentence-gap` values (BF-918 §16) if they approach 5 s. A module constant like `PTT_TTS_WATCHDOG_MS`, not config.
 6. **The two `ProfileChatTab.bf767.test.tsx` tests that pinned M6's defect are updated, not deleted.** `does not complete the new turn on the cancelled utterance's end` expected exactly one completion, "turn 1's", after turn 2 had arrived: in the controller that completion ends turn 2's turn. They now expect none, with the reason inline. BF-767's own property (turn 2 does not complete on turn 1's `end`) still kills its mutant (§10, M6-1 note).
 7. **Tier HIGH** (the parent's). **Pipelining stays default-off.** No config change.
+8. **A1, the agent change: the gate resets with its subscription** (option a). (a) The effect's cleanup sets `ttsActiveRef.current = false` and `setTtsActive(false)` after clearing the timer (chosen): one place for every parent (`AgentProfilePanel`, `CompactApp`, `MobileShell`, an unmount), the lifetime the timer already has, and it also fixes the base's mid-sentence case. It does not run for a newer `start` of the same agent or for a re-render that keeps `agentId` (the effect's deps are `[agentId]`; C23 pins it). (b) Keep the gate for the agent that closed it and let the next subscription follow that agent's events too: rejected; a redesign of BF-300's per-agent subscription, and an old agent's `end` while another is shown would still be missed, so a return after the reply had finished would hold the mic for BF-655's 45 s. (c) Seed the gate on each subscription from the arbiter (`speechQueueState()`): rejected here; a new cross-module read and behaviour no finding asked for. What (a) gives up: a return to an agent while one of its sentences still plays now shows the gate open until its next `start`, as a first mount always has; on the base that return happened to find the gate closed, from the same stale state that strands the other agent. The more common return, after the reply has finished, was stranded on the base and is now right. Registered as R36, with (c) as its design.
+9. **A1, the meeting wait: fixed inside #1626** (option a). (a) `_speakAndWait` ignores `final === false` (chosen): one condition in an existing file, the second consumer of M5's `final`, same tier, and C24 crosses the whole chain (real `voice.ts`, `useMeetingVoice`, the controller and the production predicate). The wait keeps its whole-reply safety timeout (`computeUtteranceTimeout`, BF-615; a non-pipelined reply's single `end` already came after the whole reply). In a meeting a stop between two sentences has no ordinary cause: the meeting arm submits through `submitTranscript` and never enters `agent_speaking` (`conversationController.ts:399-410`; `:433` is the only entry), so barge-in (`:350`) and with it `stopSpeaking` (its only production caller, §12) cannot run there. The causes left are GUARD 2 and a 1:1 barge-in on another surface, and the timeout ends that wait (R32, extended). (b) Its own slice or issue: rejected; one line, and the review asked that it not become another residual. (c) Also a gap timer on the meeting wait, like the PTT gate's: rejected; more code and a `start` rule in its listener for a stop with no ordinary cause.
+10. **A1, review finding 3: registered (R35), not folded in.** Injected-only reach, and the base fails the same property. Its fix (gate ownership by the `start`'s `utterance_id`, in the `start` and `end` branches) is not the code decision 8 touches (the cleanup), and it would add an ownership rule to every pipelined reply's hot path and a new property to the round-2 review.
 
 ## 4. Milestones, focused checks and tests-first expectations
 
-**M6+M7** (TypeScript). Apply §7.1 to §7.3 and §8's pairs, then, from `ui/`:
+**M6+M7** (TypeScript). Apply §7.1 to §7.5 and §8's pairs, then, from `ui/`:
 
 ```
 npx vitest run src/components/profile src/audio src/__tests__/ProfileChatTab
@@ -66,6 +78,19 @@ Tests first, on the base `ProfileChatTab.tsx` with §7.2 and §7.3 applied:
 | bf767 `completes the turn on its own utterance end` | fails | its first `toHaveBeenCalledTimes(0)` (received 1) |
 
 C1 to C12 pass. These predictions come from reading; none was executed (§17). If one is wrong, report the observed assertion; do not edit the test to match the prediction.
+
+**A1 tests first.** On the base with §7.2 to §7.5's test pairs applied (what the oracle builds), and on the candidate `ebaf69b9` with A1's test pairs applied but not its two source pairs:
+
+| Test | On the base | On the candidate | First failing assertion |
+|---|---|---|---|
+| C22 `[between two sentences]` | fails | fails | base: `expect(muted()).toBe(true)` before the change of agent (received `false`: the base opens every gap); candidate: `expect(muted()).toBe(false)` after `openAgentProfile('a2')` (received `true`) |
+| C22 `[while a sentence plays]` | fails | fails | `expect(muted()).toBe(false)` after `openAgentProfile('a2')` (received `true`) |
+| C23 | fails | passes | base: `expect(muted()).toBe(true)` after `endAudio(audios[0])` (received `false`); candidate: control |
+| C24 | fails | fails | `expect(meeting.result.current.speakingAgentId).toBe('a1')` after `endAudio(audios[0])` (received `null`) |
+| `test_bf918_m7_non_final_end_does_not_advance_or_clear_speaking` | fails | fails | `expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha'])` (received `['alpha', 'bravo']`) |
+| `test_bf918_m7_safety_timeout_still_ends_a_wait_whose_last_sentence_never_ends` | fails | fails | `expect(fake.speakCalls).toHaveLength(1)` after 59 999 ms (received 2) |
+
+On the base the 11 failures of the table above become 17 (these 6 added); every other case of the four test files passes. On the candidate with A1's test pairs only, exactly the 5 marked above fail. After A1 the focused set is 92 files and 1003 tests (997 + 6; no new file). From reading, not executed (§17). C22 needs no fake clock: the gate opens at the change of agent itself. The two `meetingVoice.test.ts` cases use that file's idiom (`tick()`, and plain `vi.useFakeTimers()` as `test_bf862_dropped_advances_promptly_without_waiting_the_safety_timeout` does, restored by its `afterEach`).
 
 **Harness rules.** `flush()` is 60 microtask turns; the new cases wait with `waitFor` wherever a count of turns would be a guess. Never add a wall-clock sleep. C20 and C21 use `vi.useFakeTimers({ shouldAdvanceTime: true })`, as `ProfileChatTab.bf764.test.tsx:384` does with this component: Testing Library's `waitFor` waits on a `setTimeout(0)` that a clock without `shouldAdvanceTime` never fires. If C20 or C21 is flaky, report it; the margins are 1 to 2 s against a test that takes milliseconds.
 
@@ -177,6 +202,41 @@ REPLACE:
           if (event.final === false) return;
           complete();
         });
+```
+
+Pair 4 (A1, review round 1: the gate resets with its agent's subscription):
+
+SEARCH:
+```tsx
+    return () => {
+      try { unsub(); } catch { /* Tier-2 */ }
+      // BF-655: never leave a dangling watchdog timer on unmount.
+      if (ttsWatchdogRef.current !== null) {
+        clearTimeout(ttsWatchdogRef.current);
+        ttsWatchdogRef.current = null;
+      }
+    };
+  }, [agentId]);
+```
+REPLACE:
+```tsx
+    return () => {
+      try { unsub(); } catch { /* Tier-2 */ }
+      // BF-655: never leave a dangling watchdog timer on unmount.
+      if (ttsWatchdogRef.current !== null) {
+        clearTimeout(ttsWatchdogRef.current);
+        ttsWatchdogRef.current = null;
+      }
+      // BF-918 M7 (#1626, review round 1): the gate ends with its agent's
+      // subscription. A change of `agentId` keeps the composer (AgentProfilePanel and
+      // CompactApp re-point it without a remount), and the next subscription ignores
+      // this agent's events, so a gate left closed here, inside a reply or between
+      // two of its sentences, had no 'end' and no timer left to open it. On unmount
+      // both writes are harmless.
+      ttsActiveRef.current = false; // the composer mic's click guard reads this
+      setTtsActive(false); // the MicIndicator's 'muted' ring reads this
+    };
+  }, [agentId]);
 ```
 
 ### 7.2 `ui/src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx`
@@ -469,7 +529,136 @@ describe('BF-918 M6 and M7: a reply completes its turn on its own last sentence'
       vi.useRealTimers();
     }
   });
+
+  it.each([['between two sentences', true], ['while a sentence plays', false]] as Array<[string, boolean]>)(
+    'C22 (M7, review round 1): opening another crew member\'s profile %s leaves the new agent\'s mic ungated',
+    async (_phase, inGap) => {
+      const first: Agent = {
+        id: 'a1', agentType: 'scout', callsign: 'First', displayName: 'First', pool: 'scout',
+        state: 'active', confidence: 0.8, trust: 0.7, tier: 'domain', isCrew: true, position: [0, 0, 0],
+      };
+      useStore.setState({
+        agents: new Map([['a1', first], ['a2', { ...first, id: 'a2', callsign: 'Second', displayName: 'Second' }]]),
+        activeProfileAgent: 'a1',
+        activeProfileThreadId: null,
+        activeThreadId: null,
+        chatThreads: new Map(),
+        threadIdByAgent: new Map(),
+      });
+      try {
+        answers = [TWO];
+        render(<AgentProfilePanel />);
+        await waitFor(() => expect(getConversationState()).toBe('listening'));
+        const composer = screen.getByPlaceholderText('Message...');
+        await captainSays('Question.');
+        await firstSentencePlays();
+        if (inGap) await endAudio(audios[0]);
+        expect(muted()).toBe(true);
+        act(() => { useStore.getState().openAgentProfile('a2'); });
+        await act(async () => { await flush(); });
+        // The panel re-points the same composer at a2; it does not remount it.
+        expect(screen.getByPlaceholderText('Message...')).toBe(composer);
+        // Before A1: still `muted`, with no timer left to open it, because a2's
+        // subscription ignores a1's later events. Between two sentences that was M7's
+        // regression; during a sentence the base already did it.
+        expect(muted()).toBe(false);
+        const info = vi.spyOn(console, 'info');
+        fireEvent.click(screen.getByTestId('mic-indicator').closest('button')!);
+        expect(info.mock.calls.some((args) => String(args[0]).includes('mic press ignored for agent a2'))).toBe(false);
+      } finally {
+        useStore.setState({ activeProfileAgent: null, agents: new Map() });
+      }
+    },
+  );
+
+  it('C23 control (M7, review round 1): a re-render that keeps the agent keeps the gate closed between two sentences', async () => {
+    answers = [TWO];
+    const surface = render(<ProfileChatTab agentId="a1" />);
+    await waitFor(() => expect(getConversationState()).toBe('listening'));
+    await captainSays('Question.');
+    await firstSentencePlays();
+    await endAudio(audios[0]);
+    expect(muted()).toBe(true);
+    surface.rerender(<ProfileChatTab agentId="a1" threadId="another-thread" />);
+    await act(async () => { await flush(); });
+    // The gate's effect depends on `agentId` only, so its cleanup did not run.
+    expect(muted()).toBe(true);
+    await answerSynthesis();
+    await plays(1);
+    expect(muted()).toBe(true);
+    await endAudio(audios[1]);
+    expect(muted()).toBe(false);
+  });
+
+  it('C24 (M7, review round 1): in a meeting the open mic stays refused until the reply\'s last sentence ends', async () => {
+    let submits = 0;
+    const meeting = renderHook(() => useMeetingVoice({ meetingActive: true, scopeKey: 'c24', owner: 'c24' }));
+    // ProfileChatTab's meeting arm passes this predicate (AD-922's echo gate).
+    const dispose = armConversationMode({
+      agentId: 'a1',
+      canListen: () => meeting.result.current.speakingAgentId == null,
+      submitTranscript: async () => { submits += 1; },
+    });
+    try {
+      await waitFor(() => expect(getConversationState()).toBe('listening'));
+      expect(hardware.transcripts.size).toBe(1);
+      act(() => { meeting.result.current.speakReplies([{ agent_id: 'a1', text: TWO }]); });
+      await firstSentencePlays();
+      expect(meeting.result.current.speakingAgentId).toBe('a1');
+      await captainSays('Heard during the first sentence.');
+      expect(submits).toBe(0);
+      await endAudio(audios[0]);
+      // Before A1: null (the first sentence's 'end' ended the wait), and the
+      // transcript below was submitted while the second sentence played.
+      expect(meeting.result.current.speakingAgentId).toBe('a1');
+      await answerSynthesis();
+      await plays(1);
+      await captainSays('Heard during the second sentence.');
+      expect(submits).toBe(0);
+      await endAudio(audios[1]);
+      await waitFor(() => expect(meeting.result.current.speakingAgentId).toBe(null));
+      // Control: once the reply is over, the open mic submits.
+      await captainSays('The Captain, after the reply.');
+      expect(submits).toBe(1);
+    } finally {
+      dispose();
+    }
+  });
 });
+```
+
+Pair 5 (A1: `renderHook` for C24):
+
+SEARCH:
+```tsx
+import { act, cleanup, fireEvent, render, screen, waitFor, type RenderResult } from '@testing-library/react';
+```
+REPLACE:
+```tsx
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, type RenderResult } from '@testing-library/react';
+```
+
+Pair 6 (A1: the modules C22 and C24 use):
+
+SEARCH:
+```tsx
+import { ProfileChatTab } from '../ProfileChatTab';
+import { useStore } from '../../../store/useStore';
+import * as voice from '../../../audio/voice';
+import {
+  getConversationState,
+```
+REPLACE:
+```tsx
+import { ProfileChatTab } from '../ProfileChatTab';
+import { AgentProfilePanel } from '../AgentProfilePanel';
+import { useStore } from '../../../store/useStore';
+import type { Agent } from '../../../store/types';
+import * as voice from '../../../audio/voice';
+import { useMeetingVoice } from '../../../audio/useMeetingVoice';
+import {
+  armConversationMode,
+  getConversationState,
 ```
 
 ### 7.3 `ui/src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx` (the two tests that pinned M6's defect)
@@ -526,6 +715,110 @@ REPLACE:
     expect(mocks.markAgentReplyCompleteMock).toHaveBeenCalledTimes(1);
 ```
 
+### 7.4 `ui/src/audio/meetingVoice.ts` (A1: the meeting wait, the second consumer of M5's `final`)
+
+Pair 1:
+
+SEARCH:
+```ts
+      if (utteranceId !== undefined
+        ? e.utterance_id !== utteranceId
+        : e.agent_id !== reply.agent_id) return;
+      finish();
+```
+REPLACE:
+```ts
+      if (utteranceId !== undefined
+        ? e.utterance_id !== utteranceId
+        : e.agent_id !== reply.agent_id) return;
+      // BF-918 M7 (#1626, review round 1): under AD-1071 pipelining every sentence
+      // fires an 'end' with the reply's id, and `final: false` says more of the reply
+      // will play (M5). Finishing on it cleared the speaking id, which is the
+      // meeting's echo gate (ProfileChatTab's `canListen`), while the rest of the
+      // reply played, and moved the label and the reveal on early. The last sentence,
+      // or a stop while one plays, carries `final: true`; every other 'end' carries no
+      // `final`. A stop between two sentences emits no further event: the safety
+      // timeout, sized for the whole reply, ends the wait (BF-918's R32).
+      if (e.type === 'end' && e.final === false) return;
+      finish();
+```
+
+### 7.5 `ui/src/audio/__tests__/meetingVoice.test.ts` (A1)
+
+Pair 1 (the fake's `fire` carries `final`):
+
+SEARCH:
+```ts
+  const fire = (e: { type: SpeechEventType; agent_id?: string; utterance_id?: number; reason?: string }): void => {
+```
+REPLACE:
+```ts
+  const fire = (e: { type: SpeechEventType; agent_id?: string; utterance_id?: number; reason?: string; final?: boolean }): void => {
+```
+
+Pair 2 (two cases, before `createVoiceProfileResolver`):
+
+SEARCH:
+```ts
+describe('createVoiceProfileResolver', () => {
+```
+REPLACE:
+```ts
+/** BF-918 M7 (#1626, review round 1): under AD-1071 pipelining every sentence of a
+ *  reply fires an 'end' with the reply's id, and `final: false` says more of it will
+ *  play (M5). The wait for a reply ends on its last sentence, so the speaking id (the
+ *  meeting's echo gate), the label and the reveal hold until then. */
+describe('BF-918 M7: a pipelined reply holds the speaking slot until its last sentence', () => {
+  it('test_bf918_m7_non_final_end_does_not_advance_or_clear_speaking', async () => {
+    const fake = makeFake({ mintIds: true });
+    const p = speakRepliesSequentially([r('alpha'), r('bravo')], fake.deps);
+    await tick();
+    const id = fake.speakCalls[0].utteranceId;
+    fake.fire({ type: 'start', agent_id: 'alpha', utterance_id: id });
+    fake.fire({ type: 'end', agent_id: 'alpha', utterance_id: id, final: false });
+    await tick();
+    await tick();
+    // Before the fix: ['alpha', 'bravo'], with alpha's second sentence still to play.
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha']);
+    expect(fake.speakingChanges).toEqual(['alpha']);
+    expect(fake.utteranceEnds).toEqual([]);
+    fake.fire({ type: 'start', agent_id: 'alpha', utterance_id: id });
+    fake.fire({ type: 'end', agent_id: 'alpha', utterance_id: id, final: true });
+    await tick();
+    expect(fake.speakCalls.map((c) => c.agentId)).toEqual(['alpha', 'bravo']);
+    expect(fake.speakingChanges).toEqual(['alpha', null, 'bravo']);
+    expect(fake.utteranceEnds).toEqual(['alpha']);
+    // A single-call reply's 'end' carries no `final` and still ends its wait.
+    fake.fire({ type: 'end', agent_id: 'bravo', utterance_id: fake.speakCalls[1].utteranceId });
+    await p;
+    expect(fake.utteranceEnds).toEqual(['alpha', 'bravo']);
+  });
+
+  it('test_bf918_m7_safety_timeout_still_ends_a_wait_whose_last_sentence_never_ends', async () => {
+    // A stop between two sentences emits no further event (BF-918 R32).
+    vi.useFakeTimers();
+    const fake = makeFake({ mintIds: true, utteranceTimeoutMs: 60000 });
+    const p = speakRepliesSequentially([r('a'), r('b')], fake.deps);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.speakCalls).toHaveLength(1);
+    fake.fire({ type: 'end', agent_id: 'a', utterance_id: fake.speakCalls[0].utteranceId, final: false });
+    await vi.advanceTimersByTimeAsync(59999);
+    // Before the fix: 2 (the first sentence's 'end' ended the wait).
+    expect(fake.speakCalls).toHaveLength(1);
+    expect(fake.speakingChanges).toEqual(['a']);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fake.speakCalls).toHaveLength(2);
+    expect(fake.utteranceEnds).toEqual(['a']);
+    fake.fire({ type: 'end', agent_id: 'b', utterance_id: fake.speakCalls[1].utteranceId });
+    await vi.advanceTimersByTimeAsync(0);
+    await p;
+  });
+});
+
+describe('createVoiceProfileResolver', () => {
+```
+
 ## 8. Tracking
 
 The `PROGRESS.md` pairs are substrings of its one-line BF-918 entry (line 5); the `DECISIONS.md` pair is a substring of its BF-918 entry (line 694). None contains a line break, and each occurs once at the base (§11). A tool that matches only whole lines must be told to match the substring. Set the date to the commit date.
@@ -538,7 +831,7 @@ its join timeout bounds the silence between two sentences rather than the reply'
 ```
 REPLACE:
 ```markdown
-its join timeout bounds the silence between two sentences rather than the reply's length, and a stop between two sentences frees it at once. M6 and M7 (2026-10-24): an older reply's `end` no longer completes a newer reply's turn in the same conversation arm, and in conversation mode with pipelining on a reply's turn completes on its last sentence's `end` (`final`), not its first, so barge-in works for the whole reply and the silence timer starts after it. The BF-300 PTT gate also stays closed between two sentences of one reply, for at most 5 s after a sentence's `end` (`PTT_SENTENCE_GAP_MS`), so a stop between two sentences reopens it; `ProfileChatTab.bf918.test.tsx` C13 to C21.
+its join timeout bounds the silence between two sentences rather than the reply's length, and a stop between two sentences frees it at once. M6 and M7 (2026-10-24): an older reply's `end` no longer completes a newer reply's turn in the same conversation arm, and in conversation mode with pipelining on a reply's turn completes on its last sentence's `end` (`final`), not its first, so barge-in works for the whole reply and the silence timer starts after it. The BF-300 PTT gate also stays closed between two sentences of one reply, for at most 5 s after a sentence's `end` (`PTT_SENTENCE_GAP_MS`), so a stop between two sentences reopens it; `ProfileChatTab.bf918.test.tsx` C13 to C21. Review round 1: opening another crew member's profile mid-reply no longer leaves the new agent's PTT gate closed (it resets with its agent's subscription), and in a meeting the speaking id, which gates the open mic, now holds until a reply's last sentence (`meetingVoice.ts` ignores an `end` with `final: false`, the second consumer of M5's field); C22 to C24 and two `meetingVoice.test.ts` cases.
 ```
 
 **`PROGRESS.md`** (pair 2):
@@ -561,7 +854,7 @@ it would cut a last sentence spoken by the browser fallback), and a new event ty
 ```
 REPLACE:
 ```markdown
-it would cut a last sentence spoken by the browser fallback), and a new event type. M6 and M7 (2026-10-24): `ProfileChatTab`'s reply listener retires without completing on any `end` once a newer reply of its arm has taken the turn (its `dropped` branch already did), and ignores an `end` whose `final` is `false`. The BF-300 PTT gate stays closed on `final: false`, bounded by `PTT_SENTENCE_GAP_MS` (5 s, a constant like BF-655's ceiling), because a stop between two sentences emits no further event. Rejected: retiring older listeners when a newer reply arrives (it turns the reviewed `dropped` guard into dead code), a turn token on `markAgentReplyComplete` (a public signature change), a gap bound on the turn itself (a slow synthesis would complete it mid-reply), and keeping the BF-718 in-flight key until the last sentence (it errs toward waiting on an `end` that nothing emits; registered as R33).
+it would cut a last sentence spoken by the browser fallback), and a new event type. M6 and M7 (2026-10-24): `ProfileChatTab`'s reply listener retires without completing on any `end` once a newer reply of its arm has taken the turn (its `dropped` branch already did), and ignores an `end` whose `final` is `false`. The BF-300 PTT gate stays closed on `final: false`, bounded by `PTT_SENTENCE_GAP_MS` (5 s, a constant like BF-655's ceiling), because a stop between two sentences emits no further event. Rejected: retiring older listeners when a newer reply arrives (it turns the reviewed `dropped` guard into dead code), a turn token on `markAgentReplyComplete` (a public signature change), a gap bound on the turn itself (a slow synthesis would complete it mid-reply), and keeping the BF-718 in-flight key until the last sentence (it errs toward waiting on an `end` that nothing emits; registered as R33). Review round 1: the PTT gate also resets with its agent's subscription (an agent change re-points the composer without a remount, and the next subscription ignores the old agent's events), and the meeting sequencer's wait (`meetingVoice.ts`) ignores `final: false` too. Rejected: per-agent gate state across an agent change (a BF-300 redesign; the return-mid-sentence case is registered as R36) and a gap timer on the meeting wait (a meeting has no ordinary stop between two sentences, and its whole-reply safety timeout bounds one).
 ```
 
 No `docs/development/roadmap.md` change (no new BF).
@@ -570,23 +863,24 @@ No `docs/development/roadmap.md` change (no new BF).
 
 - `[x] M6: an older reply's end no longer completes a newer reply's turn in the same conversation arm (does not gate the live acceptance; built with M7).` Tick it at the merge.
 - `[x] M7: in conversation mode with pipelining on, a reply's turn completes on its last sentence's end (final), not its first (found while drafting M5; built with M6; until it lands, the live acceptance's replies are typed in the chat).` Tick it at the merge; from then on the live acceptance's replies may also be spoken in conversation mode.
-- In #1626's register: mark R25 closed for the PTT gate (M7) with the in-flight key half moved to R33, and record R32 to R34 from §18.
+- In #1626's register: mark R25 closed for the PTT gate (M7) with the in-flight key half moved to R33, and record R32 to R36 from §18 (R32 as extended by A1; R35 and R36 from A1).
 
 ## 9. What this does NOT change
 
 - `voice.ts`, `voiceChunking.ts`, `speechQueueStore.ts`, `conversationController.ts` and their events: no new field, event or export. `final` is read, never produced, here.
 - The reply listener's `dropped` branch, `retire`, `pendingReplies`, the arm's cleanup and `onStateChange` retirement (BF-918 review rounds 2 to 5).
 - The BF-718 in-flight key clear (`ProfileChatTab.tsx:1385-1393`, R33), BF-655's 45 s ceiling and its re-arm on `start`, the effect's cleanup of `ttsWatchdogRef`.
-- The other `onSpeechEvent` consumers, which still act on every sentence's `end`: `wakeWord.ts` (R34), `useLipSyncCapture.ts`, `CrewVRM.tsx`, `ParametricAvatar.tsx`, `ModulationIndicator.tsx` (per-sentence mouth and modulation are correct per sentence), `useMeetingVoice.ts` through `meetingVoice.ts` (the meeting sequencer; its next reply is already held by M5's arbiter).
+- The other `onSpeechEvent` consumers, which still act on every sentence's `end`: `wakeWord.ts` (R34), `useLipSyncCapture.ts`, `CrewVRM.tsx`, `ParametricAvatar.tsx`, `ModulationIndicator.tsx` (per-sentence mouth and modulation are correct per sentence). A1 takes the meeting sequencer (`meetingVoice.ts`) out of this list.
+- `useMeetingVoice.ts`, the conversation controller and the meeting arm's predicate: no code change. Through A1's `meetingVoice.ts` condition, `speakingAgentId`, the speaking label and the BF-621 reveal advance on a reply's last `end`; the AD-915 order, the batch supersession (`shouldContinue`), the owner-scoped flush, the safety timeout and the next reply's hold by M5's arbiter are unchanged.
 - The meeting branch of the arm effect (`:2030-2060`): it has no `onAgentReply`.
 - Pipelining stays default-off. No config, no generated file, no Python.
 
-## 10. Mutation rows (6 TypeScript; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (10 TypeScript; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH. Run each row on the applied tree after an unmutated baseline run passes, and restore the file before the next row. From `ui/`:
 
 ```
-npx vitest run src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx
+npx vitest run src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx src/components/profile/__tests__/ProfileChatTab.bf767.test.tsx src/audio/__tests__/meetingVoice.test.ts
 ```
 
 | # | File | Line (stripped) | Mutate to | Killed by |
@@ -597,8 +891,12 @@ npx vitest run src/components/profile/__tests__/ProfileChatTab.bf918.test.tsx sr
 | M7-3 | `ui/src/components/profile/ProfileChatTab.tsx` | `} else if (event.type === 'end' && event.final === false) {` | `} else if (false) {` | C19, C20, C21 |
 | M7-4 | `ui/src/components/profile/ProfileChatTab.tsx` | `}, PTT_SENTENCE_GAP_MS);` | `}, PTT_TTS_WATCHDOG_MS);` | C20 (the gate is still closed after 5 s) |
 | M7-5 | `ui/src/components/profile/ProfileChatTab.tsx` | `clearTimeout(ttsWatchdogRef.current ?? undefined);` | `void 0;` | C21 (the first sentence's orphaned 45 s ceiling opens the gate during the second sentence) |
+| M7-6 | `ui/src/components/profile/ProfileChatTab.tsx` | `ttsActiveRef.current = false; // the composer mic's click guard reads this` | `void 0;` | C22 `[between two sentences]`, C22 `[while a sentence plays]` (a2's press is refused) |
+| M7-7 | `ui/src/components/profile/ProfileChatTab.tsx` | `setTtsActive(false); // the MicIndicator's 'muted' ring reads this` | `void 0;` | C22 `[between two sentences]`, C22 `[while a sentence plays]` (`muted` stays) |
+| M7-8 | `ui/src/audio/meetingVoice.ts` | `if (e.type === 'end' && e.final === false) return;` | `if (false) return;` | C24, `test_bf918_m7_non_final_end_does_not_advance_or_clear_speaking`, `test_bf918_m7_safety_timeout_still_ends_a_wait_whose_last_sentence_never_ends` |
+| M7-9 | `ui/src/audio/meetingVoice.ts` | `if (e.type === 'end' && e.final === false) return;` | `if (e.type === 'end' && e.final !== true) return;` | `test_waits_for_previous_end_before_next`, `test_bf621_utterance_start_fires_before_speak` (their `end`s carry no `final`) |
 
-M7-1 and M7-2 mutate the same line in two ways; run them as two rows.
+M7-1 and M7-2 mutate the same line in two ways; run them as two rows. M7-8 and M7-9 likewise. The cleanup's two writes (M7-6, M7-7) carry trailing comments so that each is a unique whole line; no row for A1's comment lines or the tests' `Agent` literal. Under M7-9 several other `meetingVoice.test.ts` cases wait on `await p` until vitest's per-test timeout; the named killers fail by assertion first.
 
 No row for: `retire();` and `return;` in M6's block (the guard's line is M6-1), the gap timer's body (`ttsWatchdogRef.current = null;`, `ttsActiveRef.current = false;`, `setTtsActive(false);` each occur more than once in the file; C20's final assertion covers the body), `const PTT_SENTENCE_GAP_MS = 5000;` (M7-4 covers the ceiling's use), and the test file's `deferPause` double (test-only). BF-767's mutant (drop `if (claimed && event.utterance_id !== ourUtteranceId) return;`) stays killed by bf767 `does not complete the new turn on the cancelled utterance's end` under the new expectation: turn 2's listener would then complete on turn 1's `end` (1, not 0). That line is not a row of this campaign, because this change does not touch it.
 
@@ -654,6 +952,33 @@ PROGRESS.md:5             "its join timeout bounds the silence ... frees it at o
 DECISIONS.md:694          "it would cut a last sentence spoken by the browser fallback), and a new event type." (1 line)
 ```
 
+### 11.1 A1 (2026-10-25, worktree `m67-consult`, detached at the candidate `ebaf69b9`, tree `0e41717a`; parent `3860842d`)
+
+```
+git diff --stat 3860842d ebaf69b9   ProfileChatTab.tsx 43+; bf767 test 18; bf918 test 237; meetingVoice.ts and its test untouched (base = candidate there)
+wc -l ProfileChatTab.tsx 3219; ProfileChatTab.bf918.test.tsx 740; meetingVoice.ts 225; meetingVoice.test.ts 478
+ProfileChatTab.tsx:571-625   BF-300 gate effect: 573 agent filter; 590-606 gap branch; 617-625 cleanup (clears ttsWatchdogRef only); deps [agentId]
+ProfileChatTab.tsx:619       "// BF-655: never leave a dangling watchdog timer on unmount." (1 hit in ui/src)
+ProfileChatTab.tsx:343-344   ttsActiveRef, [ttsActive, setTtsActive]; writes only at 575-609 (8); readers 2828 (click guard), 3048 (MicIndicator state)
+ProfileChatTab.tsx:2828-2832 if (ttsActiveRef.current) { console.info(`BF-300: mic press ignored for agent ${agentId} ...`); return; }
+ProfileChatTab.tsx:3044      the only <MicIndicator in ui/src outside tests; MicIndicator.tsx:62 "mic-indicator", :115 "mic-indicator-ring-muted"
+ProfileChatTab.tsx:1107-1118 useMeetingVoice({ meetingActive, participantAgentIds, owner: speechOwner, scopeKey: activeThreadId }); speakingAgentIdRef.current = speakingAgentId
+ProfileChatTab.tsx:2052-2085 meeting arm: canListen: () => speakingAgentIdRef.current == null (2071); submitTranscript; no onAgentReply
+AgentProfilePanel.tsx:68, 740  export function AgentProfilePanel(); <ProfileChatTab agentId={agentId} ... /> (no key)
+CompactApp.tsx:229            <ProfileChatTab agentId={derivedAgentId} ... /> (no key); MobileShell.tsx:175 <ProfileChatTab agentId={yeoId} ... />
+useStore.ts:1616, 1664, 1820, 1904  agents: new Map(); activeProfileAgent: null; callAudioEnabled: true; openAgentProfile
+types.ts:75-94                interface Agent (the C22 literal's fields)
+package.json:27-28            react, react-dom ^19.0.0
+meetingVoice.ts:105-154       _speakAndWait: 127 terminal filter; 138-141 attribution then finish(); 143-144 safety timeout from computeUtteranceTimeout(reply.text)
+meetingVoice.ts:158-192       speakRepliesSequentially: 177 onSpeakingChange(id); 181 await _speakAndWait; 184 onSpeakingChange(null); 190 onUtteranceEnd
+useMeetingVoice.ts:17-32, 155-175  options (meetingActive, participantAgentIds, owner, scopeKey); speak = speakResponse(..., 'narration', owner); subscribe: onSpeechEvent; onSpeakingChange -> setSpeakingAgentId
+conversationController.ts:90-101, 399-410, 433, 350  submitTranscript and canListen options; the submit path ends in _enterSilencePending; the only _setState(owner, 'agent_speaking'); barge-in only there
+voice.ts:464-475              the arbiter's wait ignores an 'end' with final === false (471)
+meetingVoice.test.ts:37-89, 97, 99-101, 363-388, 427  makeFake and fire (81); tick; afterEach useRealTimers; the fake-timer idiom; describe('createVoiceProfileResolver'
+ProfileChatTab.bf918.test.tsx:20, 51-58, 122-144, 163-164, 718-740  the imports Pairs 5 and 6 edit; arm..endAudio; mic mode stored for a1 only; C21 and the describe's close
+gh issue view 1626 --comments | grep -o -E "\bR(3[0-9]|4[0-9])\b"   R30, R31 only (R32 to R34 are this contract's; R35, R36 are A1's)
+```
+
 ## 12. Absence Verified (2026-10-24)
 
 ```
@@ -707,6 +1032,45 @@ FOUND: R30, R31 only
 HOLDS: yes; §18 uses R32 to R34
 ```
 
+### 12.1 A1 (2026-10-25)
+
+```
+CLAIM: the speech-event `final` has no other non-test reader (meetingVoice.ts consumed the same 'end's but read no `final`)
+RUN:   Grep "\.final\b" ui/src (excluding __tests__)
+FOUND: transformersStt.ts:389, 390 (an STT job's own field); voice.ts:471; ProfileChatTab.tsx:590, 2247
+HOLDS: yes; A1 makes meetingVoice.ts the fourth
+
+CLAIM: speakRepliesSequentially has one production caller, and useMeetingVoice one production use
+RUN:   Grep "speakRepliesSequentially|useMeetingVoice\(" ui/src
+FOUND: useMeetingVoice.ts:155; ProfileChatTab.tsx:1107; the rest are tests (meetingVoice.test.ts; useMeetingVoice.test.tsx mocks the sequencer) and comments (staggerReplies.ts:14, ProfileChatTab.ad976.test.tsx:59)
+HOLDS: yes
+
+CLAIM: no existing test feeds `final: false` to the meeting wait, so A1's meetingVoice.ts line changes no existing test's outcome
+RUN:   Grep "sentence_pipelining_enabled: true|final: false" ui/src
+FOUND: voice.pipelining.test.tsx:184, 226 (voice only); transformersStt.ts:277 (STT); ProfileChatTab.tsx:250, 2240 (comments)
+HOLDS: yes (bf918's stub uses a variable; its meeting case is the new C24)
+
+CLAIM: in a meeting nothing ordinary stops a started reply between two sentences
+RUN:   Grep "flushSpeechQueue|stopSpeaking\(|disarmConversationMode|armConversationMode\(" ui/src (excluding __tests__); Grep "agent_speaking'\)" conversationController.ts
+FOUND: stopSpeaking: voice.ts:937 (definition), conversationController.ts:356 (barge-in, in agent_speaking only, :350); agent_speaking set at :433 only (the 1:1 path); flushSpeechQueue (voice.ts:502-511) drops unstarted entries only: useMeetingVoice.ts:90, ProfileChatTab.tsx:1469, voice.ts:938
+HOLDS: yes; the causes left are GUARD 2 and a 1:1 barge-in on another surface (R32)
+
+CLAIM: the gate's ref and state are written only inside the gate effect, so its cleanup is the one place an agent change can leave them
+RUN:   Grep "ttsActiveRef|ttsActive\b|setTtsActive" ProfileChatTab.tsx
+FOUND: declarations 343-344; writes 575-576, 582-583, 600-601, 608-609; reads 2828, 3048
+HOLDS: yes
+
+CLAIM: no `?raw` scan reads meetingVoice.ts beyond the emoji guard, and none pins the ProfileChatTab cleanup lines
+RUN:   Grep "meetingVoice(\.ts)?\?raw" ui/src; Grep "ttsActive|ttsWatchdogRef|BF-655" ui/src/**/__tests__
+FOUND: meetingVoice.test.ts:18 (emoji guard, 447-451); voice.balancedEnd.test.tsx:391-401 (ttsWatchdogRef, clearTimeout(ttsWatchdogRef.current): kept); the rest are a local mirror (304-343) and docs
+HOLDS: yes
+
+CLAIM: A1's new mutation lines are unique whole lines
+RUN:   Grep "the composer mic's click guard reads this|the MicIndicator's 'muted' ring reads this" ui/src; Grep "final" meetingVoice.ts
+FOUND: none before A1; meetingVoice.ts has 1 "final" (the word `finally`, :183)
+HOLDS: yes
+```
+
 ## 13. Prior Art and Blind Spots
 
 A bug-fix slice inside BF-918, so the bounded external search was skipped except for one lookup behind blind spot 1, and the overdue reviews in `docs/research/reference-projects.md` were considered and deferred. Internal prior art used: BF-767 (correlate on the utterance), BF-718 (the claim and the in-flight key), BF-655 (the gate's watchdog), BF-918 review rounds 2 and 3 (the `dropped` branch's turn guard, retirement with the arm), M5's `final` (decision 7 of the M4/M5 contract named M7 as its second consumer).
@@ -719,9 +1083,14 @@ Blind spots found and settled:
 4. **A superseded listener that never sees its own id again** (stopped between sentences, or one that lost the claim) would live to its arm's end; M6 retires it on any `end` (decision 2).
 5. **The tests that pinned the defect** (bf767): updated with the reason inline (decision 6).
 
+6. **The parent decides the lifetime, not the component** (A1, finding 1). A composer re-pointed at another agent without a remount (`AgentProfilePanel`, `CompactApp`) ends a subscription but not the component, so state that belongs to the subscription must end with it. All three parents checked (§11.1).
+7. **A field added for one consumer has others** (A1, finding 2). M5 enumerated the readers of `final`; `meetingVoice.ts` read no `final` but consumed the same `end`s through an injected `subscribe`. The enumeration that finds it is every listener of the event, including injected subscriptions, not every reader of the field.
+8. **A return to an agent while it speaks, and BF-300's per-agent scope.** The return is R36. While another agent is shown, the shown composer's gate ignores the speaking agent's audio: BF-300's design, the limit AD-922 names for meetings. Considered, not changed.
+9. No external search for A1: ProfileChatTab and sequencer plumbing with no outside analogue; the reference-project reviews stay deferred as above.
+
 ## 14. Diff Reviewer: properties to verify
 
-Consumers: the conversation controller (`markAgentReplyComplete`, barge-in, the silence timer), the composer mic's click handler and the MicIndicator, and every test that drives `ProfileChatTab`'s reply listener (bf290, bf718, bf767, audioControl, bf918).
+Consumers: the conversation controller (`markAgentReplyComplete`, barge-in, the silence timer), the composer mic's click handler and the MicIndicator, every parent that mounts or re-points the composer (`AgentProfilePanel`, `CompactApp`, `MobileShell`), the meeting sequencer's consumers (`useMeetingVoice`'s `speakingAgentId`, the meeting arm's `canListen` at `ProfileChatTab.tsx:2071`, the speaking label and the BF-621 reveal), and every test that drives `ProfileChatTab`'s reply listener (bf290, bf718, bf767, audioControl, bf918) or the sequencer (meetingVoice, useMeetingVoice, ad976).
 
 1. A reply's completion listener completes the controller's turn only while its reply is the newest of its arm; once a newer reply has taken the turn, its next `end` of any kind retires it without completing. Its `dropped` branch is unchanged.
 2. With pipelining on, no `end` with `final: false` completes a turn or opens the PTT gate. Every `end` without `final` (pipelining off, single-sentence replies, browser and no-engine paths, mocks) behaves exactly as before, for both.
@@ -731,21 +1100,25 @@ Consumers: the conversation controller (`markAgentReplyComplete`, barge-in, the 
 6. The bf767 tests keep BF-767's property (turn 2 never completes on turn 1's `end`) and say why their counts changed; no test was deleted or skipped.
 7. New tests synchronise with `waitFor`, `act` and microtask flushes, never wall-clock sleeps; C20 and C21 restore real timers in `finally`.
 8. No added text matches the `?raw` scans of §12 (no `speechSynthesis.cancel`, `_activeAudio.pause`, `callMicEnabled`, emoji).
+9. A1: a change of `agentId` with the gate held, during a sentence or between two, leaves the new agent's gate open at once (no `muted` ring; a press is not refused), through the real `AgentProfilePanel` navigation (C22). A re-render that keeps `agentId` (C23) and a newer `start` of the same agent do not open it. The cleanup still leaves no gate timer pending (property 4).
+10. A1: in a meeting no `end` with `final: false` ends a reply's wait: `speakingAgentId`, the label and the reveal hold until the reply's last `end`, so the open mic refuses transcripts while any sentence of the reply plays and accepts one after it (C24). An `end` without `final`, `dropped`, the attribution rules and the safety timeout behave as before; after a non-final `end` with no further event the timeout still ends the wait. The AD-915 order and the next reply's audio, held by the arbiter, are unchanged.
+11. A1 adds no export, signature, event or config, and changes no test outside the four test files named in the header.
 
 ## 15. Acceptance criteria
 
 - [ ] `npx vitest run src/components/profile src/audio src/__tests__/ProfileChatTab` and `npx tsc -b` pass from `ui/`; CI `ui-tests` passes.
 - [ ] The tests-first table of §4 holds on the base, or each difference is reported with the observed assertion.
-- [ ] The 6 rows of §10 are killed.
+- [ ] The 10 rows of §10 are killed.
 - [ ] M6: an older reply's `end` does not complete a newer reply's turn, with pipelining off (C13) and on (C14).
 - [ ] M7: a pipelined reply's turn ends on its last sentence (C15); barge-in works during its second sentence in both event orders (C16); a one-sentence reply is unchanged (C17); a barge-in between sentences leaves the next turn unaffected (C18).
 - [ ] R25: the PTT gate stays closed between sentences (C19), reopens within 5 s after a stop between them (C20), and follows the playing sentence's ceiling (C21).
+- [ ] A1: an agent change between two sentences or during one leaves the new agent's mic ungated (C22, both phases); a re-render for the same agent keeps the gate (C23); in a meeting the speaking id holds until a reply's last sentence and the open mic refuses transcripts until then (C24 and the two `meetingVoice.test.ts` cases).
 - [ ] The live acceptance (BF-918 §16) may speak its replies in conversation mode once this merges.
 - [ ] All changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Live-vessel premise checks
 
-None is needed to build. One optional read after the live acceptance: the `bf918:sentence-gap` values it already collects (BF-918 §16). If any is near 5000 ms, revisit `PTT_SENTENCE_GAP_MS` (decision 5).
+None is needed to build. One optional read after the live acceptance: the `bf918:sentence-gap` values it already collects (BF-918 §16). If any is near 5000 ms, revisit `PTT_SENTENCE_GAP_MS` (decision 5). A1 adds none: in a live meeting with pipelining on, the speaking label should now last to each reply's last sentence, an observation for the live acceptance, not a precondition.
 
 ## 17. Not verified
 
@@ -755,11 +1128,15 @@ None is needed to build. One optional read after the live acceptance: the `bf918
 - M6's production reach (a transcript accepted in `agent_speaking` with no barge-in) is from reading the controller; no live conversation was observed.
 - `PTT_SENTENCE_GAP_MS = 5000` is a judgement, not a measurement (decision 5, §16).
 - C20 and C21's fake-timer use follows `ProfileChatTab.bf764.test.tsx` but was not run in this harness; their margins assume the steps between two clock advances take well under 1 s of real time.
-- Possible phantom-precheck false positives, all introduced here: `PTT_SENTENCE_GAP_MS`, `deferPause`, `pauseOrders`, `firstSentencePlays`, `plays`, `muted`, `GAP_MS`, `TWO`.
+- Possible phantom-precheck false positives, all introduced here: `PTT_SENTENCE_GAP_MS`, `deferPause`, `pauseOrders`, `firstSentencePlays`, `plays`, `muted`, `GAP_MS`, `TWO`; from A1, `final?` on the meeting fake's `fire`, the two `test_bf918_m7_*` names, and the bf918 test's new imports (`renderHook`, `AgentProfilePanel`, `Agent`, `useMeetingVoice`, `armConversationMode`), all of which exist at the paths given (§11.1).
+- A1 was drafted read-only, with no vitest or `tsc` run (`ui/node_modules` absent in the drafting worktree); its tests-first table is from reading. C22 renders `AgentProfilePanel` in this harness as the round-1 reviewer's executed probe did, with the same store fields. Its mic click after the gate opens runs the real capture path against the harness's mocked `startListening`; if that throws, report it and do not drop the click (it is the one observable of `ttsActiveRef`).
+- C24 follows the reviewer's executed meeting probe (real `useMeetingVoice`, `armConversationMode` with the production predicate); its closing control (a transcript after the reply submits once) is new and was not executed.
 
 ## 18. For the register (found here, not fixed by this change)
 
 - **R25 (closed for the PTT gate by M7).** The in-flight key half moves to R33.
-- **R32 (Low, M7's residual).** A pipelined reply that loses the device between two sentences by GUARD 2 (no event of the entry for 45 s, then the next entry's dispatch takes the device; `voice.ts:472`, `:484`, `:543`) emits no further event. Its conversation turn stays `agent_speaking`: barge-in and transcripts still work, so the Captain's next words recover it, but the 30 s release timer does not run until then or the arm ends. Before M7 the first sentence's `end` completed it. Reach: a sentence synthesis that neither returns nor fails for 45 s. Design if needed: `voice.ts` emits a terminal event for a sentence queue that stops after `played > 0` without a `final` `end` (check every `dropped` consumer and BF-655's pairing first), and the PTT gate and the reply listener act on it.
+- **R32 (Low, M7's residual).** A pipelined reply that loses the device between two sentences by GUARD 2 (no event of the entry for 45 s, then the next entry's dispatch takes the device; `voice.ts:472`, `:484`, `:543`) emits no further event. Its conversation turn stays `agent_speaking`: barge-in and transcripts still work, so the Captain's next words recover it, but the 30 s release timer does not run until then or the arm ends. Before M7 the first sentence's `end` completed it. Reach: a sentence synthesis that neither returns nor fails for 45 s. Design if needed: `voice.ts` emits a terminal event for a sentence queue that stops after `played > 0` without a `final` `end` (check every `dropped` consumer and BF-655's pairing first), and the PTT gate, the reply listener and the meeting wait act on it. A1 adds the meeting wait (`meetingVoice.ts` `_speakAndWait`) as a second consumer: after such a stop, or a 1:1 barge-in on another surface between two of a meeting reply's sentences, the wait ends on its whole-reply safety timeout (`computeUtteranceTimeout`, at least 20 s), holding the speaking label and the next speaker until then; no audio plays, and an armed meeting mic refuses transcripts until then. Before A1 the first sentence's `end` ended it.
 - **R33 (Low, R20's family).** The BF-718 in-flight key clear (`ProfileChatTab.tsx:1385-1393`) still runs on every sentence's `end`. An identical reply whose claim is lost after the in-flight one's first sentence has ended completes its turn at once while the rest plays (M7's symptom, for that reply). Reach: identical reply text arriving later than the in-flight reply's first sentence. Not fixed: keeping the key until `final` waits, after a stop between two sentences, on an `end` that nothing emits (decision 4).
 - **R34 (Low).** `wakeWord.ts:187-193` clears its barge-in suppression flag on every `end`, so between two sentences of a reply the wake word is not suppressed. No audio plays during the gap, so the reach is a recognition result that lands in the gap for speech captured during the previous sentence. Design: the same `final === false` check.
+- **R35 (Low, review round 1 finding 3; the base fails it too).** The PTT gate's `end` branches do not check which utterance closed the gate: after a newer `start`, an older utterance id's `end` opens it while the newer utterance plays (non-final: it replaces the 45 s ceiling with the 5 s gap timer; on the base any `end` opens it at once). Reach: injected only; the review did not establish a production ordering, and one candidate (a browser `speechSynthesis.cancel()` whose old `onend` lands after the next utterance's `start`) was not probed. Design if needed: keep the `start`'s `utterance_id` in a ref, ignore an `end` whose id is defined and differs (id-less producers unchanged), and reset the ref with the gate (decision 8).
+- **R36 (Low, pre-existing class; A1 changes one sequence).** The PTT gate knows only utterances that start while its subscription is live. A composer whose agent is already speaking when its subscription begins (a first mount, or since A1 a return to that agent mid-sentence: `AgentProfilePanel` a1, a2, a1) shows the gate open until that agent's next `start`, so a press in that window captures the rest of the sentence (without pipelining, the rest of the reply). Before A1 that return found the gate still closed, from the same stale state that stranded the other agent; a return after the reply had finished was stranded and is now right (decision 8). Reach: navigating back to a crew member while it speaks, then pressing its mic before its next sentence. Design if needed: seed the gate on each subscription from the arbiter (`speechQueueState()`, `speechQueueStore.ts:72`: a `started` entry with this `agent_id`), arming BF-655's ceiling with it; check that `started` means dispatched, not audible (`speechQueueStore.ts:45-52`).
