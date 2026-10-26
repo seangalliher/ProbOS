@@ -1,7 +1,9 @@
 """Ship's Records — Git-backed instance knowledge store (AD-434)."""
 
 import asyncio
+import fnmatch
 import logging
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -162,6 +164,44 @@ def _jaccard_similarity(text_a: str, text_b: str) -> float:
     intersection = words_a & words_b
     union = words_a | words_b
     return len(intersection) / len(union)
+
+
+def _markdown_files_or_raise(search_path: Path) -> list[Path]:
+    """AD-1341 S4 (A4, A5): every file named ``*.md`` under ``search_path``, or the ``OSError`` that hid one.
+
+    A5 (round 3 R3-M1-1): ``os.walk`` filed an entry whose type it could not read as a file and never descended into
+    it, as ``Path.rglob`` passed over a directory it could not list (A4): each standard walker absorbs some error. So
+    this walk is explicit, and each filesystem operation it makes has one disposition (the contract's 7.3a table):
+
+    - O1 ``os.scandir(search_path)``: ``FileNotFoundError`` or ``NotADirectoryError`` lists nothing, since nothing
+      was written under a directory that is not there; any other ``OSError`` raises.
+    - O2 ``os.scandir`` of a directory a listing reported: any ``OSError`` raises, ``FileNotFoundError`` included
+      (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried).
+    - O3 each step of a listing: any ``OSError`` raises.
+    - O4 ``entry.is_dir(follow_symlinks=False)``: any ``OSError`` raises; the entry is never taken for a file. The
+      type comes from the listing record, so a symbolic link is not descended, as ``rglob`` descends none.
+
+    Only a successful listing proves a document absent. A directory named ``*.md`` is no document and is not
+    returned; the suffix matches with the platform's case rule (``fnmatch``), as ``rglob``'s does.
+    """
+    found: list[Path] = []
+    pending: list[Path] = [search_path]
+    while pending:
+        directory = pending.pop()
+        try:
+            listing = os.scandir(directory)  # O1 for search_path, O2 below it
+        except (FileNotFoundError, NotADirectoryError):
+            if directory is not search_path:
+                raise  # O2 (A5): a directory a listing reported is never "no documents"
+            return found  # O1: search_path does not exist, so nothing was written under it
+        with listing:
+            for entry in listing:  # O3: an OSError while listing propagates
+                path = Path(directory, entry.name)
+                if entry.is_dir(follow_symlinks=False):  # O4: an OSError propagates; it is never read as "a file"
+                    pending.append(path)
+                elif fnmatch.fnmatch(entry.name, "*.md"):
+                    found.append(path)
+    return found
 
 
 class RecordsStore:
@@ -966,15 +1006,28 @@ class RecordsStore:
         status: str = "",
         tags: list[str] | None = None,
         classification: str = "",
+        strict: bool = False,
     ) -> list[dict]:
         """List documents with optional filters.
 
         Returns list of {"path": ..., "frontmatter": {...}} dicts.
+
+        A file that cannot be read is skipped and logged at debug. AD-1341 S4 (A2): ``strict=True`` re-raises an
+        ``OSError`` reading a listed regular file instead (a sharing violation, a permission, an I/O error: the file
+        exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
+        AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
+        that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
+        A4, A5: ``strict=True`` walks with ``_markdown_files_or_raise``, which raises every ``OSError`` that could leave
+        a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot read)
+        and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any ``OSError``,
+        with no second look at whether it is still a file (A5).
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         results = []
+        # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
+        found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
 
-        for md_file in sorted(search_path.rglob("*.md")):
+        for md_file in sorted(found):
             rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
             # Skip archived
             if rel_path.startswith("_archived/"):
@@ -982,6 +1035,11 @@ class RecordsStore:
             try:
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
+            except OSError:
+                if strict:  # A5 (O5): a file the walk listed is never "no document", whatever the read's error
+                    raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"
+                logger.debug("Skipping unreadable file", exc_info=True)
+                continue
             except Exception:
                 logger.debug("Skipping unreadable file", exc_info=True)
                 continue

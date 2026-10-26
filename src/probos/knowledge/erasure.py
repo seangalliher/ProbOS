@@ -6,7 +6,7 @@ import dataclasses
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
@@ -125,6 +125,33 @@ async def _live_episodes(memory: Any) -> AsyncIterator[Any]:
         yield episode
 
 
+class ExitNotesBlockErasure(Exception):
+    """AD-1341 S4 (D14): exit notes the next reset would archive cite episodes this erasure would erase; none erased.
+
+    ``paths`` are those notes' Ship's Records paths. The Captain vetoes each with ``probos archive veto PATH --reason
+    TEXT``, so it is never archived, and retries. Ship's Records are the crew's documents, so this path never edits a
+    note. The message carries the count only.
+    """
+
+    def __init__(self, paths: tuple[str, ...]) -> None:
+        super().__init__(f"exit_notes_cite_erased_episodes:count={len(paths)}")
+        self.paths = paths
+
+
+def _refuse_while_an_exit_note_cites(citations: Mapping[str, tuple[str, ...]] | None, episode_ids: list[str]) -> None:
+    """AD-1341 S4 (D14): raise ``ExitNotesBlockErasure`` before anything is erased if a pending exit note cites one.
+
+    ``citations`` (episode id -> the notes citing it) is read once per request, before the manager is built
+    (``archive_promotion.exit_note_citations``); None checks nothing. A module function, so ``ErasureManager`` stays
+    within its 15-method SRP trigger.
+    """
+    if not citations or not episode_ids:
+        return
+    paths = tuple(sorted({path for episode_id in episode_ids for path in citations.get(episode_id, ())}))
+    if paths:
+        raise ExitNotesBlockErasure(paths)
+
+
 class ErasureManager:
     def __init__(
         self,
@@ -133,10 +160,13 @@ class ErasureManager:
         audit_log: AuditLog | None,
         *,
         archive_store: ArchiveStore | None = None,
+        exit_note_citations: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         self._episodic_memory = episodic_memory
         self._attachment_store = attachment_store
         self._audit_log = audit_log
+        # AD-1341 S4: episode id -> the exit notes awaiting promotion that cite it, read once by the route; None checks nothing
+        self._exit_note_citations = exit_note_citations
         # AD-1341 S3: the open Ship's Archive, read only to refuse an erasure while an entry cites its episodes
         self._archive_store = archive_store
 
@@ -149,6 +179,7 @@ class ErasureManager:
         only after a successful erase; an erase failure is raised as the original typed error, unwrapped.
         """
         await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased
+        _refuse_while_an_exit_note_cites(self._exit_note_citations, [episode_id])  # AD-1341 S4: before anything is erased
         attachment_ids = await self._attachment_ids_for_episode(episode_id)
         unlinked = await self._delete_attachments(attachment_ids)
         deleted_episodes = 0
@@ -241,6 +272,7 @@ class ErasureManager:
 
     async def _forget_all(self, episode_ids: list[str], enumeration_error: Exception | None) -> ErasureResult:
         """Erase each episode in turn; raise ``ErasureCascadeIncomplete`` if the scan or any erase failed."""
+        _refuse_while_an_exit_note_cites(self._exit_note_citations, episode_ids)  # AD-1341 S4: a scan's matches, first
         total_count = 0
         deleted_episodes: list[str] = []
         deleted_attachments: set[str] = set()

@@ -43,7 +43,9 @@ logger = logging.getLogger(__name__)
 
 
 # Commands that should NOT be available via the API
-_BLOCKED_COMMANDS = {'/quit', '/debug'}
+# AD-1341 S4: /stand-down gives every crew agent a model turn for minutes. The HXI chat and the channel adapters reach
+# this function without the Captain's console, so it runs only at the console (probos serve --interactive).
+_BLOCKED_COMMANDS = {'/quit', '/debug', '/stand-down'}
 
 # Cache for failed build contexts — enables resolution endpoint (AD-345)
 _pending_failures: dict[str, dict] = {}

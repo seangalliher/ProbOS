@@ -32,6 +32,7 @@ from probos.experience.commands import (
 from probos.experience.commands import commands_wake_word
 from probos.experience.commands import commands_insights  # AD-810
 from probos.experience.commands import commands_schedule  # AD-812
+from probos.experience.commands import commands_stand_down  # AD-1341 S4
 from probos.experience.commands.approval_callbacks import (
     user_escalation_callback,
     user_self_mod_approval,
@@ -120,6 +121,7 @@ class ProbOSShell:
         "/insights":  "Show recent-activity summary (/insights [--days N], default 7) — AD-810",
         "/remind":    "One-shot reminder from natural language (/remind <when> <what>) — AD-812",
         "/schedule":  "Schedule from natural language (/schedule <NL> | list | cancel <id>) — AD-812",
+        "/stand-down": "Each crew agent's one bounded turn to leave exit notes before a reset (console only) — AD-1341",
         "/help":      "Show this help message",
         "/quit":      "Exit ProbOS",
     }
@@ -273,6 +275,7 @@ class ProbOSShell:
             "/insights":   lambda: commands_insights.cmd_insights(rt, con, arg),
             "/remind":     lambda: commands_schedule.cmd_remind(rt, con, arg),
             "/schedule":   lambda: commands_schedule.cmd_schedule(rt, con, arg),
+            "/stand-down": lambda: commands_stand_down.cmd_stand_down(rt, con, arg),
             "/security":   lambda: commands_status.cmd_security(rt, con, arg),
             "/help":       lambda: commands_status.cmd_help(con, self.COMMANDS),
 

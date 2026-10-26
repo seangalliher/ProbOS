@@ -414,8 +414,11 @@ def test_the_service_imports_only_the_knowledge_layer() -> None:
     tree = ast.parse((_SRC / "knowledge" / "archive_promotion.py").read_text(encoding="utf-8"))
     modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     modules |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    # AD-1341 S4 (#1569): the exit note's rule reads the lessons format (``probos.knowledge.lessons``), a module of the
+    # same knowledge layer, so the service still imports only that layer.
     assert {name for name in modules if name.split(".")[0] == "probos"} == {
         "probos.knowledge.archive_store",
+        "probos.knowledge.lessons",
         "probos.knowledge.records_store",
     }
 
