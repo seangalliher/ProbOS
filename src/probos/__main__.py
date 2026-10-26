@@ -3437,7 +3437,7 @@ def _cmd_archive_pending(args: argparse.Namespace) -> int:
     Plain ``print``: a path is shown as text, never as markup.
     """
     config, _ = _load_config_with_fallback(getattr(args, "config", None))
-    if not config.archive.enabled:
+    if not config.archive.enabled:  # AD-1341 S3: a disabled archive is never opened, so pending creates no file
         print("The Ship's Archive is disabled (archive.enabled): nothing is promoted, so there is nothing to review.")
         return 2
     data_dir = Path(getattr(args, "data_dir", None) or _default_data_dir())

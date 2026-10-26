@@ -88,6 +88,19 @@ def test_pending_shows_what_the_next_promotion_would_do_with_each_source(
     assert _counts(archive) == before
 
 
+def test_pending_refuses_a_disabled_archive_and_creates_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2, finding M2-F2: the disabled archive's own refusal, which the M1 base's usage line does not print."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))  # premise: sources a review would list, were the archive enabled
+
+    assert _archive(monkeypatch, _config(tmp_path, archive_enabled=False), data_dir, "pending") == 2
+
+    assert "nothing is promoted, so there is nothing to review." in capsys.readouterr().out
+    assert not (tmp_path / "archive.db").exists()
+
+
 # --- C2: the real seam -------------------------------------------------------------------------------------------
 
 
@@ -152,7 +165,8 @@ def test_a_vetoed_source_survives_two_resets_without_reaching_the_archive_or_a_l
     ids=["not-eligible", "withheld", "archived", "erased", "again", "blank-reason", "declined", "disabled"],
 )
 def test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, code: int, vetoes: int,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], case: str, code: int,
+    vetoes: int,
 ) -> None:
     data_dir = _data_dir(tmp_path)
     asyncio.run(_write_records(data_dir))
@@ -178,6 +192,11 @@ def test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing(
 
     assert _veto(monkeypatch, config, data_dir, ref, reason, yes=yes) == code
 
+    out = capsys.readouterr().out
+    if case == "blank-reason":  # the veto's own refusal, never the usage line the M1 base prints (A2, M2-F1)
+        assert "Do not restate the source's content." in out
+    if case == "disabled":
+        assert "nothing is promoted, so there is nothing to veto." in out
     assert _vetoes_on_disk(archive) == vetoes
     if case == "disabled":
         assert not archive.exists()

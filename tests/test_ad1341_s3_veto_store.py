@@ -17,7 +17,8 @@ import pytest
 
 import probos
 from probos.knowledge.archive_promotion import promote_ship_records, review_promotion
-from probos.knowledge.archive_store import PromotionOutcome, SourceKind, SourceState, VetoOutcome
+from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome, SourceKind, SourceState, VetoOutcome
+from probos.storage.sqlite_factory import default_factory
 from tests.test_ad1341_s1_archive_store import _plant_v0, _record, _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import (
     _CONVERGENCE,
@@ -302,7 +303,21 @@ async def test_the_entries_citing_an_episode_are_found_in_id_order(
     assert found == tuple(ids[name] for name in expected)
 
 
-@pytest.mark.parametrize("fault", ["not-open", "a-string", "corrupt-row"])
+# A2 (finding M1-F1): every cell the read cannot interpret as a list of episode ids, each planted on its own.
+_UNREADABLE_CELLS = {
+    "corrupt-row": "{not json",
+    "dict": '{"another": "ep-a"}',
+    "dict-key": '{"ep-a": 1}',
+    "string": '"ep-a"',
+    "number-list": "[42]",
+    "mixed-list": '["ep-a", 42]',
+    "number": "42",
+    "json-null": "null",
+    "empty-text": "",
+}
+
+
+@pytest.mark.parametrize("fault", ["not-open", "a-string", *_UNREADABLE_CELLS, "sql-null"])
 async def test_the_citation_read_never_answers_none_when_it_cannot_read(tmp_path: Path, fault: str) -> None:
     path = tmp_path / "archive.db"
     store = _store(tmp_path)
@@ -310,21 +325,34 @@ async def test_the_citation_read_never_answers_none_when_it_cannot_read(tmp_path
         with pytest.raises(RuntimeError):
             await store.entry_ids_citing(["ep-a"])
         return
+    if fault == "sql-null":  # an AD-524 file whose citation column was added nullable before S1's migration ran
+        _plant_v0(path)
+        connection = sqlite3.connect(str(path))
+        try:
+            connection.execute("ALTER TABLE archive ADD COLUMN source_episode_ids TEXT")
+            connection.commit()
+        finally:
+            connection.close()
     await store.initialize()
     try:
         if fault == "a-string":
             with pytest.raises(TypeError):
                 await store.entry_ids_citing("ep-a")
             return
-        connection = sqlite3.connect(str(path))
-        try:
-            connection.execute(
-                "INSERT INTO archive (timeline_id, category, title, content, archived_at, source_kind, source_ref, "
-                "source_episode_ids) VALUES ('t', 'c', 't', 'c', 0, 'convergence_report', 'r', '{not json')"
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        if fault in _UNREADABLE_CELLS:
+            connection = sqlite3.connect(str(path))
+            try:
+                connection.execute(
+                    "INSERT INTO archive (timeline_id, category, title, content, archived_at, source_kind, source_ref, "
+                    "source_episode_ids) VALUES ('t', 'c', 't', 'c', 0, 'convergence_report', 'r', ?)",
+                    (_UNREADABLE_CELLS[fault],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+        planted = [None, None] if fault == "sql-null" else [_UNREADABLE_CELLS[fault]]
+        assert [row[0] for row in _rows(path, "SELECT source_episode_ids FROM archive ORDER BY id")] == planted
+
         with pytest.raises(ValueError):
             await store.entry_ids_citing(["ep-a"])
     finally:
@@ -334,22 +362,105 @@ async def test_the_citation_read_never_answers_none_when_it_cannot_read(tmp_path
 # --- V7: overlapping writes ----------------------------------------------------------------------------------------
 
 
-async def test_a_veto_and_a_promotion_of_one_source_never_both_succeed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("first", ["veto", "promotion"])
+async def test_a_veto_and_a_promotion_of_one_source_never_both_succeed(tmp_path: Path, first: str) -> None:
+    """``gather`` starts its tasks in order, and the first takes the store's lock before the second runs, so each
+    order runs deterministically and must end as that order requires (A2, finding M1-F3: K4)."""
     path = tmp_path / "archive.db"
     store = _store(tmp_path)
     await store.initialize()
     try:
         record = _record()
-        vetoed, promoted = await asyncio.gather(
-            store.veto_source(record.source_kind, record.source_ref, "an overlapping veto"), store.promote_entry(record),
-        )
+        veto = store.veto_source(record.source_kind, record.source_ref, "an overlapping veto")
+        promotion = store.promote_entry(record)
+        if first == "veto":
+            vetoed, promoted = await asyncio.gather(veto, promotion)
+        else:
+            promoted, vetoed = await asyncio.gather(promotion, veto)
     finally:
         await store.close()
     counts = _counts(path)
-    assert (vetoed, promoted, counts["archive"], counts["archive_vetoes"]) in {
-        (VetoOutcome.RECORDED, PromotionOutcome.VETOED, 0, 1),
-        (VetoOutcome.ARCHIVED, PromotionOutcome.CREATED, 1, 0),
-    }
+    assert (vetoed, promoted, counts["archive"], counts["archive_vetoes"]) == {
+        "veto": (VetoOutcome.RECORDED, PromotionOutcome.VETOED, 0, 1),
+        "promotion": (VetoOutcome.ARCHIVED, PromotionOutcome.CREATED, 1, 0),
+    }[first]
+
+
+class _PausedCommit:
+    """A real connection whose next commit, once armed, waits until released and then fails (S1 D16 under test)."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.armed = False
+        self.waiting = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def commit(self) -> None:
+        if self.armed:
+            self.armed = False
+            self.waiting.set()
+            await self.release.wait()
+            raise sqlite3.OperationalError("an injected commit failure")
+        await self._inner.commit()
+
+
+class _PausedCommitFactory:
+    """The startup's ``default_factory``, with its connection wrapped in ``_PausedCommit``."""
+
+    connection: _PausedCommit
+
+    async def connect(self, db_path: str, *, read_only: bool = False) -> _PausedCommit:
+        self.connection = _PausedCommit(await default_factory.connect(db_path, read_only=read_only))
+        return self.connection
+
+
+def _paused_store(tmp_path: Path, factory: _PausedCommitFactory) -> ArchiveStore:
+    return ArchiveStore(str(tmp_path / "archive.db"), connection_factory=factory)
+
+
+@pytest.mark.parametrize("failing", ["veto-fails", "promotion-fails"])
+async def test_a_write_whose_commit_fails_leaves_nothing_the_other_write_can_commit(
+    tmp_path: Path, failing: str,
+) -> None:
+    """A2, finding M1-F2: the second write waits on the store's lock, and the first's failed commit is rolled back
+    before it runs, so the second never commits, nor is decided by, what the failed write left uncommitted."""
+    path = tmp_path / "archive.db"
+    factory = _PausedCommitFactory()
+    store = _paused_store(tmp_path, factory)
+    await store.initialize()
+    record = _record()
+
+    def veto() -> Any:
+        return store.veto_source(record.source_kind, record.source_ref, "the Captain's veto")
+
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        factory.connection.armed = True
+        tasks.append(asyncio.create_task(veto() if failing == "veto-fails" else store.promote_entry(record)))
+        await asyncio.wait_for(factory.connection.waiting.wait(), 5)
+        counts = _counts(path)
+        assert counts["archive"] + counts["archive_vetoes"] == 0  # premise: the first write is not committed
+        tasks.append(asyncio.create_task(store.promote_entry(record) if failing == "veto-fails" else veto()))
+        done, _waiting = await asyncio.wait({tasks[1]}, timeout=0.2)
+        assert not done  # the store's lock: the second write waits for the first to end
+        factory.connection.release.set()
+        with pytest.raises(sqlite3.OperationalError):
+            await tasks[0]
+        outcome = await asyncio.wait_for(tasks[1], 5)
+    finally:
+        factory.connection.release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await store.close()
+    counts = _counts(path)
+    if failing == "veto-fails":
+        assert (outcome, counts["archive"], counts["archive_vetoes"]) == (PromotionOutcome.CREATED, 1, 0)
+    else:
+        assert (outcome, counts["archive"], counts["archive_vetoes"]) == (VetoOutcome.RECORDED, 0, 1)
 
 
 # --- V8 to V10: the service --------------------------------------------------------------------------------------

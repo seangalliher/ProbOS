@@ -333,8 +333,9 @@ _VETO_SQL = (
     "ON CONFLICT (source_kind, source_ref) DO NOTHING"
 )
 
-# AD-1341 S3 (D9): every entry that cites an episode; AD-524 rows and uncited entries hold '[]'.
-_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids NOT IN ('', '[]') ORDER BY id"
+# AD-1341 S3 (D9, D10): every entry whose citation cell is not the canonical '[]' (AD-524 rows and uncited entries hold
+# it). SQL NULL and empty text are fetched, so that entry_ids_citing refuses them instead of skipping them.
+_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids IS NOT '[]' ORDER BY id"
 
 # The marker copies only the entry's id, timeline and source from the row it is about to delete.
 _ERASURE_MARKER_SQL = (
@@ -618,7 +619,7 @@ class ArchiveStore:
                     was_erased = await cursor.fetchone() is not None
                 await self._db.commit()
             except BaseException:
-                await _rollback_quietly(self._db)
+                await _rollback_quietly(self._db)  # AD-1341 S3: nothing is left open for the next write
                 raise
         if recorded:
             logger.warning("AD-1341 S3: the Captain vetoed a %s source's promotion into the Ship's Archive", kind)
@@ -655,8 +656,10 @@ class ArchiveStore:
 
         The AD-754 erasure manager's check (``knowledge/erasure.py``): an episode an entry cites is not erased until
         the Captain has erased the entry (D8). Blank ids match nothing. A read, with no lock (S1 D16). It raises when
-        the store is not open or a citation list cannot be read, and never answers "none" then: an erasure that
-        cannot check must not go on as if nothing cited the episode (D10).
+        the store is not open, and ``ValueError`` when any citation cell is not a JSON list of strings (malformed
+        JSON, an object, a string, a number, ``null``, a list holding a non-string, empty text or SQL NULL): it never
+        answers "none" then, because an erasure that cannot check must not go on as if nothing cited the episode (D10).
+        One statement per call; ``_CITING_SQL`` skips only the canonical ``'[]'``.
         """
         if type(episode_ids) not in (list, tuple) or any(type(item) is not str for item in episode_ids):
             raise TypeError("AD-1341: entry_ids_citing takes a list or tuple of episode ids")
@@ -667,8 +670,11 @@ class ArchiveStore:
             return ()
         cursor = await self._db.execute(_CITING_SQL)
         citing: list[int] = []
-        for entry_id, cited in await cursor.fetchall():
-            if wanted.intersection(json.loads(cited)):
+        for entry_id, cell in await cursor.fetchall():
+            cited = json.loads(cell) if type(cell) is str else None  # SQL NULL, or a blob, is no citation list (D10)
+            if type(cited) is not list or any(type(item) is not str for item in cited):
+                raise ValueError(f"AD-1341 S3: Ship's Archive entry {entry_id}'s citation list cannot be read")
+            if wanted.intersection(cited):
                 citing.append(entry_id)
         return tuple(citing)
 
