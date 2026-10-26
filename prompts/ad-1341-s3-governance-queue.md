@@ -2,11 +2,11 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26
 
-**Status:** build-ready. Slice 3 of 6 of #1569; it does not close the issue. No new AD or BF number. **Base (re-anchored by the orchestrator, 2026-10-26):** `origin/main` `2ca3a6ed603013316d65f59a7b80ec30a80be00f`, tree `83711dc2ee9edc59f3786c44e47f6742de50315a`, with S1, BF-925 and S2 merged (S2: `prompts/ad-1341-s2-inherited-label.md`, PR #1682). The Architect drafted this contract on `7bdd9c32` (tree `54c086ffc33b64aa9dbe413575fb3ad89950071e`) against S2's first contract; S2 then took three amendments (A2, A3 and A3c). Every SEARCH block below was applied by tool to the merged base's tree, 36 of 36 pairs (M1 16, M2 7, M3 11, trackers 2), each matching exactly once. The SEARCH blocks, not the line numbers in §0 and §11 (taken on `7bdd9c32`), are what binds, and §0's "S2 overlap" paragraph describes the draft's base, not this one. After the M1 build the orchestrator also corrected §6's first failing import name for M1 (`review_promotion`, not `SourceState`). **Captain:** nothing in this slice requires the Captain (D17).
+**Status:** build-ready. Slice 3 of 6 of #1569; it does not close the issue. No new AD or BF number. **Base (re-anchored by the orchestrator, 2026-10-26):** `origin/main` `2ca3a6ed603013316d65f59a7b80ec30a80be00f`, tree `83711dc2ee9edc59f3786c44e47f6742de50315a`, with S1, BF-925 and S2 merged (S2: `prompts/ad-1341-s2-inherited-label.md`, PR #1682). The Architect drafted this contract on `7bdd9c32` (tree `54c086ffc33b64aa9dbe413575fb3ad89950071e`) against S2's first contract; S2 then took three amendments (A2, A3 and A3c). Every SEARCH block below was applied by tool to the merged base's tree, 36 of 36 pairs (M1 16, M2 7, M3 11, trackers 2), each matching exactly once. The SEARCH blocks, not the line numbers in §0 and §11 (taken on `7bdd9c32`), are what binds, and §0's "S2 overlap" paragraph describes the draft's base, not this one. After the M1 build the orchestrator also corrected §6's first failing import name for M1 (`review_promotion`, not `SourceState`). **Amendment A2 (2026-10-26, round 1 of review: three `gpt-6.1-sol` reviewers, eight findings, no P1).** The citation read answered "nothing cites this" for a cell that is not a JSON list of strings and skipped SQL NULL and empty text (M1-F1, the M1 reviewer; M3-F2, the M3 reviewer, who showed an erasure going through at all three entry points): it now raises (7.1 pairs 5 and 9; V6b, E5, E8; K15, K19 to K23). V7 ran only the veto-first order, and nothing pinned the store lock or the veto's rollback (M1-F3, found first by the orchestrator's census as K4's unkilled claim; M1-F2, the M1 reviewer): V7 runs both orders and V7b pauses and fails a commit (K24 to K26). The M2 tests-first proof accepted an absent command in two cases and nothing protected `pending`'s disabled refusal (M2-F1, M2-F2, the M2 reviewer): C3 asserts its refusal texts, C7 and C-9 are new, and §6's failure locations are corrected. The M3 tests had no attachment store or audit log, so either side effect could move before the refusal (M3-F1, the M3 reviewer): E9, E-6, E-7. A shared attachment blob (M3-F3) and the reviewers' notes are registered (R11 to R15). No pair is added: three REPLACE bodies change (7.1 pairs 5 and 9, 7.6 pair 5; two of the changes are comments that make a mutation anchor unique), with the three new test files. **Captain:** nothing in this slice requires the Captain (D17).
 
 **Milestones and tiers:** M1 the veto record and the two reads (**HIGH**: data integrity, the veto record); M2 the Captain's CLI (**STANDARD**: the Captain's surface over M1's contract); M3 the AD-754 erasure check (**HIGH**: erasure, privacy); M4 trackers. Each milestone is one Builder delegation and one local commit. The broad gate is the orchestrator's single canonical run, once, after M4: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label ad1341-s3 --receipt logs/gates/ad1341-s3.receipt.json`. The Builder runs only the focused gates in §4. Review: cross-family (`gpt-6.1-sol`) for M1 and M3; one round for M2. One mutation campaign, on the assembled tree (§10).
 
-**Tests:** new `tests/test_ad1341_s3_veto_store.py` (M1: 12 functions, 34 cases), `tests/test_ad1341_s3_review_cli.py` (M2: 6 functions, 17 cases), `tests/test_ad1341_s3_erasure_cascade.py` (M3: 8 functions, 15 cases). Updated: `tests/test_ad1341_s1_archive_store.py` (M1: the store's pinned public surface, with an inline reason).
+**Tests:** new `tests/test_ad1341_s3_veto_store.py` (M1: 13 functions, 46 cases), `tests/test_ad1341_s3_review_cli.py` (M2: 7 functions, 18 cases), `tests/test_ad1341_s3_erasure_cascade.py` (M3: 9 functions, 24 cases). Updated: `tests/test_ad1341_s1_archive_store.py` (M1: the store's pinned public surface, with an inline reason).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -68,7 +68,7 @@ The default stays as S1 left it: a reset promotes everything eligible that the C
   - **(A) chosen:** a row in `archive_vetoes` holding the source kind, source ref, the Captain's reason (1–500 characters, stripped), the timeline it was vetoed in (the instance id, or `""`) and the time. It never holds a title, content, metadata or hash. A unique index on `(source_kind, source_ref)` makes one veto per source. It blocks the source with any content, as S1 D7's erasure marker does. The record is kept: as the governed-memory study puts it, "rejected candidates ... are evidence that selection occurred" (§13).
   - (B) key the veto by content hash: rejected. A one-character edit would evade it, and the hash of short content can be guessed (S1 D7 C).
   - (C) reuse `archive_erasures` with no entry: rejected. `entry_id` is `NOT NULL`, S1's marker tests pin that table's shape, and one table would carry two meanings.
-- **D5 (what a veto does and refuses).** `veto_source` is one `INSERT … SELECT … WHERE NOT EXISTS … ON CONFLICT DO NOTHING` statement under `_write_lock` (S1 D16). It returns `RECORDED`; `ARCHIVED`, writing nothing, when any entry from the source is archived (a veto does not remove an entry; `erase_entry` does, so each verb keeps one meaning); `ERASED`, writing nothing, when the Captain erased the source (it is already never promoted again); `ALREADY_VETOED` for a second veto, which keeps the first reason. A veto cannot be lifted in S3 (register R4).
+- **D5 (what a veto does and refuses).** `veto_source` is one `INSERT … SELECT … WHERE NOT EXISTS … ON CONFLICT DO NOTHING` statement under `_write_lock` (S1 D16). It returns `RECORDED`; `ARCHIVED`, writing nothing, when any entry from the source is archived (a veto does not remove an entry; `erase_entry` does, so each verb keeps one meaning); `ERASED`, writing nothing, when the Captain erased the source (it is already never promoted again); `ALREADY_VETOED` for a second veto, which keeps the first reason. A veto cannot be lifted in S3 (register R4). A revision of an archived source cannot be vetoed while the entry stands (ARCHIVED): the Captain erases the entry, which stops the source with any content (register R15).
 - **D6 (promotion honours a veto; one rule for two reads).** `_PROMOTE_SQL` adds `AND NOT EXISTS` on `archive_vetoes` to its one statement, so a veto can never land between a check and the insert. After a refused insert the classification order is erased, then vetoed, then present. `source_state` runs the same checks in the same order and returns `CREATED` when none holds, with the ids already archived from the source. It is a read with no lock, so a veto or erasure after the review decides the promotion: the review is not a reservation. Tested both ways (§6, V5 and V5b): the two agree in every state, and a veto or erasure between them decides the promotion.
 - **D7 (schema).**
   - **(A) chosen:** `archive_vetoes` and its index are added to `_SCHEMA` with `IF NOT EXISTS`, so every open creates them; `user_version` stays 1. A v1 file written before S3 gains the table on its next open, with every row kept (V1).
@@ -79,7 +79,7 @@ The default stays as S1 left it: a reset promotes everything eligible that the C
   - (C) cascade only when a crew-scope token is configured and presented: deferred. It needs `/forget`'s authorization changed (a tightening with its own consumers: the AD-1340 S2a and S2b seam tests post to it without the header) and a second deleter of entries. It can be added on top of (A) later (register R1).
   - (D) erase the episodes and keep the entries: rejected. A curated summary would outlive its erased evidence, and an agent or resource retry could never find those episodes again to report them.
 - **D9 (which entries an erasure reaches).** Citations only: an entry whose `source_episode_ids` names an episode the request matched. Not by author: AD-754 does not erase an agent's Ship's Records either, records-sourced entries carry no `author_did`, and callsigns repeat across generations (S2's RS2-3). Not by `source_ref`, which is a records path, not an AD-754 key. Not by content match, which would erase curated culture on a substring. Not by `classification`, which is `ship` or `fleet` on every entry. Any entry can still be erased by id (S1). The test proves that an entry authored by the agent and citing nothing does not block that agent's erasure (E3).
-- **D10 (order and failure).** The check runs before anything is erased: for one episode, before its attachments; for a resource or an agent, after the scan and before `_forget_all`. Each per-episode erase checks again, so a citation that lands after the scan still stops that episode (E8). A failed read (the store closed, a corrupt citation list) propagates with nothing erased (E5). With no open archive (disabled, failed at boot, or closed at shutdown) there is nothing to check, and the erasure proceeds as before (E4; register R2).
+- **D10 (order and failure).** The check runs before anything is erased: for one episode, before its attachments; for a resource or an agent, after the scan and before `_forget_all`. Each per-episode erase checks again, so a citation that lands after the scan still stops that episode (E8). A failed read propagates with nothing erased: the store closed, or any citation cell that is not a JSON list of strings (malformed JSON, an object, a string, a number, `null`, a list holding a non-string, empty text or SQL NULL), which the read refuses and never answers "none" for (V6b, E5; a cell that becomes unreadable after the scan fails every per-episode erase, E8). "Before anything is erased" covers the matched episodes, their own attachments and the audit marking (E9); an attachment blob another episode also references is unlinked as before S3 (register R11). With no open archive (disabled, failed at boot, or closed at shutdown) there is nothing to check, and the erasure proceeds as before (E4; register R2).
 - **D11 (AD-1340's retention rule).** Retention, when #1568 S5 builds it, protects a cited episode from decay and eviction, never from the Captain's erasure. Under D8 no archive entry ever cites an erased episode, so S5 may rely on that.
 - **D12 (authority).** A veto and an erasure of an entry are the Captain's, through the operator's shell, as S1 decided. The censuses: `veto_source` is named in `src` only by `__main__.py` (C6); `erase_entry` still only by `__main__.py` (E6, S1's R11 unchanged); `entry_ids_citing` only by `knowledge/erasure.py`; `ErasureManager` is built only by `routers/security.py` (E6); `source_state` only by the review service (V10). The route only refuses.
 - **D13 (audit).** The `archive_vetoes` and `archive_erasures` rows are the audit of record (content-free). Each veto logs a WARNING naming the source kind; a refused erasure logs a WARNING with the count. No `EventType`: the CLI runs offline with no event bus, and AD-754's manager emits none today. `generations` gains no vetoed count (register R9).
@@ -117,7 +117,7 @@ If S2 has not merged when M1 starts, drop `tests/test_ad1341_s2_inherited_label.
 | `archive_vetoes` table and unique index | `ArchiveStore` (its writer and readers); `docs/development/store-baseline.yaml` rule 11 (7.3); `scripts/check_store_registry.py --check`; `tests/test_ad1256_store_registry.py`; the AD-1265 archive backup root (online backup copies every table) | registry row updated; backup unchanged in shape |
 | `PromotionOutcome.VETOED` | `promote_ship_records` (its one consumer in `src`: Absence S3-AV6); tests comparing outcomes by identity | a vetoed source is reported as vetoed, never as present |
 | `PromotionReport.vetoed` (defaulted) | `__main__._promote_into_archive` (the message); `tests/test_ad1341_s1_promotion.py:256` compares a whole report with four keyword fields, which the default keeps equal | message gains the count |
-| `veto_source`, `source_state`, `entry_ids_citing` | M2's CLI (`veto_source`), `review_promotion` (`source_state`), M3's manager (`entry_ids_citing`); S1's A7 pin (7.4) | new; censuses V10, C6, E6 |
+| `veto_source`, `source_state`, `entry_ids_citing` | M2's CLI (`veto_source`), `review_promotion` (`source_state`), M3's manager (`entry_ids_citing`); S1's A7 pin (7.4) | new; censuses V10, C6, E6. A2: `entry_ids_citing` raises `ValueError` for any fetched cell that is not a JSON list of strings, and `_CITING_SQL` skips only `'[]'`; its one consumer, `_refuse_while_the_archive_cites`, propagates it, and `_forget_all` records it per episode (E5, E8) |
 | `VetoOutcome`, `SourceState` | M2's CLI, the review service | new |
 | `review_promotion`, `PromotionReview`, `PendingSource` | M2's `probos archive pending` | new |
 | `_PROMOTE_SQL` gains a veto check and two parameters | `promote_entry` only | refuses a vetoed source |
@@ -131,7 +131,7 @@ If S2 has not merged when M1 starts, drop `tests/test_ad1341_s2_inherited_label.
 
 ## 6. Tests
 
-On each milestone's base, every test in its new file fails at import or at its first assertion (M1: `ImportError: cannot import name 'review_promotion'`, the first new name in the file's import order, because it imports `archive_promotion` before `archive_store`, so the file cannot run against §7.1 alone and needs §7.2 before it imports; M2: the M2 file imports M1's test module, which imports fine after M1, then fails at its first assertion; M3: `ImportError: cannot import name 'ArchiveCitationsBlockErasure'`). The last column names the assertion that fails once the names exist but the behaviour is the base's. It is the Architect's analysis, not a run (no Builder order reaches it for M1), and the evidence that each test discriminates is the orchestrator's mutation census (§10).
+On each milestone's base, every test in its new file fails at import or at its first assertion (M1: `ImportError: cannot import name 'review_promotion'`, the first new name in the file's import order, because it imports `archive_promotion` before `archive_store`, so the file cannot run against §7.1 alone and needs §7.2 before it imports; M2: the M2 file imports M1's test module, which imports after M1, and then each of its 18 cases fails at an assertion; M3: `ImportError: cannot import name 'ArchiveCitationsBlockErasure'`, and with that name and the `archive_store` keyword made compatible and no check, 19 of its 24 cases fail while E3 (3) and E4 (2) pass, as controls). **What tests first can show for M2 (A2, M2-F1).** On the M1 base `_cmd_archive` answers every sub-command but `erase` with its usage line and exit 2 (`072adb71:src/probos/__main__.py:3367-3369`), so a case whose expected exit is 2 cannot fail on its exit code: C3 `[blank-reason]`, C3 `[disabled]` and C7 each assert their own refusal text, which the usage line does not contain, and fail there. Tests first therefore shows that the two commands are absent; it cannot show which guard refuses, and the census does (C-2 to C-4, C-6, C-9). C2 fails at its first assertion (its first `pending`) and C3 `[again]` at its arranging veto, before the assertions that are their point. The last column names the assertion that fails once the names exist but the behaviour is the base's. It is the Architect's analysis, not a Builder's run for M1 (round 1's reviewers ran M2's and M3's: before A2, 15 of 17 M2 cases failed, the two C3 cases above passing, and 10 of 15 M3 cases, with E3 and E4 as controls), and the evidence that each test discriminates is the orchestrator's mutation census (§10).
 
 **M1, `tests/test_ad1341_s3_veto_store.py`:**
 
@@ -144,8 +144,9 @@ On each milestone's base, every test in its new file fails at import or at its f
 | V5 | `test_the_review_reads_what_promote_entry_then_does[new, present, revised, erased, vetoed]` | D6, one rule for both reads: `source_state` equals the expected state, writes nothing, and `promote_entry` then returns the same outcome | `preview == expected` |
 | V5b | `test_a_veto_or_erasure_after_the_review_decides_the_promotion[veto, erasure]` | D6, the case that changes the state between the two reads: the review says CREATED, a veto or erasure lands, and the promotion is refused | `promote_entry(record) is expected` |
 | V6 | `test_the_entries_citing_an_episode_are_found_in_id_order[one, two-in-id-order, none, blank-ignored, empty, tuple]` | D9: ids ascending; AD-524 rows and uncited entries never match; blank ids ignored; nothing written | `found == ...` |
-| V6b | `test_the_citation_read_never_answers_none_when_it_cannot_read[not-open, a-string, corrupt-row]` | D10: RuntimeError, TypeError, ValueError; never `()` | `pytest.raises(RuntimeError)` |
-| V7 | `test_a_veto_and_a_promotion_of_one_source_never_both_succeed` | D5, D6 under S1 D16: overlapping calls agree with the file | the outcome-and-count tuple |
+| V6b | `test_the_citation_read_never_answers_none_when_it_cannot_read[not-open, a-string, corrupt-row, dict, dict-key, string, number-list, mixed-list, number, json-null, empty-text, sql-null]` | D10: RuntimeError, TypeError, then ValueError for every cell that is not a JSON list of strings (an object, a string, a list holding a number, a number, `null`, empty text, and SQL NULL on an AD-524 file whose citation column was added nullable); never `()` and never a match read from an object's keys | `pytest.raises(RuntimeError)` |
+| V7 | `test_a_veto_and_a_promotion_of_one_source_never_both_succeed[veto, promotion]` | D5, D6 under S1 D16: `gather` starts its tasks in order, so each order runs deterministically and ends as it must: veto first, RECORDED then VETOED; promotion first, CREATED then ARCHIVED | the outcome-and-count tuple |
+| V7b | `test_a_write_whose_commit_fails_leaves_nothing_the_other_write_can_commit[veto-fails, promotion-fails]` | S1 D16 for the S3 writes: the first write's commit pauses, then fails; the second waits on the lock and, after the rollback, runs as if the first never happened (promotion CREATED; veto RECORDED) | `store.veto_source` (base: `AttributeError`) |
 | V8 | `test_the_promotion_reports_a_vetoed_source_and_archives_the_rest` | the service: `vetoed` holds the source; the rest promoted; no row for it | `report.vetoed == (_CONVERGENCE,)` |
 | V9 | `test_the_review_shows_what_promoting_each_source_now_would_do_and_writes_nothing` | the review over real Ship's Records: revised (with the entry it revises), present, erased, vetoed, new, withheld; the archive's row counts unchanged | `states == {...}` |
 | V10 | `test_only_the_review_reads_what_a_promotion_would_do` | census: `source_state` named in `src` only by `knowledge/archive_promotion.py` | `_naming(...) == {...}` |
@@ -155,11 +156,12 @@ On each milestone's base, every test in its new file fails at import or at its f
 | Id | Test | Property | First assertion to fail on the base |
 |---|---|---|---|
 | C1 | `test_pending_shows_what_the_next_promotion_would_do_with_each_source` | `probos archive pending` over the V9 scene: the header, one line per state with entry ids, the withheld line; exit 0; the archive's counts unchanged | `_archive(..., "pending") == 0` (base: 2, usage) |
-| C2 | `test_a_vetoed_source_survives_two_resets_without_reaching_the_archive_or_a_later_crew` | **the real seam:** pending, then the Captain's veto, then a real tier 2 reset ("1 vetoed by the Captain"), then the next crew revises the report and resets again; never archived; the generations rows; a later crew's real Oracle never returns it; pending shows it vetoed | `"  + would be promoted: ..." in out` (base: no pending) |
-| C3 | `test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing[not-eligible, withheld, archived, erased, again, blank-reason, declined, disabled]` | exit 1, 1, 1, 0, 0, 2, 0, 2; no veto row beyond the first | the exit code |
+| C2 | `test_a_vetoed_source_survives_two_resets_without_reaching_the_archive_or_a_later_crew` | **the real seam:** pending, then the Captain's veto, then a real tier 2 reset ("1 vetoed by the Captain"), then the next crew revises the report and resets again; never archived; the generations rows; a later crew's real Oracle never returns it; pending shows it vetoed | `_archive(..., "pending") == 0`, its first assertion (base: 2, the usage line) |
+| C3 | `test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing[not-eligible, withheld, archived, erased, again, blank-reason, declined, disabled]` | exit 1, 1, 1, 0, 0, 2, 0, 2; no veto row beyond the first; `[blank-reason]` and `[disabled]` print the veto's own refusal, which the usage line does not contain | the exit code; `[again]` at its arranging veto; `[blank-reason]` and `[disabled]` at the refusal text (base: the usage line, exit 2) |
 | C4 | `test_main_dispatches_pending_and_veto_with_the_captains_options[pending, pending-root-data-dir, veto, veto-root-config, veto-own-data-dir]` | the parser, with S1 D19's SUPPRESS rule | `SystemExit` code 3 (base: argparse exits 2) |
 | C5 | `test_the_dry_run_points_the_captain_to_the_review` | D14: the hint; S1's plan line kept; no archive file | `"probos archive pending" in out` |
 | C6 | `test_only_the_cli_vetoes_a_source` | census: `veto_source` named only by `__main__.py` | `_naming("veto_source") == {"__main__.py"}` (after M1: empty set) |
+| C7 | `test_pending_refuses_a_disabled_archive_and_creates_no_file` | disclosed effect 4's limit: with the archive disabled, `pending` exits 2 with its own diagnostic and creates no archive file | the refusal text (base: the usage line, exit 2, no file) |
 
 **M3, `tests/test_ad1341_s3_erasure_cascade.py`:**
 
@@ -169,12 +171,13 @@ On each milestone's base, every test in its new file fails at import or at its f
 | E2 | `test_the_captain_erases_the_citing_entry_then_the_forget_route_erases_the_episodes[episode, agent]` | **the real seam:** the real app's `/forget` answers 409 with the id and erases nothing; the Captain's real `probos archive erase` erases the entry with its marker; the retry answers 200 and erases the episodes; the uncited entry is kept | `refused.status_code == 409` (base: 200) |
 | E3 | `test_an_erasure_no_archive_entry_cites_erases_as_before[episode, agent, resource]` | D9: an entry citing another episode, and one authored by the agent that cites nothing, block nothing | (passes on the base once the keyword exists: the control) |
 | E4 | `test_the_forget_route_consults_only_a_real_archive_store[mock, none]` | D10: a runtime double's `MagicMock` attribute, or None, is no archive; the erasure proceeds | `erased.status_code == 200` (fails only if the route passes a non-store) |
-| E5 | `test_an_archive_that_cannot_answer_stops_the_erasure_before_anything_is_erased[closed, corrupt-row]` | D10: the failed read propagates; both episodes live | `pytest.raises((RuntimeError, ValueError))` |
+| E5 | `test_an_archive_that_cannot_answer_stops_the_erasure_before_anything_is_erased[closed, corrupt-row, dict, string, dict-agent, dict-resource]` | D10: the failed read propagates at each entry point, an object or a string cell included; both episodes live | `pytest.raises((RuntimeError, ValueError))` |
 | E6 | `test_only_the_erasure_manager_reads_citations_and_only_the_forget_route_builds_it` | D12: `entry_ids_citing` only in `knowledge/erasure.py`; `ErasureManager(` only in `routers/security.py`; `erase_entry` still only `__main__.py` | `_naming("entry_ids_citing") == {...}` |
 | E7 | `test_the_runtime_exposes_its_archive_store_read_only` | a property with no setter, returning `_archive_store` | `isinstance(accessor, property)` (base: `AttributeError`) |
-| E8 | `test_a_citation_that_appears_after_the_scan_still_stops_that_episode` | D10, the case that changes the citations between the two reads: a promotion citing an episode lands after the scan's check; that episode is refused, the other erased, and `ErasureCascadeIncomplete` names it | `pytest.raises(ErasureCascadeIncomplete)` |
+| E8 | `test_a_citation_that_appears_after_the_scan_still_stops_that_episode[citation, unreadable-cell]` | D10, the case that changes the citations between the two reads: a promotion citing an episode lands after the scan's check; that episode is refused, the other erased, and `ErasureCascadeIncomplete` names it; `[unreadable-cell]`: the landed entry's cell becomes an object, and every per-episode check fails with nothing erased | `pytest.raises(ErasureCascadeIncomplete)` |
+| E9 | `test_a_refused_erasure_keeps_the_cited_episodes_attachment_and_audit_row[episode, agent, resource, late]` | D10, §14 property 5: a real `FilesystemAttachmentStore` and a real `AuditLog`; a refusal at each entry point, and at the per-episode check (`[late]`), leaves the cited episode, its attachment and its audit row | `pytest.raises(ArchiveCitationsBlockErasure)` (`[late]`: `ErasureCascadeIncomplete`) |
 
-**How each decision is tested:** D2 by C2; D3 by V9 and C1; D4 by V1, V2; D5 by V3, V7, C3; D6 by V5 and V5b (the state changes between the review and the promotion); D7 by V1 `[s1-file]`; D8 by E1, E2; D9 by E3 and V6; D10 by E4, E5 and E8 (the citations change between the scan's check and the per-episode check); D12 by V10, C6, E6; D13 by V2's marker and C2's reason; D14 by C2, C5; D15 by C4.
+**How each decision is tested:** D2 by C2; D3 by V9 and C1; D4 by V1, V2; D5 by V3, V7, V7b, C3; D6 by V5 and V5b (the state changes between the review and the promotion); D7 by V1 `[s1-file]`; D8 by E1, E2; D9 by E3 and V6; D10 by V6b, E4, E5, E8 (the citations change between the scan's check and the per-episode check) and E9 (the attachments and audit rows); D12 by V10, C6, E6; D13 by V2's marker and C2's reason; D14 by C2, C5; D15 by C4, C7.
 
 ## 7. The contract
 
@@ -337,8 +340,9 @@ _VETO_SQL = (
     "ON CONFLICT (source_kind, source_ref) DO NOTHING"
 )
 
-# AD-1341 S3 (D9): every entry that cites an episode; AD-524 rows and uncited entries hold '[]'.
-_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids NOT IN ('', '[]') ORDER BY id"
+# AD-1341 S3 (D9, D10): every entry whose citation cell is not the canonical '[]' (AD-524 rows and uncited entries hold
+# it). SQL NULL and empty text are fetched, so that entry_ids_citing refuses them instead of skipping them.
+_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids IS NOT '[]' ORDER BY id"
 ```
 
 Pair 6 (the class docstring):
@@ -468,7 +472,7 @@ REPLACE:
                     was_erased = await cursor.fetchone() is not None
                 await self._db.commit()
             except BaseException:
-                await _rollback_quietly(self._db)
+                await _rollback_quietly(self._db)  # AD-1341 S3: nothing is left open for the next write
                 raise
         if recorded:
             logger.warning("AD-1341 S3: the Captain vetoed a %s source's promotion into the Ship's Archive", kind)
@@ -505,8 +509,10 @@ REPLACE:
 
         The AD-754 erasure manager's check (``knowledge/erasure.py``): an episode an entry cites is not erased until
         the Captain has erased the entry (D8). Blank ids match nothing. A read, with no lock (S1 D16). It raises when
-        the store is not open or a citation list cannot be read, and never answers "none" then: an erasure that
-        cannot check must not go on as if nothing cited the episode (D10).
+        the store is not open, and ``ValueError`` when any citation cell is not a JSON list of strings (malformed
+        JSON, an object, a string, a number, ``null``, a list holding a non-string, empty text or SQL NULL): it never
+        answers "none" then, because an erasure that cannot check must not go on as if nothing cited the episode (D10).
+        One statement per call; ``_CITING_SQL`` skips only the canonical ``'[]'``.
         """
         if type(episode_ids) not in (list, tuple) or any(type(item) is not str for item in episode_ids):
             raise TypeError("AD-1341: entry_ids_citing takes a list or tuple of episode ids")
@@ -517,8 +523,11 @@ REPLACE:
             return ()
         cursor = await self._db.execute(_CITING_SQL)
         citing: list[int] = []
-        for entry_id, cited in await cursor.fetchall():
-            if wanted.intersection(json.loads(cited)):
+        for entry_id, cell in await cursor.fetchall():
+            cited = json.loads(cell) if type(cell) is str else None  # SQL NULL, or a blob, is no citation list (D10)
+            if type(cited) is not list or any(type(item) is not str for item in cited):
+                raise ValueError(f"AD-1341 S3: Ship's Archive entry {entry_id}'s citation list cannot be read")
+            if wanted.intersection(cited):
                 citing.append(entry_id)
         return tuple(citing)
 
@@ -733,7 +742,8 @@ import pytest
 
 import probos
 from probos.knowledge.archive_promotion import promote_ship_records, review_promotion
-from probos.knowledge.archive_store import PromotionOutcome, SourceKind, SourceState, VetoOutcome
+from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome, SourceKind, SourceState, VetoOutcome
+from probos.storage.sqlite_factory import default_factory
 from tests.test_ad1341_s1_archive_store import _plant_v0, _record, _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import (
     _CONVERGENCE,
@@ -1018,7 +1028,21 @@ async def test_the_entries_citing_an_episode_are_found_in_id_order(
     assert found == tuple(ids[name] for name in expected)
 
 
-@pytest.mark.parametrize("fault", ["not-open", "a-string", "corrupt-row"])
+# A2 (finding M1-F1): every cell the read cannot interpret as a list of episode ids, each planted on its own.
+_UNREADABLE_CELLS = {
+    "corrupt-row": "{not json",
+    "dict": '{"another": "ep-a"}',
+    "dict-key": '{"ep-a": 1}',
+    "string": '"ep-a"',
+    "number-list": "[42]",
+    "mixed-list": '["ep-a", 42]',
+    "number": "42",
+    "json-null": "null",
+    "empty-text": "",
+}
+
+
+@pytest.mark.parametrize("fault", ["not-open", "a-string", *_UNREADABLE_CELLS, "sql-null"])
 async def test_the_citation_read_never_answers_none_when_it_cannot_read(tmp_path: Path, fault: str) -> None:
     path = tmp_path / "archive.db"
     store = _store(tmp_path)
@@ -1026,21 +1050,34 @@ async def test_the_citation_read_never_answers_none_when_it_cannot_read(tmp_path
         with pytest.raises(RuntimeError):
             await store.entry_ids_citing(["ep-a"])
         return
+    if fault == "sql-null":  # an AD-524 file whose citation column was added nullable before S1's migration ran
+        _plant_v0(path)
+        connection = sqlite3.connect(str(path))
+        try:
+            connection.execute("ALTER TABLE archive ADD COLUMN source_episode_ids TEXT")
+            connection.commit()
+        finally:
+            connection.close()
     await store.initialize()
     try:
         if fault == "a-string":
             with pytest.raises(TypeError):
                 await store.entry_ids_citing("ep-a")
             return
-        connection = sqlite3.connect(str(path))
-        try:
-            connection.execute(
-                "INSERT INTO archive (timeline_id, category, title, content, archived_at, source_kind, source_ref, "
-                "source_episode_ids) VALUES ('t', 'c', 't', 'c', 0, 'convergence_report', 'r', '{not json')"
-            )
-            connection.commit()
-        finally:
-            connection.close()
+        if fault in _UNREADABLE_CELLS:
+            connection = sqlite3.connect(str(path))
+            try:
+                connection.execute(
+                    "INSERT INTO archive (timeline_id, category, title, content, archived_at, source_kind, source_ref, "
+                    "source_episode_ids) VALUES ('t', 'c', 't', 'c', 0, 'convergence_report', 'r', ?)",
+                    (_UNREADABLE_CELLS[fault],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+        planted = [None, None] if fault == "sql-null" else [_UNREADABLE_CELLS[fault]]
+        assert [row[0] for row in _rows(path, "SELECT source_episode_ids FROM archive ORDER BY id")] == planted
+
         with pytest.raises(ValueError):
             await store.entry_ids_citing(["ep-a"])
     finally:
@@ -1050,22 +1087,105 @@ async def test_the_citation_read_never_answers_none_when_it_cannot_read(tmp_path
 # --- V7: overlapping writes ----------------------------------------------------------------------------------------
 
 
-async def test_a_veto_and_a_promotion_of_one_source_never_both_succeed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("first", ["veto", "promotion"])
+async def test_a_veto_and_a_promotion_of_one_source_never_both_succeed(tmp_path: Path, first: str) -> None:
+    """``gather`` starts its tasks in order, and the first takes the store's lock before the second runs, so each
+    order runs deterministically and must end as that order requires (A2, finding M1-F3: K4)."""
     path = tmp_path / "archive.db"
     store = _store(tmp_path)
     await store.initialize()
     try:
         record = _record()
-        vetoed, promoted = await asyncio.gather(
-            store.veto_source(record.source_kind, record.source_ref, "an overlapping veto"), store.promote_entry(record),
-        )
+        veto = store.veto_source(record.source_kind, record.source_ref, "an overlapping veto")
+        promotion = store.promote_entry(record)
+        if first == "veto":
+            vetoed, promoted = await asyncio.gather(veto, promotion)
+        else:
+            promoted, vetoed = await asyncio.gather(promotion, veto)
     finally:
         await store.close()
     counts = _counts(path)
-    assert (vetoed, promoted, counts["archive"], counts["archive_vetoes"]) in {
-        (VetoOutcome.RECORDED, PromotionOutcome.VETOED, 0, 1),
-        (VetoOutcome.ARCHIVED, PromotionOutcome.CREATED, 1, 0),
-    }
+    assert (vetoed, promoted, counts["archive"], counts["archive_vetoes"]) == {
+        "veto": (VetoOutcome.RECORDED, PromotionOutcome.VETOED, 0, 1),
+        "promotion": (VetoOutcome.ARCHIVED, PromotionOutcome.CREATED, 1, 0),
+    }[first]
+
+
+class _PausedCommit:
+    """A real connection whose next commit, once armed, waits until released and then fails (S1 D16 under test)."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.armed = False
+        self.waiting = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    async def commit(self) -> None:
+        if self.armed:
+            self.armed = False
+            self.waiting.set()
+            await self.release.wait()
+            raise sqlite3.OperationalError("an injected commit failure")
+        await self._inner.commit()
+
+
+class _PausedCommitFactory:
+    """The startup's ``default_factory``, with its connection wrapped in ``_PausedCommit``."""
+
+    connection: _PausedCommit
+
+    async def connect(self, db_path: str, *, read_only: bool = False) -> _PausedCommit:
+        self.connection = _PausedCommit(await default_factory.connect(db_path, read_only=read_only))
+        return self.connection
+
+
+def _paused_store(tmp_path: Path, factory: _PausedCommitFactory) -> ArchiveStore:
+    return ArchiveStore(str(tmp_path / "archive.db"), connection_factory=factory)
+
+
+@pytest.mark.parametrize("failing", ["veto-fails", "promotion-fails"])
+async def test_a_write_whose_commit_fails_leaves_nothing_the_other_write_can_commit(
+    tmp_path: Path, failing: str,
+) -> None:
+    """A2, finding M1-F2: the second write waits on the store's lock, and the first's failed commit is rolled back
+    before it runs, so the second never commits, nor is decided by, what the failed write left uncommitted."""
+    path = tmp_path / "archive.db"
+    factory = _PausedCommitFactory()
+    store = _paused_store(tmp_path, factory)
+    await store.initialize()
+    record = _record()
+
+    def veto() -> Any:
+        return store.veto_source(record.source_kind, record.source_ref, "the Captain's veto")
+
+    tasks: list[asyncio.Task[Any]] = []
+    try:
+        factory.connection.armed = True
+        tasks.append(asyncio.create_task(veto() if failing == "veto-fails" else store.promote_entry(record)))
+        await asyncio.wait_for(factory.connection.waiting.wait(), 5)
+        counts = _counts(path)
+        assert counts["archive"] + counts["archive_vetoes"] == 0  # premise: the first write is not committed
+        tasks.append(asyncio.create_task(store.promote_entry(record) if failing == "veto-fails" else veto()))
+        done, _waiting = await asyncio.wait({tasks[1]}, timeout=0.2)
+        assert not done  # the store's lock: the second write waits for the first to end
+        factory.connection.release.set()
+        with pytest.raises(sqlite3.OperationalError):
+            await tasks[0]
+        outcome = await asyncio.wait_for(tasks[1], 5)
+    finally:
+        factory.connection.release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await store.close()
+    counts = _counts(path)
+    if failing == "veto-fails":
+        assert (outcome, counts["archive"], counts["archive_vetoes"]) == (PromotionOutcome.CREATED, 1, 0)
+    else:
+        assert (outcome, counts["archive"], counts["archive_vetoes"]) == (VetoOutcome.RECORDED, 0, 1)
 
 
 # --- V8 to V10: the service --------------------------------------------------------------------------------------
@@ -1233,7 +1353,7 @@ def _cmd_archive_pending(args: argparse.Namespace) -> int:
     Plain ``print``: a path is shown as text, never as markup.
     """
     config, _ = _load_config_with_fallback(getattr(args, "config", None))
-    if not config.archive.enabled:
+    if not config.archive.enabled:  # AD-1341 S3: a disabled archive is never opened, so pending creates no file
         print("The Ship's Archive is disabled (archive.enabled): nothing is promoted, so there is nothing to review.")
         return 2
     data_dir = Path(getattr(args, "data_dir", None) or _default_data_dir())
@@ -1505,6 +1625,19 @@ def test_pending_shows_what_the_next_promotion_would_do_with_each_source(
     assert _counts(archive) == before
 
 
+def test_pending_refuses_a_disabled_archive_and_creates_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2, finding M2-F2: the disabled archive's own refusal, which the M1 base's usage line does not print."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))  # premise: sources a review would list, were the archive enabled
+
+    assert _archive(monkeypatch, _config(tmp_path, archive_enabled=False), data_dir, "pending") == 2
+
+    assert "nothing is promoted, so there is nothing to review." in capsys.readouterr().out
+    assert not (tmp_path / "archive.db").exists()
+
+
 # --- C2: the real seam -------------------------------------------------------------------------------------------
 
 
@@ -1569,7 +1702,8 @@ def test_a_vetoed_source_survives_two_resets_without_reaching_the_archive_or_a_l
     ids=["not-eligible", "withheld", "archived", "erased", "again", "blank-reason", "declined", "disabled"],
 )
 def test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, code: int, vetoes: int,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], case: str, code: int,
+    vetoes: int,
 ) -> None:
     data_dir = _data_dir(tmp_path)
     asyncio.run(_write_records(data_dir))
@@ -1595,6 +1729,11 @@ def test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing(
 
     assert _veto(monkeypatch, config, data_dir, ref, reason, yes=yes) == code
 
+    out = capsys.readouterr().out
+    if case == "blank-reason":  # the veto's own refusal, never the usage line the M1 base prints (A2, M2-F1)
+        assert "Do not restate the source's content." in out
+    if case == "disabled":
+        assert "nothing is promoted, so there is nothing to veto." in out
     assert _vetoes_on_disk(archive) == vetoes
     if case == "disabled":
         assert not archive.exists()
@@ -1962,18 +2101,23 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
 import dataclasses
+import hashlib
 import inspect
 import sqlite3
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome
 from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureCascadeIncomplete, ErasureManager
 from probos.runtime import ProbOSRuntime
+from probos.security.audit_log import AuditLog
 from probos.storage.sqlite_factory import default_factory
 from probos.types import EpisodeStoreOutcome
 from tests.test_ad1340_s1_eviction import _episode, _memory, _raw
@@ -1991,12 +2135,19 @@ _TARGETS: dict[str, dict[str, str]] = {
     "resource": {"resource_path": _RESOURCE},
 }
 _MATCHED = {"episode": [_CITED], "agent": [_CITED, _OTHER], "resource": [_CITED]}  # of the two stored episodes
+_BODY = b"the coolant readings, photographed"
+_SHA = hashlib.sha256(_BODY).hexdigest()  # the cited episode's one attachment (E9)
 
 
 class _CitedMidway(ArchiveStore):
-    """The real store; just after its first citation read, a promotion citing ``_CITED`` lands (D10, E8)."""
+    """The real store; just after its first citation read, a promotion citing ``_CITED`` lands (D10, E8, E9).
+
+    With ``unreadable`` set to the archive's path, the landed entry's citation cell is then rewritten as a JSON
+    object, which the read cannot interpret (A2, finding M1-F1 read late: E8 ``[unreadable-cell]``).
+    """
 
     landed = False
+    unreadable: Path | None = None
 
     async def entry_ids_citing(self, episode_ids: list[str] | tuple[str, ...]) -> tuple[int, ...]:
         found = await super().entry_ids_citing(episode_ids)
@@ -2004,11 +2155,23 @@ class _CitedMidway(ArchiveStore):
             self.landed = True
             late = _record(source_ref="reports/convergence/midway.md", source_episode_ids=(_CITED,))
             assert await self.promote_entry(late) is PromotionOutcome.CREATED
+            if self.unreadable is not None:
+                connection = sqlite3.connect(str(self.unreadable))
+                try:
+                    connection.execute(
+                        "UPDATE archive SET source_episode_ids = ? WHERE source_ref = ?",
+                        ('{"another": "ep-000"}', "reports/convergence/midway.md"),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
         return found
 
 
-def _midway(tmp_path: Path) -> _CitedMidway:
-    return _CitedMidway(str(tmp_path / "archive.db"), connection_factory=default_factory)
+def _midway(tmp_path: Path, *, unreadable: bool = False) -> _CitedMidway:
+    store = _CitedMidway(str(tmp_path / "archive.db"), connection_factory=default_factory)
+    store.unreadable = tmp_path / "archive.db" if unreadable else None
+    return store
 
 
 def _episodes() -> list[Any]:
@@ -2017,9 +2180,41 @@ def _episodes() -> list[Any]:
     return [cited, _episode(1)]
 
 
-def _with_archive(memory: Any, archive: Any) -> ErasureManager:
+def _with_archive(memory: Any, archive: Any, attachments: Any = None, audit: Any = None) -> ErasureManager:
     options = {"archive_store": archive}  # S3's keyword, passed as a mapping
-    return ErasureManager(memory, None, None, **options)
+    return ErasureManager(memory, attachments, audit, **options)
+
+
+@contextlib.asynccontextmanager
+async def _traced(
+    tmp_path: Path, archive: ArchiveStore,
+) -> AsyncIterator[tuple[Any, ErasureManager, FilesystemAttachmentStore, AuditLog]]:
+    """Every trace an erasure removes, real (A2, finding M3-F1): the two episodes, the cited one's attachment in a
+    real ``FilesystemAttachmentStore``, and one row per episode in a real assistant ``AuditLog``."""
+    async with _memory(tmp_path / "vessel", "archive") as rig:
+        attachments = FilesystemAttachmentStore(tmp_path / "attachments")
+        audit = AuditLog(str(tmp_path / "assistant_audit.db"))
+        try:
+            await attachments.write(_SHA, _BODY, "text/plain")
+            cited, other = _episodes()
+            cited = dataclasses.replace(
+                cited, outcomes=[{"intent": "report", "success": True, "attachment_refs": [_SHA]}],
+            )
+            for episode in (cited, other):
+                assert await rig.em.store(episode) is EpisodeStoreOutcome.STORED
+                await audit.log_intent("report", episode.id, "agent-a", True)
+            premise = ([_CITED, _OTHER], True, [_CITED, _OTHER])
+            assert await _traces(rig.em, attachments, audit) == premise  # both episodes, the attachment, two rows
+            yield rig, _with_archive(rig.em, archive, attachments, audit), attachments, audit
+        finally:
+            attachments.close()
+
+
+async def _traces(
+    em: Any, attachments: FilesystemAttachmentStore, audit: AuditLog,
+) -> tuple[list[str], bool, list[str]]:
+    """The live episodes, whether the cited episode's attachment exists, and the audit rows' resources, sorted."""
+    return _live(em), await attachments.exists(_SHA), sorted(entry.resource for entry in await audit.query())
 
 
 async def _forget(manager: ErasureManager, target: str) -> Any:
@@ -2147,9 +2342,19 @@ async def test_the_forget_route_consults_only_a_real_archive_store(tmp_path: Pat
         assert erased.json()["deleted_episode_ids"] == [_CITED]
 
 
-@pytest.mark.parametrize("fault", ["closed", "corrupt-row"])
+_UNREADABLE = {"corrupt-row": "{x", "dict": '{"another": "ep-000"}', "string": '"ep-000"'}  # cells the read refuses
+
+
+@pytest.mark.parametrize(
+    ("fault", "target"),
+    [
+        ("closed", "episode"), ("corrupt-row", "episode"), ("dict", "episode"), ("string", "episode"),
+        ("dict", "agent"), ("dict", "resource"),
+    ],
+    ids=["closed", "corrupt-row", "dict", "string", "dict-agent", "dict-resource"],
+)
 async def test_an_archive_that_cannot_answer_stops_the_erasure_before_anything_is_erased(
-    tmp_path: Path, fault: str,
+    tmp_path: Path, fault: str, target: str,
 ) -> None:
     async with _memory(tmp_path / "vessel", "archive") as rig:
         await _stored(rig.em)
@@ -2161,16 +2366,17 @@ async def test_an_archive_that_cannot_answer_stops_the_erasure_before_anything_i
             try:
                 connection.execute(
                     "INSERT INTO archive (timeline_id, category, title, content, archived_at, source_kind, "
-                    "source_ref, source_episode_ids) VALUES ('t', 'c', 't', 'c', 0, 'convergence_report', 'r', '{x')"
+                    "source_ref, source_episode_ids) VALUES ('t', 'c', 't', 'c', 0, 'convergence_report', 'r', ?)",
+                    (_UNREADABLE[fault],),
                 )
                 connection.commit()
             finally:
                 connection.close()
         try:
             with pytest.raises((RuntimeError, ValueError)):
-                await _with_archive(rig.em, store).forget_episode(_CITED)
+                await _forget(_with_archive(rig.em, store), target)
 
-            assert _live(rig.em) == [_CITED, _OTHER]
+            assert _live(rig.em) == [_CITED, _OTHER]  # nothing was erased, at any entry point
         finally:
             await store.close()
 
@@ -2199,21 +2405,55 @@ def test_the_runtime_exposes_its_archive_store_read_only() -> None:
     assert runtime.archive_store is sentinel
 
 
-async def test_a_citation_that_appears_after_the_scan_still_stops_that_episode(tmp_path: Path) -> None:
+@pytest.mark.parametrize("late", ["citation", "unreadable-cell"])
+async def test_a_citation_that_appears_after_the_scan_still_stops_that_episode(tmp_path: Path, late: str) -> None:
     async with _memory(tmp_path / "vessel", "archive") as rig:
         await _stored(rig.em)
-        store = _midway(tmp_path)
+        store = _midway(tmp_path, unreadable=late == "unreadable-cell")
         await store.initialize()
         try:
             with pytest.raises(ErasureCascadeIncomplete) as incomplete:
                 await _with_archive(rig.em, store).forget_agent_memory("agent-a")
 
-            assert set(incomplete.value.failures) == {_CITED}
-            assert type(incomplete.value.failures[_CITED]) is ArchiveCitationsBlockErasure
-            assert incomplete.value.result.deleted_episode_ids == [_OTHER]
-            assert _live(rig.em) == [_CITED]
+            if late == "citation":
+                assert set(incomplete.value.failures) == {_CITED}
+                assert type(incomplete.value.failures[_CITED]) is ArchiveCitationsBlockErasure
+                assert incomplete.value.result.deleted_episode_ids == [_OTHER]
+                assert _live(rig.em) == [_CITED]
+            else:  # every per-episode read meets the cell it cannot interpret, so nothing is erased (D10)
+                assert set(incomplete.value.failures) == {_CITED, _OTHER}
+                assert all(type(error) is ValueError for error in incomplete.value.failures.values())
+                assert incomplete.value.result.deleted_episode_ids == []
+                assert _live(rig.em) == [_CITED, _OTHER]
         finally:
             await store.close()
+
+
+@pytest.mark.parametrize("target", ["episode", "agent", "resource", "late"])
+async def test_a_refused_erasure_keeps_the_cited_episodes_attachment_and_audit_row(
+    tmp_path: Path, target: str,
+) -> None:
+    """A2, finding M3-F1: the refusal comes before every destructive consumer, the attachment's unlink and the audit
+    marking included, at each entry point and at the per-episode check (``late``: a citation lands after the scan)."""
+    store = _midway(tmp_path) if target == "late" else _store(tmp_path)
+    await store.initialize()
+    try:
+        if target != "late":
+            assert await store.promote_entry(_record(source_episode_ids=(_CITED,))) is PromotionOutcome.CREATED
+        async with _traced(tmp_path, store) as (rig, manager, attachments, audit):
+            if target == "late":
+                with pytest.raises(ErasureCascadeIncomplete) as incomplete:
+                    await manager.forget_agent_memory("agent-a")
+
+                assert type(incomplete.value.failures[_CITED]) is ArchiveCitationsBlockErasure
+                assert await _traces(rig.em, attachments, audit) == ([_CITED], True, ["[DELETED]", _CITED])
+            else:
+                with pytest.raises(ArchiveCitationsBlockErasure):
+                    await _forget(manager, target)
+
+                assert await _traces(rig.em, attachments, audit) == ([_CITED, _OTHER], True, [_CITED, _OTHER])
+    finally:
+        await store.close()
 ```
 
 ## 8. Tracking (tracker pairs; M4's commit)
@@ -2230,7 +2470,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1341 S3 (2026-10-26), #1569 slice 3 of 6 -- the Captain reviews and vetoes what is promoted into the Ship's Archive, and an AD-754 erasure never leaves an archive entry citing an erased episode.** `probos archive pending` lists every Ship's Records source the next promotion would consider, with what promoting it now would do: archive it (new, or a revision of the entry it names), nothing (already archived, with the entry's id), or never (vetoed or erased by the Captain), and what is withheld. `probos archive veto SOURCE_REF --reason TEXT` records the Captain's veto in a new content-free `archive_vetoes` table (kind, path, reason, timeline, time; one per source); `promote_entry`'s one statement honours it for the source with any content (`VETOED`), and a veto of a source already archived is refused (erase its entry instead). The queue is derived from the plan, not stored; promotion before a reset stays on by default and promotes everything not vetoed, now reporting "N vetoed by the Captain", and the dry run points to the review. An AD-754 erasure (`POST /api/security/forget`) whose matched episodes an archive entry cites now erases nothing and answers 409 with the entries' ids; the Captain erases each with `probos archive erase` and retries, so the archive gains no new deleter and no entry outlives the evidence it cites. No production source cites an episode until S4, so nothing changes in practice yet. Schema stays v1 (the table is additive); the runtime gains a read-only `archive_store` accessor. New: `tests/test_ad1341_s3_veto_store.py`, `tests/test_ad1341_s3_review_cli.py`, `tests/test_ad1341_s3_erasure_cascade.py`. The contract is `prompts/ad-1341-s3-governance-queue.md`.
+**AD-1341 S3 (2026-10-26), #1569 slice 3 of 6 -- the Captain reviews and vetoes what is promoted into the Ship's Archive, and an AD-754 erasure never leaves an archive entry citing an erased episode.** `probos archive pending` lists every Ship's Records source the next promotion would consider, with what promoting it now would do: archive it (new, or a revision of the entry it names), nothing (already archived, with the entry's id), or never (vetoed or erased by the Captain), and what is withheld. `probos archive veto SOURCE_REF --reason TEXT` records the Captain's veto in a new content-free `archive_vetoes` table (kind, path, reason, timeline, time; one per source); `promote_entry`'s one statement honours it for the source with any content (`VETOED`), and a veto of a source already archived is refused (erase its entry instead). The queue is derived from the plan, not stored; promotion before a reset stays on by default and promotes everything not vetoed, now reporting "N vetoed by the Captain", and the dry run points to the review. An AD-754 erasure (`POST /api/security/forget`) whose matched episodes an archive entry cites now erases nothing and answers 409 with the entries' ids; the Captain erases each with `probos archive erase` and retries, so the archive gains no new deleter and no entry outlives the evidence it cites. A citation the archive cannot read stops the erasure too; an attachment another episode shares is still unlinked as before (registered). No production source cites an episode until S4, so nothing changes in practice yet. Schema stays v1 (the table is additive); the runtime gains a read-only `archive_store` accessor. New: `tests/test_ad1341_s3_veto_store.py`, `tests/test_ad1341_s3_review_cli.py`, `tests/test_ad1341_s3_erasure_cascade.py`. The contract is `prompts/ad-1341-s3-governance-queue.md`.
 ```
 
 **`DECISIONS.md`** (before the `### Explicit delegation models` heading, which every entry since 2026-10-17 has been inserted against):
@@ -2247,7 +2487,7 @@ REPLACE:
 - *D2 (review before canon).* Opt-out: the Captain reviews the plan and vetoes any source before the reset; the reset promotes the rest. Opt-in approval behind a flag is deferred to S4, whose crew-written lessons need chain-of-command review; approval by default was rejected, because it would block or, at `--full`, destroy unapproved knowledge (Decision item 7).
 - *D3-D5 (the queue and the veto).* The queue is derived from the plan and the archive's own markers, so no content is stored twice. A veto is content-free, one per source, blocks the source with any content and is kept as the record of selection. It is refused for a source already archived (a veto does not remove an entry) and moot for one erased. One statement under the store lock; no lift in this slice.
 - *D6-D7.* `promote_entry` honours a veto in its one statement; the review read runs the same checks in the same order and reserves nothing. The table is added under schema v1, because a v2 file would make a reverted build refuse every tier 2 reset.
-- *D8-D11 (AD-754).* An erasure whose matched episodes an archive entry cites erases nothing and is refused (409), and the Captain erases the entries by id through the CLI. The route has no authorization, so letting it erase entries would give the archive an open deleter. Only citations count, not authorship, path or content. The check runs before anything is erased and again per episode; a failed read stops the erasure, and no open archive means no check. Retention (#1568 S5) protects cited episodes from decay, never from the Captain's erasure.
+- *D8-D11 (AD-754).* An erasure whose matched episodes an archive entry cites erases nothing and is refused (409), and the Captain erases the entries by id through the CLI. The route has no authorization, so letting it erase entries would give the archive an open deleter. Only citations count, not authorship, path or content. The check runs before anything is erased (attachments and audit marking included) and again per episode; a failed read, or a citation cell that is not a JSON list of strings, stops the erasure, and no open archive means no check. An attachment blob shared with another episode is still unlinked as before (registered). Retention (#1568 S5) protects cited episodes from decay, never from the Captain's erasure.
 - *Disclosed effects.* Every archive open creates `archive_vetoes`. The reset's message gains a vetoed count, and the dry run gains one line. `pending` and `veto` open the archive as `erase` does, and may create it. `/forget` can answer 409 once S4 produces citations. With the archive unavailable, an erasure proceeds unchecked (registered).
 - *Reversal.* Revert the S3 commits. A reverted build ignores `archive_vetoes` (vetoed sources are promoted again at the next reset) and never refuses an AD-754 erasure; the table stays in the file, harmless.
 
@@ -2265,19 +2505,20 @@ REPLACE:
 - The archive's entries, `erase_entry` and its marker, `record_generation` and `generations`, S1's idempotence key, criteria and C1 gate, S2's label and generation numbering, and the Oracle.
 - `probos reset`'s flow, tiers, pidfile, `--skip-promotion` and its refusals; `--dry-run`'s existing lines.
 - `ErasureManager`'s scans, its attachment rules (BF-868, BF-869), BF-905's fail-closed live scan, AD-1340's archive erasure, `ErasureResult`, and `/forget`'s request model and 200 body. `/forget`'s missing authorization stays as it is (register R1).
+- AD-754's unlink of an attachment blob that another episode also references (`knowledge/erasure.py:331-339`; register R11).
 - No new flag, `EventType`, API route, config field or `.db` file; `user_version` stays 1.
 - Out of scope (D18): S4's lessons, stand-down and chain-of-command review; S5's triggers and continuous promotion; S6's `--full` snapshot, description entry and clean slate; lifting a veto; bulk erasure; an archive listing by id; an HXI view.
 
-## 10. Mutation rows (42 rows: 24 for M1, 8 for M2, 10 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (52 rows: 31 for M1, 9 for M2, 12 for M3; whole stripped lines, each occurring once in its file after §7)
 
-One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseline run of the three new test files that passes. Run each row against the named tests and restore the file before the next row. Rows S-1 and S-2 mutate the same line; restore between them.
+One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseline run of the three new test files that passes. Run each row against the named tests and restore the file before the next row. Rows S-1 and S-2, K19 and K23, K21 and K22, and E-1, E-6 and E-7 mutate the same line; restore between them.
 
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
 | K1 | M1 | `src/probos/knowledge/archive_store.py` | `"AND NOT EXISTS (SELECT 1 FROM archive_vetoes WHERE source_kind = ? AND source_ref = ?) "` | `"AND NOT EXISTS (SELECT 1 FROM archive_vetoes WHERE 0 AND source_kind = ? AND source_ref = ?) "` | `test_a_vetoed_source_is_never_archived_with_any_content` |
 | K2 | M1 | `src/probos/knowledge/archive_store.py` | `return PromotionOutcome.VETOED if vetoed else PromotionOutcome.PRESENT` | `return PromotionOutcome.PRESENT` | `test_a_vetoed_source_is_never_archived_with_any_content`, `test_the_promotion_reports_a_vetoed_source_and_archives_the_rest` |
 | K3 | M1 | `src/probos/knowledge/archive_store.py` | `cursor = await self._db.execute(_VETOED_SOURCE_SQL, (kind, record.source_ref))` | `cursor = await self._db.execute(_ERASED_SOURCE_SQL, (kind, record.source_ref))` | `test_a_vetoed_source_is_never_archived_with_any_content` |
-| K4 | M1 | `src/probos/knowledge/archive_store.py` | `"WHERE NOT EXISTS (SELECT 1 FROM archive AS a WHERE a.source_kind = ? AND a.source_ref = ?) "` | `"WHERE NOT EXISTS (SELECT 1 FROM archive AS a WHERE 0 AND a.source_kind = ? AND a.source_ref = ?) "` | `test_a_veto_that_would_change_nothing_writes_nothing`, `test_a_veto_and_a_promotion_of_one_source_never_both_succeed` |
+| K4 | M1 | `src/probos/knowledge/archive_store.py` | `"WHERE NOT EXISTS (SELECT 1 FROM archive AS a WHERE a.source_kind = ? AND a.source_ref = ?) "` | `"WHERE NOT EXISTS (SELECT 1 FROM archive AS a WHERE 0 AND a.source_kind = ? AND a.source_ref = ?) "` | `test_a_veto_that_would_change_nothing_writes_nothing`, `test_a_veto_and_a_promotion_of_one_source_never_both_succeed[promotion]` |
 | K5 | M1 | `src/probos/knowledge/archive_store.py` | `"AND NOT EXISTS (SELECT 1 FROM archive_erasures AS e WHERE e.source_kind = ? AND e.source_ref = ?) "` | `"AND NOT EXISTS (SELECT 1 FROM archive_erasures AS e WHERE 0 AND e.source_kind = ? AND e.source_ref = ?) "` | `test_a_veto_that_would_change_nothing_writes_nothing` |
 | K6 | M1 | `src/probos/knowledge/archive_store.py` | `"ON CONFLICT (source_kind, source_ref) DO NOTHING"` | `"ON CONFLICT (source_kind, source_ref) DO UPDATE SET reason = excluded.reason"` | `test_a_veto_that_would_change_nothing_writes_nothing` |
 | K7 | M1 | `src/probos/knowledge/archive_store.py` | `CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_vetoes_source ON archive_vetoes(source_kind, source_ref);` | `CREATE INDEX IF NOT EXISTS idx_archive_vetoes_source ON archive_vetoes(source_kind, source_ref);` | `test_the_archive_has_a_content_free_veto_table_keyed_by_source`, `test_a_vetoed_source_is_never_archived_with_any_content` |
@@ -2288,11 +2529,18 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | K12 | M1 | `src/probos/knowledge/archive_store.py` | `return SourceState(PromotionOutcome.VETOED, entry_ids)` | `return SourceState(PromotionOutcome.CREATED, entry_ids)` | `test_the_review_reads_what_promote_entry_then_does`, `test_a_veto_or_erasure_after_the_review_decides_the_promotion` |
 | K13 | M1 | `src/probos/knowledge/archive_store.py` | `return SourceState(PromotionOutcome.PRESENT if present else PromotionOutcome.CREATED, entry_ids)` | `return SourceState(PromotionOutcome.CREATED, entry_ids)` | `test_the_review_reads_what_promote_entry_then_does` |
 | K14 | M1 | `src/probos/knowledge/archive_store.py` | `entry_ids = tuple(row[0] for row in await cursor.fetchall())` | `entry_ids = ()` | `test_the_review_reads_what_promote_entry_then_does`, `test_the_review_shows_what_promoting_each_source_now_would_do_and_writes_nothing` |
-| K15 | M1 | `src/probos/knowledge/archive_store.py` | `if wanted.intersection(json.loads(cited)):` | `if False:` | `test_the_entries_citing_an_episode_are_found_in_id_order` |
+| K15 | M1 | `src/probos/knowledge/archive_store.py` | `if wanted.intersection(cited):` | `if False:` | `test_the_entries_citing_an_episode_are_found_in_id_order` |
 | K16 | M1 | `src/probos/knowledge/archive_store.py` | `wanted = {item for item in episode_ids if item}` | `wanted = set()` | `test_the_entries_citing_an_episode_are_found_in_id_order` |
 | K17 | M1 | `src/probos/knowledge/archive_store.py` | `raise RuntimeError("AD-1341 S3: the Ship's Archive is not open, so its citations cannot be read")` | `return ()` | `test_the_citation_read_never_answers_none_when_it_cannot_read` |
 | K18 | M1 | `src/probos/knowledge/archive_store.py` | `if type(episode_ids) not in (list, tuple) or any(type(item) is not str for item in episode_ids):` | `if False:` | `test_the_citation_read_never_answers_none_when_it_cannot_read` |
-| K19 | M1 | `src/probos/knowledge/archive_store.py` | `_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids NOT IN ('', '[]') ORDER BY id"` | `_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids NOT IN ('', '[]') ORDER BY id DESC"` | `test_the_entries_citing_an_episode_are_found_in_id_order` |
+| K19 | M1 | `src/probos/knowledge/archive_store.py` | `_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids IS NOT '[]' ORDER BY id"` | `_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids IS NOT '[]' ORDER BY id DESC"` | `test_the_entries_citing_an_episode_are_found_in_id_order` |
+| K20 | M1 | `src/probos/knowledge/archive_store.py` | `cited = json.loads(cell) if type(cell) is str else None  # SQL NULL, or a blob, is no citation list (D10)` | `cited = json.loads(cell) if type(cell) is str else []` | `test_the_citation_read_never_answers_none_when_it_cannot_read[sql-null]` |
+| K21 | M1 | `src/probos/knowledge/archive_store.py` | `if type(cited) is not list or any(type(item) is not str for item in cited):` | `if False:` | `test_the_citation_read_never_answers_none_when_it_cannot_read[dict]`, `test_the_citation_read_never_answers_none_when_it_cannot_read[string]` |
+| K22 | M1 | `src/probos/knowledge/archive_store.py` | `if type(cited) is not list or any(type(item) is not str for item in cited):` (after K21 is restored) | `if type(cited) is not list:` | `test_the_citation_read_never_answers_none_when_it_cannot_read[number-list]`, `test_the_citation_read_never_answers_none_when_it_cannot_read[mixed-list]` |
+| K23 | M1 | `src/probos/knowledge/archive_store.py` | `_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids IS NOT '[]' ORDER BY id"` (after K19 is restored) | `_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids NOT IN ('', '[]') ORDER BY id"` | `test_the_citation_read_never_answers_none_when_it_cannot_read[empty-text]`, `test_the_citation_read_never_answers_none_when_it_cannot_read[sql-null]` |
+| K24 | M1 | `src/probos/knowledge/archive_store.py` | `async with self._write_lock:  # AD-1341 S3: the veto and its checks commit or roll back alone (D16)` | `if True:` | `test_a_write_whose_commit_fails_leaves_nothing_the_other_write_can_commit` |
+| K25 | M1 | `src/probos/knowledge/archive_store.py` | `async with self._write_lock:  # AD-1341 F1: the insert and its erasure check commit or roll back alone` | `if True:` | `test_a_write_whose_commit_fails_leaves_nothing_the_other_write_can_commit` |
+| K26 | M1 | `src/probos/knowledge/archive_store.py` | `await _rollback_quietly(self._db)  # AD-1341 S3: nothing is left open for the next write` | `pass` | `test_a_write_whose_commit_fails_leaves_nothing_the_other_write_can_commit[veto-fails]` |
 | P1 | M1 | `src/probos/knowledge/archive_promotion.py` | `elif outcome is PromotionOutcome.VETOED:  # AD-1341 S3: the Captain's veto, reported, never archived` | `elif False:` | `test_the_promotion_reports_a_vetoed_source_and_archives_the_rest` |
 | P2 | M1 | `src/probos/knowledge/archive_promotion.py` | `vetoed.append(record.source_ref)` | `present.append(record.source_ref)` | `test_the_promotion_reports_a_vetoed_source_and_archives_the_rest` |
 | P3 | M1 | `src/probos/knowledge/archive_promotion.py` | `vetoed=tuple(vetoed),` | `vetoed=(),` | `test_the_promotion_reports_a_vetoed_source_and_archives_the_rest`, `test_a_vetoed_source_survives_two_resets_without_reaching_the_archive_or_a_later_crew` |
@@ -2306,18 +2554,21 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | C-6 | M2 | `src/probos/__main__.py` | `if not confirmed and input("  Veto its promotion into the Ship's Archive? [y/N]: ").strip().lower() != "y":` | `if False:` | `test_a_veto_that_cannot_or_need_not_happen_vetoes_nothing` |
 | C-7 | M2 | `src/probos/__main__.py` | `return "x vetoed by the Captain"` | `return "+ would be promoted"` | `test_pending_shows_what_the_next_promotion_would_do_with_each_source`, `test_a_vetoed_source_survives_two_resets_without_reaching_the_archive_or_a_later_crew` |
 | C-8 | M2 | `src/probos/__main__.py` | `if plan.records:  # AD-1341 S3: the Captain reviews, and may veto, before the reset promotes` | `if False:` | `test_the_dry_run_points_the_captain_to_the_review` |
+| C-9 | M2 | `src/probos/__main__.py` | `if not config.archive.enabled:  # AD-1341 S3: a disabled archive is never opened, so pending creates no file` | `if False:` | `test_pending_refuses_a_disabled_archive_and_creates_no_file` |
 | E-1 | M3 | `src/probos/knowledge/erasure.py` | `await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased` | `pass` | `test_an_erasure_whose_episodes_an_archive_entry_cites_erases_nothing`, `test_a_citation_that_appears_after_the_scan_still_stops_that_episode` |
 | E-2 | M3 | `src/probos/knowledge/erasure.py` | `await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: a resource's matches` | `pass` | `test_an_erasure_whose_episodes_an_archive_entry_cites_erases_nothing` |
 | E-3 | M3 | `src/probos/knowledge/erasure.py` | `await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: an agent's matches` | `pass` | `test_an_erasure_whose_episodes_an_archive_entry_cites_erases_nothing`, `test_the_captain_erases_the_citing_entry_then_the_forget_route_erases_the_episodes` |
 | E-4 | M3 | `src/probos/knowledge/erasure.py` | `if citing:` | `if False:` | `test_an_erasure_whose_episodes_an_archive_entry_cites_erases_nothing` |
 | E-5 | M3 | `src/probos/knowledge/erasure.py` | `self._archive_store = archive_store` | `self._archive_store = None` | `test_an_erasure_whose_episodes_an_archive_entry_cites_erases_nothing`, `test_an_archive_that_cannot_answer_stops_the_erasure_before_anything_is_erased` |
+| E-6 | M3 | `src/probos/knowledge/erasure.py` | `await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased` (after E-1 is restored) | `await self._delete_attachments(await self._attachment_ids_for_episode(episode_id)); await _refuse_while_the_archive_cites(self._archive_store, [episode_id])` | `test_a_refused_erasure_keeps_the_cited_episodes_attachment_and_audit_row[episode]`, `test_a_refused_erasure_keeps_the_cited_episodes_attachment_and_audit_row[late]` |
+| E-7 | M3 | `src/probos/knowledge/erasure.py` | `await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased` (after E-6 is restored) | `await self._audit_log.mark_deleted(episode_id) if self._audit_log is not None else None; await _refuse_while_the_archive_cites(self._archive_store, [episode_id])` | `test_a_refused_erasure_keeps_the_cited_episodes_attachment_and_audit_row[episode]`, `test_a_refused_erasure_keeps_the_cited_episodes_attachment_and_audit_row[late]` |
 | S-1 | M3 | `src/probos/routers/security.py` | `archive_store=archive if isinstance(archive, ArchiveStore) else None,  # AD-1341 S3: a real store, or none` | `archive_store=None,` | `test_the_captain_erases_the_citing_entry_then_the_forget_route_erases_the_episodes` |
 | S-2 | M3 | `src/probos/routers/security.py` | `archive_store=archive if isinstance(archive, ArchiveStore) else None,  # AD-1341 S3: a real store, or none` (after S-1 is restored) | `archive_store=archive,` | `test_the_forget_route_consults_only_a_real_archive_store` |
 | S-3 | M3 | `src/probos/routers/security.py` | `status_code=409,` | `status_code=200,` | `test_the_captain_erases_the_citing_entry_then_the_forget_route_erases_the_episodes` |
 | S-4 | M3 | `src/probos/routers/security.py` | `"archive_entry_ids": list(exc.entry_ids),` | `"archive_entry_ids": [],` | `test_the_captain_erases_the_citing_entry_then_the_forget_route_erases_the_episodes` |
 | R-1 | M3 | `src/probos/runtime.py` | `return self._archive_store` | `return None` | `test_the_runtime_exposes_its_archive_store_read_only` |
 
-The row count in the heading includes S-2. No row targets the `_write_lock` lines: removing the lock from `veto_source` is not reliably observable through V7 (aiosqlite serialises the two statements on its one thread), so V7 stays a property test, not a row (S1's A14 covers the lock for the S1 writes). Mutation K17 targets the one `RuntimeError` text unique to `entry_ids_citing`; `veto_source` and `source_state` reuse S1's `"ArchiveStore not initialized"` line, which occurs several times and has no row.
+The row count in the heading includes S-2, K22, K23, E-6 and E-7. K24 and K25 remove the store lock from `veto_source` and `promote_entry` (`if True:` keeps the body's indentation) and K26 the veto's rollback. V7 cannot see them (aiosqlite serialises the statements, and `gather` lets the first task take the lock before the second runs), so V7b pauses the first write's commit, starts the second and then fails the first: under K24 or K25 the second write finishes within V7b's 0.2 s wait (it takes milliseconds), and under K26 it commits what the failed veto left open. The unmutated V7b does not depend on that timing: the lock alone holds the second write back. K26's and C-9's anchors carry an inline comment added in A2, so that each is unique in its file. Mutation K17 targets the one `RuntimeError` text unique to `entry_ids_citing`; `veto_source` and `source_state` reuse S1's `"ArchiveStore not initialized"` line, which occurs several times and has no row.
 
 ## 11. Verified Against Codebase (2026-10-26, HEAD `7bdd9c32`, tree `54c086ffc33b64aa9dbe413575fb3ad89950071e`)
 
@@ -2477,16 +2728,26 @@ HOLDS: yes. Each passes a `MagicMock` runtime, whose `archive_store` the route i
 5. **Wall time** of the M3 file: each test builds a real ChromaDB-backed memory (as the AD-1340 tests do); expected to take seconds per case.
 6. **Command-policy coverage:** whether an agent's `run_command` can invoke `probos archive veto` or `erase` (the Captain-only CLI). This is S1's surface too; not verified here (register R8).
 
+**A2 (2026-10-26), verified on the S3 candidate `6703502c` (tree `5c189230e26518e0e9a0c62994d3c1ca05794e06`):**
+- `knowledge/archive_store.py:337` `_CITING_SQL ... NOT IN ('', '[]')`; `:668-672` `entry_ids_citing` passes `json.loads(cited)` to `set.intersection`; `:289` the v1 column `TEXT NOT NULL DEFAULT '[]'`; `:477-481` the migration adds only missing columns, so a citation column that already exists keeps its declaration (V6b `[sql-null]`).
+- `knowledge/archive_store.py:516` and `:607`: the two lock lines, each once; `:621` the veto's rollback, one of five identical `await _rollback_quietly(self._db)` lines (`:530`, `:553`, `:577`, `:582`, `:621`), so A2 adds its comment; `:413-418` `_rollback_quietly` executes `ROLLBACK`.
+- `knowledge/erasure.py:151-153` the refusal, then the attachment ids and the unlink; `:164-165` the audit marking; `:249-258` `_forget_all` records any `Exception` per episode; `:331-339` `_delete_attachments` unlinks each id and checks no other owner (R11).
+- `routers/security.py:63-66` `_get_audit_log` uses the runtime's `_assistant_audit_log` when it is an `AuditLog`; `:89-95` the manager takes `attachment_store` from the runtime.
+- `security/audit_log.py:28` `AuditLog(db_path, retention_days=90)`; `:32-40` `log_intent(intent, resource, actor, success, ...)`; `:62` `query`; `:96-109` `mark_deleted` sets `resource = '[DELETED]'` where it is `LIKE` the marker. `attachments/filesystem_store.py:192` `close`; `:311-318` `write(content_hash, blob, mime, *, origin=...)`; `:386` `exists`. `storage/sqlite_factory.py:18` `connect(self, db_path, *, read_only=False)`.
+- `__main__.py` on the M1 base (`072adb71`) `:3367-3369`: every sub-command but `erase` prints the usage line and returns 2; on the candidate `:3440-3442` (pending) and `:3504-3513` (veto) print the refusal texts C3 and C7 assert.
+- `tests/test_ad1341_s1_archive_store.py:33-47` `_V0_SCHEMA` has no citation column, `:77-90` `_plant_v0`; `tests/test_ad1341_s1_reset_and_erase.py:162` `_config(..., archive_enabled=...)`; `tests/test_ad1340_s1_eviction.py:62-72` `_episode` (ids `ep-000`, `ep-001`; one outcome), `:88-117` `_memory`.
+- Absence: `_CITING_SQL|entry_ids_citing` over `src`, `tests` and `scripts` finds `archive_store.py:16, 337, 653, 662, 668`, `erasure.py:111` and, in tests, only the three S3 files and S1's A7 pin; `if not config\.archive\.enabled|_CITING_SQL|_rollback_quietly|_write_lock` over the AD-1341 tests finds no pin of a changed line.
+
 ## 12. Deterministic gate checks, resolved up front
 
 | Check | Result |
 |---|---|
 | Phantom precheck, pattern 1 (`runtime.X`) | `runtime.archive_store` (the tests' MagicMock assignment, E2 and E4) resolves: `archive_store` occurs as `archive_store:` and `archive_store=` in `src` (`startup/results.py:140`, `cognitive_services.py:707`), and 7.10 adds the property. The route reads it with `getattr`, not as `runtime.X` |
 | Pattern 2 (`Name.attr`) | Enum members are upper case (`PromotionOutcome.VETOED`, `VetoOutcome.ARCHIVED`, `SourceKind.PUBLISHED_REPORT`). The test builds the runtime with `object.__new__(ProbOSRuntime)`, so no `ProbOSRuntime.__new__` receiver appears |
-| Pattern 3 (`Name(`) | Capitalised calls are ProbOS classes that exist (`ErasureManager`, `ArchiveStore` as a base class, `JSONResponse`) or classes this contract defines (`SourceState`, `PendingSource`, `PromotionReview`, `ArchiveCitationsBlockErasure`), stdlib exceptions (`RuntimeError`, `TypeError`, `ValueError`) and `Path`. `_CitedMidway` and `_Namespace` start with an underscore. The SQL uses `EXISTS (` and `CONFLICT (` with a space, and no upper-case SQL function is spelled `NAME(` |
+| Pattern 3 (`Name(`) | Capitalised calls are ProbOS classes that exist (`ErasureManager`, `ArchiveStore` as a base class, `JSONResponse`) or classes this contract defines (`SourceState`, `PendingSource`, `PromotionReview`, `ArchiveCitationsBlockErasure`), stdlib exceptions (`RuntimeError`, `TypeError`, `ValueError`) and `Path`. `_CitedMidway`, `_Namespace`, `_PausedCommit` and `_PausedCommitFactory` start with an underscore. A2's `FilesystemAttachmentStore(` and `AuditLog(` are classes that exist (`attachments/filesystem_store.py`, `security/audit_log.py:25`). The SQL uses `EXISTS (` and `CONFLICT (` with a space, and no upper-case SQL function is spelled `NAME(` |
 | Pattern 2, the one candidate the script reports (added by the orchestrator, 2026-10-26) | `LessonsLearnedTrackingProcess.aspx`, the last path segment of the NATO lessons-learned URL in §13's prior art: a URL, not a symbol, which pattern 2 reads as `Name.attr`. The script (`scripts/phantom-api-precheck.ps1` on this file) exits 1 with exactly this one candidate and no other; no code, test or decision names it |
 | Kwarg check (`receiver.method(kw=)`) | `archive.veto_source(..., timeline_id=...)` and `store.veto_source(..., timeline_id=...)`: the method is absent from the base, so the helper skips it (`phantom_api_ast_helper.py:237-241`). `writer.write_entry(...)` and `writer.write_notebook(...)` use existing keywords (`records_store.py:211-225, 450-461`). The new `archive_store=` and `vetoed=` keywords appear only in unbalanced fragments (7.9 pair 3, 7.2 pair 5) or as a mapping (`_with_archive`), as S2 did for `generation=` |
-| Method check (pattern B) | No `x = Class(...)` precedes a new-method call: stores come from `_store`, `_archive_store`, `_midway` and `_configured_archive_store`; the manager from `_with_archive` |
+| Method check (pattern B) | No `x = Class(...)` precedes a new-method call: stores come from `_store`, `_archive_store`, `_midway` and `_configured_archive_store`; the manager from `_with_archive`. A2's `_paused_store` builds V7b's store, and E9's `_traced` builds the real attachment store and audit log, calling only methods that exist (`write`, `exists`, `close`; `log_intent`, `query`) |
 | Layer | `knowledge/erasure.py` imports `knowledge.archive_store` (same layer); `routers/security.py` imports `knowledge` (as it already imports `knowledge.erasure`); `__main__.py` imports at function level, as S1 does |
 | Store registry | Rule 11: 7.3 adds `archive_vetoes`; run `scripts/check_store_registry.py --check` in M1 |
 | `.db` literals, config facade | no new `.db` literal, config field or `probos.config` name |
@@ -2526,25 +2787,29 @@ HOLDS: yes. Each passes a `MagicMock` runtime, whose `archive_store` the route i
 9. **An unavailable archive** skips the check. Registered (R2).
 10. **The pending set at `--full`** would be destroyed under opt-in review. This is why opt-in review is deferred (D2 B).
 11. **The review's own writes.** `initialize()` writes schema statements on open (R7).
+12. **A citation cell the read cannot interpret** (an object, a string, a list of non-strings, SQL NULL or empty text) answered "nothing cites this", so an erasure went on (round 1, M1-F1 = M3-F2). Fixed in A2: the read raises (V6b, E5, E8).
+13. **A side effect moved before the refusal** passed every test that had no attachment store or audit log (M3-F1). Fixed in A2 by E9 and rows E-6, E-7.
+14. **The lock protects rollback isolation, not race outcomes** (M1-F2), so no race test sees it. Fixed in A2 by V7b and rows K24 to K26.
+15. **A content-addressed attachment shared by two episodes** is unlinked when either is erased, even when the other is cited (M3-F3). Pre-existing AD-754 behaviour; registered (R11).
 
 ## 14. Diff Reviewer: properties to verify
 
 1. `promote_entry` refuses a vetoed source in the same single statement that checks the erasure marker and the key: no window exists between a veto check and the insert. A refused insert is classified erased, then vetoed, then present, and `source_state` evaluates the same three conditions in the same order with the same SQL constants, returning CREATED only when none holds.
 2. `veto_source` validates exact types (a plain `str` is not a `SourceKind`), writes through one `INSERT … SELECT … WHERE NOT EXISTS … ON CONFLICT DO NOTHING` under `_write_lock`, and returns RECORDED only when it inserted one row. ARCHIVED, ERASED and ALREADY_VETOED write nothing, and a second veto never changes the first reason. The row holds no title, content, metadata or hash.
 3. `archive_vetoes` has a unique index on `(source_kind, source_ref)` created on every open; `user_version` stays 1; an S1-era v1 file keeps every row.
-4. `entry_ids_citing` raises (never returns `()`) when the store is closed, its argument is not a list or tuple of strings, or a citation list cannot be parsed; it ignores blank ids and returns ids ascending. No read takes `_write_lock`, and no method holding the lock calls another store method.
-5. Every AD-754 entry point (`forget_episode`, `forget_resource`, `forget_agent_memory`) checks the open archive before anything is erased (attachments included). A refusal erases nothing and raises `ArchiveCitationsBlockErasure` carrying only ids. A per-episode re-check inside `_forget_all` turns a late citation into a per-episode failure. With no archive the behaviour is byte-identical to the base.
-6. `/forget` passes the manager only a real `ArchiveStore` (any other value is None) and answers 409 with `archive_entries_cite_erased_episodes` and the ids, logging the count only. No `src` path other than `__main__.py` names `erase_entry` or `veto_source`; `ErasureManager` is built only in `routers/security.py`; `entry_ids_citing` is named only in `knowledge/erasure.py`.
+4. `entry_ids_citing` raises (never returns `()`) when the store is closed (RuntimeError), when its argument is not a list or tuple of strings (TypeError), or when any fetched citation cell is not a JSON list of strings (ValueError: malformed JSON, an object, a string, a number, `null`, a list holding a non-string, empty text or SQL NULL; `_CITING_SQL` skips only the canonical `'[]'`). It ignores blank ids, returns ids ascending and runs one statement per call. No read takes `_write_lock`, and no method holding the lock calls another store method. V7b pins the lock and the veto's rollback: a write whose commit fails leaves nothing the next write commits or is decided by.
+5. Every AD-754 entry point (`forget_episode`, `forget_resource`, `forget_agent_memory`) checks the open archive before anything is erased: the episodes, their own attachments (BF-868's declared fields) and the audit marking. E9 proves it with a real `FilesystemAttachmentStore` and a real `AuditLog` at each entry point and at the per-episode check. A refusal erases nothing and raises `ArchiveCitationsBlockErasure` carrying only ids. A per-episode re-check inside `_forget_all` turns a late citation, or a cell that becomes unreadable, into a per-episode failure. An attachment blob that another episode also references is unlinked as before S3, even when that episode is cited (register R11). With no archive the behaviour is byte-identical to the base.
+6. `/forget` passes the manager only a real `ArchiveStore` (any other value is None) and answers 409 with `archive_entries_cite_erased_episodes` and the ids, logging the count only. No `src` path other than `__main__.py` names `erase_entry` or `veto_source`; `ErasureManager` is built only in `routers/security.py`; `entry_ids_citing` is named only in `knowledge/erasure.py`. A citation read that fails reaches the route as the read's own error, with nothing erased (E5). An empty request is answered 422 by the request model, before the route's 400 (register R14).
 7. `probos archive pending` and `probos archive veto` print with plain `print`; they exit 2 for a disabled archive or a bad argument; the veto exits 1 for a source not in the current plan or already archived, and 0 when it records, finds one already vetoed or erased, or the Captain declines. Their `--config` and `--data-dir` use `argparse.SUPPRESS`, so a root option before the command survives.
 8. The reset's flow, refusals and exit codes are unchanged; only its promotion message gains the vetoed count, and the dry run gains one line after the withheld list. The `--dry-run` path still opens no archive.
 9. `ProbOSRuntime.archive_store` is a read-only property returning `_archive_store`; shutdown's close of `_archive_store` is untouched.
-10. The new tests use the real store, records, promotion service, `EpisodicMemory`, manager, app route and CLI; the only stand-ins are the config loader (as in S1) and, in E8, a subclass that lands a real promotion between two real reads. Every archive lies under `tmp_path`.
+10. The new tests use the real store, records, promotion service, `EpisodicMemory`, manager, attachment store, assistant audit log, app route and CLI. The stand-ins are: the config loader (as in S1); the E8 and E9 subclass, which lands a real promotion (or rewrites one real cell) between two real reads; V7b's connection wrapper, which pauses and fails one commit of a real connection; and the route tests' `MagicMock` runtime (S2a's `_runtime`, in E2 and E4), whose `archive_store` is a writable attribute, not the production property. E7 pins the property itself on `ProbOSRuntime` (read-only, returning `_archive_store`). Every archive lies under `tmp_path`.
 
 ## 15. Acceptance criteria
 
-1. A Captain veto stops a promotion and is recorded, content-free, and survives later resets and revisions of the source (V2, V3, C2; K1 to K9).
-2. The Captain can review what the next promotion would do with each source before a reset, and the review agrees with what the promotion then does (V5, V5b, V9, C1; K11 to K14, P4, P5).
-3. An AD-754 erasure never leaves an archive entry citing an erased episode: it erases nothing while one cites a match, and once the Captain has erased the entry through the CLI the retry erases the episodes (E1, E2, E8; E-1 to E-5, S-1 to S-4).
+1. A Captain veto stops a promotion and is recorded, content-free, and survives later resets and revisions of the source (V2, V3, V7, V7b, C2; K1 to K9, K24 to K26).
+2. The Captain can review what the next promotion would do with each source before a reset, and the review agrees with what the promotion then does (V5, V5b, V9, C1, C7; K11 to K14, P4, P5, C-9).
+3. An AD-754 erasure never leaves an archive entry citing an erased episode: it erases nothing (the matched episodes, their own attachments and audit rows) while one cites a match or a citation cannot be read, and once the Captain has erased the entry through the CLI the retry erases the episodes (V6b, E1, E2, E5, E8, E9; K15 to K23, E-1 to E-7, S-1 to S-4).
 4. No agent or service path updates or deletes an entry, or records or lifts a veto (V10, C6, E6, and S1's R11 and P15).
 5. Promotion before a reset stays on by default and reports vetoed sources (C2, C5; C-5, C-8).
 6. Every test in §6 fails on its milestone's base as named, and every row in §10 is killed by the named test. One broad gate and one PR for M1 to M4; cross-family review of M1 and M3 (tier HIGH).
@@ -2571,3 +2836,13 @@ HOLDS: yes. Each passes a `MagicMock` runtime, whose `archive_store` the route i
 **R9.** `generations` has no vetoed count, so a close's counts no longer add up to the plan when a source is vetoed. `archive_vetoes` is the record. Adding a column needs a migration of `generations`.
 
 **R10.** The dry run's "N to promote" counts sources that are vetoed, erased or already archived (S1 behaviour). S3 adds a pointer to `pending` rather than changing S1's line.
+
+**R11.** A content-addressed attachment blob that two episodes reference is unlinked when either is erased: `knowledge/erasure.py:331-339` unlinks each id and checks no other owner (unchanged by S3; the base does the same). With an entry citing episode A only, erasing B (uncited) removes A's attachment: `deleted=['ep-001']`, `live=['ep-000']`, `citations=(1,)`, `attachment_exists=False` on the base and the candidate (round 1, the M3 reviewer's `m3-test_late_failure_and_shared_trace.py` and `m3-test_shared_baseline_comparison.py`). S3's guarantee covers the matched episodes and their own attachments (D10, §14 property 5). The fix changes AD-754's attachment ownership (unlink a blob only when no other live or archived episode references it, or refuse while a cited episode does), so it is a separate follow-up issue on `knowledge/erasure.py`, ordered before S4 makes citing entries normal; S4's premise table names it. A fix that keeps bytes the requester asked to erase, because another episode holds them, weakens an erasure guarantee and is the Captain's decision.
+
+**R12.** Round 1 confirmed by execution (2026-10-26). R2: with no runtime archive an erasure goes through while a persisted citation remains. R3's window is demonstrated, not only argued: a promotion committed after the per-episode check gave HTTP 200 (two 200s for two concurrent requests) while an entry still cited the erased episode. It stays bounded as recorded (only the offline reset promotes, and its records cite none), and checking that an episode is live at promotion time would not close it. R7 holds at byte level: `pending` changes the file's header change counter, and creates a missing file at v1. R8: the default command policy returns `no_policy` and `runs=True` for both `probos archive veto` and `erase`; the whole admission chain is still unverified.
+
+**R13.** The citation check reads every citing row once per call, and a bulk erasure makes N+1 calls (the scan's and one per matched episode). 1,000 matched episodes against 10,000 citing entries took 28.5 s, against 16.4 s with no archive (1,001 reads, 10,010,000 rows fetched, 13.0 s inside the checks; 18.1 s against 10,000 uncited entries). That is tolerable for a deliberate bulk erasure, not for an interactive guard (round 1, `m3-test_cascade_cost.py`). An indexed citation table (episode id to entry id), or one read per erasure, is S4's to schedule before citing entries are produced continuously. A2 keeps the bound: the statement also fetches NULL and empty cells, which canonical files never hold.
+
+**R14.** `POST /api/security/forget` with no target answers 422 from its request model, on the base and the candidate; the route's 400 branch (`routers/security.py:104-108`) is reached only when model validation is bypassed. No client handles the 409: `ui/src/components/wardroom/ForgetThis.tsx` is an unwired callback component (`ForgetThis|onForgetEpisode|forgetEpisode` finds only the component), so the 409's CLI instruction is the Captain's way through today.
+
+**R15.** A revision of an archived source cannot be vetoed while its entry stands: `veto_source` returns ARCHIVED (D5), and the next promotion archives the revision as a second entry (round 1, the M1 reviewer). The Captain's source-wide stop is to erase the entry (S1's marker blocks the source with any content), which also removes the accepted version. A veto that blocks later revisions while keeping the accepted entry is not built.
