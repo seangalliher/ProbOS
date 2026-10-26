@@ -23,8 +23,11 @@ from probos.cognitive.episode_archive import (
     EpisodeArchiveUnavailable,
 )
 from probos.credential_store import crew_scope_token
+from probos.knowledge.archive_promotion import exit_note_citations
 from probos.knowledge.archive_store import ArchiveStore
 from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureManager
+from probos.knowledge.erasure import ExitNotesBlockErasure
+from probos.knowledge.records_store import RecordsStore
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 from probos.security.audit_log import AuditLog
@@ -75,6 +78,21 @@ def _get_audit_log(runtime: Any) -> AuditLog:
     return log
 
 
+async def _pending_exit_note_citations(runtime: Any, archive: Any) -> dict[str, tuple[str, ...]] | None:
+    """AD-1341 S4 (D14, D16): which episodes the exit notes the next reset would archive cite; None checks nothing.
+
+    Only a real Ship's Records store is read (a runtime double's attribute is none), and only while the archive is
+    enabled: a disabled archive promotes nothing. An enabled archive that is not open (failed at boot, or closed) is
+    still checked, with every valid note counted, because the next reset opens the archive and would promote them
+    (S3 register R2, for notes). A failed read propagates, so nothing is erased.
+    """
+    records = getattr(runtime, "records_store", None)
+    section = getattr(getattr(runtime, "config", None), "archive", None)
+    if not isinstance(records, RecordsStore) or getattr(section, "enabled", False) is not True:
+        return None
+    return await exit_note_citations(records, archive if isinstance(archive, ArchiveStore) else None)
+
+
 @router.post("/forget")
 async def request_erasure(
     request: ForgetRequest,
@@ -87,10 +105,12 @@ async def request_erasure(
     erases an entry: the Captain erases each with ``probos archive erase ENTRY_ID --reason TEXT``, then retries.
     """
     archive = getattr(runtime, "archive_store", None)  # AD-1341 S3: consulted only when it is a real store
+    citations = await _pending_exit_note_citations(runtime, archive)  # AD-1341 S4 (D14): once, before any erase
     manager = ErasureManager(
         episodic_memory=getattr(runtime, "episodic_memory", None),
         attachment_store=getattr(runtime, "attachment_store", None),
         audit_log=_get_audit_log(runtime),
+        exit_note_citations=citations,  # AD-1341 S4 (D14): the pending notes' citations
         archive_store=archive if isinstance(archive, ArchiveStore) else None,  # AD-1341 S3: a real store, or none
     )
 
@@ -106,6 +126,19 @@ async def request_erasure(
                 {"error": "one erasure target is required"},
                 status_code=400,
             )
+    except ExitNotesBlockErasure as exc:  # AD-1341 S4 (D14): nothing was erased
+        logger.warning(
+            "AD-1341 S4: an AD-754 erasure was refused: %d exit note(s) awaiting promotion cite its episodes",
+            len(exc.paths),
+        )
+        return JSONResponse(
+            {
+                "error": "exit_notes_cite_erased_episodes",
+                "exit_note_paths": list(exc.paths),
+                "next": "probos archive veto PATH --reason TEXT for each, then retry",
+            },
+            status_code=409,
+        )
     except ArchiveCitationsBlockErasure as exc:  # AD-1341 S3 (D8): nothing was erased
         logger.warning(
             "AD-1341 S3: an AD-754 erasure was refused: %d Ship's Archive entr(ies) cite its episodes",
