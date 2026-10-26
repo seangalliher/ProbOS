@@ -58,6 +58,7 @@ Projects appear here only as technical design references. Positioning against th
 | LoCoMo benchmark | 2026-05-08 | absorption | `locomo-benchmark-absorption.md` |
 | Memvid | 2026-04-05 | absorption | `memvid-evaluation.md` |
 | AI Meets Brain memory survey (arXiv 2512.23343) | 2026-04-12 | absorption | `agent-memory-survey-absorption.md` |
+| Governed Collaborative Memory (Cuadros et al., arXiv 2605.04264; selection regimes for shared memory) | 2026-10-25 | absorption | `coral-governed-memory-absorption.md` (read in full); draft amendments for the AD-1336 (#1558) child 8 graduation rule and for keeping declined proposals at intake |
 
 ## Protocols and standards (interval: 180 days)
 
@@ -91,6 +92,7 @@ Projects appear here only as technical design references. Positioning against th
 | Skill-library selection and lifecycle (Dynamic Agent Skills survey arXiv 2607.10113; SkillRouter arXiv 2603.22455; SkillSeek arXiv 2609.38822) | 2026-10-17 | absorption | `self-evolving-harness-absorption.md` (abstracts only); AD-1338 (#1565) selection as a measured service, and AD-1186 (#1123) for the selection-accuracy trial |
 | Harness² recursive harness improvement (Google Research, arXiv 2610.14224; google-research/harness2) | 2026-10-18 | absorption | `harness2-absorption.md` (first 100K of about 169K characters); AD-1299 (#1352) matched probes, scoped editors and frozen-during-run library, AD-1338 (#1565) evidence-carrying lesson records and start-from-base reuse |
 | Microduck (Pollen Robotics; physical embodiment, MuJoCo twin `duck-sim`) | 2026-10-23 | absorption | `microduck-embodiment-absorption.md` (README, cheatsheet, simulation design read); AD-1348 (#1630, paused), AD-1342 (#1582), AD-1186 (#1123) |
+| CORAL multi-agent evolution (arXiv 2604.01658; Human-Agent-Society/CORAL) | 2026-10-25 | absorption | `coral-governed-memory-absorption.md` (project page, README, paper HTML to about 100K of 119K characters); draft AD-1290 (#1337) amendment: reflection checkpoints and an attempts ledger |
 | ImpossibleBench (reward hacking in coding agents, arXiv 2510.20270) | 2026-10-16 | checked | BF-898 (#1563) Prior art, `prompts/bf-898-fix-loop-grader-protection.md` (coding agents passing tests that contradict the specification) |
 
 A *passing* row is a weak signal: the project was named, not examined. When an AD's problem is the one a passing project addresses, treat the row as *never*.
