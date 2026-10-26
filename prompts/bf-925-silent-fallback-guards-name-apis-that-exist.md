@@ -5,12 +5,14 @@
 **Status:** build-ready. One BF, two milestones, one PR, one gate; #1655 closes with it. **BF number:** BF-925 (#1655); this contract allocates nothing. **Tiers:** M1 **STANDARD** (F06, F11, F18, F13 and the guard test: Captain-facing report content, a social-graph write and a Chief's prompt context; no safety, trust or authority property); M2 **HIGH** (F12: it edits the scoring function behind every recall's anchor confidence and the AD-607 recall anomaly map, and starts writing a new value into a persisted episode field; the property it must keep, "no score or verdict moves", fails silently, so the census in section 10 carries it). Review M2 with the Copilot `Diff Reviewer`. **Base:** `72fae2dd` (BF-924 final plus BF-926+927, both by tool); after BF-926+927 merges the orchestrator re-verifies every SEARCH on the merge SHA, and a changed REPLACE returns to the Architect. **Line endings:** working copies are CRLF (`core.autocrlf=true`); every SEARCH here is LF; match and write with each file's own endings; new files are LF. **No config field changes**, so no generated file changes.
 
 **Tests:**
-- New (M1): `tests/test_bf925_silent_guards.py` (13 functions, 13 cases), `tests/test_bf925_guard_names.py` (6 functions, 14 cases), `tests/fixtures/guard_name_allowlist.txt` (23 entries).
+- New (M1): `tests/test_bf925_silent_guards.py` (15 functions, 15 cases), `tests/test_bf925_guard_names.py` (6 functions, 14 cases), `tests/fixtures/guard_name_allowlist.txt` (23 entries).
 - Updated pins (M1): `tests/test_ad810_insights.py` (fakes of methods nothing defines), `tests/test_ad630_leadership_feedback.py` (sets `ward_room_service` and `agent_pool`, which no runtime has).
 - New (M2): `tests/test_bf925_event_log_window.py` (10 functions, 11 cases).
 - Updated pins (M2): `tests/test_orientation.py` (a MagicMock's `recent`), `tests/test_ad567c_anchor_quality.py` (two scores from a fixture window no producer stores), `tests/test_ad567b_anchor_recall.py` (three, same reason).
 
 **Amendment A1 (2026-10-25, `claude-architect`, on the orchestrator's controls over the M2 oracle `a8148c5e`):** the M2 focused check found one pin that section 5 called unchanged. `test_ad567b_anchor_recall.py::TestConfigWeights::test_custom_weights_affect_score` (`:452`) expects a fully filled anchor to score 1.0 under custom weights (anchor weight 0.10) at a 1e-9 tolerance. With the window held out, the anchor scores 0.95 and the composite moves by 0.005 (0.865 against 0.870). A1 adds pair 3 to §7.16 and updates the header, §5's Tests row, §6's M2 tests-first count (14 → 15), §10 M2-13's kill list, §11, §12 (a census of every test fixture that sets a window) and §17. No source line changes, and no REPLACE in §7.1 to §7.15 or §7.17.
+
+**Amendment A2 (2026-10-26, `claude-architect`, on round 1 of the Diff Reviews: two `gpt-6.1-sol` reviewers, M1 and M2):** the M1 reviewer found, with the real classes, that §7.3's link block resolved each mention a second time after the dispatch's awaits, so a recipient replaced during the dispatch got the TaskEvent and its replacement the link (M1-1), and that a resolver bound without a dispatcher recorded links with no TaskEvent (M1-3). §7.3 now records the ids the AD-654d block dispatches to and links exactly those (new pair 1; pair 2's REPLACE changes); §7.7 adds two cases and `_RecordingDispatcher`; §10 re-anchors M1-6 to M1-8 and adds M1-13 and M1-14. The M1 reviewer also found `reconnected_count` (nats-py 2.14.0 has no such attribute) classified `duck` (M1-4: now a `finding`, 6 duck and 17 finding; R1) and D4's per-Chief cost wrong (M1-5). The M2 reviewer found §8's contract file name wrong (M2-2) and a stale median comment after §7.15 pair 2 (M2-3: the pair is extended by that line). Recorded, not fixed: a stopped store still attached reads as running in the Insights report (R12); AD-607's recall gate is never bound and would raise if it were (R13). **No source line of M2 changes**; in M2, only §7.15 pair 2's comment line and §8's text change.
 
 ## 0. Premise: what is present on this tree
 
@@ -64,7 +66,7 @@ Ranked for the section set: (1, chosen) wire three, drop two, each with its reas
 | `tests/test_ad810_insights.py` | fakes of `cluster_recall_counts` / `recent_threads_by_crew` | fakes by the real names, pinned to the real classes (§7.2, §7.7) |
 | Docs `docs/getting-started/shell.md:53` | generic | unchanged |
 
-**D3, F11 resolver, link and bound.** Ranked: (1, chosen) `self._callsign_registry.resolve(callsign)`: the resolver the same method already uses for the mention's TaskEvent (`messages.py:255-259`), bound by `attach_dispatcher` (`startup/finalize.py:5590`, `runtime.callsign_registry`), and itself an `AgentRegistry` resolution (`crew_profile.py:726-731`: the first live agent of the callsign's type, case-insensitive); one id per mention for both the TaskEvent and the link; (2) BF-921's resolver, `CounselorAgent._resolve_agent_id_from_callsign` (`counselor.py:1583-1601`, 4 callers, scans `AgentRegistry.all()` for `agent.callsign ==`): private to the Counselor, case-sensitive, and would need an `AgentRegistry` injected into `MessageStore` as a second resolver that can disagree with the TaskEvent's; (3) promote BF-921's scan to `AgentRegistry`: touches `counselor.py`, in BF-924's review (R10). The issue's "the AgentRegistry resolution BF-921 introduced" is met in substance: resolution goes through the live `AgentRegistry`. **Link:** `record_interaction(source=author_id, target=<agent.id>, success=True, rel_type=REL_SOCIAL)`, the AD-453 reply link's call; ids are `agent.id` on both sides, as the reply link's (`create_post` callers pass `author_id=agent.id`). **Bound (E2):** at most one reinforcement per (author, mentioned agent) per post (repeated mentions count once; the thread author already has this post's reply link); weight `w·0.995 + 0.05`, clamped to 1.0 (`routing.py:177-213`; `config/system.yaml:14-17`); no link for a self-mention, an unknown callsign or an agent that is not alive; none when no dispatcher is attached (then no TaskEvent either).
+**D3, F11 resolver, link and bound.** Ranked: (1, chosen) `self._callsign_registry.resolve(callsign)`: the resolver the same method already uses for the mention's TaskEvent (`messages.py:255-259`), bound by `attach_dispatcher` (`startup/finalize.py:5590`, `runtime.callsign_registry`), and itself an `AgentRegistry` resolution (`crew_profile.py:726-731`: the first live agent of the callsign's type, case-insensitive); one id per mention for both the TaskEvent and the link (A2: resolved once, in the TaskEvent block, and the link block reuses it); (2) BF-921's resolver, `CounselorAgent._resolve_agent_id_from_callsign` (`counselor.py:1583-1601`, 4 callers, scans `AgentRegistry.all()` for `agent.callsign ==`): private to the Counselor, case-sensitive, and would need an `AgentRegistry` injected into `MessageStore` as a second resolver that can disagree with the TaskEvent's; (3) promote BF-921's scan to `AgentRegistry`: touches `counselor.py`, in BF-924's review (R10). The issue's "the AgentRegistry resolution BF-921 introduced" is met in substance: resolution goes through the live `AgentRegistry`. **Link:** `record_interaction(source=author_id, target=<agent.id>, success=True, rel_type=REL_SOCIAL)`, the AD-453 reply link's call; ids are `agent.id` on both sides, as the reply link's (`create_post` callers pass `author_id=agent.id`). **Bound (E2):** at most one reinforcement per (author, mentioned agent) per post (repeated mentions count once; the thread author already has this post's reply link); weight `w·0.995 + 0.05`, clamped to 1.0 (`routing.py:177-213`; `config/system.yaml:14-17`); no link for a self-mention, an unknown callsign or an agent that is not alive; none when no dispatcher is attached (then no TaskEvent either; A2: by construction, since the link block reads only the ids the TaskEvent block resolved).
 
 | Reader of social weights | Effect |
 |---|---|
@@ -75,11 +77,11 @@ Ranked for the section set: (1, chosen) wire three, drop two, each with its reas
 | Untyped `get_weight(s, t)` (`routing.py:212`, `:257-259`; `proactive.py:4952`; `builder.py:1250-1253`) | the pair's last-written weight, as for reply and DM links today |
 | `HEBBIAN_UPDATE` (`messages.py:448-453`, when `format_trust_fn` is set) | one event per new mention link |
 
-**D4, F18 attributes and id.** `rt.ward_room` (`runtime.py:1091`, set `:3266`) and `rt.registry` (`runtime.py:684`); the subordinate is the first live agent whose `agent_type` matches (`registry.all()`, `substrate/registry.py:71`; `BaseAgent.is_alive`, `substrate/agent.py:108`); stats are read by `agent.id`, the id posts and credibility carry. Ranked: (1, chosen) as stated; (2) keep the sovereign id: measured 0 posts, so the section stays empty; (3) `CallsignRegistry.resolve`: the code has the type, not a callsign. **E4:** the agents filling posts with direct reports (`config/ontology/organization.yaml`: `first_officer` `:39` (5), `chief_engineer` `:109` (2), `chief_science` `:153` (4), `chief_medical` `:259` (3)) get a `<subordinate_activity>` block, one line per subordinate with at least 3 posts since boot (≤5 lines, ~100 characters each), in the one-shot proactive prompt (`cognitive_agent.py:11108-11120`) and the chain's situation sensorium (`:1265-1270`, `:9557-9571`, read by `sub_tasks/analyze.py:293`, `compose.py:558`). Cost: ≤5 × 4 SQLite reads per Chief per proactive gather.
+**D4, F18 attributes and id.** `rt.ward_room` (`runtime.py:1091`, set `:3266`) and `rt.registry` (`runtime.py:684`); the subordinate is the first live agent whose `agent_type` matches (`registry.all()`, `substrate/registry.py:71`; `BaseAgent.is_alive`, `substrate/agent.py:108`); stats are read by `agent.id`, the id posts and credibility carry. Ranked: (1, chosen) as stated; (2) keep the sovereign id: measured 0 posts, so the section stays empty; (3) `CallsignRegistry.resolve`: the code has the type, not a callsign. **E4:** the agents filling posts with direct reports (`config/ontology/organization.yaml`: `first_officer` `:39` (5), `chief_engineer` `:109` (2), `chief_science` `:153` (4), `chief_medical` `:259` (3)) get a `<subordinate_activity>` block, one line per subordinate with at least 3 posts since boot (≤5 lines, ~100 characters each), in the one-shot proactive prompt (`cognitive_agent.py:11108-11120`) and the chain's situation sensorium (`:1265-1270`, `:9557-9571`, read by `sub_tasks/analyze.py:293`, `compose.py:558`). Cost: 5 SQLite reads per subordinate type with a live agent (`get_agent_comm_stats`, `messages.py:695-724`; `count_endorsements_for_author` is two queries), at most 5 subordinate types, so ≤ 25 per Chief per proactive gather; measured 20 for `architect` (4 subordinate agent types; round-1 review, A2).
 
 **D5, F12.** (a) **Source.** Ranked: (1, chosen) new `EventLog.count_since(since, *, cap=1000)`: one `COUNT(*)` over the newest `cap` rows by primary key; no row transfer; (2) `query(limit=1000)` and a client-side filter (`event_log.py:820`): transfers and JSON-decodes up to 1000 rows per think; (3) `query_governed` (`:915`): the audited agent-tool read, with redaction and a 200-row cap (`:30`); using it for an internal count blurs that surface; (4) `count(category)` (`:1176`): no time filter. `EventLog` is the only production implementation (section 12); `EventLogProtocol` (`protocols.py:188-205`) declares `log`/`start`/`stop` only and is not extended; no test double needs `count_since`: the helper turns any failure into 0.0 (the value every anchor had) with a WARNING the first time per loop. (b) **Hold.** `_compute_dimension_scores` counts the window as an unfilled field (a constant 0.0 in its place), so every score equals the score that field gave at 0.0; `memory_security._ATTR_DIMENSION` drops `event_log_window`. Ranked: (1, chosen) unfilled placeholder: every live score unchanged by construction; (2) remove it from the evidential list (one field of one): raises every episode with a `thread_id` from 0.5 to 1.0 evidential, +0.05 confidence ship-wide; (3) score the real value: the measurement has not happened. Readers: section 5. (c) **Fill**, as the Captain decided: both sites call one helper. Disclosed (E5): on the shipped configuration neither site's episode reaches storage (section 0), so the stored value stays 0.0; the measurement row is written so that this is its first finding. Ranked: (1, chosen) fill both sites (the Captain's decision; one bounded count per no-response think; the stored shape is unchanged); (2) remove the guarded expressions (the issue's alternative, "or the field is dropped"): contrary to the Captain's "fill the real value"; (3) also fill the Ward Room thread and post episodes, where a proactive post's episode is made: a new producer for most episodes and an `EventLog` injection into `WardRoomService`; widens the issue, so it is the measurement's decision (R5). Not a Captain condition: no control is weakened (no score or verdict moves), nothing is widened. **Why HIGH:** the hold edits the confidence scorer behind recall ranking (`episodic.py:4754`, weight 0.15), the anchor-confidence gate and social verification (`social_verification.py:337`, `:529`), and the AD-607 mismatch map; a wrong placeholder or a dropped field moves every score silently. Rows M2-11 to M2-13 and the identical-score tests carry it.
 
-**D6, the guard test.** *Guard:* `hasattr(obj, "name")`, or `getattr(obj, "name", default)` with three arguments, the name a string literal, inside a function, whose receiver's root (through attributes, subscripts and nested `getattr`) is `self`, `cls`, `rt` or `runtime`, or a local name assigned in an enclosing function from such an expression (`x = self._store`, `x = getattr(self._runtime, "y", None)`, `x = a or b` by its first operand, to a fixed point). Two-argument `getattr` (raises), `callable(getattr(...))` without a default, `try/except AttributeError`, dunder names and module-level guards are out. *Defined:* a `def`/`async def` or class name; a module- or class-level assignment target (class attributes, dataclass and pydantic fields, enum members); any attribute assignment target anywhere (`self.x =`, `runtime.x =`); a `__slots__` string; a `setattr(obj, "x", …)` literal; a module-level import name; an argparse `dest=` or first long option. Production = `src/probos/**/*.py` of this checkout; AST only; deterministic (sorted walk, sets); about 9 s for 1,067 files. *Allow-list:* `tests/fixtures/guard_name_allowlist.txt`, `path | name | kind | reason`, kind `duck` (third-party, optional by design) or `finding` (registered on #1523, untriaged); keyed by (path, name), so line moves do not matter. The test fails on a hit not listed and on an entry that is no longer a hit (its name is now defined, or no longer guarded in that file). *Measured* (section 12, scratch probes): name-only, every receiver: 109 hits (argparse namespaces, `os`, exceptions, Playwright pages): not reviewable. Receiver-scoped (chosen): 39 hits, 36 (path, name) pairs: the 13 of the five items plus 23 others, 7 `duck` and 16 `finding`. Ranked: (1, chosen) receiver-scoped; (2) name-only, about 95 allow-list hits; (3) name-only plus statically excluded receivers (non-`probos` module roots, `except`-bound names): 72 hits, 65 pairs, 52 entries. *Gives up / cannot see:* a guard on a parameter or a local not derived from those roots; a name an unrelated production class happens to define (**F12's `recent` is defined by 5 other classes, and `pending_proposals` by `ChainOptimizer`: neither would have been caught**); dynamic names; `__getattr__`; third-party attributes on owned receivers (allow-listed). Both blind spots are R9.
+**D6, the guard test.** *Guard:* `hasattr(obj, "name")`, or `getattr(obj, "name", default)` with three arguments, the name a string literal, inside a function, whose receiver's root (through attributes, subscripts and nested `getattr`) is `self`, `cls`, `rt` or `runtime`, or a local name assigned in an enclosing function from such an expression (`x = self._store`, `x = getattr(self._runtime, "y", None)`, `x = a or b` by its first operand, to a fixed point). Two-argument `getattr` (raises), `callable(getattr(...))` without a default, `try/except AttributeError`, dunder names and module-level guards are out. *Defined:* a `def`/`async def` or class name; a module- or class-level assignment target (class attributes, dataclass and pydantic fields, enum members); any attribute assignment target anywhere (`self.x =`, `runtime.x =`); a `__slots__` string; a `setattr(obj, "x", …)` literal; a module-level import name; an argparse `dest=` or first long option. Production = `src/probos/**/*.py` of this checkout; AST only; deterministic (sorted walk, sets); about 9 s for 1,067 files. *Allow-list:* `tests/fixtures/guard_name_allowlist.txt`, `path | name | kind | reason`, kind `duck` (third-party, optional by design) or `finding` (registered on #1523, untriaged); keyed by (path, name), so line moves do not matter. The test fails on a hit not listed and on an entry that is no longer a hit (its name is now defined, or no longer guarded in that file). *Measured* (section 12, scratch probes): name-only, every receiver: 109 hits (argparse namespaces, `os`, exceptions, Playwright pages): not reviewable. Receiver-scoped (chosen): 39 hits, 36 (path, name) pairs: the 13 of the five items plus 23 others, 6 `duck` and 17 `finding` (A2: `nats_bus.py` `reconnected_count` reclassified). Ranked: (1, chosen) receiver-scoped; (2) name-only, about 95 allow-list hits; (3) name-only plus statically excluded receivers (non-`probos` module roots, `except`-bound names): 72 hits, 65 pairs, 52 entries. *Gives up / cannot see:* a guard on a parameter or a local not derived from those roots; a name an unrelated production class happens to define (**F12's `recent` is defined by 5 other classes, and `pending_proposals` by `ChainOptimizer`: neither would have been caught**); dynamic names; `__getattr__`; third-party attributes on owned receivers (allow-listed). Both blind spots are R9.
 
 **D7, F13.** The `list_all` branch never ran (no procedure store defines it; `inspect.isawaitable` dances served it); it fed `existing` and nothing else. Removed with the `hasattr` checks on `list_active`/`get` (the bridge is built only with the runtime's `ProcedureStore` or None, `startup/dreaming.py:115-121`) and the `inspect` import. Behaviour is unchanged (premise measured). The merge it feeds is never saved: R2, not fixed (dream-time writes to stored procedures are design).
 
@@ -100,7 +102,7 @@ States of the window read: *measured* (an int ≤ 1000); *failed* (the runtime h
 | Reader of `event_log_window` | Outcome |
 |---|---|
 | `anchor_quality._compute_dimension_scores` (`:39-51`) → `compute_anchor_confidence` (`:54-80`) → recall `score_recall` (`episodic.py:4754`), the confidence gate, `social_verification.py:337`, `:529`; `build_anchor_profile` (`:103-172`, no production caller) | unchanged: the window counts as unfilled, as 0.0 did on every stored episode |
-| `memory_security.score_anchor_mismatch` (`:93-163`) via `validate_recall_result` (`:166-204`), `EpisodicMemory._security_anomaly_drop` (`episodic.py:1520-1549`) | unchanged in production: the only production query, `_AnchorQueryView` (`episodic.py:333-352`, built at `:5028`, `:5251`), has no `event_log_window`; after the change no query can make it count |
+| `memory_security.score_anchor_mismatch` (`:93-163`) via `validate_recall_result` (`:166-204`), `EpisodicMemory._security_anomaly_drop` (`episodic.py:1520-1549`) | unchanged in production: the only production query, `_AnchorQueryView` (`episodic.py:333-352`, built at `:5028`, `:5251`), has no `event_log_window`; after the change no query can make it count (and no production code binds the gate, R13) |
 | Persisted shape: `anchors_json` (`episodic.py:4364`), loaders `:4502`, `:923`; `knowledge/store.py:178`; `knowledge/erasure.py:57` | shape unchanged; a stored 0.0 and a missing key both load as 0.0 (pinned) |
 | Proactive anchor sites (`proactive.py:1418-1425`, `:1678-1689`) | the real count; neither episode is stored on a running loop (section 0), E5 |
 | UI, export, API | no reader (section 12) |
@@ -114,21 +116,21 @@ States of the window read: *measured* (an int ≤ 1000); *failed* (the runtime h
 
 Before editing, grep the pins: `grep -rn "ward_room_service\|agent_pool\|cluster_recall_counts\|recent_threads_by_crew\|_resolve_callsign_to_id\|list_all\|subordinate_stats" tests/`. `test_proactive.py:150` and `test_ad635f_clinical_proactive_context.py:40-41` set the dead attributes on MagicMock runtimes whose ontology names no subordinate; left (R11).
 
-**Named doubles (M1).** `_FakeAlerts`, `_FakeRequests` (`test_ad810`): stand for the stores by their real method names, pinned to the real signatures (§7.7 `test_the_insights_doubles_match_the_real_classes`); the alert and request objects are the real dataclasses. `_AcceptingDispatcher`: masks only the mention TaskEvent's delivery (unchanged). F18's runtime is a MagicMock for the context sources F18 does not touch, with the real `WardRoomService` and `AgentRegistry` set; a MagicMock would invent any attribute name, so `test_the_attributes_these_paths_read_exist_on_the_runtime` pins the names on a real `ProbOSRuntime`. Crew are `SimpleNamespace`s with the attributes `AgentRegistry.register` and `CallsignRegistry.resolve` read. Every store is real (tmp-path SQLite); the task store's tick loop sleeps an hour and the test runs its tick body (`_execute_due_tasks`), as `test_bf877_unapproved_design_is_refused.py:637` does.
+**Named doubles (M1).** `_FakeAlerts`, `_FakeRequests` (`test_ad810`): stand for the stores by their real method names, pinned to the real signatures (§7.7 `test_the_insights_doubles_match_the_real_classes`); the alert and request objects are the real dataclasses. `_AcceptingDispatcher`: masks only the mention TaskEvent's delivery (unchanged). `_RecordingDispatcher` (A2): the same, recording each TaskEvent and running one step during the dispatch (the recycle). F18's runtime is a MagicMock for the context sources F18 does not touch, with the real `WardRoomService` and `AgentRegistry` set; a MagicMock would invent any attribute name, so `test_the_attributes_these_paths_read_exist_on_the_runtime` pins the names on a real `ProbOSRuntime`. Crew are `SimpleNamespace`s with the attributes `AgentRegistry.register` and `CallsignRegistry.resolve` read. Every store is real (tmp-path SQLite); the task store's tick loop sleeps an hour and the test runs its tick body (`_execute_due_tasks`), as `test_bf877_unapproved_design_is_refused.py:637` does.
 
-Tests first: with §7.2, §7.5, §7.7 to §7.9 applied and §7.1, §7.3, §7.4, §7.6 not, exactly 13 cases fail:
-- `test_bf925_silent_guards.py` (7): `test_the_report_reads_alerts_requests_and_completed_tasks` (`[] == [('critical', 'trust_network')]`), `test_a_source_that_is_not_running_reports_not_available`, `test_the_report_json_keeps_its_keys_and_adds_unavailable` (`AttributeError: 'InsightsReport' object has no attribute 'unavailable'` / the key set), `test_alerts_outside_the_window_are_left_out` (`[] == [...]`), `test_a_mention_records_a_social_link_to_the_mentioned_agent` and `test_one_post_reinforces_each_mentioned_agent_once` (`0.0 == approx(0.05)` for `bones-1`), `test_a_chief_sees_a_subordinates_ward_room_stats` (`KeyError: 'subordinate_stats'`);
+Tests first: with §7.2, §7.5, §7.7 to §7.9 applied and §7.1, §7.3, §7.4, §7.6 not, exactly 14 cases fail:
+- `test_bf925_silent_guards.py` (8): `test_the_report_reads_alerts_requests_and_completed_tasks` (`[] == [('critical', 'trust_network')]`), `test_a_source_that_is_not_running_reports_not_available`, `test_the_report_json_keeps_its_keys_and_adds_unavailable` (`AttributeError: 'InsightsReport' object has no attribute 'unavailable'` / the key set), `test_alerts_outside_the_window_are_left_out` (`[] == [...]`), `test_a_mention_records_a_social_link_to_the_mentioned_agent` and `test_one_post_reinforces_each_mentioned_agent_once` (`0.0 == approx(0.05)` for `bones-1`), `test_the_link_goes_to_the_agent_the_mention_was_dispatched_to` (A2; `0.0 == approx(0.05)` for `bones-1`, after both premises pass), `test_a_chief_sees_a_subordinates_ward_room_stats` (`KeyError: 'subordinate_stats'`);
 - `test_bf925_guard_names.py::test_production_guards_name_attributes_production_code_defines` (the 13 pairs of section 12, listed as new);
 - `test_ad810_insights.py` (4): the happy path (`[] == [...]`), the empty state ("Not available" missing), the failing source (`AttributeError ... 'unavailable'`), the narrative (`'' == 'Operator activity was steady this week.'`);
 - `test_ad630_leadership_feedback.py::TestChiefContextInjection::test_chief_gets_subordinate_stats`.
 
-Pass on both sides: the F11 negative case, the F18 not-alive case and runtime-attribute pin, both F13 cases (the premise), the doubles pin, the five scanner self-tests, `test_parse_days_*`, `test_api_endpoint_returns_json_shape`, the other `test_ad630` cases. Another failure, or an exception before the asserted line, is a hard stop for the Architect. Focused check:
+Pass on both sides: the F11 negative case, `test_no_link_without_a_dispatcher_even_with_a_resolver` (A2; the base records no mention link at all; it fails on the A1 tree), the F18 not-alive case and runtime-attribute pin, both F13 cases (the premise), the doubles pin, the five scanner self-tests, `test_parse_days_*`, `test_api_endpoint_returns_json_shape`, the other `test_ad630` cases. Another failure, or an exception before the asserted line, is a hard stop for the Architect. Focused check:
 
 ```
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf925_silent_guards.py tests/test_bf925_guard_names.py tests/test_ad810_insights.py tests/test_ad630_leadership_feedback.py tests/test_ad635f_clinical_proactive_context.py tests/test_proactive.py tests/test_ad572_procedural_bridge.py tests/test_hebbian_social.py tests/test_ward_room.py tests/test_bf467_directed_mention.py tests/test_ad1036_exogenous_mention.py tests/test_bf157_mention_response.py tests/test_procedure_store.py -n 0 -q
 ```
 
-(The orchestrator computes the collected and passing counts by tool; the new files add 27 cases.)
+(The orchestrator computes the collected and passing counts by tool; the new files add 29 cases.)
 
 **M2 (HIGH), §7.10 to §7.17.** First heading: `### 7.10 \`src/probos/substrate/event_log.py\` (M2, F12)`. Commit "BF-925 M2: episode anchors count the EventLog window, held out of scoring (part of #1655)", body ending "EventLog never had recent, so every anchor's event_log_window was 0.0. EventLog.count_since counts the newest rows in a window; both proactive anchor sites read the last 60 s through one helper. Anchor confidence counts the window as unfilled and memory security no longer maps it, so no score or verdict moves until it is measured (#1523)." The tracker entries (section 8) go in this commit.
 
@@ -822,6 +824,36 @@ REPLACE:
 
 ### 7.3 `src/probos/ward_room/messages.py` (M1, F11)
 
+Pair 1 (A2): the AD-654d block records the id each mention is dispatched to.
+
+SEARCH:
+````python
+        # AD-654d: Emit mention TaskEvent for each @mentioned agent
+        mentions = extract_mentions(body)
+        if mentions and self._dispatcher and self._callsign_registry:
+            for callsign in mentions:
+                resolved = self._callsign_registry.resolve(callsign)
+                if resolved and resolved.get("agent_id") and resolved["agent_id"] != author_id:
+                    try:
+````
+REPLACE:
+````python
+        # AD-654d: Emit mention TaskEvent for each @mentioned agent
+        # BF-925 (#1655): the ids resolved here are the ids the AD-453 block below links, so the
+        # TaskEvent and the Hebbian social link name the same agent even if the recipient is replaced
+        # during the dispatch's awaits; with no dispatcher there is neither a TaskEvent nor a link.
+        mention_targets: list[str] = []
+        mentions = extract_mentions(body)
+        if mentions and self._dispatcher and self._callsign_registry:
+            for callsign in mentions:
+                resolved = self._callsign_registry.resolve(callsign)
+                if resolved and resolved.get("agent_id") and resolved["agent_id"] != author_id:
+                    mention_targets.append(resolved["agent_id"])
+                    try:
+````
+
+Pair 2: the AD-453 block links exactly those ids.
+
 SEARCH:
 ````python
                 # @mention connections
@@ -835,18 +867,18 @@ SEARCH:
 REPLACE:
 ````python
                 # @mention connections
-                # BF-925 (#1655): resolved through the CallsignRegistry attach_dispatcher binds, which reads
-                # the live AgentRegistry, as the mention TaskEvent above is. The guarded
+                # BF-925 (#1655): one link per agent the AD-654d block above dispatched a mention to, by
+                # the id it resolved for that dispatch (the CallsignRegistry attach_dispatcher binds, which
+                # reads the live AgentRegistry), whether or not the dispatch was accepted; resolving again
+                # here could name a replacement recycled in during the dispatch's awaits. The guarded
                 # _resolve_callsign_to_id never existed, so no mention was ever recorded. One reinforcement
                 # per mentioned agent per post (the thread author already has the reply link); a
-                # self-mention, an unknown callsign or an agent that is not alive records nothing.
-                mentions = extract_mentions(body)
-                if mentions and self._callsign_registry is not None:
+                # self-mention, an unknown callsign, an agent that is not alive or a post with no
+                # dispatcher attached records nothing.
+                if mention_targets:
                     reinforced = {trow[0]} if trow and trow[0] and trow[0] != author_id else set()
-                    for callsign in mentions:
-                        resolved = self._callsign_registry.resolve(callsign)
-                        mid = resolved.get("agent_id") if resolved else None
-                        if mid and mid != author_id and mid not in reinforced:
+                    for mid in mention_targets:
+                        if mid not in reinforced:
                             reinforced.add(mid)
                             self._hebbian_router.record_interaction(
 ````
@@ -1149,11 +1181,28 @@ class _AcceptingDispatcher:
     """Stands for AD-654d's dispatcher, which attach_dispatcher binds with the CallsignRegistry.
 
     It masks only the mention TaskEvent's delivery, which BF-925 does not change; the Hebbian write
-    F11 adds does not pass through it.
+    F11 adds links the ids resolved for the dispatch, whatever the dispatch returns (A2).
     """
 
     async def dispatch(self, event: Any) -> Any:
         return SimpleNamespace(accepted=True, rejected=0, unroutable=0)
+
+
+class _RecordingDispatcher(_AcceptingDispatcher):
+    """An accepting dispatcher that records each TaskEvent and can run one step during the dispatch.
+
+    ``during`` stands for what the real dispatcher's awaits let happen meanwhile (an agent recycled).
+    """
+
+    def __init__(self, during: Any = None) -> None:
+        self.events: list[Any] = []
+        self._during = during
+
+    async def dispatch(self, event: Any) -> Any:
+        self.events.append(event)
+        if self._during is not None:
+            await self._during()
+        return await super().dispatch(event)
 
 
 _CREW = (  # (agent id, agent type, callsign, alive)
@@ -1183,7 +1232,7 @@ async def ward_room(tmp_path: Path):
     channel_id = (await service.list_channels())[0].id
     thread = await service.create_thread(channel_id, "thea-1", "Survey", "Opening the survey.", author_callsign="Thea")
     try:
-        yield SimpleNamespace(service=service, router=router, thread_id=thread.id)
+        yield SimpleNamespace(service=service, router=router, registry=registry, callsigns=callsigns, thread_id=thread.id)
     finally:
         await service.stop()
 
@@ -1208,6 +1257,37 @@ async def test_no_link_for_oneself_an_unknown_callsign_or_an_agent_that_is_not_a
     await ward_room.service.create_post(ward_room.thread_id, "bones-1", "@Bones @Nobody @Ghost", author_callsign="Bones")
     social = {key for key in ward_room.router.all_weights_typed() if key[2] == REL_SOCIAL}
     assert social == {("bones-1", "thea-1", REL_SOCIAL)}  # only the reply link
+
+
+async def test_the_link_goes_to_the_agent_the_mention_was_dispatched_to(ward_room: Any) -> None:
+    """A2 (round-1 review): the recipient is recycled during the dispatch (stopped, unregistered, a new
+    agent of its callsign registered). The TaskEvent and the link name the agent the mention resolved
+    to for the dispatch; resolving again would link the replacement (D3: one id per mention)."""
+
+    async def replace_bones() -> None:
+        bones = ward_room.registry.get("bones-1")
+        bones.is_alive = False
+        await ward_room.registry.unregister("bones-1")
+        await ward_room.registry.register(
+            SimpleNamespace(id="bones-2", agent_type="medical_officer", pool="medical_officer", is_alive=True)
+        )
+        assert ward_room.callsigns.resolve("Bones")["agent_id"] == "bones-2"  # premise: a later resolve names the replacement
+
+    dispatcher = _RecordingDispatcher(during=replace_bones)
+    ward_room.service.attach_dispatcher(dispatcher, ward_room.callsigns)
+    await ward_room.service.create_post(ward_room.thread_id, "author-1", "@Bones please check the scan", author_callsign="Avery")
+    assert [event.target.agent_id for event in dispatcher.events] == ["bones-1"]  # premise: AD-654d unchanged
+    assert _social(ward_room.router, "author-1", "bones-1") == pytest.approx(0.05)
+    assert _social(ward_room.router, "author-1", "bones-2") == 0.0
+
+
+async def test_no_link_without_a_dispatcher_even_with_a_resolver(ward_room: Any) -> None:
+    """A2 (round-1 review): attach_dispatcher(None, callsigns) binds a resolver but no dispatcher, so no
+    TaskEvent is dispatched and no mention link is recorded (D3)."""
+    ward_room.service.attach_dispatcher(None, ward_room.callsigns)
+    await ward_room.service.create_post(ward_room.thread_id, "author-1", "@Bones please check the scan", author_callsign="Avery")
+    social = {key for key in ward_room.router.all_weights_typed() if key[2] == REL_SOCIAL}
+    assert social == {("author-1", "thea-1", REL_SOCIAL)}  # only the reply link
 
 
 # --- F18: the Chiefs' subordinate communication stats -------------------------------------------
@@ -1587,6 +1667,7 @@ def test_the_allow_list_has_one_reason_per_entry() -> None:
 #   duck     a third-party or version-dependent attribute, optional by design
 #   finding  a dead-guard candidate BF-925's scan found, registered on #1523 (R1), not yet triaged
 # Measured 2026-10-25 on 72fae2dd with BF-925 M1 applied.
+# A2 (2026-10-26): nats_bus.py reconnected_count moved from duck to finding (nats-py 2.14.0 has no such attribute).
 src/probos/channels/base.py | pairing_service | finding | self.runtime.pairing_service has no production definition
 src/probos/channels/discord_adapter.py | http | duck | discord.py Bot.http on the adapter's bot
 src/probos/channels/discord_adapter.py | _HTTPClient__session | duck | discord.py HTTPClient's private session; version-dependent
@@ -1603,7 +1684,7 @@ src/probos/cognitive/scout.py | channel_adapters | finding | self._runtime.chann
 src/probos/cognitive/swe_harness/tools.py | system_self_model | finding | self._runtime.system_self_model has no production definition
 src/probos/cognitive/swe_harness/tools.py | list_pools | finding | spawner.list_pools has no production definition
 src/probos/experience/commands/commands_status.py | memory_security_registry | finding | runtime.memory_security_registry has no production definition
-src/probos/mesh/nats_bus.py | reconnected_count | duck | nats-py client attribute; version-dependent
+src/probos/mesh/nats_bus.py | reconnected_count | finding | nats-py 2.14.0 Client has no reconnected_count (the count is stats["reconnects"]), so NATSBus.health() reports 0 reconnects; R1
 src/probos/routers/agent_actions.py | action_dispatcher | finding | runtime.action_dispatcher has no production definition
 src/probos/routers/teams_webhook.py | teams_adapter | finding | runtime.teams_adapter has no production definition
 src/probos/tools/browser/llm_classifier.py | complete_sync | finding | llm.complete_sync has no production definition
@@ -1841,6 +1922,7 @@ SEARCH:
         assert profile.total_episodes == 3
         # mean = (1.0 + 0.0 + 0.25) / 3 ≈ 0.4167
         assert abs(profile.mean_confidence - (1.0 + 0.0 + 0.25) / 3) < 1e-4
+        # sorted: [0.0, 0.25, 1.0] → median = 0.25
 ````
 REPLACE:
 ````python
@@ -1853,6 +1935,7 @@ REPLACE:
         assert profile.total_episodes == 3
         # mean = (0.95 + 0.0 + 0.25) / 3 = 0.4
         assert abs(profile.mean_confidence - (0.95 + 0.0 + 0.25) / 3) < 1e-4
+        # sorted: [0.0, 0.25, 0.95] → median = 0.25
 ````
 
 ### 7.16 `tests/test_ad567b_anchor_recall.py` (M2: a fixture window no producer stores)
@@ -2119,7 +2202,7 @@ REPLACE:
 ````markdown
 # ProbOS Progress
 
-**BF-925 (2026-10-25), #1655 -- silent-fallback guards name APIs that exist.** Guards on methods no production class defines made features silently empty. The Insights report (`/insights`, `GET /api/insights`) now shows Bridge alerts, the Captain's pending capability and skill requests and completed persistent tasks, and says which sections have no source (topics, crew) or whose source is down (`unavailable`, an additive JSON key). Ward Room @mentions now reinforce the Hebbian social link to the mentioned agent once per post, resolved through the `CallsignRegistry` and the live `AgentRegistry`. Department Chiefs now see subordinates' Ward Room activity (`runtime.ward_room`, `runtime.registry`, by `agent.id`). The AD-572 bridge loses a `list_all` branch that could never run. `EventLog.count_since` counts the newest events in a window; both proactive anchor sites record the last 60 s, held out of anchor-confidence and memory-security scoring until measured (#1523), so no score or verdict changes. A new test fails when a production `hasattr`/`getattr` guard names an attribute no production code defines (allow-list `tests/fixtures/guard_name_allowlist.txt`). New: `tests/test_bf925_silent_guards.py`, `tests/test_bf925_guard_names.py`, `tests/test_bf925_event_log_window.py`. The contract is `prompts/bf-925-silent-fallback-guards.md`.
+**BF-925 (2026-10-25), #1655 -- silent-fallback guards name APIs that exist.** Guards on methods no production class defines made features silently empty. The Insights report (`/insights`, `GET /api/insights`) now shows Bridge alerts, the Captain's pending capability and skill requests and completed persistent tasks, and says which sections have no source (topics, crew) or whose source is down (`unavailable`, an additive JSON key). Ward Room @mentions now reinforce the Hebbian social link to the mentioned agent once per post, resolved through the `CallsignRegistry` and the live `AgentRegistry`. Department Chiefs now see subordinates' Ward Room activity (`runtime.ward_room`, `runtime.registry`, by `agent.id`). The AD-572 bridge loses a `list_all` branch that could never run. `EventLog.count_since` counts the newest events in a window; both proactive anchor sites record the last 60 s, held out of anchor-confidence and memory-security scoring until measured (#1523), so no score or verdict changes. A new test fails when a production `hasattr`/`getattr` guard names an attribute no production code defines (allow-list `tests/fixtures/guard_name_allowlist.txt`). New: `tests/test_bf925_silent_guards.py`, `tests/test_bf925_guard_names.py`, `tests/test_bf925_event_log_window.py`. The contract is `prompts/bf-925-silent-fallback-guards-name-apis-that-exist.md`.
 ````
 
 **`DECISIONS.md`:**
@@ -2133,7 +2216,7 @@ REPLACE:
 ### BF-925 -- Silent-fallback guards name APIs that exist (2026-10-25, #1655)
 
 - *Insights.* A section reads a real source or says "not available" with its reason; a source that is down or fails says so in its own section. Three are wired (Bridge alerts, the capability and skill request queues, completed persistent tasks); topics and crew are dropped because no store measures what AD-810 named, and relabelling Ward Room post counts as "crew" would report a different measure. The JSON keeps its keys and adds `unavailable`.
-- *Mentions.* Resolved through the `CallsignRegistry` the dispatcher binds, the resolver the mention's TaskEvent already uses (it reads the live `AgentRegistry`), not a second resolver; one reinforcement per mentioned agent per post.
+- *Mentions.* Resolved through the `CallsignRegistry` the dispatcher binds, the resolver the mention's TaskEvent already uses (it reads the live `AgentRegistry`), not a second resolver, and resolved once: the link goes to the agent the TaskEvent was dispatched to, so an agent replaced during the dispatch cannot split them, and a post with no dispatcher records neither; one reinforcement per mentioned agent per post.
 - *Chiefs' stats.* Read by `agent.id`, the id posts carry; the sovereign id counted nothing.
 - *Event log window.* Filled from the `EventLog` and held out of scoring as an unfilled field, so no score or verdict moves; on the shipped configuration no stored episode carries the anchor (the no-response episode is not stored, the thought episode only without a Ward Room), which is the measurement's first finding (#1523).
 - *Guard test.* Receiver-scoped (`self`, `cls`, `rt`, `runtime` and their local aliases) because a name-only rule over every receiver gave 109 hits; it cannot see a name an unrelated class defines (F12's `recent` would have passed). The allow-list holds third-party attributes and registered, untriaged findings.
@@ -2149,14 +2232,14 @@ REPLACE:
 - [ ] (F11) @mentions reinforce one social link per mentioned agent per post, through the `CallsignRegistry` and live `AgentRegistry` (M1).
 - [ ] (F18) Chiefs read `runtime.ward_room` and `runtime.registry` by `agent.id` (M1).
 - [ ] (F13) The `list_all` branch removed; `list_active` plus `get` is the path; seam test on a real `ProcedureStore` (M1).
-- [ ] Guard test and allow-list (23 entries: 7 duck, 16 findings registered on #1523) (M1).
+- [ ] Guard test and allow-list (23 entries: 6 duck, 17 findings registered on #1523) (M1).
 - [ ] (F12) `EventLog.count_since`; both anchor sites read it; held out of anchor confidence and memory security; no score or verdict moves (M2).
-- [ ] (F12) Measurement row and R1 to R11 posted on #1523.
+- [ ] (F12) Measurement row and R1 to R13 posted on #1523.
 - [ ] First live session after merge: section 16 recorded on #1655.
 
 ## 9. What this does NOT change
 
-- `CounselorAgent._resolve_agent_id_from_callsign`, `CallsignRegistry`, `AgentRegistry`, the AD-654d mention TaskEvent, `threads.py`'s thread-body mentions (no Hebbian link there, R8) and the reply and DM links.
+- `CounselorAgent._resolve_agent_id_from_callsign`, `CallsignRegistry`, `AgentRegistry`, the AD-654d mention TaskEvent (its block now also records the ids it dispatches to, A2; the events are unchanged), `threads.py`'s thread-body mentions (no Hebbian link there, R8) and the reply and DM links.
 - `WardRoomService.get_agent_comm_stats`, the 3-post threshold, the sensorium and prompt renderers of `subordinate_stats`.
 - `BridgeAlertService`, `CapabilityRequestStore`, `SkillRequestStore`, `PersistentTaskStore`, `TaskScheduler`; `commands_insights.py`, `routers/insights.py`; `ui/`.
 - `EpisodicProceduralBridge`'s matching, merge and creation (the merge stays unsaved, R2); `dreaming.py`.
@@ -2184,13 +2267,15 @@ d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf925_event_log_window.p
 | M1-3 | 1 | `src/probos/cognitive/insights.py` | `report.unavailable[name] = "service not running"` | `pass` | `test_a_source_that_is_not_running_reports_not_available`, `test_build_report_empty_state_renders_no_activity_marker` |
 | M1-4 | 1 | `src/probos/cognitive/insights.py` | `report.unavailable[name] = f"failed ({type(exc).__name__})"` | `pass` | `test_build_report_failing_source_does_not_blank_other_sources` |
 | M1-5 | 1 | `src/probos/cognitive/insights.py` | `report.unavailable.update(_NO_SOURCE)` | `pass` | `test_a_source_that_is_not_running_reports_not_available` |
-| M1-6 | 1 | `src/probos/ward_room/messages.py` | `mid = resolved.get("agent_id") if resolved else None` | `mid = None` | `test_a_mention_records_a_social_link_to_the_mentioned_agent` |
-| M1-7 | 1 | `src/probos/ward_room/messages.py` | `if mid and mid != author_id and mid not in reinforced:` | `if mid and mid != author_id:` | `test_one_post_reinforces_each_mentioned_agent_once` |
+| M1-6 | 1 | `src/probos/ward_room/messages.py` | `mention_targets.append(resolved["agent_id"])` | `pass` | `test_a_mention_records_a_social_link_to_the_mentioned_agent` |
+| M1-7 | 1 | `src/probos/ward_room/messages.py` | `if mid not in reinforced:` | `if True:` | `test_one_post_reinforces_each_mentioned_agent_once` |
 | M1-8 | 1 | `src/probos/ward_room/messages.py` | `reinforced.add(mid)` | `pass` | `test_one_post_reinforces_each_mentioned_agent_once` |
 | M1-9 | 1 | `src/probos/proactive.py` | `stats = await rt.ward_room.get_agent_comm_stats(sub_agent.id, since=since)` | `stats = await rt.ward_room.get_agent_comm_stats(sub_agent.sovereign_id or sub_agent.id, since=since)` | `test_a_chief_sees_a_subordinates_ward_room_stats`, `test_chief_gets_subordinate_stats` |
 | M1-10 | 1 | `src/probos/proactive.py` | `live = [a for a in rt.registry.all() if a.is_alive]` | `live = list(rt.registry.all())` | `test_a_subordinate_with_no_live_agent_is_skipped` |
 | M1-11 | 1 | `src/probos/cognitive/episodic_procedural_bridge.py` | `procedure = await store.get(entry["id"])` | `procedure = None` | `test_the_bridge_merges_a_cluster_a_stored_procedure_covers` |
 | M1-12 | 1 | `tests/test_bf925_guard_names.py` | `_OWNED = frozenset({"self", "cls", "rt", "runtime"})` | `_OWNED = frozenset({"self", "cls"})` | `test_a_guard_on_an_undefined_name_is_reported`, `test_production_guards_name_attributes_production_code_defines` (stale `runtime` entries) |
+| M1-13 | 1 | `src/probos/ward_room/messages.py` | `for mid in mention_targets:` | `for mid in [r["agent_id"] for r in map(self._callsign_registry.resolve, mentions) if r and r["agent_id"] and r["agent_id"] != author_id]:` | `test_the_link_goes_to_the_agent_the_mention_was_dispatched_to` (A2: the re-resolution) |
+| M1-14 | 1 | `src/probos/ward_room/messages.py` | `if mentions and self._dispatcher and self._callsign_registry:` | `if mentions and self._callsign_registry:` | `test_no_link_without_a_dispatcher_even_with_a_resolver` (A2) |
 | M2-1 | 2 | `src/probos/substrate/event_log.py` | `"SELECT COUNT(*) FROM (SELECT timestamp FROM events ORDER BY id DESC LIMIT ?) WHERE timestamp >= ?",` | `"SELECT COUNT(*) FROM (SELECT timestamp FROM events ORDER BY id DESC LIMIT ?) WHERE timestamp >= ? OR 1",` | `test_count_since_counts_the_events_logged_in_the_window` |
 | M2-2 | 2 | `src/probos/substrate/event_log.py` | `if not self._db or cap <= 0:` | `if not self._db:` | `test_count_since_reads_at_most_cap_rows` |
 | M2-3 | 2 | `src/probos/substrate/event_log.py` | `cutoff = datetime.fromtimestamp(since, tz=timezone.utc).isoformat()` | `cutoff = datetime.fromtimestamp(since - 3600.0, tz=timezone.utc).isoformat()` | `test_count_since_counts_the_events_logged_in_the_window` |
@@ -2240,6 +2325,11 @@ probes (scratch, logs/architect/bf925/, gitignored; this worktree's src first on
   EventLog: COUNT over newest 1000 with ISO cutoff -> 3 of 3 recent; future cutoff -> 0
   ProbOSRuntime(config=SystemConfig(), data_dir=tmp) unstarted: ward_room/bridge_alerts/capability/skill/persistent/ontology None; registry AgentRegistry; event_log EventLog
   guard scan: 1,067 files, 5,369 guards; name-only 109 hits; + module/except exclusions 72 hits; receiver-scoped 39 hits, 36 (path, name) pairs, ~10 s
+A2 (2026-10-26, on 0c57d0d3 and oracle 3a84ed27):
+  messages.py:254-260 AD-654d resolve (unchanged on main); oracle :445-449 second resolve (removed by A2); base :438-453 link block tail (target=mid)
+  substrate/registry.py:40-59 unregister/get; crew_profile.py:709-732 resolve (first live agent of the pool); activation/task_event.py:74-95 (target=AgentTarget(agent_id))
+  mesh/nats_bus.py:1240 getattr(self._nc, "reconnected_count", 0); episodic.py:1486-1488 set_security_config, :5027-5029 gate (watch_section)
+  round-1 evidence, logs/bf925r2/: MENTION_IDENTITY_BOUNDARY (event bones-1, link bones-replacement); NO_DISPATCHER_EDGES True (bones-1, zora-1 linked); NATS_REAL_ATTRIBUTE_ENUMERATION (2.14.0, reconnected_count absent, health 0); CHIEF_COST (5 queries per subordinate, 20 for architect)
 ```
 
 ## 12. Absence Verified (2026-10-25)
@@ -2286,8 +2376,17 @@ HOLDS: yes after A1; :452 was the only exact expectation the shift moved
 
 CLAIM: guard-scan hits on this tree (receiver-scoped rule, D6), 36 (path, name) pairs
 FOUND (the five items, 13): insights.py cluster_recall_counts, thread_store, recent_threads_by_crew, watch_bill, completed_since, consensus_manager, pending_votes, vision_budget, recent_breaches; episodic_procedural_bridge.py list_all; proactive.py ward_room_service, agent_pool; ward_room/messages.py _resolve_callsign_to_id
-FOUND (allow-list, 23): §7.9, 7 duck and 16 finding
+FOUND (allow-list, 23): §7.9, 6 duck and 17 finding (A2: `nats_bus.py` `reconnected_count` reclassified, R1)
 HOLDS: yes; M1 removes the 13, M2 adds no guard
+
+CLAIM (A2, R13): no production code binds AD-607's recall config, so the gate at episodic.py:5027 never runs
+RUN:   rg -n "set_security_config" (repo, excluding prompts/) -> episodic.py:1486 (def); tests/test_ad607_memory_security.py:929, :931 (hasattr only)
+RUN:   rg -n "_security_config\s*=" src -> episodic.py:1488 (the setter's body) only; readers :1531, :5027, :5250
+HOLDS: yes
+
+CLAIM (A2, M1-4): nats-py's Client has no reconnected_count
+RUN:   (round-1 review) logs/bf925r2/evidence-bf925-r1-mention-and-duck-baseline.txt:8: nats-py 2.14.0, 'reconnected_count' in dir(Client()) False, stats['reconnects'] 7, NATSBus.health()['reconnects'] 0
+HOLDS: yes (the reviewer's run; the amending session ran no Python)
 ```
 
 ## 13. Prior Art and Blind Spots
@@ -2300,7 +2399,7 @@ HOLDS: yes; M1 removes the 13, M2 adds no guard
 
 1. Every Insights section either has rows from a real store or an entry in `unavailable` with its reason; a source that raises marks only its own section and logs one WARNING; `to_json` has every earlier key plus `unavailable`; topics and crew are always `[]` with their no-source reasons.
 2. The wired sections are bounded: at most 20 alerts (from the newest 200, inside the window, newest first), 20 requests per queue (oldest first), and completed tasks from the newest 200 inside the window; nothing is written.
-3. A Ward Room post reinforces at most one social link per mentioned live agent, never the author, never an unknown callsign, never the thread author twice; the resolver is the one the mention's TaskEvent uses; nothing else in `create_post` changes.
+3. A Ward Room post reinforces at most one social link per mentioned live agent, never the author, never an unknown callsign, never the thread author twice; the link goes to the id the mention's TaskEvent was dispatched to, resolved once (no dispatcher, no link; A2); the AD-654d block only records those ids, its events unchanged; nothing else in `create_post` changes.
 4. A Chief's subordinate stats are read from `runtime.ward_room` for the first live agent of each subordinate type, by `agent.id`; the threshold and rendering are unchanged.
 5. The bridge loads procedures only through `list_active` and `get`; matching, merging and creation are unchanged.
 6. The guard test scans this checkout's `src` by AST, imports nothing, fails on a guard not allow-listed and on a stale entry, and every allow-list line has a path, a name, a kind and a reason.
@@ -2313,7 +2412,7 @@ HOLDS: yes; M1 removes the 13, M2 adds no guard
 ## 15. Acceptance criteria
 
 - Through the real `InsightService` on a real `ProbOSRuntime` with real stores: alerts, requests and completed tasks appear; topics and crew read "not available"; a stopped or failing source reads "not available".
-- Through a real `WardRoomService`, `HebbianRouter`, `AgentRegistry` and `CallsignRegistry`: a mention records one social link; repeats, self-mentions, unknown callsigns and agents that are not alive record none.
+- Through a real `WardRoomService`, `HebbianRouter`, `AgentRegistry` and `CallsignRegistry`: a mention records one social link; repeats, self-mentions, unknown callsigns and agents that are not alive record none; the link names the agent the TaskEvent was dispatched to when a replacement is registered during the dispatch, and a resolver bound without a dispatcher records none (A2).
 - Through `_gather_context` with a real `WardRoomService` and `AgentRegistry`: a Chief sees a subordinate's post count by `agent.id`; the attribute names exist on a real `ProbOSRuntime`.
 - Through a real `ProcedureStore`: a covered cluster is merged, a novel one bridged.
 - The guard test passes at the M1 and M2 stages and fails in both directions.
@@ -2329,13 +2428,13 @@ After the first session on the merged build, record on #1655: one `/insights` ou
 
 - **The new tests were written in a drafting run and not run.** Measured by scratch probes (section 11): the scan counts, the F13 premise, the F11 base weights, the post id form, the EventLog comparison, the unstarted runtime's attributes. Not measured: that `_gather_context` completes on a MagicMock runtime holding a real `WardRoomService` (its Ward Room activity section now reaches the real service); that `_think_for_agent` on `SimpleNamespace(episodic_memory, event_log)` reaches the no-response store with `should_store` opened; that the task store's first tick runs before the test creates its task (the fixture's later awaits yield to it); that `log()` chains correctly after a backdated row with an empty `row_hash`; that no other proactive test that reaches the no-response site with a MagicMock runtime asserts there is no WARNING (the helper warns once).
 - (Measured 2026-10-25: section 5's "expected unchanged" row held except `test_ad567b_*:452`, now pinned by A1.)
-- The 16 `finding` entries are untriaged: each is "no production definition" by the scan's rule, not a confirmed defect. The `duck` reasons are not verified against the third-party packages.
+- The 17 `finding` entries are untriaged except `nats_bus.py` `reconnected_count`, a confirmed defect (R1); each other is "no production definition" by the scan's rule, not a confirmed defect. The `duck` reasons: pydantic 2.12.5 `model_dump` and Playwright 1.60.0 `Page.viewport_size`, `mouse`, `keyboard` verified by the round-1 review; discord.py's `http` and `_HTTPClient__session` not verified (discord.py is not installed in the venv).
 - **Which source the tests import:** run with `PYTHONPATH` set to the scratch tree's `src` (the venv's editable install points at `D:\ProbOS\src`).
 - Live: that `ward_room.enabled` is true in the Captain's operator `system.yaml` (tracked `config/system.yaml:913-914`; the model default is False, `config_models/crew.py:279`).
 
 ## 18. For the register (#1523; found here, not fixed by this change)
 
-- **R1.** 16 production guards name an attribute no production code defines (the `finding` lines of `tests/fixtures/guard_name_allowlist.txt`); each needs triage: wire, remove, or reclassify as duck typing (and edit the allow-list).
+- **R1.** 17 production guards name an attribute no production code defines (the `finding` lines of `tests/fixtures/guard_name_allowlist.txt`); each needs triage: wire, remove, or reclassify as duck typing (and edit the allow-list). One is confirmed (round-1 review, A2): `nats_bus.py:1240` reads `getattr(self._nc, "reconnected_count", 0)`, which nats-py 2.14.0's `Client` does not have, so `NATSBus.health()["reconnects"]` is always 0; the count is `self._nc.stats["reconnects"]`.
 - **R2.** AD-572's cross-cycle merge is never persisted: `_merge_cross_cycle` (`episodic_procedural_bridge.py:72-77`) mutates a loaded copy; only new procedures are saved (`dreaming.py:1223-1235`). Measured. Saving merged provenance is a dream-time write with its own review.
 - **R3.** `proactive.py:1619-1695` (the thought episode) cannot store on a running loop (section 12).
 - **R4.** `proactive.py:1405-1429` builds a no-response episode that `should_store` always discards (`episodic.py:1937-1939`); since BF-925 it also costs one bounded `EventLog` count per no-response think.
@@ -2346,3 +2445,5 @@ After the first session on the merged build, record on #1655: one `/insights` ou
 - **R9.** The guard test's rule cannot see a guard whose name an unrelated production class defines (F12's `recent`; `pending_proposals`) or a guard on a parameter; a typed check would need annotations at these seams.
 - **R10.** Two callsign resolvers: `CounselorAgent._resolve_agent_id_from_callsign` (case-sensitive `agent.callsign` scan, 4 callers) and `CallsignRegistry.resolve` (case-insensitive type map). One resolver is a DRY refactor.
 - **R11.** `tests/test_proactive.py:150` and `tests/test_ad635f_clinical_proactive_context.py:40-41` still set `ward_room_service` / `agent_pool` on MagicMock runtimes; harmless and dead.
+- **R12 (A2; round-1 review M1-2).** The Insights report treats only a `None` store as not running (`cognitive/insights.py:238-241`, `:254-266` on the M1 tree). A store still attached after `stop()` answers from its cache (`CapabilityRequestStore.stop`, `capability_request.py:721-724`, and `SkillRequestStore.stop`, `skill_request.py:128-131`, close the database and keep `_cache`; measured by the reviewer: 2 cached requests) or with `[]` (`PersistentTaskStore.stop`, `persistent_tasks.py:157-159`), and the report cannot tell. None of the three exposes a public readiness signal (only private `_db` / `_running`). Reach: injected-only (per the review). *Fix it enables:* a public readiness property on the three stores, read by the report; a store API change, not BF-925's.
+- **R13 (A2; round-1 review M2-1; not BF-925's, not a regression).** AD-607's recall anomaly gate is never bound in production, and would raise if it were. (a) `EpisodicMemory.set_security_config` (`episodic.py:1486-1488`) has no production caller (§12), so the gates at `:5027` and `:5250` never run. (b) Bound to a real `MemorySecurityConfig`, a non-empty weighted recall raises `NameError: name 'watch_section' is not defined` at `:5029` (`watch_section=query_watch_section or watch_section`: the method has `query_watch_section`, not `watch_section`; the reviewer reports further unbound names in that block). Same on M1, M2 and `main`. *Decision it enables:* repair the block's names, then decide whether production binds the gate (it filters recall results: a security behaviour change with its own review). Filed as its own issue.
