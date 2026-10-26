@@ -4,6 +4,8 @@
 
 **Header edits (orchestrator, 2026-10-26, mechanical; no pair, SEARCH or REPLACE changed):** the **Base** paragraph (S3 merged: base `origin/main` `20c1ec00`), section 4's "Expected focused counts" paragraph (measured on that base) and its tests-first sentence, and section 6's names of each new test file's first failing import (each leg was run on the oracle); after A2, section 14 property 1's per-section bound (A2 made the lesson's bound 700 characters in all, property 14).
 
+**Amendment A5:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from round 3 of the three cross-family reviews of the committed head `bbc64351` (9 findings; one P1, found by two reviewers) and the round-three brake (continue; round 4 a delta review by two reviewers). The strict read gets one table of every filesystem operation it makes, with one disposition each (7.3a, O1 to O7), and a trace-and-fault test that fails for an operation without a row (C3g). `_markdown_files_or_raise` walks with `os.scandir` and raises every `OSError` except a missing root's (R3-M1-1: `os.walk` took an entry whose type it could not read for a file). It returns files only, so a listed file whose read fails raises without A2's second look through `Path.is_file()`, which reads EBADF, ENOENT and "the device is not ready" as "not there" (O5). The citation read raises for a listed ship-wide note its second read cannot find (O6). The stand-down's two existence checks ask `Path.lstat` and treat "cannot tell" as unknown (O7). A stored frontmatter value `str()` cannot convert is archived as no value, at the exit note's three conversions and S1's six (R3-M1-2). The console counts completed writes and, apart, the writes that may have left a note (M2-2). A first read that returns after the window refuses before any turn task exists (M2-3). `_left_at`'s unknown branch has its test and rows (M2-4). M2-1 (reach reclassified to injected-only), R3-M1-3 and M2-5 are registered (R28 to R30); R31 lists what stays outside the table. 7.3 gains pairs 8 and 9 (37 pairs in all). Milestone boundaries are unchanged.
+
 **Amendment A4:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from round 2 of the three cross-family reviews of the repaired head `e1e97d25` (16 findings, two P1 with one root). The strict listing now raises for a directory it cannot list (7.3a pairs 3 to 5: an error-reporting walk for `strict=True` only; the default runs the same `rglob` call). A section name matches in ASCII only, so a lookalike letter opens no section instead of raising; a lesson refuses every C0 and C1 control and DEL but tab, line feed and carriage return; `is_exit_note_text` refuses `---`, where Ship's Records cuts a frontmatter value (register R25), and the stand-down offers only episodes whose ids it admits. The stand-down's write path is made smaller, not larger: it never removes a document (A2's rollback could delete another writer's document and could not run on cancellation), checks for a note written meanwhile without an await and charges that check to the window, begins no write once the window has closed, and reports the path of any note a failed or cut-off write left. `asyncio.create_task` replaces `ensure_future`. M3 is unchanged.
 
 **Amendment A3:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from the orchestrator's run of A2 on the oracle (151 of the 154 cases of the three new files passed, and every focused list passed except X8's three cases): X8 builds its own transport that answers as a served app does (`raise_app_exceptions=False`) and records the one exception the app raised, because the shared `_client` re-raises the app's exception instead of returning the 500 (C108 to C110); R19 records that M3-F2 is already F-141 on #1523 and is not re-filed (C111: the Architect withdrew its A2 ruling "file it as its own BF" after the orchestrator found F-141 in the register). No other text changes.
@@ -18,7 +20,7 @@
 
 **Amendment A2:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from round 1 of the three cross-family reviews of the candidate `54cb4027` (24 findings, four P1). Three shared contracts change, each at its smallest seam: `RecordsStore.list_entries` gains a keyword-only `strict` (7.3a), so the AD-754 read and the stand-down's first read fail closed on a note file that exists but cannot be read now (M1-F1, M3-F1); `CognitiveAgent._conversational_agentic_will_run` answers no for a `direct_message` carrying `bounded_turn: True`, so a stand-down turn is answered inline on the single-pass path and never promoted into a background work item (7.9a, M2-1); the Oracle tool is not touched, and a lesson is bounded at 700 characters in all, so a whole archived note fits one tool entry (M1-F4, L6 through the real tool). A2 also closes the format under rendering (M1-F3), archives exactly the canonical note (M1-F5), checks every provenance value the origin line and SQLite receive (M1-F2, F6, F7, M2-7), recognises `_` emphasis (M1-F8), corrects the plan's docstring (M1-F9), rebuilds the stand-down's bounds (one window from before the first read through every write, one deadline per turn, one turn per billet, a failed write removed, a member's fault kept inside its turn, no turn outliving the call: M2-2 to M2-6), budgets excerpts in transport bytes (M2-8), and strengthens S3, S4b, S9, S13b, S14, X1, X2 and X7 (M2-9, M3-F3 to F5). Two pre-existing findings are registered, not repaired (R18, R19). Milestone boundaries are unchanged; 7.3a is in M1 and 7.9a in M2.
 
-**Tests:** new `tests/test_ad1341_s4_lessons.py` (M1: 25 functions; A4 added six), `tests/test_ad1341_s4_stand_down.py` (M2: 33 functions; A4 added five), `tests/test_ad1341_s4_exit_note_erasure.py` (M3: 10 functions). Updated: `tests/test_ad1341_s1_archive_store.py` (M1: the closed `SourceKind` set) and `tests/test_ad1341_s1_promotion.py` (M1, A1: the service's import set), each with an inline reason.
+**Tests:** new `tests/test_ad1341_s4_lessons.py` (M1: 30 functions; A4 added six, A5 five), `tests/test_ad1341_s4_stand_down.py` (M2: 37 functions; A4 added five, A5 four), `tests/test_ad1341_s4_exit_note_erasure.py` (M3: 10 functions; A5 parametrises X8 by fault). Updated: `tests/test_ad1341_s1_archive_store.py` (M1: the closed `SourceKind` set) and `tests/test_ad1341_s1_promotion.py` (M1, A1: the service's import set), each with an inline reason.
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -172,7 +174,7 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 
 M1 adds `exit_note_citations` and tests it (C1 to C3c). Its consumer, the route, arrives in M3.
 
-**Expected focused counts (measured by the orchestrator on the real base `20c1ec00`, replacing A1's figures, which predate S3's repair):** M1 480 passed, 1 skipped. M2 397 passed, 1 skipped. M3 403 passed. These predate A2. A2 adds M1 cases (two functions and parameter cases), M2's ten functions and six DM test files, and two M3 functions; the orchestrator re-measures on the repaired oracle. (A1's figures were M1 458, M2 388, M3 393.) No list changes: M1's list already holds `tests/test_ad1341_s1_promotion.py` (7.4a), and M2's and M3's hold `tests/test_ad1341_s3_erasure_cascade.py` (X1b imports its `_traced` and `_traces`).
+**Expected focused counts (measured by the orchestrator on the real base `20c1ec00`, replacing A1's figures, which predate S3's repair):** M1 480 passed, 1 skipped. M2 397 passed, 1 skipped. M3 403 passed. These predate A2. A2 adds M1 cases (two functions and parameter cases), M2's ten functions and six DM test files, and two M3 functions; the orchestrator re-measures on the repaired oracle. (A1's figures were M1 458, M2 388, M3 393.) No list changes: M1's list already holds `tests/test_ad1341_s1_promotion.py` (7.4a), and M2's and M3's hold `tests/test_ad1341_s3_erasure_cascade.py` (X1b imports its `_traced` and `_traces`). A5 adds C3g, C3h, C3i, P5 and P6 (M1: 25 cases), S2c, S4f, S8d and S13d (M2), a case each to C3e and S8c, and X8's fault parameter (nine cases for three); no list changes; the orchestrator re-measures.
 
 ## 5. Consumers of every value this changes
 
@@ -197,7 +199,11 @@ M1 adds `exit_note_citations` and tests it (C1 to C3c). Its consumer, the route,
 | `is_exit_note_text` refuses `---` (A4) | `exit_note_provenance_ok` (the stand-down's timeline refusal and `NO_IDENTITY`, and `_exit_note_record`); `_exit_note_record`'s episode-id check; `_offer` (A4) | a value Ship's Records would read back cut short (R25) is never asked for, offered or archived (P4, S7e, S10b) |
 | `_NOT_LESSON_TEXT` (A4; was `_UNSTORABLE`) | `parse_lesson` only: the stand-down's reply and the promotion's stored body | a lesson holds no C0 or C1 control and no DEL but tab, line feed and carriage return (L3, L9) |
 | `_SECTION` matches in ASCII only (A4) | `_HEADING_LINE`, `_ALONE_LINE`, `_LABEL_LINE`, so `_heading` and `parse_lesson` | a lookalike letter opens no section; nothing raises (L8, L10) |
-| A turn's path on `failed` or `timed_out` (A4) | `cmd_stand_down` prints any turn's path (`commands_stand_down.py:37-39`, unchanged) | names a note a failed or cut-off write left; nothing is removed |
+| A turn's path on `failed` or `timed_out` (A4, A5) | `cmd_stand_down` prints any turn's path (`commands_stand_down.py:37-39`) and, from A5, counts the `failed` or `timed_out` turns that carry one apart from `written` (M2-2) | names a document a failed or cut-off write may have left, or whose presence could not be checked; nothing is removed |
+| `_markdown_files_or_raise` (A5: an explicit `os.scandir` walk, files only) | `list_entries(strict=True)`, so `exit_note_citations` and `run_stand_down`'s first read (A5-AV1) | raises for every failure but a missing root (7.3a's table); lists what the default lists on a sound tree (C3f, C3g) |
+| `exit_note_citations` raises for a ship-wide listed note `read_entry` cannot find (A5, O6) | `/forget` (500, nothing erased; the retry decides) | never "no citations" for a note listed a moment ago |
+| `_present` (A5, O7) | `_write`'s check (unknown: `failed`, nothing written) and `_left_at` (unknown: the path named) | what `Path.exists` reads as "not there" (EBADF and the like) is unknown |
+| `_stored_text` (A5) | `_title_for`, `plan_promotion`'s S1 record, `_exit_note_record` | a value `str()` cannot convert is archived as no value; every other value converts as before |
 
 ## 6. Tests
 
@@ -236,10 +242,15 @@ The last column below is the Architect's analysis of the assertion each test fai
 | L9 | `test_a_lesson_carries_no_control_character_but_tab_line_feed_and_carriage_return` | A4 (R2-F5): every C0 and C1 control and DEL refused anywhere in a reply; tab kept; line feed and carriage return end lines | `assert lesson is None, hex(code)` at `0x1`, `0x1b` (base: accepted) |
 | L10 | `test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs` | A4 (R2-F2): a stored lookalike heading through the real `probos reset`: exit 0, the note not archived | `_reset(...) == 0` (base: 1) |
 | P4 | `test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records[callsign, agent_type, did, cited]` | A4 (R2-F3): YAML's quoting cases and, for the callsign, every code point to U+017F: refused and withheld, or admitted, stored, read back whole and archived | `(record,) = plan.records` for a value holding `---` (base: admitted, then withheld) |
-| C3e | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations[injected-root, injected-timeline, native-root, native-timeline]` | A4 (R2-F1, M3-1): `exit-notes/` or a timeline directory the OS refuses to list; the strict listing and the citation read raise; the default listing never raises (and, natively, passes over it); listable again, the note counts | `pytest.raises(OSError)` (did not raise) |
-| C3f | `test_the_strict_listing_lists_exactly_what_the_default_listing_lists[all, exit-notes, absent]` | A4: the strict walk's parity with `rglob("*.md")`: nested directories, a `*.md` directory, another suffix, the suffix's case as the platform matches it, `_archived/`, a missing directory | (passes on the base, where `strict` changes no traversal: the control; kills RS-5) |
+| C3e | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations[injected-root, injected-timeline, injected-entry-type, native-root, native-timeline]` | A4 (R2-F1, M3-1): `exit-notes/` or a timeline directory the OS refuses to list; A5 (R3-M1-1): `[injected-entry-type]`, the OS cannot report the timeline directory's type (the round-3 P1); the strict listing and the citation read raise; the default listing never raises (and, natively, passes over it); listable again, the note counts | `pytest.raises(OSError)` (did not raise; on `bbc64351` only `[injected-entry-type]`) |
+| C3f | `test_the_strict_listing_lists_exactly_what_the_default_listing_lists[all, exit-notes, absent]` | A4: the strict walk's parity with `rglob("*.md")`: nested directories, a `*.md` directory, another suffix, the suffix's case as the platform matches it, `_archived/`, a missing directory | (passes on the base, where `strict` changes no traversal: the control; A5: the walk returns files only and `list_entries` lists the same; kills RS-10) |
 | K1 | `tests/test_ad1341_s1_archive_store.py::test_source_kinds_are_closed_and_none_is_an_episode` (updated) | the closed set gains `exit_note`; none is an episode | the set equality (base: no `exit_note`) |
 | K2 | `tests/test_ad1341_s1_promotion.py::test_the_service_imports_only_the_knowledge_layer` (updated, A1, 7.4a) | the promotion service still imports only the knowledge layer, now with `probos.knowledge.lessons` | the set equality (base: no `lessons` import, until 7.3 pair 2) |
+| C3g | `test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing[absent, io, not-a-directory, permission]` | A5 (R3-M1-1; 7.3a's O1 to O4): a trace-and-fault matrix. A clean walk over a real tree records every operation (each `os.scandir`, each listing step including the last, each `is_dir`); an entry offers only `name` and `is_dir(follow_symlinks=False)`, and `os.stat`, `os.lstat`, `os.listdir`, `os.walk` trip, so an operation without a row fails. Then each recorded operation fails once with the kind: the walk raises it, except a missing root (`[absent]`, `[not-a-directory]` at the root's open), which lists nothing. Every cell asserts its fault fired where aimed | the clean run's `follow_symlinks is False` (base: `os.walk` calls `is_dir()`, then `os.path.islink`) |
+| C3h | `test_a_listed_note_the_strict_read_cannot_read_is_never_read_as_no_note[permission, io, absent, not-a-directory × stat-ok, stat-ebadf]` | A5 (O5): a listed note whose read fails with any error raises from the strict listing and the citation read; the default still skips it; readable again, it counts. `[*-stat-ebadf]`: A2's `is_file()` answered "not there" | `pytest.raises(OSError)` (did not raise) in the four `[*-stat-ebadf]` cases; `[*-stat-ok]` pass on the base |
+| C3i | `test_a_listed_note_the_citation_read_cannot_find_again_is_never_read_as_no_citations[ebadf, enoent, eacces]` | A5 (O6): the strict listing returned and read the note; `read_entry`'s `Path.exists` cannot find it now: the citation read raises; readable again, it counts. `[eacces]`: `exists` raises itself (the control) | `pytest.raises(OSError)` (base: `{}`) for `[ebadf]`, `[enoent]` |
+| P5 | `test_a_stored_value_that_cannot_be_shown_as_text_never_stops_the_promotion[...9 cases]` | A5 (R3-M1-2): a YAML integer (`0x` and 4,000 digits) in each value the promotion converts: the exit note's status, created, updated; a notebook finding's author, status, department, created, updated, topic (S1's sources). The plan selects the document; the value is archived as no value; the title falls back to the file name | `plan_promotion` raises `ValueError` (all nine) |
+| P6 | `test_a_note_holding_a_value_that_cannot_be_shown_as_text_is_archived_by_the_real_reset` | A5 (R3-M1-2): the reviewer's case through the real `probos reset`: exit 0, the note archived | `_reset(...) == 0` (base: 1) |
 
 **M2, `tests/test_ad1341_s4_stand_down.py`:**
 
@@ -270,14 +281,18 @@ The last column below is the Architect's analysis of the assertion each test fai
 | S7c | `test_the_captain_s_message_stays_inside_the_inline_params_bound_in_any_script[ascii, cjk, astral]` | A2 (M2-8): 12 episodes and a 32-character CJK callsign; params as JSON at most 4,096 bytes; 12 shown | `len(json.dumps(intent.params)) <= 4096` (`[ascii]` a control) |
 | S7d | `test_one_member_s_fault_never_ends_the_other_turns_or_leaves_one_running[timestamps, unreadable-episode, self-cancelled]` | A2 (M2-6): inf and NaN shown undated; one member's unreadable episode fails that member only; a turn cancelled from inside cancels and drains the rest; no task outlives the call | the call raises `OverflowError` / `RuntimeError`; `stopped.is_set()` |
 | S8b | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[same-type, same-member, written-meanwhile]` | A2 (M2-3) | the outcomes (base: two WRITTEN; asked twice; revision 2) |
-| S8c | `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[file, directory]` | A2 (M1-F1 asked of the stand-down): a skip would replace the note; A4 (M3-1): a billet directory the OS refuses to list | `pytest.raises(StandDownRefused)` (did not raise) |
+| S8c | `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[file, directory, entry-type]` | A2 (M1-F1 asked of the stand-down): a skip would replace the note; A4 (M3-1): a billet directory the OS refuses to list; A5 (O4): a note whose type the OS cannot report | `pytest.raises(StandDownRefused)` (did not raise; on `bbc64351` only `[entry-type]`) |
 | S10b | `test_an_identity_that_cannot_stand_in_the_note_is_not_asked[multiline-callsign, long-callsign, nul-agent-type, surrogate-did, delimiter-callsign]` | A2 (M2-7); A4 (R2-F3): a callsign holding `---` | `[TurnOutcome.NO_IDENTITY]` (base: WRITTEN) |
-| S4d | `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window, a-write-returns-late, cut-off-after-publishing]` | A4 (round 2 M2-2, M2-4, M2-7): the real clock with 200 ms of margin over the 15.6 ms tick; the existence check is charged to the window; a late synchronous return is `written` with its note; a write cut off after publishing is `timed_out` with the path it left | `writes == []` (base: a write began after the window) / `(TIMED_OUT, path)` (base: `(TIMED_OUT, "")`, the note removed) |
+| S4d | `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window, a-write-returns-late, cut-off-after-publishing]` | A4 (round 2 M2-2, M2-4, M2-7): the real clock with 200 ms of margin over the 15.6 ms tick; the existence check (A5: `Path.lstat`, the seam slowed) is charged to the window; a late synchronous return is `written` with its note; a write cut off after publishing is `timed_out` with the path it left | `writes == []` (base: a write began after the window) / `(TIMED_OUT, path)` (base: `(TIMED_OUT, "")`, the note removed) |
 | S4e | `test_a_cancelled_stand_down_keeps_every_note_it_published_and_leaves_nothing_running` | A4 (round 2 M2-3): the cancellation propagates; no task outlives it; the published note stays whole and reviewable (register R27) | (passes on the base: the control pinning A4's decision) |
 | S7e | `test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives[long, nul, surrogate, line-break, delimiter]` | A4 (R2-F4, M2-5): an episode whose id the rule refuses is never offered or shown; every offered id is cited, stored and archived | `[...source_episode_ids...] == [("ep-000", "ep-001")]` (base: `[]`, the note withheld) |
 | S11b | `test_a_bound_that_is_not_positive_is_refused_before_anything_is_read[turn, window, concurrency]` | A4 (M2's record): `ValueError` before the first read, nobody asked | (passes on the base; D-41 is its evidence) |
 | S13c | `test_the_console_command_takes_no_arguments` | A4 (M2's record): the usage line; the runtime untouched | (passes on the base; C-2 is its evidence) |
 | S16 | `test_a_stand_down_turn_is_answered_inline_by_the_real_dm_consumer_and_never_promoted` | A2 (M2-1), **the real seam:** real `CognitiveAgent` consumers with the shipped `dm_agentic` settings; the turns take the single-pass path, the loop's model is never called, no work item, no promoted task; the control's ordinary 1:1 still runs the loop | `intent.params[BOUNDED_TURN_PARAM]` (KeyError) |
+| S2c | `test_a_failed_write_whose_note_cannot_be_checked_still_names_its_path` | A5 (round 3 M2-4): a write publishes and then fails, and `Path.lstat` of the billet raises: unknown counts as there, so the report names the path | `assert checks` (base: checks with `Path.exists`); its evidence is D-43 and D-46 |
+| S4f | `test_a_first_read_that_returns_after_the_window_asks_nobody_and_starts_no_turn` | A5 (round 3 M2-3): a first read that never yields returns after the window (injected clock): `StandDownRefused` before any turn task is created; nobody asked | `pytest.raises(StandDownRefused)` (base: a report, every turn `not_reached`) |
+| S8d | `test_a_billet_whose_note_cannot_be_checked_is_never_written_over` | A5 (O7): a note written meanwhile, then `Path.stat` and `Path.lstat` of the billet fail with EBADF (which `Path.exists` reads as "not there"): `failed` with no path, no write, the note unrevised | `[(FAILED, "")]` (base: `written`, revision 2) |
+| S13d | `test_the_console_counts_completed_writes_and_names_a_note_a_failed_write_may_have_left` | A5 (round 3 M2-2): after a write that published and then failed, the console prints the turn with its path, `0 exit note(s) written`, and that one write did not complete and may have left a document; the next reset would archive it | the "did not complete" line (base: absent) |
 
 **M3, `tests/test_ad1341_s4_exit_note_erasure.py`:**
 
@@ -292,7 +307,7 @@ The last column below is the Architect's analysis of the assertion each test fai
 | X6 | `test_only_the_forget_route_reads_exit_note_citations_and_only_the_manager_refuses_on_them` | census | `_importers("exit_note_citations") == {"routers/security.py"}` |
 | X7 | `test_a_note_written_after_the_request_read_its_citations_does_not_stop_it` | D14's disclosed bound, through the real route (A2, M3-F3): one read; the late note lands after it and before the manager; a second read counts it | (passes once the keyword exists: the control; kills R-8) |
 | X1c | `test_s3_s_archive_refusal_comes_before_this_slice_s_when_both_cite_the_episode[episode, agent, resource]` | A2 (M3-F4): an archived note and a pending note both cite the target; S3's refusal comes first | (a control on the base's order; kills E-7, E-8) |
-| X8 | `test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure[episode, agent, resource]` | A2 (M3-F1, A3): a note the OS refuses to read during the request, through a transport that answers as a served app does (`raise_app_exceptions=False`); 500 with the body `Internal Server Error`, the one exception the app raised a `PermissionError`, nothing erased; readable again, 409 with its path and no further exception | `failed.status_code == 500` (base: 200) |
+| X8 | `test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure[read, listing, entry-type × episode, agent, resource]` | A2 (M3-F1, A3), A5 (round 3 R3-M1-1, M3's coverage): during the request the OS refuses to read the note, to list its timeline directory, or to report that directory's type; through a transport that answers as a served app does (`raise_app_exceptions=False`); 500 with the body `Internal Server Error`, the one exception the app raised a `PermissionError`, nothing erased; the fault lifted, 409 with its path and no further exception | `failed.status_code == 500` (base: 200; on `bbc64351` only `[entry-type-*]`: 200, erased) |
 
 **Controls (A1).** C3b, X3, X5 and X7 pass on the base's behaviour by design (C3b: nothing to read; X3 and X7: once the keyword exists; X5: on the M3 base). None of them is evidence of a refusal on its own. X3 kills P-10's mutant (a note the read wrongly counts would refuse). X5 kills R-3, and its premise asserts that a real store's read counts the note. X7's premise asserts that a second read counts the late note, so its pass comes from the one-read bound and not from an invalid note. Every refusal asserts its own type or text, which the base's behaviour cannot produce: `ExitNotesBlockErasure` with `.paths` (X1, X1b), `exit_notes_cite_erased_episodes` and `exit_note_paths` (X2, X4), each case's `StandDownRefused` text (S11), `only available in the CLI terminal` (S13), and `Stand-down refused` (S13b).
 
@@ -672,8 +687,9 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
     to the timeline that wrote the note, not to the reset that promotes it, so a note a skipped promotion left behind
     keeps its own generation.
 
-    Never raises for a document: every value ``PromotionRecord`` would refuse is checked here first, so one bad note is
-    withheld and never stops a reset (S1 A3's rule). The one rule for the promotion and for ``exit_note_citations``.
+    Never raises for a document: every value ``PromotionRecord`` would refuse is checked here first, and a stored
+    value ``str()`` cannot convert is archived as no value (``_stored_text``, A5), so one bad note is withheld or
+    archived and never stops a reset (S1 A3's rule). The one rule for the promotion and for ``exit_note_citations``.
     """
     if type(document) is not dict or type(document.get("frontmatter")) is not dict:
         return None
@@ -715,10 +731,10 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
         author_agent_type=agent_type,
         author_did=author_did,
         source_episode_ids=tuple(cited),  # AD-1341 S4: the agent's own episodes, by id; never their text
-        metadata={
-            "status": str(frontmatter.get("status") or ""),
-            "record_created": str(frontmatter.get("created") or ""),
-            "record_updated": str(frontmatter.get("updated") or ""),
+        metadata={  # A5 (R3-M1-2): each stored value through the one never-raising conversion
+            "status": _stored_text(frontmatter.get("status")),
+            "record_created": _stored_text(frontmatter.get("created")),
+            "record_updated": _stored_text(frontmatter.get("updated")),
         },
     )
 
@@ -735,13 +751,22 @@ async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | Non
     permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
     UTF-8, or whose frontmatter does not parse, is never counted, because the promotion never archives it either: that
     is a property of the file, not of the moment.
+
+    A5 (7.3a's table, O6): each listed note is read again through ``read_entry``, whose ``Path.exists`` answers False
+    for errors ``pathlib`` reads as "not there". A ship-wide note the strict listing returned and the second read
+    cannot find raises: it was there a moment ago, so whether the next promotion would archive it is unknown.
     """
     citing: dict[str, list[str]] = {}
     for listed in await records.list_entries(EXIT_NOTES_DIR, strict=True):
         path = listed["path"]
         if source_kind_for(path, listed["frontmatter"]) is not SourceKind.EXIT_NOTE:
             continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
-        record = _exit_note_record(path, await records.read_entry(path, ARCHIVE_READER))
+        document = await records.read_entry(path, ARCHIVE_READER)
+        classification = listed["frontmatter"].get("classification")
+        listed_readable = type(classification) is str and classification in PROMOTABLE_CLASSIFICATIONS
+        if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now: never "no citations"
+            raise OSError(f"AD-1341 S4: the exit note {path} was listed but cannot be found now")
+        record = _exit_note_record(path, document)
         if record is None or not record.source_episode_ids:
             continue
         if archive is not None and (await archive.source_state(record)).outcome is not PromotionOutcome.CREATED:
@@ -807,11 +832,93 @@ REPLACE:
     """
 ```
 
+Pair 8 (A5, round 3 R3-M1-2: one never-raising conversion for every stored value; the title through it):
+
+SEARCH:
+```python
+def _title_for(path: str, frontmatter: dict[str, Any]) -> str:
+    """The archive entry's title: the document's topic, else its file name, else its records path (A3, F1).
+
+    The producers accept a blank topic (``write_entry(topic="   ")``, ``write_notebook(topic_slug=" ")``) and the
+    promotion record refuses a blank title. A title is a label, so it never withholds a document or stops a run.
+    The records path is never blank: only a path under a source's directory is a source.
+    """
+    topic = frontmatter.get("topic")
+    for candidate in (str(topic) if topic else "", path.rsplit("/", 1)[-1].removesuffix(".md")):
+```
+REPLACE:
+```python
+def _stored_text(value: object) -> str:
+    """AD-1341 S4 (A5, round 3 R3-M1-2): a stored frontmatter value as archive text; never raises.
+
+    ``str()`` raises ``ValueError`` for an integer longer than Python's integer-string limit (4,300 digits by default,
+    ``sys.set_int_max_str_digits``), which YAML builds from ``0x...``; one such value stopped the plan and the whole
+    reset. It is archived as no value, as a missing one is. Every other value converts exactly as ``str()`` did.
+    """
+    try:
+        return str(value or "")
+    except ValueError:  # A5 (R3-M1-2): an integer longer than Python's integer-string limit
+        logger.warning("AD-1341 S4: a stored Ship's Records value cannot be shown as text; it is archived empty")
+        return ""
+
+
+def _title_for(path: str, frontmatter: dict[str, Any]) -> str:
+    """The archive entry's title: the document's topic, else its file name, else its records path (A3, F1).
+
+    The producers accept a blank topic (``write_entry(topic="   ")``, ``write_notebook(topic_slug=" ")``) and the
+    promotion record refuses a blank title. A title is a label, so it never withholds a document or stops a run.
+    The records path is never blank: only a path under a source's directory is a source.
+    """
+    topic = frontmatter.get("topic")
+    for candidate in (_stored_text(topic), path.rsplit("/", 1)[-1].removesuffix(".md")):
+```
+
+Pair 9 (A5: S1's record converts its stored values the same way; they were the same `ValueError` on the base):
+
+SEARCH:
+```python
+                author_callsign=str(frontmatter.get("author") or ""),
+                metadata={
+                    "status": str(frontmatter.get("status") or ""),
+                    "department": str(frontmatter.get("department") or ""),
+                    "record_created": str(frontmatter.get("created") or ""),
+                    "record_updated": str(frontmatter.get("updated") or ""),
+                },
+```
+REPLACE:
+```python
+                author_callsign=_stored_text(frontmatter.get("author")),
+                metadata={  # AD-1341 S4 (A5): S1's conversions, through the one never-raising rule
+                    "status": _stored_text(frontmatter.get("status")),
+                    "department": _stored_text(frontmatter.get("department")),
+                    "record_created": _stored_text(frontmatter.get("created")),
+                    "record_updated": _stored_text(frontmatter.get("updated")),
+                },
+```
+
 ### 7.3a `src/probos/knowledge/records_store.py` (M1, A2)
 
 A2 (M1-F1, M3-F1). `list_entries` (`:961-1001`) catches every read or parse failure of a listed file and skips it (`:982-987`), so a caller cannot tell an unreadable note from an absent one. `strict=True` re-raises an `OSError` reading a regular file that exists. A file that is not UTF-8 is still skipped (a property of the file; the promotion skips it too); a YAML error never reaches here (`_parse_document`, `:1190-1200`, folds it into `{}`); a path that is no longer a file (a directory named `*.md`, a vanished file) is skipped as absent. The default keeps every caller's behaviour (§5). A shared contract: round 2 re-reviews whole.
 
 A4 (R2-F1, M3-1). `Path.rglob` (`:984`) also passes over a directory it cannot list, so a strict reader still took the notes inside an unlistable `exit-notes/` or timeline directory for absent ones. `strict=True` now walks with `os.walk` and an error callback that re-raises for a directory that exists but cannot be listed, and treats a directory that does not exist (or is gone) as empty (pairs 3 to 5). The default runs the same `rglob` call as before. Round 3 re-reviews whole.
+
+A5 (round 3 R3-M1-1, and its class). `os.walk` catches an `OSError` from `DirEntry.is_dir()` and files the entry as a non-directory (CPython 3.12 `Lib/os.py:386-399`), so a timeline directory whose type could not be read was never descended, and the strict listing returned `[]` without raising. Round 2 found the same hole in `Path.rglob` at the directory open. Each standard walker absorbs some error, so A5 replaces the walker and decides every filesystem operation of the strict read once (pairs 2 and 4 here; 7.3 pair 5; 7.6). The rule: **only a successful listing proves that a document is not there.**
+
+| # | Operation | Failure | Disposition |
+|---|---|---|---|
+| O1 | `os.scandir(search_path)` | `FileNotFoundError`, `NotADirectoryError` | `[]`: nothing was written under a directory that is not there |
+| O1 | | any other `OSError` | raises |
+| O2 | `os.scandir` of a directory a listing reported | any `OSError`, `FileNotFoundError` included | raises: gone since, or unaddressable, it is not proved empty; the strict caller refuses and is retried |
+| O3 | each step of a listing, the last included | any `OSError` | raises |
+| O4 | `entry.is_dir(follow_symlinks=False)` | any `OSError` | raises; never taken for a file (the type comes from the listing record: a symbolic link is not descended, as `rglob` descends none; a junction is) |
+| O5 | `md_file.read_text` in `list_entries(strict=True)` | any `OSError` | raises, with no second look: A2's `md_file.is_file()` read EBADF, ELOOP, ENOENT, ENOTDIR and "the device is not ready" as "not there" |
+| O5 | | `UnicodeDecodeError` | skipped (A2: a property of the file) |
+| O6 | `read_entry` in `exit_note_citations` (`Path.exists`, then `read_text`) | None for a note the listing returned with a `ship` or `fleet` classification | raises (7.3 pair 5) |
+| O6 | | an `OSError` from `exists` or `read_text` | propagates (unchanged) |
+| O7 | the stand-down's check of a billet (`_present`: `Path.lstat`) | `FileNotFoundError`, `NotADirectoryError` | nothing there |
+| O7 | | any other `OSError` | unknown: the guard writes nothing (`failed`, no path) and `_left_at` names the path |
+
+The walk returns files only: a directory named `*.md` is never a document. It was listed and then skipped before; `list_entries` lists the same (C3f). Outside the table, each decided in register R31: `_safe_path`'s `resolve()`, a missing root the OS cannot address, special files, a junction cycle, the default listing and the reviews built on it (R20), git (R23), `write_entry`'s own `exists()` (R28) and the one-snapshot bound (R2). C3g is a trace-and-fault matrix over O1 to O4; C3h faults O5; C3i faults O6; S8d, S2c and S4d run O7; C3e, S8c and X8 cross the strict read's two consumers. A shared contract: round 4 reviews the delta with this table as its property (§14, 16).
 
 Pair 1 (the parameter):
 
@@ -840,8 +947,10 @@ REPLACE:
         exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
         AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
         that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
-        A4: ``strict=True`` also raises the ``OSError`` of a directory that exists but cannot be listed now, which
-        ``Path.rglob`` passes over (``_markdown_files_or_raise``); a directory that does not exist lists nothing.
+        A4, A5: ``strict=True`` walks with ``_markdown_files_or_raise``, which raises every ``OSError`` that could leave
+        a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot read)
+        and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any ``OSError``,
+        with no second look at whether it is still a file (A5).
         """
 ```
 
@@ -862,7 +971,7 @@ REPLACE:
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
             except OSError:
-                if strict and md_file.is_file():
+                if strict:  # A5 (O5): a file the walk listed is never "no document", whatever the read's error
                     raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"
                 logger.debug("Skipping unreadable file", exc_info=True)
                 continue
@@ -907,22 +1016,40 @@ REPLACE:
 
 
 def _markdown_files_or_raise(search_path: Path) -> list[Path]:
-    """AD-1341 S4 (A4): every ``*.md`` path under ``search_path`` that ``rglob("*.md")`` finds, except that a directory
-    which exists but cannot be listed now raises its ``OSError`` instead of being passed over.
+    """AD-1341 S4 (A4, A5): every file named ``*.md`` under ``search_path``, or the ``OSError`` that hid one.
 
-    ``Path.rglob`` skips a directory it cannot list (a permission, a sharing violation), so a strict reader would take
-    the documents inside it for absent ones. A directory that does not exist, or is gone by the time it is listed,
-    lists nothing, as it does for ``rglob``. ``fnmatch`` matches the suffix with the platform's case rule, as ``rglob``
-    does, and a directory named ``*.md`` is found, as ``rglob`` finds it.
+    A5 (round 3 R3-M1-1): ``os.walk`` filed an entry whose type it could not read as a file and never descended into
+    it, as ``Path.rglob`` passed over a directory it could not list (A4): each standard walker absorbs some error. So
+    this walk is explicit, and each filesystem operation it makes has one disposition (the contract's 7.3a table):
+
+    - O1 ``os.scandir(search_path)``: ``FileNotFoundError`` or ``NotADirectoryError`` lists nothing, since nothing
+      was written under a directory that is not there; any other ``OSError`` raises.
+    - O2 ``os.scandir`` of a directory a listing reported: any ``OSError`` raises, ``FileNotFoundError`` included
+      (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried).
+    - O3 each step of a listing: any ``OSError`` raises.
+    - O4 ``entry.is_dir(follow_symlinks=False)``: any ``OSError`` raises; the entry is never taken for a file. The
+      type comes from the listing record, so a symbolic link is not descended, as ``rglob`` descends none.
+
+    Only a successful listing proves a document absent. A directory named ``*.md`` is no document and is not
+    returned; the suffix matches with the platform's case rule (``fnmatch``), as ``rglob``'s does.
     """
     found: list[Path] = []
-
-    def _unlisted(error: OSError) -> None:
-        if not isinstance(error, (FileNotFoundError, NotADirectoryError)):  # gone, or never a directory: absent
-            raise error  # AD-1341 S4 (A4): a directory that exists but cannot be listed now is never "no documents"
-
-    for root, dirs, files in os.walk(search_path, onerror=_unlisted):
-        found.extend(Path(root, name) for name in (*dirs, *files) if fnmatch.fnmatch(name, "*.md"))
+    pending: list[Path] = [search_path]
+    while pending:
+        directory = pending.pop()
+        try:
+            listing = os.scandir(directory)  # O1 for search_path, O2 below it
+        except (FileNotFoundError, NotADirectoryError):
+            if directory is not search_path:
+                raise  # O2 (A5): a directory a listing reported is never "no documents"
+            return found  # O1: search_path does not exist, so nothing was written under it
+        with listing:
+            for entry in listing:  # O3: an OSError while listing propagates
+                path = Path(directory, entry.name)
+                if entry.is_dir(follow_symlinks=False):  # O4: an OSError propagates; it is never read as "a file"
+                    pending.append(path)
+                elif fnmatch.fnmatch(entry.name, "*.md"):
+                    found.append(path)
     return found
 
 
@@ -1012,6 +1139,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import os
 import re
@@ -1055,7 +1183,7 @@ from probos.knowledge.lessons import (
     parse_citations,
     parse_lesson,
 )
-from probos.knowledge.records_store import RecordsStore
+from probos.knowledge.records_store import RecordsStore, _markdown_files_or_raise
 from probos.tools.oracle_query_tool import _MAX_ENTRY_CHARS, OracleQueryTool
 from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _config, _data_dir, _records, _reset
@@ -1113,17 +1241,19 @@ async def _write_note(
     return note_path
 
 
-def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path, error: OSError | None = None) -> None:
     """A2: the OS refuses to read ``denied``, as a sharing violation does while an editor or a scanner holds the file.
 
     Only ``Path.read_text`` of that one file fails, so the real ``RecordsStore.list_entries`` meets the failure inside
-    its own loop, on every platform.
+    its own loop, on every platform. A5: ``error`` is the failure raised (a sharing violation by default).
     """
     real_read_text = Path.read_text
     target = denied.resolve()
 
     def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.resolve() == target:
+            if error is not None:
+                raise error
             raise PermissionError(13, "the file is being used by another process", str(self))
         return real_read_text(self, *args, **kwargs)
 
@@ -1188,6 +1318,154 @@ def _deny_listing(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
         return real_scandir(path)
 
     monkeypatch.setattr(os, "scandir", scandir)
+
+
+def _deny_entry_type(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """A5 (round 3 R3-M1-1): the OS cannot report the type of the entry ``denied`` when its parent is listed
+    (``DirEntry.is_dir`` raises), as for a link whose target cannot be examined or a filesystem that reports no
+    types. ``os.walk`` filed such an entry as a file and never descended into it. Every listing passes through a
+    wrapper; only that one entry's ``is_dir`` fails, and every other attribute is the real entry's."""
+    real_scandir = os.scandir
+    target = denied.resolve()
+
+    class _Entry:
+        def __init__(self, entry: Any) -> None:
+            self._entry = entry
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._entry, name)
+
+        def is_dir(self, *args: Any, **kwargs: Any) -> bool:
+            if Path(self._entry.path).resolve() == target:
+                raise PermissionError(13, "the entry's type cannot be read", self._entry.path)
+            return bool(self._entry.is_dir(*args, **kwargs))
+
+    class _Listing:
+        def __init__(self, listing: Any) -> None:
+            self._listing = listing
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._listing.close()
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> _Entry:
+            return _Entry(next(self._listing))
+
+        def close(self) -> None:
+            self._listing.close()
+
+    def scandir(path: Any = ".") -> Any:
+        return _Listing(real_scandir(path))
+
+    monkeypatch.setattr(os, "scandir", scandir)
+
+
+def _deny_stat(monkeypatch: pytest.MonkeyPatch, denied: Path, error: OSError) -> None:
+    """A5: ``Path.stat`` of ``denied`` fails with ``error``. ``Path.exists`` and ``Path.is_file`` read ENOENT, ENOTDIR,
+    EBADF and ELOOP, and three Windows errors ("the device is not ready" among them), as "not there". Compared by
+    name, never through ``resolve()``, which calls ``stat`` itself."""
+    real_stat = Path.stat
+    target = os.path.normcase(os.fspath(denied.resolve()))
+
+    def stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if os.path.normcase(os.fspath(self)) == target:
+            raise error
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+
+
+#: A5: the failures 7.3a's table decides, by kind.
+_WALK_FAULTS: dict[str, Any] = {
+    "absent": lambda where: FileNotFoundError(errno.ENOENT, "gone", where),
+    "io": lambda where: OSError(errno.EIO, "I/O error", where),
+    "not-a-directory": lambda where: NotADirectoryError(errno.ENOTDIR, "not a directory", where),
+    "permission": lambda where: PermissionError(errno.EACCES, "denied", where),
+}
+
+
+class _Trace:
+    """A5: the strict walk's filesystem operations in order; with ``fail_at``, that one (1-based) raises ``fault``."""
+
+    def __init__(self, fail_at: int = 0, fault: Any = None) -> None:
+        self.operations: list[str] = []
+        self.fail_at, self.fault, self.fired = fail_at, fault, ""
+
+    def tick(self, operation: str, where: str) -> None:
+        self.operations.append(operation)
+        if len(self.operations) == self.fail_at:
+            self.fired = operation
+            raise self.fault(where)
+
+
+class _TracedEntry:
+    """A5: a directory entry offering only ``name`` and ``is_dir``: 7.3a's table has no row for anything else."""
+
+    def __init__(self, entry: Any, trace: _Trace) -> None:
+        self.name: str = entry.name
+        self._entry, self._trace = entry, trace
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        assert follow_symlinks is False, "O4 reads the listing record and never follows a link"
+        self._trace.tick("is_dir", self._entry.path)
+        return bool(self._entry.is_dir(follow_symlinks=False))
+
+
+class _TracedListing:
+    """A5: one traced ``os.scandir`` listing; each step is an operation, the step that ends the listing included."""
+
+    def __init__(self, listing: Any, trace: _Trace, where: str) -> None:
+        self._listing, self._trace, self._where = listing, trace, where
+
+    def __enter__(self) -> _TracedListing:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._listing.close()
+
+    def __iter__(self) -> _TracedListing:
+        return self
+
+    def __next__(self) -> _TracedEntry:
+        self._trace.tick("next", self._where)
+        return _TracedEntry(next(self._listing), self._trace)
+
+
+def _traced_walk(root: Path, trace: _Trace) -> list[Path]:
+    """A5: the real ``_markdown_files_or_raise`` with every ``os.scandir`` traced, and a tripwire on every other
+    filesystem call it could make, so an operation without a row in 7.3a's table fails the test."""
+    real_scandir = os.scandir
+
+    def scandir(path: Any = ".") -> _TracedListing:
+        where = os.fspath(path)
+        trace.tick("open-root" if Path(where) == root else "open-subdirectory", where)
+        return _TracedListing(real_scandir(path), trace, where)
+
+    def tripwire(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the strict walk made a filesystem call that 7.3a's table has no row for")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(os, "scandir", scandir)
+        for name in ("stat", "lstat", "listdir", "walk"):
+            patch.setattr(os, name, tripwire)
+        return _markdown_files_or_raise(root)
+
+
+def _walk_tree(root: Path) -> None:
+    """A5: every shape the walk meets: nested directories, two timelines, a directory named ``*.md``, another suffix
+    and the suffix in upper case."""
+    for relative in (
+        "ship-a/surgeon.md", "ship-a/chapel.md", "ship-b/deep/er/nested.md", "ship-b/UPPER.MD", "ship-b/plain.txt",
+        "top.md",
+    ):
+        (root / relative).parent.mkdir(parents=True, exist_ok=True)
+        (root / relative).write_text("---\nauthor: Bones\n---\n\nA record.\n", encoding="utf-8")
+    (root / "folder.md").mkdir()
 
 
 # --- L1 to L7: the format -------------------------------------------------------------------------------------------
@@ -1539,6 +1817,63 @@ def test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs(
     assert (path,) not in _rows(tmp_path / "archive.db", "SELECT source_ref FROM archive")
 
 
+_HUGE = "0x" + "1" * 4000  # A5: a YAML integer whose decimal form is longer than Python's integer-string limit
+
+
+@pytest.mark.parametrize(
+    "source, field",
+    [
+        ("exit-note", "status"), ("exit-note", "created"), ("exit-note", "updated"), ("finding", "author"),
+        ("finding", "status"), ("finding", "department"), ("finding", "created"), ("finding", "updated"),
+        ("finding", "topic"),
+    ],
+)
+async def test_a_stored_value_that_cannot_be_shown_as_text_never_stops_the_promotion(
+    tmp_path: Path, source: str, field: str,
+) -> None:
+    """A5 (round 3 R3-M1-2): ``str()`` raises ``ValueError`` for an integer longer than Python's integer-string limit
+    (YAML reads ``0x...`` into one), so one stored value stopped the plan and the whole reset. Such a value is archived
+    as no value, as a missing one is, and a title falls back to the file name; S1's sources had the same conversions."""
+    records = _records(_data_dir(tmp_path))
+    if source == "exit-note":
+        path = await _write_note(records)
+    else:
+        path = "notebooks/bones/finding.md"
+        await records.write_entry(
+            author="Bones", path=path, content="A finding.", message="test: a finding", classification="ship",
+            department="medical", topic="Coolant drift", extra_frontmatter={"claim_id": "claim-0001"},
+        )
+    stored = records.repo_path / path
+    raw = stored.read_text(encoding="utf-8")
+    assert re.search(rf"(?m)^{field}:", raw)  # premise: the store wrote the field
+    stored.write_text(re.sub(rf"(?m)^{field}:.*$", f"{field}: {_HUGE}", raw), encoding="utf-8")
+
+    plan = await plan_promotion(records, timeline_id=_SHIP)
+
+    (record,) = plan.records
+    shown = {
+        "author": record.author_callsign, "topic": record.title, "status": record.metadata["status"],
+        "department": record.metadata.get("department"), "created": record.metadata["record_created"],
+        "updated": record.metadata["record_updated"],
+    }[field]
+    assert shown == ("finding" if field == "topic" else "")
+
+
+def test_a_note_holding_a_value_that_cannot_be_shown_as_text_is_archived_by_the_real_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5 (round 3 R3-M1-2): the reviewer's case through the real ``probos reset``, which exited 1 with nothing
+    wiped. The note is valid, so the reset archives it, with no status."""
+    config, data_dir = _config(tmp_path), _data_dir(tmp_path)
+    path = asyncio.run(_write_note(_records(data_dir)))
+    stored = _records(data_dir).repo_path / path
+    raw = stored.read_text(encoding="utf-8")
+    stored.write_text(re.sub(r"(?m)^status:.*$", f"status: {_HUGE}", raw), encoding="utf-8")
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+    assert (path,) in _rows(tmp_path / "archive.db", "SELECT source_ref FROM archive")
+
+
 async def test_an_exit_note_is_archived_once_whichever_reset_promotes_it(tmp_path: Path) -> None:
     records = _records(_data_dir(tmp_path))
     path = await _write_note(records)
@@ -1663,7 +1998,9 @@ async def test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations(
     assert await exit_note_citations(records, None) == {"ep-000": (path,)}
 
 
-@pytest.mark.parametrize("fault", ["injected-root", "injected-timeline", "native-root", "native-timeline"])
+@pytest.mark.parametrize(
+    "fault", ["injected-root", "injected-timeline", "injected-entry-type", "native-root", "native-timeline"],
+)
 async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
 ) -> None:
@@ -1671,13 +2008,16 @@ async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_
     ``Path.rglob`` passes over such a directory, so the strict citation read answered that nothing cites the episode
     and the AD-754 erasure went ahead. The strict listing now raises, and the citation read with it, while the default
     listing never raises, as before. Listable again, the note counts. ``[native-*]``: a share-nothing handle on
-    Windows, mode 000 on POSIX (skips only where the account lists it anyway)."""
+    Windows, mode 000 on POSIX (skips only where the account lists it anyway). A5 (R3-M1-1): ``[injected-entry-type]``,
+    the OS cannot report the timeline directory's type; ``os.walk`` took it for a file and the read answered ``{}``."""
     records = _records(_data_dir(tmp_path))
     path = await _write_note(records)
     timeline_directory = (records.repo_path / path).parent
     denied = timeline_directory.parent if fault.endswith("-root") else timeline_directory
     with contextlib.ExitStack() as stack:
-        if fault.startswith("injected"):
+        if fault == "injected-entry-type":
+            _deny_entry_type(monkeypatch, timeline_directory)
+        elif fault.startswith("injected"):
             _deny_listing(monkeypatch, denied)
         else:
             stack.enter_context(_unreadable(denied))
@@ -1697,9 +2037,9 @@ async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_
     "directory", ["", EXIT_NOTES_DIR, f"{EXIT_NOTES_DIR}/absent"], ids=["all", "exit-notes", "absent"],
 )
 async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(tmp_path: Path, directory: str) -> None:
-    """A4: the strict walk (``os.walk`` with an error callback) finds what ``rglob("*.md")`` finds, in the same order:
-    nested directories, a directory named ``*.md`` (found, then skipped as no file), another suffix, the suffix's case
-    as the platform matches it, ``_archived/``, and a directory that does not exist."""
+    """A4, A5: the strict listing lists what the default listing lists, in the same order: nested directories, a
+    directory named ``*.md`` (A5: never returned by the walk; the default reads it as no file), another suffix, the
+    suffix's case as the platform matches it, ``_archived/``, and a directory that does not exist."""
     records = _records(_data_dir(tmp_path))
     await _write_note(records)
     for relative in (
@@ -1713,6 +2053,78 @@ async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(t
 
     assert await records.list_entries(directory, strict=True) == default
     assert len(default) >= (0 if directory.endswith("absent") else 2)  # premise: something to list
+
+
+@pytest.mark.parametrize("kind", sorted(_WALK_FAULTS))
+def test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing(tmp_path: Path, kind: str) -> None:
+    """A5 (round 3 R3-M1-1): a trace-and-fault matrix over 7.3a's table, not one case per round. A clean walk over a
+    real tree records every filesystem operation it makes (each ``os.scandir``, each listing step, the last one
+    included, each ``is_dir``); the trace allows nothing else, so an operation added without a row fails here. Then
+    each recorded operation fails once with ``kind``: the walk raises that error, except a missing root
+    (``FileNotFoundError`` or ``NotADirectoryError`` at the root's open), which lists nothing. Every cell first asserts
+    that its fault fired at the operation the clean walk made there."""
+    root = tmp_path / "exit-notes"
+    _walk_tree(root)
+    clean = _Trace()
+    found = sorted(_traced_walk(root, clean))
+    assert found == sorted(path for path in root.rglob("*.md") if path.is_file())  # rglob's files, on a sound tree
+    assert set(clean.operations) == {"open-root", "open-subdirectory", "next", "is_dir"}  # one row each, no other
+    for fail_at, operation in enumerate(clean.operations, start=1):
+        trace = _Trace(fail_at, _WALK_FAULTS[kind])
+        try:
+            outcome: Any = sorted(_traced_walk(root, trace))
+        except OSError as exc:
+            outcome = type(exc)
+        assert trace.fired == operation, (fail_at, operation)  # premise: this cell's fault fired where it was aimed
+        missing_root = operation == "open-root" and kind in ("absent", "not-a-directory")
+        assert outcome == ([] if missing_root else type(_WALK_FAULTS[kind]("cell"))), (fail_at, operation)
+
+
+@pytest.mark.parametrize("stat", ["stat-ok", "stat-ebadf"])
+@pytest.mark.parametrize("kind", ["permission", "io", "absent", "not-a-directory"])
+async def test_a_listed_note_the_strict_read_cannot_read_is_never_read_as_no_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, stat: str,
+) -> None:
+    """A5 (7.3a's table, O5): a listed note whose read fails, with any error, raises from the strict listing and the
+    citation read; the default listing still skips it; readable again, it counts. ``[*-stat-ebadf]``: A2's
+    ``Path.is_file()`` then answered "not there" (``pathlib`` reads EBADF, ENOENT, ENOTDIR, ELOOP and three Windows
+    errors so), and the note was skipped as absent. The strict read no longer asks: the walk's listing decides."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    note = records.repo_path / path
+    _deny_reading(monkeypatch, note, error=_WALK_FAULTS[kind](str(note)))
+    if stat == "stat-ebadf":
+        _deny_stat(monkeypatch, note, OSError(errno.EBADF, "bad file descriptor", str(note)))
+    assert await records.list_entries(EXIT_NOTES_DIR) == []  # premise: the default listing skips it, as before
+    with pytest.raises(OSError):
+        await records.list_entries(EXIT_NOTES_DIR, strict=True)
+    with pytest.raises(OSError):
+        await exit_note_citations(records, None)
+    monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
+
+
+@pytest.mark.parametrize("error", ["ebadf", "enoent", "eacces"])
+async def test_a_listed_note_the_citation_read_cannot_find_again_is_never_read_as_no_citations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: str,
+) -> None:
+    """A5 (7.3a's table, O6): ``exit_note_citations`` reads each listed note again through ``read_entry``, whose
+    ``Path.exists`` answers False for EBADF and ENOENT (and on Windows "the device is not ready"), so a note listed and
+    read a moment before came back None and cited nothing. A ship-wide note the strict listing returned and
+    ``read_entry`` cannot find now raises. ``[eacces]``: ``exists`` raises itself (the control)."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    note = records.repo_path / path
+    code = {"ebadf": errno.EBADF, "enoent": errno.ENOENT, "eacces": errno.EACCES}[error]
+    _deny_stat(monkeypatch, note, OSError(code, os.strerror(code), str(note)))
+    listed = await records.list_entries(EXIT_NOTES_DIR, strict=True)
+    assert [entry["path"] for entry in listed] == [path]  # premise: the strict listing listed and read it
+    with pytest.raises(OSError):
+        await exit_note_citations(records, None)
+    monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
 
 
 async def test_the_captain_s_review_lists_an_exit_note_as_a_source_to_be_promoted(tmp_path: Path) -> None:
@@ -1791,6 +2203,8 @@ from probos.knowledge.lessons import (
 from probos.types import IntentMessage
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from probos.knowledge.records_store import RecordsStore
 
 logger = logging.getLogger(__name__)
@@ -1825,10 +2239,12 @@ class CrewMember:
 class TurnOutcome(StrEnum):
     """What one agent's stand-down turn came to.
 
-    WRITTEN wrote its note. The stand-down never removes a document (A4): a FAILED or TIMED_OUT turn that carries a
-    path is a write that published its note before it failed or was cut off, so the report names it, the Captain's
-    review lists it and the next promotion would archive it unless the Captain vetoes it. Every other outcome left
-    nothing at its path, or found a note there already (ALREADY_WRITTEN, DUPLICATE).
+    WRITTEN wrote its note. The stand-down never removes a document (A4). A FAILED or TIMED_OUT turn that carries a
+    path is a write that did not complete and may have left a document there: it published before it failed or was
+    cut off, or whether it did could not be checked (A5, round 3 M2-2). The report names the path, the console counts
+    such turns apart from WRITTEN, and the Captain's review lists any note the next promotion would archive there. A
+    FAILED turn without a path wrote nothing, a billet that could not be checked included (A5). Every other outcome
+    left nothing at its path, or found a note there already (ALREADY_WRITTEN, DUPLICATE).
     """
 
     WRITTEN = "written"
@@ -1875,6 +2291,23 @@ Recall = Callable[[CrewMember], Awaitable[Sequence[Any]]]
 
 def _turn_result(member: CrewMember, outcome: TurnOutcome, path: str = "") -> TurnResult:
     return TurnResult(member.agent_type, member.callsign, outcome, path)
+
+
+def _present(path: Path) -> bool | None:
+    """A5 (7.3a's table, O7): True when something is at ``path``, False when nothing is, None when that cannot be told.
+
+    ``Path.exists`` answers False for errors ``pathlib`` reads as "not there" (EBADF and ELOOP, and on Windows "the
+    device is not ready" among others), so a note there could be taken for none and written over, or left out of the
+    report. Only "not found", or a parent that is no directory, is absent. ``lstat``: whatever is at the billet's path
+    is there, and a link is never followed.
+    """
+    try:
+        path.lstat()
+    except (FileNotFoundError, NotADirectoryError):  # A5: nothing is there
+        return False
+    except OSError:
+        return None
+    return True
 
 
 def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
@@ -1969,7 +2402,8 @@ async def run_stand_down(
     published is removed: a write that fails or is cut off after publishing is reported with its path (A4).
 
     Raises ``StandDownRefused`` when the timeline is missing, cannot stand in a note or name a records path, or when
-    Ship's Records cannot be read in time (nobody is asked), and ``ValueError`` for a bound that is not positive.
+    Ship's Records cannot be read in time, a first read that returns after the window has closed included (A5; nobody
+    is asked), and ``ValueError`` for a bound that is not positive.
     Nothing that happens in a member's turn raises, and no turn outlives the call.
     """
     if type(timeline_id) is not str or not timeline_id.strip():
@@ -1994,6 +2428,11 @@ async def run_stand_down(
         raise StandDownRefused(
             "Ship's Records could not be read in time, so nobody was asked: a note already written could be replaced."
         ) from exc
+    if clock() >= deadline:  # A5 (round 3 M2-3): the first read returned after the window closed
+        # wait_for cannot cut off a read that never yields (synchronous Ship's Records I/O, register R22), so the
+        # window is checked again before any turn task exists, and none begins after it.
+        logger.warning("AD-1341 S4: reading Ship's Records took the whole stand-down window; nobody is asked")
+        raise StandDownRefused("Reading Ship's Records took the whole stand-down window, so nobody was asked.")
     existing = {entry["path"] for entry in listed}
     claimed_paths: set[str] = set()  # A2 (M2-3): the billets a turn has taken in this stand-down
     seen_agents: set[str] = set()
@@ -2001,14 +2440,13 @@ async def run_stand_down(
     write_lock = asyncio.Lock()  # one Ship's Records write at a time: the repository has one git index
 
     def _left_at(path: str) -> str:
-        """A4: ``path`` when a document is there now, so the report names it; unknown counts as there."""
-        try:
-            return path if (records.repo_path / path).exists() else ""
-        except OSError:
-            return path
+        """A4: ``path`` when a document is there now, so the report names it. Unknown counts as there (A5: through
+        ``_present``, which reads what ``Path.exists`` calls "not there" as unknown)."""
+        return "" if _present(records.repo_path / path) is False else path
 
     async def _write(member: CrewMember, path: str, body: str, envelope: dict[str, Any]) -> TurnResult:
-        """Write one note: begun inside the window, never over a note, and reported as it is left (A2, A4).
+        """Write one note: begun inside the window, never over a document its check found or could not rule out, and
+        reported as it is left (A2, A4, A5; a writer outside ProbOS saving at the path in the same instant: R28).
 
         The check for a note written since the stand-down began has no await, and its time is charged to the window
         before a write may begin (A4, round 2 M2-2). The stand-down never removes a document (A4): a write that fails,
@@ -2017,8 +2455,15 @@ async def run_stand_down(
         window (synchronous Ship's Records I/O, register R22) left its note: WRITTEN.
         """
         async with write_lock:
-            if (records.repo_path / path).exists():  # A2 (M2-3), A4: written since the stand-down began; no await
+            present = _present(records.repo_path / path)  # A5: what Path.exists reads as "not there" is unknown here
+            if present:  # A2 (M2-3), A4: a note written since the stand-down began; no await
                 return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
+            if present is None:  # A5: whether a note is there cannot be told now, so nothing is written over it
+                logger.warning(
+                    "AD-1341 S4: whether %s's exit note is already written cannot be checked; nothing is written",
+                    member.callsign,
+                )
+                return _turn_result(member, TurnOutcome.FAILED)
             remaining = deadline - clock()  # A4: after the check, so its time is charged to the window
             if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock
                 return _turn_result(member, TurnOutcome.TIMED_OUT)
@@ -2235,6 +2680,12 @@ async def cmd_stand_down(runtime: Any, console: Console, arg: str) -> None:
     for turn in report.turns:
         where = f" -> {turn.path}" if turn.path else ""
         console.print(f"  {escape(turn.callsign or turn.agent_type)}: {turn.outcome.value}{escape(where)}")
+    left = sum(1 for turn in report.turns if turn.path and turn.outcome in (TurnOutcome.FAILED, TurnOutcome.TIMED_OUT))
+    if left:  # A5 (round 3 M2-2): a write that did not complete may still have published its note
+        console.print(
+            f"{left} write(s) did not complete and may have left a document at the path shown; "
+            "probos archive pending lists any the next reset would archive."
+        )
     console.print(
         f"{report.count(TurnOutcome.WRITTEN)} exit note(s) written for timeline {escape(report.timeline_id)}. "
         "Review: probos archive pending. Veto one: probos archive veto PATH --reason TEXT. "
@@ -2350,6 +2801,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import dataclasses
+import errno
 import json
 import re
 import subprocess
@@ -2415,7 +2867,7 @@ from tests.test_ad1341_s1_reset_and_erase import (
     _reset,
     _rows,
 )
-from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_listing, _deny_reading
+from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_entry_type, _deny_listing, _deny_reading
 
 _SRC = Path(probos.__file__).resolve().parent
 
@@ -2600,6 +3052,41 @@ async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(tmp_pat
         assert (note["frontmatter"]["author"], note["content"], selected) == ("Bones", "Written by hand.", [])
 
 
+async def test_a_failed_write_whose_note_cannot_be_checked_still_names_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5 (round 3 M2-4): a write publishes its note and then fails, and whether the note is there cannot be told
+    (``Path.lstat`` of the billet raises). Unknown counts as there, so the report names the path for the Captain's
+    review; dropping that fallback hid a note the next reset would archive (rows D-43, D-46)."""
+    records = _records(_data_dir(tmp_path))
+    real_write, real_lstat = records.write_entry, Path.lstat
+    path = exit_note_path(_SHIP, "surgeon")
+    checks: list[str] = []
+
+    def lstat(self: Path) -> Any:
+        if self.name == "surgeon.md":
+            checks.append(str(self))
+            raise PermissionError(13, "the volume is being checked", str(self))
+        return real_lstat(self)
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        monkeypatch.setattr(Path, "lstat", lstat)  # from here no check of the billet can be made
+        raise subprocess.TimeoutExpired(["git", "add"], 30)
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    report = await _run(records, (_member(),), ask)
+    monkeypatch.undo()
+
+    assert checks  # premise: the check after the failure was made, and could not tell
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
+    assert len((await plan_promotion(records, timeline_id=_SHIP)).records) == 1  # the note the path names
+
+
 # --- S3 to S6: the bounds -------------------------------------------------------------------------------------------
 
 
@@ -2777,6 +3264,32 @@ async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path
     assert await _notes(records) == []
 
 
+async def test_a_first_read_that_returns_after_the_window_asks_nobody_and_starts_no_turn(tmp_path: Path) -> None:
+    """A5 (round 3 M2-3): ``asyncio.wait_for`` cannot cut off a first read that never yields (synchronous Ship's
+    Records I/O, register R22). When it returns after the window has closed, the stand-down refuses before it creates
+    a turn task, so nobody is asked and nothing begins after the window. The injected clock moves inside the read."""
+    records = _records(_data_dir(tmp_path))
+    real_list = records.list_entries
+    now = [0.0]
+    asked: list[str] = []
+
+    async def list_entries(*args: Any, **kwargs: Any) -> Any:
+        listed = await real_list(*args, **kwargs)  # the real store's read never yields
+        now[0] = 1_000.0  # and it took longer than the whole window
+        return listed
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    records.list_entries = list_entries  # type: ignore[method-assign]
+    with pytest.raises(StandDownRefused, match="took the whole stand-down window, so nobody was asked"):
+        await _run(records, (_member(),), ask, window_seconds=0.3, clock=lambda: now[0])
+
+    assert asked == []
+    assert await _notes(records) == []
+
+
 @pytest.mark.parametrize("case", ["the-check-outlasts-the-window", "a-write-returns-late", "cut-off-after-publishing"])
 async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
@@ -2789,14 +3302,14 @@ async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note
     says written and names it. A write the window cuts off after it published is timed out, and the report names
     the note it left, which the next promotion would archive unless the Captain vetoes it."""
     records = _records(_data_dir(tmp_path))
-    real_write, real_exists = records.write_entry, Path.exists
+    real_write, real_lstat = records.write_entry, Path.lstat
     path = exit_note_path(_SHIP, "surgeon")
     writes: list[str] = []
 
-    def exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+    def lstat(self: Path) -> Any:  # A5: the check asks Path.lstat (_present)
         if case == "the-check-outlasts-the-window" and self.name == "surgeon.md":
             time.sleep(0.4)  # a slow filesystem: the 0.2 s window closes during the check
-        return real_exists(self, *args, **kwargs)
+        return real_lstat(self)
 
     async def write_entry(**fields: Any) -> Any:
         writes.append(fields["path"])
@@ -2807,7 +3320,7 @@ async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note
             await asyncio.sleep(5)  # the commit hangs, and the window's bound cancels it
         return fields["path"]
 
-    monkeypatch.setattr(Path, "exists", exists)
+    monkeypatch.setattr(Path, "lstat", lstat)
     records.write_entry = write_entry  # type: ignore[method-assign]
 
     async def ask(member: CrewMember, prompt: str) -> str:
@@ -3115,13 +3628,14 @@ async def test_one_billet_gets_one_turn_and_no_note_is_ever_replaced(tmp_path: P
         assert note["frontmatter"]["author"] == "Chapel" and "revision" not in note["frontmatter"]
 
 
-@pytest.mark.parametrize("fault", ["file", "directory"])
+@pytest.mark.parametrize("fault", ["file", "directory", "entry-type"])
 async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
 ) -> None:
     """A2 (M1-F1 asked of the stand-down): a note already written that the OS refuses to read when the stand-down
     lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead. A4
-    (M3-1): the same when the OS refuses to list the billet's directory, which the listing used to pass over."""
+    (M3-1): the same when the OS refuses to list the billet's directory, which the listing used to pass over. A5 (O4):
+    the same when the OS cannot report the note's type."""
     records = _records(_data_dir(tmp_path))
     asked: list[str] = []
 
@@ -3134,14 +3648,62 @@ async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
     path = exit_note_path(_SHIP, "surgeon")
     if fault == "file":
         _deny_reading(monkeypatch, records.repo_path / path)
-    else:
+    elif fault == "directory":
         _deny_listing(monkeypatch, (records.repo_path / path).parent)
+    else:
+        _deny_entry_type(monkeypatch, records.repo_path / path)
     with pytest.raises(StandDownRefused, match="Ship's Records could not be read"):
         await _run(records, (_member(),), ask)
     monkeypatch.undo()
 
     assert asked == []
     assert "revision" not in (await records.read_entry(path, "captain"))["frontmatter"]
+
+
+async def test_a_billet_whose_note_cannot_be_checked_is_never_written_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5 (7.3a's table, O7): ``Path.exists`` answers False for an error ``pathlib`` reads as "not there" (EBADF here;
+    ELOOP, and on Windows "the device is not ready", among others), so a note written meanwhile was taken for none
+    and revised. The check asks ``Path.lstat``: only a path that is not found is absent, and a check that cannot tell
+    is the turn's ``failed``, with no path. Nothing is written, and the note stays as it was."""
+    records = _records(_data_dir(tmp_path))
+    path = exit_note_path(_SHIP, "surgeon")
+    real_write, real_stat, real_lstat = records.write_entry, Path.stat, Path.lstat
+    writes: list[str] = []
+    bad = OSError(errno.EBADF, "bad file descriptor")
+
+    def stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == "surgeon.md":
+            raise bad
+        return real_stat(self, *args, **kwargs)
+
+    def lstat(self: Path) -> Any:
+        if self.name == "surgeon.md":
+            raise bad
+        return real_lstat(self)
+
+    async def write_entry(**fields: Any) -> Any:
+        writes.append(fields["path"])
+        return await real_write(**fields)
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        await real_write(
+            author="Bones", path=path, content="Written by hand meanwhile.", message="test: meanwhile",
+            classification="ship",
+        )
+        monkeypatch.setattr(Path, "stat", stat)  # from here no check of the billet can be made
+        monkeypatch.setattr(Path, "lstat", lstat)
+        return _reply()
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+    report = await _run(records, (_member(),), ask)
+    monkeypatch.undo()
+
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, "")]
+    assert writes == []
+    note = await records.read_entry(path, "captain")
+    assert note["frontmatter"]["author"] == "Bones" and "revision" not in note["frontmatter"]
 
 
 def test_the_prompt_says_writing_is_optional_and_what_the_note_is_for() -> None:
@@ -3328,6 +3890,34 @@ async def test_the_console_command_reports_each_turn_and_the_next_steps(tmp_path
     refused = StringIO()
     await commands_stand_down.cmd_stand_down(runtime, Console(file=refused, width=200), "")
     assert "Stand-down refused" in refused.getvalue()
+
+
+async def test_the_console_counts_completed_writes_and_names_a_note_a_failed_write_may_have_left(
+    tmp_path: Path,
+) -> None:
+    """A5 (round 3 M2-2): a write that published its note and then failed is not a completed write, but the next
+    reset would archive the note unless the Captain vetoes it. The footer counts completed writes, and says apart how
+    many writes did not complete but may have left a document at the path shown."""
+    records = _records(_data_dir(tmp_path))
+    real_write = records.write_entry
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        raise subprocess.TimeoutExpired(["git", "add"], 30)
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+    runtime, _received = _vessel(
+        _config(tmp_path), records, MockEpisodicMemory(), replies={"surgeon": ("Chapel", _reply())},
+    )
+    output = StringIO()
+
+    await commands_stand_down.cmd_stand_down(runtime, Console(file=output, width=200), "")
+
+    text = output.getvalue()
+    assert f"Chapel: failed -> {exit_note_path(_SHIP, 'surgeon')}" in text
+    assert "0 exit note(s) written" in text
+    assert "1 write(s) did not complete and may have left a document at the path shown" in text
+    assert len((await plan_promotion(records, timeline_id=_SHIP)).records) == 1  # premise: the reset would archive it
 
 
 async def test_the_console_command_takes_no_arguments() -> None:
@@ -3740,7 +4330,7 @@ from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _SHIP, _config, _data_dir, _records, _reset
 from tests.test_ad1341_s3_erasure_cascade import _traced, _traces
 from tests.test_ad1341_s3_review_cli import _veto
-from tests.test_ad1341_s4_lessons import _deny_reading
+from tests.test_ad1341_s4_lessons import _deny_entry_type, _deny_listing, _deny_reading
 from tests.test_ad1341_s4_stand_down import _reply
 
 _SRC = Path(probos.__file__).resolve().parent
@@ -4065,11 +4655,16 @@ async def test_a_note_written_after_the_request_read_its_citations_does_not_stop
 
 
 @pytest.mark.parametrize("target", ["episode", "agent", "resource"])
+@pytest.mark.parametrize("fault", ["read", "listing", "entry-type"])
 async def test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, target: str,
 ) -> None:
     """A2 (M3-F1): a valid note citing the episode, which the OS refuses to read during the request. The route answers
     500 and erases nothing; once the note can be read, the refusal names it (the Captain's way through, unchanged).
+    A5 (round 3 R3-M1-1, M3's coverage): the same through the route when the OS refuses to list the note's timeline
+    directory (``[listing-*]``) or cannot report that directory's type (``[entry-type-*]``: the round-3 P1, in which
+    the listing took the directory for a file, the read answered "no citations" and the erasure went ahead). The read
+    runs before the manager is built (``routers/security.py``), so no attachment or audit row is touched (X1b).
 
     A3: the shared ``_client`` re-raises the app's exception (``raise_app_exceptions=True``), so this test builds a
     transport that answers as a served app does: Starlette's error middleware sends the 500, then re-raises, and the
@@ -4096,7 +4691,13 @@ async def test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure(
 
         transport = httpx.ASGITransport(app=served, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            _deny_reading(monkeypatch, records.repo_path / path)
+            note = records.repo_path / path
+            if fault == "read":
+                _deny_reading(monkeypatch, note)
+            elif fault == "listing":
+                _deny_listing(monkeypatch, note.parent)
+            else:
+                _deny_entry_type(monkeypatch, note.parent)
             failed = await _post(client, _FORGET, _TARGETS[target])
             assert failed.status_code == 500, failed.text
             assert failed.text == "Internal Server Error"  # what a served app sends: no path, no reason
@@ -4165,7 +4766,7 @@ REPLACE:
 - No new flag, `EventType`, API route, config field or `.db` file; `user_version` stays 1. `config/ontology/records.yaml` is not edited (register R10).
 - Out of scope (D19): S5's after-action reports, continuous promotion and chain-of-command review; S6's `--full` snapshot, description entry and clean slate; fleet sharing; an HXI stand-down; lifting a veto; bulk vetoes.
 
-## 10. Mutation rows (98 rows: 38 for M1, 44 for M2, 16 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (110 rows: 44 for M1, 50 for M2, 16 for M3; whole stripped lines, each occurring once in its file after §7)
 
 One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseline run of the three new test files that passes. Run each row against the named tests and restore the file before the next row. R-1 and R-2 mutate the same line, and so do R-3 and R-4, and E-1, E-5 and E-6; restore between them.
 
@@ -4231,7 +4832,7 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | L-15 | M1 | `src/probos/knowledge/lessons.py` | `if lesson is None or content != exit_note_body(callsign, agent_type, timeline_id, lesson):` | `if lesson is None:` | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing` |
 | P-13 | M1 | `src/probos/knowledge/archive_promotion.py` | `if not exit_note_provenance_ok(*named):  # A2: one storable line each, within its bound` | `if not all(type(value) is str and value.strip() for value in named):` | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing` |
 | P-14 | M1 | `src/probos/knowledge/archive_promotion.py` | `for listed in await records.list_entries(EXIT_NOTES_DIR, strict=True):` | `for listed in await records.list_entries(EXIT_NOTES_DIR):` | `test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations`, `test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure` |
-| RS-1 | M1 | `src/probos/knowledge/records_store.py` | `raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"` | `pass` | `test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody`, `test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure` |
+| RS-1 | M1 | `src/probos/knowledge/records_store.py` | `raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"` | `pass` | `test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations`, `test_a_listed_note_the_strict_read_cannot_read_is_never_read_as_no_note`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[file]`, `test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure[read-*]` |
 | D-18 | M2 | `src/probos/stand_down.py` | `remaining = turn_deadline - clock()  # A2 (M2-5): what the recall spent is spent` | `remaining = min(turn_seconds, deadline - clock())` | `test_the_recall_and_the_ask_spend_one_turn[recall-runs-out]` |
 | D-19 | M2 | `src/probos/stand_down.py` | the D-2 line (after D-2 is restored) | `if clock() > deadline:` | `test_a_reply_that_returns_after_the_turn_s_deadline_writes_nothing` |
 | D-20 | M2 | `src/probos/stand_down.py` | `listed = await asyncio.wait_for(records.list_entries(directory, strict=True), timeout=window_seconds)` | `listed = await records.list_entries(directory, strict=True)` | `test_the_window_bounds_the_records_reads_and_writes_too[first-read]` |
@@ -4239,7 +4840,7 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | D-22 | M2 | `src/probos/stand_down.py` | `await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the window cuts off an awaiting write` | `await written` | `test_the_window_bounds_the_records_reads_and_writes_too[write]` |
 | D-23 | M2 | `src/probos/stand_down.py` | `if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock` | `if False:` | `test_the_window_bounds_the_records_reads_and_writes_too[write]` |
 | D-24 | M2 | `src/probos/stand_down.py` | `if path in claimed_paths or member.agent_id in seen_agents:  # A2 (M2-3): one turn per billet, and per agent` | `if False:` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced` |
-| D-25 | M2 | `src/probos/stand_down.py` | `if (records.repo_path / path).exists():  # A2 (M2-3), A4: written since the stand-down began; no await` | `if False:` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[written-meanwhile]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window]` |
+| D-25 | M2 | `src/probos/stand_down.py` | `if present:  # A2 (M2-3), A4: a note written since the stand-down began; no await` | `if False:` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[written-meanwhile]` |
 | D-37 | M2 | `src/probos/stand_down.py` | `return _turn_result(member, outcome, _left_at(path))  # A4: never removed; the report names it` | `return _turn_result(member, outcome)` | `test_a_write_that_fails_after_publishing_leaves_no_hidden_note[published]`, `[replaced]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[cut-off-after-publishing]` |
 | D-38 | M2 | `src/probos/stand_down.py` | `remaining = deadline - clock()  # A4: after the check, so its time is charged to the window` | `remaining = window_seconds` | `test_the_window_bounds_the_records_reads_and_writes_too[write]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window]` |
 | D-28 | M2 | `src/probos/stand_down.py` | `except (OverflowError, OSError, ValueError):  # A2 (M2-6): inf, or out of range; the turn still runs` | `except ():` | `test_one_member_s_fault_never_ends_the_other_turns_or_leaves_one_running[timestamps]` |
@@ -4260,17 +4861,29 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | L-17 | M1 | `src/probos/knowledge/lessons.py` | `and _FRONTMATTER_DELIMITER not in value  # A4 (R2-F3): Ship's Records cuts a frontmatter value at "---"` | `and True` | `test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records`, `test_an_identity_that_cannot_stand_in_the_note_is_not_asked[delimiter-callsign]`, `test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives[delimiter]` |
 | L-18 | M1 | `src/probos/knowledge/lessons.py` | `_SECTION = f"((?a:{_SECTION_NAMES}))"` | `_SECTION = f"({_SECTION_NAMES})"` | `test_a_section_name_spelled_with_a_lookalike_letter_opens_no_section`, `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing[lookalike-heading]`, `test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs` |
 | P-15 | M1 | `src/probos/knowledge/archive_promotion.py` | `if type(cited) is not list or not all(is_exit_note_text(item, EXIT_NOTE_EPISODE_ID_MAX_CHARS) for item in cited):` | `if type(cited) is not list or not all(type(item) is str and item.strip() for item in cited):` | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing[long-citation]`, `[newline-citation]` |
-| RS-2 | M1 | `src/probos/knowledge/records_store.py` | `raise error  # AD-1341 S4 (A4): a directory that exists but cannot be listed now is never "no documents"` | `pass` | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[directory]` |
-| RS-3 | M1 | `src/probos/knowledge/records_store.py` | `if not isinstance(error, (FileNotFoundError, NotADirectoryError)):  # gone, or never a directory: absent` | `if True:` | `test_ship_s_records_without_exit_notes_cite_nothing`, `test_each_crew_agent_gets_one_turn_and_its_note_is_kept_with_its_provenance` |
-| RS-4 | M1 | `src/probos/knowledge/records_store.py` | `found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")` | `found = search_path.rglob("*.md")` | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[directory]` |
-| RS-5 | M1 | `src/probos/knowledge/records_store.py` | `found.extend(Path(root, name) for name in (*dirs, *files) if fnmatch.fnmatch(name, "*.md"))` | `found.extend(Path(root, name) for name in (*dirs, *files))` | `test_the_strict_listing_lists_exactly_what_the_default_listing_lists[all]`, `[exit-notes]` |
+| RS-4 | M1 | `src/probos/knowledge/records_store.py` | `found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")` | `found = search_path.rglob("*.md")` | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[directory]`, `[entry-type]`, `test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure[listing-*]`, `[entry-type-*]` |
+| RS-6 | M1 | `src/probos/knowledge/records_store.py` | `if strict:  # A5 (O5): a file the walk listed is never "no document", whatever the read's error` | `if strict and md_file.is_file():` | `test_a_listed_note_the_strict_read_cannot_read_is_never_read_as_no_note[*-stat-ebadf]` |
+| RS-7 | M1 | `src/probos/knowledge/records_store.py` | `raise  # O2 (A5): a directory a listing reported is never "no documents"` | `return found` | `test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing[absent]`, `[not-a-directory]` |
+| RS-8 | M1 | `src/probos/knowledge/records_store.py` | `return found  # O1: search_path does not exist, so nothing was written under it` | `raise` | `test_ship_s_records_without_exit_notes_cite_nothing`, `test_each_crew_agent_gets_one_turn_and_its_note_is_kept_with_its_provenance`, `test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing[absent]` |
+| RS-9 | M1 | `src/probos/knowledge/records_store.py` | `if entry.is_dir(follow_symlinks=False):  # O4: an OSError propagates; it is never read as "a file"` | `if entry.is_dir():` | `test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing` (the clean trace) |
+| RS-10 | M1 | `src/probos/knowledge/records_store.py` | `elif fnmatch.fnmatch(entry.name, "*.md"):` | `else:` | `test_the_strict_listing_lists_exactly_what_the_default_listing_lists[all]`, `[exit-notes]`, `test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing` |
 | D-36 | M2 | `src/probos/stand_down.py` | `if not is_exit_note_text(episode_id, EXIT_NOTE_EPISODE_ID_MAX_CHARS) or episode_id in offered.values():` | `if type(episode_id) is not str or not episode_id.strip() or episode_id in offered.values():` | `test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives` |
 | D-39 | M2 | `src/probos/stand_down.py` | `except Exception:  # log-and-degrade: the turn offers no episodes, so its note cites none` | `except ():` | `test_a_failed_episode_read_offers_none_and_the_note_cites_none`, `test_the_recall_and_the_ask_spend_one_turn[recall-runs-out]` |
 | D-40 | M2 | `src/probos/stand_down.py` | `"labelled as inherited from this crew. Write nothing you would not share with the whole ship. Summarise in "` | `"Write nothing you would not share with the whole ship. Summarise in "` | `test_the_prompt_says_writing_is_optional_and_what_the_note_is_for` |
 | D-41 | M2 | `src/probos/stand_down.py` | `if concurrency < 1 or turn_seconds <= 0 or window_seconds <= 0:` | `if False:` | `test_a_bound_that_is_not_positive_is_refused_before_anything_is_read` |
 | C-2 | M2 | `src/probos/experience/commands/commands_stand_down.py` | `if arg.strip():` | `if False:` | `test_the_console_command_takes_no_arguments` |
+| P-16 | M1 | `src/probos/knowledge/archive_promotion.py` | `if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now: never "no citations"` | `if False:` | `test_a_listed_note_the_citation_read_cannot_find_again_is_never_read_as_no_citations[ebadf]`, `[enoent]` |
+| P-17 | M1 | `src/probos/knowledge/archive_promotion.py` | `except ValueError:  # A5 (R3-M1-2): an integer longer than Python's integer-string limit` | `except ():` | `test_a_stored_value_that_cannot_be_shown_as_text_never_stops_the_promotion`, `test_a_note_holding_a_value_that_cannot_be_shown_as_text_is_archived_by_the_real_reset` |
+| P-18 | M1 | `src/probos/knowledge/archive_promotion.py` | `for candidate in (_stored_text(topic), path.rsplit("/", 1)[-1].removesuffix(".md")):` | `for candidate in (str(topic) if topic else "", path.rsplit("/", 1)[-1].removesuffix(".md")):` | `test_a_stored_value_that_cannot_be_shown_as_text_never_stops_the_promotion[finding-topic]` |
+| P-19 | M1 | `src/probos/knowledge/archive_promotion.py` | `author_callsign=_stored_text(frontmatter.get("author")),` | `author_callsign=str(frontmatter.get("author") or ""),` | `test_a_stored_value_that_cannot_be_shown_as_text_never_stops_the_promotion[finding-author]` |
+| D-42 | M2 | `src/probos/stand_down.py` | `present = _present(records.repo_path / path)  # A5: what Path.exists reads as "not there" is unknown here` | `present = False` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[written-meanwhile]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window]`, `test_a_billet_whose_note_cannot_be_checked_is_never_written_over` |
+| D-43 | M2 | `src/probos/stand_down.py` | `return "" if _present(records.repo_path / path) is False else path` | `return path if _present(records.repo_path / path) else ""` | `test_a_failed_write_whose_note_cannot_be_checked_still_names_its_path` |
+| D-44 | M2 | `src/probos/stand_down.py` | `if present is None:  # A5: whether a note is there cannot be told now, so nothing is written over it` | `if False:` | `test_a_billet_whose_note_cannot_be_checked_is_never_written_over` |
+| D-45 | M2 | `src/probos/stand_down.py` | `if clock() >= deadline:  # A5 (round 3 M2-3): the first read returned after the window closed` | `if False:` | `test_a_first_read_that_returns_after_the_window_asks_nobody_and_starts_no_turn` |
+| D-46 | M2 | `src/probos/stand_down.py` | `except (FileNotFoundError, NotADirectoryError):  # A5: nothing is there` | `except OSError:` | `test_a_billet_whose_note_cannot_be_checked_is_never_written_over`, `test_a_failed_write_whose_note_cannot_be_checked_still_names_its_path` |
+| C-3 | M2 | `src/probos/experience/commands/commands_stand_down.py` | `if left:  # A5 (round 3 M2-2): a write that did not complete may still have published its note` | `if False:` | `test_the_console_counts_completed_writes_and_names_a_note_a_failed_write_may_have_left` |
 
-The heading's count includes R-2 and R-4. A2: L-13 and L-14, D-1 and D-34, D-2 and D-19, D-9 and D-30, D-20 and D-21 each mutate one line; restore between them. A4: D-26 and D-27 are retired with the rollback they mutated (their numbers are not reused); D-22, D-25 and L-11 name their lines as A4 rewrote them; RS-2 and RS-3 mutate two lines of one helper; restore between them.
+The heading's count includes R-2 and R-4. A2: L-13 and L-14, D-1 and D-34, D-2 and D-19, D-9 and D-30, D-20 and D-21 each mutate one line; restore between them. A4: D-26 and D-27 are retired with the rollback they mutated (their numbers are not reused); D-22, D-25 and L-11 name their lines as A4 rewrote them; RS-2 and RS-3 mutate two lines of one helper; restore between them. A5: RS-2, RS-3 and RS-5 are retired with the `os.walk` lines they mutated (their numbers are not reused); D-25 names its line as A5 rewrote it; RS-7 and RS-8 mutate two lines of one `except` clause, so restore between them.
 
 Rows with no mutation:
 
@@ -4279,7 +4892,10 @@ Rows with no mutation:
 - P-3's `wrong-version` is also an envelope `version` the stand-down never writes.
 - (A2) The stand-down's preflight (`exit_note_lesson(...) != lesson` in `_ask_and_write`): unreachable once the provenance check (D-9, D-30) and the format's closure (L-10) hold. It keeps the service and the promotion on one rule by construction.
 - (A2, A4) `_write`'s `TIMED_OUT` versus `FAILED`: both outcomes are asserted (S4c `[write]`, S4d, S2b); a mutant swapping them is not listed separately.
-- (A4) `_left_at`'s `except OSError: return path` (a check that cannot be made names the path): no supported caller reaches an `exists()` that raises without injection; it errs toward telling the Captain where to look.
+- (A4, superseded by A5) `_left_at`'s unknown branch now has rows D-43 and D-46, killed by S2c (round 3 M2-4).
+- (A5) Absorbing an O3 or O4 failure would need a new `try` statement, not a one-line mutant: the walk has one `except` clause (O1, O2) and none around a listing step or an `is_dir`. C3g fails every such cell.
+- (A5) The status, department, created and updated conversions through `_stored_text` occur twice as stripped lines (the exit note's record and S1's), so they have no row; P5's per-field cases are their evidence, and P-17 kills the helper.
+- (A5) `_present`'s `return None` is a line `stand_down.py` holds elsewhere; D-44 and D-46 cover the helper's unknown branch.
 - (A4) Computing `remaining` before the existence check is a two-line move, not a single-line row: S4d `[the-check-outlasts-the-window]` fails on it (the check sleeps 0.4 s against a 0.2 s window).
 - (A3 (2)) D-23 is killed by S4c `[write]` only because the stub counts a write when `write_entry` is called: Python 3.12's `asyncio.wait_for` with a timeout of zero or less cancels the coroutine before it starts, so a stub that counted inside its body would never see the mutant's second write once the clock reads past the deadline. S4c `[write]`, S3c and S4 run on the injected clock, so their order is fixed; S3 and S4b keep real time because their property is the real bound, with 1 s of headroom (a 1.5 s bound asserted under 2.5 s; D-34's doubled bound takes 3 s).
 
@@ -4525,6 +5141,57 @@ HOLDS: yes.
 
 **Not verified for A4 (the orchestrator verifies by running):** `(?a:...)` under `re.IGNORECASE` (L8 runs it); the native directory denial (C3e `[native-*]`: a share-nothing handle with `FILE_FLAG_BACKUP_SEMANTICS` on Windows, as the reviewers' WinError 32 probe used); P4's PyYAML quoting of every admitted value; S4d's margins on this host.
 
+## Verified for A5 (2026-10-26, committed head `bbc64351`, tree `963adf2b1c3021675cdd4e931ef0d8c66e58b377`; `git diff --stat 6aafab3c bbc64351 -- prompts/` is empty, so this contract is A4's)
+
+Read in the checkout of `bbc64351` with Grep and Read.
+
+- `records_store.py:169-186` `_markdown_files_or_raise` (`:180-182` the `onerror` callback, `:184` `os.walk`, `:185` dirs and files matched by `fnmatch`); `:983-1039` `list_entries` (`:1005` `search_path` through `_safe_path`, `:1008` the strict or default walk, `:1016` `read_text`, `:1018-1022` the `OSError` branch with `md_file.is_file()`); `:952-981` `read_entry` (`:962` `_safe_path`, `:963` `exists()` returning None, `:966` `read_text`); `:1240-1251` `_safe_path` (`:1245` `resolve()`); `:299-300` `write_entry`'s `exists()`, `:343` `write_text`; `:34-45` `_RESERVED_FRONTMATTER_KEYS` (no `claim_id`).
+- `archive_promotion.py:48` `logger`, `:53` `ARCHIVE_READER = ""`, `:88-99` `_title_for` (`:96` `str(topic) if topic else ""`), `:114-115` the never-raises claim, `:157-161` the exit note's three `str()` conversions, `:179-183` the strict listing and the second read through `read_entry`, `:227` `plan_promotion`'s default listing, `:252-266` S1's record (`:260` the author, `:262-265` four metadata values). `git show 20c1ec00:src/probos/knowledge/archive_promotion.py` holds the same five at `:141-146` (pre-existing in S1).
+- `archive_store.py:87` `PROMOTABLE_CLASSIFICATIONS = frozenset({"ship", "fleet"})`; `:172-188` `PromotionRecord` requires `str` author fields and JSON-serialisable metadata.
+- `stand_down.py:251-261` the deadline and the strict first read; `:267-272` `_left_at` (`Path.exists`, `except OSError`); `:284` the guard's `Path.exists`; `:389` the turn tasks. `commands_stand_down.py:37-44` the turn lines and the footer counting `WRITTEN` only.
+- `routers/security.py:81-93` `_pending_exit_note_citations` lets a failed read propagate; `:108` it runs before `:109` builds the manager.
+- `pyproject.toml:9` `requires-python = ">=3.12"`.
+- Round 3's executed evidence: the orchestrator's single-fault probe (one `is_dir` fault; `[]` returned) and its matrix on `bbc64351` (6 of 36 operations, each an `is_dir`, returned a shorter list for `PermissionError` and `OSError(EIO)`); the M1 reviewer's `0x` and 4,000 digits through the real store and the real reset (exit 1).
+
+## Absence Verified (A5, 2026-10-26)
+
+**A5-AV1.** CLAIM: `exit_note_citations` and `run_stand_down` are the only strict callers, and only `list_entries` calls `_markdown_files_or_raise`.
+RUN: Grep `_markdown_files_or_raise|list_entries\([^)]*strict` over `*.py`.
+FOUND: `records_store.py:169`, `:1003`, `:1008`; `archive_promotion.py:179`; `stand_down.py:253`; `tests/test_ad1341_s4_lessons.py:686`, `:712`.
+HOLDS: yes.
+
+**A5-AV2.** CLAIM: the stand-down makes two filesystem existence checks and no other filesystem call.
+RUN: Grep `exists\(|is_file\(|is_dir\(|\.stat\(|os\.` in `src/probos/stand_down.py`.
+FOUND: `:270` (`_left_at`), `:284` (the guard); the rest are prose and imports.
+HOLDS: yes; O7 covers both.
+
+**A5-AV3.** CLAIM: the promotion service makes no filesystem call of its own.
+RUN: Grep `exists\(|is_file\(|is_dir\(|\.stat\(|scandir|rglob|glob\(` in `archive_promotion.py`.
+FOUND: none.
+HOLDS: yes; its reads are `list_entries` (O1 to O5) and `read_entry` (O6).
+
+**A5-AV4.** CLAIM: the promotion converts stored frontmatter values with `str()` at nine places and no others.
+RUN: Grep `str\(frontmatter\.get` and `str\(topic\)` in `archive_promotion.py`.
+FOUND: `:158`, `:159`, `:160`, `:260`, `:262`, `:263`, `:264`, `:265`; `:96`.
+HOLDS: yes; all nine go through `_stored_text`.
+
+**A5-AV5.** CLAIM: no committed S1 to S4 test patches `Path.exists`, `Path.lstat` or `Path.stat` except S4d.
+RUN: Grep `"exists"|"lstat"|"stat"|Path\.exists|Path\.lstat|Path\.stat|"is_file"` over `tests/test_ad1341_s*.py`.
+FOUND: `tests/test_ad1341_s4_stand_down.py:454`, `:472` (S4d).
+HOLDS: yes; S4d moves to `Path.lstat` with the guard (C236, C237).
+
+**A5-AV6.** CLAIM: no test pins `os.walk`, `_title_for` or the `str()` conversions as text.
+RUN: Grep `str\(frontmatter|os\.walk|_title_for|_stored_text` over `tests/`.
+FOUND: `test_ad1341_s4_lessons.py:698` (C3f's docstring, rewritten by C221); `test_bf896_dispatcher_confinement_seam.py:117` (its own walk); two unrelated names.
+HOLDS: yes.
+
+**Not verified for A5 (the orchestrator verifies by running):** Python 3.12.13's `pathlib` internals the tests rely on. The orchestrator read `_ignore_error` at `pathlib.py:45-54`, `is_file` at `:886-896`, `Path.walk` at `:1112-1156` and the wildcard selector at `:191-215`. Also unverified here:
+- `Path.resolve()` calls `stat()` in non-strict mode and re-raises only a link loop (so `_deny_stat` compares by name, never through `resolve()`).
+- `Path.lstat()` goes through `Path.stat(follow_symlinks=False)`; S8d patches both, so it does not depend on it.
+- `DirEntry.is_dir` returns False itself for an entry that no longer exists.
+- `is_dir(follow_symlinks=False)` is true for a junction on Windows.
+- C3g's operation count on this host, and X8's 500 under `_deny_entry_type`.
+
 ## Not verified (the orchestrator verifies by running)
 
 1. **The live archive** (`%LOCALAPPDATA%\ProbOS\archive\archive.db`, read-only; the vessel stays up): `PRAGMA user_version` (1) and `SELECT count(*) FROM archive` (0). The bridge allows no `sqlite3`; I did not open it. No S4 fact depends on it.
@@ -4636,6 +5303,7 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 21. **(A2) Prior art.** A2 repairs ProbOS-specific seams, so no outside search was made. One analogue was considered and deferred: an atomic publish through a temp file and rename inside `RecordsStore`, which would change every writer's failure behaviour. `docs/research/reference-projects.md` was not re-examined for a repair amendment.
 22. **(A4) Prior art.** `os.walk`'s `onerror` callback (it may raise to abort the walk) is the standard library's error-reporting traversal; 3.12's `Path.rglob` has none, so the strict listing walks with `os.walk` and the default keeps `rglob` (adopted). python-frontmatter recognises the YAML delimiter only on a line of its own (`FM_BOUNDARY = re.compile(r"^-{3,}\s*$", re.MULTILINE)`, `frontmatter/default_handlers.py`). That is the right fix for `_parse_document`, deferred to its own BF because it changes how every Ship's Records reader parses a document holding `---` (R25). Python's `re` documents that `[a-z]` with IGNORECASE matches four letters outside ASCII, and that `(?a:...)` scopes ASCII matching to a group (adopted for the section names only). Terminal escape injection through stored text is a known class; refusing C0 and C1 controls at the one parser closes it for notes. Unicode format characters can still reorder how a note displays and are deferred (R26). `docs/research/reference-projects.md` has no row on file listing, frontmatter or terminal-safe text (A4-AV4).
 23. **(A4) Blind spots.** A late-returning write's note is `written` and promotable: true, by design. A cancelled stand-down reports nothing, and its notes stay (R27). A cut-off write's orphaned `git add` thread can contend for the index lock with the next write (pre-existing, R23). Python 3.13's `glob` may bind `os.scandir` at import, so C3e asserts the default listing's result only for the native denial.
+24. **(A5) Prior art and blind spots.** The standard library's walkers each decide some errors for the caller. `os.walk` passes `scandir` errors to `onerror` but files an entry whose `is_dir()` raises as a non-directory. 3.12's `Path.walk` and the `*.md` selector under `rglob` swallow every `OSError` (the orchestrator's reading of `Lib/os.py:386-399` and `Lib/pathlib.py:191-215`, `:1112-1156`, 3.12.13). A strict reader therefore owns its traversal: an explicit `os.scandir` loop, one table, and a trace-and-fault test that fails for an operation without a row (adopted; rounds 2 and 3 each found one instance of this class). `pathlib`'s `exists()` and `is_file()` read EBADF, ELOOP, ENOENT, ENOTDIR and three Windows errors as "not there" (`_ignore_error`), so every existence question in the strict read was replaced (O5 to O7). Considered and deferred: a create-only write in `RecordsStore` (R28), and a strict `pending` review (R31). No outside search: this is ProbOS-specific plumbing, and `docs/research/reference-projects.md` was not re-examined for a repair amendment.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -4644,16 +5312,19 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 3. `_exit_note_record` never raises for any document. It returns a record only when the envelope (version 1, non-blank timeline, callsign, agent type and DID, at most 12 distinct non-blank ids), the path (`exit_note_path` of the envelope's timeline and agent type), the author (the callsign), the body (the origin line, then a lesson in the format) and the classification (`ship` or `fleet`) all hold. The record's timeline is the envelope's, and it carries the DID, agent type, callsign and ids.
 4. `plan_promotion` sends every `exit-notes/` document through `_exit_note_record` and nothing else, and appends it to `withheld` when that returns None. Every other source is handled exactly as before.
 5. `exit_note_citations` applies the same `_exit_note_record` rule and counts a note only while `source_state` says CREATED, or for every valid note when the archive is None. Like `plan_promotion`, it skips unread a listed document that `source_kind_for` does not class as an exit note (frontmatter not a mapping), so a document the promotion can never archive never makes the read raise (C3c). It writes nothing, and propagates any read failure.
-6. `run_stand_down` asks each member at most once. It never asks a member with no DID or callsign, one whose note already exists in this timeline, or one whose turn begins after the window closes. It bounds each ask by the turn limit and the remaining window and cancels it on timeout. It writes nothing for a timed-out, failed, late, declined, unparseable or empty turn. It runs at most `concurrency` turns at once and serialises Ship's Records writes (S6, S6b). A written note's body is exactly `exit_note_body(...)` of the parsed lesson.
+6. `run_stand_down` asks each member at most once. It never asks a member with no DID or callsign, one whose note already exists in this timeline, or one whose turn begins after the window closes. It bounds each ask by the turn limit and the remaining window and cancels it on timeout. A turn whose ask times out, fails, comes late, declines or leaves no lesson writes nothing; a write that fails or is cut off after publishing leaves its note and is reported with its path (A4, A5). It runs at most `concurrency` turns at once and serialises Ship's Records writes (S6, S6b). A written note's body is exactly `exit_note_body(...)` of the parsed lesson.
 7. `stand_down_vessel` refuses, asking nobody, when the archive is disabled, Ship's Records is absent, or the instance id is blank or `"unknown"`. It addresses only `is_crew_agent` agents, sending each a `direct_message` from `"captain"` with `session` False through `intent_bus.send`, and treats a None or unsuccessful result as no reply. `stand_down.py` imports nothing from `probos.knowledge.archive_*`.
 8. `/stand-down` is in the shell's help and dispatch, and is in `_BLOCKED_COMMANDS`, so `_handle_slash_command` answers before touching the runtime.
 9. Every AD-754 entry point checks the pending-note citations before anything is erased: `forget_episode` before attachments, and `_forget_all` before its first erase. Both come before the attachment unlink and the audit marking (X1b). S3's archive check still runs first at every entry point. A refusal erases nothing and carries only paths. With `exit_note_citations=None` the behaviour is byte-identical to S3's.
 10. `/forget` reads citations once, before building the manager, only from a real `RecordsStore` and only while `config.archive.enabled` is True. It passes S3's archive only when it is a real `ArchiveStore`, and answers 409 `exit_notes_cite_erased_episodes` with the paths, logging the count only. `exit_note_citations` and `ExitNotesBlockErasure` are imported in `src` only by `routers/security.py`.
 11. The new tests use the real parser, Ship's Records, promotion, review, archive, `EpisodicMemory`, `ErasureManager`, app route, `probos archive veto`, `probos reset` and Oracle. The stand-ins are the agent's model (a stub `ask`, or a stub bus subscriber), the in-memory episodic store in M2, an identity stub returning real `IdentityRef`s, and S1's config loader. Every store lies under `tmp_path`.
-12. (A2, A4) `RecordsStore.list_entries(strict=True)` re-raises an `OSError` reading a regular file that exists, and the `OSError` of a directory under it that exists but cannot be listed, and nothing else; a directory that does not exist lists nothing; otherwise it lists exactly what the default lists, in the same order (C3f); `strict=False` runs the same `rglob` call as before for every caller. `exit_note_citations` and `run_stand_down` pass `strict=True`; `plan_promotion` does not.
+12. (A2, A4, A5) `RecordsStore.list_entries(strict=True)` raises every `OSError` of 7.3a's O1 to O5 except a missing `directory`'s, which lists nothing; otherwise it lists exactly what the default lists, in the same order (C3f); `strict=False` runs the same `rglob` call as before for every caller. `exit_note_citations` and `run_stand_down` pass `strict=True`; `plan_promotion` does not.
 13. (A2) A `direct_message` with `bounded_turn: True` makes `_conversational_agentic_will_run` return False and changes nothing else; no other sender sets it. The stand-down sets it on every turn.
 14. (A2) `parse_lesson` accepts nothing whose rendering would parse differently, nothing with a NUL or a lone surrogate, and nothing over 700 characters in all. `_exit_note_record` requires an `int` version 1, provenance within `exit_note_provenance_ok`, episode ids within `is_exit_note_text`, and a body equal to `exit_note_body` of its parsed lesson.
-15. (A2) `run_stand_down`: the window starts before the first read; each turn has one deadline its recall and ask share and its reply must meet; a billet is claimed before asking, and its path is re-read under the write lock; no write begins once the window has closed (the existence check, without an await, charged first), a write still awaiting is cut off by the window, nothing is ever removed, and a failed or cut-off write reports the path of any note it left; a member's exception is that member's `FAILED`; on any `BaseException` every turn is cancelled and drained before it re-raises.
+15. (A2) `run_stand_down`: the window starts before the first read; each turn has one deadline its recall and ask share and its reply must meet; a billet is claimed before asking, and its path is re-read under the write lock; no write begins once the window has closed (the existence check, without an await, charged first), a write still awaiting is cut off by the window, nothing is ever removed, and a failed or cut-off write reports the path of any note it left; a member's exception is that member's `FAILED`; on any `BaseException` every turn is cancelled and drained before it re-raises. (A5) A first read that returns after the window closes refuses before any turn task is created.
+16. (A5) Every filesystem operation of the strict read appears in 7.3a's table with one disposition, and no failure yields a shorter list. `_markdown_files_or_raise` has one `except` clause (O1, O2); every other `OSError` propagates; it returns `[]` only for a missing root; it calls nothing on the filesystem but `os.scandir` and `DirEntry.is_dir(follow_symlinks=False)` (C3g's trace). `list_entries(strict=True)` raises any `OSError` of a listed file's read. `exit_note_citations` raises for a `ship` or `fleet` listed note `read_entry` cannot find. The stand-down's `_present` reads only `FileNotFoundError` and `NotADirectoryError` as absent; its guard writes nothing on unknown, and `_left_at` names the path on unknown. Everything outside the table is in R31.
+17. (A5) `cmd_stand_down` prints the count of `written` turns and, apart, the number of `failed` or `timed_out` turns that carry a path; `TurnOutcome`'s docstring says such a path may hold a note, not that it does.
+18. (A5) `_stored_text` returns `str(value or "")`, and `""` only on `ValueError`. It serves every stored frontmatter value the promotion converts (`_title_for`; S1's author and metadata; the exit note's metadata), and nothing else that is archived changes.
 
 ## 15. Acceptance criteria
 
@@ -4666,10 +5337,11 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 7. `/stand-down` runs only at the Captain's console (S13; H-1, A-1).
 8. Every test in §6 fails on its milestone's base as named, and every row in §10 is killed by the named test. One broad gate and one PR for M1 to M4; cross-family review of M1, M2 and M3 (HIGH).
 9. (A2) A stand-down turn is answered inline or not at all: no tool-calling loop, background promotion or task outlives it, and no other DM behaves differently (S16, S7d; G-1, D-32, D-33).
-10. (A2, A4) A note file that exists but cannot be read now, or a note directory that exists but cannot be listed now, never clears an AD-754 erasure and never lets a stand-down replace a note (C3d, C3e, X8, S8c; RS-1 to RS-4, P-14, D-21).
+10. (A2, A4, A5) No failure of a filesystem operation of the strict read (7.3a's table, O1 to O7) clears an AD-754 erasure or lets a stand-down write over a note. Only a missing root, a billet not found at the stand-down's check, and bytes that are not UTF-8 read as absent (C3d to C3i, X8, S8c, S8d, S2c; RS-1, RS-4, RS-6 to RS-10, P-14, P-16, D-21, D-42 to D-44, D-46).
 11. (A2) A whole note at every bound reaches a later crew through the real Oracle tool, and every lesson the parser accepts is stored and archived exactly as the Captain reviewed it (L6, L1b, P2; L-2, L-10, L-15, P-6).
-12. (A2, A4) The window bounds the first read, and no write begins after it closes; the stand-down removes nothing, and every note a failed or cut-off write left is reported with its path; one billet, one turn (S2b, S4c, S4d, S4e, S8b; D-20, D-22 to D-25, D-37, D-38).
+12. (A2, A4) The window bounds the first read, and no write begins after it closes; the stand-down removes nothing, and every note a failed or cut-off write left is reported with its path; one billet, one turn (S2b, S4c, S4d, S4e, S8b; D-20, D-22 to D-25, D-37, D-38). A5: a first read that returns after the window refuses before any turn is created, and the console counts a write that may have left a note apart from a completed one (S4f, S13d; D-45, C-3).
 12a. (A4) Every value the exit-note rule admits survives Ship's Records, every episode offered can be cited by a note the promotion archives, and a note the rule refuses is withheld without raising, the real reset included (P4, S7e, L8, L10, P2; L-17, L-18, D-36, P-15).
+12b. (A5) A stored frontmatter value that `str()` cannot convert never stops a plan or a reset; it is archived as no value (P5, P6; P-17 to P-19).
 13. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1523)
@@ -4727,3 +5399,19 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 **R26.** (A4, the remainder of R2-F5; considered, deferred) Unicode format characters (category Cf: the bidirectional overrides U+202A to U+202E and U+2066 to U+2069, zero-width characters) are accepted in a lesson. A terminal does not act on them, but they can reorder or hide what a note shows the Captain's review. Some are legitimate in scripts the crew may write (ZWJ, ZWNJ). Refusing the bidirectional overrides is one line in `_NOT_LESSON_TEXT` if the Captain wants it.
 
 **R27.** (A4, round 2 M2-3) A stand-down cancelled by the Captain or by the vessel stopping prints no report. Every note it published stays whole in Ship's Records, including the one whose commit was cut short (`write_entry` writes the file before it awaits git), and `probos archive pending` lists them all for review and veto before the reset (S4e). The stand-down does not remove a cancelled write's note: it cannot prove the file is its own without a store change, and the note is the same whole note the agent wrote.
+
+**R28.** (A5, round 3 M2-1; reach reclassified to a writer outside the vessel's event loop racing the write, injected-only; P2; regression: neither, M2's own, reproduced on `e1e97d25`) The stand-down's check of the billet (`_present`, with no await) and `write_entry`'s file write are not one atomic create. `write_entry` is an AD-550 upsert (`records_store.py:299-343`), so a document another process or thread creates at the exact billet path in the sub-millisecond between them is revised (author replaced, revision 2), and the turn reports `written`. No ProbOS writer names the path (A4-AV1). The asked agent has no tools during its turn. Python 3.12's `asyncio.wait_for` awaits the write inline, so no sibling task interleaves. The race is symmetric: a hand edit saved a moment later overwrites the stand-down's note. A create-only keyword on `write_entry` (open with mode `x`, default off) would close the stand-down's side. It changes the one function every Ship's Records writer uses, so it is its own slice, not bundled into R25's BF.
+
+**R29.** (A5, round 3 R3-M1-3; P3, injected-only; regression: neither, a test gap reproduced on `e1e97d25`) L6 budgets a six-digit generation label as the longest; S2's renderer accepts wider generations (int64's maximum renders 80 characters against L6's 67). The note stays whole at today's bounds (1,184 of 1,200 characters at that maximum), so no production truncation is shown. L6 should budget the label the real renderer gives at the largest generation the archive stores.
+
+**R30.** (A5, round 3 M2-5; P3, injected-only: a malformed identity; regression: neither, M2's own) `commands_stand_down.py` prints a refused identity's callsign through Rich `escape`, which removes markup, not terminal controls, so an ESC sequence in a callsign reaches the console. The normal naming ceremony produces none. The fix (encode C0 and C1 controls in every display field) belongs with R18's console hardening, as a separate row.
+
+**R31.** (A5, 7.3a's table) Outside the strict read's table, each decided:
+(a) `_safe_path`'s `Path.resolve()` (non-strict `realpath`): an error it raises propagates, and the path it returns is what O1, O5 and O6 open, so their dispositions apply.
+(b) The one-snapshot bound (R2).
+(c) A root that the OS cannot address (beyond `MAX_PATH` without long-path support) reads as missing, like any absent root. The roots are Ship's Records' own short paths.
+(d) A special file (a FIFO, a device) named `*.md` is read as a file, as every listing reads it; no ProbOS writer makes one.
+(e) A junction cycle ends in an `OSError` (fail closed).
+(f) The default listing (`strict=False`) stays lossy at every operation, and so do the reset's promotion and the Captain's `pending` review built on it (R20). A note unreadable while the Captain reviews is not listed, and a later reset archives it if it reads then.
+(g) Bytes that are not UTF-8 are skipped by the strict listing (A2); a document rewritten between the strict listing and the citation read's second read raises there (fail closed).
+(h) Git (`_git_sync` returns on a non-zero exit, R23) and `write_entry`'s own `exists()` (R28's window).
