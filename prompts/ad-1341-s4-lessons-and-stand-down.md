@@ -4,6 +4,8 @@
 
 **Header edits (orchestrator, 2026-10-26, mechanical; no pair, SEARCH or REPLACE changed):** the **Base** paragraph (S3 merged: base `origin/main` `20c1ec00`), section 4's "Expected focused counts" paragraph (measured on that base) and its tests-first sentence, and section 6's names of each new test file's first failing import (each leg was run on the oracle); after A2, section 14 property 1's per-section bound (A2 made the lesson's bound 700 characters in all, property 14).
 
+**Amendment A4:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from round 2 of the three cross-family reviews of the repaired head `e1e97d25` (16 findings, two P1 with one root). The strict listing now raises for a directory it cannot list (7.3a pairs 3 to 5: an error-reporting walk for `strict=True` only; the default runs the same `rglob` call). A section name matches in ASCII only, so a lookalike letter opens no section instead of raising; a lesson refuses every C0 and C1 control and DEL but tab, line feed and carriage return; `is_exit_note_text` refuses `---`, where Ship's Records cuts a frontmatter value (register R25), and the stand-down offers only episodes whose ids it admits. The stand-down's write path is made smaller, not larger: it never removes a document (A2's rollback could delete another writer's document and could not run on cancellation), checks for a note written meanwhile without an await and charges that check to the window, begins no write once the window has closed, and reports the path of any note a failed or cut-off write left. `asyncio.create_task` replaces `ensure_future`. M3 is unchanged.
+
 **Amendment A3:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from the orchestrator's run of A2 on the oracle (151 of the 154 cases of the three new files passed, and every focused list passed except X8's three cases): X8 builds its own transport that answers as a served app does (`raise_app_exceptions=False`) and records the one exception the app raised, because the shared `_client` re-raises the app's exception instead of returning the 500 (C108 to C110); R19 records that M3-F2 is already F-141 on #1523 and is not re-filed (C111: the Architect withdrew its A2 ruling "file it as its own BF" after the orchestrator found F-141 in the register). No other text changes.
 
 **Amendment A3 (2):** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from the orchestrator's stress run of A3 on the oracle `312a792c` (S4c `[write]` failed 21 of 60 repetitions; every other case passed all 8 runs of the file). asyncio fires a timer once the loop's clock is within one clock resolution of it (15.6 ms on Windows before Python 3.13), so the hanging write's bound could expire just before the deadline the service reads from the same clock, and the queued turn began a write. The service is unchanged: that write is still bounded by the window and removed. S4c `[write]` and S3c (the same race on the recall's bound) now run on the stand-down's injected `clock`, and S4c records a write when `write_entry` is called, which D-23 needs (C116, C118 to C120); S3 and S4b keep their real bound, now 1.5 s with 1 s of headroom (C115, C117, C121). Test functions and cases are unchanged.
@@ -16,7 +18,7 @@
 
 **Amendment A2:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26, from round 1 of the three cross-family reviews of the candidate `54cb4027` (24 findings, four P1). Three shared contracts change, each at its smallest seam: `RecordsStore.list_entries` gains a keyword-only `strict` (7.3a), so the AD-754 read and the stand-down's first read fail closed on a note file that exists but cannot be read now (M1-F1, M3-F1); `CognitiveAgent._conversational_agentic_will_run` answers no for a `direct_message` carrying `bounded_turn: True`, so a stand-down turn is answered inline on the single-pass path and never promoted into a background work item (7.9a, M2-1); the Oracle tool is not touched, and a lesson is bounded at 700 characters in all, so a whole archived note fits one tool entry (M1-F4, L6 through the real tool). A2 also closes the format under rendering (M1-F3), archives exactly the canonical note (M1-F5), checks every provenance value the origin line and SQLite receive (M1-F2, F6, F7, M2-7), recognises `_` emphasis (M1-F8), corrects the plan's docstring (M1-F9), rebuilds the stand-down's bounds (one window from before the first read through every write, one deadline per turn, one turn per billet, a failed write removed, a member's fault kept inside its turn, no turn outliving the call: M2-2 to M2-6), budgets excerpts in transport bytes (M2-8), and strengthens S3, S4b, S9, S13b, S14, X1, X2 and X7 (M2-9, M3-F3 to F5). Two pre-existing findings are registered, not repaired (R18, R19). Milestone boundaries are unchanged; 7.3a is in M1 and 7.9a in M2.
 
-**Tests:** new `tests/test_ad1341_s4_lessons.py` (M1: 19 functions), `tests/test_ad1341_s4_stand_down.py` (M2: 28 functions), `tests/test_ad1341_s4_exit_note_erasure.py` (M3: 10 functions). Updated: `tests/test_ad1341_s1_archive_store.py` (M1: the closed `SourceKind` set) and `tests/test_ad1341_s1_promotion.py` (M1, A1: the service's import set), each with an inline reason.
+**Tests:** new `tests/test_ad1341_s4_lessons.py` (M1: 25 functions; A4 added six), `tests/test_ad1341_s4_stand_down.py` (M2: 33 functions; A4 added five), `tests/test_ad1341_s4_exit_note_erasure.py` (M3: 10 functions). Updated: `tests/test_ad1341_s1_archive_store.py` (M1: the closed `SourceKind` set) and `tests/test_ad1341_s1_promotion.py` (M1, A1: the service's import set), each with an inline reason.
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -81,7 +83,7 @@ Three things are missing:
   - (C) the service calls the model itself in the agent's name: rejected. That is not the agent's judgment and bypasses its standing orders and character.
   - (D) AD-1347 agent work items, (E) the duty schedule or the proactive loop, (F) a Ward Room DM thread: rejected. Each is claimed or fired on its own cadence (`duty_schedule.py:4`, `:173-197`; `agent_work.py:1-24`), and none can bound a window that ends at a reset. The issue named the duty schedule; a cron duty cannot be started by the Captain's order and cannot bound its own end.
 - **D4 (what the agent is asked).** `exit_notes_prompt` (7.6), fixed in code and pinned by S9. It says why it asks (the successor will not share the agent's memories), what to write (what it learned, what it would do differently, what remains open), that writing is optional (reply `NO NOTES` and nothing is recorded), the exact format and its bound, the optional `Cites:` line, and where the note goes: Ship's Records under its callsign and DID, the Captain's review and veto, then the Ship's Archive, where every later crew reads it labelled as inherited. It tells the agent to write nothing it would not share with the whole ship, to summarise and not quote its memories, and to reply without tools, which holds by construction since A2 (D3: no tool-calling loop runs for a bounded turn). It shows the agent at most 12 of its own most recent episodes, each as a handle (`e1`..), a date and an excerpt of at most 160 bytes once JSON-escaped (160 ASCII characters, 26 CJK, 13 astral), so the message stays inside the 4 KiB standard for inline `IntentMessage.params` in any script (A2, M2-8; S7c).
-- **D5 (the bounds).** `STAND_DOWN_TURN_SECONDS = 180.0` per turn (the Captain's own 1:1 messages use a 60-second TTL, `session.py:119`). `STAND_DOWN_WINDOW_SECONDS = 900.0` for the whole stand-down. `STAND_DOWN_CONCURRENCY = 2` turns at once, inside AD-636's 6 concurrent model calls. A turn past its bound is cancelled through `asyncio.wait_for`, as System QA's are. **A2:** each turn has one deadline, 180 s from its start and never past the window, that its recall and its ask both spend and that its reply must meet, so a reply that suppresses its cancellation and returns late writes nothing (M2-5). The window starts before Ship's Records is first read and bounds every write: a first read that cannot finish in time refuses the stand-down with nobody asked, and a write that runs out of time or fails is removed again (M2-2, M2-4). A reply that arrives after the window writes nothing. An agent whose turn has not begun when the window closes is not asked (`not_reached`). The stand-down returns by the end of the window plus cancellation. A slow episode read is bounded by the same turn limit; a failed one offers no episodes. Module constants, not configuration (register R7). Tested: S3 (turn), S4 (window, late reply, not reached), S4b (the window bounds a turn its own bound would allow), S6 (concurrency), S7 (12 episodes, 160 characters); A2: S3b and S3c (one deadline per turn), S4c (the records stages), S7c (bytes), S7d (no fault or turn escapes its member or the call).
+- **D5 (the bounds).** `STAND_DOWN_TURN_SECONDS = 180.0` per turn (the Captain's own 1:1 messages use a 60-second TTL, `session.py:119`). `STAND_DOWN_WINDOW_SECONDS = 900.0` for the whole stand-down. `STAND_DOWN_CONCURRENCY = 2` turns at once, inside AD-636's 6 concurrent model calls. A turn past its bound is cancelled through `asyncio.wait_for`, as System QA's are. **A2:** each turn has one deadline, 180 s from its start and never past the window, that its recall and its ask both spend and that its reply must meet, so a reply that suppresses its cancellation and returns late writes nothing (M2-5). The window starts before Ship's Records is first read and bounds every write: a first read that cannot finish in time refuses the stand-down with nobody asked (M2-2). **A4:** no write begins once the window has closed, and the check for a note written meanwhile (no await) is charged to the window before it; the stand-down never removes a document, so a write that fails or that the window cuts off after publishing is reported with the path of the note it left, and a write that returns late (synchronous I/O, R22) is `written`, which it is (M2-4). A reply that arrives after the window writes nothing. An agent whose turn has not begun when the window closes is not asked (`not_reached`). The stand-down returns by the end of the window plus cancellation. A slow episode read is bounded by the same turn limit; a failed one offers no episodes. Module constants, not configuration (register R7). Tested: S3 (turn), S4 (window, late reply, not reached), S4b (the window bounds a turn its own bound would allow), S6 (concurrency), S7 (12 episodes, 160 characters); A2: S3b and S3c (one deadline per turn), S4c (the records stages), S7c (bytes), S7d (no fault or turn escapes its member or the call); A4: S2b (what a failed write leaves), S4d (the real clock), S4e (a cancelled stand-down).
 - **D6 (the format, and where it is validated).** Four sections, in order, each once, each non-empty, together at most 700 characters (A2; A0 said 1,200 each). The Oracle tool cuts each entry to 1,200 characters (`oracle_query_tool.py:71`, `_cap_entry` `:119-129`), so at 1,200 a section a full note reached a later crew as its Observation alone (M1-F4). With the callsign, agent type and timeline bounded at 32, 48 and 64 characters, a whole archived note with the tool's marker, S2's longest label, the `[exit_note]` title and the origin line takes at most 1,172 characters of that entry (L6, through the real tool), far inside AD-1148's 6,000. The passive Oracle context previews 300 characters of every archive entry, of every kind (`oracle_service.py:763`; register R21). **Closed under rendering (A2, M1-F3):** a section whose text would read as a heading or a `Cites:` line once rendered on its own line is refused, so every accepted lesson renders to text that parses back to itself (L1b). Text with a NUL or a lone surrogate is refused (SQLite cannot store it whole). Headings may be `## Observation`, `**Observation**`, a bare `Observation` line or `Observation: text`. A label needs its colon, so "Lesson learned, ..." stays text. Text before the first heading is dropped. A `Cites:` line is read separately and never kept. **One parser** (`parse_lesson`) reads the agent's reply at the stand-down and the stored note at the promotion, and `LessonLearned.render` writes the canonical form, which parses back to itself (L1). A reply not in the format writes nothing (`not_in_format`).
 - **D7 (where a note waits for the reset).** Ranked:
   - **(A) chosen: a Ship's Records document** at `exit-notes/{timeline}/{agent_type}.md`. The body is a fixed origin line ("Exit notes left by {callsign} ({agent_type}) of the crew of timeline {timeline} for their successor. A record, not a memory.") followed by the rendered lesson. The frontmatter has `author` (the callsign), `classification: ship`, `status: submitted`, `topic`, `tags`, and the envelope `exit_note: {version, timeline_id, callsign, agent_type, author_did, source_episode_ids}`. S1's promotion already reads Ship's Records, and S3's `pending` and `veto` already work by records path, so the Captain reviews and vetoes notes with the tools that exist. The path is keyed by agent type, not callsign, because callsigns repeat across generations (S2's RS2-3).
@@ -177,7 +179,7 @@ M1 adds `exit_note_citations` and tests it (C1 to C3c). Its consumer, the route,
 | Value | Consumers | Effect |
 |---|---|---|
 | `SourceKind.EXIT_NOTE` (`"exit_note"`) | `promote_entry` (stored as `source_kind` and `category`); `source_state`, `veto_source` (S3); `_pending_label` and `probos archive veto` (print `record.source_kind.value`); S1's closed-set pin (7.4) | a new kind; no column change |
-| `source_kind_for` returns `EXIT_NOTE` for `exit-notes/` | `plan_promotion` (its one caller in `src`, Absence S4-AV3) | notes enter the plan |
+| `source_kind_for` returns `EXIT_NOTE` for `exit-notes/` | `plan_promotion` and `exit_note_citations` (its two callers in `src`, Absence S4-AV3 as A4 corrected it) | notes enter the plan and the citation read |
 | `plan_promotion`'s exit-note branch (`_exit_note_record`) | `promote_ship_records` (the reset), `review_promotion` (`pending`), `_veto_pending_source` (`veto`), `_show_promotion_plan` (dry run), `_promote_into_archive`'s no-instance-id refusal | notes promoted, reviewed, vetoable, listed; a bad one withheld |
 | `exit_note_citations` | M3's route only (X6) | new |
 | `probos.knowledge.lessons` | `archive_promotion.py`, `stand_down.py`; S1's import census of `archive_promotion.py` (`test_ad1341_s1_promotion.py:413-420`, 7.4a) | new; the census's pinned set gains it |
@@ -188,10 +190,14 @@ M1 adds `exit_note_citations` and tests it (C1 to C3c). Its consumer, the route,
 | `ExitNotesBlockErasure` | `request_erasure` (409); `_forget_all` counts it as a per-episode failure if raised inside the per-episode loop (it is raised first, at the top) | new |
 | `POST /api/security/forget` 409 `exit_notes_cite_erased_episodes` | no HXI or CLI caller (S3-AV3); the route tests pass a `MagicMock` runtime whose `records_store` is not a `RecordsStore`, so they read no notes | new answer |
 | Ship's Records `exit-notes/` | S1's promotion; the Oracle's records tier (keyword search); `list_entries` | new documents |
-| `RecordsStore.list_entries(..., strict=False)` (A2, 7.3a) | default kept by every `RecordsStore` caller in `src`: `experience/commands/commands_gap.py:51`, `cognitive/dreaming.py:918`, `proactive.py:2735`, `cognitive/diagnostic_context.py:375`, `knowledge/archive_promotion.py:210` (`plan_promotion`; register R20), `knowledge/backlinks.py:263`, `knowledge/knowledge_linter.py:58`, `knowledge/notebook_quality.py:217`, `knowledge/semantic.py:708`, `routers/gaps.py:23`, `routers/records.py:50`, `:123`, `:134`, `:212`. `strict=True`: `exit_note_citations` and `run_stand_down`'s first read only | keyword-only; the default is behaviour-identical |
+| `RecordsStore.list_entries(..., strict=False)` (A2, 7.3a) | default kept by every `RecordsStore` caller in `src`: `experience/commands/commands_gap.py:51`, `cognitive/dreaming.py:918`, `proactive.py:2735`, `cognitive/diagnostic_context.py:375`, `knowledge/archive_promotion.py:227` (`plan_promotion`; register R20), `knowledge/backlinks.py:263`, `knowledge/knowledge_linter.py:58`, `knowledge/notebook_quality.py:217`, `knowledge/semantic.py:708`, `routers/gaps.py:23`, `routers/records.py:50`, `:123`, `:134`, `:212`. `strict=True` (a file that cannot be read, and from A4 a directory that cannot be listed, raises): `exit_note_citations` and `run_stand_down`'s first read only | keyword-only; the default runs the same `rglob` call as before (C3f proves the strict walk's parity) |
 | `direct_message` param `bounded_turn: True` (A2, 7.9a) | its one reader `CognitiveAgent._conversational_agentic_will_run`, and through it the dispatch (`cognitive_agent.py:4754`), the AD-1070 self-description (`:3214`) and the reply-tag suppressions (`:4206`, `:4254`). Sent only by `stand_down_vessel`. The channel adapters (`channels/base.py:452-457`), the console's 1:1 (`session.py:110-148`), System QA and every other sender never set it | a stand-down turn is single-pass and inline; no other DM changes |
 | `LESSON_MAX_CHARS` (700) and the envelope bounds (A2) | `parse_lesson`; `exit_note_provenance_ok` (the stand-down before asking, and `_exit_note_record`); the prompt (S9); the Oracle tool's 1,200-character entry (`oracle_query_tool.py:71`, unchanged) | a whole note fits one tool entry (L6) |
 | `TurnOutcome.DUPLICATE` (A2) | `cmd_stand_down` prints `outcome.value` | new outcome |
+| `is_exit_note_text` refuses `---` (A4) | `exit_note_provenance_ok` (the stand-down's timeline refusal and `NO_IDENTITY`, and `_exit_note_record`); `_exit_note_record`'s episode-id check; `_offer` (A4) | a value Ship's Records would read back cut short (R25) is never asked for, offered or archived (P4, S7e, S10b) |
+| `_NOT_LESSON_TEXT` (A4; was `_UNSTORABLE`) | `parse_lesson` only: the stand-down's reply and the promotion's stored body | a lesson holds no C0 or C1 control and no DEL but tab, line feed and carriage return (L3, L9) |
+| `_SECTION` matches in ASCII only (A4) | `_HEADING_LINE`, `_ALONE_LINE`, `_LABEL_LINE`, so `_heading` and `parse_lesson` | a lookalike letter opens no section; nothing raises (L8, L10) |
+| A turn's path on `failed` or `timed_out` (A4) | `cmd_stand_down` prints any turn's path (`commands_stand_down.py:37-39`, unchanged) | names a note a failed or cut-off write left; nothing is removed |
 
 ## 6. Tests
 
@@ -209,14 +215,14 @@ The last column below is the Architect's analysis of the assertion each test fai
 |---|---|---|---|
 | L1 | `test_a_rendered_lesson_parses_back_to_itself[one-line, multi-line]` | D6: the canonical form, headings in order, round trip | (new module) |
 | L2 | `test_the_four_sections_are_read_in_each_heading_form[...7 forms]` | D6: heading forms; preamble dropped; `Cites:` line not kept; "Lesson learned, ..." stays text | (new module) |
-| L3 | `test_a_reply_not_in_the_format_is_no_lesson[...9 cases]` | D6: missing, reordered, repeated, empty, over 700 in all, prose, not text; A2: a NUL, a lone surrogate | (new module) |
+| L3 | `test_a_reply_not_in_the_format_is_no_lesson[...14 cases]` | D6: missing, reordered, repeated, empty, over 700 in all, prose, not text; A2: a NUL, a lone surrogate; A4 (R2-F5): an ESC sequence, BEL, a C1 control, DEL, a vertical tab | (new module) |
 | L4 | `test_a_declining_reply_is_recognised_and_nothing_else_is[...11]` | D4; A2 (M1-F8): `__NO NOTES__` and `_no notes_` decline, `no_notes` does not | (new module) |
 | L5 | `test_citations_name_only_the_episodes_offered[...6]` | D9: only offered handles, once each, in order | (new module) |
 | L5b | `test_a_lesson_cites_at_most_the_bounded_number_of_episodes` | D9: 12 | (new module) |
 | L6 | `test_a_whole_note_at_every_bound_reaches_a_later_crew_through_the_oracle_tool` | D6 (A2, M1-F4): a note at every bound reaches a later crew through the real Oracle tool whole (four sections, nothing shortened), with room for the longest label and marker; one character more is refused | (new module) |
 | L7 | `test_an_exit_note_has_one_path_per_timeline_and_agent_type` | D7: the slug rule; ValueError for no letter or digit | (new module) |
 | P1 | `test_an_exit_note_is_promoted_with_its_own_provenance` | D9, D10: the row's timeline (the note's, not the reset's), kind, title, content, author type, callsign, DID, citations, classification | `promoted.created == (path,)` (base: an `exit-notes/` path is no source) |
-| P2 | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing[...19 cases]` | D6, D9, D10: each break withheld; the plan never raises; the citation read counts none. A2: a `True` or `1.0` version (M1-F7); a line break, NUL or over-long value in the provenance and a DID SQLite cannot store (M1-F2, M1-F6, M2-7); a preamble or a standalone `Cites:` line in the stored body (M1-F5) | `plan.records == ()` (A2's cases: the base selects them) |
+| P2 | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing[...23 cases]` | D6, D9, D10: each break withheld; the plan never raises; the citation read counts none. A2: a `True` or `1.0` version (M1-F7); a line break, NUL or over-long value in the provenance and a DID SQLite cannot store (M1-F2, M1-F6, M2-7); a preamble or a standalone `Cites:` line in the stored body (M1-F5). A4: an over-long or line-broken episode id (R2-F4's missing case), a lookalike heading (R2-F2: withheld, never raised), a control character in the body (R2-F5) | `plan.records == ()` (A2's and A4's cases: the base selects them, or raises) |
 | P3 | `test_an_exit_note_is_archived_once_whichever_reset_promotes_it` | D11 | `first.created == (path,)` |
 | C1 | `test_the_erasure_read_counts_a_note_only_while_the_next_promotion_would_archive_it[new, vetoed, erased, present, uncited, no-archive]` | D14, D16: one rule; fail closed with no archive | `cited == expected` |
 | C2 | `test_a_veto_between_the_citation_read_and_the_promotion_decides_both` | D14, the case that changes the state between the two reads | `before == {...}` |
@@ -226,6 +232,12 @@ The last column below is the Architect's analysis of the assertion each test fai
 | C4 | `test_the_captain_s_review_lists_an_exit_note_as_a_source_to_be_promoted` | D12, D13: S3's review sees the note | `[...] == [(path, PromotionOutcome.CREATED)]` |
 | L1b | `test_every_lesson_the_parser_accepts_is_written_and_read_back_unchanged[...11 cases]` | A2 (M1-F3): the format is closed under rendering; four ambiguous inline or stripped bodies are refused | `assert lesson is None` (the four refusal cases) |
 | C3d | `test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations[injected, native]` | A2 (M1-F1): a valid note the OS refuses to read now; the real listing meets the failure inside its loop; the citation read raises; the default listing still skips it; once readable it counts. `[native]`: a share-nothing handle on Windows, mode 000 on POSIX (skips only where the account reads it anyway) | `pytest.raises(OSError)` (did not raise) |
+| L8 | `test_a_section_name_spelled_with_a_lookalike_letter_opens_no_section` | A4 (R2-F2): the four letters Unicode IGNORECASE folds onto ASCII (premise: Python's documented set), in every section name and four heading forms: refused, never raised | the parser raises `KeyError` (base) |
+| L9 | `test_a_lesson_carries_no_control_character_but_tab_line_feed_and_carriage_return` | A4 (R2-F5): every C0 and C1 control and DEL refused anywhere in a reply; tab kept; line feed and carriage return end lines | `assert lesson is None, hex(code)` at `0x1`, `0x1b` (base: accepted) |
+| L10 | `test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs` | A4 (R2-F2): a stored lookalike heading through the real `probos reset`: exit 0, the note not archived | `_reset(...) == 0` (base: 1) |
+| P4 | `test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records[callsign, agent_type, did, cited]` | A4 (R2-F3): YAML's quoting cases and, for the callsign, every code point to U+017F: refused and withheld, or admitted, stored, read back whole and archived | `(record,) = plan.records` for a value holding `---` (base: admitted, then withheld) |
+| C3e | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations[injected-root, injected-timeline, native-root, native-timeline]` | A4 (R2-F1, M3-1): `exit-notes/` or a timeline directory the OS refuses to list; the strict listing and the citation read raise; the default listing never raises (and, natively, passes over it); listable again, the note counts | `pytest.raises(OSError)` (did not raise) |
+| C3f | `test_the_strict_listing_lists_exactly_what_the_default_listing_lists[all, exit-notes, absent]` | A4: the strict walk's parity with `rglob("*.md")`: nested directories, a `*.md` directory, another suffix, the suffix's case as the platform matches it, `_archived/`, a missing directory | (passes on the base, where `strict` changes no traversal: the control; kills RS-5) |
 | K1 | `tests/test_ad1341_s1_archive_store.py::test_source_kinds_are_closed_and_none_is_an_episode` (updated) | the closed set gains `exit_note`; none is an episode | the set equality (base: no `exit_note`) |
 | K2 | `tests/test_ad1341_s1_promotion.py::test_the_service_imports_only_the_knowledge_layer` (updated, A1, 7.4a) | the promotion service still imports only the knowledge layer, now with `probos.knowledge.lessons` | the set equality (base: no `lessons` import, until 7.3 pair 2) |
 
@@ -251,15 +263,20 @@ The last column below is the Architect's analysis of the assertion each test fai
 | S13b | `test_the_console_command_reports_each_turn_and_the_next_steps` | D13 | (new module) |
 | S14 | `test_the_stand_down_never_writes_the_ship_s_archive` | D7 D: no archive import; no archive write call | (new module) |
 | S15 | `test_a_stand_down_note_reaches_a_later_crew_as_inherited_and_its_citation_reaches_the_erasure_check` | **the real seam:** the vessel stand-down (real bus, the model a stub) → the real `probos reset` promotes it → a later crew's real Oracle returns it with "[Inherited from the crew of generation 1: not your own memory]" first → S3's real check refuses an AD-754 erasure of the cited episode | (new module) |
-| S2b | `test_a_write_that_fails_after_publishing_leaves_no_hidden_note[removed, cannot-remove]` | A2 (M2-4): a git failure after publication; the file is removed, the plan finds nothing, the next stand-down asks again; a file that cannot be removed is reported failed with its path | `_notes(records) == []` / `(FAILED, path)` |
+| S2b | `test_a_write_that_fails_after_publishing_leaves_no_hidden_note[published, replaced, not-published]` | A2 (M2-4), A4: the stand-down removes nothing. A note a failed write published is reported failed with its path and is promotable; another writer's document at the path stays as it was; a write that failed before publishing leaves nothing and the billet is asked again | `(FAILED, path)` (base: `(FAILED, "")`, the note removed) / the author `Bones` (base: removed) |
 | S3b | `test_a_reply_that_returns_after_the_turn_s_deadline_writes_nothing` | A2 (M2-5): a cancellation-suppressing ask returning after the turn's deadline, inside the window | `[TurnOutcome.TIMED_OUT]` (base: WRITTEN) |
 | S3c | `test_the_recall_and_the_ask_spend_one_turn[slow-recall, recall-runs-out]` | A2 (M2-5): one deadline per turn | `[TurnOutcome.TIMED_OUT]` (base: WRITTEN) |
-| S4c | `test_the_window_bounds_the_records_reads_and_writes_too[first-read, write]` | A2 (M2-2): a hanging first read refuses with nobody asked; a hanging write ends with the window, and the turn behind it never starts a write | `pytest.raises(StandDownRefused)` / the outcomes |
+| S4c | `test_the_window_bounds_the_records_reads_and_writes_too[first-read, write]` | A2 (M2-2): a hanging first read refuses with nobody asked; a hanging write is cut off by the window; A4: on the injected clock, the turn queued behind it for the write lock never begins a write. It proves the guard's logic, not the real timer (S4d is the real clock) | `pytest.raises(StandDownRefused)` / the outcomes |
 | S7c | `test_the_captain_s_message_stays_inside_the_inline_params_bound_in_any_script[ascii, cjk, astral]` | A2 (M2-8): 12 episodes and a 32-character CJK callsign; params as JSON at most 4,096 bytes; 12 shown | `len(json.dumps(intent.params)) <= 4096` (`[ascii]` a control) |
 | S7d | `test_one_member_s_fault_never_ends_the_other_turns_or_leaves_one_running[timestamps, unreadable-episode, self-cancelled]` | A2 (M2-6): inf and NaN shown undated; one member's unreadable episode fails that member only; a turn cancelled from inside cancels and drains the rest; no task outlives the call | the call raises `OverflowError` / `RuntimeError`; `stopped.is_set()` |
 | S8b | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[same-type, same-member, written-meanwhile]` | A2 (M2-3) | the outcomes (base: two WRITTEN; asked twice; revision 2) |
-| S8c | `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody` | A2 (M1-F1 asked of the stand-down): a skip would replace the note | `pytest.raises(StandDownRefused)` (did not raise) |
-| S10b | `test_an_identity_that_cannot_stand_in_the_note_is_not_asked[multiline-callsign, long-callsign, nul-agent-type, surrogate-did]` | A2 (M2-7) | `[TurnOutcome.NO_IDENTITY]` (base: WRITTEN) |
+| S8c | `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[file, directory]` | A2 (M1-F1 asked of the stand-down): a skip would replace the note; A4 (M3-1): a billet directory the OS refuses to list | `pytest.raises(StandDownRefused)` (did not raise) |
+| S10b | `test_an_identity_that_cannot_stand_in_the_note_is_not_asked[multiline-callsign, long-callsign, nul-agent-type, surrogate-did, delimiter-callsign]` | A2 (M2-7); A4 (R2-F3): a callsign holding `---` | `[TurnOutcome.NO_IDENTITY]` (base: WRITTEN) |
+| S4d | `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window, a-write-returns-late, cut-off-after-publishing]` | A4 (round 2 M2-2, M2-4, M2-7): the real clock with 200 ms of margin over the 15.6 ms tick; the existence check is charged to the window; a late synchronous return is `written` with its note; a write cut off after publishing is `timed_out` with the path it left | `writes == []` (base: a write began after the window) / `(TIMED_OUT, path)` (base: `(TIMED_OUT, "")`, the note removed) |
+| S4e | `test_a_cancelled_stand_down_keeps_every_note_it_published_and_leaves_nothing_running` | A4 (round 2 M2-3): the cancellation propagates; no task outlives it; the published note stays whole and reviewable (register R27) | (passes on the base: the control pinning A4's decision) |
+| S7e | `test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives[long, nul, surrogate, line-break, delimiter]` | A4 (R2-F4, M2-5): an episode whose id the rule refuses is never offered or shown; every offered id is cited, stored and archived | `[...source_episode_ids...] == [("ep-000", "ep-001")]` (base: `[]`, the note withheld) |
+| S11b | `test_a_bound_that_is_not_positive_is_refused_before_anything_is_read[turn, window, concurrency]` | A4 (M2's record): `ValueError` before the first read, nobody asked | (passes on the base; D-41 is its evidence) |
+| S13c | `test_the_console_command_takes_no_arguments` | A4 (M2's record): the usage line; the runtime untouched | (passes on the base; C-2 is its evidence) |
 | S16 | `test_a_stand_down_turn_is_answered_inline_by_the_real_dm_consumer_and_never_promoted` | A2 (M2-1), **the real seam:** real `CognitiveAgent` consumers with the shipped `dm_agentic` settings; the turns take the single-pass path, the loop's model is never called, no work item, no promoted task; the control's ordinary 1:1 still runs the loop | `intent.params[BOUNDED_TURN_PARAM]` (KeyError) |
 
 **M3, `tests/test_ad1341_s4_exit_note_erasure.py`:**
@@ -343,7 +360,10 @@ EXIT_NOTE_VERSION: Final = 1
 EXIT_NOTE_STATUS: Final = "submitted"
 
 _NAMES = {name.lower(): name for name in LESSON_SECTIONS}
-_SECTION = "(observation|discussion|lesson|recommendation)"
+_SECTION_NAMES = "observation|discussion|lesson|recommendation"
+# A4 (R2-F2): the names match in ASCII only. Under re.IGNORECASE alone, U+0130, U+0131 and U+017F match as ASCII
+# letters ("Ob\u017fervation"), and _NAMES holds only the ASCII names, so such a heading raised KeyError.
+_SECTION = f"((?a:{_SECTION_NAMES}))"
 _EMPHASIS = r"(?:\*\*|__)?"
 # "## Observation" or "### Observation:": a markdown heading alone on its line.
 _HEADING_LINE = re.compile(rf"^\s{{0,3}}#{{1,6}}\s*{_SECTION}\s*:?\s*#*\s*$", re.IGNORECASE)
@@ -359,10 +379,15 @@ _HANDLE = re.compile(r"\be(\d{1,2})\b", re.IGNORECASE)
 _DECLINED = re.compile(r"^[\W_]*no notes[\W_]*$", re.IGNORECASE)  # A2: _ is emphasis too (__NO NOTES__, _NO NOTES_)
 _NOT_SLUG = re.compile(r"[^a-z0-9]+")
 # A2: what SQLite cannot store whole: a NUL ends its length() and keyword search, and a lone surrogate is no UTF-8.
-_UNSTORABLE = re.compile(r"[\x00\ud800-\udfff]")
+# A4 (R2-F5): and what a console acts on: the Captain reads exit notes at a terminal, where an ESC sequence redraws it.
+# So a lesson holds no C0 or C1 control and no DEL, except tab, line feed and carriage return (which end lines).
+_NOT_LESSON_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
 # A2: what cannot stand in one line of an exit note: every control character, the line and paragraph separators (each
 # ends a line for str.splitlines), and lone surrogates.
 _NOT_ONE_LINE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
+# A4 (R2-F3): Ship's Records splits a document's frontmatter at the first two "---" it finds, inside a value too
+# (records_store._parse_document, register R25), so an envelope value holding one would come back cut short.
+_FRONTMATTER_DELIMITER = "---"
 
 
 @dataclass(frozen=True)
@@ -407,9 +432,9 @@ def parse_lesson(text: object) -> LessonLearned | None:
     A2: the format is closed under ``LessonLearned.render``. A section whose text would read as a heading or a
     ``Cites:`` line once rendered on its own line (``Observation: Discussion: ...``) is refused, so every accepted
     lesson is written, stored and read back unchanged. Text SQLite cannot store whole (a NUL, a lone surrogate) is
-    refused.
+    refused, and A4 (R2-F5) refuses every other C0 and C1 control and DEL but tab, line feed and carriage return.
     """
-    if type(text) is not str or _UNSTORABLE.search(text) is not None:
+    if type(text) is not str or _NOT_LESSON_TEXT.search(text) is not None:
         return None
     sections: list[tuple[str, list[str]]] = []
     for line in text.splitlines():
@@ -499,10 +524,12 @@ def is_exit_note_text(value: object, max_chars: int) -> bool:
 
     A string of at most ``max_chars`` characters that is not blank and is one line: no control character, no line or
     paragraph separator, no lone surrogate. SQLite stores the value as UTF-8 and a NUL would end its ``length()`` and
-    keyword search; a line break in a callsign would put another heading into the origin line.
+    keyword search; a line break in a callsign would put another heading into the origin line. A4 (R2-F3): and no
+    ``---``, which Ship's Records would take for the end of the frontmatter, so the value would come back cut short.
     """
     return (
         type(value) is str and bool(value.strip()) and len(value) <= max_chars and _NOT_ONE_LINE.search(value) is None
+        and _FRONTMATTER_DELIMITER not in value  # A4 (R2-F3): Ship's Records cuts a frontmatter value at "---"
     )
 
 
@@ -784,6 +811,8 @@ REPLACE:
 
 A2 (M1-F1, M3-F1). `list_entries` (`:961-1001`) catches every read or parse failure of a listed file and skips it (`:982-987`), so a caller cannot tell an unreadable note from an absent one. `strict=True` re-raises an `OSError` reading a regular file that exists. A file that is not UTF-8 is still skipped (a property of the file; the promotion skips it too); a YAML error never reaches here (`_parse_document`, `:1190-1200`, folds it into `{}`); a path that is no longer a file (a directory named `*.md`, a vanished file) is skipped as absent. The default keeps every caller's behaviour (§5). A shared contract: round 2 re-reviews whole.
 
+A4 (R2-F1, M3-1). `Path.rglob` (`:984`) also passes over a directory it cannot list, so a strict reader still took the notes inside an unlistable `exit-notes/` or timeline directory for absent ones. `strict=True` now walks with `os.walk` and an error callback that re-raises for a directory that exists but cannot be listed, and treats a directory that does not exist (or is gone) as empty (pairs 3 to 5). The default runs the same `rglob` call as before. Round 3 re-reviews whole.
+
 Pair 1 (the parameter):
 
 SEARCH:
@@ -811,6 +840,8 @@ REPLACE:
         exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
         AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
         that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
+        A4: ``strict=True`` also raises the ``OSError`` of a directory that exists but cannot be listed now, which
+        ``Path.rglob`` passes over (``_markdown_files_or_raise``); a directory that does not exist lists nothing.
         """
 ```
 
@@ -838,6 +869,83 @@ REPLACE:
             except Exception:
                 logger.debug("Skipping unreadable file", exc_info=True)
                 continue
+```
+
+Pair 3 (A4: the modules the strict walk uses):
+
+SEARCH:
+```python
+import asyncio
+import logging
+import subprocess
+```
+REPLACE:
+```python
+import asyncio
+import fnmatch
+import logging
+import os
+import subprocess
+```
+
+Pair 4 (A4: the strict walk, a module function beside `_jaccard_similarity`):
+
+SEARCH:
+```python
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+class RecordsStore:
+```
+REPLACE:
+```python
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def _markdown_files_or_raise(search_path: Path) -> list[Path]:
+    """AD-1341 S4 (A4): every ``*.md`` path under ``search_path`` that ``rglob("*.md")`` finds, except that a directory
+    which exists but cannot be listed now raises its ``OSError`` instead of being passed over.
+
+    ``Path.rglob`` skips a directory it cannot list (a permission, a sharing violation), so a strict reader would take
+    the documents inside it for absent ones. A directory that does not exist, or is gone by the time it is listed,
+    lists nothing, as it does for ``rglob``. ``fnmatch`` matches the suffix with the platform's case rule, as ``rglob``
+    does, and a directory named ``*.md`` is found, as ``rglob`` finds it.
+    """
+    found: list[Path] = []
+
+    def _unlisted(error: OSError) -> None:
+        if not isinstance(error, (FileNotFoundError, NotADirectoryError)):  # gone, or never a directory: absent
+            raise error  # AD-1341 S4 (A4): a directory that exists but cannot be listed now is never "no documents"
+
+    for root, dirs, files in os.walk(search_path, onerror=_unlisted):
+        found.extend(Path(root, name) for name in (*dirs, *files) if fnmatch.fnmatch(name, "*.md"))
+    return found
+
+
+class RecordsStore:
+```
+
+Pair 5 (A4: the strict listing walks with it; the default runs the same `rglob` call):
+
+SEARCH:
+```python
+        search_path = self._safe_path(directory) if directory else self._repo_path
+        results = []
+
+        for md_file in sorted(search_path.rglob("*.md")):
+```
+REPLACE:
+```python
+        search_path = self._safe_path(directory) if directory else self._repo_path
+        results = []
+        # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
+        found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
+
+        for md_file in sorted(found):
 ```
 
 ### 7.4 `tests/test_ad1341_s1_archive_store.py` (M1: K1 pins the closed set)
@@ -902,8 +1010,11 @@ keywords breaks one part of the rule; M2's tests write notes through the stand-d
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
+import os
+import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -924,6 +1035,8 @@ from probos.knowledge.lessons import (
     DECLINE_REPLY,
     EXIT_NOTE_AGENT_TYPE_MAX_CHARS,
     EXIT_NOTE_CALLSIGN_MAX_CHARS,
+    EXIT_NOTE_DID_MAX_CHARS,
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTE_TIMELINE_MAX_CHARS,
@@ -938,13 +1051,14 @@ from probos.knowledge.lessons import (
     exit_note_path,
     exit_notes_directory,
     is_declined,
+    is_exit_note_text,
     parse_citations,
     parse_lesson,
 )
 from probos.knowledge.records_store import RecordsStore
 from probos.tools.oracle_query_tool import _MAX_ENTRY_CHARS, OracleQueryTool
 from tests.test_ad1341_s1_archive_store import _rows, _store
-from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _data_dir, _records
+from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _config, _data_dir, _records, _reset
 
 _DID = f"did:probos:{_SHIP}:chapel-0001"
 _LESSON = LessonLearned(
@@ -1019,7 +1133,8 @@ def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
 @contextlib.contextmanager
 def _unreadable(path: Path) -> Iterator[None]:
     """A2: the OS itself refuses to read ``path`` while this is open: a handle that shares nothing on Windows, mode 000
-    elsewhere. Skips where this account reads such a file anyway (root on POSIX)."""
+    elsewhere. Skips where this account reads such a file anyway (root on POSIX). A4: ``path`` may be a directory,
+    which the OS then refuses to list."""
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -1031,7 +1146,8 @@ def _unreadable(path: Path) -> Iterator[None]:
             wintypes.HANDLE,
         )
         kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-        handle = kernel32.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)  # GENERIC_READ, share nothing
+        flags = 0x02000000 if path.is_dir() else 0x80  # A4: FILE_FLAG_BACKUP_SEMANTICS opens a directory
+        handle = kernel32.CreateFileW(str(path), 0x80000000, 0, None, 3, flags, None)  # GENERIC_READ, share nothing
         if handle is None or handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         try:
@@ -1039,11 +1155,14 @@ def _unreadable(path: Path) -> Iterator[None]:
         finally:
             kernel32.CloseHandle(handle)
     else:
-        mode = path.stat().st_mode
+        directory, mode = path.is_dir(), path.stat().st_mode
         path.chmod(0)
         try:
             try:
-                path.read_text(encoding="utf-8")
+                if directory:
+                    os.listdir(path)  # A4: a directory with mode 000 cannot be listed
+                else:
+                    path.read_text(encoding="utf-8")
             except PermissionError:
                 pass
             else:
@@ -1051,6 +1170,24 @@ def _unreadable(path: Path) -> Iterator[None]:
             yield
         finally:
             path.chmod(mode)
+
+
+def _deny_listing(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """A4 (R2-F1, M3-1): the OS refuses to list the directory ``denied``, as a sharing violation does.
+
+    Only ``os.scandir`` of that one directory fails, so the real traversal inside ``RecordsStore.list_entries`` meets
+    the failure itself, on every platform. (Python 3.13's ``glob`` may bind ``scandir`` at import, so the default
+    listing's result under this patch is not asserted; the native cases assert it.)
+    """
+    real_scandir = os.scandir
+    target = denied.resolve()
+
+    def scandir(path: Any = ".") -> Any:
+        if isinstance(path, (str, os.PathLike)) and Path(path).resolve() == target:
+            raise PermissionError(13, "the directory is being used by another process", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
 
 
 # --- L1 to L7: the format -------------------------------------------------------------------------------------------
@@ -1122,6 +1259,12 @@ _NOT_LESSONS: dict[str, object] = {
     "too-long": LessonLearned("o" * (LESSON_MAX_CHARS - 2), "d", "l", "r").render(),  # 701 in all (A2)
     "nul": _LESSON.render().replace("cleared", "clea\x00red"),  # A2: SQLite cannot store it whole
     "surrogate": _LESSON.render() + "\ud800",
+    # A4 (R2-F5): what a console acts on; the Captain reads notes at a terminal.
+    "escape": _LESSON.render().replace("cleared", "\x1b[2Jcleared"),
+    "bell": _LESSON.render().replace("cleared", "\x07cleared"),
+    "c1-control": _LESSON.render().replace("cleared", "\x9bcleared"),
+    "delete": _LESSON.render().replace("cleared", "\x7fcleared"),
+    "vertical-tab": _LESSON.render().replace("night watch", "night\x0bwatch"),
     "prose": "I learned a great deal on this voyage, and I leave it all to my successor.",
     "not-text": 42,
 }
@@ -1130,6 +1273,44 @@ _NOT_LESSONS: dict[str, object] = {
 @pytest.mark.parametrize("case", sorted(_NOT_LESSONS))
 def test_a_reply_not_in_the_format_is_no_lesson(case: str) -> None:
     assert parse_lesson(_NOT_LESSONS[case]) is None
+
+
+_ASCII_LETTER = re.compile("[a-z]", re.IGNORECASE)
+
+
+def test_a_section_name_spelled_with_a_lookalike_letter_opens_no_section() -> None:
+    """A4 (R2-F2): under Unicode IGNORECASE four letters outside ASCII match as ASCII ones (the dotted capital I, the
+    dotless i, the long s, the Kelvin sign), and the section lookup held only ASCII names, so such a heading raised
+    ``KeyError`` through the parser, the rule and the plan. The section names now match in ASCII only: every such
+    spelling of every section, in every heading form, opens no section, and the reply is refused, never raised."""
+    lookalikes = [
+        chr(code) for code in range(0x80, 0x110000)
+        if not 0xD800 <= code <= 0xDFFF and _ASCII_LETTER.fullmatch(chr(code))
+    ]
+    assert lookalikes == ["\u0130", "\u0131", "\u017f", "\u212a"]  # premise: Python's documented four
+    cases = [
+        (name, name[:index] + char + name[index + 1:])
+        for name in LESSON_SECTIONS
+        for index, letter in enumerate(name.lower())
+        for char in lookalikes
+        if re.fullmatch(letter, char, re.IGNORECASE)
+    ]
+    assert len(cases) == 14  # premise: Observation 3, Discussion 7, Lesson 2, Recommendation 2
+    for name, variant in cases:
+        for heading in (f"## {variant}", f"**{variant}**", variant, f"{variant}: text"):
+            assert parse_lesson(_LESSON.render().replace(f"## {name}", heading, 1)) is None, (variant, heading)
+
+
+def test_a_lesson_carries_no_control_character_but_tab_line_feed_and_carriage_return() -> None:
+    """A4 (R2-F5): the Captain reads exit notes at a console, where an escape sequence acts. Every C0 and C1 control
+    and DEL is refused anywhere in a reply; tab stays in the text, and line feed and carriage return end lines."""
+    for code in (*range(0x00, 0x20), *range(0x7F, 0xA0)):
+        lesson = parse_lesson(_LESSON.render().replace("night watch", f"night{chr(code)}watch"))
+        if chr(code) in "\t\n\r":
+            assert lesson is not None, hex(code)
+            assert parse_lesson(lesson.render()) == lesson
+        else:
+            assert lesson is None, hex(code)
 
 
 @pytest.mark.parametrize(
@@ -1275,6 +1456,15 @@ _BROKEN: dict[str, dict[str, Any]] = {
         "content": f"{exit_note_header('Chapel', 'surgeon', _SHIP)}\n\nA preamble the parser drops.\n\n{_LESSON.render()}",
     },
     "standalone-cites": {"content": f"{exit_note_body('Chapel', 'surgeon', _SHIP, _LESSON)}\nCites: e1"},
+    # A4: an episode id the rule refuses (R2-F4's missing case), a lookalike heading (R2-F2), a control (R2-F5).
+    "long-citation": {"cited": ("ep-000", "e" * (EXIT_NOTE_EPISODE_ID_MAX_CHARS + 1))},
+    "newline-citation": {"cited": ("ep-000", "ep\n001")},
+    "lookalike-heading": {
+        "content": exit_note_body("Chapel", "surgeon", _SHIP, _LESSON).replace("## Lesson", "## Le\u017fson"),
+    },
+    "control-in-body": {
+        "content": exit_note_body("Chapel", "surgeon", _SHIP, _LESSON).replace("cleared", "\x1b[2Jcleared"),
+    },
 }
 
 
@@ -1288,6 +1478,65 @@ async def test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing(t
     assert plan.records == ()
     assert plan.withheld == (path,)
     assert await exit_note_citations(records, None) == {}
+
+
+#: A4 (R2-F3): text YAML must quote or escape, the frontmatter delimiter, and characters outside ASCII.
+_YAML_HARD = (
+    "---", "--- x", "-- -", "- x", "? x", ": x", "x: y", " #x", "#x", "'x", '"x', "\\x", "{x}", "[x]", "&x", "*x",
+    "!x", "%x", "@x", "`x", "|x", ">x", "~", "null", "yes", "No", "1", "1.0", "0x1F", "2026-10-26", " x", "x ",
+    "x  y", "...", "\u00e9", "\U0001f680", "\ufeff", "\u00a0", "\u0085", "\u2028",
+)
+
+
+@pytest.mark.parametrize("field", ["callsign", "agent_type", "did", "cited"])
+async def test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records(
+    tmp_path: Path, field: str,
+) -> None:
+    """A4 (R2-F3): Ship's Records cuts a document's frontmatter at the first two ``---`` it finds, wherever they stand
+    (register R25), so a callsign such as ``normal---value`` came back as ``normal``: the stand-down reported the
+    note written and the promotion withheld it. The rule now refuses a value holding ``---``. Each value here (YAML's
+    quoting cases, and for the callsign, which the store writes three times, every code point to U+017F) is either
+    refused by the rule and withheld, or admitted, stored, read back whole and archived."""
+    records = _records(_data_dir(tmp_path))
+    bound = {
+        "callsign": EXIT_NOTE_CALLSIGN_MAX_CHARS, "agent_type": EXIT_NOTE_AGENT_TYPE_MAX_CHARS,
+        "did": EXIT_NOTE_DID_MAX_CHARS, "cited": EXIT_NOTE_EPISODE_ID_MAX_CHARS,
+    }[field]
+    values = [f"Ch{text}pel" for text in _YAML_HARD] + [f"{text}Chapel" for text in _YAML_HARD]
+    if field == "callsign":
+        values += [f"Ch{chr(code)}pel" for code in range(0x180)]
+    admitted_seen = refused_seen = 0
+    for value in values:
+        note = {"cited": ("ep-000", value)} if field == "cited" else {field: value}
+        path = await _write_note(records, **note)
+        plan = await plan_promotion(records, timeline_id=_SHIP)
+        (records.repo_path / path).unlink()
+        if is_exit_note_text(value, bound):
+            (record,) = plan.records
+            stored = {
+                "callsign": record.author_callsign, "agent_type": record.author_agent_type, "did": record.author_did,
+                "cited": record.source_episode_ids[-1],
+            }[field]
+            assert stored == value, repr(value)
+            admitted_seen += 1
+        else:
+            assert plan.records == (), repr(value)
+            refused_seen += 1
+    assert admitted_seen and refused_seen  # premise: both kinds were exercised
+
+
+def test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A4 (R2-F2): a stored note whose heading is spelled with a lookalike letter raised ``KeyError`` through the
+    rule, the plan and the real ``probos reset``, which exited 1 with nothing wiped. A note that breaks the rule is
+    withheld, and the reset runs."""
+    config, data_dir = _config(tmp_path), _data_dir(tmp_path)
+    lookalike = exit_note_body("Chapel", "surgeon", _SHIP, _LESSON).replace("## Discussion", "## D\u0131scussion")
+    path = asyncio.run(_write_note(_records(data_dir), content=lookalike))
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+    assert (path,) not in _rows(tmp_path / "archive.db", "SELECT source_ref FROM archive")
 
 
 async def test_an_exit_note_is_archived_once_whichever_reset_promotes_it(tmp_path: Path) -> None:
@@ -1414,6 +1663,58 @@ async def test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations(
     assert await exit_note_citations(records, None) == {"ep-000": (path,)}
 
 
+@pytest.mark.parametrize("fault", ["injected-root", "injected-timeline", "native-root", "native-timeline"])
+async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    """A4 (R2-F1, M3-1): the OS refuses to list ``exit-notes/`` or the timeline directory holding a valid citing note.
+    ``Path.rglob`` passes over such a directory, so the strict citation read answered that nothing cites the episode
+    and the AD-754 erasure went ahead. The strict listing now raises, and the citation read with it, while the default
+    listing never raises, as before. Listable again, the note counts. ``[native-*]``: a share-nothing handle on
+    Windows, mode 000 on POSIX (skips only where the account lists it anyway)."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    timeline_directory = (records.repo_path / path).parent
+    denied = timeline_directory.parent if fault.endswith("-root") else timeline_directory
+    with contextlib.ExitStack() as stack:
+        if fault.startswith("injected"):
+            _deny_listing(monkeypatch, denied)
+        else:
+            stack.enter_context(_unreadable(denied))
+        default = await records.list_entries(EXIT_NOTES_DIR)  # never raises: every other reader is unchanged
+        if fault.startswith("native"):
+            assert default == []  # premise: the OS itself refused to list the directory
+        with pytest.raises(OSError):
+            await records.list_entries(EXIT_NOTES_DIR, strict=True)
+        with pytest.raises(OSError):
+            await exit_note_citations(records, None)
+        monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
+
+
+@pytest.mark.parametrize(
+    "directory", ["", EXIT_NOTES_DIR, f"{EXIT_NOTES_DIR}/absent"], ids=["all", "exit-notes", "absent"],
+)
+async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(tmp_path: Path, directory: str) -> None:
+    """A4: the strict walk (``os.walk`` with an error callback) finds what ``rglob("*.md")`` finds, in the same order:
+    nested directories, a directory named ``*.md`` (found, then skipped as no file), another suffix, the suffix's case
+    as the platform matches it, ``_archived/``, and a directory that does not exist."""
+    records = _records(_data_dir(tmp_path))
+    await _write_note(records)
+    for relative in (
+        "exit-notes/a/b/deep.md", "exit-notes/UPPER.MD", "exit-notes/plain.txt", "_archived/old.md", "top.md",
+    ):
+        (records.repo_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (records.repo_path / relative).write_text("---\nauthor: Bones\n---\n\nA record.\n", encoding="utf-8")
+    (records.repo_path / "exit-notes" / "folder.md").mkdir()
+
+    default = await records.list_entries(directory)
+
+    assert await records.list_entries(directory, strict=True) == default
+    assert len(default) >= (0 if directory.endswith("absent") else 2)  # premise: something to list
+
+
 async def test_the_captain_s_review_lists_an_exit_note_as_a_source_to_be_promoted(tmp_path: Path) -> None:
     records = _records(_data_dir(tmp_path))
     path = await _write_note(records)
@@ -1444,8 +1745,9 @@ agent answers it on its single-pass path, without its tool-calling loop, so noth
 
 No agent can hold a reset. Each turn is bounded by ``STAND_DOWN_TURN_SECONDS``, the whole stand-down by
 ``STAND_DOWN_WINDOW_SECONDS``, and at most ``STAND_DOWN_CONCURRENCY`` turns run at once. A turn that runs out of time
-is cancelled, and a turn that ends late, fails or is never reached writes nothing. ``probos reset`` neither waits for
-a stand-down nor needs one.
+is cancelled; a turn whose reply comes late, fails or is never reached writes nothing, and no write begins once the
+window has closed. Nothing the stand-down published is ever removed (A4): a write that fails or is cut off after
+publishing is reported with its path. ``probos reset`` neither waits for a stand-down nor needs one.
 
 A note is a Ship's Records document at ``exit_note_path(timeline, agent_type)``, written with the author's callsign,
 agent type and DID, the ids of the episodes it cites (only episodes the agent was shown), ``ship`` classification and
@@ -1469,6 +1771,7 @@ from typing import TYPE_CHECKING, Any, Final
 from probos.dm_reply import DmReply
 from probos.knowledge.lessons import (
     DECLINE_REPLY,
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTE_TIMELINE_MAX_CHARS,
@@ -1522,8 +1825,10 @@ class CrewMember:
 class TurnOutcome(StrEnum):
     """What one agent's stand-down turn came to.
 
-    Only WRITTEN wrote a note. A failed write is removed again (A2, M2-4); a FAILED turn that carries a path is one
-    whose partly written note could not be removed, so the report names it and the Captain's review shows it.
+    WRITTEN wrote its note. The stand-down never removes a document (A4): a FAILED or TIMED_OUT turn that carries a
+    path is a write that published its note before it failed or was cut off, so the report names it, the Captain's
+    review lists it and the next promotion would archive it unless the Captain vetoes it. Every other outcome left
+    nothing at its path, or found a note there already (ALREADY_WRITTEN, DUPLICATE).
     """
 
     WRITTEN = "written"
@@ -1576,7 +1881,8 @@ def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
     """The handles an agent may cite (``e1`` -> an episode id) and the lines that show them (D4, D9).
 
     The agent's own most recent episodes, at most ``STAND_DOWN_EPISODES``, each by handle, date and opening words of
-    at most ``EPISODE_EXCERPT_CHARS`` bytes once JSON-escaped. An episode without an id, or seen twice, is skipped.
+    at most ``EPISODE_EXCERPT_CHARS`` bytes once JSON-escaped. An episode seen twice, or whose id the promotion's rule
+    refuses (``is_exit_note_text``: blank, over 128 characters, not one line, or holding ``---``; A4), is skipped.
     """
     offered: dict[str, str] = {}
     shown: list[str] = []
@@ -1584,8 +1890,8 @@ def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
         if len(offered) >= STAND_DOWN_EPISODES:
             break
         episode_id = getattr(episode, "id", None)
-        if type(episode_id) is not str or not episode_id.strip() or episode_id in offered.values():
-            continue
+        if not is_exit_note_text(episode_id, EXIT_NOTE_EPISODE_ID_MAX_CHARS) or episode_id in offered.values():
+            continue  # A4 (R2-F4): an id the promotion's rule refuses is never offered
         handle = f"e{len(offered) + 1}"
         offered[handle] = episode_id
         day, excerpt = _day(getattr(episode, "timestamp", 0.0)), _excerpt(getattr(episode, "user_input", ""))
@@ -1659,7 +1965,8 @@ async def run_stand_down(
     window includes the first read of Ship's Records and every write (A2, M2-2). Each member's turn has one deadline,
     ``turn_seconds`` after it begins and never past the window, that its recall and its ask both spend and that its
     reply must meet (A2, M2-5). One turn per billet: a second crew agent of an agent type, or a member listed twice, is
-    ``DUPLICATE`` and is not asked (A2, M2-3). A write that fails or runs out of time is removed again (A2, M2-4).
+    ``DUPLICATE`` and is not asked (A2, M2-3). No write begins once the window has closed, and nothing the stand-down
+    published is removed: a write that fails or is cut off after publishing is reported with its path (A4).
 
     Raises ``StandDownRefused`` when the timeline is missing, cannot stand in a note or name a records path, or when
     Ship's Records cannot be read in time (nobody is asked), and ``ValueError`` for a bound that is not positive.
@@ -1693,14 +2000,28 @@ async def run_stand_down(
     gate = asyncio.Semaphore(concurrency)
     write_lock = asyncio.Lock()  # one Ship's Records write at a time: the repository has one git index
 
+    def _left_at(path: str) -> str:
+        """A4: ``path`` when a document is there now, so the report names it; unknown counts as there."""
+        try:
+            return path if (records.repo_path / path).exists() else ""
+        except OSError:
+            return path
+
     async def _write(member: CrewMember, path: str, body: str, envelope: dict[str, Any]) -> TurnResult:
-        """Write one note inside the window, and leave nothing at ``path`` when the write fails (A2, M2-2, M2-4)."""
+        """Write one note: begun inside the window, never over a note, and reported as it is left (A2, A4).
+
+        The check for a note written since the stand-down began has no await, and its time is charged to the window
+        before a write may begin (A4, round 2 M2-2). The stand-down never removes a document (A4): a write that fails,
+        or that the window cuts off, may already have published its note (``write_entry`` writes the file before it
+        awaits git), so the report names the path and the Captain's review lists it. A write that returns after the
+        window (synchronous Ship's Records I/O, register R22) left its note: WRITTEN.
+        """
         async with write_lock:
-            remaining = deadline - clock()
+            if (records.repo_path / path).exists():  # A2 (M2-3), A4: written since the stand-down began; no await
+                return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
+            remaining = deadline - clock()  # A4: after the check, so its time is charged to the window
             if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock
                 return _turn_result(member, TurnOutcome.TIMED_OUT)
-            if await records.read_entry(path, "captain") is not None:  # A2 (M2-3): written since the stand-down began
-                return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
             written = records.write_entry(
                 author=member.callsign,
                 path=path,
@@ -1713,19 +2034,14 @@ async def run_stand_down(
                 extra_frontmatter={EXIT_NOTE_KEY: envelope},
             )
             try:
-                await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the write ends inside the window
+                await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the window cuts off an awaiting write
             except Exception as exc:  # log-and-degrade: TimeoutError included; the other notes are still written
                 outcome = TurnOutcome.TIMED_OUT if isinstance(exc, TimeoutError) else TurnOutcome.FAILED
                 logger.warning(
-                    "AD-1341 S4: %s's exit note could not be written; removing what was published", member.callsign,
-                    exc_info=True,
+                    "AD-1341 S4: %s's exit note write did not complete; what it published stays and is reported",
+                    member.callsign, exc_info=True,
                 )
-                try:  # A2 (M2-4): write_entry publishes the file before git runs, so a failure can follow it
-                    (records.repo_path / path).unlink(missing_ok=True)
-                except OSError:
-                    logger.error("AD-1341 S4: a partly written exit note remains at %s", path, exc_info=True)
-                    return _turn_result(member, TurnOutcome.FAILED, path)  # it may be promoted: the report names it
-                return _turn_result(member, outcome)
+                return _turn_result(member, outcome, _left_at(path))  # A4: never removed; the report names it
         return _turn_result(member, TurnOutcome.WRITTEN, path)
 
     async def _ask_and_write(member: CrewMember, path: str) -> TurnResult:
@@ -1806,7 +2122,7 @@ async def run_stand_down(
             )
             return _turn_result(member, TurnOutcome.FAILED)
 
-    turns = [asyncio.ensure_future(_turn(member)) for member in crew]
+    turns = [asyncio.create_task(_turn(member)) for member in crew]  # A4: held here and drained below
     try:
         await asyncio.gather(*turns)
     except BaseException:  # A2 (M2-6): the caller's cancellation, or a turn's own; no turn outlives the stand-down
@@ -2061,6 +2377,7 @@ from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureManage
 from probos.knowledge.lessons import (
     DECLINE_REPLY,
     EXIT_NOTE_CALLSIGN_MAX_CHARS,
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTES_DIR,
@@ -2098,7 +2415,7 @@ from tests.test_ad1341_s1_reset_and_erase import (
     _reset,
     _rows,
 )
-from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_reading
+from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_listing, _deny_reading
 
 _SRC = Path(probos.__file__).resolve().parent
 
@@ -2238,24 +2555,27 @@ async def test_writing_is_optional_and_a_turn_that_leaves_no_lesson_writes_nothi
     assert await _notes(records) == []
 
 
-@pytest.mark.parametrize("case", ["removed", "cannot-remove"])
-async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
-) -> None:
-    """A2 (M2-4): ``write_entry`` publishes the document before git runs, so its failure can follow the publication (a
-    git timeout here, as the real call raises past its 30 s). The stand-down removes what was published: the report
-    says failed, the promotion finds nothing, and the next stand-down asks again. A note it cannot remove is reported
-    failed WITH its path, which is true."""
+@pytest.mark.parametrize("case", ["published", "replaced", "not-published"])
+async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(tmp_path: Path, case: str) -> None:
+    """A2 (M2-4), A4: ``write_entry`` publishes the document before git runs, so its failure can follow the
+    publication (a git timeout here, as the real call raises past its 30 s). The stand-down never removes a document:
+    a note the failed write published is reported failed WITH its path, the Captain's review lists it and the next
+    promotion would archive it; a document another writer put at the path stays exactly as it is; a write that failed
+    before publishing leaves nothing, and the next stand-down asks again."""
     records = _records(_data_dir(tmp_path))
     real_write = records.write_entry
     failures = [1]
 
     async def write_entry(**fields: Any) -> Any:
-        await real_write(**fields)  # published
         if failures:
             failures.pop()
+            if case == "not-published":
+                raise OSError("Ship's Records' disk is full")  # fails before anything is written
+            if case == "replaced":  # another writer's document is at the path when the git failure comes
+                fields = {**fields, "author": "Bones", "content": "Written by hand.", "extra_frontmatter": None}
+            await real_write(**fields)  # published
             raise subprocess.TimeoutExpired(["git", "add"], 30)
-        return fields["path"]
+        return await real_write(**fields)
 
     records.write_entry = write_entry  # type: ignore[method-assign]
 
@@ -2263,26 +2583,21 @@ async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(
         return _reply()
 
     path = exit_note_path(_SHIP, "surgeon")
-    if case == "cannot-remove":
-        real_unlink = Path.unlink
-
-        def unlink(self: Path, missing_ok: bool = False) -> None:
-            if self.name == "surgeon.md":
-                raise PermissionError(13, "the file is being used by another process", str(self))
-            real_unlink(self, missing_ok=missing_ok)
-
-        monkeypatch.setattr(Path, "unlink", unlink)
     report = await _run(records, (_member(),), ask)
 
-    if case == "removed":
+    if case == "not-published":
         assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, "")]
         assert await _notes(records) == []
-        assert (await plan_promotion(records, timeline_id=_SHIP)).records == ()  # nothing for the reset to archive
-        again = await _run(records, (_member(),), ask)
+        again = await _run(records, (_member(),), ask)  # nothing was left, so the billet is asked again
         assert [(turn.outcome, turn.path) for turn in again.turns] == [(TurnOutcome.WRITTEN, path)]
-    else:
-        assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
-        assert await _notes(records) == [path]  # it is there, and the report says where
+        return
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
+    note = await records.read_entry(path, "captain")
+    selected = [record.source_ref for record in (await plan_promotion(records, timeline_id=_SHIP)).records]
+    if case == "published":  # the agent's whole note, named in the report: reviewable, vetoable, archivable
+        assert selected == [path]
+    else:  # never removed and never rewritten
+        assert (note["frontmatter"]["author"], note["content"], selected) == ("Bones", "Written by hand.", [])
 
 
 # --- S3 to S6: the bounds -------------------------------------------------------------------------------------------
@@ -2406,9 +2721,13 @@ async def test_the_window_bounds_a_turn_its_own_bound_would_allow(tmp_path: Path
 
 @pytest.mark.parametrize("stage", ["first-read", "write"])
 async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path, stage: str) -> None:
-    """A2 (M2-2): the window starts before Ship's Records is first read and ends every write. A first read that hangs
-    refuses the stand-down with nobody asked; a write that hangs ends with the window and leaves nothing, and the turn
-    queued behind it for the write lock never starts a write.
+    """A2 (M2-2): the window starts before Ship's Records is first read and cuts off every write still awaiting. A
+    first read that hangs refuses the stand-down with nobody asked; a write that hangs ends with the window, and the
+    turn queued behind it for the write lock never starts a write.
+
+    A4 (round 2 M2-7): this proves the write lock's guard on the injected clock, not the real timer. On the real
+    clock the queued turn may begin a write in that last tick; the window then cuts it off and the report names any
+    note it left. S4d proves those guarantees on the real clock.
 
     A3 (2): the window runs on the stand-down's ``clock``. The hanging write moves it past the deadline when the
     window's bound cancels the write, so the queued turn finds the window closed in every run; on the real clock,
@@ -2456,6 +2775,91 @@ async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path
         assert len(writes) == 1  # the turn behind the lock never began a write
     assert time.monotonic() - started < 3.0
     assert await _notes(records) == []
+
+
+@pytest.mark.parametrize("case", ["the-check-outlasts-the-window", "a-write-returns-late", "cut-off-after-publishing"])
+async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """A4 (round 2 M2-2, M2-4, M2-7): the real clock, with 200 ms of margin over Windows' 15.6 ms tick; no assertion
+    but the upper bound rests on an asyncio timer.
+
+    The check for a note written meanwhile is charged to the window: a check that outlasts it begins no write. A
+    write that returns after the window (synchronous Ship's Records I/O, register R22) left its note, so the report
+    says written and names it. A write the window cuts off after it published is timed out, and the report names
+    the note it left, which the next promotion would archive unless the Captain vetoes it."""
+    records = _records(_data_dir(tmp_path))
+    real_write, real_exists = records.write_entry, Path.exists
+    path = exit_note_path(_SHIP, "surgeon")
+    writes: list[str] = []
+
+    def exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+        if case == "the-check-outlasts-the-window" and self.name == "surgeon.md":
+            time.sleep(0.4)  # a slow filesystem: the 0.2 s window closes during the check
+        return real_exists(self, *args, **kwargs)
+
+    async def write_entry(**fields: Any) -> Any:
+        writes.append(fields["path"])
+        await real_write(**fields)  # published; with auto_commit off the store awaits nothing
+        if case == "a-write-returns-late":
+            time.sleep(0.4)  # synchronous I/O the window cannot pre-empt (R22)
+        elif case == "cut-off-after-publishing":
+            await asyncio.sleep(5)  # the commit hangs, and the window's bound cancels it
+        return fields["path"]
+
+    monkeypatch.setattr(Path, "exists", exists)
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    started = time.monotonic()
+    report = await _run(records, (_member(),), ask, window_seconds=0.2)
+    elapsed = time.monotonic() - started
+    monkeypatch.undo()
+
+    left = case != "the-check-outlasts-the-window"
+    outcome = TurnOutcome.WRITTEN if case == "a-write-returns-late" else TurnOutcome.TIMED_OUT
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(outcome, path if left else "")]
+    assert writes == ([path] if left else [])
+    assert await _notes(records) == ([path] if left else [])
+    assert len((await plan_promotion(records, timeline_id=_SHIP)).records) == int(left)
+    assert elapsed < 1.5
+
+
+async def test_a_cancelled_stand_down_keeps_every_note_it_published_and_leaves_nothing_running(
+    tmp_path: Path,
+) -> None:
+    """A4 (round 2 M2-3): the Captain's cancellation, or the vessel stopping, ends the stand-down without a report.
+    Nothing it published is removed: the note whose commit the cancellation cut short is whole (Ship's Records writes
+    the file before it awaits git), as every note written before it is, and the Captain's review lists it (register
+    R27). The cancellation propagates, and no turn outlives the call."""
+    records = _records(_data_dir(tmp_path))
+    real_write = records.write_entry
+    published = asyncio.Event()
+    path = exit_note_path(_SHIP, "surgeon")
+    before = asyncio.all_tasks()
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        published.set()
+        await asyncio.sleep(5)  # the commit is still running when the stand-down is cancelled
+        return fields["path"]
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    stand_down = asyncio.create_task(_run(records, (_member(),), ask))
+    await asyncio.wait_for(published.wait(), timeout=5.0)
+    stand_down.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stand_down
+
+    assert asyncio.all_tasks() - before == set()
+    assert await _notes(records) == [path]
+    assert [record.source_ref for record in (await plan_promotion(records, timeline_id=_SHIP)).records] == [path]
 
 
 async def test_no_more_than_the_bounded_number_of_turns_run_at_once(tmp_path: Path) -> None:
@@ -2541,6 +2945,36 @@ async def test_a_failed_episode_read_offers_none_and_the_note_cites_none(tmp_pat
     assert [turn.outcome for turn in report.turns] == [TurnOutcome.WRITTEN]
     note = await records.read_entry(report.turns[0].path, "captain")
     assert note["frontmatter"][EXIT_NOTE_KEY]["source_episode_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    ["e" * (EXIT_NOTE_EPISODE_ID_MAX_CHARS + 1), "ep\x00bad", "ep-\ud800", "ep\nbad", "ep---bad"],
+    ids=["long", "nul", "surrogate", "line-break", "delimiter"],
+)
+async def test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives(
+    tmp_path: Path, bad_id: str,
+) -> None:
+    """A4 (R2-F4, M2-5): an episode whose id the promotion's rule refuses is never offered or shown, so citing what
+    was offered never turns a written note into one the promotion withholds. Every offered id is cited, stored and
+    archived."""
+    records = _records(_data_dir(tmp_path))
+    prompts: list[str] = []
+
+    async def recall(member: CrewMember) -> list[Episode]:
+        bad = Episode(id=bad_id, timestamp=1_790_000_000.0, agent_ids=[member.sovereign_id], user_input="the bad one")
+        return [bad, *_episodes(2, member.sovereign_id)]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        prompts.append(prompt)
+        return _reply("e1, e2, e3")
+
+    report = await _run(records, (_member(),), ask, recall)
+
+    assert [turn.outcome for turn in report.turns] == [TurnOutcome.WRITTEN]
+    assert "the bad one" not in prompts[0]  # never shown
+    plan = await plan_promotion(records, timeline_id=_SHIP)
+    assert [record.source_episode_ids for record in plan.records] == [("ep-000", "ep-001")]
 
 
 @pytest.mark.parametrize("script", ["ascii", "cjk", "astral"])
@@ -2681,11 +3115,13 @@ async def test_one_billet_gets_one_turn_and_no_note_is_ever_replaced(tmp_path: P
         assert note["frontmatter"]["author"] == "Chapel" and "revision" not in note["frontmatter"]
 
 
+@pytest.mark.parametrize("fault", ["file", "directory"])
 async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
 ) -> None:
     """A2 (M1-F1 asked of the stand-down): a note already written that the OS refuses to read when the stand-down
-    lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead."""
+    lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead. A4
+    (M3-1): the same when the OS refuses to list the billet's directory, which the listing used to pass over."""
     records = _records(_data_dir(tmp_path))
     asked: list[str] = []
 
@@ -2696,7 +3132,10 @@ async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
     await _run(records, (_member(),), ask)
     asked.clear()
     path = exit_note_path(_SHIP, "surgeon")
-    _deny_reading(monkeypatch, records.repo_path / path)
+    if fault == "file":
+        _deny_reading(monkeypatch, records.repo_path / path)
+    else:
+        _deny_listing(monkeypatch, (records.repo_path / path).parent)
     with pytest.raises(StandDownRefused, match="Ship's Records could not be read"):
         await _run(records, (_member(),), ask)
     monkeypatch.undo()
@@ -2750,8 +3189,9 @@ async def test_an_agent_without_an_identity_is_not_asked(tmp_path: Path) -> None
     [
         ("callsign", "Chapel\n## Observation"), ("callsign", "C" * (EXIT_NOTE_CALLSIGN_MAX_CHARS + 1)),
         ("agent_type", "sur\x00geon"), ("did", "did:probos:x:\ud800"),
+        ("callsign", "Chapel---Two"),  # A4 (R2-F3): Ship's Records would read it back as "Chapel"
     ],
-    ids=["multiline-callsign", "long-callsign", "nul-agent-type", "surrogate-did"],
+    ids=["multiline-callsign", "long-callsign", "nul-agent-type", "surrogate-did", "delimiter-callsign"],
 )
 async def test_an_identity_that_cannot_stand_in_the_note_is_not_asked(tmp_path: Path, field: str, value: str) -> None:
     """A2 (M2-7): the promotion's own provenance check, before the turn. An identity whose note the promotion would
@@ -2793,6 +3233,32 @@ async def test_the_stand_down_refuses_when_nothing_could_be_kept_or_attributed(t
         await stand_down_vessel(runtime)
 
     assert received == []  # nobody was asked
+
+
+@pytest.mark.parametrize(
+    "bounds", [{"turn_seconds": 0.0}, {"window_seconds": -1.0}, {"concurrency": 0}], ids=["turn", "window", "concurrency"],
+)
+async def test_a_bound_that_is_not_positive_is_refused_before_anything_is_read(
+    tmp_path: Path, bounds: dict[str, Any],
+) -> None:
+    """A4 (round 2, M2's record): a bound that is not positive is a caller's error, refused before Ship's Records is
+    read and before anyone is asked. The wait bounds the test: a stand-down with no turn slot would never end."""
+    records = _records(_data_dir(tmp_path))
+    real_list, asked, listed = records.list_entries, [], []
+
+    async def list_entries(*args: Any, **kwargs: Any) -> Any:
+        listed.append(args)
+        return await real_list(*args, **kwargs)
+
+    records.list_entries = list_entries  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    with pytest.raises(ValueError, match="bounds must be positive"):
+        await asyncio.wait_for(_run(records, (_member(),), ask, **bounds), timeout=5.0)
+    assert (asked, listed) == ([], [])
 
 
 async def test_the_vessel_stand_down_sends_each_crew_agent_the_captains_message_through_the_intent_bus(
@@ -2862,6 +3328,16 @@ async def test_the_console_command_reports_each_turn_and_the_next_steps(tmp_path
     refused = StringIO()
     await commands_stand_down.cmd_stand_down(runtime, Console(file=refused, width=200), "")
     assert "Stand-down refused" in refused.getvalue()
+
+
+async def test_the_console_command_takes_no_arguments() -> None:
+    """A4 (round 2, M2's record): ``/stand-down`` takes no arguments; with one it prints its usage and touches nothing."""
+    runtime, output = MagicMock(), StringIO()
+
+    await commands_stand_down.cmd_stand_down(runtime, Console(file=output, width=200), "now")
+
+    assert "Usage: /stand-down  (no arguments)" in output.getvalue()
+    assert runtime.mock_calls == []  # nobody asked, nothing read
 
 
 def test_the_stand_down_never_writes_the_ship_s_archive() -> None:
@@ -3648,7 +4124,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1341 S4 (2026-10-26), #1569 slice 4 of 6 -- the lessons format, and the stand-down that gives each crew agent one bounded turn to leave exit notes for its successor.** A lesson has four sections, Observation, Discussion, Lesson and Recommendation (#1569 comment 1). One parser (`knowledge/lessons.py`) reads an agent's reply and the stored note, the four sections together at most 700 characters, so a whole archived note reaches a later crew in one Oracle tool entry; the format is closed under rendering, and the archive receives exactly the note the Captain reviewed. The Captain types `/stand-down` at the vessel's console (console only: the HXI chat and the channel adapters refuse it), and each crew agent gets one Captain's message through the intent bus, showing it up to 12 of its own recent episodes by handle. The message is a bounded turn: the agent answers it inline on its single-pass path, never through its tool-calling loop or a background work item. Writing is optional (`NO NOTES`). A turn is bounded at 180 s and the whole window at 900 s, with at most two turns at once; a late, failed or unreached turn writes nothing, and `probos reset` neither waits for nor needs a stand-down. A note is a Ship's Records document at `exit-notes/{timeline}/{agent_type}.md`: an origin line ("... A record, not a memory.") and the lesson, `ship` classification, and an `exit_note` envelope with the author's DID, callsign, agent type and the ids of the episodes it cites (only episodes it was shown; no episode text). A second stand-down asks only the agents without a note, and one stand-down gives each billet one turn. The window starts before Ship's Records is first read and bounds every write; a write that fails is removed again; an AD-754 erasure fails closed on a note file that cannot be read. The reset's promotion archives each note as `SourceKind.EXIT_NOTE`, attributed to the timeline that wrote it, with the archive's first real `source_episode_ids`; a malformed note is withheld, never raised. The Captain reviews notes with `probos archive pending` and vetoes one with `probos archive veto PATH`. An AD-754 erasure (`POST /api/security/forget`) whose matched episodes a note awaiting promotion cites erases nothing and answers 409 `exit_notes_cite_erased_episodes` with the paths, and fails closed when the archive is enabled but not open; the Captain vetoes the note and retries. Chain-of-command review of lessons moves to S5. Open before S5 and not S4's: BF-939 (#1683, an erasure unlinks an attachment another episode shares) and an indexed citation read for S3's N+1 check. No schema, flag, config field, event type or API route. New: `src/probos/knowledge/lessons.py`, `src/probos/stand_down.py`, `src/probos/experience/commands/commands_stand_down.py`, `tests/test_ad1341_s4_lessons.py`, `tests/test_ad1341_s4_stand_down.py`, `tests/test_ad1341_s4_exit_note_erasure.py`. The contract is `prompts/ad-1341-s4-lessons-and-stand-down.md`.
+**AD-1341 S4 (2026-10-26), #1569 slice 4 of 6 -- the lessons format, and the stand-down that gives each crew agent one bounded turn to leave exit notes for its successor.** A lesson has four sections, Observation, Discussion, Lesson and Recommendation (#1569 comment 1). One parser (`knowledge/lessons.py`) reads an agent's reply and the stored note, the four sections together at most 700 characters, so a whole archived note reaches a later crew in one Oracle tool entry; the format is closed under rendering, and the archive receives exactly the note the Captain reviewed. The Captain types `/stand-down` at the vessel's console (console only: the HXI chat and the channel adapters refuse it), and each crew agent gets one Captain's message through the intent bus, showing it up to 12 of its own recent episodes by handle. The message is a bounded turn: the agent answers it inline on its single-pass path, never through its tool-calling loop or a background work item. Writing is optional (`NO NOTES`). A turn is bounded at 180 s and the whole window at 900 s, with at most two turns at once; a late, failed or unreached turn writes nothing, and `probos reset` neither waits for nor needs a stand-down. A note is a Ship's Records document at `exit-notes/{timeline}/{agent_type}.md`: an origin line ("... A record, not a memory.") and the lesson, `ship` classification, and an `exit_note` envelope with the author's DID, callsign, agent type and the ids of the episodes it cites (only episodes it was shown; no episode text). A second stand-down asks only the agents without a note, and one stand-down gives each billet one turn. The window starts before Ship's Records is first read, and no write begins after it closes; the stand-down removes nothing, and a write that fails or is cut off after publishing is reported with its path; an AD-754 erasure fails closed on a note file that cannot be read. The reset's promotion archives each note as `SourceKind.EXIT_NOTE`, attributed to the timeline that wrote it, with the archive's first real `source_episode_ids`; a malformed note is withheld, never raised. The Captain reviews notes with `probos archive pending` and vetoes one with `probos archive veto PATH`. An AD-754 erasure (`POST /api/security/forget`) whose matched episodes a note awaiting promotion cites erases nothing and answers 409 `exit_notes_cite_erased_episodes` with the paths, and fails closed when the archive is enabled but not open; the Captain vetoes the note and retries. Chain-of-command review of lessons moves to S5. Open before S5 and not S4's: BF-939 (#1683, an erasure unlinks an attachment another episode shares) and an indexed citation read for S3's N+1 check. No schema, flag, config field, event type or API route. New: `src/probos/knowledge/lessons.py`, `src/probos/stand_down.py`, `src/probos/experience/commands/commands_stand_down.py`, `tests/test_ad1341_s4_lessons.py`, `tests/test_ad1341_s4_stand_down.py`, `tests/test_ad1341_s4_exit_note_erasure.py`. The contract is `prompts/ad-1341-s4-lessons-and-stand-down.md`.
 ```
 
 **`DECISIONS.md`** (before the `### Explicit delegation models` heading, which every entry since 2026-10-17 has been inserted against):
@@ -3689,7 +4165,7 @@ REPLACE:
 - No new flag, `EventType`, API route, config field or `.db` file; `user_version` stays 1. `config/ontology/records.yaml` is not edited (register R10).
 - Out of scope (D19): S5's after-action reports, continuous promotion and chain-of-command review; S6's `--full` snapshot, description entry and clean slate; fleet sharing; an HXI stand-down; lifting a veto; bulk vetoes.
 
-## 10. Mutation rows (85 rows: 30 for M1, 39 for M2, 16 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (98 rows: 38 for M1, 44 for M2, 16 for M3; whole stripped lines, each occurring once in its file after §7)
 
 One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseline run of the three new test files that passes. Run each row against the named tests and restore the file before the next row. R-1 and R-2 mutate the same line, and so do R-3 and R-4, and E-1, E-5 and E-6; restore between them.
 
@@ -3717,7 +4193,7 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | P-11 | M1 | `src/probos/knowledge/archive_promotion.py` | `citing.setdefault(episode_id, []).append(path)` | `pass` | `test_the_erasure_read_counts_a_note_only_while_the_next_promotion_would_archive_it`, `test_a_veto_between_the_citation_read_and_the_promotion_decides_both` |
 | P-12 | M1 | `src/probos/knowledge/archive_promotion.py` | `if source_kind_for(path, listed["frontmatter"]) is not SourceKind.EXIT_NOTE:` | `if False:` | `test_a_document_the_promotion_skips_is_never_read_as_a_citing_note` |
 | D-1 | M2 | `src/probos/stand_down.py` | `reply = await asyncio.wait_for(ask(member, prompt), timeout=remaining)` | `reply = await ask(member, prompt)` | `test_a_turn_that_runs_past_its_bound_is_cancelled_and_writes_nothing`, `test_the_window_bounds_a_turn_its_own_bound_would_allow` |
-| D-2 | M2 | `src/probos/stand_down.py` | `if clock() > turn_deadline:  # a reply after the turn's deadline (never past the window) writes nothing` | `if False:` | `test_the_window_closes_on_time_and_writes_nothing_late_or_unreached`, `test_a_reply_that_returns_after_the_turn_s_deadline_writes_nothing` |
+| D-2 | M2 | `src/probos/stand_down.py` | `if clock() > turn_deadline:  # a reply after the turn's deadline (never past the window) writes nothing` | `if False:` | `test_a_reply_that_returns_after_the_turn_s_deadline_writes_nothing`, `test_the_recall_and_the_ask_spend_one_turn[slow-recall]` (A4: S4's mutant is equivalent, since `_write`'s window check returns the same `TIMED_OUT`) |
 | D-3 | M2 | `src/probos/stand_down.py` | `if clock() >= deadline:  # the window closed before this agent's turn began` | `if False:` | `test_the_window_closes_on_time_and_writes_nothing_late_or_unreached` |
 | D-4 | M2 | `src/probos/stand_down.py` | `gate = asyncio.Semaphore(concurrency)` | `gate = asyncio.Semaphore(len(crew) + 1)` | `test_no_more_than_the_bounded_number_of_turns_run_at_once` |
 | D-5 | M2 | `src/probos/stand_down.py` | `if path in existing:` | `if False:` | `test_a_second_stand_down_asks_only_the_agents_without_a_note` |
@@ -3748,7 +4224,7 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | R-5 | M3 | `src/probos/routers/security.py` | `exit_note_citations=citations,  # AD-1341 S4 (D14): the pending notes' citations` | `exit_note_citations=None,` | `test_the_captain_vetoes_the_note_then_the_forget_route_erases_the_episodes` |
 | R-6 | M3 | `src/probos/routers/security.py` | `"exit_note_paths": list(exc.paths),` | `"exit_note_paths": [],` | `test_the_captain_vetoes_the_note_then_the_forget_route_erases_the_episodes` |
 | L-10 | M1 | `src/probos/knowledge/lessons.py` | `if any(_heading(line) is not None or _CITES_LINE.match(line) for body in bodies for line in body.splitlines()):` | `if False:` | `test_every_lesson_the_parser_accepts_is_written_and_read_back_unchanged` |
-| L-11 | M1 | `src/probos/knowledge/lessons.py` | `if type(text) is not str or _UNSTORABLE.search(text) is not None:` | `if type(text) is not str:` | `test_a_reply_not_in_the_format_is_no_lesson` |
+| L-11 | M1 | `src/probos/knowledge/lessons.py` | `if type(text) is not str or _NOT_LESSON_TEXT.search(text) is not None:` | `if type(text) is not str:` | `test_a_reply_not_in_the_format_is_no_lesson`, `test_a_lesson_carries_no_control_character_but_tab_line_feed_and_carriage_return` |
 | L-12 | M1 | `src/probos/knowledge/lessons.py` | `_DECLINED = re.compile(r"^[\W_]*no notes[\W_]*$", re.IGNORECASE)  # A2: _ is emphasis too (__NO NOTES__, _NO NOTES_)` | `_DECLINED = re.compile(r"^\W*no notes\W*$", re.IGNORECASE)` | `test_a_declining_reply_is_recognised_and_nothing_else_is` |
 | L-13 | M1 | `src/probos/knowledge/lessons.py` | `type(value) is str and bool(value.strip()) and len(value) <= max_chars and _NOT_ONE_LINE.search(value) is None` | `type(value) is str and bool(value.strip()) and len(value) <= max_chars` | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing`, `test_an_identity_that_cannot_stand_in_the_note_is_not_asked` |
 | L-14 | M1 | `src/probos/knowledge/lessons.py` | the L-13 line (after L-13 is restored) | `type(value) is str and bool(value.strip()) and _NOT_ONE_LINE.search(value) is None` | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing`, `test_an_identity_that_cannot_stand_in_the_note_is_not_asked` |
@@ -3760,12 +4236,12 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | D-19 | M2 | `src/probos/stand_down.py` | the D-2 line (after D-2 is restored) | `if clock() > deadline:` | `test_a_reply_that_returns_after_the_turn_s_deadline_writes_nothing` |
 | D-20 | M2 | `src/probos/stand_down.py` | `listed = await asyncio.wait_for(records.list_entries(directory, strict=True), timeout=window_seconds)` | `listed = await records.list_entries(directory, strict=True)` | `test_the_window_bounds_the_records_reads_and_writes_too[first-read]` |
 | D-21 | M2 | `src/probos/stand_down.py` | the D-20 line (after D-20 is restored) | `listed = await asyncio.wait_for(records.list_entries(directory), timeout=window_seconds)` | `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody` |
-| D-22 | M2 | `src/probos/stand_down.py` | `await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the write ends inside the window` | `await written` | `test_the_window_bounds_the_records_reads_and_writes_too[write]` |
+| D-22 | M2 | `src/probos/stand_down.py` | `await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the window cuts off an awaiting write` | `await written` | `test_the_window_bounds_the_records_reads_and_writes_too[write]` |
 | D-23 | M2 | `src/probos/stand_down.py` | `if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock` | `if False:` | `test_the_window_bounds_the_records_reads_and_writes_too[write]` |
 | D-24 | M2 | `src/probos/stand_down.py` | `if path in claimed_paths or member.agent_id in seen_agents:  # A2 (M2-3): one turn per billet, and per agent` | `if False:` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced` |
-| D-25 | M2 | `src/probos/stand_down.py` | `if await records.read_entry(path, "captain") is not None:  # A2 (M2-3): written since the stand-down began` | `if False:` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[written-meanwhile]` |
-| D-26 | M2 | `src/probos/stand_down.py` | `(records.repo_path / path).unlink(missing_ok=True)` | `pass` | `test_a_write_that_fails_after_publishing_leaves_no_hidden_note[removed]` |
-| D-27 | M2 | `src/probos/stand_down.py` | `return _turn_result(member, TurnOutcome.FAILED, path)  # it may be promoted: the report names it` | `return _turn_result(member, TurnOutcome.FAILED)` | `test_a_write_that_fails_after_publishing_leaves_no_hidden_note[cannot-remove]` |
+| D-25 | M2 | `src/probos/stand_down.py` | `if (records.repo_path / path).exists():  # A2 (M2-3), A4: written since the stand-down began; no await` | `if False:` | `test_one_billet_gets_one_turn_and_no_note_is_ever_replaced[written-meanwhile]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window]` |
+| D-37 | M2 | `src/probos/stand_down.py` | `return _turn_result(member, outcome, _left_at(path))  # A4: never removed; the report names it` | `return _turn_result(member, outcome)` | `test_a_write_that_fails_after_publishing_leaves_no_hidden_note[published]`, `[replaced]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[cut-off-after-publishing]` |
+| D-38 | M2 | `src/probos/stand_down.py` | `remaining = deadline - clock()  # A4: after the check, so its time is charged to the window` | `remaining = window_seconds` | `test_the_window_bounds_the_records_reads_and_writes_too[write]`, `test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported[the-check-outlasts-the-window]` |
 | D-28 | M2 | `src/probos/stand_down.py` | `except (OverflowError, OSError, ValueError):  # A2 (M2-6): inf, or out of range; the turn still runs` | `except ():` | `test_one_member_s_fault_never_ends_the_other_turns_or_leaves_one_running[timestamps]` |
 | D-29 | M2 | `src/probos/stand_down.py` | `except Exception:  # A2 (M2-6): one member's fault never ends the others' turns or the report` | `except ():` | `test_one_member_s_fault_never_ends_the_other_turns_or_leaves_one_running[unreadable-episode]` |
 | D-30 | M2 | `src/probos/stand_down.py` | the D-9 line (after D-9 is restored) | `if not member.did.strip() or not member.callsign.strip():` | `test_an_identity_that_cannot_stand_in_the_note_is_not_asked` |
@@ -3780,8 +4256,21 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | E-8 | M3 | `src/probos/knowledge/erasure.py` | `await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: a resource's matches` | `_refuse_while_an_exit_note_cites(self._exit_note_citations, matching_ids); await _refuse_while_the_archive_cites(self._archive_store, matching_ids)` | `test_s3_s_archive_refusal_comes_before_this_slice_s_when_both_cite_the_episode[resource]` |
 | R-7 | M3 | `src/probos/routers/security.py` | `"AD-1341 S4: an AD-754 erasure was refused: %d exit note(s) awaiting promotion cite its episodes",` | `"AD-1341 S4: an AD-754 erasure was refused: %d exit note(s) awaiting promotion cite its episodes " + str(exc.paths),` | `test_the_captain_vetoes_the_note_then_the_forget_route_erases_the_episodes` |
 | R-8 | M3 | `src/probos/routers/security.py` | `citations = await _pending_exit_note_citations(runtime, archive)  # AD-1341 S4 (D14): once, before any erase` | `citations = [await _pending_exit_note_citations(runtime, archive) for _read in range(2)][-1]` | `test_a_note_written_after_the_request_read_its_citations_does_not_stop_it` |
+| L-16 | M1 | `src/probos/knowledge/lessons.py` | `_NOT_LESSON_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")` | `_NOT_LESSON_TEXT = re.compile(r"[\x00\ud800-\udfff]")` | `test_a_reply_not_in_the_format_is_no_lesson[escape]`, `test_a_lesson_carries_no_control_character_but_tab_line_feed_and_carriage_return` |
+| L-17 | M1 | `src/probos/knowledge/lessons.py` | `and _FRONTMATTER_DELIMITER not in value  # A4 (R2-F3): Ship's Records cuts a frontmatter value at "---"` | `and True` | `test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records`, `test_an_identity_that_cannot_stand_in_the_note_is_not_asked[delimiter-callsign]`, `test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives[delimiter]` |
+| L-18 | M1 | `src/probos/knowledge/lessons.py` | `_SECTION = f"((?a:{_SECTION_NAMES}))"` | `_SECTION = f"({_SECTION_NAMES})"` | `test_a_section_name_spelled_with_a_lookalike_letter_opens_no_section`, `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing[lookalike-heading]`, `test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs` |
+| P-15 | M1 | `src/probos/knowledge/archive_promotion.py` | `if type(cited) is not list or not all(is_exit_note_text(item, EXIT_NOTE_EPISODE_ID_MAX_CHARS) for item in cited):` | `if type(cited) is not list or not all(type(item) is str and item.strip() for item in cited):` | `test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing[long-citation]`, `[newline-citation]` |
+| RS-2 | M1 | `src/probos/knowledge/records_store.py` | `raise error  # AD-1341 S4 (A4): a directory that exists but cannot be listed now is never "no documents"` | `pass` | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[directory]` |
+| RS-3 | M1 | `src/probos/knowledge/records_store.py` | `if not isinstance(error, (FileNotFoundError, NotADirectoryError)):  # gone, or never a directory: absent` | `if True:` | `test_ship_s_records_without_exit_notes_cite_nothing`, `test_each_crew_agent_gets_one_turn_and_its_note_is_kept_with_its_provenance` |
+| RS-4 | M1 | `src/probos/knowledge/records_store.py` | `found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")` | `found = search_path.rglob("*.md")` | `test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations`, `test_a_stand_down_that_cannot_read_a_written_note_asks_nobody[directory]` |
+| RS-5 | M1 | `src/probos/knowledge/records_store.py` | `found.extend(Path(root, name) for name in (*dirs, *files) if fnmatch.fnmatch(name, "*.md"))` | `found.extend(Path(root, name) for name in (*dirs, *files))` | `test_the_strict_listing_lists_exactly_what_the_default_listing_lists[all]`, `[exit-notes]` |
+| D-36 | M2 | `src/probos/stand_down.py` | `if not is_exit_note_text(episode_id, EXIT_NOTE_EPISODE_ID_MAX_CHARS) or episode_id in offered.values():` | `if type(episode_id) is not str or not episode_id.strip() or episode_id in offered.values():` | `test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives` |
+| D-39 | M2 | `src/probos/stand_down.py` | `except Exception:  # log-and-degrade: the turn offers no episodes, so its note cites none` | `except ():` | `test_a_failed_episode_read_offers_none_and_the_note_cites_none`, `test_the_recall_and_the_ask_spend_one_turn[recall-runs-out]` |
+| D-40 | M2 | `src/probos/stand_down.py` | `"labelled as inherited from this crew. Write nothing you would not share with the whole ship. Summarise in "` | `"Write nothing you would not share with the whole ship. Summarise in "` | `test_the_prompt_says_writing_is_optional_and_what_the_note_is_for` |
+| D-41 | M2 | `src/probos/stand_down.py` | `if concurrency < 1 or turn_seconds <= 0 or window_seconds <= 0:` | `if False:` | `test_a_bound_that_is_not_positive_is_refused_before_anything_is_read` |
+| C-2 | M2 | `src/probos/experience/commands/commands_stand_down.py` | `if arg.strip():` | `if False:` | `test_the_console_command_takes_no_arguments` |
 
-The heading's count includes R-2 and R-4. A2: L-13 and L-14, D-1 and D-34, D-2 and D-19, D-9 and D-30, D-20 and D-21 each mutate one line; restore between them.
+The heading's count includes R-2 and R-4. A2: L-13 and L-14, D-1 and D-34, D-2 and D-19, D-9 and D-30, D-20 and D-21 each mutate one line; restore between them. A4: D-26 and D-27 are retired with the rollback they mutated (their numbers are not reused); D-22, D-25 and L-11 name their lines as A4 rewrote them; RS-2 and RS-3 mutate two lines of one helper; restore between them.
 
 Rows with no mutation:
 
@@ -3789,10 +4278,12 @@ Rows with no mutation:
 - (A1) The stand-down's write lock now has a row, D-17: S6b holds each write open, so an unserialised second write overlaps it.
 - P-3's `wrong-version` is also an envelope `version` the stand-down never writes.
 - (A2) The stand-down's preflight (`exit_note_lesson(...) != lesson` in `_ask_and_write`): unreachable once the provenance check (D-9, D-30) and the format's closure (L-10) hold. It keeps the service and the promotion on one rule by construction.
-- (A2) `_write`'s `TIMED_OUT` versus `FAILED` after a removed write: both outcomes are asserted (S4c `[write]`, S2b `[removed]`); a mutant swapping them is not listed separately.
+- (A2, A4) `_write`'s `TIMED_OUT` versus `FAILED`: both outcomes are asserted (S4c `[write]`, S4d, S2b); a mutant swapping them is not listed separately.
+- (A4) `_left_at`'s `except OSError: return path` (a check that cannot be made names the path): no supported caller reaches an `exists()` that raises without injection; it errs toward telling the Captain where to look.
+- (A4) Computing `remaining` before the existence check is a two-line move, not a single-line row: S4d `[the-check-outlasts-the-window]` fails on it (the check sleeps 0.4 s against a 0.2 s window).
 - (A3 (2)) D-23 is killed by S4c `[write]` only because the stub counts a write when `write_entry` is called: Python 3.12's `asyncio.wait_for` with a timeout of zero or less cancels the coroutine before it starts, so a stub that counted inside its body would never see the mutant's second write once the clock reads past the deadline. S4c `[write]`, S3c and S4 run on the injected clock, so their order is fixed; S3 and S4b keep real time because their property is the real bound, with 1 s of headroom (a 1.5 s bound asserted under 2.5 s; D-34's doubled bound takes 3 s).
 
-Mutants D-1, D-20 and D-32 take about 5 s to be killed, D-34 about 3 s and D-22 about 10 s (the stubs' sleeps and the doubled 1.5 s bound); every other row is killed in about two seconds or less (A3 (2): S3 and S4b take 1.5 s each on the honest code).
+Mutants D-1, D-20 and D-32 take about 5 s to be killed, D-34 about 3 s and D-22 about 10 s (the stubs' sleeps and the doubled 1.5 s bound); every other row is killed in about two seconds or less (A3 (2): S3 and S4b take 1.5 s each on the honest code). A4: D-41's `[concurrency]` case takes 5 s (the test's bounded wait); on the honest code P4 takes about 3 s and L8 about 1 s.
 
 ## 11. Verified Against Codebase (2026-10-26, HEAD `fefd7f79`, tree `21d2a199c8b647d90488b029a0067ae6815c86bd`)
 
@@ -3936,9 +4427,9 @@ RUN: Grep `httpx|127\.0\.0\.1|api_port|localhost:` and `/api/|api_url|probos_url
 FOUND: Ollama warm-up and probes (`:204-314`, `:1030-1041`), `setup` probes (`:1172-1281`), and printed help strings (`:885-886`, `:915`, `:2233`). No request to the vessel's own API.
 HOLDS: yes.
 
-**S4-AV3.** CLAIM: `source_kind_for` has one caller in `src`.
-RUN: Grep `source_kind_for` in `src`.
-FOUND: `archive_promotion.py:43` (definition), `:117`, `:124` (`plan_promotion`).
+**S4-AV3.** CLAIM (corrected by A4; the original held on the S3 base, before 7.3 added the citation read): `source_kind_for` has two callers in `src`, `plan_promotion` and `exit_note_citations`.
+RUN: `git show e1e97d25:src/probos/knowledge/archive_promotion.py`, grep `source_kind_for`; Grep `source_kind_for` in `src`.
+FOUND: `archive_promotion.py:56` (definition), `:181` (`exit_note_citations`), `:229`, `:243` (`plan_promotion`), and the module docstring at `:5`; no other file.
 HOLDS: yes.
 
 **S4-AV4.** CLAIM: no test pins `_BLOCKED_COMMANDS`'s members or the whole `ProbOSShell.COMMANDS` set, so 7.8 and 7.9 break no test.
@@ -3973,7 +4464,7 @@ HOLDS: yes, as far as reading shows; M2's gate runs the census (§Not verified, 
 - `ontology/loader.py:99`, `:162` the instance id is `str(uuid.uuid4())` (36 characters, inside 64).
 - `cognitive_agent.py:4692-4715` the gate (`:4711-4715` the group and vision checks), `:4754` the dispatch, `:4382` the decision step's call, `:3214`, `:4206`, `:4254` the other readers, `:5190-5205` the promotion arming, `:5404` `run_with_promotion`, `:2955` `perceive` keeps `params`, `:1352` `_promoted_turn_tasks`, `:10374` `_format_direct_message_trigger`; `config/system.yaml:469-470` (`dm_agentic: enabled: true`), `:624` (`promote_to_task_after_seconds: 40`); `mesh/intent.py:473` `subscribe` replaces an agent's handler (S16 re-subscribes).
 - `erasure.py:181-182` (S3 then S4 in `forget_episode`), `:218`, `:233` (S3 in the scans), `:275` (S4 at the top of `_forget_all`).
-- `scripts/check_architecture_principles.py:652-677`: only a bare-statement scheduling call is an unowned-task finding, and `:661-668` counts every `.create_task` attribute call. 7.6's `asyncio.ensure_future` calls sit inside a list (assigned, not bare, not `.create_task`), so no `TaskGroup` is used.
+- `scripts/check_architecture_principles.py:652-677`: only a bare-statement scheduling call is an unowned-task finding, and `:661-668` counts every `.create_task` attribute call. A4: 7.6's `asyncio.create_task` calls sit inside a list (assigned, not bare), so they are no finding; `:661-668` counts them into `broad_create_task_calls`, which `:1071` reports and no gate or test reads. A2's `asyncio.ensure_future` broke Engineering Principles' Async Discipline (`docs/development/engineering-principles.md:84`, "Never use `asyncio.ensure_future()`").
 - The reviewer's probe `logs/ad1341s4r1/probes-m2/test_additional_seams.py:133-181` builds the S16 rig (real `CognitiveAgent`, `WorkItemStore`, `ChatThreadStore`, `TrustNetwork`, `AgentRegistry`, a `BaseLLMClient` subclass) on the candidate and fails on its assertion, not its construction.
 
 ## Absence Verified (A2, 2026-10-26)
@@ -3997,6 +4488,42 @@ CLAIM: no `asyncio.TaskGroup` in `src`.
 RUN: Grep `TaskGroup\(` over `src/probos`.
 FOUND: none.
 HOLDS: yes (A2 adds none).
+
+## Verified for A4 (2026-10-26, repaired head `e1e97d25`, tree `908866a49810c1d5603200c612c1c6545728b4cd`; `git diff --stat ddf0e295 e1e97d25 -- prompts/` is empty, so this contract is A3's)
+
+Read with `git show e1e97d25:<path>` and grep.
+
+- `records_store.py:3-5` the stdlib imports (no `os`, no `fnmatch`); `:156-164` `_jaccard_similarity`, `:167` `class RecordsStore`; `:961-1013` `list_entries`: `:981` `search_path`, `:984` `for md_file in sorted(search_path.rglob("*.md")):`, `:992-994` the strict file re-raise; `:316-317` `yaml.dump`, then `f"---\n{fm_yaml}---\n\n{content}"`; `:321` `write_text` before `:324-326` git (only with `auto_commit`); `:1202-1212` `_parse_document`, `:1205` `raw.split("---", 2)` (R2-F3, register R25).
+- `lessons.py:59` `_NAMES` (ASCII keys), `:60` `_SECTION`, `:106`, `:109` `_NAMES[match.group(1).lower()]` (R2-F2's `KeyError`); `:76` `_UNSTORABLE` (NUL and surrogates only) and `:126` its one use; `:79` `_NOT_ONE_LINE`; `:211-220` `is_exit_note_text`.
+- `archive_promotion.py:131` the id check (P-15), `:179` the strict citation read, `:227` `plan_promotion`'s default listing (R20).
+- `stand_down.py:140-157` `_offer` (`:152` the id check R2-F4 names); `:235` the bound check; `:247-254` the strict first read, whose exception becomes `StandDownRefused` before any turn is created (unchanged); `:261-294` `_write`: `:264` `remaining` before `:267`'s awaited `read_entry` (round 2 M2-2), `:289` the unconditional `unlink` (M2-1); `:300` the recall's degrade (D-39); `:320` D-2's line; `:374` `ensure_future`. `commands_stand_down.py:25-27` the usage guard (C-2), `:37-39` prints any turn's path.
+- `tests/test_ad1341_s1_reset_and_erase.py:49` `_SHIP = "ship-did-alpha-0001"`; `:162-166` `_config`; `:181-182` `_records` with `auto_commit=False` (so `write_entry` awaits nothing, and S4d's late return never yields); `:212-218` `_reset`.
+- Python 3.12 `re` (docs.python.org/3.12/library/re.html, fetched 2026-10-26): with IGNORECASE, `[a-z]` also matches U+0130, U+0131, U+017F and U+212A; `(?a:...)` switches a group of a Unicode pattern to ASCII-only matching, for that group only. `os.walk`'s `onerror` may raise to abort the walk.
+- D-2 by reading: S4 sets the clock to 1,000 inside the data analyst's ask. With D-2's check removed, `_write` computes `remaining = deadline - clock()` below zero and returns `TIMED_OUT`, so S4's outcomes are unchanged (equivalent). S3b (a real-clock reply returning after its 0.2 s turn inside a 60 s window) and S3c `[slow-recall]` (the clock at 0.65 against a 0.5 s turn) reach the write under the mutant and fail. S3c `[recall-runs-out]` times out before the ask and never reaches D-2.
+
+## Absence Verified (A4, 2026-10-26)
+
+**A4-AV1.** CLAIM: no `src` file other than the stand-down names an exit-note path, so the stand-down is the only in-process writer of `exit-notes/`.
+RUN: Grep `exit-notes|EXIT_NOTES_DIR|exit_note_path\(` in `src`; `git show e1e97d25:src/probos/stand_down.py` and `archive_promotion.py`, the same grep.
+FOUND: `lessons.py` (definitions); `archive_promotion.py:39`, `:71`, `:136`, `:179`, `:235` (readers); `stand_down.py:269` (`write_entry`) at the path from `:350`, and the tag `"exit-notes"`.
+HOLDS: yes. The writers left are R14's (a hand edit, a file-writing tool). Round 2's M2-1 probe built two `RecordsStore` instances on one repository, which ProbOS never does.
+
+**A4-AV2.** CLAIM: nothing but S2b depends on the stand-down removing a failed write's note.
+RUN: grep `unlink` in this contract.
+FOUND: `stand_down.py`'s rollback (7.6) and S2b's `[cannot-remove]` patch (7.10); the rest are attachments (BF-939, M3), unrelated.
+HOLDS: yes.
+
+**A4-AV3.** CLAIM: `ensure_future` appears once in the slice, and nothing pins it.
+RUN: `git show e1e97d25:src/probos/stand_down.py`, grep `ensure_future|create_task`; grep this contract.
+FOUND: `stand_down.py:374` only; the contract's 7.6 line and the A2 verified bullet.
+HOLDS: yes.
+
+**A4-AV4.** CLAIM: `docs/research/reference-projects.md` has no row on file listing, frontmatter or terminal-safe text.
+RUN: `git show e1e97d25:docs/research/reference-projects.md`, grep -i -c `frontmatter|front matter|yaml|terminal|ansi|scandir`.
+FOUND: 0.
+HOLDS: yes.
+
+**Not verified for A4 (the orchestrator verifies by running):** `(?a:...)` under `re.IGNORECASE` (L8 runs it); the native directory denial (C3e `[native-*]`: a share-nothing handle with `FILE_FLAG_BACKUP_SEMANTICS` on Windows, as the reviewers' WinError 32 probe used); P4's PyYAML quoting of every admitted value; S4d's margins on this host.
 
 ## Not verified (the orchestrator verifies by running)
 
@@ -4105,8 +4632,10 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 17. **(A2) A failure the shared listing hides** (M1-F1, M3-F1): a skip inside `list_entries` looked like an absent note. Fixed with a strict read (7.3a); the reset keeps S1's tolerance (R20).
 18. **(A2) The last consumer's own cap** (M1-F4): the arithmetic was done against AD-1148's 6,000, not the tool's 1,200. L6 now runs through the real tool.
 19. **(A2) A format that is not closed under its own writer** (M1-F3), and **an archive that receives a different string from the one validated** (M1-F5). Fixed by refusal (L1b) and by requiring the canonical body.
-20. **(A2) A write that publishes before it fails** (M2-4). Fixed by removal in the service; the git history and semantic index may keep a trace (R23).
+20. **(A2, A4) A write that publishes before it fails** (M2-4). A2 removed the published note; A4 reports it instead, because the removal could delete a document another writer put there and could not run on cancellation without a store change. The Captain's review decides (R23, R27).
 21. **(A2) Prior art.** A2 repairs ProbOS-specific seams, so no outside search was made. One analogue was considered and deferred: an atomic publish through a temp file and rename inside `RecordsStore`, which would change every writer's failure behaviour. `docs/research/reference-projects.md` was not re-examined for a repair amendment.
+22. **(A4) Prior art.** `os.walk`'s `onerror` callback (it may raise to abort the walk) is the standard library's error-reporting traversal; 3.12's `Path.rglob` has none, so the strict listing walks with `os.walk` and the default keeps `rglob` (adopted). python-frontmatter recognises the YAML delimiter only on a line of its own (`FM_BOUNDARY = re.compile(r"^-{3,}\s*$", re.MULTILINE)`, `frontmatter/default_handlers.py`). That is the right fix for `_parse_document`, deferred to its own BF because it changes how every Ship's Records reader parses a document holding `---` (R25). Python's `re` documents that `[a-z]` with IGNORECASE matches four letters outside ASCII, and that `(?a:...)` scopes ASCII matching to a group (adopted for the section names only). Terminal escape injection through stored text is a known class; refusing C0 and C1 controls at the one parser closes it for notes. Unicode format characters can still reorder how a note displays and are deferred (R26). `docs/research/reference-projects.md` has no row on file listing, frontmatter or terminal-safe text (A4-AV4).
+23. **(A4) Blind spots.** A late-returning write's note is `written` and promotable: true, by design. A cancelled stand-down reports nothing, and its notes stay (R27). A cut-off write's orphaned `git add` thread can contend for the index lock with the next write (pre-existing, R23). Python 3.13's `glob` may bind `os.scandir` at import, so C3e asserts the default listing's result only for the native denial.
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -4121,10 +4650,10 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 9. Every AD-754 entry point checks the pending-note citations before anything is erased: `forget_episode` before attachments, and `_forget_all` before its first erase. Both come before the attachment unlink and the audit marking (X1b). S3's archive check still runs first at every entry point. A refusal erases nothing and carries only paths. With `exit_note_citations=None` the behaviour is byte-identical to S3's.
 10. `/forget` reads citations once, before building the manager, only from a real `RecordsStore` and only while `config.archive.enabled` is True. It passes S3's archive only when it is a real `ArchiveStore`, and answers 409 `exit_notes_cite_erased_episodes` with the paths, logging the count only. `exit_note_citations` and `ExitNotesBlockErasure` are imported in `src` only by `routers/security.py`.
 11. The new tests use the real parser, Ship's Records, promotion, review, archive, `EpisodicMemory`, `ErasureManager`, app route, `probos archive veto`, `probos reset` and Oracle. The stand-ins are the agent's model (a stub `ask`, or a stub bus subscriber), the in-memory episodic store in M2, an identity stub returning real `IdentityRef`s, and S1's config loader. Every store lies under `tmp_path`.
-12. (A2) `RecordsStore.list_entries(strict=True)` re-raises an `OSError` reading a regular file that exists, and nothing else; `strict=False` is behaviour-identical to before for every caller. `exit_note_citations` and `run_stand_down` pass `strict=True`; `plan_promotion` does not.
+12. (A2, A4) `RecordsStore.list_entries(strict=True)` re-raises an `OSError` reading a regular file that exists, and the `OSError` of a directory under it that exists but cannot be listed, and nothing else; a directory that does not exist lists nothing; otherwise it lists exactly what the default lists, in the same order (C3f); `strict=False` runs the same `rglob` call as before for every caller. `exit_note_citations` and `run_stand_down` pass `strict=True`; `plan_promotion` does not.
 13. (A2) A `direct_message` with `bounded_turn: True` makes `_conversational_agentic_will_run` return False and changes nothing else; no other sender sets it. The stand-down sets it on every turn.
 14. (A2) `parse_lesson` accepts nothing whose rendering would parse differently, nothing with a NUL or a lone surrogate, and nothing over 700 characters in all. `_exit_note_record` requires an `int` version 1, provenance within `exit_note_provenance_ok`, episode ids within `is_exit_note_text`, and a body equal to `exit_note_body` of its parsed lesson.
-15. (A2) `run_stand_down`: the window starts before the first read; each turn has one deadline its recall and ask share and its reply must meet; a billet is claimed before asking, and its path is re-read under the write lock; a write is bounded by the window and removed when it fails; a member's exception is that member's `FAILED`; on any `BaseException` every turn is cancelled and drained before it re-raises.
+15. (A2) `run_stand_down`: the window starts before the first read; each turn has one deadline its recall and ask share and its reply must meet; a billet is claimed before asking, and its path is re-read under the write lock; no write begins once the window has closed (the existence check, without an await, charged first), a write still awaiting is cut off by the window, nothing is ever removed, and a failed or cut-off write reports the path of any note it left; a member's exception is that member's `FAILED`; on any `BaseException` every turn is cancelled and drained before it re-raises.
 
 ## 15. Acceptance criteria
 
@@ -4137,9 +4666,10 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 7. `/stand-down` runs only at the Captain's console (S13; H-1, A-1).
 8. Every test in §6 fails on its milestone's base as named, and every row in §10 is killed by the named test. One broad gate and one PR for M1 to M4; cross-family review of M1, M2 and M3 (HIGH).
 9. (A2) A stand-down turn is answered inline or not at all: no tool-calling loop, background promotion or task outlives it, and no other DM behaves differently (S16, S7d; G-1, D-32, D-33).
-10. (A2) A note file that exists but cannot be read now never clears an AD-754 erasure and never lets a stand-down replace a note (C3d, X8, S8c; RS-1, P-14, D-21).
+10. (A2, A4) A note file that exists but cannot be read now, or a note directory that exists but cannot be listed now, never clears an AD-754 erasure and never lets a stand-down replace a note (C3d, C3e, X8, S8c; RS-1 to RS-4, P-14, D-21).
 11. (A2) A whole note at every bound reaches a later crew through the real Oracle tool, and every lesson the parser accepts is stored and archived exactly as the Captain reviewed it (L6, L1b, P2; L-2, L-10, L-15, P-6).
-12. (A2) The window bounds the first read and every write; a failed write leaves no promotable note; one billet, one turn (S2b, S4c, S8b; D-20, D-22 to D-27).
+12. (A2, A4) The window bounds the first read, and no write begins after it closes; the stand-down removes nothing, and every note a failed or cut-off write left is reported with its path; one billet, one turn (S2b, S4c, S4d, S4e, S8b; D-20, D-22 to D-25, D-37, D-38).
+12a. (A4) Every value the exit-note rule admits survives Ship's Records, every episode offered can be cited by a note the promotion archives, and a note the rule refuses is withheld without raising, the real reset included (P4, S7e, L8, L10, P2; L-17, L-18, D-36, P-15).
 13. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1523)
@@ -4182,12 +4712,18 @@ The orchestrator re-verifies these on the real post-S3 merge. If one changed, th
 
 **R19.** (A2, M3-F2; ordinary reach; regression: neither, reproduced on `e6ced018`) `api.py:439-442` imports `HTMLResponse` locally, so `app.openapi()` raises `PydanticUserError` and `/openapi.json` answers 500 whenever the HXI fallback route is registered (an unbuilt-HXI checkout; where the HXI is built, `api.py:400` mounts `ui/dist` and the fallback is never registered). `test_ad1207_fault_visibility.py:218` already excludes it. Not S4's change surface (S4 edits only `_BLOCKED_COMMANDS`). Already registered as F-141 on #1523 (AD-1340 S2a review round 1, Low, pre-existing); S4 neither repairs nor re-files it (A3). The fix stays one line plus that test's premise.
 
-**R20.** (A2) `plan_promotion`'s listing (`archive_promotion.py:210`) stays non-strict, as S1 built it. A note file unreadable at the reset's moment is skipped, not withheld: tier 2 keeps it for the next reset, and tier 3 deletes Ship's Records and the note with it, unarchived. A strict reset would stop on any unreadable record of any source. The AD-754 read is strict (fail closed), the safe asymmetry.
+**R20.** (A2, A4) `plan_promotion`'s listing (`archive_promotion.py:227`) stays non-strict, as S1 built it; A4 keeps it so, and a directory the reset cannot list is passed over, as a file is. A note file unreadable at the reset's moment is skipped, not withheld: tier 2 keeps it for the next reset, and tier 3 deletes Ship's Records and the note with it, unarchived. A strict reset would stop on any unreadable record of any source. The AD-754 read is strict (fail closed), the safe asymmetry.
 
 **R21.** (A2) The passive Oracle context (`OracleService.query_formatted`, `oracle_service.py:763`) previews 300 characters of each entry, for every archive kind. An ORACLE-tier agent receives an exit note passively as its label, title and origin line; the whole note comes through the Oracle tool (L6). Pre-existing for every kind.
 
 **R22.** (A2) Ship's Records' reads and writes run synchronously on the event loop (`list_entries`, `write_entry`'s file write, YAML). The window bounds every await (the first read as a coroutine, the git calls, the semantic indexer), not a synchronous stall inside one. Pre-existing for every records caller (M2's property 6).
 
-**R23.** (A2) A note the stand-down removes after a failed or timed-out write may already be staged or committed in Ship's Records' git history and indexed by AD-1138's semantic layer; the working tree the promotion reads holds no note. A cancelled write's executor thread (`git add`) can finish after the removal; executor threads cannot be cancelled.
+**R23.** (A2, rewritten by A4) The stand-down removes nothing. A note a failed or cut-off write published stays in the working tree the promotion reads, and the report gives its path. It may be unstaged, staged or uncommitted in Ship's Records' git history, and missing from AD-1138's semantic index until its next write or backfill. A cut-off write's executor thread (`git add`) can finish after the turn has ended, and can contend for the index lock with the next write, whose `git add` then fails silently (`_git_sync` returns on a non-zero exit) while its file is still on disk. Executor threads cannot be cancelled.
 
-**R24.** (A2) A stand-down reply is a single-pass 1:1 reply, so its reply tags act as on any 1:1 message (`[NOTEBOOK]` for every crew agent, AD-911/912; `[CREATE_TASK]` for the agents that opt in, AD-845): an agent that adds one writes a notebook entry or opens a work item. The prompt asks for the notes alone, and nothing the service writes depends on them.
+**R24.** (A2, corrected by A4 from round 2's M2-8) A stand-down turn is a `direct_message` on the intent bus, and its reply is read as text (`DmReply.from_intent_result` in `stand_down_vessel`); the DM reply pipeline (`DmReplyPipeline`, built on the HTTP and group reply paths) does not run on it. So reply tags do nothing here. A valid `[NOTEBOOK]` or `[CREATE_TASK]` saves no notebook and opens no work item; it stays literal text in the reply, and in the note when it falls inside a section (round 2's `s4q2-valid-tags-and-unicode-consumers`: no notebook, no work item, the tags in a promotable note). The prompt asks for the notes alone; the rule does not strip tags, and a later crew reads them as text. Running the pipeline here would add work with its own owner and bounds, so it is not done.
+
+**R25.** (A4, R2-F3; ordinary reach; regression: neither, pre-existing) `RecordsStore._parse_document` (`records_store.py:1202-1212`) splits a document at the first two `---` it finds (`raw.split("---", 2)`), inside a frontmatter value too. An author or topic holding `---` reads back cut short, and the rest of the frontmatter lands in the body (round 2: `Normal---Name` reads back as `Normal`). Every Ship's Records reader is affected (`read_entry`, `list_entries`, `search`, `write_entry`'s update in place, `publish`). S4 closes it for exit notes at the rule (`is_exit_note_text` refuses `---`; P4). The fix, a delimiter only on a line of its own (python-frontmatter's `^-{3,}\s*$`), changes how every reader parses such a document and needs a census of the live Ship's Records first. It is its own BF, for the orchestrator to file with the BF ceiling.
+
+**R26.** (A4, the remainder of R2-F5; considered, deferred) Unicode format characters (category Cf: the bidirectional overrides U+202A to U+202E and U+2066 to U+2069, zero-width characters) are accepted in a lesson. A terminal does not act on them, but they can reorder or hide what a note shows the Captain's review. Some are legitimate in scripts the crew may write (ZWJ, ZWNJ). Refusing the bidirectional overrides is one line in `_NOT_LESSON_TEXT` if the Captain wants it.
+
+**R27.** (A4, round 2 M2-3) A stand-down cancelled by the Captain or by the vessel stopping prints no report. Every note it published stays whole in Ship's Records, including the one whose commit was cut short (`write_entry` writes the file before it awaits git), and `probos archive pending` lists them all for review and veto before the reset (S4e). The stand-down does not remove a cancelled write's note: it cannot prove the file is its own without a store change, and the note is the same whole note the agent wrote.
