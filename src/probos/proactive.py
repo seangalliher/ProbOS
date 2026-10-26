@@ -1421,7 +1421,7 @@ class ProactiveCognitiveLoop:
                             department=_dept,
                             trigger_type="duty_cycle" if duty else "proactive_think",
                             watch_section=derive_watch_section(),
-                            event_log_window=float(len(rt.event_log.recent(seconds=60))) if hasattr(rt, 'event_log') and hasattr(rt.event_log, 'recent') else 0.0,
+                            event_log_window=await self._event_log_window(rt),  # BF-925 (#1655): no-response episode
                         ),
                     )
                     from probos.cognitive.episodic import EpisodicMemory
@@ -1681,7 +1681,7 @@ class ProactiveCognitiveLoop:
                         department=_dept,
                         trigger_type="duty_cycle" if duty else "proactive_think",
                         watch_section=derive_watch_section(),
-                        event_log_window=float(len(rt.event_log.recent(seconds=60))) if hasattr(rt, 'event_log') and hasattr(rt.event_log, 'recent') else 0.0,
+                        event_log_window=await self._event_log_window(rt),  # BF-925 (#1655): thought episode
                         source_timestamp=_earliest_source_ts,  # AD-577
                         # AD-663: Provenance
                         source_origin_id=_wr_origin,
@@ -1710,6 +1710,27 @@ class ProactiveCognitiveLoop:
             agent.agent_type, rank.value, len(response_text),
             f" [duty: {duty.duty_id}]" if duty else " [free-form]",
         )
+
+    # BF-925 (#1655): the window an episode anchor counts, and whether a failed read has warned.
+    _EVENT_LOG_WINDOW_SECONDS = 60.0
+    _event_log_window_warned = False
+
+    async def _event_log_window(self, rt: Any) -> float:
+        """BF-925 (#1655): events the ship's EventLog recorded in the last 60 s, for an episode anchor.
+
+        EventLog never had the ``recent`` both anchor sites guarded on, so every anchor recorded 0.0.
+        The value is held out of anchor-confidence scoring until it is measured (#1523). A failed
+        read records 0.0, the value every anchor had before; the first failure per loop warns.
+        """
+        try:
+            return float(await rt.event_log.count_since(time.time() - self._EVENT_LOG_WINDOW_SECONDS))
+        except Exception:
+            if not self._event_log_window_warned:
+                self._event_log_window_warned = True
+                logger.warning("BF-925 (#1655): EventLog window read failed; episode anchors record 0.0 (later failures log at DEBUG)", exc_info=True)
+            else:
+                logger.debug("BF-925: EventLog window read failed again", exc_info=True)
+            return 0.0
 
     async def _gather_context(self, agent: Any, trust_score: float) -> dict:
         """Gather recent context for the agent's proactive review."""

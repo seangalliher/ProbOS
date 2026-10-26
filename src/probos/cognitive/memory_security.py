@@ -131,9 +131,9 @@ def score_anchor_mismatch(episode: Episode, anchor_query: Any) -> float:
         # causal
         "trigger_type": "causal",
         "causal": "causal",
-        # evidential
+        # evidential (BF-925, #1655: event_log_window is held out until measured, #1523; the
+        # production query, episodic._AnchorQueryView, never set it, so no verdict changes)
         "thread_id": "evidential",
-        "event_log_window": "evidential",
         "evidential": "evidential",
     }
 

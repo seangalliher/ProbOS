@@ -82,11 +82,16 @@ def _low_confidence_anchor() -> AnchorFrame:
 
 class TestAnchorConfidenceScoring:
     def test_all_fields_filled(self):
-        """Test 1: All 10 fields filled → confidence ≈ 1.0."""
+        """Test 1: All 10 fields filled → confidence ≈ 0.95.
+
+        BF-925 (#1655): event_log_window is held out of scoring and counts as unfilled, so the
+        evidential dimension is at most 1/2 (0.10 * 0.5). No producer ever stored a non-zero
+        window, so no stored episode's score moves; this fixture's 1000.0 did.
+        """
         from probos.cognitive.anchor_quality import compute_anchor_confidence
 
         conf = compute_anchor_confidence(_full_anchor())
-        assert abs(conf - 1.0) < 1e-9
+        assert abs(conf - 0.95) < 1e-9
 
     def test_no_fields_filled(self):
         """Test 2: No fields filled → confidence = 0.0."""
@@ -231,16 +236,16 @@ class TestAnchorProfiles:
 
         mock_em = AsyncMock()
         mock_em.recent_for_agent = AsyncMock(return_value=[
-            _make_episode(anchors=_full_anchor()),       # conf = 1.0
+            _make_episode(anchors=_full_anchor()),       # conf = 0.95 (BF-925: the window is held out)
             _make_episode(anchors=AnchorFrame()),         # conf = 0.0
             _make_episode(anchors=_temporal_only_anchor()),  # conf = 0.25
         ])
 
         profile = await build_anchor_profile("agent-001", mock_em)
         assert profile.total_episodes == 3
-        # mean = (1.0 + 0.0 + 0.25) / 3 ≈ 0.4167
-        assert abs(profile.mean_confidence - (1.0 + 0.0 + 0.25) / 3) < 1e-4
-        # sorted: [0.0, 0.25, 1.0] → median = 0.25
+        # mean = (0.95 + 0.0 + 0.25) / 3 = 0.4
+        assert abs(profile.mean_confidence - (0.95 + 0.0 + 0.25) / 3) < 1e-4
+        # sorted: [0.0, 0.25, 0.95] → median = 0.25
         assert abs(profile.median_confidence - 0.25) < 1e-4
 
     @pytest.mark.asyncio

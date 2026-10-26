@@ -1191,6 +1191,23 @@ class EventLog:
         """Total event count."""
         return await self.count()
 
+    async def count_since(self, since: float, *, cap: int = 1000) -> int:
+        """BF-925 (#1655): how many of the newest ``cap`` events were logged at or after ``since``.
+
+        ``since`` is Unix seconds. Only the newest ``cap`` rows by id (the primary key) are read, so
+        the cost is bounded whatever the table's size; a non-positive ``cap`` counts nothing (SQLite
+        reads ``LIMIT -1`` as no limit). Timestamps are stored as UTC ISO text, as ``prune`` compares.
+        """
+        if not self._db or cap <= 0:
+            return 0
+        cutoff = datetime.fromtimestamp(since, tz=timezone.utc).isoformat()
+        async with self._db.execute(
+            "SELECT COUNT(*) FROM (SELECT timestamp FROM events ORDER BY id DESC LIMIT ?) WHERE timestamp >= ?",
+            (cap, cutoff),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def verify_chain(self) -> tuple[bool, int | None]:
         """AD-490: Walk the events table by id; return (ok, broken_at).
 

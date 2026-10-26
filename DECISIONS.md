@@ -736,6 +736,15 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
   - (3) Elastic workers (#1332, AD-1288 #1335, AD-1290 #1337) may fill Reviewer and Builder slots, commissioned by the Chief Engineer under AD-1288's separation of duty and leases. A fresh reviewer has no shared context by construction. Drafting and brake authority stay with persistent identities.
 - *Reversal.* Restore the Utility agent in AD-1299 S2f and route the judgment roles to it. The services, evidence and approvals are unchanged either way.
 
+### BF-925 -- Silent-fallback guards name APIs that exist (2026-10-25, #1655)
+
+- *Insights.* A section reads a real source or says "not available" with its reason; a source that is down or fails says so in its own section. Three are wired (Bridge alerts, the capability and skill request queues, completed persistent tasks); topics and crew are dropped because no store measures what AD-810 named, and relabelling Ward Room post counts as "crew" would report a different measure. The JSON keeps its keys and adds `unavailable`.
+- *Mentions.* Resolved through the `CallsignRegistry` the dispatcher binds, the resolver the mention's TaskEvent already uses (it reads the live `AgentRegistry`), not a second resolver, and resolved once: the link goes to the agent the TaskEvent was dispatched to, so an agent replaced during the dispatch cannot split them, and a post with no dispatcher records neither; one reinforcement per mentioned agent per post.
+- *Chiefs' stats.* Read by `agent.id`, the id posts carry; the sovereign id counted nothing.
+- *Event log window.* Filled from the `EventLog` and held out of scoring as an unfilled field, so no score or verdict moves; on the shipped configuration no stored episode carries the anchor (the no-response episode is not stored, the thought episode only without a Ward Room), which is the measurement's first finding (#1523).
+- *Guard test.* Receiver-scoped (`self`, `cls`, `rt`, `runtime` and their local aliases) because a name-only rule over every receiver gave 109 hits; it cannot see a name an unrelated class defines (F12's `recent` would have passed). The allow-list holds third-party attributes and registered, untriaged findings.
+- *Reversal.* Revert the commits; the report, mention links, Chiefs' stats and window return to empty, and the guard test goes.
+
 ### BF-926 and BF-927 -- Config fields and boot claims say what runs (2026-10-25, #1656, #1657)
 
 - *Inert, not removed.* A field nothing acts on that describes behaviour another issue is meant to build (#1659 governance, #1324 memory machinery) is kept and marked with one phrase, "Inert: no production code reads this field (or section) to act on it", in its field description or its model's docstring summary, the two places the reference renders; generic config I/O, which exports and rewrites every field, and source introspection, which shows an agent a field's source (the codebase index), do not count as acting on it. Unknown keys are ignored, so removal would also load, silently; marking is the visible choice and keeps the operator's value and the design intent.

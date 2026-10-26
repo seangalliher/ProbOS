@@ -286,17 +286,26 @@ class TestAnchorFieldGaps:
             dept = store._resolve_author_department("security_agent")
             assert dept == "Security"
 
-    def test_event_log_window_populated(self) -> None:
-        """AnchorFrame construction in proactive.py includes event_log_window."""
+    async def test_event_log_window_populated(self, tmp_path) -> None:
+        """AnchorFrame construction in proactive.py includes event_log_window.
+
+        BF-925 (#1655): this used a MagicMock's ``recent``, which EventLog never had, so it passed
+        while every anchor recorded 0.0. It now counts through the real EventLog.
+        """
+        from probos.substrate.event_log import EventLog
         from probos.types import AnchorFrame
-        # Simulate event log with 5 recent events
-        mock_el = MagicMock()
-        mock_el.recent.return_value = [1, 2, 3, 4, 5]
-        anchor = AnchorFrame(
-            channel="duty_report",
-            event_log_window=float(len(mock_el.recent(seconds=60))),
-            watch_section=derive_watch_section(14),
-        )
+        event_log = EventLog(db_path=tmp_path / "events.db")
+        await event_log.start()
+        try:
+            for index in range(5):
+                await event_log.log("test", f"event-{index}")
+            anchor = AnchorFrame(
+                channel="duty_report",
+                event_log_window=float(await event_log.count_since(time.time() - 60.0)),
+                watch_section=derive_watch_section(14),
+            )
+        finally:
+            await event_log.stop()
         assert anchor.event_log_window == 5.0
         assert anchor.watch_section == "afternoon"
 
