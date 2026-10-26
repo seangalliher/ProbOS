@@ -33,7 +33,7 @@ from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _SHIP, _config, _data_dir, _records, _reset
 from tests.test_ad1341_s3_erasure_cascade import _traced, _traces
 from tests.test_ad1341_s3_review_cli import _veto
-from tests.test_ad1341_s4_lessons import _deny_reading
+from tests.test_ad1341_s4_lessons import _deny_entry_type, _deny_listing, _deny_reading
 from tests.test_ad1341_s4_stand_down import _reply
 
 _SRC = Path(probos.__file__).resolve().parent
@@ -358,11 +358,16 @@ async def test_a_note_written_after_the_request_read_its_citations_does_not_stop
 
 
 @pytest.mark.parametrize("target", ["episode", "agent", "resource"])
+@pytest.mark.parametrize("fault", ["read", "listing", "entry-type"])
 async def test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, target: str,
 ) -> None:
     """A2 (M3-F1): a valid note citing the episode, which the OS refuses to read during the request. The route answers
     500 and erases nothing; once the note can be read, the refusal names it (the Captain's way through, unchanged).
+    A5 (round 3 R3-M1-1, M3's coverage): the same through the route when the OS refuses to list the note's timeline
+    directory (``[listing-*]``) or cannot report that directory's type (``[entry-type-*]``: the round-3 P1, in which
+    the listing took the directory for a file, the read answered "no citations" and the erasure went ahead). The read
+    runs before the manager is built (``routers/security.py``), so no attachment or audit row is touched (X1b).
 
     A3: the shared ``_client`` re-raises the app's exception (``raise_app_exceptions=True``), so this test builds a
     transport that answers as a served app does: Starlette's error middleware sends the 500, then re-raises, and the
@@ -389,7 +394,13 @@ async def test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure(
 
         transport = httpx.ASGITransport(app=served, raise_app_exceptions=False)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            _deny_reading(monkeypatch, records.repo_path / path)
+            note = records.repo_path / path
+            if fault == "read":
+                _deny_reading(monkeypatch, note)
+            elif fault == "listing":
+                _deny_listing(monkeypatch, note.parent)
+            else:
+                _deny_entry_type(monkeypatch, note.parent)
             failed = await _post(client, _FORGET, _TARGETS[target])
             assert failed.status_code == 500, failed.text
             assert failed.text == "Internal Server Error"  # what a served app sends: no path, no reason

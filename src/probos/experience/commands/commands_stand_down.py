@@ -37,6 +37,12 @@ async def cmd_stand_down(runtime: Any, console: Console, arg: str) -> None:
     for turn in report.turns:
         where = f" -> {turn.path}" if turn.path else ""
         console.print(f"  {escape(turn.callsign or turn.agent_type)}: {turn.outcome.value}{escape(where)}")
+    left = sum(1 for turn in report.turns if turn.path and turn.outcome in (TurnOutcome.FAILED, TurnOutcome.TIMED_OUT))
+    if left:  # A5 (round 3 M2-2): a write that did not complete may still have published its note
+        console.print(
+            f"{left} write(s) did not complete and may have left a document at the path shown; "
+            "probos archive pending lists any the next reset would archive."
+        )
     console.print(
         f"{report.count(TurnOutcome.WRITTEN)} exit note(s) written for timeline {escape(report.timeline_id)}. "
         "Review: probos archive pending. Veto one: probos archive veto PATH --reason TEXT. "

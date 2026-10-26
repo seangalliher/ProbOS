@@ -55,6 +55,8 @@ from probos.knowledge.lessons import (
 from probos.types import IntentMessage
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from probos.knowledge.records_store import RecordsStore
 
 logger = logging.getLogger(__name__)
@@ -89,10 +91,12 @@ class CrewMember:
 class TurnOutcome(StrEnum):
     """What one agent's stand-down turn came to.
 
-    WRITTEN wrote its note. The stand-down never removes a document (A4): a FAILED or TIMED_OUT turn that carries a
-    path is a write that published its note before it failed or was cut off, so the report names it, the Captain's
-    review lists it and the next promotion would archive it unless the Captain vetoes it. Every other outcome left
-    nothing at its path, or found a note there already (ALREADY_WRITTEN, DUPLICATE).
+    WRITTEN wrote its note. The stand-down never removes a document (A4). A FAILED or TIMED_OUT turn that carries a
+    path is a write that did not complete and may have left a document there: it published before it failed or was
+    cut off, or whether it did could not be checked (A5, round 3 M2-2). The report names the path, the console counts
+    such turns apart from WRITTEN, and the Captain's review lists any note the next promotion would archive there. A
+    FAILED turn without a path wrote nothing, a billet that could not be checked included (A5). Every other outcome
+    left nothing at its path, or found a note there already (ALREADY_WRITTEN, DUPLICATE).
     """
 
     WRITTEN = "written"
@@ -139,6 +143,23 @@ Recall = Callable[[CrewMember], Awaitable[Sequence[Any]]]
 
 def _turn_result(member: CrewMember, outcome: TurnOutcome, path: str = "") -> TurnResult:
     return TurnResult(member.agent_type, member.callsign, outcome, path)
+
+
+def _present(path: Path) -> bool | None:
+    """A5 (7.3a's table, O7): True when something is at ``path``, False when nothing is, None when that cannot be told.
+
+    ``Path.exists`` answers False for errors ``pathlib`` reads as "not there" (EBADF and ELOOP, and on Windows "the
+    device is not ready" among others), so a note there could be taken for none and written over, or left out of the
+    report. Only "not found", or a parent that is no directory, is absent. ``lstat``: whatever is at the billet's path
+    is there, and a link is never followed.
+    """
+    try:
+        path.lstat()
+    except (FileNotFoundError, NotADirectoryError):  # A5: nothing is there
+        return False
+    except OSError:
+        return None
+    return True
 
 
 def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
@@ -233,7 +254,8 @@ async def run_stand_down(
     published is removed: a write that fails or is cut off after publishing is reported with its path (A4).
 
     Raises ``StandDownRefused`` when the timeline is missing, cannot stand in a note or name a records path, or when
-    Ship's Records cannot be read in time (nobody is asked), and ``ValueError`` for a bound that is not positive.
+    Ship's Records cannot be read in time, a first read that returns after the window has closed included (A5; nobody
+    is asked), and ``ValueError`` for a bound that is not positive.
     Nothing that happens in a member's turn raises, and no turn outlives the call.
     """
     if type(timeline_id) is not str or not timeline_id.strip():
@@ -258,6 +280,11 @@ async def run_stand_down(
         raise StandDownRefused(
             "Ship's Records could not be read in time, so nobody was asked: a note already written could be replaced."
         ) from exc
+    if clock() >= deadline:  # A5 (round 3 M2-3): the first read returned after the window closed
+        # wait_for cannot cut off a read that never yields (synchronous Ship's Records I/O, register R22), so the
+        # window is checked again before any turn task exists, and none begins after it.
+        logger.warning("AD-1341 S4: reading Ship's Records took the whole stand-down window; nobody is asked")
+        raise StandDownRefused("Reading Ship's Records took the whole stand-down window, so nobody was asked.")
     existing = {entry["path"] for entry in listed}
     claimed_paths: set[str] = set()  # A2 (M2-3): the billets a turn has taken in this stand-down
     seen_agents: set[str] = set()
@@ -265,14 +292,13 @@ async def run_stand_down(
     write_lock = asyncio.Lock()  # one Ship's Records write at a time: the repository has one git index
 
     def _left_at(path: str) -> str:
-        """A4: ``path`` when a document is there now, so the report names it; unknown counts as there."""
-        try:
-            return path if (records.repo_path / path).exists() else ""
-        except OSError:
-            return path
+        """A4: ``path`` when a document is there now, so the report names it. Unknown counts as there (A5: through
+        ``_present``, which reads what ``Path.exists`` calls "not there" as unknown)."""
+        return "" if _present(records.repo_path / path) is False else path
 
     async def _write(member: CrewMember, path: str, body: str, envelope: dict[str, Any]) -> TurnResult:
-        """Write one note: begun inside the window, never over a note, and reported as it is left (A2, A4).
+        """Write one note: begun inside the window, never over a document its check found or could not rule out, and
+        reported as it is left (A2, A4, A5; a writer outside ProbOS saving at the path in the same instant: R28).
 
         The check for a note written since the stand-down began has no await, and its time is charged to the window
         before a write may begin (A4, round 2 M2-2). The stand-down never removes a document (A4): a write that fails,
@@ -281,8 +307,15 @@ async def run_stand_down(
         window (synchronous Ship's Records I/O, register R22) left its note: WRITTEN.
         """
         async with write_lock:
-            if (records.repo_path / path).exists():  # A2 (M2-3), A4: written since the stand-down began; no await
+            present = _present(records.repo_path / path)  # A5: what Path.exists reads as "not there" is unknown here
+            if present:  # A2 (M2-3), A4: a note written since the stand-down began; no await
                 return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
+            if present is None:  # A5: whether a note is there cannot be told now, so nothing is written over it
+                logger.warning(
+                    "AD-1341 S4: whether %s's exit note is already written cannot be checked; nothing is written",
+                    member.callsign,
+                )
+                return _turn_result(member, TurnOutcome.FAILED)
             remaining = deadline - clock()  # A4: after the check, so its time is charged to the window
             if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock
                 return _turn_result(member, TurnOutcome.TIMED_OUT)

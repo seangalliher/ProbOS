@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import json
 import os
 import re
@@ -53,7 +54,7 @@ from probos.knowledge.lessons import (
     parse_citations,
     parse_lesson,
 )
-from probos.knowledge.records_store import RecordsStore
+from probos.knowledge.records_store import RecordsStore, _markdown_files_or_raise
 from probos.tools.oracle_query_tool import _MAX_ENTRY_CHARS, OracleQueryTool
 from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _config, _data_dir, _records, _reset
@@ -111,17 +112,19 @@ async def _write_note(
     return note_path
 
 
-def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path, error: OSError | None = None) -> None:
     """A2: the OS refuses to read ``denied``, as a sharing violation does while an editor or a scanner holds the file.
 
     Only ``Path.read_text`` of that one file fails, so the real ``RecordsStore.list_entries`` meets the failure inside
-    its own loop, on every platform.
+    its own loop, on every platform. A5: ``error`` is the failure raised (a sharing violation by default).
     """
     real_read_text = Path.read_text
     target = denied.resolve()
 
     def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
         if self.resolve() == target:
+            if error is not None:
+                raise error
             raise PermissionError(13, "the file is being used by another process", str(self))
         return real_read_text(self, *args, **kwargs)
 
@@ -186,6 +189,154 @@ def _deny_listing(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
         return real_scandir(path)
 
     monkeypatch.setattr(os, "scandir", scandir)
+
+
+def _deny_entry_type(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """A5 (round 3 R3-M1-1): the OS cannot report the type of the entry ``denied`` when its parent is listed
+    (``DirEntry.is_dir`` raises), as for a link whose target cannot be examined or a filesystem that reports no
+    types. ``os.walk`` filed such an entry as a file and never descended into it. Every listing passes through a
+    wrapper; only that one entry's ``is_dir`` fails, and every other attribute is the real entry's."""
+    real_scandir = os.scandir
+    target = denied.resolve()
+
+    class _Entry:
+        def __init__(self, entry: Any) -> None:
+            self._entry = entry
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._entry, name)
+
+        def is_dir(self, *args: Any, **kwargs: Any) -> bool:
+            if Path(self._entry.path).resolve() == target:
+                raise PermissionError(13, "the entry's type cannot be read", self._entry.path)
+            return bool(self._entry.is_dir(*args, **kwargs))
+
+    class _Listing:
+        def __init__(self, listing: Any) -> None:
+            self._listing = listing
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._listing.close()
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> _Entry:
+            return _Entry(next(self._listing))
+
+        def close(self) -> None:
+            self._listing.close()
+
+    def scandir(path: Any = ".") -> Any:
+        return _Listing(real_scandir(path))
+
+    monkeypatch.setattr(os, "scandir", scandir)
+
+
+def _deny_stat(monkeypatch: pytest.MonkeyPatch, denied: Path, error: OSError) -> None:
+    """A5: ``Path.stat`` of ``denied`` fails with ``error``. ``Path.exists`` and ``Path.is_file`` read ENOENT, ENOTDIR,
+    EBADF and ELOOP, and three Windows errors ("the device is not ready" among them), as "not there". Compared by
+    name, never through ``resolve()``, which calls ``stat`` itself."""
+    real_stat = Path.stat
+    target = os.path.normcase(os.fspath(denied.resolve()))
+
+    def stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if os.path.normcase(os.fspath(self)) == target:
+            raise error
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+
+
+#: A5: the failures 7.3a's table decides, by kind.
+_WALK_FAULTS: dict[str, Any] = {
+    "absent": lambda where: FileNotFoundError(errno.ENOENT, "gone", where),
+    "io": lambda where: OSError(errno.EIO, "I/O error", where),
+    "not-a-directory": lambda where: NotADirectoryError(errno.ENOTDIR, "not a directory", where),
+    "permission": lambda where: PermissionError(errno.EACCES, "denied", where),
+}
+
+
+class _Trace:
+    """A5: the strict walk's filesystem operations in order; with ``fail_at``, that one (1-based) raises ``fault``."""
+
+    def __init__(self, fail_at: int = 0, fault: Any = None) -> None:
+        self.operations: list[str] = []
+        self.fail_at, self.fault, self.fired = fail_at, fault, ""
+
+    def tick(self, operation: str, where: str) -> None:
+        self.operations.append(operation)
+        if len(self.operations) == self.fail_at:
+            self.fired = operation
+            raise self.fault(where)
+
+
+class _TracedEntry:
+    """A5: a directory entry offering only ``name`` and ``is_dir``: 7.3a's table has no row for anything else."""
+
+    def __init__(self, entry: Any, trace: _Trace) -> None:
+        self.name: str = entry.name
+        self._entry, self._trace = entry, trace
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:
+        assert follow_symlinks is False, "O4 reads the listing record and never follows a link"
+        self._trace.tick("is_dir", self._entry.path)
+        return bool(self._entry.is_dir(follow_symlinks=False))
+
+
+class _TracedListing:
+    """A5: one traced ``os.scandir`` listing; each step is an operation, the step that ends the listing included."""
+
+    def __init__(self, listing: Any, trace: _Trace, where: str) -> None:
+        self._listing, self._trace, self._where = listing, trace, where
+
+    def __enter__(self) -> _TracedListing:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._listing.close()
+
+    def __iter__(self) -> _TracedListing:
+        return self
+
+    def __next__(self) -> _TracedEntry:
+        self._trace.tick("next", self._where)
+        return _TracedEntry(next(self._listing), self._trace)
+
+
+def _traced_walk(root: Path, trace: _Trace) -> list[Path]:
+    """A5: the real ``_markdown_files_or_raise`` with every ``os.scandir`` traced, and a tripwire on every other
+    filesystem call it could make, so an operation without a row in 7.3a's table fails the test."""
+    real_scandir = os.scandir
+
+    def scandir(path: Any = ".") -> _TracedListing:
+        where = os.fspath(path)
+        trace.tick("open-root" if Path(where) == root else "open-subdirectory", where)
+        return _TracedListing(real_scandir(path), trace, where)
+
+    def tripwire(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the strict walk made a filesystem call that 7.3a's table has no row for")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(os, "scandir", scandir)
+        for name in ("stat", "lstat", "listdir", "walk"):
+            patch.setattr(os, name, tripwire)
+        return _markdown_files_or_raise(root)
+
+
+def _walk_tree(root: Path) -> None:
+    """A5: every shape the walk meets: nested directories, two timelines, a directory named ``*.md``, another suffix
+    and the suffix in upper case."""
+    for relative in (
+        "ship-a/surgeon.md", "ship-a/chapel.md", "ship-b/deep/er/nested.md", "ship-b/UPPER.MD", "ship-b/plain.txt",
+        "top.md",
+    ):
+        (root / relative).parent.mkdir(parents=True, exist_ok=True)
+        (root / relative).write_text("---\nauthor: Bones\n---\n\nA record.\n", encoding="utf-8")
+    (root / "folder.md").mkdir()
 
 
 # --- L1 to L7: the format -------------------------------------------------------------------------------------------
@@ -537,6 +688,63 @@ def test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs(
     assert (path,) not in _rows(tmp_path / "archive.db", "SELECT source_ref FROM archive")
 
 
+_HUGE = "0x" + "1" * 4000  # A5: a YAML integer whose decimal form is longer than Python's integer-string limit
+
+
+@pytest.mark.parametrize(
+    "source, field",
+    [
+        ("exit-note", "status"), ("exit-note", "created"), ("exit-note", "updated"), ("finding", "author"),
+        ("finding", "status"), ("finding", "department"), ("finding", "created"), ("finding", "updated"),
+        ("finding", "topic"),
+    ],
+)
+async def test_a_stored_value_that_cannot_be_shown_as_text_never_stops_the_promotion(
+    tmp_path: Path, source: str, field: str,
+) -> None:
+    """A5 (round 3 R3-M1-2): ``str()`` raises ``ValueError`` for an integer longer than Python's integer-string limit
+    (YAML reads ``0x...`` into one), so one stored value stopped the plan and the whole reset. Such a value is archived
+    as no value, as a missing one is, and a title falls back to the file name; S1's sources had the same conversions."""
+    records = _records(_data_dir(tmp_path))
+    if source == "exit-note":
+        path = await _write_note(records)
+    else:
+        path = "notebooks/bones/finding.md"
+        await records.write_entry(
+            author="Bones", path=path, content="A finding.", message="test: a finding", classification="ship",
+            department="medical", topic="Coolant drift", extra_frontmatter={"claim_id": "claim-0001"},
+        )
+    stored = records.repo_path / path
+    raw = stored.read_text(encoding="utf-8")
+    assert re.search(rf"(?m)^{field}:", raw)  # premise: the store wrote the field
+    stored.write_text(re.sub(rf"(?m)^{field}:.*$", f"{field}: {_HUGE}", raw), encoding="utf-8")
+
+    plan = await plan_promotion(records, timeline_id=_SHIP)
+
+    (record,) = plan.records
+    shown = {
+        "author": record.author_callsign, "topic": record.title, "status": record.metadata["status"],
+        "department": record.metadata.get("department"), "created": record.metadata["record_created"],
+        "updated": record.metadata["record_updated"],
+    }[field]
+    assert shown == ("finding" if field == "topic" else "")
+
+
+def test_a_note_holding_a_value_that_cannot_be_shown_as_text_is_archived_by_the_real_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5 (round 3 R3-M1-2): the reviewer's case through the real ``probos reset``, which exited 1 with nothing
+    wiped. The note is valid, so the reset archives it, with no status."""
+    config, data_dir = _config(tmp_path), _data_dir(tmp_path)
+    path = asyncio.run(_write_note(_records(data_dir)))
+    stored = _records(data_dir).repo_path / path
+    raw = stored.read_text(encoding="utf-8")
+    stored.write_text(re.sub(r"(?m)^status:.*$", f"status: {_HUGE}", raw), encoding="utf-8")
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+    assert (path,) in _rows(tmp_path / "archive.db", "SELECT source_ref FROM archive")
+
+
 async def test_an_exit_note_is_archived_once_whichever_reset_promotes_it(tmp_path: Path) -> None:
     records = _records(_data_dir(tmp_path))
     path = await _write_note(records)
@@ -661,7 +869,9 @@ async def test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations(
     assert await exit_note_citations(records, None) == {"ep-000": (path,)}
 
 
-@pytest.mark.parametrize("fault", ["injected-root", "injected-timeline", "native-root", "native-timeline"])
+@pytest.mark.parametrize(
+    "fault", ["injected-root", "injected-timeline", "injected-entry-type", "native-root", "native-timeline"],
+)
 async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
 ) -> None:
@@ -669,13 +879,16 @@ async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_
     ``Path.rglob`` passes over such a directory, so the strict citation read answered that nothing cites the episode
     and the AD-754 erasure went ahead. The strict listing now raises, and the citation read with it, while the default
     listing never raises, as before. Listable again, the note counts. ``[native-*]``: a share-nothing handle on
-    Windows, mode 000 on POSIX (skips only where the account lists it anyway)."""
+    Windows, mode 000 on POSIX (skips only where the account lists it anyway). A5 (R3-M1-1): ``[injected-entry-type]``,
+    the OS cannot report the timeline directory's type; ``os.walk`` took it for a file and the read answered ``{}``."""
     records = _records(_data_dir(tmp_path))
     path = await _write_note(records)
     timeline_directory = (records.repo_path / path).parent
     denied = timeline_directory.parent if fault.endswith("-root") else timeline_directory
     with contextlib.ExitStack() as stack:
-        if fault.startswith("injected"):
+        if fault == "injected-entry-type":
+            _deny_entry_type(monkeypatch, timeline_directory)
+        elif fault.startswith("injected"):
             _deny_listing(monkeypatch, denied)
         else:
             stack.enter_context(_unreadable(denied))
@@ -695,9 +908,9 @@ async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_
     "directory", ["", EXIT_NOTES_DIR, f"{EXIT_NOTES_DIR}/absent"], ids=["all", "exit-notes", "absent"],
 )
 async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(tmp_path: Path, directory: str) -> None:
-    """A4: the strict walk (``os.walk`` with an error callback) finds what ``rglob("*.md")`` finds, in the same order:
-    nested directories, a directory named ``*.md`` (found, then skipped as no file), another suffix, the suffix's case
-    as the platform matches it, ``_archived/``, and a directory that does not exist."""
+    """A4, A5: the strict listing lists what the default listing lists, in the same order: nested directories, a
+    directory named ``*.md`` (A5: never returned by the walk; the default reads it as no file), another suffix, the
+    suffix's case as the platform matches it, ``_archived/``, and a directory that does not exist."""
     records = _records(_data_dir(tmp_path))
     await _write_note(records)
     for relative in (
@@ -711,6 +924,78 @@ async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(t
 
     assert await records.list_entries(directory, strict=True) == default
     assert len(default) >= (0 if directory.endswith("absent") else 2)  # premise: something to list
+
+
+@pytest.mark.parametrize("kind", sorted(_WALK_FAULTS))
+def test_every_operation_of_the_strict_walk_raises_unless_the_root_is_missing(tmp_path: Path, kind: str) -> None:
+    """A5 (round 3 R3-M1-1): a trace-and-fault matrix over 7.3a's table, not one case per round. A clean walk over a
+    real tree records every filesystem operation it makes (each ``os.scandir``, each listing step, the last one
+    included, each ``is_dir``); the trace allows nothing else, so an operation added without a row fails here. Then
+    each recorded operation fails once with ``kind``: the walk raises that error, except a missing root
+    (``FileNotFoundError`` or ``NotADirectoryError`` at the root's open), which lists nothing. Every cell first asserts
+    that its fault fired at the operation the clean walk made there."""
+    root = tmp_path / "exit-notes"
+    _walk_tree(root)
+    clean = _Trace()
+    found = sorted(_traced_walk(root, clean))
+    assert found == sorted(path for path in root.rglob("*.md") if path.is_file())  # rglob's files, on a sound tree
+    assert set(clean.operations) == {"open-root", "open-subdirectory", "next", "is_dir"}  # one row each, no other
+    for fail_at, operation in enumerate(clean.operations, start=1):
+        trace = _Trace(fail_at, _WALK_FAULTS[kind])
+        try:
+            outcome: Any = sorted(_traced_walk(root, trace))
+        except OSError as exc:
+            outcome = type(exc)
+        assert trace.fired == operation, (fail_at, operation)  # premise: this cell's fault fired where it was aimed
+        missing_root = operation == "open-root" and kind in ("absent", "not-a-directory")
+        assert outcome == ([] if missing_root else type(_WALK_FAULTS[kind]("cell"))), (fail_at, operation)
+
+
+@pytest.mark.parametrize("stat", ["stat-ok", "stat-ebadf"])
+@pytest.mark.parametrize("kind", ["permission", "io", "absent", "not-a-directory"])
+async def test_a_listed_note_the_strict_read_cannot_read_is_never_read_as_no_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, stat: str,
+) -> None:
+    """A5 (7.3a's table, O5): a listed note whose read fails, with any error, raises from the strict listing and the
+    citation read; the default listing still skips it; readable again, it counts. ``[*-stat-ebadf]``: A2's
+    ``Path.is_file()`` then answered "not there" (``pathlib`` reads EBADF, ENOENT, ENOTDIR, ELOOP and three Windows
+    errors so), and the note was skipped as absent. The strict read no longer asks: the walk's listing decides."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    note = records.repo_path / path
+    _deny_reading(monkeypatch, note, error=_WALK_FAULTS[kind](str(note)))
+    if stat == "stat-ebadf":
+        _deny_stat(monkeypatch, note, OSError(errno.EBADF, "bad file descriptor", str(note)))
+    assert await records.list_entries(EXIT_NOTES_DIR) == []  # premise: the default listing skips it, as before
+    with pytest.raises(OSError):
+        await records.list_entries(EXIT_NOTES_DIR, strict=True)
+    with pytest.raises(OSError):
+        await exit_note_citations(records, None)
+    monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
+
+
+@pytest.mark.parametrize("error", ["ebadf", "enoent", "eacces"])
+async def test_a_listed_note_the_citation_read_cannot_find_again_is_never_read_as_no_citations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: str,
+) -> None:
+    """A5 (7.3a's table, O6): ``exit_note_citations`` reads each listed note again through ``read_entry``, whose
+    ``Path.exists`` answers False for EBADF and ENOENT (and on Windows "the device is not ready"), so a note listed and
+    read a moment before came back None and cited nothing. A ship-wide note the strict listing returned and
+    ``read_entry`` cannot find now raises. ``[eacces]``: ``exists`` raises itself (the control)."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    note = records.repo_path / path
+    code = {"ebadf": errno.EBADF, "enoent": errno.ENOENT, "eacces": errno.EACCES}[error]
+    _deny_stat(monkeypatch, note, OSError(code, os.strerror(code), str(note)))
+    listed = await records.list_entries(EXIT_NOTES_DIR, strict=True)
+    assert [entry["path"] for entry in listed] == [path]  # premise: the strict listing listed and read it
+    with pytest.raises(OSError):
+        await exit_note_citations(records, None)
+    monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
 
 
 async def test_the_captain_s_review_lists_an_exit_note_as_a_source_to_be_promoted(tmp_path: Path) -> None:

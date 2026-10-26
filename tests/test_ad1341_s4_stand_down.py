@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import dataclasses
+import errno
 import json
 import re
 import subprocess
@@ -77,7 +78,7 @@ from tests.test_ad1341_s1_reset_and_erase import (
     _reset,
     _rows,
 )
-from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_listing, _deny_reading
+from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_entry_type, _deny_listing, _deny_reading
 
 _SRC = Path(probos.__file__).resolve().parent
 
@@ -262,6 +263,41 @@ async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(tmp_pat
         assert (note["frontmatter"]["author"], note["content"], selected) == ("Bones", "Written by hand.", [])
 
 
+async def test_a_failed_write_whose_note_cannot_be_checked_still_names_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5 (round 3 M2-4): a write publishes its note and then fails, and whether the note is there cannot be told
+    (``Path.lstat`` of the billet raises). Unknown counts as there, so the report names the path for the Captain's
+    review; dropping that fallback hid a note the next reset would archive (rows D-43, D-46)."""
+    records = _records(_data_dir(tmp_path))
+    real_write, real_lstat = records.write_entry, Path.lstat
+    path = exit_note_path(_SHIP, "surgeon")
+    checks: list[str] = []
+
+    def lstat(self: Path) -> Any:
+        if self.name == "surgeon.md":
+            checks.append(str(self))
+            raise PermissionError(13, "the volume is being checked", str(self))
+        return real_lstat(self)
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        monkeypatch.setattr(Path, "lstat", lstat)  # from here no check of the billet can be made
+        raise subprocess.TimeoutExpired(["git", "add"], 30)
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    report = await _run(records, (_member(),), ask)
+    monkeypatch.undo()
+
+    assert checks  # premise: the check after the failure was made, and could not tell
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
+    assert len((await plan_promotion(records, timeline_id=_SHIP)).records) == 1  # the note the path names
+
+
 # --- S3 to S6: the bounds -------------------------------------------------------------------------------------------
 
 
@@ -439,6 +475,32 @@ async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path
     assert await _notes(records) == []
 
 
+async def test_a_first_read_that_returns_after_the_window_asks_nobody_and_starts_no_turn(tmp_path: Path) -> None:
+    """A5 (round 3 M2-3): ``asyncio.wait_for`` cannot cut off a first read that never yields (synchronous Ship's
+    Records I/O, register R22). When it returns after the window has closed, the stand-down refuses before it creates
+    a turn task, so nobody is asked and nothing begins after the window. The injected clock moves inside the read."""
+    records = _records(_data_dir(tmp_path))
+    real_list = records.list_entries
+    now = [0.0]
+    asked: list[str] = []
+
+    async def list_entries(*args: Any, **kwargs: Any) -> Any:
+        listed = await real_list(*args, **kwargs)  # the real store's read never yields
+        now[0] = 1_000.0  # and it took longer than the whole window
+        return listed
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    records.list_entries = list_entries  # type: ignore[method-assign]
+    with pytest.raises(StandDownRefused, match="took the whole stand-down window, so nobody was asked"):
+        await _run(records, (_member(),), ask, window_seconds=0.3, clock=lambda: now[0])
+
+    assert asked == []
+    assert await _notes(records) == []
+
+
 @pytest.mark.parametrize("case", ["the-check-outlasts-the-window", "a-write-returns-late", "cut-off-after-publishing"])
 async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
@@ -451,14 +513,14 @@ async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note
     says written and names it. A write the window cuts off after it published is timed out, and the report names
     the note it left, which the next promotion would archive unless the Captain vetoes it."""
     records = _records(_data_dir(tmp_path))
-    real_write, real_exists = records.write_entry, Path.exists
+    real_write, real_lstat = records.write_entry, Path.lstat
     path = exit_note_path(_SHIP, "surgeon")
     writes: list[str] = []
 
-    def exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+    def lstat(self: Path) -> Any:  # A5: the check asks Path.lstat (_present)
         if case == "the-check-outlasts-the-window" and self.name == "surgeon.md":
             time.sleep(0.4)  # a slow filesystem: the 0.2 s window closes during the check
-        return real_exists(self, *args, **kwargs)
+        return real_lstat(self)
 
     async def write_entry(**fields: Any) -> Any:
         writes.append(fields["path"])
@@ -469,7 +531,7 @@ async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note
             await asyncio.sleep(5)  # the commit hangs, and the window's bound cancels it
         return fields["path"]
 
-    monkeypatch.setattr(Path, "exists", exists)
+    monkeypatch.setattr(Path, "lstat", lstat)
     records.write_entry = write_entry  # type: ignore[method-assign]
 
     async def ask(member: CrewMember, prompt: str) -> str:
@@ -777,13 +839,14 @@ async def test_one_billet_gets_one_turn_and_no_note_is_ever_replaced(tmp_path: P
         assert note["frontmatter"]["author"] == "Chapel" and "revision" not in note["frontmatter"]
 
 
-@pytest.mark.parametrize("fault", ["file", "directory"])
+@pytest.mark.parametrize("fault", ["file", "directory", "entry-type"])
 async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
 ) -> None:
     """A2 (M1-F1 asked of the stand-down): a note already written that the OS refuses to read when the stand-down
     lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead. A4
-    (M3-1): the same when the OS refuses to list the billet's directory, which the listing used to pass over."""
+    (M3-1): the same when the OS refuses to list the billet's directory, which the listing used to pass over. A5 (O4):
+    the same when the OS cannot report the note's type."""
     records = _records(_data_dir(tmp_path))
     asked: list[str] = []
 
@@ -796,14 +859,62 @@ async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
     path = exit_note_path(_SHIP, "surgeon")
     if fault == "file":
         _deny_reading(monkeypatch, records.repo_path / path)
-    else:
+    elif fault == "directory":
         _deny_listing(monkeypatch, (records.repo_path / path).parent)
+    else:
+        _deny_entry_type(monkeypatch, records.repo_path / path)
     with pytest.raises(StandDownRefused, match="Ship's Records could not be read"):
         await _run(records, (_member(),), ask)
     monkeypatch.undo()
 
     assert asked == []
     assert "revision" not in (await records.read_entry(path, "captain"))["frontmatter"]
+
+
+async def test_a_billet_whose_note_cannot_be_checked_is_never_written_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A5 (7.3a's table, O7): ``Path.exists`` answers False for an error ``pathlib`` reads as "not there" (EBADF here;
+    ELOOP, and on Windows "the device is not ready", among others), so a note written meanwhile was taken for none
+    and revised. The check asks ``Path.lstat``: only a path that is not found is absent, and a check that cannot tell
+    is the turn's ``failed``, with no path. Nothing is written, and the note stays as it was."""
+    records = _records(_data_dir(tmp_path))
+    path = exit_note_path(_SHIP, "surgeon")
+    real_write, real_stat, real_lstat = records.write_entry, Path.stat, Path.lstat
+    writes: list[str] = []
+    bad = OSError(errno.EBADF, "bad file descriptor")
+
+    def stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == "surgeon.md":
+            raise bad
+        return real_stat(self, *args, **kwargs)
+
+    def lstat(self: Path) -> Any:
+        if self.name == "surgeon.md":
+            raise bad
+        return real_lstat(self)
+
+    async def write_entry(**fields: Any) -> Any:
+        writes.append(fields["path"])
+        return await real_write(**fields)
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        await real_write(
+            author="Bones", path=path, content="Written by hand meanwhile.", message="test: meanwhile",
+            classification="ship",
+        )
+        monkeypatch.setattr(Path, "stat", stat)  # from here no check of the billet can be made
+        monkeypatch.setattr(Path, "lstat", lstat)
+        return _reply()
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+    report = await _run(records, (_member(),), ask)
+    monkeypatch.undo()
+
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, "")]
+    assert writes == []
+    note = await records.read_entry(path, "captain")
+    assert note["frontmatter"]["author"] == "Bones" and "revision" not in note["frontmatter"]
 
 
 def test_the_prompt_says_writing_is_optional_and_what_the_note_is_for() -> None:
@@ -990,6 +1101,34 @@ async def test_the_console_command_reports_each_turn_and_the_next_steps(tmp_path
     refused = StringIO()
     await commands_stand_down.cmd_stand_down(runtime, Console(file=refused, width=200), "")
     assert "Stand-down refused" in refused.getvalue()
+
+
+async def test_the_console_counts_completed_writes_and_names_a_note_a_failed_write_may_have_left(
+    tmp_path: Path,
+) -> None:
+    """A5 (round 3 M2-2): a write that published its note and then failed is not a completed write, but the next
+    reset would archive the note unless the Captain vetoes it. The footer counts completed writes, and says apart how
+    many writes did not complete but may have left a document at the path shown."""
+    records = _records(_data_dir(tmp_path))
+    real_write = records.write_entry
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        raise subprocess.TimeoutExpired(["git", "add"], 30)
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+    runtime, _received = _vessel(
+        _config(tmp_path), records, MockEpisodicMemory(), replies={"surgeon": ("Chapel", _reply())},
+    )
+    output = StringIO()
+
+    await commands_stand_down.cmd_stand_down(runtime, Console(file=output, width=200), "")
+
+    text = output.getvalue()
+    assert f"Chapel: failed -> {exit_note_path(_SHIP, 'surgeon')}" in text
+    assert "0 exit note(s) written" in text
+    assert "1 write(s) did not complete and may have left a document at the path shown" in text
+    assert len((await plan_promotion(records, timeline_id=_SHIP)).records) == 1  # premise: the reset would archive it
 
 
 async def test_the_console_command_takes_no_arguments() -> None:

@@ -85,6 +85,20 @@ def source_kind_for(path: str, frontmatter: Any) -> SourceKind | None:
     return None
 
 
+def _stored_text(value: object) -> str:
+    """AD-1341 S4 (A5, round 3 R3-M1-2): a stored frontmatter value as archive text; never raises.
+
+    ``str()`` raises ``ValueError`` for an integer longer than Python's integer-string limit (4,300 digits by default,
+    ``sys.set_int_max_str_digits``), which YAML builds from ``0x...``; one such value stopped the plan and the whole
+    reset. It is archived as no value, as a missing one is. Every other value converts exactly as ``str()`` did.
+    """
+    try:
+        return str(value or "")
+    except ValueError:  # A5 (R3-M1-2): an integer longer than Python's integer-string limit
+        logger.warning("AD-1341 S4: a stored Ship's Records value cannot be shown as text; it is archived empty")
+        return ""
+
+
 def _title_for(path: str, frontmatter: dict[str, Any]) -> str:
     """The archive entry's title: the document's topic, else its file name, else its records path (A3, F1).
 
@@ -93,7 +107,7 @@ def _title_for(path: str, frontmatter: dict[str, Any]) -> str:
     The records path is never blank: only a path under a source's directory is a source.
     """
     topic = frontmatter.get("topic")
-    for candidate in (str(topic) if topic else "", path.rsplit("/", 1)[-1].removesuffix(".md")):
+    for candidate in (_stored_text(topic), path.rsplit("/", 1)[-1].removesuffix(".md")):
         if candidate.strip():
             return candidate
     return path
@@ -111,8 +125,9 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
     to the timeline that wrote the note, not to the reset that promotes it, so a note a skipped promotion left behind
     keeps its own generation.
 
-    Never raises for a document: every value ``PromotionRecord`` would refuse is checked here first, so one bad note is
-    withheld and never stops a reset (S1 A3's rule). The one rule for the promotion and for ``exit_note_citations``.
+    Never raises for a document: every value ``PromotionRecord`` would refuse is checked here first, and a stored
+    value ``str()`` cannot convert is archived as no value (``_stored_text``, A5), so one bad note is withheld or
+    archived and never stops a reset (S1 A3's rule). The one rule for the promotion and for ``exit_note_citations``.
     """
     if type(document) is not dict or type(document.get("frontmatter")) is not dict:
         return None
@@ -154,10 +169,10 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
         author_agent_type=agent_type,
         author_did=author_did,
         source_episode_ids=tuple(cited),  # AD-1341 S4: the agent's own episodes, by id; never their text
-        metadata={
-            "status": str(frontmatter.get("status") or ""),
-            "record_created": str(frontmatter.get("created") or ""),
-            "record_updated": str(frontmatter.get("updated") or ""),
+        metadata={  # A5 (R3-M1-2): each stored value through the one never-raising conversion
+            "status": _stored_text(frontmatter.get("status")),
+            "record_created": _stored_text(frontmatter.get("created")),
+            "record_updated": _stored_text(frontmatter.get("updated")),
         },
     )
 
@@ -174,13 +189,22 @@ async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | Non
     permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
     UTF-8, or whose frontmatter does not parse, is never counted, because the promotion never archives it either: that
     is a property of the file, not of the moment.
+
+    A5 (7.3a's table, O6): each listed note is read again through ``read_entry``, whose ``Path.exists`` answers False
+    for errors ``pathlib`` reads as "not there". A ship-wide note the strict listing returned and the second read
+    cannot find raises: it was there a moment ago, so whether the next promotion would archive it is unknown.
     """
     citing: dict[str, list[str]] = {}
     for listed in await records.list_entries(EXIT_NOTES_DIR, strict=True):
         path = listed["path"]
         if source_kind_for(path, listed["frontmatter"]) is not SourceKind.EXIT_NOTE:
             continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
-        record = _exit_note_record(path, await records.read_entry(path, ARCHIVE_READER))
+        document = await records.read_entry(path, ARCHIVE_READER)
+        classification = listed["frontmatter"].get("classification")
+        listed_readable = type(classification) is str and classification in PROMOTABLE_CLASSIFICATIONS
+        if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now: never "no citations"
+            raise OSError(f"AD-1341 S4: the exit note {path} was listed but cannot be found now")
+        record = _exit_note_record(path, document)
         if record is None or not record.source_episode_ids:
             continue
         if archive is not None and (await archive.source_state(record)).outcome is not PromotionOutcome.CREATED:
@@ -257,12 +281,12 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
                 title=_title_for(path, frontmatter),
                 content=content,
                 classification=classification,
-                author_callsign=str(frontmatter.get("author") or ""),
-                metadata={
-                    "status": str(frontmatter.get("status") or ""),
-                    "department": str(frontmatter.get("department") or ""),
-                    "record_created": str(frontmatter.get("created") or ""),
-                    "record_updated": str(frontmatter.get("updated") or ""),
+                author_callsign=_stored_text(frontmatter.get("author")),
+                metadata={  # AD-1341 S4 (A5): S1's conversions, through the one never-raising rule
+                    "status": _stored_text(frontmatter.get("status")),
+                    "department": _stored_text(frontmatter.get("department")),
+                    "record_created": _stored_text(frontmatter.get("created")),
+                    "record_updated": _stored_text(frontmatter.get("updated")),
                 },
             )
         )
