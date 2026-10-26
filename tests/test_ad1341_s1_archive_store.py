@@ -220,8 +220,10 @@ def test_a_record_the_archive_must_not_hold_is_refused_when_built(overrides: dic
 
 
 def test_source_kinds_are_closed_and_none_is_an_episode() -> None:
+    # AD-1341 S4 (#1569): the exit note joins the closed set. It is a lesson a crew agent writes for its successor and
+    # cites that agent's episodes by id; it is not an episode, so the assertion below still holds.
     assert {kind.value for kind in SourceKind} == {
-        "convergence_report", "published_report", "captains_log", "notebook_finding",
+        "convergence_report", "published_report", "captains_log", "notebook_finding", "exit_note",
     }
     assert not any("episode" in kind.value for kind in SourceKind)
     assert PROMOTABLE_CLASSIFICATIONS == frozenset({"ship", "fleet"})

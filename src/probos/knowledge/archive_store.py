@@ -100,6 +100,7 @@ class SourceKind(StrEnum):
     PUBLISHED_REPORT = "published_report"
     CAPTAINS_LOG = "captains_log"
     NOTEBOOK_FINDING = "notebook_finding"
+    EXIT_NOTE = "exit_note"  # AD-1341 S4: a lesson a crew agent leaves for its successor; it cites episodes, never is one
 
 
 class PromotionOutcome(StrEnum):
