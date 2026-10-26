@@ -8,8 +8,11 @@ keywords breaks one part of the rule; M2's tests write notes through the stand-d
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
+import os
+import re
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -30,6 +33,8 @@ from probos.knowledge.lessons import (
     DECLINE_REPLY,
     EXIT_NOTE_AGENT_TYPE_MAX_CHARS,
     EXIT_NOTE_CALLSIGN_MAX_CHARS,
+    EXIT_NOTE_DID_MAX_CHARS,
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTE_TIMELINE_MAX_CHARS,
@@ -44,13 +49,14 @@ from probos.knowledge.lessons import (
     exit_note_path,
     exit_notes_directory,
     is_declined,
+    is_exit_note_text,
     parse_citations,
     parse_lesson,
 )
 from probos.knowledge.records_store import RecordsStore
 from probos.tools.oracle_query_tool import _MAX_ENTRY_CHARS, OracleQueryTool
 from tests.test_ad1341_s1_archive_store import _rows, _store
-from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _data_dir, _records
+from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _config, _data_dir, _records, _reset
 
 _DID = f"did:probos:{_SHIP}:chapel-0001"
 _LESSON = LessonLearned(
@@ -125,7 +131,8 @@ def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
 @contextlib.contextmanager
 def _unreadable(path: Path) -> Iterator[None]:
     """A2: the OS itself refuses to read ``path`` while this is open: a handle that shares nothing on Windows, mode 000
-    elsewhere. Skips where this account reads such a file anyway (root on POSIX)."""
+    elsewhere. Skips where this account reads such a file anyway (root on POSIX). A4: ``path`` may be a directory,
+    which the OS then refuses to list."""
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
@@ -137,7 +144,8 @@ def _unreadable(path: Path) -> Iterator[None]:
             wintypes.HANDLE,
         )
         kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-        handle = kernel32.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)  # GENERIC_READ, share nothing
+        flags = 0x02000000 if path.is_dir() else 0x80  # A4: FILE_FLAG_BACKUP_SEMANTICS opens a directory
+        handle = kernel32.CreateFileW(str(path), 0x80000000, 0, None, 3, flags, None)  # GENERIC_READ, share nothing
         if handle is None or handle == ctypes.c_void_p(-1).value:
             raise ctypes.WinError(ctypes.get_last_error())
         try:
@@ -145,11 +153,14 @@ def _unreadable(path: Path) -> Iterator[None]:
         finally:
             kernel32.CloseHandle(handle)
     else:
-        mode = path.stat().st_mode
+        directory, mode = path.is_dir(), path.stat().st_mode
         path.chmod(0)
         try:
             try:
-                path.read_text(encoding="utf-8")
+                if directory:
+                    os.listdir(path)  # A4: a directory with mode 000 cannot be listed
+                else:
+                    path.read_text(encoding="utf-8")
             except PermissionError:
                 pass
             else:
@@ -157,6 +168,24 @@ def _unreadable(path: Path) -> Iterator[None]:
             yield
         finally:
             path.chmod(mode)
+
+
+def _deny_listing(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """A4 (R2-F1, M3-1): the OS refuses to list the directory ``denied``, as a sharing violation does.
+
+    Only ``os.scandir`` of that one directory fails, so the real traversal inside ``RecordsStore.list_entries`` meets
+    the failure itself, on every platform. (Python 3.13's ``glob`` may bind ``scandir`` at import, so the default
+    listing's result under this patch is not asserted; the native cases assert it.)
+    """
+    real_scandir = os.scandir
+    target = denied.resolve()
+
+    def scandir(path: Any = ".") -> Any:
+        if isinstance(path, (str, os.PathLike)) and Path(path).resolve() == target:
+            raise PermissionError(13, "the directory is being used by another process", str(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", scandir)
 
 
 # --- L1 to L7: the format -------------------------------------------------------------------------------------------
@@ -228,6 +257,12 @@ _NOT_LESSONS: dict[str, object] = {
     "too-long": LessonLearned("o" * (LESSON_MAX_CHARS - 2), "d", "l", "r").render(),  # 701 in all (A2)
     "nul": _LESSON.render().replace("cleared", "clea\x00red"),  # A2: SQLite cannot store it whole
     "surrogate": _LESSON.render() + "\ud800",
+    # A4 (R2-F5): what a console acts on; the Captain reads notes at a terminal.
+    "escape": _LESSON.render().replace("cleared", "\x1b[2Jcleared"),
+    "bell": _LESSON.render().replace("cleared", "\x07cleared"),
+    "c1-control": _LESSON.render().replace("cleared", "\x9bcleared"),
+    "delete": _LESSON.render().replace("cleared", "\x7fcleared"),
+    "vertical-tab": _LESSON.render().replace("night watch", "night\x0bwatch"),
     "prose": "I learned a great deal on this voyage, and I leave it all to my successor.",
     "not-text": 42,
 }
@@ -236,6 +271,44 @@ _NOT_LESSONS: dict[str, object] = {
 @pytest.mark.parametrize("case", sorted(_NOT_LESSONS))
 def test_a_reply_not_in_the_format_is_no_lesson(case: str) -> None:
     assert parse_lesson(_NOT_LESSONS[case]) is None
+
+
+_ASCII_LETTER = re.compile("[a-z]", re.IGNORECASE)
+
+
+def test_a_section_name_spelled_with_a_lookalike_letter_opens_no_section() -> None:
+    """A4 (R2-F2): under Unicode IGNORECASE four letters outside ASCII match as ASCII ones (the dotted capital I, the
+    dotless i, the long s, the Kelvin sign), and the section lookup held only ASCII names, so such a heading raised
+    ``KeyError`` through the parser, the rule and the plan. The section names now match in ASCII only: every such
+    spelling of every section, in every heading form, opens no section, and the reply is refused, never raised."""
+    lookalikes = [
+        chr(code) for code in range(0x80, 0x110000)
+        if not 0xD800 <= code <= 0xDFFF and _ASCII_LETTER.fullmatch(chr(code))
+    ]
+    assert lookalikes == ["\u0130", "\u0131", "\u017f", "\u212a"]  # premise: Python's documented four
+    cases = [
+        (name, name[:index] + char + name[index + 1:])
+        for name in LESSON_SECTIONS
+        for index, letter in enumerate(name.lower())
+        for char in lookalikes
+        if re.fullmatch(letter, char, re.IGNORECASE)
+    ]
+    assert len(cases) == 14  # premise: Observation 3, Discussion 7, Lesson 2, Recommendation 2
+    for name, variant in cases:
+        for heading in (f"## {variant}", f"**{variant}**", variant, f"{variant}: text"):
+            assert parse_lesson(_LESSON.render().replace(f"## {name}", heading, 1)) is None, (variant, heading)
+
+
+def test_a_lesson_carries_no_control_character_but_tab_line_feed_and_carriage_return() -> None:
+    """A4 (R2-F5): the Captain reads exit notes at a console, where an escape sequence acts. Every C0 and C1 control
+    and DEL is refused anywhere in a reply; tab stays in the text, and line feed and carriage return end lines."""
+    for code in (*range(0x00, 0x20), *range(0x7F, 0xA0)):
+        lesson = parse_lesson(_LESSON.render().replace("night watch", f"night{chr(code)}watch"))
+        if chr(code) in "\t\n\r":
+            assert lesson is not None, hex(code)
+            assert parse_lesson(lesson.render()) == lesson
+        else:
+            assert lesson is None, hex(code)
 
 
 @pytest.mark.parametrize(
@@ -381,6 +454,15 @@ _BROKEN: dict[str, dict[str, Any]] = {
         "content": f"{exit_note_header('Chapel', 'surgeon', _SHIP)}\n\nA preamble the parser drops.\n\n{_LESSON.render()}",
     },
     "standalone-cites": {"content": f"{exit_note_body('Chapel', 'surgeon', _SHIP, _LESSON)}\nCites: e1"},
+    # A4: an episode id the rule refuses (R2-F4's missing case), a lookalike heading (R2-F2), a control (R2-F5).
+    "long-citation": {"cited": ("ep-000", "e" * (EXIT_NOTE_EPISODE_ID_MAX_CHARS + 1))},
+    "newline-citation": {"cited": ("ep-000", "ep\n001")},
+    "lookalike-heading": {
+        "content": exit_note_body("Chapel", "surgeon", _SHIP, _LESSON).replace("## Lesson", "## Le\u017fson"),
+    },
+    "control-in-body": {
+        "content": exit_note_body("Chapel", "surgeon", _SHIP, _LESSON).replace("cleared", "\x1b[2Jcleared"),
+    },
 }
 
 
@@ -394,6 +476,65 @@ async def test_an_exit_note_that_breaks_the_rule_is_withheld_and_stops_nothing(t
     assert plan.records == ()
     assert plan.withheld == (path,)
     assert await exit_note_citations(records, None) == {}
+
+
+#: A4 (R2-F3): text YAML must quote or escape, the frontmatter delimiter, and characters outside ASCII.
+_YAML_HARD = (
+    "---", "--- x", "-- -", "- x", "? x", ": x", "x: y", " #x", "#x", "'x", '"x', "\\x", "{x}", "[x]", "&x", "*x",
+    "!x", "%x", "@x", "`x", "|x", ">x", "~", "null", "yes", "No", "1", "1.0", "0x1F", "2026-10-26", " x", "x ",
+    "x  y", "...", "\u00e9", "\U0001f680", "\ufeff", "\u00a0", "\u0085", "\u2028",
+)
+
+
+@pytest.mark.parametrize("field", ["callsign", "agent_type", "did", "cited"])
+async def test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records(
+    tmp_path: Path, field: str,
+) -> None:
+    """A4 (R2-F3): Ship's Records cuts a document's frontmatter at the first two ``---`` it finds, wherever they stand
+    (register R25), so a callsign such as ``normal---value`` came back as ``normal``: the stand-down reported the
+    note written and the promotion withheld it. The rule now refuses a value holding ``---``. Each value here (YAML's
+    quoting cases, and for the callsign, which the store writes three times, every code point to U+017F) is either
+    refused by the rule and withheld, or admitted, stored, read back whole and archived."""
+    records = _records(_data_dir(tmp_path))
+    bound = {
+        "callsign": EXIT_NOTE_CALLSIGN_MAX_CHARS, "agent_type": EXIT_NOTE_AGENT_TYPE_MAX_CHARS,
+        "did": EXIT_NOTE_DID_MAX_CHARS, "cited": EXIT_NOTE_EPISODE_ID_MAX_CHARS,
+    }[field]
+    values = [f"Ch{text}pel" for text in _YAML_HARD] + [f"{text}Chapel" for text in _YAML_HARD]
+    if field == "callsign":
+        values += [f"Ch{chr(code)}pel" for code in range(0x180)]
+    admitted_seen = refused_seen = 0
+    for value in values:
+        note = {"cited": ("ep-000", value)} if field == "cited" else {field: value}
+        path = await _write_note(records, **note)
+        plan = await plan_promotion(records, timeline_id=_SHIP)
+        (records.repo_path / path).unlink()
+        if is_exit_note_text(value, bound):
+            (record,) = plan.records
+            stored = {
+                "callsign": record.author_callsign, "agent_type": record.author_agent_type, "did": record.author_did,
+                "cited": record.source_episode_ids[-1],
+            }[field]
+            assert stored == value, repr(value)
+            admitted_seen += 1
+        else:
+            assert plan.records == (), repr(value)
+            refused_seen += 1
+    assert admitted_seen and refused_seen  # premise: both kinds were exercised
+
+
+def test_a_note_the_rule_refuses_is_withheld_and_the_real_reset_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A4 (R2-F2): a stored note whose heading is spelled with a lookalike letter raised ``KeyError`` through the
+    rule, the plan and the real ``probos reset``, which exited 1 with nothing wiped. A note that breaks the rule is
+    withheld, and the reset runs."""
+    config, data_dir = _config(tmp_path), _data_dir(tmp_path)
+    lookalike = exit_note_body("Chapel", "surgeon", _SHIP, _LESSON).replace("## Discussion", "## D\u0131scussion")
+    path = asyncio.run(_write_note(_records(data_dir), content=lookalike))
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+    assert (path,) not in _rows(tmp_path / "archive.db", "SELECT source_ref FROM archive")
 
 
 async def test_an_exit_note_is_archived_once_whichever_reset_promotes_it(tmp_path: Path) -> None:
@@ -518,6 +659,58 @@ async def test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations(
         monkeypatch.undo()
 
     assert await exit_note_citations(records, None) == {"ep-000": (path,)}
+
+
+@pytest.mark.parametrize("fault", ["injected-root", "injected-timeline", "native-root", "native-timeline"])
+async def test_a_note_directory_the_listing_cannot_list_now_is_never_read_as_no_citations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    """A4 (R2-F1, M3-1): the OS refuses to list ``exit-notes/`` or the timeline directory holding a valid citing note.
+    ``Path.rglob`` passes over such a directory, so the strict citation read answered that nothing cites the episode
+    and the AD-754 erasure went ahead. The strict listing now raises, and the citation read with it, while the default
+    listing never raises, as before. Listable again, the note counts. ``[native-*]``: a share-nothing handle on
+    Windows, mode 000 on POSIX (skips only where the account lists it anyway)."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    timeline_directory = (records.repo_path / path).parent
+    denied = timeline_directory.parent if fault.endswith("-root") else timeline_directory
+    with contextlib.ExitStack() as stack:
+        if fault.startswith("injected"):
+            _deny_listing(monkeypatch, denied)
+        else:
+            stack.enter_context(_unreadable(denied))
+        default = await records.list_entries(EXIT_NOTES_DIR)  # never raises: every other reader is unchanged
+        if fault.startswith("native"):
+            assert default == []  # premise: the OS itself refused to list the directory
+        with pytest.raises(OSError):
+            await records.list_entries(EXIT_NOTES_DIR, strict=True)
+        with pytest.raises(OSError):
+            await exit_note_citations(records, None)
+        monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
+
+
+@pytest.mark.parametrize(
+    "directory", ["", EXIT_NOTES_DIR, f"{EXIT_NOTES_DIR}/absent"], ids=["all", "exit-notes", "absent"],
+)
+async def test_the_strict_listing_lists_exactly_what_the_default_listing_lists(tmp_path: Path, directory: str) -> None:
+    """A4: the strict walk (``os.walk`` with an error callback) finds what ``rglob("*.md")`` finds, in the same order:
+    nested directories, a directory named ``*.md`` (found, then skipped as no file), another suffix, the suffix's case
+    as the platform matches it, ``_archived/``, and a directory that does not exist."""
+    records = _records(_data_dir(tmp_path))
+    await _write_note(records)
+    for relative in (
+        "exit-notes/a/b/deep.md", "exit-notes/UPPER.MD", "exit-notes/plain.txt", "_archived/old.md", "top.md",
+    ):
+        (records.repo_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (records.repo_path / relative).write_text("---\nauthor: Bones\n---\n\nA record.\n", encoding="utf-8")
+    (records.repo_path / "exit-notes" / "folder.md").mkdir()
+
+    default = await records.list_entries(directory)
+
+    assert await records.list_entries(directory, strict=True) == default
+    assert len(default) >= (0 if directory.endswith("absent") else 2)  # premise: something to list
 
 
 async def test_the_captain_s_review_lists_an_exit_note_as_a_source_to_be_promoted(tmp_path: Path) -> None:

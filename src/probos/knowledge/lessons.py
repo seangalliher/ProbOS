@@ -57,7 +57,10 @@ EXIT_NOTE_VERSION: Final = 1
 EXIT_NOTE_STATUS: Final = "submitted"
 
 _NAMES = {name.lower(): name for name in LESSON_SECTIONS}
-_SECTION = "(observation|discussion|lesson|recommendation)"
+_SECTION_NAMES = "observation|discussion|lesson|recommendation"
+# A4 (R2-F2): the names match in ASCII only. Under re.IGNORECASE alone, U+0130, U+0131 and U+017F match as ASCII
+# letters ("Ob\u017fervation"), and _NAMES holds only the ASCII names, so such a heading raised KeyError.
+_SECTION = f"((?a:{_SECTION_NAMES}))"
 _EMPHASIS = r"(?:\*\*|__)?"
 # "## Observation" or "### Observation:": a markdown heading alone on its line.
 _HEADING_LINE = re.compile(rf"^\s{{0,3}}#{{1,6}}\s*{_SECTION}\s*:?\s*#*\s*$", re.IGNORECASE)
@@ -73,10 +76,15 @@ _HANDLE = re.compile(r"\be(\d{1,2})\b", re.IGNORECASE)
 _DECLINED = re.compile(r"^[\W_]*no notes[\W_]*$", re.IGNORECASE)  # A2: _ is emphasis too (__NO NOTES__, _NO NOTES_)
 _NOT_SLUG = re.compile(r"[^a-z0-9]+")
 # A2: what SQLite cannot store whole: a NUL ends its length() and keyword search, and a lone surrogate is no UTF-8.
-_UNSTORABLE = re.compile(r"[\x00\ud800-\udfff]")
+# A4 (R2-F5): and what a console acts on: the Captain reads exit notes at a terminal, where an ESC sequence redraws it.
+# So a lesson holds no C0 or C1 control and no DEL, except tab, line feed and carriage return (which end lines).
+_NOT_LESSON_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
 # A2: what cannot stand in one line of an exit note: every control character, the line and paragraph separators (each
 # ends a line for str.splitlines), and lone surrogates.
 _NOT_ONE_LINE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
+# A4 (R2-F3): Ship's Records splits a document's frontmatter at the first two "---" it finds, inside a value too
+# (records_store._parse_document, register R25), so an envelope value holding one would come back cut short.
+_FRONTMATTER_DELIMITER = "---"
 
 
 @dataclass(frozen=True)
@@ -121,9 +129,9 @@ def parse_lesson(text: object) -> LessonLearned | None:
     A2: the format is closed under ``LessonLearned.render``. A section whose text would read as a heading or a
     ``Cites:`` line once rendered on its own line (``Observation: Discussion: ...``) is refused, so every accepted
     lesson is written, stored and read back unchanged. Text SQLite cannot store whole (a NUL, a lone surrogate) is
-    refused.
+    refused, and A4 (R2-F5) refuses every other C0 and C1 control and DEL but tab, line feed and carriage return.
     """
-    if type(text) is not str or _UNSTORABLE.search(text) is not None:
+    if type(text) is not str or _NOT_LESSON_TEXT.search(text) is not None:
         return None
     sections: list[tuple[str, list[str]]] = []
     for line in text.splitlines():
@@ -213,10 +221,12 @@ def is_exit_note_text(value: object, max_chars: int) -> bool:
 
     A string of at most ``max_chars`` characters that is not blank and is one line: no control character, no line or
     paragraph separator, no lone surrogate. SQLite stores the value as UTF-8 and a NUL would end its ``length()`` and
-    keyword search; a line break in a callsign would put another heading into the origin line.
+    keyword search; a line break in a callsign would put another heading into the origin line. A4 (R2-F3): and no
+    ``---``, which Ship's Records would take for the end of the frontmatter, so the value would come back cut short.
     """
     return (
         type(value) is str and bool(value.strip()) and len(value) <= max_chars and _NOT_ONE_LINE.search(value) is None
+        and _FRONTMATTER_DELIMITER not in value  # A4 (R2-F3): Ship's Records cuts a frontmatter value at "---"
     )
 
 

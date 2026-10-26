@@ -39,6 +39,7 @@ from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureManage
 from probos.knowledge.lessons import (
     DECLINE_REPLY,
     EXIT_NOTE_CALLSIGN_MAX_CHARS,
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTES_DIR,
@@ -76,7 +77,7 @@ from tests.test_ad1341_s1_reset_and_erase import (
     _reset,
     _rows,
 )
-from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_reading
+from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_listing, _deny_reading
 
 _SRC = Path(probos.__file__).resolve().parent
 
@@ -216,24 +217,27 @@ async def test_writing_is_optional_and_a_turn_that_leaves_no_lesson_writes_nothi
     assert await _notes(records) == []
 
 
-@pytest.mark.parametrize("case", ["removed", "cannot-remove"])
-async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
-) -> None:
-    """A2 (M2-4): ``write_entry`` publishes the document before git runs, so its failure can follow the publication (a
-    git timeout here, as the real call raises past its 30 s). The stand-down removes what was published: the report
-    says failed, the promotion finds nothing, and the next stand-down asks again. A note it cannot remove is reported
-    failed WITH its path, which is true."""
+@pytest.mark.parametrize("case", ["published", "replaced", "not-published"])
+async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(tmp_path: Path, case: str) -> None:
+    """A2 (M2-4), A4: ``write_entry`` publishes the document before git runs, so its failure can follow the
+    publication (a git timeout here, as the real call raises past its 30 s). The stand-down never removes a document:
+    a note the failed write published is reported failed WITH its path, the Captain's review lists it and the next
+    promotion would archive it; a document another writer put at the path stays exactly as it is; a write that failed
+    before publishing leaves nothing, and the next stand-down asks again."""
     records = _records(_data_dir(tmp_path))
     real_write = records.write_entry
     failures = [1]
 
     async def write_entry(**fields: Any) -> Any:
-        await real_write(**fields)  # published
         if failures:
             failures.pop()
+            if case == "not-published":
+                raise OSError("Ship's Records' disk is full")  # fails before anything is written
+            if case == "replaced":  # another writer's document is at the path when the git failure comes
+                fields = {**fields, "author": "Bones", "content": "Written by hand.", "extra_frontmatter": None}
+            await real_write(**fields)  # published
             raise subprocess.TimeoutExpired(["git", "add"], 30)
-        return fields["path"]
+        return await real_write(**fields)
 
     records.write_entry = write_entry  # type: ignore[method-assign]
 
@@ -241,26 +245,21 @@ async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(
         return _reply()
 
     path = exit_note_path(_SHIP, "surgeon")
-    if case == "cannot-remove":
-        real_unlink = Path.unlink
-
-        def unlink(self: Path, missing_ok: bool = False) -> None:
-            if self.name == "surgeon.md":
-                raise PermissionError(13, "the file is being used by another process", str(self))
-            real_unlink(self, missing_ok=missing_ok)
-
-        monkeypatch.setattr(Path, "unlink", unlink)
     report = await _run(records, (_member(),), ask)
 
-    if case == "removed":
+    if case == "not-published":
         assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, "")]
         assert await _notes(records) == []
-        assert (await plan_promotion(records, timeline_id=_SHIP)).records == ()  # nothing for the reset to archive
-        again = await _run(records, (_member(),), ask)
+        again = await _run(records, (_member(),), ask)  # nothing was left, so the billet is asked again
         assert [(turn.outcome, turn.path) for turn in again.turns] == [(TurnOutcome.WRITTEN, path)]
-    else:
-        assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
-        assert await _notes(records) == [path]  # it is there, and the report says where
+        return
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
+    note = await records.read_entry(path, "captain")
+    selected = [record.source_ref for record in (await plan_promotion(records, timeline_id=_SHIP)).records]
+    if case == "published":  # the agent's whole note, named in the report: reviewable, vetoable, archivable
+        assert selected == [path]
+    else:  # never removed and never rewritten
+        assert (note["frontmatter"]["author"], note["content"], selected) == ("Bones", "Written by hand.", [])
 
 
 # --- S3 to S6: the bounds -------------------------------------------------------------------------------------------
@@ -384,9 +383,13 @@ async def test_the_window_bounds_a_turn_its_own_bound_would_allow(tmp_path: Path
 
 @pytest.mark.parametrize("stage", ["first-read", "write"])
 async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path, stage: str) -> None:
-    """A2 (M2-2): the window starts before Ship's Records is first read and ends every write. A first read that hangs
-    refuses the stand-down with nobody asked; a write that hangs ends with the window and leaves nothing, and the turn
-    queued behind it for the write lock never starts a write.
+    """A2 (M2-2): the window starts before Ship's Records is first read and cuts off every write still awaiting. A
+    first read that hangs refuses the stand-down with nobody asked; a write that hangs ends with the window, and the
+    turn queued behind it for the write lock never starts a write.
+
+    A4 (round 2 M2-7): this proves the write lock's guard on the injected clock, not the real timer. On the real
+    clock the queued turn may begin a write in that last tick; the window then cuts it off and the report names any
+    note it left. S4d proves those guarantees on the real clock.
 
     A3 (2): the window runs on the stand-down's ``clock``. The hanging write moves it past the deadline when the
     window's bound cancels the write, so the queued turn finds the window closed in every run; on the real clock,
@@ -434,6 +437,91 @@ async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path
         assert len(writes) == 1  # the turn behind the lock never began a write
     assert time.monotonic() - started < 3.0
     assert await _notes(records) == []
+
+
+@pytest.mark.parametrize("case", ["the-check-outlasts-the-window", "a-write-returns-late", "cut-off-after-publishing"])
+async def test_on_the_real_clock_no_write_begins_after_the_window_and_every_note_left_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """A4 (round 2 M2-2, M2-4, M2-7): the real clock, with 200 ms of margin over Windows' 15.6 ms tick; no assertion
+    but the upper bound rests on an asyncio timer.
+
+    The check for a note written meanwhile is charged to the window: a check that outlasts it begins no write. A
+    write that returns after the window (synchronous Ship's Records I/O, register R22) left its note, so the report
+    says written and names it. A write the window cuts off after it published is timed out, and the report names
+    the note it left, which the next promotion would archive unless the Captain vetoes it."""
+    records = _records(_data_dir(tmp_path))
+    real_write, real_exists = records.write_entry, Path.exists
+    path = exit_note_path(_SHIP, "surgeon")
+    writes: list[str] = []
+
+    def exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+        if case == "the-check-outlasts-the-window" and self.name == "surgeon.md":
+            time.sleep(0.4)  # a slow filesystem: the 0.2 s window closes during the check
+        return real_exists(self, *args, **kwargs)
+
+    async def write_entry(**fields: Any) -> Any:
+        writes.append(fields["path"])
+        await real_write(**fields)  # published; with auto_commit off the store awaits nothing
+        if case == "a-write-returns-late":
+            time.sleep(0.4)  # synchronous I/O the window cannot pre-empt (R22)
+        elif case == "cut-off-after-publishing":
+            await asyncio.sleep(5)  # the commit hangs, and the window's bound cancels it
+        return fields["path"]
+
+    monkeypatch.setattr(Path, "exists", exists)
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    started = time.monotonic()
+    report = await _run(records, (_member(),), ask, window_seconds=0.2)
+    elapsed = time.monotonic() - started
+    monkeypatch.undo()
+
+    left = case != "the-check-outlasts-the-window"
+    outcome = TurnOutcome.WRITTEN if case == "a-write-returns-late" else TurnOutcome.TIMED_OUT
+    assert [(turn.outcome, turn.path) for turn in report.turns] == [(outcome, path if left else "")]
+    assert writes == ([path] if left else [])
+    assert await _notes(records) == ([path] if left else [])
+    assert len((await plan_promotion(records, timeline_id=_SHIP)).records) == int(left)
+    assert elapsed < 1.5
+
+
+async def test_a_cancelled_stand_down_keeps_every_note_it_published_and_leaves_nothing_running(
+    tmp_path: Path,
+) -> None:
+    """A4 (round 2 M2-3): the Captain's cancellation, or the vessel stopping, ends the stand-down without a report.
+    Nothing it published is removed: the note whose commit the cancellation cut short is whole (Ship's Records writes
+    the file before it awaits git), as every note written before it is, and the Captain's review lists it (register
+    R27). The cancellation propagates, and no turn outlives the call."""
+    records = _records(_data_dir(tmp_path))
+    real_write = records.write_entry
+    published = asyncio.Event()
+    path = exit_note_path(_SHIP, "surgeon")
+    before = asyncio.all_tasks()
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        published.set()
+        await asyncio.sleep(5)  # the commit is still running when the stand-down is cancelled
+        return fields["path"]
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    stand_down = asyncio.create_task(_run(records, (_member(),), ask))
+    await asyncio.wait_for(published.wait(), timeout=5.0)
+    stand_down.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stand_down
+
+    assert asyncio.all_tasks() - before == set()
+    assert await _notes(records) == [path]
+    assert [record.source_ref for record in (await plan_promotion(records, timeline_id=_SHIP)).records] == [path]
 
 
 async def test_no_more_than_the_bounded_number_of_turns_run_at_once(tmp_path: Path) -> None:
@@ -519,6 +607,36 @@ async def test_a_failed_episode_read_offers_none_and_the_note_cites_none(tmp_pat
     assert [turn.outcome for turn in report.turns] == [TurnOutcome.WRITTEN]
     note = await records.read_entry(report.turns[0].path, "captain")
     assert note["frontmatter"][EXIT_NOTE_KEY]["source_episode_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    ["e" * (EXIT_NOTE_EPISODE_ID_MAX_CHARS + 1), "ep\x00bad", "ep-\ud800", "ep\nbad", "ep---bad"],
+    ids=["long", "nul", "surrogate", "line-break", "delimiter"],
+)
+async def test_every_episode_offered_can_be_cited_by_a_note_the_promotion_archives(
+    tmp_path: Path, bad_id: str,
+) -> None:
+    """A4 (R2-F4, M2-5): an episode whose id the promotion's rule refuses is never offered or shown, so citing what
+    was offered never turns a written note into one the promotion withholds. Every offered id is cited, stored and
+    archived."""
+    records = _records(_data_dir(tmp_path))
+    prompts: list[str] = []
+
+    async def recall(member: CrewMember) -> list[Episode]:
+        bad = Episode(id=bad_id, timestamp=1_790_000_000.0, agent_ids=[member.sovereign_id], user_input="the bad one")
+        return [bad, *_episodes(2, member.sovereign_id)]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        prompts.append(prompt)
+        return _reply("e1, e2, e3")
+
+    report = await _run(records, (_member(),), ask, recall)
+
+    assert [turn.outcome for turn in report.turns] == [TurnOutcome.WRITTEN]
+    assert "the bad one" not in prompts[0]  # never shown
+    plan = await plan_promotion(records, timeline_id=_SHIP)
+    assert [record.source_episode_ids for record in plan.records] == [("ep-000", "ep-001")]
 
 
 @pytest.mark.parametrize("script", ["ascii", "cjk", "astral"])
@@ -659,11 +777,13 @@ async def test_one_billet_gets_one_turn_and_no_note_is_ever_replaced(tmp_path: P
         assert note["frontmatter"]["author"] == "Chapel" and "revision" not in note["frontmatter"]
 
 
+@pytest.mark.parametrize("fault", ["file", "directory"])
 async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
 ) -> None:
     """A2 (M1-F1 asked of the stand-down): a note already written that the OS refuses to read when the stand-down
-    lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead."""
+    lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead. A4
+    (M3-1): the same when the OS refuses to list the billet's directory, which the listing used to pass over."""
     records = _records(_data_dir(tmp_path))
     asked: list[str] = []
 
@@ -674,7 +794,10 @@ async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
     await _run(records, (_member(),), ask)
     asked.clear()
     path = exit_note_path(_SHIP, "surgeon")
-    _deny_reading(monkeypatch, records.repo_path / path)
+    if fault == "file":
+        _deny_reading(monkeypatch, records.repo_path / path)
+    else:
+        _deny_listing(monkeypatch, (records.repo_path / path).parent)
     with pytest.raises(StandDownRefused, match="Ship's Records could not be read"):
         await _run(records, (_member(),), ask)
     monkeypatch.undo()
@@ -728,8 +851,9 @@ async def test_an_agent_without_an_identity_is_not_asked(tmp_path: Path) -> None
     [
         ("callsign", "Chapel\n## Observation"), ("callsign", "C" * (EXIT_NOTE_CALLSIGN_MAX_CHARS + 1)),
         ("agent_type", "sur\x00geon"), ("did", "did:probos:x:\ud800"),
+        ("callsign", "Chapel---Two"),  # A4 (R2-F3): Ship's Records would read it back as "Chapel"
     ],
-    ids=["multiline-callsign", "long-callsign", "nul-agent-type", "surrogate-did"],
+    ids=["multiline-callsign", "long-callsign", "nul-agent-type", "surrogate-did", "delimiter-callsign"],
 )
 async def test_an_identity_that_cannot_stand_in_the_note_is_not_asked(tmp_path: Path, field: str, value: str) -> None:
     """A2 (M2-7): the promotion's own provenance check, before the turn. An identity whose note the promotion would
@@ -771,6 +895,32 @@ async def test_the_stand_down_refuses_when_nothing_could_be_kept_or_attributed(t
         await stand_down_vessel(runtime)
 
     assert received == []  # nobody was asked
+
+
+@pytest.mark.parametrize(
+    "bounds", [{"turn_seconds": 0.0}, {"window_seconds": -1.0}, {"concurrency": 0}], ids=["turn", "window", "concurrency"],
+)
+async def test_a_bound_that_is_not_positive_is_refused_before_anything_is_read(
+    tmp_path: Path, bounds: dict[str, Any],
+) -> None:
+    """A4 (round 2, M2's record): a bound that is not positive is a caller's error, refused before Ship's Records is
+    read and before anyone is asked. The wait bounds the test: a stand-down with no turn slot would never end."""
+    records = _records(_data_dir(tmp_path))
+    real_list, asked, listed = records.list_entries, [], []
+
+    async def list_entries(*args: Any, **kwargs: Any) -> Any:
+        listed.append(args)
+        return await real_list(*args, **kwargs)
+
+    records.list_entries = list_entries  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    with pytest.raises(ValueError, match="bounds must be positive"):
+        await asyncio.wait_for(_run(records, (_member(),), ask, **bounds), timeout=5.0)
+    assert (asked, listed) == ([], [])
 
 
 async def test_the_vessel_stand_down_sends_each_crew_agent_the_captains_message_through_the_intent_bus(
@@ -840,6 +990,16 @@ async def test_the_console_command_reports_each_turn_and_the_next_steps(tmp_path
     refused = StringIO()
     await commands_stand_down.cmd_stand_down(runtime, Console(file=refused, width=200), "")
     assert "Stand-down refused" in refused.getvalue()
+
+
+async def test_the_console_command_takes_no_arguments() -> None:
+    """A4 (round 2, M2's record): ``/stand-down`` takes no arguments; with one it prints its usage and touches nothing."""
+    runtime, output = MagicMock(), StringIO()
+
+    await commands_stand_down.cmd_stand_down(runtime, Console(file=output, width=200), "now")
+
+    assert "Usage: /stand-down  (no arguments)" in output.getvalue()
+    assert runtime.mock_calls == []  # nobody asked, nothing read
 
 
 def test_the_stand_down_never_writes_the_ship_s_archive() -> None:

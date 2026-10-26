@@ -1,7 +1,9 @@
 """Ship's Records — Git-backed instance knowledge store (AD-434)."""
 
 import asyncio
+import fnmatch
 import logging
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -162,6 +164,26 @@ def _jaccard_similarity(text_a: str, text_b: str) -> float:
     intersection = words_a & words_b
     union = words_a | words_b
     return len(intersection) / len(union)
+
+
+def _markdown_files_or_raise(search_path: Path) -> list[Path]:
+    """AD-1341 S4 (A4): every ``*.md`` path under ``search_path`` that ``rglob("*.md")`` finds, except that a directory
+    which exists but cannot be listed now raises its ``OSError`` instead of being passed over.
+
+    ``Path.rglob`` skips a directory it cannot list (a permission, a sharing violation), so a strict reader would take
+    the documents inside it for absent ones. A directory that does not exist, or is gone by the time it is listed,
+    lists nothing, as it does for ``rglob``. ``fnmatch`` matches the suffix with the platform's case rule, as ``rglob``
+    does, and a directory named ``*.md`` is found, as ``rglob`` finds it.
+    """
+    found: list[Path] = []
+
+    def _unlisted(error: OSError) -> None:
+        if not isinstance(error, (FileNotFoundError, NotADirectoryError)):  # gone, or never a directory: absent
+            raise error  # AD-1341 S4 (A4): a directory that exists but cannot be listed now is never "no documents"
+
+    for root, dirs, files in os.walk(search_path, onerror=_unlisted):
+        found.extend(Path(root, name) for name in (*dirs, *files) if fnmatch.fnmatch(name, "*.md"))
+    return found
 
 
 class RecordsStore:
@@ -977,11 +999,15 @@ class RecordsStore:
         exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
         AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
         that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
+        A4: ``strict=True`` also raises the ``OSError`` of a directory that exists but cannot be listed now, which
+        ``Path.rglob`` passes over (``_markdown_files_or_raise``); a directory that does not exist lists nothing.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         results = []
+        # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
+        found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
 
-        for md_file in sorted(search_path.rglob("*.md")):
+        for md_file in sorted(found):
             rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
             # Skip archived
             if rel_path.startswith("_archived/"):

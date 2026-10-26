@@ -9,8 +9,9 @@ agent answers it on its single-pass path, without its tool-calling loop, so noth
 
 No agent can hold a reset. Each turn is bounded by ``STAND_DOWN_TURN_SECONDS``, the whole stand-down by
 ``STAND_DOWN_WINDOW_SECONDS``, and at most ``STAND_DOWN_CONCURRENCY`` turns run at once. A turn that runs out of time
-is cancelled, and a turn that ends late, fails or is never reached writes nothing. ``probos reset`` neither waits for
-a stand-down nor needs one.
+is cancelled; a turn whose reply comes late, fails or is never reached writes nothing, and no write begins once the
+window has closed. Nothing the stand-down published is ever removed (A4): a write that fails or is cut off after
+publishing is reported with its path. ``probos reset`` neither waits for a stand-down nor needs one.
 
 A note is a Ship's Records document at ``exit_note_path(timeline, agent_type)``, written with the author's callsign,
 agent type and DID, the ids of the episodes it cites (only episodes the agent was shown), ``ship`` classification and
@@ -34,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Final
 from probos.dm_reply import DmReply
 from probos.knowledge.lessons import (
     DECLINE_REPLY,
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTE_TIMELINE_MAX_CHARS,
@@ -87,8 +89,10 @@ class CrewMember:
 class TurnOutcome(StrEnum):
     """What one agent's stand-down turn came to.
 
-    Only WRITTEN wrote a note. A failed write is removed again (A2, M2-4); a FAILED turn that carries a path is one
-    whose partly written note could not be removed, so the report names it and the Captain's review shows it.
+    WRITTEN wrote its note. The stand-down never removes a document (A4): a FAILED or TIMED_OUT turn that carries a
+    path is a write that published its note before it failed or was cut off, so the report names it, the Captain's
+    review lists it and the next promotion would archive it unless the Captain vetoes it. Every other outcome left
+    nothing at its path, or found a note there already (ALREADY_WRITTEN, DUPLICATE).
     """
 
     WRITTEN = "written"
@@ -141,7 +145,8 @@ def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
     """The handles an agent may cite (``e1`` -> an episode id) and the lines that show them (D4, D9).
 
     The agent's own most recent episodes, at most ``STAND_DOWN_EPISODES``, each by handle, date and opening words of
-    at most ``EPISODE_EXCERPT_CHARS`` bytes once JSON-escaped. An episode without an id, or seen twice, is skipped.
+    at most ``EPISODE_EXCERPT_CHARS`` bytes once JSON-escaped. An episode seen twice, or whose id the promotion's rule
+    refuses (``is_exit_note_text``: blank, over 128 characters, not one line, or holding ``---``; A4), is skipped.
     """
     offered: dict[str, str] = {}
     shown: list[str] = []
@@ -149,8 +154,8 @@ def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
         if len(offered) >= STAND_DOWN_EPISODES:
             break
         episode_id = getattr(episode, "id", None)
-        if type(episode_id) is not str or not episode_id.strip() or episode_id in offered.values():
-            continue
+        if not is_exit_note_text(episode_id, EXIT_NOTE_EPISODE_ID_MAX_CHARS) or episode_id in offered.values():
+            continue  # A4 (R2-F4): an id the promotion's rule refuses is never offered
         handle = f"e{len(offered) + 1}"
         offered[handle] = episode_id
         day, excerpt = _day(getattr(episode, "timestamp", 0.0)), _excerpt(getattr(episode, "user_input", ""))
@@ -224,7 +229,8 @@ async def run_stand_down(
     window includes the first read of Ship's Records and every write (A2, M2-2). Each member's turn has one deadline,
     ``turn_seconds`` after it begins and never past the window, that its recall and its ask both spend and that its
     reply must meet (A2, M2-5). One turn per billet: a second crew agent of an agent type, or a member listed twice, is
-    ``DUPLICATE`` and is not asked (A2, M2-3). A write that fails or runs out of time is removed again (A2, M2-4).
+    ``DUPLICATE`` and is not asked (A2, M2-3). No write begins once the window has closed, and nothing the stand-down
+    published is removed: a write that fails or is cut off after publishing is reported with its path (A4).
 
     Raises ``StandDownRefused`` when the timeline is missing, cannot stand in a note or name a records path, or when
     Ship's Records cannot be read in time (nobody is asked), and ``ValueError`` for a bound that is not positive.
@@ -258,14 +264,28 @@ async def run_stand_down(
     gate = asyncio.Semaphore(concurrency)
     write_lock = asyncio.Lock()  # one Ship's Records write at a time: the repository has one git index
 
+    def _left_at(path: str) -> str:
+        """A4: ``path`` when a document is there now, so the report names it; unknown counts as there."""
+        try:
+            return path if (records.repo_path / path).exists() else ""
+        except OSError:
+            return path
+
     async def _write(member: CrewMember, path: str, body: str, envelope: dict[str, Any]) -> TurnResult:
-        """Write one note inside the window, and leave nothing at ``path`` when the write fails (A2, M2-2, M2-4)."""
+        """Write one note: begun inside the window, never over a note, and reported as it is left (A2, A4).
+
+        The check for a note written since the stand-down began has no await, and its time is charged to the window
+        before a write may begin (A4, round 2 M2-2). The stand-down never removes a document (A4): a write that fails,
+        or that the window cuts off, may already have published its note (``write_entry`` writes the file before it
+        awaits git), so the report names the path and the Captain's review lists it. A write that returns after the
+        window (synchronous Ship's Records I/O, register R22) left its note: WRITTEN.
+        """
         async with write_lock:
-            remaining = deadline - clock()
+            if (records.repo_path / path).exists():  # A2 (M2-3), A4: written since the stand-down began; no await
+                return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
+            remaining = deadline - clock()  # A4: after the check, so its time is charged to the window
             if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock
                 return _turn_result(member, TurnOutcome.TIMED_OUT)
-            if await records.read_entry(path, "captain") is not None:  # A2 (M2-3): written since the stand-down began
-                return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
             written = records.write_entry(
                 author=member.callsign,
                 path=path,
@@ -278,19 +298,14 @@ async def run_stand_down(
                 extra_frontmatter={EXIT_NOTE_KEY: envelope},
             )
             try:
-                await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the write ends inside the window
+                await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the window cuts off an awaiting write
             except Exception as exc:  # log-and-degrade: TimeoutError included; the other notes are still written
                 outcome = TurnOutcome.TIMED_OUT if isinstance(exc, TimeoutError) else TurnOutcome.FAILED
                 logger.warning(
-                    "AD-1341 S4: %s's exit note could not be written; removing what was published", member.callsign,
-                    exc_info=True,
+                    "AD-1341 S4: %s's exit note write did not complete; what it published stays and is reported",
+                    member.callsign, exc_info=True,
                 )
-                try:  # A2 (M2-4): write_entry publishes the file before git runs, so a failure can follow it
-                    (records.repo_path / path).unlink(missing_ok=True)
-                except OSError:
-                    logger.error("AD-1341 S4: a partly written exit note remains at %s", path, exc_info=True)
-                    return _turn_result(member, TurnOutcome.FAILED, path)  # it may be promoted: the report names it
-                return _turn_result(member, outcome)
+                return _turn_result(member, outcome, _left_at(path))  # A4: never removed; the report names it
         return _turn_result(member, TurnOutcome.WRITTEN, path)
 
     async def _ask_and_write(member: CrewMember, path: str) -> TurnResult:
@@ -371,7 +386,7 @@ async def run_stand_down(
             )
             return _turn_result(member, TurnOutcome.FAILED)
 
-    turns = [asyncio.ensure_future(_turn(member)) for member in crew]
+    turns = [asyncio.create_task(_turn(member)) for member in crew]  # A4: held here and drained below
     try:
         await asyncio.gather(*turns)
     except BaseException:  # A2 (M2-6): the caller's cancellation, or a turn's own; no turn outlives the stand-down
