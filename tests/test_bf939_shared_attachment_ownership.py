@@ -319,11 +319,11 @@ async def test_an_owner_the_failed_scan_could_not_read_does_not_keep_the_attachm
 
 @pytest.mark.parametrize(
     ("case", "expected"),
-    [
-        ("agent", {"live": 1, "archive": 1, "citation_reads": 4}),  # the scan's read, then one per match (S3 D10)
-        ("episode-with-attachment", {"live": 1, "archive": 1, "citation_reads": 1}),
-        ("episode-without-attachment", {"live": 0, "archive": 0, "citation_reads": 1}),
-        ("refused", {"live": 0, "archive": 0, "citation_reads": 1}),
+    [  # A-4 (A4): explicit ids, so the node ids are the labels §6 and §10 use
+        pytest.param("agent", {"live": 1, "archive": 1, "citation_reads": 4}, id="agent"),  # the scan's read, then one per match (S3 D10)
+        pytest.param("episode-with-attachment", {"live": 1, "archive": 1, "citation_reads": 1}, id="episode-with-attachment"),
+        pytest.param("episode-without-attachment", {"live": 0, "archive": 0, "citation_reads": 1}, id="episode-without-attachment"),
+        pytest.param("refused", {"live": 0, "archive": 0, "citation_reads": 1}, id="refused"),
     ],
 )
 async def test_each_entry_point_scans_for_owners_at_most_once_and_keeps_the_per_episode_citation_check(
@@ -355,3 +355,211 @@ async def test_each_entry_point_scans_for_owners_at_most_once_and_keeps_the_per_
             assert {**calls, "citation_reads": store.citation_reads} == expected
     finally:
         await store.close()
+
+
+# --- T12, T13: overlapping erasures run one at a time (A-4, B1) -----------------------------------------------------
+
+_FIRST, _SECOND = "/srv/bf939/first.log", "/srv/bf939/second.log"
+_OVERLAP_WAIT_S = 1.0
+
+
+def _two_owners() -> tuple[Episode, Episode]:
+    """ep-000 (agent-a, under ``_FIRST``) and ep-001 (agent-b, under ``_SECOND``), both naming the shared attachment."""
+    first, second = _naming(0), _naming(1, agent="agent-b")
+    return (
+        dataclasses.replace(first, user_input=f"{first.user_input} under {_FIRST}"),
+        dataclasses.replace(second, user_input=f"{second.user_input} under {_SECOND}"),
+    )
+
+
+def _rendezvous_after_the_archive_scan(monkeypatch: pytest.MonkeyPatch, em: Any) -> list[int]:
+    """B1's interleaving, made deterministic, for two erasures on ``em``.
+
+    Each archive scan, after its last row, waits up to ``_OVERLAP_WAIT_S`` for the other erasure's scan to finish
+    too. Unserialized, both scans finish before either erasure decides (the race reviewer B reproduced); serialized,
+    the first waits alone, then decides, unlinks and evicts before the second scans. Returns, per finished scan, how
+    many other finished scans were still waiting then: ``[0, 0]`` means the two never overlapped.
+    """
+    inner = em.iter_archived_episodes
+    waiting = [0]
+    arrivals: list[int] = []
+    both = asyncio.Event()
+
+    async def rendezvous(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        async for episode in inner(*args, **kwargs):
+            yield episode
+        arrivals.append(waiting[0])
+        if len(arrivals) == 2:
+            both.set()
+        waiting[0] += 1
+        try:
+            with contextlib.suppress(TimeoutError):  # serialized: nothing else can reach its scan meanwhile
+                await asyncio.wait_for(both.wait(), _OVERLAP_WAIT_S)
+        finally:
+            waiting[0] -= 1
+
+    monkeypatch.setattr(em, "iter_archived_episodes", rendezvous)
+    return arrivals
+
+
+_OVERLAPS: dict[str, tuple[Any, Any]] = {
+    "two-episodes": (lambda manager: manager.forget_episode(_A), lambda manager: manager.forget_episode(_B)),
+    "two-resources": (
+        lambda manager: manager.forget_resource(_FIRST), lambda manager: manager.forget_resource(_SECOND),
+    ),
+    "agent-and-episode": (
+        lambda manager: manager.forget_agent_memory("agent-a"), lambda manager: manager.forget_episode(_B),
+    ),
+}
+
+
+@pytest.mark.parametrize("overlap", list(_OVERLAPS))
+async def test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every_owner_is_erased(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlap: str,
+) -> None:
+    """B1: two managers on one memory, as the route builds one per request, each erasing one of two owners."""
+    async with _vessel(tmp_path) as (rig, attachments):
+        await _stored(rig.em, list(_two_owners()))
+        arrivals = _rendezvous_after_the_archive_scan(monkeypatch, rig.em)
+        erase_first, erase_second = _OVERLAPS[overlap]
+
+        results = await asyncio.gather(
+            erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments)),
+        )
+
+        assert not await attachments.exists(_SHA)  # B1: no owner remains, so neither erasure may keep it
+        assert sorted(sha for result in results for sha in result.deleted_attachment_ids) == [_SHA]
+        assert sorted(sha for result in results for sha in result.retained_attachments) == [_SHA]  # kept once, then removed
+        assert _raw(rig.em, [_A, _B])["ids"] == []
+        assert arrivals == [0, 0]  # the two scans never overlapped
+
+
+class _AnyMemory:
+    """A stand-in key: the erasure lock needs only an object it can weakly reference."""
+
+
+def test_the_erasure_lock_is_one_per_memory_and_follows_the_running_loop() -> None:
+    # Imported here, so that on a tree without A-4 only this test fails, not the module's collection
+    from probos.knowledge.erasure import _one_erasure_at_a_time
+
+    memory, other = _AnyMemory(), _AnyMemory()
+
+    async def hold() -> None:
+        async with _one_erasure_at_a_time(memory):
+            pass
+
+    async def contend() -> Any:
+        lock = _one_erasure_at_a_time(memory)
+        assert _one_erasure_at_a_time(memory) is lock  # one lock per memory in a loop ...
+        assert _one_erasure_at_a_time(other) is not lock  # ... and each memory its own
+        async with lock:
+            waiter = asyncio.create_task(hold())
+            await asyncio.sleep(0)
+            assert not waiter.done()  # the waiter queues on the lock, which binds it to this loop
+        await waiter
+        return lock
+
+    first = asyncio.run(contend())
+    second = asyncio.run(contend())  # the first loop's lock would raise "bound to a different event loop" here
+
+    assert second is not first
+    assert isinstance(_one_erasure_at_a_time(None), contextlib.nullcontext)  # no memory, no lock
+
+
+# --- T14, T15: an owner recording that raises never shrinks an erasure (A-4, A1) -----------------------------------
+
+
+def _fail_recording_for(
+    monkeypatch: pytest.MonkeyPatch, manager: ErasureManager, fault: str, episode_id: str,
+) -> list[Any]:
+    """Make recording ``episode_id``'s owners raise: its ``_episode_to_dict`` (``serialization``) or its
+    ``_extract_attachment_ids`` (``extraction``). Test-only private access. Returns the id each call saw."""
+    name = "_episode_to_dict" if fault == "serialization" else "_extract_attachment_ids"
+    inner = getattr(manager, name)
+    seen: list[Any] = []
+
+    def failing(value: Any) -> Any:
+        if fault == "serialization":
+            seen_id = getattr(value, "id", None)
+        else:
+            seen_id = value.get("id") if isinstance(value, dict) else None
+        seen.append(seen_id)
+        if seen_id == episode_id:
+            raise ValueError(f"injected: recording the owners of {episode_id} failed")
+        return inner(value)
+
+    monkeypatch.setattr(manager, name, failing)
+    return seen
+
+
+# The resource cascade's own predicate serializes every episode, so its serialization fault ends the scan on the
+# base too (reviewer A): that case is not a regression and is not listed here.
+_RECORDING_FAULTS = [
+    pytest.param(target, fault, where, wired, id=f"{target}-{fault}-{where}-{'wired' if wired else 'unwired'}")
+    for target, fault in (("agent", "serialization"), ("agent", "extraction"), ("resource", "extraction"))
+    for where in ("live", "archived")
+    for wired in (True, False)
+]
+
+
+@pytest.mark.parametrize(("target", "fault", "where", "wired"), _RECORDING_FAULTS)
+async def test_an_owner_recording_failure_never_ends_a_cascades_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    target: str, fault: str, where: str, wired: bool,
+) -> None:
+    """A1: an unrelated episode whose owners cannot be recorded never hides a later match; unwired, nothing is
+    recorded, so the cascade is the base's."""
+    async with _vessel(tmp_path) as (rig, attachments):
+        episodes = [
+            _naming(0, resource=True),
+            _naming(1, agent="agent-b", attachment=False),
+            _naming(2, resource=True, attachment=False),
+        ]
+        await _stored(rig.em, episodes, archived=[_B, _C] if where == "archived" else [])
+        order = [episode.id async for episode in rig.em.iter_live_episodes()]
+        order += [episode.id async for episode in rig.em.iter_archived_episodes()]
+        assert order.index(_B) < order.index(_C)  # premise: the failing ep-001 is scanned before the match ep-002
+        manager = ErasureManager(rig.em, attachments if wired else None, None)
+        seen = _fail_recording_for(monkeypatch, manager, fault, _B)
+        caplog.set_level(logging.WARNING, logger="probos.knowledge.erasure")
+
+        if wired:
+            with pytest.raises(ErasureCascadeIncomplete) as incomplete:
+                await _forget(manager, target)
+            result = incomplete.value.result
+            assert result.deleted_episode_ids == [_A, _C]
+            assert incomplete.value.failures == {}
+            assert str(incomplete.value.enumeration_error) == f"injected: recording the owners of {_B} failed"
+            assert result.deleted_attachment_ids == [_SHA]  # only ep-000 names it
+            assert any("recording the attachment owners" in record.getMessage() for record in caplog.records)
+        else:
+            result = await _forget(manager, target)
+            assert result.deleted_episode_ids == [_A, _C]
+            assert _B not in seen  # no attachment store, so no owner was recorded
+
+        if where == "live":
+            assert _raw(rig.em, [_A, _B, _C])["ids"] == [_B]
+        else:
+            assert [episode.id async for episode in rig.em.iter_archived_episodes()] == [_B]
+
+
+async def test_an_owner_recording_failure_on_the_single_path_still_reaches_the_owners_after_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 on the single path: the scan goes on past the failure, so a later owner still keeps the attachment."""
+    async with _vessel(tmp_path) as (rig, attachments):
+        await _stored(rig.em, [_naming(0), _naming(1, agent="agent-b", attachment=False), _naming(2, agent="agent-c")])
+        order = [episode.id async for episode in rig.em.iter_live_episodes()]
+        assert order.index(_B) < order.index(_C)  # premise: the failing ep-001 is scanned before the owner ep-002
+        manager = _manager(rig, attachments)
+        _fail_recording_for(monkeypatch, manager, "extraction", _B)
+
+        with pytest.raises(ErasureCascadeIncomplete) as incomplete:
+            await manager.forget_episode(_A)
+
+        assert incomplete.value.result.retained_attachments == {_SHA: [_C]}
+        assert await attachments.exists(_SHA)
+        assert incomplete.value.failures == {}
+        assert str(incomplete.value.enumeration_error) == f"injected: recording the owners of {_B} failed"
+        assert incomplete.value.result.deleted_episode_ids == [_A]
+        assert sorted(_raw(rig.em, [_A, _B, _C])["ids"]) == [_B, _C]

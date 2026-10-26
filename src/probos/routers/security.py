@@ -109,6 +109,11 @@ async def request_erasure(
     episode outside this request still names is kept, and ``retained_attachment_ids`` maps it to those episodes:
     erase them too to remove it. Attachment references held outside episodic memory (thread pins, chat, work items,
     artifacts) are not checked, so an attachment only they hold is removed, as before.
+
+    A-4: overlapping erasure requests run one at a time, so a request can wait for one already running (a cascade
+    over 100k episodes takes about 15 s). An episode stored while an erasure runs is not covered by its owner check
+    (register G2). A 500 has no body (BF-905 D6): an erasure that raised after erasing, a cascade's or a single
+    episode's whose owner scan failed, reports neither what it erased nor what it kept (register G3).
     """
     archive = getattr(runtime, "archive_store", None)  # AD-1341 S3: consulted only when it is a real store
     citations = await _pending_exit_note_citations(runtime, archive)  # AD-1341 S4 (D14): once, before any erase
