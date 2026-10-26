@@ -28,7 +28,7 @@ class InfodynamicConfig(BaseModel):
 
 
 class GroundTruthConfig(BaseModel):
-    """Ground-truth task verification configuration (AD-528, AD-528b, AD-528c)."""
+    """Ground-truth task verification configuration (AD-528, AD-528b, AD-528c). The GroundTruthVerifier is built, not invoked: only the rejection gate calls verify, and nothing calls the gate (BF-927, #1657)."""
 
     enabled: bool = True
     threshold: float = Field(default=0.75, ge=0.0, le=1.0)

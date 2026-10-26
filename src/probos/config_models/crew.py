@@ -374,7 +374,7 @@ class FirewallConfig(BaseModel):
 
 
 class RiskTierConfig(BaseModel):
-    """Action Risk Tier configuration (AD-676)."""
+    """Action Risk Tier configuration (AD-676). The ActionRiskRegistry is built, not invoked: nothing calls check_authorization (BF-927, #1657)."""
 
     enabled: bool = True
     elevated_min_trust: float = 0.0

@@ -2951,7 +2951,7 @@ class AuthConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    """Security Team configuration (AD-455).
+    """Security Team configuration (AD-455). The RedTeamLead pool-health monitor runs; InputValidator, ThreatDetector and TrustIntegrityMonitor are built, not invoked, so nothing screens inbound input (BF-927, #1657).
 
     AD-711 (Wave 130): adds ``profile`` and ``permissions`` fields for
     claude-bootstrap-derived secure-by-default init wizard. ``profile`` is

@@ -193,7 +193,12 @@ async def vote_on_intent(
     policy_engine: TenantPolicyEngine,
     standard_quorum_voting: Callable[[], Awaitable[QuorumResult]],
 ) -> QuorumResult:
-    """Apply AD-753 permission gates before running standard quorum voting."""
+    """Apply AD-753 permission gates before running standard quorum voting.
+
+    BF-927 (#1657): built, not invoked. No production code calls this function, so
+    ``security.permission_mode`` and the tenant policy engine gate no intent today;
+    wiring it is #1659.
+    """
     scope = str(intent.params.get("scope") or "unspecified")
     reason = str(intent.params.get("reason") or "permission_check")
     ttl_sec_raw = intent.params.get("ttl_sec")

@@ -52,13 +52,13 @@ class CreativeExpressionConfig(BaseModel):
 
 
 class ClassificationGateConfig(BaseModel):
-    """Configuration for AD-530 v1 disclosure gate."""
+    """Configuration for AD-530 v1 disclosure gate. The ClassificationGate is built, not invoked: nothing calls check_disclosure (BF-927, #1657)."""
 
     enabled: bool = True
 
 
 class AutonomyBoundariesConfig(BaseModel):
-    """AD-511 v1: Agent Autonomy Boundaries (registry + observational detector)."""
+    """AD-511 v1: Agent Autonomy Boundaries (registry + observational detector). The detector is built, not invoked: nothing calls its scan, so it observes nothing (BF-927, #1657)."""
 
     enabled: bool = True
 
