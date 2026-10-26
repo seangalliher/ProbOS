@@ -252,11 +252,16 @@ class MessageStore:
         })
 
         # AD-654d: Emit mention TaskEvent for each @mentioned agent
+        # BF-925 (#1655): the ids resolved here are the ids the AD-453 block below links, so the
+        # TaskEvent and the Hebbian social link name the same agent even if the recipient is replaced
+        # during the dispatch's awaits; with no dispatcher there is neither a TaskEvent nor a link.
+        mention_targets: list[str] = []
         mentions = extract_mentions(body)
         if mentions and self._dispatcher and self._callsign_registry:
             for callsign in mentions:
                 resolved = self._callsign_registry.resolve(callsign)
                 if resolved and resolved.get("agent_id") and resolved["agent_id"] != author_id:
+                    mention_targets.append(resolved["agent_id"])
                     try:
                         from probos.activation import task_event_for_agent
                         from probos.types import Priority
@@ -436,11 +441,19 @@ class MessageStore:
                             "rel_type": "social",
                         })
                 # @mention connections
-                mentions = extract_mentions(body)
-                if mentions and hasattr(self, '_resolve_callsign_to_id'):
-                    for callsign in mentions:
-                        mid = self._resolve_callsign_to_id(callsign)
-                        if mid and mid != author_id:
+                # BF-925 (#1655): one link per agent the AD-654d block above dispatched a mention to, by
+                # the id it resolved for that dispatch (the CallsignRegistry attach_dispatcher binds, which
+                # reads the live AgentRegistry), whether or not the dispatch was accepted; resolving again
+                # here could name a replacement recycled in during the dispatch's awaits. The guarded
+                # _resolve_callsign_to_id never existed, so no mention was ever recorded. One reinforcement
+                # per mentioned agent per post (the thread author already has the reply link); a
+                # self-mention, an unknown callsign, an agent that is not alive or a post with no
+                # dispatcher attached records nothing.
+                if mention_targets:
+                    reinforced = {trow[0]} if trow and trow[0] and trow[0] != author_id else set()
+                    for mid in mention_targets:
+                        if mid not in reinforced:
+                            reinforced.add(mid)
                             self._hebbian_router.record_interaction(
                                 source=author_id, target=mid,
                                 success=True, rel_type=REL_SOCIAL,

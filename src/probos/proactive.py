@@ -2368,18 +2368,20 @@ class ProactiveCognitiveLoop:
                 subordinate_types = rt.ontology.get_subordinate_agent_types(
                     agent.agent_type
                 )
-                if subordinate_types and hasattr(rt, 'ward_room_service') and rt.ward_room_service:
+                # BF-925 (#1655): the live attributes. ``ward_room_service`` and ``agent_pool`` exist on no
+                # runtime, so no Chief ever saw these stats.
+                if subordinate_types and rt.ward_room is not None:
                     sub_stats: dict = {}
                     since = getattr(rt, '_start_time_wall', None)
+                    live = [a for a in rt.registry.all() if a.is_alive]
                     for sub_type in subordinate_types:
-                        sub_agent = rt.agent_pool.get(sub_type) if hasattr(rt, 'agent_pool') else None
+                        sub_agent = next((a for a in live if a.agent_type == sub_type), None)
                         if sub_agent:
-                            sub_id = getattr(sub_agent, 'sovereign_id', None) or sub_agent.id
-                            stats = await rt.ward_room_service.get_agent_comm_stats(
-                                sub_id, since=since
-                            )
+                            # BF-925: posts and credibility carry the author's agent.id (every Ward Room
+                            # write passes it), so the sovereign id read before counted no posts.
+                            stats = await rt.ward_room.get_agent_comm_stats(sub_agent.id, since=since)
                             if stats.get("posts_total", 0) >= 3:
-                                callsign = getattr(sub_agent, 'callsign', sub_type)
+                                callsign = sub_agent.callsign or sub_type
                                 sub_stats[callsign] = stats
                     if sub_stats:
                         context["subordinate_stats"] = sub_stats
