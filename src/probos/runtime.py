@@ -3411,6 +3411,19 @@ class ProbOSRuntime:
                     exc_info=True,
                 )
 
+        # AD-1341 S2 (#1569): the Oracle labels a Ship's Archive entry this crew archived as its own record and every
+        # other entry as inherited, so it needs this crew's timeline: the instance id the ontology loaded. A failure
+        # degrades to "every entry inherited", never to an inherited entry labelled as this crew's (D5).
+        if self._oracle_service is not None and self.ontology is not None:
+            try:
+                self._oracle_service.attach_current_timeline(self.ontology.get_vessel_identity().instance_id)
+            except Exception:
+                logger.warning(
+                    "AD-1341 S2: failed to attach this crew's timeline to OracleService; every Ship's Archive "
+                    "entry reads as inherited, including any this crew archived",
+                    exc_info=True,
+                )
+
         # AD-1347 S1 (#1627): the Ship's Computer service that owns agent-created work. Built only when
         # agent_work.enabled, here, where the work store, the tool registry, the stop gate and the ontology all
         # exist; while off the attribute stays None and workforce.db gains no table. Nothing calls it in S1.

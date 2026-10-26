@@ -14,6 +14,13 @@ later crew reads every entry) and when it was archived. ``generations`` records
 each crew generation's close at a reset of tier 2 or above, including a
 promotion the Captain skipped and why.
 
+AD-1341 S2: ``generations`` also numbers the crews. A timeline's generation is
+its first close's place among the closes attributed to a timeline, and every read
+fills an entry's ``generation`` from it. ``inheritance_label`` is what an agent
+reads first about an archived entry: inherited from the crew of generation N, or
+from an earlier crew, or archived by this crew; never its own memory. The Oracle's
+archive tier (``OracleService._query_archive``) is the one place that attaches it.
+
 Schema: ``PRAGMA user_version`` 1. A version-0 archive (AD-524) is migrated in
 place by adding columns; any other version is refused. Every connection sets
 ``PRAGMA secure_delete=ON`` and verifies it, so an erased row's bytes are
@@ -59,6 +66,9 @@ class ArchiveEntry:
     classification: str = ""
     author_did: str = ""
     source_episode_ids: tuple[str, ...] = ()
+    # AD-1341 S2 (D3): the crew generation that archived it: 1 for the first crew whose close ``generations``
+    # records. None when its timeline has no recorded close (an AD-524 entry, or a close that failed).
+    generation: int | None = None
 
 
 #: AD-1341: the schema this store writes. 0 is AD-524's, with no provenance.
@@ -279,6 +289,58 @@ _GENERATION_SQL = (
 # one raises OverflowError, so the lookup and the erasure treat it as a missing id.
 _SQLITE_MAX_ROWID = 2**63 - 1
 
+# AD-1341 S2 (D3): the generation order. A timeline's generation is its first close's place among the closes
+# attributed to a timeline: a skip with no instance id numbers none, and a second close of one timeline does not
+# renumber it. AUTOINCREMENT ids only grow, so the first close's id orders the crews. Which timelines are blank is
+# decided in Python (``_generation_numbers``, A2): SQLite's one-argument ``trim`` strips spaces only.
+_GENERATION_ORDER_SQL = (
+    "SELECT timeline_id FROM generations "
+    "GROUP BY timeline_id ORDER BY min(id)"
+)
+
+#: AD-1341 S2 (D4, D5): what an agent reads first about an entry its own crew archived.
+LABEL_THIS_CREW = "[Archived by this crew: a record, not a memory]"
+
+#: AD-1341 S2 (D4): what an agent reads first about an inherited entry whose crew generation is not recorded.
+LABEL_EARLIER_CREW = "[Inherited from an earlier crew: not your own memory]"
+
+#: AD-1341 S2 (A2, D12): what an agent reads before text in which a consumer may have cut or summarised away an
+#: archive label: after AD-1148's elision marker, and at the head of an AD-547 compaction summary.
+ARCHIVE_ORIGIN_NOTICE = (
+    "[Ship's Archive: some text here may come from archived entries whose labels were cut or summarised away: "
+    "archived knowledge, not your own memory]"
+)
+
+# AD-1341 S2 (A2): text that holds any of these holds Ship's Archive knowledge. Every inherited label opens with the
+# first; the notice is here so that a second compaction keeps it.
+_ARCHIVE_ORIGINS = ("[Inherited from ", LABEL_THIS_CREW, ARCHIVE_ORIGIN_NOTICE)
+
+
+def holds_archive_label(text: str) -> bool:
+    """AD-1341 S2 (A2, D12): whether ``text`` holds an inheritance label or ``ARCHIVE_ORIGIN_NOTICE``.
+
+    A consumer that cuts a tool result's middle or summarises messages asks this of the text it cuts or summarises
+    and, when it is true, puts ``ARCHIVE_ORIGIN_NOTICE`` before what it keeps. A false positive (a file that quotes a
+    label) only adds the notice: the safe direction.
+    """
+    return any(origin in text for origin in _ARCHIVE_ORIGINS)
+
+
+def inheritance_label(entry: ArchiveEntry, *, current_timeline: str) -> str:
+    """AD-1341 S2 (#1569): the label an agent reads before an archived entry (D4).
+
+    The Westworld Principle (agents know what they are) and the minority-report principle (inherited knowledge is
+    never presented as an agent's own memory): every label says where the entry came from and that it is not the
+    reader's memory. An entry of ``current_timeline`` (the reading crew's own instance id) was archived by this
+    crew, whatever its generation (D5); any other entry is inherited, from the crew of its generation when one is
+    recorded and from an earlier crew otherwise. An empty ``current_timeline`` matches nothing.
+    """
+    if current_timeline and entry.timeline_id == current_timeline:
+        return LABEL_THIS_CREW
+    if type(entry.generation) is int and entry.generation >= 1:
+        return f"[Inherited from the crew of generation {entry.generation}: not your own memory]"
+    return LABEL_EARLIER_CREW
+
 
 def _valid_reason(reason: object) -> str:
     if type(reason) is not str or not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
@@ -463,7 +525,9 @@ class ArchiveStore:
             return None
         cursor = await self._db.execute(f"SELECT {_ENTRY_COLUMNS} FROM archive WHERE id = ?", (entry_id,))
         row = await cursor.fetchone()
-        return self._row_to_entry(row) if row else None
+        if not row:
+            return None
+        return self._row_to_entry(row, await self._generation_numbers())
 
     async def search(
         self,
@@ -496,8 +560,9 @@ class ArchiveStore:
 
         cursor = await self._db.execute(sql, params)
         rows = await cursor.fetchall()
+        generations = await self._generation_numbers()  # AD-1341 S2
 
-        return [self._row_to_entry(row) for row in rows]
+        return [self._row_to_entry(row, generations) for row in rows]
 
     async def get_recent(self, limit: int = 20) -> list[ArchiveEntry]:
         """Get the most recent archive entries (no filter)."""
@@ -509,7 +574,8 @@ class ArchiveStore:
             (limit,),
         )
         rows = await cursor.fetchall()
-        return [self._row_to_entry(row) for row in rows]
+        generations = await self._generation_numbers()  # AD-1341 S2
+        return [self._row_to_entry(row, generations) for row in rows]
 
     async def count(self) -> int:
         """Return total number of archive entries."""
@@ -519,8 +585,17 @@ class ArchiveStore:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def _generation_numbers(self) -> dict[str, int]:
+        """AD-1341 S2: each timeline's generation, from ``generations`` (D3). A read, so it takes no lock (D16)."""
+        cursor = await self._db.execute(_GENERATION_ORDER_SQL)
+        rows = await cursor.fetchall()
+        # A close whose timeline is blank by ``str.strip`` names no crew, so it numbers none (A2: SQLite's ``trim``
+        # strips spaces only, so the filter is here, not in the SQL).
+        crews = [row[0] for row in rows if row[0].strip()]
+        return {timeline: number for number, timeline in enumerate(crews, start=1)}
+
     @staticmethod
-    def _row_to_entry(row: Any) -> ArchiveEntry:
+    def _row_to_entry(row: Any, generations: dict[str, int]) -> ArchiveEntry:
         return ArchiveEntry(
             id=row[0],
             timeline_id=row[1],
@@ -537,4 +612,5 @@ class ArchiveStore:
             classification=row[12],
             author_did=row[13],
             source_episode_ids=tuple(json.loads(row[14])) if row[14] else (),
+            generation=generations.get(row[1]),
         )

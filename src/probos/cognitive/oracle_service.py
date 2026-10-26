@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from probos.cognitive.episodic import reciprocal_rank_fusion  # AD-979c / BF-684
+from probos.knowledge.archive_store import LABEL_THIS_CREW, inheritance_label  # AD-1341 S2
 from probos.types import (  # AD-462f (types.py has no reverse dep on oracle_service)
     MemoryRef,
     dominant_match_reason,  # AD-988
@@ -266,6 +267,18 @@ def _extract_entity_tokens(text: str) -> list[str]:
     return out
 
 
+def _expansion_text(result: OracleResult) -> str:
+    """AD-1341 S2 (A2): the text AD-688's graph expansion reads tokens from.
+
+    An archive result's first line is its inheritance label (``_query_archive``), there for the reading agent and not
+    knowledge about the entry. Expansion reads the entry without it, so an archive parent's tokens, lookups and edges
+    are those of the archived text alone.
+    """
+    if result.source_tier == "archive":
+        return result.content.partition("\n")[2]
+    return result.content
+
+
 def _record_graph_hit(
     scored: dict[str, tuple[float, Any, float, str, str]],
     edge: Any,
@@ -370,6 +383,9 @@ class OracleService:
         # which is the fail-closed state — see _resolve_records_reader.
         self._reader_identity_resolver = reader_identity_resolver
         self._callsign_registry: Any = None  # BF-264 (callsign→agent_type expansion)
+        # AD-1341 S2 (D5): this crew's timeline (the ship's instance id), so an archive entry this crew archived is
+        # labelled as its own record and every other entry as inherited. "" until the runtime attaches it.
+        self._current_timeline = ""
         # AD-462f: Instance-scoped LRU for resolve_ref(). Bounded by
         # _MEMORY_REF_CACHE_SIZE; OrderedDict eviction (oldest first).
         self._ref_cache: OrderedDict[str, OracleResult] = OrderedDict()
@@ -432,6 +448,17 @@ class OracleService:
         disclosed.
         """
         self._reader_identity_resolver = resolver
+
+    def attach_current_timeline(self, timeline_id: str) -> None:
+        """AD-1341 S2: Late-bind this crew's timeline, the ship's instance id (``ontology/instance_id``).
+
+        Used by the runtime because the ontology, which loads the instance id, is built after the cognitive phase
+        that builds OracleService. Idempotent — last write wins. Until it is attached no archive entry is labelled
+        as this crew's own: every entry reads as inherited, the safe direction (D5).
+        """
+        if type(timeline_id) is not str:
+            raise TypeError("AD-1341 S2: the current timeline is the ship's instance id, a string")
+        self._current_timeline = timeline_id.strip()
 
     def _resolve_records_reader(self, agent_id: str) -> tuple[str, str]:
         """BF-679: map the calling ``agent_id`` onto a Ship's Records reader.
@@ -1134,16 +1161,23 @@ class OracleService:
     async def _query_archive(
         self, query_text: str, *, k: int = 5,
     ) -> list[OracleResult]:
-        """Query the Ship's Archive for cross-reset knowledge."""
+        """Query the Ship's Archive for cross-reset knowledge (AD-524).
+
+        AD-1341 S2 (#1569): every result's content opens with its inheritance label (``inheritance_label``), so
+        each renderer of an Oracle result, and every cap that keeps the head of the text, hands the agent the label
+        before the archived knowledge. This is the one path from the archive to an agent (D2). The score and the
+        provenance are unchanged (D7).
+        """
         entries = await self._archive_store.search(query_text, limit=k)
         results: list[OracleResult] = []
         for entry in entries:
             age_days = max(1, (time.time() - entry.archived_at) / 86400)
             score = min(1.0, 1.0 / (1.0 + age_days * 0.01))
+            label = inheritance_label(entry, current_timeline=self._current_timeline)
 
             results.append(OracleResult(
                 source_tier="archive",
-                content=f"[{entry.category}] {entry.title}\n{entry.content}",
+                content=f"{label}\n[{entry.category}] {entry.title}\n{entry.content}",
                 score=score,
                 metadata={
                     "archive_id": entry.id,
@@ -1151,6 +1185,8 @@ class OracleService:
                     "category": entry.category,
                     "author": entry.author_callsign or entry.author_agent_type,
                     "archived_at": entry.archived_at,
+                    "generation": entry.generation,
+                    "inherited": label != LABEL_THIS_CREW,
                 },
                 provenance=f"Archive/{entry.category} (timeline {entry.timeline_id[:8]}...)",
             ))
@@ -1471,7 +1507,8 @@ class OracleService:
         expansion: list[OracleResult] = []
 
         for parent in parents:
-            tokens = _extract_entity_tokens(parent.content)
+            # AD-1341 S2 (A2): an archive parent's tokens come from its text, not from its label's words.
+            tokens = _extract_entity_tokens(_expansion_text(parent))
             if not tokens:
                 continue
             per_parent_emitted = 0

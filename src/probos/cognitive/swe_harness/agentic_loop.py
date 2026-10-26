@@ -65,6 +65,7 @@ from probos.cognitive.swe_harness.loop_tier_steps import (
 )
 from probos.fault_detection import ToolFaultCapture
 from probos.fault_report import canonical_tool_id, error_signature
+from probos.knowledge.archive_store import ARCHIVE_ORIGIN_NOTICE, holds_archive_label  # AD-1341 S2 (A2)
 from probos.repository_instructions import (
     InstructionObservation,
     append_repository_instructions,
@@ -185,6 +186,15 @@ _ELISION_MARKER = (
 )
 
 
+def _archive_origin_notice(text: str) -> str:
+    """AD-1341 S2 (A2, A3): the origin notice ``truncate_tool_output`` adds after its marker for ``text``, or ``""``.
+
+    The one expression for it in this module: the bound adds it, and the AD-1151 durable split
+    (``_durable_head_tail``) reserves its length, so both are sized from the same budget.
+    """
+    return f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(text) else ""
+
+
 def truncate_tool_output(
     text: str,
     *,
@@ -212,10 +222,15 @@ def truncate_tool_output(
     if max_chars <= 0 or len(text) <= max_chars:
         return text
 
+    # AD-1341 S2 (A2): a Ship's Archive label in the text means the tail slice may begin inside an archived entry
+    # whose label was elided. The tail always follows the marker, so the origin notice placed after the marker
+    # introduces every such fragment. It is part of the marker and sized with it, so the cap still holds.
+    notice = _archive_origin_notice(text)
+
     # Size the marker against the largest omission this call can report, so the
     # marker rendered with the real (smaller or equal) count is always within
     # the budget reserved for it here.
-    sizing_marker = _ELISION_MARKER.format(omitted=len(text))
+    sizing_marker = _ELISION_MARKER.format(omitted=len(text)) + notice
     content_budget = max_chars - len(sizing_marker)
     if content_budget <= 0:
         return sizing_marker[:max_chars]
@@ -232,6 +247,7 @@ def truncate_tool_output(
     return (
         text[:head]
         + _ELISION_MARKER.format(omitted=omitted)
+        + notice
         + text[len(text) - tail :]
     )
 
@@ -318,7 +334,9 @@ def resolve_tool_trace_bounds(cfg: Any) -> dict[str, int]:
     return bounds
 
 
-def _durable_head_tail(output_max_chars: int, original_chars: int) -> tuple[int, int]:
+def _durable_head_tail(
+    output_max_chars: int, original_chars: int, *, notice_chars: int = 0,
+) -> tuple[int, int]:
     """AD-1151 / DD-5: split the DURABLE cap into head and tail slices.
 
     ``truncate_tool_output`` treats ``max_chars`` as a keep-whole *trigger*, not
@@ -333,8 +351,19 @@ def _durable_head_tail(output_max_chars: int, original_chars: int) -> tuple[int,
     just wider. Returns ``(0, 0)`` when the cap cannot even hold the elision
     marker; ``truncate_tool_output`` renders as much of the marker as fits and
     never consults the slices in that case.
+
+    AD-1341 S2 (A3): ``notice_chars`` is the length of the archive origin notice
+    ``truncate_tool_output`` adds after its marker for the same text
+    (``len(_archive_origin_notice(text))``). Reserving it here makes head + tail
+    equal that function's content budget, so it never rescales these slices a
+    second time. When the context head is exactly twice the context tail (the
+    default 4000 / 2000), these slices therefore contain the model's: the same
+    slices when the model's were scaled to an equal cap, at least as wide
+    otherwise. Any other configured split can leave the durable head or tail
+    tighter than the model's, with or without a notice, because the ratio here
+    is fixed and never reads the context split (a pre-existing AD-1151 gap).
     """
-    budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars))
+    budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars)) - notice_chars
     if budget <= 0:
         return 0, 0
     head = budget * 2 // 3
@@ -544,7 +573,13 @@ def build_tool_trace_payload(
             # dropped" forbids.
             raw = tcr.output
             original = raw if isinstance(raw, str) else str(raw) if raw is not None else ""
-            head_chars, tail_chars = _durable_head_tail(output_max_chars, len(original))
+            # AD-1341 S2 (A3): reserve the origin notice truncate_tool_output adds for this text, so the durable
+            # slices fill its content budget exactly and are not rounded down a second time.
+            head_chars, tail_chars = _durable_head_tail(
+                output_max_chars,
+                len(original),
+                notice_chars=len(_archive_origin_notice(original)),
+            )
             bounded = truncate_tool_output(
                 original,
                 max_chars=output_max_chars,
