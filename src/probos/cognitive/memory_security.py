@@ -7,8 +7,9 @@ Three defense layers per "AI Meets Brain" survey Section 8:
   - Privacy-based: MemoryAccessPolicy enum + DP aggregation
 
 v1 is OBSERVATIONAL by default. Opt-in enforcement via MemorySecurityConfig
-flags (enforce_recall / enforce_provenance / enforce_store / enforce_leak) —
-all default-False per the AD-695 + W82 + W88 + W91 default-False precedent.
+flags (enforce_recall / enforce_provenance / enforce_store) — all default-False
+per the AD-695 + W82 + W88 + W91 default-False precedent. The leak guard has no
+enforce flag (BF-926, #1656): it only emits MEMORY_LEAK_SUSPECTED.
 """
 from __future__ import annotations
 

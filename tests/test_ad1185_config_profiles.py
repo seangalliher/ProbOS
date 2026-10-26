@@ -665,6 +665,16 @@ def test_the_two_profile_directories_are_distinct() -> None:
 
 
 def test_a_conflicting_profile_raises_at_parse(tmp_path: Path) -> None:
+    # BF-926 (#1656): the committed manifest's only conflict edge named
+    # security.memory.enforce_leak_guard, which is deleted (it enforced nothing). The parse-time
+    # conflict check is still proven, on a one-row fixture manifest joining two real booleans,
+    # read through load_profile's own manifest_path.
+    manifest = tmp_path / "manifest" / "config-profiles.yaml"
+    manifest.parent.mkdir()
+    manifest.write_text(
+        yaml.safe_dump({"flags": [{"path": "federation.enabled", "conflicts_with": ["federation.tls.enabled"]}]}),
+        encoding="utf-8",
+    )
     _write_profile(
         tmp_path,
         "probe",
@@ -675,14 +685,11 @@ def test_a_conflicting_profile_raises_at_parse(tmp_path: Path) -> None:
                 "description": "deliberate conflict",
                 "arm": "experiment",
             },
-            "overrides": {
-                "social_verification": {"expose_episode_content": True},
-                "security": {"memory": {"enforce_leak_guard": True}},
-            },
+            "overrides": {"federation": {"enabled": True, "tls": {"enabled": True}}},
         },
     )
     with pytest.raises(ProfileConflictError) as excinfo:
-        load_profile("probe", profile_dir=tmp_path)
+        load_profile("probe", profile_dir=tmp_path, manifest_path=manifest)
     assert "conflicts with" in str(excinfo.value)
 
 
@@ -979,9 +986,11 @@ def test_an_unexplained_conflict_fails(tmp_path: Path) -> None:
     before = DEFAULT_MANIFEST_PATH.read_bytes()
 
     def mutate(document: dict[str, Any]) -> None:
-        for row in document["flags"]:
-            if row.get("conflicts_with"):
-                row.pop("conflict_rationale", None)
+        # BF-926 (#1656): the committed manifest declares no conflict any more, so the mutation
+        # adds one with no rationale; the check must still refuse an unexplained conflict.
+        row = document["flags"][0]
+        row["conflicts_with"] = ["federation.tls.enabled"]
+        row.pop("conflict_rationale", None)
 
     try:
         errors = _check_with(_mutate_manifest(tmp_path, mutate)).errors

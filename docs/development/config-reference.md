@@ -153,7 +153,7 @@ Cognitive layer configuration.
 | `working_memory_token_budget` | `int` | `4000` | — |  |
 | `decomposition_timeout_seconds` | `float` | `30.0` | — |  |
 | `dag_execution_timeout_seconds` | `float` | `60.0` | — |  |
-| `use_consensus_for_writes` | `bool` | `True` | — |  |
+| `use_consensus_for_writes` | `bool` | `True` | — | Inert: no production code reads this field to act on it (BF-926, #1656). Whether a write needs consensus is decided per intent (IntentDescriptor.requires_consensus); a candidate for #1659. |
 | `max_concurrent_tasks` | `int` | `8` | — |  |
 | `deferred_capability_threshold` | `int` | `0` | — |  |
 | `attention_decay_rate` | `float` | `0.95` | — |  |
@@ -356,11 +356,11 @@ Multi-node federation configuration.
 | `forward_timeout_ms` | `int` | `5000` | — |  |
 | `gossip_interval_seconds` | `float` | `10.0` | — |  |
 | `validate_remote_results` | `bool` | `True` | — |  |
-| `memory_policy` | `str` | `'clean_room'` | — |  |
-| `memory_policy_selective_tags` | `list[str]` | `[]` | — |  |
-| `min_peer_trust_score` | `float` | `0.0` | — |  |
+| `memory_policy` | `str` | `'clean_room'` | — | Inert: no production code reads this field to act on it (BF-926, #1656). No transfer path applies it (apply_memory_policy has no caller); the validator still rejects an unknown policy. A candidate for #1659. |
+| `memory_policy_selective_tags` | `list[str]` | `[]` | — | Inert: no production code reads this field to act on it (BF-926, #1656); it belongs to memory_policy, which nothing applies. A candidate for #1659. |
+| `min_peer_trust_score` | `float` | `0.0` | — | Inert: no production code reads this field to act on it (BF-926, #1656). This floor ranks or refuses no peer; a candidate for #1659. |
 | `memory_access_policy` | `str` | `'shared_trust'` | — |  |
-| `shared_trust_min_score` | `float` | `0.5` | ≥ 0.0, ≤ 1.0 |  |
+| `shared_trust_min_score` | `float` | `0.5` | ≥ 0.0, ≤ 1.0 | Inert: no production code reads this field to act on it (BF-926, #1656). The shared_trust policy filters by episode classification only, with no trust floor; a candidate for #1659. |
 | `dp_min_cohort_size` | `int` | `3` | ≥ 1 |  |
 | `identity_keys_enabled` | `bool` | `False` | — |  |
 | `identity_key_store` | `Literal['keyring', 'plaintext_dev']` | `'keyring'` | — |  |
@@ -1018,7 +1018,7 @@ AD-529: Communication Contagion Firewall configuration.
 
 ## `security`
 
-Security Team configuration (AD-455).
+Security Team configuration (AD-455). The RedTeamLead pool-health monitor runs; InputValidator, ThreatDetector and TrustIntegrityMonitor are built, not invoked, so nothing screens inbound input (BF-927, #1657).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -1031,8 +1031,8 @@ Security Team configuration (AD-455).
 | `burst_threshold` | `int` | `20` | ≥ 2 |  |
 | `campaign_interval_seconds` | `float` | `3600.0` | ≥ 60.0 |  |
 | `profile` | `Literal['strict', 'relaxed']` | `'strict'` | — |  |
-| `permission_mode` | `Literal['manual', 'autopilot']` | `'manual'` | — |  |
-| `policy_engine_class` | `str` | `'NullPolicyEngine'` | — |  |
+| `permission_mode` | `Literal['manual', 'autopilot']` | `'manual'` | — | Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). The AD-753 gate (vote_on_intent) has no caller, so no mode gates any intent; a candidate for #1659. |
+| `policy_engine_class` | `str` | `'NullPolicyEngine'` | — | Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). No engine is loaded from it and the AD-753 gate has no caller; a candidate for #1659. |
 
 ## `permissions`
 
@@ -1388,7 +1388,7 @@ Chain-of-command order configuration (AD-440).
 
 ## `validation_framework`
 
-Validation framework configuration (AD-451).
+Validation framework configuration (AD-451). The ReconciliationEscalator is built, not invoked: nothing calls reconcile (BF-927, #1657).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -1482,7 +1482,7 @@ Security infrastructure configuration (AD-456 + AD-456b).
 
 ## `ground_truth`
 
-Ground-truth task verification configuration (AD-528, AD-528b, AD-528c).
+Ground-truth task verification configuration (AD-528, AD-528b, AD-528c). The GroundTruthVerifier is built, not invoked: only the rejection gate calls verify, and nothing calls the gate (BF-927, #1657).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2448,23 +2448,23 @@ Anomaly window detection configuration (AD-673).
 
 ## `working_memory`
 
-AD-573: Unified agent working memory configuration.
+AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours is read; AgentWorkingMemory uses its own defaults for everything else.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
-| `token_budget` | `int` | `3000` | — |  |
-| `max_recent_actions` | `int` | `10` | — |  |
-| `max_recent_observations` | `int` | `5` | — |  |
-| `max_recent_conversations` | `int` | `5` | — |  |
-| `max_events` | `int` | `10` | — |  |
-| `proactive_budget` | `int` | `1500` | — |  |
-| `stale_threshold_hours` | `float` | `24.0` | — |  |
-| `conclusion_ttl_seconds` | `float` | `1800.0` | — |  |
-| `max_conclusions` | `int` | `20` | — |  |
-| `duty_budget` | `int` | `600` | — |  |
-| `social_budget` | `int` | `800` | — |  |
-| `ship_budget` | `int` | `800` | — |  |
-| `engagement_budget` | `int` | `800` | — |  |
+| `token_budget` | `int` | `3000` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `max_recent_actions` | `int` | `10` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `max_recent_observations` | `int` | `5` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `max_recent_conversations` | `int` | `5` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `max_events` | `int` | `10` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `proactive_budget` | `int` | `1500` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `stale_threshold_hours` | `float` | `24.0` | — | Read at warm boot: restored working-memory entries older than this are dropped. |
+| `conclusion_ttl_seconds` | `float` | `1800.0` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `max_conclusions` | `int` | `20` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `duty_budget` | `int` | `600` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `social_budget` | `int` | `800` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `ship_budget` | `int` | `800` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `engagement_budget` | `int` | `800` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
 
 ## `predictive_branching`
 
@@ -2499,7 +2499,7 @@ AD-482 v1: Self-improvement pipeline (proposal -> approval -> QA -> evolution ->
 
 ## `memory_budget`
 
-AD-573: Memory budget accounting across recall tiers.
+AD-573: Memory budget accounting across recall tiers. Inert: no production code reads this section to act on it (BF-926, #1656): nothing passes it to CognitiveAgent's memory_budget_config, so enabled and the budgets change nothing (#1324).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2512,7 +2512,7 @@ AD-573: Memory budget accounting across recall tiers.
 
 ## `metabolism`
 
-AD-670: Working memory metabolism — active lifecycle management.
+AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section to act on it (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2527,7 +2527,7 @@ AD-670: Working memory metabolism — active lifecycle management.
 
 ## `pinned_knowledge`
 
-AD-579a: Pinned knowledge buffer configuration.
+AD-579a: Pinned knowledge buffer configuration. Inert: no production code reads this section to act on it (BF-926, #1656): nothing passes it to AgentWorkingMemory's pinned_config, so no pinned-knowledge buffer is built (#1324).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2538,7 +2538,7 @@ AD-579a: Pinned knowledge buffer configuration.
 
 ## `temporal_validity`
 
-AD-579b: Temporal validity windows for episodic memory.
+AD-579b: Temporal validity windows for episodic memory. Inert: no production code reads this section to act on it (BF-926, #1656): enabled and default_validity_hours change nothing (#1324).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2941,7 +2941,7 @@ Operational status tracker configuration (AD-571b).
 
 ## `risk_tiers`
 
-Action Risk Tier configuration (AD-676).
+Action Risk Tier configuration (AD-676). The ActionRiskRegistry is built, not invoked: nothing calls check_authorization (BF-927, #1657).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -3024,7 +3024,7 @@ Configuration for AD-525 v1 (Skills Inventory + Records Output).
 
 ## `classification_gate`
 
-Configuration for AD-530 v1 disclosure gate.
+Configuration for AD-530 v1 disclosure gate. The ClassificationGate is built, not invoked: nothing calls check_disclosure (BF-927, #1657).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -3032,7 +3032,7 @@ Configuration for AD-530 v1 disclosure gate.
 
 ## `autonomy_boundaries`
 
-AD-511 v1: Agent Autonomy Boundaries (registry + observational detector).
+AD-511 v1: Agent Autonomy Boundaries (registry + observational detector). The detector is built, not invoked: nothing calls its scan, so it observes nothing (BF-927, #1657).
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|

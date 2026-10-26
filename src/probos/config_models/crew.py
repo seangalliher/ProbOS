@@ -119,7 +119,8 @@ class MemorySecurityConfig(BaseModel):
 
     enforce_recall: bool = False        # AD-607a opt-in: drop anomalous episodes from recall
     enforce_provenance: bool = False    # AD-607b opt-in: reject provenance-gap episodes from recall
-    enforce_leak_guard: bool = False    # AD-607d opt-in: redact response when leak suspected
+    # BF-926 (#1656): enforce_leak_guard (AD-607d) is deleted. Nothing read it and the leak guard
+    # never redacts (it only emits MEMORY_LEAK_SUSPECTED); a config that still sets it loads.
     enforce_store: bool = False         # AD-607h opt-in: reject prompt-injection at store time
     anchor_mismatch_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     dp_min_cohort_size: int = Field(default=3, ge=1)

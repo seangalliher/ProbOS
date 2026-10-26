@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1887
-  field_definitions: 1876
+  canonical_dump_leaves: 1886
+  field_definitions: 1875
   incidental: 13
   own_models: 228
   owned: 296
   public_names: 309
-canonical_dump_sha256: bbf47ad58a4316e1906cd1efff1ec25594b81c66dd6ff5b096a9fbd18aa16969
+canonical_dump_sha256: d3e9858f41400c79083c82c30d70a7a66eb56843809092670951bc3a95d6cfe0
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -664,7 +664,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: b98b8eda818f9662b6aa7907e81edf90205b80bc02b52420774c464ff119579b
+    schema_sha256: 0ad55fb4106ad3078d542326a6a7ca838a45559b810188382a50591648ce9e6e
     fields:
     - {default: 'True', name: enabled}
   AvatarTelemetryConfig:
@@ -1012,7 +1012,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 46f7d2c98075a0ab057c3d469a4e06c706d1e2125dab98ed9b9e505abfbd07f2
+    schema_sha256: c94a0b62cac1abc5df3d17b93f3f8faa59bbad284ded5e9c809a0dd8b19015b5
     fields:
     - {default: 'True', name: enabled}
   ClinicalTelemetryConfig:
@@ -1057,7 +1057,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: a477658b95e36b11d0f28067a985461757563cabc1931aaa39a2438ad0fc56c8
+    schema_sha256: 73fe5e35fdd84d4720066e64a38788c34ca4c6aaee28cf22b8c225823087dfcf
     fields:
     - {default: '''http://127.0.0.1:8080/v1''', name: llm_base_url}
     - {default: '''''', name: llm_api_key}
@@ -1908,7 +1908,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: b30568e3b8419261e64e666d97d1f3e8e1aa3c5cfd73eb18e9ac3661d37e4aa4
+    schema_sha256: 1531612a0dc3c820e0104a6d66be564a00b72878aa18667a89a30e2a9a912607
     fields:
     - {default: 'False', name: enabled}
     - {default: '''node-1''', name: node_id}
@@ -2012,7 +2012,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: bc532df5be768e023b88b821d0accb2d8483a454dd5032b9823fb85c5e127817
+    schema_sha256: 78b8af52a871b1b380ff43e4609c2ab18d128bcf804479f0af914358efe27be1
     fields:
     - {default: 'True', name: enabled}
     - {default: '0.75', name: threshold}
@@ -2354,7 +2354,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 833fe26c2e0edca432ca48c191d2cd877ce3efc4f0367f405b4de14eab52cbef
+    schema_sha256: cd80695c28339964c59779b6a79c72cf96958e080ab12d43875bb1be81a84dd1
     fields:
     - {default: 'True', name: enabled}
     - {default: '4650', name: total_budget_tokens}
@@ -2434,11 +2434,10 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 4ca560bf13410271d09acdded6aa80bb4bc3802f52922f7219895bd6ffd99b94
+    schema_sha256: b1a049076915eca40b6a21b2e29db5c710ad921cf1911e2ff2856601c2e704f2
     fields:
     - {default: 'False', name: enforce_recall}
     - {default: 'False', name: enforce_provenance}
-    - {default: 'False', name: enforce_leak_guard}
     - {default: 'False', name: enforce_store}
     - {default: '0.7', name: anchor_mismatch_threshold}
     - {default: '3', name: dp_min_cohort_size}
@@ -2465,7 +2464,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: def91a4ed609a5b1dee6dcfb34d552c6b5ed9b1c824ed9a57b576d18b32c338d
+    schema_sha256: 7f3bf1730fb76576a3c6a84a7c067dd64475adc0c157c9158be23542228fda9d
     fields:
     - {default: 'True', name: enabled}
     - {default: '3600.0', name: decay_half_life_seconds}
@@ -2745,7 +2744,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: a8ff4bb4f488477f40c5f164cc1453d644a450d8b8a803b9674eb5c8fe0238f0
+    schema_sha256: 709daaf8132c4ca902477163bef528ba8732682b9723d6f367aed88929d864db
     fields:
     - {default: 'True', name: enabled}
     - {default: '150', name: max_tokens}
@@ -3071,7 +3070,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: d1b1c3e4f19bab41b4cb033373e865e13a48557a194bf98a61aa436bd3add8d6
+    schema_sha256: 20fa908c922c45f6f8d9d7628d0f188e059af7eb5cafb2d4a10ab88e153a603e
     fields:
     - {default: 'True', name: enabled}
     - {default: '0.0', name: elevated_min_trust}
@@ -3152,7 +3151,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 0b15c41e0df70423ede1dd854bd18cdd03d64c06ca70a785ca61574ff636ce98
+    schema_sha256: 18e16a784ae309fb2e60b55c75e4b50ba7eb380820e14211e45653847f235438
     fields:
     - {default: 'True', name: enabled}
     - {default: '65536', name: max_payload_bytes}
@@ -3411,7 +3410,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: dc10c4795616d785b6c6860834ef150fab29c53abd48d9052f3950c44abc82aa
+    schema_sha256: 1dfb423f29770dde72e65d6a0e299859c61ef3e0dfc54b82d76e68361585980a
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3674,7 +3673,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 927be2f10588c66b802cb6078f1e5ab41c49975ccd3c3831097ad2cf3400e68d
+    schema_sha256: a9fb90d30e73530ecfe2c4a76abc575a2a99c500b7f386fb27a47ee498fb1f74
     fields:
     - {default: 'True', name: enabled}
     - {default: '0.0', name: default_validity_hours}
@@ -3769,7 +3768,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: d98a0a8fd14967f6c16701a390a7145f7c9eaa51a674a7ab29266b641aaf64b6
+    schema_sha256: 9910b5545d3bbd063786ed962bb79cb701e8f29bc6e126f1a02081a13f59d5b4
     fields:
     - {default: 'True', name: enabled}
     - {default: '0.85', name: metadata_threshold}
@@ -3888,7 +3887,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 33d77f02fdb9e2da454dad49a4cd8cca374a7b8b2c7b85987c8d63123dd439f2
+    schema_sha256: 3a0f88791c671c7d4c4027c25a6f4417069e7ffbb48f179b14bb7b283531f0e5
     fields:
     - {default: '3000', name: token_budget}
     - {default: '10', name: max_recent_actions}

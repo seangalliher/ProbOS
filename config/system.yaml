@@ -95,7 +95,7 @@ cognitive:
   working_memory_token_budget: 4000
   decomposition_timeout_seconds: 300.0
   dag_execution_timeout_seconds: 300.0
-  use_consensus_for_writes: true
+  use_consensus_for_writes: true  # BF-926 (#1656): inert, no production code reads it
   max_concurrent_tasks: 8
   attention_decay_rate: 0.95
   focus_history_size: 10
@@ -103,7 +103,6 @@ cognitive:
   captain_card_enabled: true
   captain_card_path: captain_card.json
   captain_card_max_tokens: 500
-  captain_card_refresh_min_interval_seconds: 3600
 health_probe_interval_seconds: 30.0
 protected_execution:
   enabled: false
@@ -291,8 +290,8 @@ federation:
   forward_timeout_ms: 5000
   gossip_interval_seconds: 10.0
   validate_remote_results: true
-  memory_policy: clean_room
-  memory_policy_selective_tags: []
+  memory_policy: clean_room  # BF-926 (#1656): inert, no production code reads it
+  memory_policy_selective_tags: []  # BF-926 (#1656): inert, no production code reads it
   mcp_server:
     enabled: false
     bind_host: 127.0.0.1
@@ -321,9 +320,9 @@ federation:
   cluster_monitor:
     enabled: true
     peer_unreachable_seconds: 60.0
-  min_peer_trust_score: 0.0
+  min_peer_trust_score: 0.0  # BF-926 (#1656): inert, no production code reads it
   memory_access_policy: shared_trust
-  shared_trust_min_score: 0.5
+  shared_trust_min_score: 0.5  # BF-926 (#1656): inert, no production code reads it
   dp_min_cohort_size: 3
 self_mod:
   enabled: true
@@ -974,7 +973,6 @@ security:
   memory:
     enforce_recall: false
     enforce_provenance: false
-    enforce_leak_guard: false
     enforce_store: false
     anchor_mismatch_threshold: 0.7
     dp_min_cohort_size: 3
@@ -982,8 +980,8 @@ security:
   permissions:
     allow: []
     deny: []
-  permission_mode: manual
-  policy_engine_class: NullPolicyEngine
+  permission_mode: manual  # BF-926 (#1656): inert, no production code reads it
+  policy_engine_class: NullPolicyEngine  # BF-926 (#1656): inert, no production code reads it
 auth:
   crew_scope_token: ''
 emergent_detector:
@@ -1964,6 +1962,7 @@ anomaly_window:
   enabled: true
   max_window_duration_seconds: 1800.0
   lookback_seconds: 60.0
+# BF-926 (#1656): only stale_threshold_hours is read; the other keys change nothing.
 working_memory:
   token_budget: 3000
   max_recent_actions: 10
@@ -1997,6 +1996,7 @@ self_improvement:
   evolution_half_life_seconds: 2592000.0
   evolution_collection_name: self_improvement_lessons
   persistence_root_dir: src/probos/agents/designed
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 memory_budget:
   enabled: true
   total_budget_tokens: 4650
@@ -2004,6 +2004,7 @@ memory_budget:
   l1_budget: 3000
   l2_budget: 1000
   l3_budget: 500
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 metabolism:
   enabled: true
   decay_half_life_seconds: 3600.0
@@ -2013,11 +2014,13 @@ metabolism:
   cycle_interval_seconds: 300.0
   triage_fullness_threshold: 0.8
   triage_base_score: 0.3
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 pinned_knowledge:
   enabled: true
   max_tokens: 150
   max_pins: 10
   default_ttl_seconds: 86400.0
+# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 temporal_validity:
   enabled: true
   default_validity_hours: 0.0

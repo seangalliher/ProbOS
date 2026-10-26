@@ -608,7 +608,7 @@ class CognitiveConfig(BaseModel):
     working_memory_token_budget: int = 4000
     decomposition_timeout_seconds: float = 30.0
     dag_execution_timeout_seconds: float = 60.0
-    use_consensus_for_writes: bool = True
+    use_consensus_for_writes: bool = Field(default=True, description="Inert: no production code reads this field to act on it (BF-926, #1656). Whether a write needs consensus is decided per intent (IntentDescriptor.requires_consensus); a candidate for #1659.")
     max_concurrent_tasks: int = 8
     # AD-983d: deferred-tool threshold. When the decomposer's registered intent
     # catalog EXCEEDS this many descriptors, build_system_prompt renders a
@@ -2485,10 +2485,10 @@ class FederationConfig(BaseModel):
     # CLEAN_ROOM (default) means foreign agents arrive with sovereign identity
     # but zero episodic memory — safest default. SELECTIVE filters by tag.
     # FULL accepts all episodes verbatim. Per-agent overrides via Standing Orders.
-    memory_policy: str = "clean_room"
+    memory_policy: str = Field(default="clean_room", description="Inert: no production code reads this field to act on it (BF-926, #1656). No transfer path applies it (apply_memory_policy has no caller); the validator still rejects an unknown policy. A candidate for #1659.")
     # AD-443c: Tag whitelist for SELECTIVE memory policy. Ignored for the
     # other two policies. Empty list with SELECTIVE means no episodes pass.
-    memory_policy_selective_tags: list[str] = []
+    memory_policy_selective_tags: list[str] = Field(default=[], description="Inert: no production code reads this field to act on it (BF-926, #1656); it belongs to memory_policy, which nothing applies. A candidate for #1659.")
 
     # AD-480: Cross-ecosystem federation adapters.
     mcp_server: FederationMCPServerConfig = Field(
@@ -2510,11 +2510,11 @@ class FederationConfig(BaseModel):
         default_factory=FederationClusterMonitorConfig
     )
     # AD-479b ranking gate (default 0.0 keeps W87/W89 baseline behavior).
-    min_peer_trust_score: float = 0.0
+    min_peer_trust_score: float = Field(default=0.0, description="Inert: no production code reads this field to act on it (BF-926, #1656). This floor ranks or refuses no peer; a candidate for #1659.")
     # AD-607g federation outbound privacy filter. Default ``shared_trust``
     # honors the AD-479b peer-trust ranking surface that W91 shipped.
     memory_access_policy: str = "shared_trust"
-    shared_trust_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
+    shared_trust_min_score: float = Field(default=0.5, ge=0.0, le=1.0, description="Inert: no production code reads this field to act on it (BF-926, #1656). The shared_trust policy filters by episode classification only, with no trust floor; a candidate for #1659.")
     dp_min_cohort_size: int = Field(default=3, ge=1)
     # AD-1196: bind the ship DID to an Ed25519 key and sign the certificates it
     # anchors. Default-OFF: off is byte-identical and never touches the OS keyring.
@@ -2973,8 +2973,8 @@ class SecurityConfig(BaseModel):
     profile: Literal["strict", "relaxed"] = "strict"
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     # AD-753: unattended permission posture for personal-desktop scope.
-    permission_mode: Literal["manual", "autopilot"] = "manual"
-    policy_engine_class: str = "NullPolicyEngine"
+    permission_mode: Literal["manual", "autopilot"] = Field(default="manual", description="Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). The AD-753 gate (vote_on_intent) has no caller, so no mode gates any intent; a candidate for #1659.")
+    policy_engine_class: str = Field(default="NullPolicyEngine", description="Inert: no production code reads this field to act on it (BF-926, BF-927; #1656, #1657). No engine is loaded from it and the AD-753 gate has no caller; a candidate for #1659.")
 
 
 class AgenticLoopConfig(BaseModel):
