@@ -105,10 +105,12 @@ class TestRecallScoreComputation:
         )
         # AD-584c weights: 0.35*sem + 0.20*kw + 0.10*trust + 0.05*hebb + 0.15*rec + 0.15*anchor
         # + 0.10 convergence bonus (semantic > 0 AND keyword_hits > 0)
-        # = 0.35*0.8 + 0.20*1.0 + 0.10*0.9 + 0.05*0.7 + 0.15*0.6 + 0.15*1.0 + 0.10
-        expected = 0.35 * 0.8 + 0.20 * 1.0 + 0.10 * 0.9 + 0.05 * 0.7 + 0.15 * 0.6 + 0.15 * 1.0 + 0.10
+        # BF-925 (#1655): event_log_window is held out of anchor scoring, so this fixture's 1000.0 (a
+        # value no producer ever stored) counts as unfilled: anchor confidence 0.95.
+        # = 0.35*0.8 + 0.20*1.0 + 0.10*0.9 + 0.05*0.7 + 0.15*0.6 + 0.15*0.95 + 0.10
+        expected = 0.35 * 0.8 + 0.20 * 1.0 + 0.10 * 0.9 + 0.05 * 0.7 + 0.15 * 0.6 + 0.15 * 0.95 + 0.10
         assert abs(rs.composite_score - expected) < 1e-9
-        assert rs.anchor_confidence == 1.0
+        assert rs.anchor_confidence == pytest.approx(0.95)
 
     def test_zero_inputs(self):
         """All-zero inputs produce composite_score = 0."""
@@ -156,12 +158,12 @@ class TestRecencyWeight:
 
 class TestAnchorCompleteness:
     def test_all_filled(self):
-        """10/10 fields = 1.0."""
+        """10/10 fields filled = 0.95: BF-925 (#1655) holds event_log_window out (scored as unfilled)."""
         from probos.cognitive.episodic import EpisodicMemory
 
         ep = _make_episode(anchors=_full_anchor())
         rs = EpisodicMemory.score_recall(ep, semantic_similarity=0.5)
-        assert rs.anchor_confidence == 1.0
+        assert rs.anchor_confidence == pytest.approx(0.95)
 
     def test_half_filled(self):
         """Half-filled anchor → Johnson-weighted confidence ≈ 0.567."""
@@ -448,8 +450,9 @@ class TestConfigWeights:
         # With semantic zeroed, score should be lower (0.8 semantic was contributing)
         # and trust contribution should dominate
         assert rs_custom.composite_score != rs_default.composite_score
-        # Trust dominates: 0.80 * 0.9 = 0.72 for trust alone
-        expected_custom = 0.80 * 0.9 + 0.10 * 0.5 + 0.10 * 1.0
+        # Trust dominates: 0.80 * 0.9 = 0.72 for trust alone. BF-925 (#1655): event_log_window is held
+        # out of anchor scoring, so this fully filled fixture scores 0.95, not 1.0.
+        expected_custom = 0.80 * 0.9 + 0.10 * 0.5 + 0.10 * 0.95
         assert abs(rs_custom.composite_score - expected_custom) < 1e-9
 
 

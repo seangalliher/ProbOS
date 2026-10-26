@@ -24,6 +24,11 @@ DEFAULT_DIMENSION_WEIGHTS: dict[str, float] = {
     "evidential": 0.10, # Corroboration — supplementary
 }
 
+# BF-925 (#1655): ``event_log_window`` is held out of scoring until it is measured (#1523). No
+# producer ever stored a non-zero window, so it counts as one unfilled evidential field, exactly as
+# 0.0 did: every confidence score, profile fill rate and recall gate is unchanged.
+_EVENT_LOG_WINDOW_HELD_OUT = 0.0
+
 
 def _is_filled(value: Any) -> bool:
     """Check if an AnchorFrame field value is populated (non-default)."""
@@ -41,7 +46,7 @@ def _compute_dimension_scores(anchors: AnchorFrame) -> dict[str, float]:
     temporal_fields = [anchors.duty_cycle_id, anchors.watch_section]
     spatial_fields = [anchors.channel, anchors.channel_id, anchors.department]
     social_fields = [anchors.participants, anchors.trigger_agent]
-    evidential_fields = [anchors.thread_id, anchors.event_log_window]
+    evidential_fields = [anchors.thread_id, _EVENT_LOG_WINDOW_HELD_OUT]  # BF-925: the window is held out
     return {
         "temporal": sum(1 for f in temporal_fields if _is_filled(f)) / len(temporal_fields),
         "spatial": sum(1 for f in spatial_fields if _is_filled(f)) / len(spatial_fields),

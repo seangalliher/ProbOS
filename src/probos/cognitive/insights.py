@@ -1,7 +1,10 @@
 """AD-810: operator-facing recent-activity summary.
 
-Pure aggregation service. Reads from existing stores (journal, dream
-scheduler, thread namer, vision telemetry). No new persistence.
+Pure aggregation service. No new persistence. BF-925 (#1655): every section
+named a method no production class defines, so the report was always empty.
+Three sections read real sources (Bridge alerts, the Captain's capability and
+skill request queues, completed persistent tasks); topics and crew have no
+source, and the report says "not available" for them.
 """
 
 from __future__ import annotations
@@ -16,6 +19,25 @@ if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
 
 logger = logging.getLogger(__name__)
+
+# BF-925 (#1655): the sections with no source. Each named a method no production class defines
+# (an episodic ``cluster_recall_counts``; a runtime ``thread_store`` with ``recent_threads_by_crew``).
+_NO_SOURCE: dict[str, str] = {
+    "top_topics": "no store records recall frequency by topic",
+    "top_crew": "no store counts DM or session messages per crew member",
+}
+_SECTION_LABELS: dict[str, str] = {
+    "top_topics": "top topics",
+    "top_crew": "top crew interactions",
+    "scheduled_tasks_completed": "scheduled tasks",
+    "pending_decisions": "pending decisions",
+    "anomaly_windows": "anomaly windows",
+}
+_SEVERITY: dict[str, str] = {"info": "info", "advisory": "warning", "alert": "critical"}  # AlertSeverity values
+_MAX_COMPLETED_TASKS = 200
+_MAX_PER_QUEUE = 20
+_ALERT_LOG_READ = 200  # BridgeAlertService keeps its newest 200 alerts
+_MAX_ANOMALIES = 20
 
 
 @dataclass(frozen=True)
@@ -41,7 +63,7 @@ class ScheduledTask:
 class PendingDecision:
     summary: str
     age_hours: float
-    source: str  # "consensus" | "self_mod" | "qualification" | "gap"
+    source: str  # "capability_request" | "skill_request" (BF-925)
 
 
 @dataclass(frozen=True)
@@ -57,12 +79,14 @@ class InsightsReport:
 
     window_days: int
     generated_at: float
-    top_topics: list[TopicCount] = field(default_factory=list)
-    top_crew: list[CrewInteraction] = field(default_factory=list)
+    top_topics: list[TopicCount] = field(default_factory=list)  # BF-925: no source; always empty
+    top_crew: list[CrewInteraction] = field(default_factory=list)  # BF-925: no source; always empty
     scheduled_tasks_completed: list[ScheduledTask] = field(default_factory=list)
     pending_decisions: list[PendingDecision] = field(default_factory=list)
     anomaly_windows: list[AnomalyWindow] = field(default_factory=list)
     narrative_summary: str = ""  # Fast-tier LLM rendering; empty on honest-degrade.
+    # BF-925 (#1655): section name -> why it is not available (no source, not running, failed).
+    unavailable: dict[str, str] = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         return not (
@@ -73,27 +97,24 @@ class InsightsReport:
             or self.anomaly_windows
         )
 
+    def _not_available_line(self) -> str:
+        """BF-925 (#1655): one line naming each section that is not available, with its reason."""
+        if not self.unavailable:
+            return ""
+        parts = "; ".join(f"{_SECTION_LABELS[name]} ({reason})" for name, reason in self.unavailable.items())
+        return f"_Not available: {parts}._\n"
+
     def to_markdown(self) -> str:
         """Render as channel-agnostic Markdown."""
         if self.is_empty():
-            return f"## Insights — last {self.window_days} day(s)\n\n_No activity recorded in this window._\n"
+            empty = f"## Insights — last {self.window_days} day(s)\n\n_No activity recorded in this window._\n"
+            not_available = self._not_available_line()
+            return empty + ("\n" + not_available if not_available else "")
 
         lines: list[str] = [f"## Insights — last {self.window_days} day(s)\n"]
 
         if self.narrative_summary:
             lines.append(self.narrative_summary)
-            lines.append("")
-
-        if self.top_topics:
-            lines.append("**Top topics**")
-            for t in self.top_topics:
-                lines.append(f"- {t.label} ({t.count} recalls)")
-            lines.append("")
-
-        if self.top_crew:
-            lines.append("**Top crew interactions**")
-            for c in self.top_crew:
-                lines.append(f"- {c.callsign}: {c.message_count} message(s)")
             lines.append("")
 
         if self.scheduled_tasks_completed:
@@ -111,6 +132,9 @@ class InsightsReport:
             for a in self.anomaly_windows:
                 lines.append(f"- [{a.severity}] {a.label}")
             lines.append("")
+
+        if self.unavailable:
+            lines.append(self._not_available_line())
 
         return "\n".join(lines).rstrip() + "\n"
 
@@ -137,15 +161,17 @@ class InsightsReport:
                 for a in self.anomaly_windows
             ],
             "narrative_summary": self.narrative_summary,
+            "unavailable": dict(self.unavailable),  # BF-925 (#1655): additive; every other key is unchanged
         }
 
 
 class InsightService:
     """Aggregate recent-activity insights from existing stores.
 
-    Pure read-side; uses ``hasattr`` guards on every source so missing
-    upstream APIs honest-degrade to an empty section rather than blank
-    the whole report.
+    Pure read-side. BF-925 (#1655): the ``hasattr`` guards this used named
+    methods nothing defines, so every section was silently empty. Sources are
+    read directly; one that is down or fails is reported as not available in
+    its own section and never blanks the report.
     """
 
     # Working-memory budget for the fast-tier summarizer (same shape AD-794
@@ -169,44 +195,26 @@ class InsightService:
         report = InsightsReport(window_days=days, generated_at=now)
 
         # Each section uses log-and-degrade per the engineering principles —
-        # one missing store should not blank the whole report.
-        try:
-            report.top_topics = await self._top_topics(since)
-        except Exception as exc:
-            logger.warning(
-                "Insights: top_topics aggregation failed (%s); section will be empty in report", exc
-            )
-
-        try:
-            report.top_crew = await self._top_crew(since)
-        except Exception as exc:
-            logger.warning(
-                "Insights: top_crew aggregation failed (%s); section will be empty in report", exc
-            )
-
-        try:
-            report.scheduled_tasks_completed = await self._scheduled_tasks_completed(since)
-        except Exception as exc:
-            logger.warning(
-                "Insights: scheduled_tasks_completed aggregation failed (%s); section will be empty in report",
-                exc,
-            )
-
-        try:
-            report.pending_decisions = await self._pending_decisions(now)
-        except Exception as exc:
-            logger.warning(
-                "Insights: pending_decisions aggregation failed (%s); section will be empty in report",
-                exc,
-            )
-
-        try:
-            report.anomaly_windows = await self._anomaly_windows(since)
-        except Exception as exc:
-            logger.warning(
-                "Insights: anomaly_windows aggregation failed (%s); section will be empty in report",
-                exc,
-            )
+        # one missing store should not blank the whole report. BF-925 (#1655): a section
+        # whose source is down or fails says so in ``unavailable`` instead of reading empty.
+        report.unavailable.update(_NO_SOURCE)
+        for name, gather, bound in (
+            ("scheduled_tasks_completed", self._scheduled_tasks_completed, since),
+            ("pending_decisions", self._pending_decisions, now),
+            ("anomaly_windows", self._anomaly_windows, since),
+        ):
+            try:
+                rows = await gather(bound)
+            except Exception as exc:
+                logger.warning(
+                    "Insights: %s aggregation failed (%s); the report shows it as not available", name, exc,
+                )
+                report.unavailable[name] = f"failed ({type(exc).__name__})"
+                continue
+            if rows is None:
+                report.unavailable[name] = "service not running"
+            else:
+                setattr(report, name, rows)
 
         # Fast-tier narrative summary — honest-degrade on missing client.
         if self._llm_client is not None and not report.is_empty():
@@ -220,76 +228,65 @@ class InsightService:
 
         return report
 
-    async def _top_topics(self, since: float) -> list[TopicCount]:
-        """Top topics by episodic recall frequency in the window."""
-        episodic = getattr(self._runtime, "episodic_memory", None)
-        if episodic is None or not hasattr(episodic, "cluster_recall_counts"):
-            return []
-        candidates = await episodic.cluster_recall_counts(since=since)
-        return [TopicCount(label=label, count=count) for label, count in candidates[:10]]
+    async def _scheduled_tasks_completed(self, since: float) -> list[ScheduledTask] | None:
+        """Persistent tasks that completed in the window; ``None`` when the store is not running.
 
-    async def _top_crew(self, since: float) -> list[CrewInteraction]:
-        """Most-active crew callsigns by DM/session message volume in window."""
-        threads_store = getattr(self._runtime, "thread_store", None)
-        if threads_store is None or not hasattr(threads_store, "recent_threads_by_crew"):
-            return []
-        records = await threads_store.recent_threads_by_crew(since=since)
+        BF-925 (#1655): ``watch_bill.completed_since`` never existed. A task completes on its final
+        run (``once``, or ``max_runs`` reached); a recurring task stays pending and is not counted.
+        Reads the newest ``_MAX_COMPLETED_TASKS`` completed tasks by creation time.
+        """
+        store = self._runtime.persistent_task_store
+        if store is None:
+            return None
+        tasks = await store.list_tasks(status="completed", limit=_MAX_COMPLETED_TASKS)
         return [
-            CrewInteraction(
-                callsign=r["callsign"],
-                message_count=r["count"],
-                last_active_ts=r["last_ts"],
-            )
-            for r in records[:10]
+            ScheduledTask(description=t.name, completed_at=t.last_run_at)
+            for t in tasks
+            if t.last_run_at is not None and t.last_run_at >= since
         ]
 
-    async def _scheduled_tasks_completed(self, since: float) -> list[ScheduledTask]:
-        """Watch-bill / scheduled-task completions in window."""
-        watch = getattr(self._runtime, "watch_bill", None)
-        if watch is None or not hasattr(watch, "completed_since"):
-            return []
-        records = await watch.completed_since(since)
-        return [ScheduledTask(description=r["description"], completed_at=r["ts"]) for r in records]
+    async def _pending_decisions(self, now: float) -> list[PendingDecision] | None:
+        """Requests awaiting the Captain: capability and skill requests, oldest first.
 
-    async def _pending_decisions(self, now: float) -> list[PendingDecision]:
-        """Cross-source pending operator decisions (unresolved at ``now``)."""
+        BF-925 (#1655): ``consensus_manager.pending_votes`` and ``self_mod_pipeline.pending_proposals``
+        never existed. At most ``_MAX_PER_QUEUE`` per queue; ``None`` when neither queue is running.
+        """
+        capability = self._runtime.capability_request_store
+        skills = self._runtime.skill_request_store
+        if capability is None and skills is None:
+            return None
         out: list[PendingDecision] = []
-        consensus = getattr(self._runtime, "consensus_manager", None)
-        if consensus is not None and hasattr(consensus, "pending_votes"):
-            for v in await consensus.pending_votes():
-                out.append(
-                    PendingDecision(
-                        summary=v["summary"],
-                        age_hours=(now - v["created_at"]) / 3600.0,
-                        source="consensus",
-                    )
-                )
-        self_mod = getattr(self._runtime, "self_mod_pipeline", None)
-        if self_mod is not None and hasattr(self_mod, "pending_proposals"):
-            for p in await self_mod.pending_proposals():
-                out.append(
-                    PendingDecision(
-                        summary=p["title"],
-                        age_hours=(now - p["created_at"]) / 3600.0,
-                        source="self_mod",
-                    )
-                )
+        if capability is not None:
+            for req in sorted(await capability.list_pending(), key=lambda r: r.created_at)[:_MAX_PER_QUEUE]:
+                out.append(PendingDecision(
+                    summary=f"{req.kind} {req.target}",
+                    age_hours=(now - req.created_at) / 3600.0,
+                    source="capability_request",
+                ))
+        if skills is not None:
+            for req in sorted(await skills.list_pending(), key=lambda r: r.created_at)[:_MAX_PER_QUEUE]:
+                out.append(PendingDecision(
+                    summary=f"skill {req.skill_label or req.skill_id}",
+                    age_hours=(now - req.created_at) / 3600.0,
+                    source="skill_request",
+                ))
         return out
 
-    async def _anomaly_windows(self, since: float) -> list[AnomalyWindow]:
-        """Anomaly-detector triggers (vision-budget breaches, gap reports, etc.)."""
-        out: list[AnomalyWindow] = []
-        vision_budget = getattr(self._runtime, "vision_budget", None)
-        if vision_budget is not None and hasattr(vision_budget, "recent_breaches"):
-            for b in await vision_budget.recent_breaches(since=since):
-                out.append(
-                    AnomalyWindow(
-                        label=f"vision budget: {b['kind']}",
-                        triggered_at=b["ts"],
-                        severity=b.get("severity", "warning"),
-                    )
-                )
-        return out
+    async def _anomaly_windows(self, since: float) -> list[AnomalyWindow] | None:
+        """Bridge alerts raised in the window, newest first; ``None`` when the service is not running.
+
+        BF-925 (#1655): ``vision_budget.recent_breaches`` never existed. The alert log is in memory
+        (the newest 200 since boot), so a window that reaches before boot shows this session's
+        alerts. At most ``_MAX_ANOMALIES``.
+        """
+        alerts = self._runtime.bridge_alerts
+        if alerts is None:
+            return None
+        recent = [a for a in alerts.get_recent_alerts(limit=_ALERT_LOG_READ) if a.timestamp >= since]
+        return [
+            AnomalyWindow(label=f"{a.source}: {a.title}", triggered_at=a.timestamp, severity=_SEVERITY[a.severity.value])
+            for a in reversed(recent[-_MAX_ANOMALIES:])
+        ]
 
     async def _summarize(self, report: InsightsReport) -> str:
         """Fast-tier LLM narrative — one paragraph, plain Markdown."""
@@ -297,15 +294,7 @@ class InsightService:
             return ""
         from probos.types import LLMRequest
 
-        sections: list[str] = []
-        if report.top_topics:
-            sections.append(
-                "Top topics: " + ", ".join(f"{t.label}({t.count})" for t in report.top_topics[:5])
-            )
-        if report.top_crew:
-            sections.append(
-                "Top crew: " + ", ".join(f"{c.callsign}({c.message_count})" for c in report.top_crew[:5])
-            )
+        sections: list[str] = []  # BF-925 (#1655): topics and crew have no source, so no line
         if report.scheduled_tasks_completed:
             sections.append(f"Tasks completed: {len(report.scheduled_tasks_completed)}")
         if report.pending_decisions:

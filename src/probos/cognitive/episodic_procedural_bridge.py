@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
 import uuid
@@ -81,27 +80,11 @@ class EpisodicProceduralBridge:
         if store is None:
             return []
 
-        if hasattr(store, "list_all"):
-            result = store.list_all()
-            if inspect.isawaitable(result):
-                result = await result
-            return [proc for proc in result if isinstance(proc, Procedure)]
-
-        if not hasattr(store, "list_active") or not hasattr(store, "get"):
-            return []
-
-        active = store.list_active()
-        if inspect.isawaitable(active):
-            active = await active
-
+        # BF-925 (#1655): every active procedure through ProcedureStore.list_active and get. No store
+        # defines list_all; the branch that asked for it never ran, and this was always the path.
         procedures: list[Procedure] = []
-        for entry in active or []:
-            procedure_id = entry.get("id", "") if isinstance(entry, dict) else getattr(entry, "id", "")
-            if not procedure_id:
-                continue
-            procedure = store.get(procedure_id)
-            if inspect.isawaitable(procedure):
-                procedure = await procedure
+        for entry in await store.list_active():
+            procedure = await store.get(entry["id"])
             if isinstance(procedure, Procedure):
                 procedures.append(procedure)
         return procedures

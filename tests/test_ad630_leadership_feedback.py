@@ -455,12 +455,17 @@ class TestChiefContextInjection:
             return_value=subordinate_types
         )
         rt.ontology.get_crew_context = MagicMock(return_value=None)
-        rt.ward_room_service = AsyncMock()
+        # BF-925 (#1655): the runtime has ``ward_room`` and ``registry``. ``ward_room_service`` and
+        # ``agent_pool``, which this helper set, exist on no runtime: the MagicMock invented them.
+        rt.ward_room = AsyncMock()
         if comm_stats is not None:
-            rt.ward_room_service.get_agent_comm_stats = AsyncMock(
+            rt.ward_room.get_agent_comm_stats = AsyncMock(
                 return_value=comm_stats
             )
-        rt.agent_pool = sub_agents or {}
+        for agent_type, sub in (sub_agents or {}).items():
+            sub.agent_type = agent_type
+            sub.is_alive = True
+        rt.registry.all = MagicMock(return_value=list((sub_agents or {}).values()))
         rt._start_time_wall = 1000.0
         rt.trust_network = AsyncMock()
         rt.trust_network.get_score = AsyncMock(return_value=0.5)
@@ -505,6 +510,7 @@ class TestChiefContextInjection:
         assert "Forge" in context["subordinate_stats"]
         stats = context["subordinate_stats"]["Forge"]
         assert stats["posts_total"] == 5
+        rt.ward_room.get_agent_comm_stats.assert_awaited_once_with("sub-id", since=1000.0)  # BF-925: agent.id
 
     @pytest.mark.asyncio
     async def test_non_chief_no_subordinate_stats(self):

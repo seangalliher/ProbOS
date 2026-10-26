@@ -1,0 +1,31 @@
+# BF-925 (#1655): production guards that name an attribute no production code defines, accepted on
+# purpose. tests/test_bf925_guard_names.py checks both directions: a guard not listed here fails the
+# test, and so does an entry whose name is now defined or no longer guarded in that file.
+# Format: path | name | kind | reason.
+#   duck     a third-party or version-dependent attribute, optional by design
+#   finding  a dead-guard candidate BF-925's scan found, registered on #1523 (R1), not yet triaged
+# Measured 2026-10-25 on 72fae2dd with BF-925 M1 applied.
+# A2 (2026-10-26): nats_bus.py reconnected_count moved from duck to finding (nats-py 2.14.0 has no such attribute).
+src/probos/channels/base.py | pairing_service | finding | self.runtime.pairing_service has no production definition
+src/probos/channels/discord_adapter.py | http | duck | discord.py Bot.http on the adapter's bot
+src/probos/channels/discord_adapter.py | _HTTPClient__session | duck | discord.py HTTPClient's private session; version-dependent
+src/probos/cognitive/captain_engagement.py | captain_dm_queue_depth | finding | ward_room.captain_dm_queue_depth has no production definition
+src/probos/cognitive/cognitive_agent.py | _callsign | finding | self._callsign has no production definition (agents define callsign)
+src/probos/cognitive/cognitive_agent.py | get_by_intent | finding | self._procedure_store.get_by_intent has no production definition
+src/probos/cognitive/communication_benchmarks.py | _callsign | finding | agent._callsign has no production definition (agents define callsign)
+src/probos/cognitive/counselor.py | model_dump | duck | pydantic v2 BaseModel.model_dump on a model-or-dict value
+src/probos/cognitive/dm/reply_pipeline.py | action_dispatcher | finding | self.ctx.runtime.action_dispatcher has no production definition
+src/probos/cognitive/dreaming.py | _agent_type | finding | self._agent_type has no production definition
+src/probos/cognitive/gap_remediation.py | qualification_service | finding | runtime.qualification_service has no production definition
+src/probos/cognitive/peer_observation_training.py | crew_profile | finding | agent.crew_profile has no production definition
+src/probos/cognitive/scout.py | channel_adapters | finding | self._runtime.channel_adapters has no production definition
+src/probos/cognitive/swe_harness/tools.py | system_self_model | finding | self._runtime.system_self_model has no production definition
+src/probos/cognitive/swe_harness/tools.py | list_pools | finding | spawner.list_pools has no production definition
+src/probos/experience/commands/commands_status.py | memory_security_registry | finding | runtime.memory_security_registry has no production definition
+src/probos/mesh/nats_bus.py | reconnected_count | finding | nats-py 2.14.0 Client has no reconnected_count (the count is stats["reconnects"]), so NATSBus.health() reports 0 reconnects; R1
+src/probos/routers/agent_actions.py | action_dispatcher | finding | runtime.action_dispatcher has no production definition
+src/probos/routers/teams_webhook.py | teams_adapter | finding | runtime.teams_adapter has no production definition
+src/probos/tools/browser/llm_classifier.py | complete_sync | finding | llm.complete_sync has no production definition
+src/probos/tools/browser/session.py | viewport_size | duck | Playwright Page.viewport_size
+src/probos/tools/browser/session.py | mouse | duck | Playwright Page.mouse
+src/probos/tools/browser/session.py | keyboard | duck | Playwright Page.keyboard
