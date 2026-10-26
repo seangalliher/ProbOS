@@ -12,6 +12,8 @@ narrower than ``ship`` or has nothing to archive, and promotes the rest with the
   decode, so such a file is neither promoted nor reported (AD-1341 S1 register RA3-1).
 - Ship's Records carry no source-episode ids, so a records-sourced entry carries none (the lessons slice
   adds them).
+- AD-1341 S3: a source the Captain vetoed is reported as vetoed and never archived. ``review_promotion`` is the
+  Captain's review of the next run (``probos archive pending``): it reads, and records nothing.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from probos.knowledge.archive_store import (
     PromotionOutcome,
     PromotionRecord,
     SourceKind,
+    SourceState,
 )
 from probos.knowledge.records_store import RecordsStore
 
@@ -96,6 +99,7 @@ class PromotionReport:
     present: tuple[str, ...]
     erased: tuple[str, ...]
     withheld: tuple[str, ...]
+    vetoed: tuple[str, ...] = ()  # AD-1341 S3: sources the Captain vetoed; never archived
 
 
 async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> PromotionPlan:
@@ -159,19 +163,51 @@ async def promote_ship_records(
     created: list[str] = []
     present: list[str] = []
     erased: list[str] = []
+    vetoed: list[str] = []
     for record in plan.records:
         outcome = await archive.promote_entry(record)
         if outcome is PromotionOutcome.CREATED:
             created.append(record.source_ref)
         elif outcome is PromotionOutcome.ERASED:
             erased.append(record.source_ref)
+        elif outcome is PromotionOutcome.VETOED:  # AD-1341 S3: the Captain's veto, reported, never archived
+            vetoed.append(record.source_ref)
         else:
             present.append(record.source_ref)
     logger.info(
         "AD-1341: Ship's Archive promotion for timeline %s: %d created, %d already archived, "
-        "%d erased by the Captain, %d withheld",
-        timeline_id, len(created), len(present), len(erased), len(plan.withheld),
+        "%d erased by the Captain, %d vetoed by the Captain, %d withheld",
+        timeline_id, len(created), len(present), len(erased), len(vetoed), len(plan.withheld),
     )
     return PromotionReport(
         created=tuple(created), present=tuple(present), erased=tuple(erased), withheld=plan.withheld,
+        vetoed=tuple(vetoed),
     )
+
+
+@dataclass(frozen=True)
+class PendingSource:
+    """AD-1341 S3: one source the next promotion would consider, and what promoting it now would do."""
+
+    record: PromotionRecord
+    state: SourceState
+
+
+@dataclass(frozen=True)
+class PromotionReview:
+    """AD-1341 S3: the Captain's review of the next promotion, in the order Ship's Records lists the sources."""
+
+    sources: tuple[PendingSource, ...]
+    withheld: tuple[str, ...]
+
+
+async def review_promotion(records: RecordsStore, archive: ArchiveStore, *, timeline_id: str) -> PromotionReview:
+    """AD-1341 S3 (D3): every source that meets its criterion, with what promoting it now would do; and what is withheld.
+
+    The queue is derived: the plan the next run would promote (``plan_promotion``), each source's state read from the
+    archive (``ArchiveStore.source_state``). It reads Ship's Records and the archive and records nothing. A veto or
+    erasure after the review decides the promotion (D6).
+    """
+    plan = await plan_promotion(records, timeline_id=timeline_id)
+    sources = [PendingSource(record, await archive.source_state(record)) for record in plan.records]
+    return PromotionReview(sources=tuple(sources), withheld=plan.withheld)

@@ -246,9 +246,11 @@ def test_the_store_has_no_append_update_or_delete_and_names_its_writes() -> None
         name for name in vars(ArchiveStore)
         if not name.startswith("_") and callable(getattr(ArchiveStore, name))
     }
+    # AD-1341 S3 (#1569): the Captain's veto (a write of no entry, Captain-only through ``probos archive veto``) and
+    # two reads, the review's and the AD-754 erasure check's. There is still no update or delete of an entry.
     assert public == {
         "initialize", "close", "promote_entry", "record_generation", "erase_entry", "entry_by_id",
-        "search", "get_recent", "count",
+        "search", "get_recent", "count", "veto_source", "source_state", "entry_ids_citing",
     }
 
 

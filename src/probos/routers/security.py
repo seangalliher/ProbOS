@@ -23,7 +23,8 @@ from probos.cognitive.episode_archive import (
     EpisodeArchiveUnavailable,
 )
 from probos.credential_store import crew_scope_token
-from probos.knowledge.erasure import ErasureManager
+from probos.knowledge.archive_store import ArchiveStore
+from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureManager
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 from probos.security.audit_log import AuditLog
@@ -79,23 +80,44 @@ async def request_erasure(
     request: ForgetRequest,
     runtime: Any = Depends(get_runtime),
 ) -> dict[str, Any]:
-    """User-directed erasure for episode, resource, or agent memory."""
+    """User-directed erasure for episode, resource, or agent memory.
+
+    AD-1341 S3: while a Ship's Archive entry cites an episode this request would erase, nothing is erased and the
+    answer is 409 with the entries' ids. The archive is append-only for agents and services, so this route never
+    erases an entry: the Captain erases each with ``probos archive erase ENTRY_ID --reason TEXT``, then retries.
+    """
+    archive = getattr(runtime, "archive_store", None)  # AD-1341 S3: consulted only when it is a real store
     manager = ErasureManager(
         episodic_memory=getattr(runtime, "episodic_memory", None),
         attachment_store=getattr(runtime, "attachment_store", None),
         audit_log=_get_audit_log(runtime),
+        archive_store=archive if isinstance(archive, ArchiveStore) else None,  # AD-1341 S3: a real store, or none
     )
 
-    if request.episode_id:
-        result = await manager.forget_episode(request.episode_id, reason=request.reason)
-    elif request.resource_path:
-        result = await manager.forget_resource(request.resource_path)
-    elif request.agent_id:
-        result = await manager.forget_agent_memory(request.agent_id)
-    else:
+    try:
+        if request.episode_id:
+            result = await manager.forget_episode(request.episode_id, reason=request.reason)
+        elif request.resource_path:
+            result = await manager.forget_resource(request.resource_path)
+        elif request.agent_id:
+            result = await manager.forget_agent_memory(request.agent_id)
+        else:
+            return JSONResponse(
+                {"error": "one erasure target is required"},
+                status_code=400,
+            )
+    except ArchiveCitationsBlockErasure as exc:  # AD-1341 S3 (D8): nothing was erased
+        logger.warning(
+            "AD-1341 S3: an AD-754 erasure was refused: %d Ship's Archive entr(ies) cite its episodes",
+            len(exc.entry_ids),
+        )
         return JSONResponse(
-            {"error": "one erasure target is required"},
-            status_code=400,
+            {
+                "error": "archive_entries_cite_erased_episodes",
+                "archive_entry_ids": list(exc.entry_ids),
+                "next": "probos archive erase ENTRY_ID --reason TEXT for each, then retry",
+            },
+            status_code=409,
         )
 
     return {

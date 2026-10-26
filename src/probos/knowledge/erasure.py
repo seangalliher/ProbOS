@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
 
+from probos.knowledge.archive_store import ArchiveStore
 from probos.security.audit_log import AuditLog
 from probos.types import EvictionDisposition
 
@@ -84,6 +85,34 @@ class ErasureCascadeIncomplete(Exception):
         self.enumeration_error = enumeration_error
 
 
+class ArchiveCitationsBlockErasure(Exception):
+    """AD-1341 S3 (D8): Ship's Archive entries cite episodes this erasure would erase, so nothing was erased.
+
+    ``entry_ids`` are those entries. The Captain erases each with ``probos archive erase ENTRY_ID --reason TEXT`` and
+    retries. The archive is append-only for agents and services, so this path never erases an entry itself; and
+    erasing the episodes first would leave entries citing them that no later scan could find. The message carries the
+    count only.
+    """
+
+    def __init__(self, entry_ids: tuple[int, ...]) -> None:
+        super().__init__(f"archive_entries_cite_erased_episodes:count={len(entry_ids)}")
+        self.entry_ids = entry_ids
+
+
+async def _refuse_while_the_archive_cites(archive: ArchiveStore | None, episode_ids: list[str]) -> None:
+    """AD-1341 S3 (D8, D10): raise ``ArchiveCitationsBlockErasure`` before anything is erased if an entry cites one.
+
+    No open archive (disabled, failed at boot, or closed at shutdown): nothing to check, as before S3. A failed read
+    propagates, so the erasure stops with nothing erased. A module function, so ``ErasureManager`` stays within its
+    15-method SRP trigger.
+    """
+    if archive is None or not episode_ids:
+        return
+    citing = await archive.entry_ids_citing(episode_ids)
+    if citing:
+        raise ArchiveCitationsBlockErasure(citing)
+
+
 async def _live_episodes(memory: Any) -> AsyncIterator[Any]:
     """BF-905: every live episode, through the memory's fail-closed erasure read ``iter_live_episodes``.
 
@@ -102,10 +131,14 @@ class ErasureManager:
         episodic_memory: Any | None,
         attachment_store: Any | None,
         audit_log: AuditLog | None,
+        *,
+        archive_store: ArchiveStore | None = None,
     ) -> None:
         self._episodic_memory = episodic_memory
         self._attachment_store = attachment_store
         self._audit_log = audit_log
+        # AD-1341 S3: the open Ship's Archive, read only to refuse an erasure while an entry cites its episodes
+        self._archive_store = archive_store
 
     async def forget_episode(self, episode_id: str, reason: str = "user_request") -> ErasureResult:
         """Delete one episode and related attachment refs, then mark audit rows.
@@ -115,6 +148,7 @@ class ErasureManager:
         already removed them by the time it raises, so a retry could never find them again. ``mark_deleted`` runs
         only after a successful erase; an erase failure is raised as the original typed error, unwrapped.
         """
+        await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased
         attachment_ids = await self._attachment_ids_for_episode(episode_id)
         unlinked = await self._delete_attachments(attachment_ids)
         deleted_episodes = 0
@@ -140,7 +174,8 @@ class ErasureManager:
     async def forget_resource(self, resource_path: str) -> ErasureResult:
         """Delete all episodes that mention a resource path.
 
-        Erases every match it can and raises ``ErasureCascadeIncomplete`` if any did not erase.
+        Erases every match it can and raises ``ErasureCascadeIncomplete`` if any did not erase. AD-1341 S3: erases
+        nothing, raising ``ArchiveCitationsBlockErasure``, while a Ship's Archive entry cites a match.
         """
         needle = resource_path.lower()
 
@@ -149,18 +184,22 @@ class ErasureManager:
             return needle in serialized
 
         matching_ids, enumeration_error = await self._matching_ids(mentions_resource)
+        await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: a resource's matches
         return await self._forget_all(matching_ids, enumeration_error)
 
     async def forget_agent_memory(self, agent_id: str) -> ErasureResult:
         """Delete all episodes involving a specific agent.
 
-        Erases every match it can and raises ``ErasureCascadeIncomplete`` if any did not erase.
+        Erases every match it can and raises ``ErasureCascadeIncomplete`` if any did not erase. AD-1341 S3: erases
+        nothing, raising ``ArchiveCitationsBlockErasure``, while a Ship's Archive entry cites a match; an entry the
+        agent authored that cites none of them does not block it (D9).
         """
 
         def involves_agent(episode: Any) -> bool:
             return agent_id in list(getattr(episode, "agent_ids", []) or [])
 
         matching_ids, enumeration_error = await self._matching_ids(involves_agent)
+        await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: an agent's matches
         return await self._forget_all(matching_ids, enumeration_error)
 
     async def _matching_ids(self, matches: Callable[[Any], bool]) -> tuple[list[str], Exception | None]:

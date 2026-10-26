@@ -8,6 +8,14 @@ content. The one removal is the Captain's ``erase_entry``, reached only from the
 offline ``probos archive erase``: it deletes the row and leaves a marker in
 ``archive_erasures`` that holds no title, content or hash.
 
+AD-1341 S3: the Captain reviews what the next promotion would archive
+(``source_state``, through ``probos archive pending``) and may veto a source
+before it is archived (``veto_source``, through ``probos archive veto``): a row
+in ``archive_vetoes`` that holds no title, content or hash, and that
+``promote_entry`` honours for the source with any content. The AD-754 erasure
+manager reads ``entry_ids_citing`` and erases nothing while an entry cites an
+episode it would erase, until the Captain has erased that entry.
+
 Each entry records the timeline (instance) it came from, its source kind and
 reference, the content's SHA-256, its classification (``ship`` or ``fleet``: a
 later crew reads every entry) and when it was archived. ``generations`` records
@@ -100,6 +108,7 @@ class PromotionOutcome(StrEnum):
     CREATED = "created"
     PRESENT = "present"  # this source with this content is already archived
     ERASED = "erased"  # the Captain erased this source; it is not archived again
+    VETOED = "vetoed"  # AD-1341 S3: the Captain vetoed this source before it was archived; it never is
 
 
 class GenerationOutcome(StrEnum):
@@ -107,6 +116,28 @@ class GenerationOutcome(StrEnum):
 
     PROMOTED = "promoted"
     SKIPPED = "skipped"
+
+
+class VetoOutcome(StrEnum):
+    """AD-1341 S3: what ``veto_source`` did with the Captain's veto of a source."""
+
+    RECORDED = "recorded"
+    ALREADY_VETOED = "already_vetoed"  # a veto of this source is recorded already; the first reason stands
+    ARCHIVED = "archived"  # an entry from this source is archived: a veto does not remove it, erase_entry does
+    ERASED = "erased"  # the Captain erased this source's entry, so it is already never promoted again
+
+
+@dataclass(frozen=True)
+class SourceState:
+    """AD-1341 S3: what ``promote_entry`` would do with a record now, and the ids already archived from its source.
+
+    ``outcome`` is CREATED when the record would be archived (new, or a revision of the entries in ``entry_ids``).
+    Read with no lock: a veto, erasure or promotion after the read decides what ``promote_entry`` does. The review is
+    not a reservation.
+    """
+
+    outcome: PromotionOutcome
+    entry_ids: tuple[int, ...] = ()
 
 
 def _required_text(value: object, name: str) -> None:
@@ -234,6 +265,17 @@ CREATE TABLE IF NOT EXISTS archive_erasures (
 );
 
 CREATE INDEX IF NOT EXISTS idx_archive_erasures_source ON archive_erasures(source_kind, source_ref);
+
+CREATE TABLE IF NOT EXISTS archive_vetoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timeline_id TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    source_ref TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    vetoed_at REAL NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_vetoes_source ON archive_vetoes(source_kind, source_ref);
 """
 
 # AD-1341 schema v1: the provenance columns, each added to a v0 table only where absent, so a migration that
@@ -262,17 +304,38 @@ _ENTRY_COLUMNS = (
     "source_kind, source_ref, content_sha256, classification, author_did, source_episode_ids"
 )
 
-# One statement, so an erasure can never land between a check and the insert.
+# One statement, so neither an erasure nor (AD-1341 S3) a veto can land between a check and the insert.
 _PROMOTE_SQL = (
     "INSERT INTO archive (timeline_id, category, title, content, author_agent_type, author_callsign, "
     "archived_at, metadata, source_kind, source_ref, content_sha256, classification, author_did, "
     "source_episode_ids) "
     "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? "
     "WHERE NOT EXISTS (SELECT 1 FROM archive_erasures WHERE source_kind = ? AND source_ref = ?) "
+    "AND NOT EXISTS (SELECT 1 FROM archive_vetoes WHERE source_kind = ? AND source_ref = ?) "
     f"ON CONFLICT ({_PROMOTION_KEY}) WHERE content_sha256 IS NOT NULL DO NOTHING"
 )
 
 _ERASED_SOURCE_SQL = "SELECT 1 FROM archive_erasures WHERE source_kind = ? AND source_ref = ? LIMIT 1"
+
+# AD-1341 S3 (D6): the Captain's veto, honoured by promote_entry and shown by source_state.
+_VETOED_SOURCE_SQL = "SELECT 1 FROM archive_vetoes WHERE source_kind = ? AND source_ref = ? LIMIT 1"
+
+_PRESENT_SQL = "SELECT 1 FROM archive WHERE source_kind = ? AND source_ref = ? AND content_sha256 = ? LIMIT 1"
+
+_SOURCE_ENTRIES_SQL = "SELECT id FROM archive WHERE source_kind = ? AND source_ref = ? ORDER BY id"
+
+# AD-1341 S3 (D5): one statement. A source already archived or erased is refused, and a second veto writes nothing.
+_VETO_SQL = (
+    "INSERT INTO archive_vetoes (timeline_id, source_kind, source_ref, reason, vetoed_at) "
+    "SELECT ?, ?, ?, ?, ? "
+    "WHERE NOT EXISTS (SELECT 1 FROM archive AS a WHERE a.source_kind = ? AND a.source_ref = ?) "
+    "AND NOT EXISTS (SELECT 1 FROM archive_erasures AS e WHERE e.source_kind = ? AND e.source_ref = ?) "
+    "ON CONFLICT (source_kind, source_ref) DO NOTHING"
+)
+
+# AD-1341 S3 (D9, D10): every entry whose citation cell is not the canonical '[]' (AD-524 rows and uncited entries hold
+# it). SQL NULL and empty text are fetched, so that entry_ids_citing refuses them instead of skipping them.
+_CITING_SQL = "SELECT id, source_episode_ids FROM archive WHERE source_episode_ids IS NOT '[]' ORDER BY id"
 
 # The marker copies only the entry's id, timeline and source from the row it is about to delete.
 _ERASURE_MARKER_SQL = (
@@ -365,14 +428,15 @@ async def _close_quietly(db: Any) -> None:
 
 
 class ArchiveStore:
-    """The Ship's Archive (AD-524), with AD-1341's provenance, promotion and the Captain's erasure.
+    """The Ship's Archive (AD-524), with AD-1341's provenance, promotion, and the Captain's veto and erasure.
 
-    Agents and services never update or delete an entry: ``promote_entry`` is the one write and
-    ``erase_entry`` the one removal (Captain-only, through ``probos archive erase``). Uses the
+    Agents and services never update or delete an entry: ``promote_entry`` is the one write of an entry and
+    ``erase_entry`` the one removal (Captain-only, through ``probos archive erase``). ``veto_source`` (S3) records
+    the Captain's veto of a source (Captain-only, through ``probos archive veto``); it writes no entry. Uses the
     ConnectionFactory protocol for cloud-ready storage.
 
     AD-1341 A2 (F1): one connection serves every call, and a ROLLBACK or COMMIT ends whatever that connection
-    has open. So the three writes and ``close`` hold ``_write_lock`` from their first statement through the
+    has open. So the four writes and ``close`` hold ``_write_lock`` from their first statement through the
     commit or rollback that ends it, and no call can undo, or land, another call's work (AD-1340 R3's pattern,
     ``episode_archive.py``). Reads and ``initialize`` take no lock: a read issues no commit or rollback, and it
     sees the connection's state, a write in flight included. No method holding the lock calls another store
@@ -448,6 +512,7 @@ class ArchiveStore:
             record.author_callsign, time.time(), json.dumps(record.metadata), kind, record.source_ref,
             record.content_sha256, record.classification, record.author_did,
             json.dumps(list(record.source_episode_ids)), kind, record.source_ref,
+            kind, record.source_ref,  # AD-1341 S3: the veto check
         )
         async with self._write_lock:  # AD-1341 F1: the insert and its erasure check commit or roll back alone
             if not self._db:
@@ -455,17 +520,21 @@ class ArchiveStore:
             try:
                 cursor = await self._db.execute(_PROMOTE_SQL, params)
                 created = cursor.rowcount == 1
-                erased = False
-                if not created:
+                erased = vetoed = False
+                if not created:  # AD-1341 S3 (D6): erased, then vetoed, then present; source_state reads the same
                     cursor = await self._db.execute(_ERASED_SOURCE_SQL, (kind, record.source_ref))
                     erased = await cursor.fetchone() is not None
+                    cursor = await self._db.execute(_VETOED_SOURCE_SQL, (kind, record.source_ref))
+                    vetoed = await cursor.fetchone() is not None
                 await self._db.commit()
             except BaseException:
                 await _rollback_quietly(self._db)
                 raise
         if created:
             return PromotionOutcome.CREATED
-        return PromotionOutcome.ERASED if erased else PromotionOutcome.PRESENT
+        if erased:
+            return PromotionOutcome.ERASED
+        return PromotionOutcome.VETOED if vetoed else PromotionOutcome.PRESENT
 
     async def record_generation(self, closure: GenerationRecord) -> int:
         """AD-1341: record a crew generation's close (a promotion run, or a skip and its reason). Returns its id."""
@@ -515,6 +584,99 @@ class ArchiveStore:
                 raise
         logger.warning("AD-1341: the Captain erased Ship's Archive entry %d", entry_id)
         return True
+
+    async def veto_source(
+        self, source_kind: SourceKind, source_ref: str, reason: str, *, timeline_id: str = "",
+    ) -> VetoOutcome:
+        """AD-1341 S3: the Captain's veto of a source before it is archived, reached only from ``probos archive veto``.
+
+        One statement (``_VETO_SQL``) writes a row in ``archive_vetoes``: the source kind and ref, the Captain's
+        reason, the timeline it was vetoed in and the time; never a title, content, metadata or hash.
+        ``promote_entry`` then refuses the source with any content (VETOED). Nothing is written for a source an entry
+        is archived from (ARCHIVED: a veto does not remove an entry, ``erase_entry`` does), for a source the Captain
+        erased (ERASED: it is never promoted again already), or for a second veto (ALREADY_VETOED: the first reason
+        stands). Holds ``_write_lock`` through the commit or rollback (S1 D16).
+        """
+        if type(source_kind) is not SourceKind:
+            raise ValueError("AD-1341: source_kind must be a SourceKind")
+        _required_text(source_ref, "source_ref")
+        text = _valid_reason(reason)
+        if type(timeline_id) is not str:
+            raise ValueError("AD-1341: timeline_id must be a string")
+        kind = source_kind.value
+        params = (timeline_id.strip(), kind, source_ref, text, time.time(), kind, source_ref, kind, source_ref)
+        async with self._write_lock:  # AD-1341 S3: the veto and its checks commit or roll back alone (D16)
+            if not self._db:
+                raise RuntimeError("ArchiveStore not initialized")
+            try:
+                cursor = await self._db.execute(_VETO_SQL, params)
+                recorded = cursor.rowcount == 1
+                archived = was_erased = False
+                if not recorded:
+                    cursor = await self._db.execute(_SOURCE_ENTRIES_SQL, (kind, source_ref))
+                    archived = await cursor.fetchone() is not None
+                    cursor = await self._db.execute(_ERASED_SOURCE_SQL, (kind, source_ref))
+                    was_erased = await cursor.fetchone() is not None
+                await self._db.commit()
+            except BaseException:
+                await _rollback_quietly(self._db)  # AD-1341 S3: nothing is left open for the next write
+                raise
+        if recorded:
+            logger.warning("AD-1341 S3: the Captain vetoed a %s source's promotion into the Ship's Archive", kind)
+            return VetoOutcome.RECORDED
+        if archived:
+            return VetoOutcome.ARCHIVED
+        return VetoOutcome.ERASED if was_erased else VetoOutcome.ALREADY_VETOED
+
+    async def source_state(self, record: PromotionRecord) -> SourceState:
+        """AD-1341 S3: what ``promote_entry`` would do with ``record`` now, and the ids archived from its source.
+
+        The same checks in the same order as ``promote_entry`` (an erasure, then a veto, then this content already
+        archived), CREATED when none holds (D6). A read: no lock and no commit (S1 D16), so a later write decides.
+        """
+        if type(record) is not PromotionRecord:
+            raise TypeError("AD-1341: source_state takes a PromotionRecord")
+        if not self._db:
+            raise RuntimeError("ArchiveStore not initialized")
+        kind, ref = record.source_kind.value, record.source_ref
+        cursor = await self._db.execute(_SOURCE_ENTRIES_SQL, (kind, ref))
+        entry_ids = tuple(row[0] for row in await cursor.fetchall())
+        cursor = await self._db.execute(_ERASED_SOURCE_SQL, (kind, ref))
+        if await cursor.fetchone() is not None:
+            return SourceState(PromotionOutcome.ERASED, entry_ids)
+        cursor = await self._db.execute(_VETOED_SOURCE_SQL, (kind, ref))
+        if await cursor.fetchone() is not None:
+            return SourceState(PromotionOutcome.VETOED, entry_ids)
+        cursor = await self._db.execute(_PRESENT_SQL, (kind, ref, record.content_sha256))
+        present = await cursor.fetchone() is not None
+        return SourceState(PromotionOutcome.PRESENT if present else PromotionOutcome.CREATED, entry_ids)
+
+    async def entry_ids_citing(self, episode_ids: list[str] | tuple[str, ...]) -> tuple[int, ...]:
+        """AD-1341 S3: the ids of the entries whose ``source_episode_ids`` name any of ``episode_ids``, ascending.
+
+        The AD-754 erasure manager's check (``knowledge/erasure.py``): an episode an entry cites is not erased until
+        the Captain has erased the entry (D8). Blank ids match nothing. A read, with no lock (S1 D16). It raises when
+        the store is not open, and ``ValueError`` when any citation cell is not a JSON list of strings (malformed
+        JSON, an object, a string, a number, ``null``, a list holding a non-string, empty text or SQL NULL): it never
+        answers "none" then, because an erasure that cannot check must not go on as if nothing cited the episode (D10).
+        One statement per call; ``_CITING_SQL`` skips only the canonical ``'[]'``.
+        """
+        if type(episode_ids) not in (list, tuple) or any(type(item) is not str for item in episode_ids):
+            raise TypeError("AD-1341: entry_ids_citing takes a list or tuple of episode ids")
+        if not self._db:
+            raise RuntimeError("AD-1341 S3: the Ship's Archive is not open, so its citations cannot be read")
+        wanted = {item for item in episode_ids if item}
+        if not wanted:
+            return ()
+        cursor = await self._db.execute(_CITING_SQL)
+        citing: list[int] = []
+        for entry_id, cell in await cursor.fetchall():
+            cited = json.loads(cell) if type(cell) is str else None  # SQL NULL, or a blob, is no citation list (D10)
+            if type(cited) is not list or any(type(item) is not str for item in cited):
+                raise ValueError(f"AD-1341 S3: Ship's Archive entry {entry_id}'s citation list cannot be read")
+            if wanted.intersection(cited):
+                citing.append(entry_id)
+        return tuple(citing)
 
     async def entry_by_id(self, entry_id: int) -> ArchiveEntry | None:
         """AD-1341: one entry, so the erasure can show the Captain what it is about to remove.

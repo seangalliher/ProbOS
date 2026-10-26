@@ -2211,6 +2211,15 @@ class ProbOSRuntime:
         return self._records_store
 
     @property
+    def archive_store(self) -> Any:
+        """AD-1341 S3: the Ship's Archive store (AD-524), or None when it is disabled, failed to start or is closed.
+
+        Read by the AD-754 route (``routers/security.py``) so an erasure refuses while an archive entry cites an
+        episode it would erase. Read-only; shutdown clears ``_archive_store`` after closing it.
+        """
+        return self._archive_store
+
+    @property
     def data_dir(self) -> Path:
         """AD-468: public read-only accessor for the runtime data directory."""
         return self._data_dir

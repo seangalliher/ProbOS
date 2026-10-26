@@ -65,7 +65,8 @@ if TYPE_CHECKING:
     import httpx
 
     from probos.config import SystemConfig
-    from probos.knowledge.archive_store import ArchiveStore
+    from probos.knowledge.archive_promotion import PromotionReview
+    from probos.knowledge.archive_store import ArchiveStore, SourceState
     from probos.knowledge.records_store import RecordsStore
 
 
@@ -3314,7 +3315,8 @@ async def _promote_into_archive(
         await archive.close()
     return True, (
         f"Ship's Archive: {len(promoted.created)} promoted, {len(promoted.present)} already archived, "
-        f"{len(promoted.erased)} erased by the Captain, {len(promoted.withheld)} withheld (timeline {timeline_id})."
+        f"{len(promoted.erased)} erased by the Captain, {len(promoted.vetoed)} vetoed by the Captain, "
+        f"{len(promoted.withheld)} withheld (timeline {timeline_id})."
     )
 
 
@@ -3349,6 +3351,11 @@ def _show_promotion_plan(config: SystemConfig, data_dir: Path, skip_reason: str 
         console.print(f"    + {escape(record.source_ref)}")
     for path in plan.withheld:
         console.print(f"    - withheld: {escape(path)}")
+    if plan.records:  # AD-1341 S3: the Captain reviews, and may veto, before the reset promotes
+        console.print(
+            "  [dim]probos archive pending shows what each would do now; "
+            "probos archive veto SOURCE_REF --reason TEXT keeps one out of the Ship's Archive.[/dim]"
+        )
     if plan.records and not timeline_id:
         console.print("  [yellow]⚠ No instance id: this reset would refuse without --skip-promotion REASON.[/yellow]")
     return 0
@@ -3364,8 +3371,16 @@ def _cmd_archive(args: argparse.Namespace) -> int:
     """
     from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
 
-    if getattr(args, "archive_cmd", None) != "erase":
-        print("usage: probos archive erase ENTRY_ID --reason TEXT [--yes] [--config PATH]")
+    command = getattr(args, "archive_cmd", None)
+    if command == "pending":  # AD-1341 S3: the Captain's review before canon
+        return _cmd_archive_pending(args)
+    if command == "veto":  # AD-1341 S3: the Captain's veto
+        return _cmd_archive_veto(args)
+    if command != "erase":
+        print(
+            "usage: probos archive erase ENTRY_ID --reason TEXT | pending | veto SOURCE_REF --reason TEXT "
+            "[--yes] [--config PATH] [--data-dir DIR]"
+        )
         return 2
     config, _ = _load_config_with_fallback(getattr(args, "config", None))
     if not config.archive.enabled:
@@ -3409,6 +3424,143 @@ async def _erase_archive_entry(config: SystemConfig, entry_id: int, reason: str,
         f"Erased Ship's Archive entry {entry_id}. A marker records the erasure: if its source is still in Ship's "
         "Records, it will not be promoted again."
     )
+    return 0
+
+
+def _cmd_archive_pending(args: argparse.Namespace) -> int:
+    """``probos archive pending`` (AD-1341 S3): the Captain's review of what the next promotion would archive.
+
+    Every Ship's Records document that meets its source's criterion, with what promoting it now would do: archive it
+    (new, or a revision of the entries named), nothing (already archived), or never (vetoed or erased by the
+    Captain); then what is withheld (C1). It reads Ship's Records and the Ship's Archive and records nothing; opening
+    the archive brings its schema up to date, as ``erase`` does. 0 shown; 1 a read failed; 2 the archive disabled.
+    Plain ``print``: a path is shown as text, never as markup.
+    """
+    config, _ = _load_config_with_fallback(getattr(args, "config", None))
+    if not config.archive.enabled:  # AD-1341 S3: a disabled archive is never opened, so pending creates no file
+        print("The Ship's Archive is disabled (archive.enabled): nothing is promoted, so there is nothing to review.")
+        return 2
+    data_dir = Path(getattr(args, "data_dir", None) or _default_data_dir())
+    timeline_id = _read_instance_id(data_dir) or _UNATTRIBUTED_TIMELINE
+    try:
+        review = asyncio.run(_review_pending_promotion(config, data_dir, timeline_id))
+    except Exception as exc:  # nothing is recorded either way; the Captain sees why
+        print(f"The review could not be read: {type(exc).__name__}: {exc}")
+        return 1
+    print(
+        f"Ship's Archive review for timeline {timeline_id}: {len(review.sources)} eligible, "
+        f"{len(review.withheld)} withheld"
+    )
+    for pending in review.sources:
+        print(f"  {_pending_label(pending.state)}: {pending.record.source_ref}")
+    for path in review.withheld:
+        print(f"  - withheld: {path}")
+    if review.sources:
+        print(
+            "Veto a source: probos archive veto SOURCE_REF --reason TEXT. "
+            "Erase an archived entry: probos archive erase ENTRY_ID --reason TEXT."
+        )
+    return 0
+
+
+async def _review_pending_promotion(config: SystemConfig, data_dir: Path, timeline_id: str) -> PromotionReview:
+    """The review over this vessel's Ship's Records and the configured archive; the archive is closed on every exit."""
+    from probos.knowledge.archive_promotion import review_promotion
+
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        return await review_promotion(_reset_records_store(config, data_dir), archive, timeline_id=timeline_id)
+    finally:
+        await archive.close()
+
+
+def _pending_label(state: SourceState) -> str:
+    """What promoting a source now would do, as ``probos archive pending`` shows it (AD-1341 S3)."""
+    from probos.knowledge.archive_store import PromotionOutcome
+
+    entries = ", ".join(str(entry_id) for entry_id in state.entry_ids)
+    if state.outcome is PromotionOutcome.ERASED:
+        return "x erased by the Captain"
+    if state.outcome is PromotionOutcome.VETOED:
+        return "x vetoed by the Captain"
+    if state.outcome is PromotionOutcome.PRESENT:
+        return f"= already archived (entry {entries})"
+    return f"+ would be promoted (a revision of entry {entries})" if entries else "+ would be promoted"
+
+
+def _cmd_archive_veto(args: argparse.Namespace) -> int:
+    """``probos archive veto SOURCE_REF --reason TEXT`` (AD-1341 S3): the Captain vetoes a source before it is archived.
+
+    The source must be one the next promotion would archive (``probos archive pending`` lists them). The veto keeps the
+    source's kind and path, the reason, the timeline and the time, never its title or content, and no later promotion
+    archives that source, with any content. A source already archived is refused: erase its entry instead. 0 vetoed,
+    already vetoed, already erased, or declined; 1 not a pending source, already archived, or the veto failed; 2 the
+    archive disabled, or a blank source or a bad reason. Plain ``print``.
+    """
+    from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
+
+    config, _ = _load_config_with_fallback(getattr(args, "config", None))
+    if not config.archive.enabled:
+        print("The Ship's Archive is disabled (archive.enabled): nothing is promoted, so there is nothing to veto.")
+        return 2
+    source_ref, reason = args.source_ref.strip(), args.reason
+    if not source_ref:
+        print("A source is its Ship's Records path, as probos archive pending lists it.")
+        return 2
+    if not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
+        print(f"--reason needs 1 to {ARCHIVE_REASON_MAX_CHARS} characters. Do not restate the source's content.")
+        return 2
+    data_dir = Path(getattr(args, "data_dir", None) or _default_data_dir())
+    try:
+        return asyncio.run(_veto_pending_source(config, data_dir, source_ref, reason, bool(getattr(args, "yes", False))))
+    except Exception as exc:  # one statement, so nothing is half-recorded; the Captain sees why
+        print(f"The veto failed: {type(exc).__name__}: {exc}")
+        return 1
+
+
+async def _veto_pending_source(
+    config: SystemConfig, data_dir: Path, source_ref: str, reason: str, confirmed: bool,
+) -> int:
+    """Find the pending source, show it, ask unless ``--yes``, then record the veto. The archive is closed on every exit."""
+    from probos.knowledge.archive_promotion import plan_promotion
+    from probos.knowledge.archive_store import VetoOutcome
+
+    timeline_id = _read_instance_id(data_dir)
+    plan = await plan_promotion(
+        _reset_records_store(config, data_dir), timeline_id=timeline_id or _UNATTRIBUTED_TIMELINE,
+    )
+    record = next((item for item in plan.records if item.source_ref == source_ref), None)
+    if record is None:
+        print(
+            f"{source_ref} is not a source the next promotion would archive (not in Ship's Records, not eligible, "
+            "or withheld). probos archive pending lists the sources."
+        )
+        return 1
+    print(f"Ship's Records source {record.source_ref}: {record.title}")
+    print(f"  kind: {record.source_kind.value}")
+    if not confirmed and input("  Veto its promotion into the Ship's Archive? [y/N]: ").strip().lower() != "y":
+        print("Aborted. Nothing was vetoed.")
+        return 0
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        outcome = await archive.veto_source(record.source_kind, record.source_ref, reason, timeline_id=timeline_id)
+    finally:
+        await archive.close()
+    if outcome is VetoOutcome.ARCHIVED:
+        print(
+            "An entry from this source is already in the Ship's Archive, and a veto does not remove it. "
+            "probos archive pending shows its id; erase it with probos archive erase ENTRY_ID --reason TEXT."
+        )
+        return 1
+    if outcome is VetoOutcome.ERASED:
+        print("The Captain already erased this source's entry, so it is never promoted again. Nothing changed.")
+        return 0
+    if outcome is VetoOutcome.ALREADY_VETOED:
+        print("This source is already vetoed. Nothing changed.")
+        return 0
+    print("Vetoed: this source is never promoted into the Ship's Archive. The veto and its reason are recorded.")
     return 0
 
 
@@ -3726,8 +3878,10 @@ def main() -> None:
              "the reason (1-500 characters) is recorded",
     )
 
-    # --- probos archive (AD-1341 S1): the Captain's erasure ---
-    archive_parser = subparsers.add_parser("archive", help="The Ship's Archive: the Captain's erasure (AD-1341)")
+    # --- probos archive (AD-1341 S1, S3): the Captain's erasure, review and veto ---
+    archive_parser = subparsers.add_parser(
+        "archive", help="The Ship's Archive: the Captain's review, veto and erasure (AD-1341)",
+    )
     archive_sub = archive_parser.add_subparsers(dest="archive_cmd", required=True)
     archive_erase = archive_sub.add_parser(
         "erase", help="Erase one Ship's Archive entry; its source is never promoted again",
@@ -3739,6 +3893,23 @@ def main() -> None:
     )
     archive_erase.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
     archive_erase.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    # AD-1341 S3: SUPPRESS keeps a root --config or --data-dir given before the command (S1 D19).
+    archive_pending = archive_sub.add_parser(
+        "pending", help="List what the next promotion would archive, and what the Captain vetoed or erased",
+    )
+    archive_pending.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    archive_pending.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
+    archive_veto = archive_sub.add_parser(
+        "veto", help="Veto one Ship's Records source: it is never promoted into the Ship's Archive",
+    )
+    archive_veto.add_argument("source_ref", type=str, help="The source's Ship's Records path, as pending lists it")
+    archive_veto.add_argument(
+        "--reason", type=str, required=True,
+        help="Why, in 1-500 characters; it is recorded. Do not restate the source's content.",
+    )
+    archive_veto.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
+    archive_veto.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    archive_veto.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
 
     args = parser.parse_args()
 

@@ -122,6 +122,7 @@ undeclared_stores:
   tables:
   - archive
   - archive_erasures
+  - archive_vetoes
   - generations
 - module: probos.knowledge.edges
   tables:
