@@ -4,7 +4,8 @@
 Architect's premise P1). The stand-down is the live step before it. The Captain types ``/stand-down`` at the vessel's
 console, and every crew agent is sent one Captain's message: a ``direct_message`` intent through the intent bus, as a
 1:1 message is, that asks for exit notes in the lessons format (``probos.knowledge.lessons``) and shows the agent its
-own most recent episodes by handle. Writing is optional.
+own most recent episodes by handle. Writing is optional. The message is a bounded turn (``BOUNDED_TURN_PARAM``, A2): the
+agent answers it on its single-pass path, without its tool-calling loop, so nothing the turn starts outlives it.
 
 No agent can hold a reset. Each turn is bounded by ``STAND_DOWN_TURN_SECONDS``, the whole stand-down by
 ``STAND_DOWN_WINDOW_SECONDS``, and at most ``STAND_DOWN_CONCURRENCY`` turns run at once. A turn that runs out of time
@@ -22,6 +23,7 @@ of them first. This module never writes the Ship's Archive and never copies an e
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -34,13 +36,17 @@ from probos.knowledge.lessons import (
     DECLINE_REPLY,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
+    EXIT_NOTE_TIMELINE_MAX_CHARS,
     EXIT_NOTE_VERSION,
+    LESSON_MAX_CHARS,
     LESSON_MAX_CITATIONS,
-    LESSON_SECTION_MAX_CHARS,
     exit_note_body,
+    exit_note_lesson,
     exit_note_path,
+    exit_note_provenance_ok,
     exit_notes_directory,
     is_declined,
+    is_exit_note_text,
     parse_citations,
     parse_lesson,
 )
@@ -59,7 +65,12 @@ STAND_DOWN_WINDOW_SECONDS: Final = 900.0
 STAND_DOWN_CONCURRENCY: Final = 2
 #: AD-1341 S4 (D4): the most recent episodes an agent is shown, each by handle, date and opening characters.
 STAND_DOWN_EPISODES: Final = LESSON_MAX_CITATIONS
+#: A2 (M2-8): an excerpt's bound in bytes once JSON-escaped (the transport escapes every character outside ASCII), so
+#: in characters too; the Captain's message stays inside the 4 KiB standard for inline ``IntentMessage.params`` (S7c).
 EPISODE_EXCERPT_CHARS: Final = 160
+#: A2 (M2-1): the ``direct_message`` param that makes the turn a bounded one. ``CognitiveAgent`` answers it on the
+#: single-pass path, so no tool-calling loop runs and nothing is promoted into a background work item past the turn.
+BOUNDED_TURN_PARAM: Final = "bounded_turn"
 
 
 @dataclass(frozen=True)
@@ -74,7 +85,11 @@ class CrewMember:
 
 
 class TurnOutcome(StrEnum):
-    """What one agent's stand-down turn came to. Only WRITTEN wrote anything."""
+    """What one agent's stand-down turn came to.
+
+    Only WRITTEN wrote a note. A failed write is removed again (A2, M2-4); a FAILED turn that carries a path is one
+    whose partly written note could not be removed, so the report names it and the Captain's review shows it.
+    """
 
     WRITTEN = "written"
     DECLINED = "declined"
@@ -85,6 +100,7 @@ class TurnOutcome(StrEnum):
     NOT_REACHED = "not_reached"
     ALREADY_WRITTEN = "already_written"
     NO_IDENTITY = "no_identity"
+    DUPLICATE = "duplicate"  # A2 (M2-3): this billet's path is another crew agent's turn in this stand-down
 
 
 @dataclass(frozen=True)
@@ -124,8 +140,8 @@ def _turn_result(member: CrewMember, outcome: TurnOutcome, path: str = "") -> Tu
 def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
     """The handles an agent may cite (``e1`` -> an episode id) and the lines that show them (D4, D9).
 
-    The agent's own most recent episodes, at most ``STAND_DOWN_EPISODES``, each by handle, date and at most
-    ``EPISODE_EXCERPT_CHARS`` opening characters. An episode without an id, or seen twice, is skipped.
+    The agent's own most recent episodes, at most ``STAND_DOWN_EPISODES``, each by handle, date and opening words of
+    at most ``EPISODE_EXCERPT_CHARS`` bytes once JSON-escaped. An episode without an id, or seen twice, is skipped.
     """
     offered: dict[str, str] = {}
     shown: list[str] = []
@@ -137,11 +153,33 @@ def _offer(episodes: Sequence[Any]) -> tuple[dict[str, str], tuple[str, ...]]:
             continue
         handle = f"e{len(offered) + 1}"
         offered[handle] = episode_id
-        stamp = getattr(episode, "timestamp", 0.0)
-        day = time.strftime("%Y-%m-%d", time.gmtime(stamp)) if type(stamp) in (int, float) and stamp > 0 else "undated"
-        excerpt = " ".join(str(getattr(episode, "user_input", "") or "").split())[:EPISODE_EXCERPT_CHARS]
+        day, excerpt = _day(getattr(episode, "timestamp", 0.0)), _excerpt(getattr(episode, "user_input", ""))
         shown.append(f"{handle} {day}: {excerpt}")
     return offered, tuple(shown)
+
+
+def _day(stamp: object) -> str:
+    """An episode's date, or ``undated`` for a timestamp that names none (missing, not positive, NaN, out of range)."""
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)) or not stamp > 0:
+        return "undated"
+    try:
+        return time.strftime("%Y-%m-%d", time.gmtime(stamp))
+    except (OverflowError, OSError, ValueError):  # A2 (M2-6): inf, or out of range; the turn still runs
+        return "undated"
+
+
+def _excerpt(text: object) -> str:
+    """An episode's opening words: at most ``EPISODE_EXCERPT_CHARS`` bytes once JSON-escaped (A2, M2-8)."""
+    kept: list[str] = []
+    cost = 0
+    for char in " ".join(str(text or "").split()):
+        if "\ud800" <= char <= "\udfff":
+            continue  # a lone surrogate is no UTF-8: dropped, never sent
+        cost += len(json.dumps(char)) - 2
+        if cost > EPISODE_EXCERPT_CHARS:
+            break
+        kept.append(char)
+    return "".join(kept)
 
 
 def exit_notes_prompt(callsign: str, shown: Sequence[str]) -> str:
@@ -152,8 +190,8 @@ def exit_notes_prompt(callsign: str, shown: Sequence[str]) -> str:
         "your memories. This is your one turn to leave them exit notes: what you learned, what you would do "
         "differently, and what remains open.\n\n"
         f"Writing is optional. To decline, reply exactly {DECLINE_REPLY} and nothing is recorded.\n\n"
-        "If you write, reply in exactly this form, from your own experience, each section at most "
-        f"{LESSON_SECTION_MAX_CHARS} characters:\n"
+        "If you write, reply in exactly this form, from your own experience, the four sections together at most "
+        f"{LESSON_MAX_CHARS} characters:\n"
         "## Observation\n(what happened)\n"
         "## Discussion\n(why it happened and why it mattered)\n"
         "## Lesson\n(the general learning)\n"
@@ -182,26 +220,83 @@ async def run_stand_down(
     """Give each crew member one bounded turn to leave exit notes, and write each note it leaves (D3 to D11).
 
     ``ask`` delivers the prompt and returns the reply (None for no reply); ``recall`` returns the member's most recent
-    episodes. Returns when every turn has ended: by ``window_seconds`` after it starts, plus the cancellation of the
-    turns still running then. Raises ``StandDownRefused`` when the timeline is missing or names no records path, and
-    ``ValueError`` for a bound that is not positive; nothing that happens in a turn raises.
+    episodes. Returns by ``window_seconds`` after it starts, plus the cancellation of what is still running then: the
+    window includes the first read of Ship's Records and every write (A2, M2-2). Each member's turn has one deadline,
+    ``turn_seconds`` after it begins and never past the window, that its recall and its ask both spend and that its
+    reply must meet (A2, M2-5). One turn per billet: a second crew agent of an agent type, or a member listed twice, is
+    ``DUPLICATE`` and is not asked (A2, M2-3). A write that fails or runs out of time is removed again (A2, M2-4).
+
+    Raises ``StandDownRefused`` when the timeline is missing, cannot stand in a note or name a records path, or when
+    Ship's Records cannot be read in time (nobody is asked), and ``ValueError`` for a bound that is not positive.
+    Nothing that happens in a member's turn raises, and no turn outlives the call.
     """
     if type(timeline_id) is not str or not timeline_id.strip():
         raise StandDownRefused("This vessel has no instance id, so its exit notes could not be attributed to a timeline.")
     if concurrency < 1 or turn_seconds <= 0 or window_seconds <= 0:
         raise ValueError("AD-1341 S4: a stand-down's bounds must be positive")
+    if not is_exit_note_text(timeline_id, EXIT_NOTE_TIMELINE_MAX_CHARS):
+        raise StandDownRefused(
+            f"The instance id cannot stand in an exit note (one line, at most {EXIT_NOTE_TIMELINE_MAX_CHARS} characters)."
+        )
     try:
         directory = exit_notes_directory(timeline_id)
     except ValueError as exc:
         raise StandDownRefused(f"The instance id cannot name a records path: {exc}") from exc
-    existing = {listed["path"] for listed in await records.list_entries(directory)}
-    deadline = clock() + window_seconds
+    deadline = clock() + window_seconds  # A2 (M2-2): the window starts before Ship's Records is first read
+    try:
+        listed = await asyncio.wait_for(records.list_entries(directory, strict=True), timeout=window_seconds)
+    except Exception as exc:  # the window closed, or a note file could not be read: which notes exist is unknown
+        logger.warning(
+            "AD-1341 S4: Ship's Records could not be read for the stand-down; nobody is asked", exc_info=True,
+        )
+        raise StandDownRefused(
+            "Ship's Records could not be read in time, so nobody was asked: a note already written could be replaced."
+        ) from exc
+    existing = {entry["path"] for entry in listed}
+    claimed_paths: set[str] = set()  # A2 (M2-3): the billets a turn has taken in this stand-down
+    seen_agents: set[str] = set()
     gate = asyncio.Semaphore(concurrency)
     write_lock = asyncio.Lock()  # one Ship's Records write at a time: the repository has one git index
 
+    async def _write(member: CrewMember, path: str, body: str, envelope: dict[str, Any]) -> TurnResult:
+        """Write one note inside the window, and leave nothing at ``path`` when the write fails (A2, M2-2, M2-4)."""
+        async with write_lock:
+            remaining = deadline - clock()
+            if remaining <= 0:  # A2 (M2-2): the window closed while this turn waited for the write lock
+                return _turn_result(member, TurnOutcome.TIMED_OUT)
+            if await records.read_entry(path, "captain") is not None:  # A2 (M2-3): written since the stand-down began
+                return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
+            written = records.write_entry(
+                author=member.callsign,
+                path=path,
+                content=body,
+                message=f"AD-1341 S4: exit notes of {member.callsign}",
+                classification="ship",  # AD-1341 S4 (D8): for the next crew, so ship-wide; C1 admits it to the archive
+                status=EXIT_NOTE_STATUS,
+                topic=f"Exit notes of {member.callsign}",
+                tags=["exit-notes", "ad-1341"],
+                extra_frontmatter={EXIT_NOTE_KEY: envelope},
+            )
+            try:
+                await asyncio.wait_for(written, timeout=remaining)  # A2 (M2-2): the write ends inside the window
+            except Exception as exc:  # log-and-degrade: TimeoutError included; the other notes are still written
+                outcome = TurnOutcome.TIMED_OUT if isinstance(exc, TimeoutError) else TurnOutcome.FAILED
+                logger.warning(
+                    "AD-1341 S4: %s's exit note could not be written; removing what was published", member.callsign,
+                    exc_info=True,
+                )
+                try:  # A2 (M2-4): write_entry publishes the file before git runs, so a failure can follow it
+                    (records.repo_path / path).unlink(missing_ok=True)
+                except OSError:
+                    logger.error("AD-1341 S4: a partly written exit note remains at %s", path, exc_info=True)
+                    return _turn_result(member, TurnOutcome.FAILED, path)  # it may be promoted: the report names it
+                return _turn_result(member, outcome)
+        return _turn_result(member, TurnOutcome.WRITTEN, path)
+
     async def _ask_and_write(member: CrewMember, path: str) -> TurnResult:
+        turn_deadline = min(clock() + turn_seconds, deadline)  # A2 (M2-5): one deadline for the whole turn
         try:
-            episodes = await asyncio.wait_for(recall(member), timeout=max(0.001, min(turn_seconds, deadline - clock())))
+            episodes = await asyncio.wait_for(recall(member), timeout=max(0.001, turn_deadline - clock()))
         except Exception:  # log-and-degrade: the turn offers no episodes, so its note cites none
             logger.warning(
                 "AD-1341 S4: %s's recent episodes could not be read; its turn offers none", member.callsign,
@@ -209,12 +304,12 @@ async def run_stand_down(
             )
             episodes = ()
         offered, shown = _offer(episodes)
-        remaining = deadline - clock()
+        remaining = turn_deadline - clock()  # A2 (M2-5): what the recall spent is spent
         if remaining <= 0:
             return _turn_result(member, TurnOutcome.TIMED_OUT)
         prompt = exit_notes_prompt(member.callsign, shown)
         try:
-            reply = await asyncio.wait_for(ask(member, prompt), timeout=min(turn_seconds, remaining))
+            reply = await asyncio.wait_for(ask(member, prompt), timeout=remaining)
         except TimeoutError:
             return _turn_result(member, TurnOutcome.TIMED_OUT)
         except Exception:  # log-and-degrade: one agent's failed turn never stops the others, or the reset
@@ -222,7 +317,7 @@ async def run_stand_down(
                 "AD-1341 S4: %s's exit-notes turn failed; nothing is written", member.callsign, exc_info=True,
             )
             return _turn_result(member, TurnOutcome.FAILED)
-        if clock() > deadline:  # a reply after the window writes nothing
+        if clock() > turn_deadline:  # a reply after the turn's deadline (never past the window) writes nothing
             return _turn_result(member, TurnOutcome.TIMED_OUT)
         if reply is None:
             return _turn_result(member, TurnOutcome.NO_REPLY)
@@ -231,6 +326,12 @@ async def run_stand_down(
         lesson = parse_lesson(reply)
         if lesson is None:
             return _turn_result(member, TurnOutcome.NOT_IN_FORMAT)
+        body = exit_note_body(member.callsign, member.agent_type, timeline_id, lesson)
+        if exit_note_lesson(member.callsign, member.agent_type, timeline_id, body) != lesson:
+            logger.error(
+                "AD-1341 S4: %s's exit note would not pass the promotion's rule; nothing is written", member.callsign,
+            )
+            return _turn_result(member, TurnOutcome.FAILED)  # A2 (M2-7): the promotion's own rule, before the write
         cited = parse_citations(reply, offered)
         envelope = {
             "version": EXIT_NOTE_VERSION,
@@ -240,43 +341,45 @@ async def run_stand_down(
             "author_did": member.did,
             "source_episode_ids": list(cited),
         }
-        async with write_lock:
-            try:
-                await records.write_entry(
-                    author=member.callsign,
-                    path=path,
-                    content=exit_note_body(member.callsign, member.agent_type, timeline_id, lesson),
-                    message=f"AD-1341 S4: exit notes of {member.callsign}",
-                    classification="ship",  # AD-1341 S4 (D8): for the next crew, so ship-wide; C1 admits it to the archive
-                    status=EXIT_NOTE_STATUS,
-                    topic=f"Exit notes of {member.callsign}",
-                    tags=["exit-notes", "ad-1341"],
-                    extra_frontmatter={EXIT_NOTE_KEY: envelope},
-                )
-            except Exception:  # log-and-degrade: the turn is reported failed; the other notes are still written
-                logger.warning(
-                    "AD-1341 S4: %s's exit note could not be written to Ship's Records", member.callsign,
-                    exc_info=True,
-                )
-                return _turn_result(member, TurnOutcome.FAILED)
-        return _turn_result(member, TurnOutcome.WRITTEN, path)
+        return await _write(member, path, body, envelope)
 
-    async def _turn(member: CrewMember) -> TurnResult:
-        if not member.did.strip() or not member.callsign.strip():
-            return _turn_result(member, TurnOutcome.NO_IDENTITY)
+    async def _claimed_turn(member: CrewMember) -> TurnResult:
+        if not exit_note_provenance_ok(timeline_id, member.callsign, member.agent_type, member.did):
+            return _turn_result(member, TurnOutcome.NO_IDENTITY)  # A2 (M2-7): no identity the note could carry
         try:
             path = exit_note_path(timeline_id, member.agent_type)
         except ValueError:
             return _turn_result(member, TurnOutcome.NO_IDENTITY)
         if path in existing:
             return _turn_result(member, TurnOutcome.ALREADY_WRITTEN, path)
+        if path in claimed_paths or member.agent_id in seen_agents:  # A2 (M2-3): one turn per billet, and per agent
+            return _turn_result(member, TurnOutcome.DUPLICATE, path)
+        claimed_paths.add(path)  # no await since the check above: the claim cannot race
+        seen_agents.add(member.agent_id)
         async with gate:
             if clock() >= deadline:  # the window closed before this agent's turn began
                 return _turn_result(member, TurnOutcome.NOT_REACHED)
             return await _ask_and_write(member, path)
 
-    turns = await asyncio.gather(*(_turn(member) for member in crew))
-    report = StandDownReport(timeline_id=timeline_id, turns=tuple(turns))
+    async def _turn(member: CrewMember) -> TurnResult:
+        try:
+            return await _claimed_turn(member)
+        except Exception:  # A2 (M2-6): one member's fault never ends the others' turns or the report
+            logger.warning(
+                "AD-1341 S4: %s's stand-down turn failed; nothing is written", member.callsign or member.agent_id,
+                exc_info=True,
+            )
+            return _turn_result(member, TurnOutcome.FAILED)
+
+    turns = [asyncio.ensure_future(_turn(member)) for member in crew]
+    try:
+        await asyncio.gather(*turns)
+    except BaseException:  # A2 (M2-6): the caller's cancellation, or a turn's own; no turn outlives the stand-down
+        for turn in turns:
+            turn.cancel()
+        await asyncio.gather(*turns, return_exceptions=True)
+        raise
+    report = StandDownReport(timeline_id=timeline_id, turns=tuple(turn.result() for turn in turns))
     logger.info(
         "AD-1341 S4: stand-down for timeline %s: %d of %d crew agents left exit notes",
         timeline_id, report.count(TurnOutcome.WRITTEN), len(report.turns),
@@ -320,7 +423,7 @@ async def stand_down_vessel(runtime: Any) -> StandDownReport:
     async def _ask(member: CrewMember, text: str) -> str | None:
         intent = IntentMessage(
             intent="direct_message",
-            params={"text": text, "from": "captain", "session": False},
+            params={"text": text, "from": "captain", "session": False, BOUNDED_TURN_PARAM: True},  # A2 (M2-1)
             target_agent_id=member.agent_id,
             ttl_seconds=STAND_DOWN_TURN_SECONDS,
         )

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import dataclasses
 import json
 import re
+import subprocess
 import time
 from io import StringIO
 from pathlib import Path
@@ -25,17 +27,22 @@ from rich.console import Console
 
 import probos
 from probos.api import _handle_slash_command
+from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.episodic_mock import MockEpisodicMemory
+from probos.cognitive.llm_client import BaseLLMClient
+from probos.consensus.trust import TrustNetwork
 from probos.experience.commands import commands_stand_down
 from probos.experience.shell import ProbOSShell
 from probos.identity_service import IdentityRef
+from probos.knowledge.archive_promotion import plan_promotion
 from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureManager
 from probos.knowledge.lessons import (
     DECLINE_REPLY,
+    EXIT_NOTE_CALLSIGN_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
     EXIT_NOTES_DIR,
-    LESSON_SECTION_MAX_CHARS,
+    LESSON_MAX_CHARS,
     LESSON_SECTIONS,
     exit_note_body,
     exit_note_path,
@@ -43,17 +50,22 @@ from probos.knowledge.lessons import (
 from probos.mesh.intent import IntentBus
 from probos.mesh.signal import SignalManager
 from probos.stand_down import (
+    BOUNDED_TURN_PARAM,
     EPISODE_EXCERPT_CHARS,
     STAND_DOWN_CONCURRENCY,
     STAND_DOWN_TURN_SECONDS,
     CrewMember,
     StandDownRefused,
     TurnOutcome,
+    crew_for_stand_down,
     exit_notes_prompt,
     run_stand_down,
     stand_down_vessel,
 )
-from probos.types import Episode, IntentMessage, IntentResult
+from probos.substrate.registry import AgentRegistry
+from probos.threads import ChatThreadStore
+from probos.types import Episode, IntentMessage, IntentResult, LLMResponse
+from probos.workforce import WorkItemStore
 from tests.test_ad1341_s1_reset_and_erase import (
     _SHIP,
     _archive_store,
@@ -64,7 +76,7 @@ from tests.test_ad1341_s1_reset_and_erase import (
     _reset,
     _rows,
 )
-from tests.test_ad1341_s4_lessons import _DID, _LESSON
+from tests.test_ad1341_s4_lessons import _DID, _LESSON, _deny_reading
 
 _SRC = Path(probos.__file__).resolve().parent
 
@@ -204,6 +216,53 @@ async def test_writing_is_optional_and_a_turn_that_leaves_no_lesson_writes_nothi
     assert await _notes(records) == []
 
 
+@pytest.mark.parametrize("case", ["removed", "cannot-remove"])
+async def test_a_write_that_fails_after_publishing_leaves_no_hidden_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """A2 (M2-4): ``write_entry`` publishes the document before git runs, so its failure can follow the publication (a
+    git timeout here, as the real call raises past its 30 s). The stand-down removes what was published: the report
+    says failed, the promotion finds nothing, and the next stand-down asks again. A note it cannot remove is reported
+    failed WITH its path, which is true."""
+    records = _records(_data_dir(tmp_path))
+    real_write = records.write_entry
+    failures = [1]
+
+    async def write_entry(**fields: Any) -> Any:
+        await real_write(**fields)  # published
+        if failures:
+            failures.pop()
+            raise subprocess.TimeoutExpired(["git", "add"], 30)
+        return fields["path"]
+
+    records.write_entry = write_entry  # type: ignore[method-assign]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        return _reply()
+
+    path = exit_note_path(_SHIP, "surgeon")
+    if case == "cannot-remove":
+        real_unlink = Path.unlink
+
+        def unlink(self: Path, missing_ok: bool = False) -> None:
+            if self.name == "surgeon.md":
+                raise PermissionError(13, "the file is being used by another process", str(self))
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+    report = await _run(records, (_member(),), ask)
+
+    if case == "removed":
+        assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, "")]
+        assert await _notes(records) == []
+        assert (await plan_promotion(records, timeline_id=_SHIP)).records == ()  # nothing for the reset to archive
+        again = await _run(records, (_member(),), ask)
+        assert [(turn.outcome, turn.path) for turn in again.turns] == [(TurnOutcome.WRITTEN, path)]
+    else:
+        assert [(turn.outcome, turn.path) for turn in report.turns] == [(TurnOutcome.FAILED, path)]
+        assert await _notes(records) == [path]  # it is there, and the report says where
+
+
 # --- S3 to S6: the bounds -------------------------------------------------------------------------------------------
 
 
@@ -220,11 +279,65 @@ async def test_a_turn_that_runs_past_its_bound_is_cancelled_and_writes_nothing(t
         return _reply()
 
     started = time.monotonic()
+    report = await _run(records, (_member(),), ask, turn_seconds=1.5, window_seconds=60.0)
+    elapsed = time.monotonic() - started
+
+    assert [turn.outcome for turn in report.turns] == [TurnOutcome.TIMED_OUT]
+    assert 1.4 <= elapsed < 2.5  # A2 (M2-9), A3 (2): the turn's own bound, neither halved nor doubled, 1 s headroom
+    assert cancelled.is_set()  # the turn is cancelled, never left running
+    assert await _notes(records) == []
+
+
+async def test_a_reply_that_returns_after_the_turn_s_deadline_writes_nothing(tmp_path: Path) -> None:
+    """A2 (M2-5): an ask that suppresses its cancellation and returns after the turn's deadline, inside the window."""
+    records = _records(_data_dir(tmp_path))
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.1)  # finishes late instead of stopping
+        return _reply()
+
     report = await _run(records, (_member(),), ask, turn_seconds=0.2, window_seconds=60.0)
 
     assert [turn.outcome for turn in report.turns] == [TurnOutcome.TIMED_OUT]
-    assert time.monotonic() - started < 3.0
-    assert cancelled.is_set()  # the turn is cancelled, never left running
+    assert await _notes(records) == []
+
+
+@pytest.mark.parametrize("case", ["slow-recall", "recall-runs-out"])
+async def test_the_recall_and_the_ask_spend_one_turn(tmp_path: Path, case: str) -> None:
+    """A2 (M2-5): one deadline per turn. What the recall spent is not given back to the ask, and a recall that runs
+    out the turn leaves no turn to ask in.
+
+    A3 (2): the turn runs on the stand-down's ``clock``, which the stubs advance, so the recall's end, the ask and the
+    turn's deadline come in one fixed order, never raced against the event loop's timer resolution."""
+    records = _records(_data_dir(tmp_path))
+    now = [0.0]
+    asked: list[str] = []
+
+    async def recall(member: CrewMember) -> list[Episode]:
+        if case == "slow-recall":
+            now[0] = 0.3  # the recall spent 0.3 s of the 0.5 s turn
+            return []
+        try:
+            await asyncio.sleep(5)  # hangs until the turn's bound cancels it
+        except asyncio.CancelledError:
+            now[0] = 0.6  # the turn is spent; the 60 s window is not
+            raise
+        return []
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        now[0] += 0.35  # inside a fresh 0.5 s turn, past what the recall left
+        return _reply()
+
+    report = await _run(
+        records, (_member(),), ask, recall, turn_seconds=0.5, window_seconds=60.0, clock=lambda: now[0],
+    )
+
+    assert [turn.outcome for turn in report.turns] == [TurnOutcome.TIMED_OUT]
+    assert asked == (["surgeon"] if case == "slow-recall" else [])
     assert await _notes(records) == []
 
 
@@ -261,9 +374,64 @@ async def test_the_window_bounds_a_turn_its_own_bound_would_allow(tmp_path: Path
         return _reply()
 
     started = time.monotonic()
-    report = await _run(records, (_member(),), ask, turn_seconds=60.0, window_seconds=0.3)
+    report = await _run(records, (_member(),), ask, turn_seconds=60.0, window_seconds=1.5)
+    elapsed = time.monotonic() - started
 
     assert [turn.outcome for turn in report.turns] == [TurnOutcome.TIMED_OUT]
+    assert 1.4 <= elapsed < 2.5  # A2 (M2-9), A3 (2): the window's bound, neither halved nor doubled, 1 s headroom
+    assert await _notes(records) == []
+
+
+@pytest.mark.parametrize("stage", ["first-read", "write"])
+async def test_the_window_bounds_the_records_reads_and_writes_too(tmp_path: Path, stage: str) -> None:
+    """A2 (M2-2): the window starts before Ship's Records is first read and ends every write. A first read that hangs
+    refuses the stand-down with nobody asked; a write that hangs ends with the window and leaves nothing, and the turn
+    queued behind it for the write lock never starts a write.
+
+    A3 (2): the window runs on the stand-down's ``clock``. The hanging write moves it past the deadline when the
+    window's bound cancels the write, so the queued turn finds the window closed in every run; on the real clock,
+    asyncio may fire the bound one clock tick early (15.6 ms on Windows before Python 3.13) and leave that turn a
+    few milliseconds of window to begin a write in. A write is counted when ``write_entry`` is called: a write whose
+    bound is already spent is cancelled before its coroutine runs."""
+    records = _records(_data_dir(tmp_path))
+    real_list, real_write = records.list_entries, records.write_entry
+    now = [0.0]
+    writes: list[str] = []
+    asked: list[str] = []
+
+    async def list_entries(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(5)
+        return await real_list(*args, **kwargs)
+
+    async def _hang(fields: dict[str, Any]) -> Any:
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            now[0] = 1_000.0  # the window's bound cancelled the write: the window has closed
+            raise
+        return await real_write(**fields)
+
+    def write_entry(**fields: Any) -> Any:
+        writes.append(fields["path"])  # at the call, before anything awaits the write
+        return _hang(fields)
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    crew = (_member(), _member("pathologist", "Selar", "did:probos:x:selar", "sov-pathologist"))
+    started = time.monotonic()
+    if stage == "first-read":
+        records.list_entries = list_entries  # type: ignore[method-assign]
+        with pytest.raises(StandDownRefused, match="Ship's Records could not be read in time"):
+            await _run(records, crew, ask, window_seconds=0.3)
+        records.list_entries = real_list  # type: ignore[method-assign]
+        assert asked == []
+    else:
+        records.write_entry = write_entry  # type: ignore[method-assign]
+        report = await _run(records, crew, ask, window_seconds=0.3, clock=lambda: now[0])
+        assert [turn.outcome for turn in report.turns] == [TurnOutcome.TIMED_OUT, TurnOutcome.TIMED_OUT]
+        assert len(writes) == 1  # the turn behind the lock never began a write
     assert time.monotonic() - started < 3.0
     assert await _notes(records) == []
 
@@ -353,6 +521,87 @@ async def test_a_failed_episode_read_offers_none_and_the_note_cites_none(tmp_pat
     assert note["frontmatter"][EXIT_NOTE_KEY]["source_episode_ids"] == []
 
 
+@pytest.mark.parametrize("script", ["ascii", "cjk", "astral"])
+async def test_the_captain_s_message_stays_inside_the_inline_params_bound_in_any_script(
+    tmp_path: Path, script: str,
+) -> None:
+    """A2 (M2-8): 12 episodes in any script and a callsign at its bound in CJK. The Captain's message as the transport
+    encodes it (JSON, every character outside ASCII escaped) stays inside the 4 KiB standard for inline params, and
+    the agent is still shown all 12."""
+    letter = {"ascii": "a", "cjk": "\u6f22", "astral": "\U0001f680"}[script]
+    data_dir = _data_dir(tmp_path)
+    memory = MockEpisodicMemory()
+    for index in range(12):
+        await memory.store(Episode(
+            id=f"ep-{index:03d}", timestamp=1_790_000_000.0 + index, agent_ids=["sov-surgeon"],
+            user_input=f"{index} " + letter * 400,
+        ))
+    callsign = "\u5c0f" * EXIT_NOTE_CALLSIGN_MAX_CHARS
+    runtime, received = _vessel(_config(tmp_path), _records(data_dir), memory, replies={"surgeon": (callsign, None)})
+
+    await stand_down_vessel(runtime)
+
+    (intent,) = received
+    shown = [line for line in intent.params["text"].splitlines() if re.match(r"^e\d+ ", line)]
+    assert len(shown) == 12
+    assert len(json.dumps(intent.params)) <= 4096
+
+
+class _Unrenderable:
+    """An episode whose text cannot even be read (a store returning a broken record)."""
+
+    id = "ep-broken"
+    timestamp = 1_790_000_000.0
+
+    @property
+    def user_input(self) -> str:
+        raise RuntimeError("the episode's text cannot be read")
+
+
+@pytest.mark.parametrize("case", ["timestamps", "unreadable-episode", "self-cancelled"])
+async def test_one_member_s_fault_never_ends_the_other_turns_or_leaves_one_running(tmp_path: Path, case: str) -> None:
+    """A2 (M2-6): a timestamp that names no date (inf, NaN) is shown undated; an episode whose text cannot be read
+    fails that member's turn only; a turn cancelled from inside ends the stand-down with every other turn cancelled
+    and drained. Nothing outlives the call."""
+    records = _records(_data_dir(tmp_path))
+    stopped = asyncio.Event()
+    before = asyncio.all_tasks()
+
+    async def recall(member: CrewMember) -> list[Any]:
+        if member.agent_type == "surgeon" and case == "unreadable-episode":
+            return [_Unrenderable()]
+        stamps = (float("inf"), float("nan")) if case == "timestamps" else (1_790_000_000.0,)
+        return [
+            Episode(id=f"ep-{index}", timestamp=stamp, agent_ids=[member.sovereign_id], user_input="watch")
+            for index, stamp in enumerate(stamps)
+        ]
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        if case == "self-cancelled":
+            if member.agent_type == "surgeon":
+                await asyncio.sleep(0.05)  # the other turn is waiting on its model by now
+                raise asyncio.CancelledError  # cancelled from inside the turn, not by the caller
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                stopped.set()
+                raise
+        if case == "timestamps":
+            assert "undated" in prompt
+        return _reply()
+
+    crew = (_member(), _member("pathologist", "Selar", "did:probos:x:selar", "sov-pathologist"))
+    if case == "self-cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await _run(records, crew, ask, recall)
+        assert stopped.is_set()  # the other turn was cancelled, never left running
+    else:
+        report = await _run(records, crew, ask, recall)
+        expected = TurnOutcome.FAILED if case == "unreadable-episode" else TurnOutcome.WRITTEN
+        assert [turn.outcome for turn in report.turns] == [expected, TurnOutcome.WRITTEN]
+    assert asyncio.all_tasks() - before == set()
+
+
 async def test_a_second_stand_down_asks_only_the_agents_without_a_note(tmp_path: Path) -> None:
     records = _records(_data_dir(tmp_path))
     asked: list[str] = []
@@ -375,6 +624,65 @@ async def test_a_second_stand_down_asks_only_the_agents_without_a_note(tmp_path:
     assert "revision" not in first_note["frontmatter"]  # never rewritten
 
 
+@pytest.mark.parametrize("case", ["same-type", "same-member", "written-meanwhile"])
+async def test_one_billet_gets_one_turn_and_no_note_is_ever_replaced(tmp_path: Path, case: str) -> None:
+    """A2 (M2-3): two crew agents of one agent type share their billet's path (register R9). The first in crew order
+    takes the turn and the second is not asked. A member listed twice is asked once. A note written by anyone after
+    the stand-down began is found under the write lock and kept."""
+    records = _records(_data_dir(tmp_path))
+    asked: list[str] = []
+    path = exit_note_path(_SHIP, "surgeon")
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_id)
+        if case == "written-meanwhile":
+            await records.write_entry(
+                author="Bones", path=path, content="Written by hand meanwhile.", message="test: meanwhile",
+                classification="ship",
+            )
+        return _reply()
+
+    first = _member()
+    second = CrewMember("slot-second", "surgeon", "sov-second", "did:probos:x:selar", "Selar")
+    crew = {"same-type": (first, second), "same-member": (first, first), "written-meanwhile": (first,)}[case]
+    report = await _run(records, crew, ask, concurrency=1)
+
+    note = await records.read_entry(path, "captain")
+    if case == "written-meanwhile":
+        assert [turn.outcome for turn in report.turns] == [TurnOutcome.ALREADY_WRITTEN]
+        assert note["frontmatter"]["author"] == "Bones" and "revision" not in note["frontmatter"]
+    else:
+        assert [(turn.outcome, turn.path) for turn in report.turns] == [
+            (TurnOutcome.WRITTEN, path), (TurnOutcome.DUPLICATE, path),
+        ]
+        assert asked == ["slot-surgeon"]
+        assert note["frontmatter"]["author"] == "Chapel" and "revision" not in note["frontmatter"]
+
+
+async def test_a_stand_down_that_cannot_read_a_written_note_asks_nobody(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (M1-F1 asked of the stand-down): a note already written that the OS refuses to read when the stand-down
+    lists the notes. A skip would ask its author again and replace the note; the stand-down refuses instead."""
+    records = _records(_data_dir(tmp_path))
+    asked: list[str] = []
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    await _run(records, (_member(),), ask)
+    asked.clear()
+    path = exit_note_path(_SHIP, "surgeon")
+    _deny_reading(monkeypatch, records.repo_path / path)
+    with pytest.raises(StandDownRefused, match="Ship's Records could not be read"):
+        await _run(records, (_member(),), ask)
+    monkeypatch.undo()
+
+    assert asked == []
+    assert "revision" not in (await records.read_entry(path, "captain"))["frontmatter"]
+
+
 def test_the_prompt_says_writing_is_optional_and_what_the_note_is_for() -> None:
     prompt = exit_notes_prompt("Chapel", ("e1 2026-10-25: the coolant alarm cleared again",))
 
@@ -384,12 +692,14 @@ def test_the_prompt_says_writing_is_optional_and_what_the_note_is_for() -> None:
         "what you learned, what you would do differently, and what remains open",
         "Writing is optional",
         f"reply exactly {DECLINE_REPLY} and nothing is recorded",
-        f"each section at most {LESSON_SECTION_MAX_CHARS} characters",
+        f"the four sections together at most {LESSON_MAX_CHARS} characters",
         *(f"## {name}\n" for name in LESSON_SECTIONS),
         "Cites: (optional)",
         "kept in Ship's Records under your callsign and DID",
         "The Captain may review them and veto them",
         "archived in the Ship's Archive at the reset, where every later crew can read them",
+        "labelled as inherited from this crew",  # A2 (M2-9)
+        "Reply with the notes alone, without using tools",
         "Write nothing you would not share with the whole ship",
         "do not quote your memories",
         "e1 2026-10-25: the coolant alarm cleared again",
@@ -409,6 +719,33 @@ async def test_an_agent_without_an_identity_is_not_asked(tmp_path: Path) -> None
     report = await _run(records, crew, ask)
 
     assert [turn.outcome for turn in report.turns] == [TurnOutcome.NO_IDENTITY, TurnOutcome.NO_IDENTITY]
+    assert asked == []
+    assert await _notes(records) == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("callsign", "Chapel\n## Observation"), ("callsign", "C" * (EXIT_NOTE_CALLSIGN_MAX_CHARS + 1)),
+        ("agent_type", "sur\x00geon"), ("did", "did:probos:x:\ud800"),
+    ],
+    ids=["multiline-callsign", "long-callsign", "nul-agent-type", "surrogate-did"],
+)
+async def test_an_identity_that_cannot_stand_in_the_note_is_not_asked(tmp_path: Path, field: str, value: str) -> None:
+    """A2 (M2-7): the promotion's own provenance check, before the turn. An identity whose note the promotion would
+    withhold (a line break or NUL in the origin line, a value past its bound, a DID SQLite cannot store) is never
+    asked and never reported written."""
+    records = _records(_data_dir(tmp_path))
+    asked: list[str] = []
+
+    async def ask(member: CrewMember, prompt: str) -> str:
+        asked.append(member.agent_type)
+        return _reply()
+
+    member = dataclasses.replace(_member(), **{field: value})
+    report = await _run(records, (member,), ask)
+
+    assert [turn.outcome for turn in report.turns] == [TurnOutcome.NO_IDENTITY]
     assert asked == []
     assert await _notes(records) == []
 
@@ -457,6 +794,7 @@ async def test_the_vessel_stand_down_sends_each_crew_agent_the_captains_message_
     for intent in received:
         assert intent.intent == "direct_message"
         assert (intent.params["from"], intent.params["session"]) == ("captain", False)
+        assert intent.params[BOUNDED_TURN_PARAM] is True  # A2 (M2-1): the DM consumer answers it inline, single-pass
         assert intent.ttl_seconds == STAND_DOWN_TURN_SECONDS
         assert "Writing is optional" in intent.params["text"]
     note = await _records(data_dir).read_entry(report.turns[1].path, "captain")
@@ -487,15 +825,16 @@ async def test_only_the_console_runs_a_stand_down(monkeypatch: pytest.MonkeyPatc
 
 async def test_the_console_command_reports_each_turn_and_the_next_steps(tmp_path: Path) -> None:
     data_dir = _data_dir(tmp_path)
-    runtime, _received = _vessel(
-        _config(tmp_path), _records(data_dir), MockEpisodicMemory(), replies={"surgeon": ("Chapel", _reply())},
+    runtime, _received = _vessel(  # A2 (M2-9): a callsign that is Rich markup is printed as text
+        _config(tmp_path), _records(data_dir), MockEpisodicMemory(),
+        replies={"surgeon": ("[bold]Chapel[/bold]", _reply())},
     )
     output = StringIO()
 
     await commands_stand_down.cmd_stand_down(runtime, Console(file=output, width=200), "")
 
     text = output.getvalue()
-    assert f"Chapel: written -> {exit_note_path(_SHIP, 'surgeon')}" in text
+    assert f"[bold]Chapel[/bold]: written -> {exit_note_path(_SHIP, 'surgeon')}" in text
     assert "probos archive pending" in text and "probos archive veto PATH --reason TEXT" in text
     runtime.config.archive.enabled = False
     refused = StringIO()
@@ -507,6 +846,10 @@ def test_the_stand_down_never_writes_the_ship_s_archive() -> None:
     tree = ast.parse((_SRC / "stand_down.py").read_text(encoding="utf-8"))
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    imported |= {  # A2 (M2-9): ``from probos.knowledge import archive_store`` names the module through its alias
+        f"{node.module}.{alias.name}"
+        for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module for alias in node.names
+    }
     called = {
         node.func.attr for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
@@ -562,3 +905,83 @@ def test_a_stand_down_note_reaches_a_later_crew_as_inherited_and_its_citation_re
     # Here the cited episode outlives the reset (this memory is not the reset's data directory). S3's check refuses its
     # erasure, which is the citation S5's continuous promotion will rely on while episodes are still live.
     assert asyncio.run(_erase_the_cited_episode(tmp_path, memory, "ep-001")) == (entry_id,)
+
+
+# --- S16: the real DM consumer (A2, M2-1) ----------------------------------------------------------------------------
+
+
+async def test_a_stand_down_turn_is_answered_inline_by_the_real_dm_consumer_and_never_promoted(tmp_path: Path) -> None:
+    """A2 (M2-1), the real seam: real ``CognitiveAgent`` DM consumers (``perceive``, then the conversational agentic
+    gate the agent's decision step calls) with the shipped ``dm_agentic`` settings armed: the tool-calling loop on, and
+    promotion into a background work item after 40 s. The stand-down's turns take the single-pass path: the loop's
+    model is never called, no work item is opened and no promoted task is left. The control: the same agent's ordinary
+    1:1 message still runs the loop."""
+    runtime, received = _vessel(
+        _config(tmp_path), _records(_data_dir(tmp_path)), MockEpisodicMemory(),
+        replies={"surgeon": ("Chapel", None), "data_analyst": ("Rahda", None)},
+    )
+    runtime.config.dm_agentic.enabled = True  # the shipped settings (config/system.yaml, dm_agentic)
+    runtime.config.dm_agentic.promote_to_task_after_seconds = 40.0
+    work = WorkItemStore(db_path=str(tmp_path / "work.db"))
+    await work.start()
+    runtime.work_item_store = work
+    runtime.chat_thread_store = ChatThreadStore(tmp_path / "threads.db")
+    runtime.trust_network = TrustNetwork()
+    runtime.ontology.get_agent_department = lambda agent_type: "medical"
+    loop_requests: list[Any] = []
+    single_pass: list[str] = []
+
+    class OfflineModel(BaseLLMClient):
+        """The only stand-in: the model behind the tool-calling loop answers at once, and is counted."""
+
+        async def complete(self, request: Any, *, priority: Any = None) -> LLMResponse:
+            loop_requests.append(request)
+            return LLMResponse(
+                content=_reply(), model="offline-stub", tier=request.tier, tokens_used=1, request_id=request.id,
+            )
+
+    members = crew_for_stand_down(runtime)
+    runtime.registry = AgentRegistry()
+    agents: list[CognitiveAgent] = []
+    for member in members:
+        agent = CognitiveAgent(
+            agent_id=member.agent_id, instructions="Offline only.", runtime=runtime, llm_client=OfflineModel(),
+        )
+        agent.agent_type, agent.callsign = member.agent_type, member.callsign
+        await runtime.registry.register(agent)
+        agents.append(agent)
+
+        async def consumer(intent: IntentMessage, agent: CognitiveAgent = agent) -> IntentResult:
+            received.append(intent)
+            observation = await agent.perceive(intent)
+            text = await agent._maybe_run_conversational_agentic(  # the gate the decision step calls first
+                observation, system_prompt="Offline only.",
+                user_message=CognitiveAgent._format_direct_message_trigger(intent.params),
+            )
+            if text is None:  # the single-pass path answers inline; the stub stands for its one model call
+                single_pass.append(intent.target_agent_id)
+                text = _reply()
+            return IntentResult(intent_id=intent.id, agent_id=agent.id, success=True, result=text, confidence=1.0)
+
+        runtime.intent_bus.subscribe(member.agent_id, consumer, intent_names=["direct_message"])
+    try:
+        report = await stand_down_vessel(runtime)
+        turns, items, during = list(received), await work.list_work_items(), len(loop_requests)
+        control = await runtime.intent_bus.send(IntentMessage(
+            intent="direct_message", params={"text": "How was the watch?", "from": "captain", "session": False},
+            target_agent_id=members[0].agent_id, ttl_seconds=60.0,
+        ))
+    finally:
+        for agent in agents:
+            while agent._promoted_turn_tasks:
+                await asyncio.gather(*tuple(agent._promoted_turn_tasks), return_exceptions=True)
+        await work.stop()
+
+    assert len(turns) == 2 and all(intent.params[BOUNDED_TURN_PARAM] is True for intent in turns)
+    assert report.count(TurnOutcome.WRITTEN) == 2
+    assert sorted(single_pass) == sorted(member.agent_id for member in members)  # each answered inline
+    assert during == 0  # the tool-calling loop never ran for a stand-down turn
+    assert items == []  # and nothing was promoted into a work item
+    assert all(not agent._promoted_turn_tasks for agent in agents)
+    assert control is not None and control.success
+    assert len(loop_requests) > during  # the control: an ordinary 1:1 message still runs the loop

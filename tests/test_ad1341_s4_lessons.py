@@ -8,12 +8,16 @@ keywords breaks one part of the rule; M2's tests write notes through the stand-d
 
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from probos.cognitive.oracle_service import OracleService
 from probos.config import RecordsConfig
 from probos.knowledge.archive_promotion import (
     exit_note_citations,
@@ -24,11 +28,15 @@ from probos.knowledge.archive_promotion import (
 from probos.knowledge.archive_store import PromotionOutcome, SourceKind, VetoOutcome
 from probos.knowledge.lessons import (
     DECLINE_REPLY,
+    EXIT_NOTE_AGENT_TYPE_MAX_CHARS,
+    EXIT_NOTE_CALLSIGN_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_STATUS,
+    EXIT_NOTE_TIMELINE_MAX_CHARS,
     EXIT_NOTE_VERSION,
+    EXIT_NOTES_DIR,
+    LESSON_MAX_CHARS,
     LESSON_MAX_CITATIONS,
-    LESSON_SECTION_MAX_CHARS,
     LESSON_SECTIONS,
     LessonLearned,
     exit_note_body,
@@ -40,6 +48,7 @@ from probos.knowledge.lessons import (
     parse_lesson,
 )
 from probos.knowledge.records_store import RecordsStore
+from probos.tools.oracle_query_tool import _MAX_ENTRY_CHARS, OracleQueryTool
 from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _NEXT_SHIP, _SHIP, _data_dir, _records
 
@@ -73,6 +82,7 @@ async def _write_note(
     path: str | None = None,
     author: str | None = None,
     classification: str = "ship",
+    lesson: LessonLearned = _LESSON,
 ) -> str:
     """An exit note written as ``probos.stand_down`` writes one; each keyword breaks one part of the rule."""
     note_path = path or exit_note_path(timeline, agent_type)
@@ -84,7 +94,7 @@ async def _write_note(
     await records.write_entry(
         author=callsign if author is None else author,
         path=note_path,
-        content=exit_note_body(callsign, agent_type, timeline, _LESSON) if content is None else content,
+        content=exit_note_body(callsign, agent_type, timeline, lesson) if content is None else content,
         message=f"test: exit notes of {callsign}",
         classification=classification,
         status=EXIT_NOTE_STATUS,
@@ -93,6 +103,60 @@ async def _write_note(
         extra_frontmatter={EXIT_NOTE_KEY: fields} if with_envelope else None,
     )
     return note_path
+
+
+def _deny_reading(monkeypatch: pytest.MonkeyPatch, denied: Path) -> None:
+    """A2: the OS refuses to read ``denied``, as a sharing violation does while an editor or a scanner holds the file.
+
+    Only ``Path.read_text`` of that one file fails, so the real ``RecordsStore.list_entries`` meets the failure inside
+    its own loop, on every platform.
+    """
+    real_read_text = Path.read_text
+    target = denied.resolve()
+
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self.resolve() == target:
+            raise PermissionError(13, "the file is being used by another process", str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
+@contextlib.contextmanager
+def _unreadable(path: Path) -> Iterator[None]:
+    """A2: the OS itself refuses to read ``path`` while this is open: a handle that shares nothing on Windows, mode 000
+    elsewhere. Skips where this account reads such a file anyway (root on POSIX)."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = (
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)  # GENERIC_READ, share nothing
+        if handle is None or handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            yield
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        mode = path.stat().st_mode
+        path.chmod(0)
+        try:
+            try:
+                path.read_text(encoding="utf-8")
+            except PermissionError:
+                pass
+            else:
+                pytest.skip("this account reads a file with mode 000 (root): no native read denial to test")
+            yield
+        finally:
+            path.chmod(mode)
 
 
 # --- L1 to L7: the format -------------------------------------------------------------------------------------------
@@ -131,12 +195,39 @@ def test_the_four_sections_are_read_in_each_heading_form(form: str) -> None:
     assert parse_lesson(_FORMS[form]) == _LESSON
 
 
+_CLOSURE: dict[str, str] = {
+    **_FORMS,
+    "label-inline-heading": "Observation: Discussion: the cause\nDiscussion: d\nLesson: l\nRecommendation: r",
+    "label-inline-cites": "Observation: Cites: e1\nDiscussion: d\nLesson: l\nRecommendation: r",
+    "label-inline-bold-name": "Observation: **Lesson**\nDiscussion: d\nLesson: l\nRecommendation: r",
+    "indented-name": "## Observation\n    Discussion\n## Discussion\nd\n## Lesson\nl\n## Recommendation\nr",
+}
+_REFUSED_FOR_CLOSURE = {"label-inline-heading", "label-inline-cites", "label-inline-bold-name", "indented-name"}
+
+
+@pytest.mark.parametrize("case", sorted(_CLOSURE))
+def test_every_lesson_the_parser_accepts_is_written_and_read_back_unchanged(case: str) -> None:
+    """A2 (M1-F3): the format is closed under ``render``. A section that would read as a heading or a ``Cites:`` line
+    once rendered on its own line is refused; every accepted lesson renders, and is stored, as text that parses back
+    to itself."""
+    lesson = parse_lesson(_CLOSURE[case])
+
+    if case in _REFUSED_FOR_CLOSURE:
+        assert lesson is None
+    else:
+        assert lesson is not None
+        assert parse_lesson(lesson.render()) == lesson
+        assert parse_lesson(exit_note_body("Chapel", "surgeon", _SHIP, lesson)) == lesson
+
+
 _NOT_LESSONS: dict[str, object] = {
     "missing": "\n\n".join(f"## {name}\n\n{body}" for name, body in _sections()[:3]),
     "reordered": "\n\n".join(f"## {name}\n\n{body}" for name, body in (_sections()[1], _sections()[0], *_sections()[2:])),
     "repeated": f"{_LESSON.render()}\n\n## Lesson\n\nAnd once more.",
     "empty-section": "## Observation\n\n## Discussion\nd\n## Lesson\nl\n## Recommendation\nr",
-    "too-long": LessonLearned("o" * (LESSON_SECTION_MAX_CHARS + 1), "d", "l", "r").render(),
+    "too-long": LessonLearned("o" * (LESSON_MAX_CHARS - 2), "d", "l", "r").render(),  # 701 in all (A2)
+    "nul": _LESSON.render().replace("cleared", "clea\x00red"),  # A2: SQLite cannot store it whole
+    "surrogate": _LESSON.render() + "\ud800",
     "prose": "I learned a great deal on this voyage, and I leave it all to my successor.",
     "not-text": 42,
 }
@@ -151,9 +242,13 @@ def test_a_reply_not_in_the_format_is_no_lesson(case: str) -> None:
     "reply, declined",
     [
         (DECLINE_REPLY, True), ("No notes.", True), ("**NO NOTES**", True), ("", True), ("   \n", True),
+        ("__NO NOTES__", True), ("_no notes_", True), ("no_notes", False),
         ("No notes on the coolant yet, but here they are.", False), (_LESSON.render(), False), (None, False),
     ],
-    ids=["exact", "punctuation", "bold", "empty", "blank", "a-sentence", "a-lesson", "not-text"],
+    ids=[
+        "exact", "punctuation", "bold", "empty", "blank", "underscore-bold", "underscore", "joined-by-underscore",
+        "a-sentence", "a-lesson", "not-text",
+    ],
 )
 def test_a_declining_reply_is_recognised_and_nothing_else_is(reply: object, declined: bool) -> None:
     assert is_declined(reply) is declined
@@ -186,15 +281,46 @@ def test_a_lesson_cites_at_most_the_bounded_number_of_episodes() -> None:
     assert cited == tuple(f"ep-{index:03d}" for index in range(1, LESSON_MAX_CITATIONS + 1))
 
 
-def test_the_section_bound_keeps_a_full_note_and_its_label_inside_the_tool_result_cap() -> None:
-    full = LessonLearned(*("x" * LESSON_SECTION_MAX_CHARS for _name in LESSON_SECTIONS))
+#: The longest inheritance label S2 writes (a six-digit generation) and the longest provenance marker the Oracle tool
+#: puts before an archive entry it has just retrieved (relevance at most 1.00, retrieved under a minute ago).
+_WORST_LABEL = "[Inherited from the crew of generation 999999: not your own memory]"
+_WORST_MARKER = "[source:archive relevance:1.00 age:59s]"
 
-    assert parse_lesson(full.render()) == full
-    assert len(full.render()) == 4867
-    assert parse_lesson(LessonLearned("x" * (LESSON_SECTION_MAX_CHARS + 1), "d", "l", "r").render()) is None
-    body = exit_note_body("C" * 24, "a" * 32, "t" * 64, full)
-    label = "[Inherited from the crew of generation 999999: not your own memory]"
-    assert len(label) + 1 + len(body) <= 6000  # the Captain's tool_result_max_chars: AD-1148 never elides a note
+
+async def test_a_whole_note_at_every_bound_reaches_a_later_crew_through_the_oracle_tool(tmp_path: Path) -> None:
+    """A2 (M1-F4): the Oracle tool cuts each entry to ``_MAX_ENTRY_CHARS``. A note at every bound (the lesson at
+    ``LESSON_MAX_CHARS``, the callsign, agent type and timeline at theirs) reaches a later crew whole: all four
+    sections, nothing shortened, with room left for the longest label and marker."""
+    names = ("OBS_BODY", "DISCUSSION_BODY", "LESSON_BODY", "RECOMMENDATION_BODY")
+    bodies = tuple(f"{name} " + "x" * (LESSON_MAX_CHARS // 4 - len(name) - 1) for name in names)
+    assert sum(len(body) for body in bodies) == LESSON_MAX_CHARS  # premise: at the bound
+    longest = LessonLearned(*bodies)
+    assert parse_lesson(longest.render()) == longest
+    assert parse_lesson(LessonLearned(bodies[0] + "x", *bodies[1:]).render()) is None  # one character more
+    callsign, agent_type, timeline = (
+        "C" * EXIT_NOTE_CALLSIGN_MAX_CHARS, "a" * EXIT_NOTE_AGENT_TYPE_MAX_CHARS, "t" * EXIT_NOTE_TIMELINE_MAX_CHARS,
+    )
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records, timeline=timeline, agent_type=agent_type, callsign=callsign, lesson=longest)
+    archive = _store(tmp_path)
+    await archive.initialize()
+    try:
+        assert (await promote_ship_records(records, archive, timeline_id=_NEXT_SHIP)).created == (path,)
+        oracle = OracleService(archive_store=archive)
+        oracle.attach_current_timeline(_NEXT_SHIP)  # a later crew reads it
+        result = await OracleQueryTool(oracle=oracle).invoke({"query": "RECOMMENDATION_BODY", "kind": "archive"})
+    finally:
+        await archive.close()
+
+    assert not result.error and result.metadata["returned_count"] == 1  # premise: the real tool delivered it
+    entry = result.output[result.output.index("[source:archive"):].rstrip("\n")
+    marker, label = entry.splitlines()[:2]
+    assert label.startswith("[Inherited from ")  # premise: S2's label comes first after the marker
+    assert "[entry shortened]" not in entry
+    for body in bodies:
+        assert body in entry  # the Lesson and the Recommendation too, not only the Observation
+    worst = len(entry) - len(marker) - len(label) + len(_WORST_MARKER) + len(_WORST_LABEL)
+    assert worst <= _MAX_ENTRY_CHARS  # the longest label and marker would still leave it whole
 
 
 def test_an_exit_note_has_one_path_per_timeline_and_agent_type() -> None:
@@ -244,6 +370,17 @@ _BROKEN: dict[str, dict[str, Any]] = {
     "duplicate-citation": {"cited": ("ep-000", "ep-000")},
     "blank-citation": {"cited": ("ep-000", " ")},
     "department": {"classification": "department"},
+    # A2: what the rule checked too little (M1-F2, F5, F6, F7; M2-7).
+    "bool-version": {"envelope": {"version": True}},
+    "float-version": {"envelope": {"version": 1.0}},
+    "newline-callsign": {"callsign": "Chapel\n## Observation"},
+    "nul-agent-type": {"agent_type": "sur\x00geon"},
+    "surrogate-did": {"did": "did:probos:x:\ud800"},
+    "long-callsign": {"callsign": "C" * (EXIT_NOTE_CALLSIGN_MAX_CHARS + 1)},
+    "preamble": {
+        "content": f"{exit_note_header('Chapel', 'surgeon', _SHIP)}\n\nA preamble the parser drops.\n\n{_LESSON.render()}",
+    },
+    "standalone-cites": {"content": f"{exit_note_body('Chapel', 'surgeon', _SHIP, _LESSON)}\nCites: e1"},
 }
 
 
@@ -340,18 +477,47 @@ async def test_ship_s_records_without_exit_notes_cite_nothing(tmp_path: Path) ->
     assert await exit_note_citations(records, None) == {}
 
 
-async def test_a_document_the_promotion_skips_is_never_read_as_a_citing_note(tmp_path: Path) -> None:
+@pytest.mark.parametrize("case", ["not-a-mapping", "not-utf-8"])
+async def test_a_document_the_promotion_skips_is_never_read_as_a_citing_note(tmp_path: Path, case: str) -> None:
     """A1: frontmatter that is not a mapping. ``plan_promotion`` skips the document unread, so it can never be
-    archived; the citation read skips it too, instead of raising in ``read_entry`` and stopping every erasure."""
+    archived; the citation read skips it too, instead of raising in ``read_entry`` and stopping every erasure. A2:
+    bytes that are not UTF-8 are a property of the file, not of the moment; the promotion never sees the document, and
+    the strict read skips it too rather than refusing every erasure while it sits in ``exit-notes/``."""
     records = _records(_data_dir(tmp_path))
     stray = records.repo_path / exit_note_path(_SHIP, "surgeon")
     stray.parent.mkdir(parents=True)
-    stray.write_text("---\nnot a mapping\n---\nCites: ep-000\n", encoding="utf-8")
+    if case == "not-a-mapping":
+        stray.write_text("---\nnot a mapping\n---\nCites: ep-000\n", encoding="utf-8")
+    else:
+        stray.write_bytes(b"---\nauthor: Chapel\n---\n\xff\xfe Cites: ep-000\n")
 
     plan = await plan_promotion(records, timeline_id=_SHIP)
 
     assert (plan.records, plan.withheld) == ((), ())  # premise: the promotion skips it
     assert await exit_note_citations(records, None) == {}
+
+
+@pytest.mark.parametrize("fault", ["injected", "native"])
+async def test_a_note_the_listing_cannot_read_now_is_never_read_as_no_citations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str,
+) -> None:
+    """A2 (M1-F1, M3-F1): a valid citing note the OS refuses to read at this moment. The real listing meets the
+    failure inside its own loop; the citation read raises instead of answering that nothing cites the episode, while
+    every other reader of Ship's Records keeps skipping the file as before. Readable again, the note counts."""
+    records = _records(_data_dir(tmp_path))
+    path = await _write_note(records)
+    note = records.repo_path / path
+    with contextlib.ExitStack() as stack:
+        if fault == "injected":
+            _deny_reading(monkeypatch, note)
+        else:
+            stack.enter_context(_unreadable(note))
+        assert await records.list_entries(EXIT_NOTES_DIR) == []  # premise: the default listing skips it, as before
+        with pytest.raises(OSError):
+            await exit_note_citations(records, None)
+        monkeypatch.undo()
+
+    assert await exit_note_citations(records, None) == {"ep-000": (path,)}
 
 
 async def test_the_captain_s_review_lists_an_exit_note_as_a_source_to_be_promoted(tmp_path: Path) -> None:

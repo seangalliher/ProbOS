@@ -966,10 +966,17 @@ class RecordsStore:
         status: str = "",
         tags: list[str] | None = None,
         classification: str = "",
+        strict: bool = False,
     ) -> list[dict]:
         """List documents with optional filters.
 
         Returns list of {"path": ..., "frontmatter": {...}} dicts.
+
+        A file that cannot be read is skipped and logged at debug. AD-1341 S4 (A2): ``strict=True`` re-raises an
+        ``OSError`` reading a listed regular file instead (a sharing violation, a permission, an I/O error: the file
+        exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
+        AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
+        that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         results = []
@@ -982,6 +989,11 @@ class RecordsStore:
             try:
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
+            except OSError:
+                if strict and md_file.is_file():
+                    raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"
+                logger.debug("Skipping unreadable file", exc_info=True)
+                continue
             except Exception:
                 logger.debug("Skipping unreadable file", exc_info=True)
                 continue

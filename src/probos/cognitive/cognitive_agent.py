@@ -4694,6 +4694,10 @@ class CognitiveAgent(BaseAgent):
         loop will handle this turn. Gates: a wired runtime,
         ``config.dm_agentic.enabled``, a 1:1 ``direct_message`` (not group /
         ward-room / proactive), and no vision (multimodal turns are single-pass).
+        AD-1341 S4 (A2): and not a bounded turn (``params["bounded_turn"] is
+        True``, the stand-down's exit-notes message): its sender bounds and
+        cancels the turn, so it is answered inline on the single-pass path and
+        never promoted into a background work item (AD-1165) past that bound.
 
         Single source of truth for "is the loop active for this turn?" - used both
         to dispatch the loop and (AD-1070a) to suppress the single-pass reply-tag
@@ -4711,6 +4715,8 @@ class CognitiveAgent(BaseAgent):
         if params.get("is_group_chat"):
             return False
         if params.get("vision_messages"):
+            return False
+        if params.get("bounded_turn") is True:  # AD-1341 S4 (A2): probos.stand_down.BOUNDED_TURN_PARAM
             return False
         return True
 

@@ -28,9 +28,20 @@ from typing import Final
 #: The four sections of a lesson, in order.
 LESSON_SECTIONS: Final = ("Observation", "Discussion", "Lesson", "Recommendation")
 
-#: The longest section, in characters. Four full sections render to 4,867 characters, so an exit note with its origin
-#: line and its Ship's Archive label stays under the 6,000-character tool result cap (AD-1148) and is never elided.
-LESSON_SECTION_MAX_CHARS: Final = 1200
+#: The longest a lesson may be: its four sections together, in characters (AD-1341 S4 A2). With the envelope bounds
+#: below, a whole archived exit note (the Oracle tool's provenance marker and S2's inheritance label, the
+#: ``[exit_note]`` title, the origin line and the four sections) fits one Oracle tool entry (1,200 characters,
+#: ``oracle_query_tool._MAX_ENTRY_CHARS``), so a later crew reads the Lesson and the Recommendation, not only the
+#: Observation.
+LESSON_MAX_CHARS: Final = 700
+
+#: The longest value of each exit-note envelope field (A2). The timeline, callsign and agent type stand in the origin
+#: line, and the callsign in the Oracle entry's title, so these bounds are part of the Oracle-entry budget above.
+EXIT_NOTE_TIMELINE_MAX_CHARS: Final = 64
+EXIT_NOTE_CALLSIGN_MAX_CHARS: Final = 32
+EXIT_NOTE_AGENT_TYPE_MAX_CHARS: Final = 48
+EXIT_NOTE_DID_MAX_CHARS: Final = 256
+EXIT_NOTE_EPISODE_ID_MAX_CHARS: Final = 128
 
 #: The most episodes a lesson cites, and the most a stand-down shows an agent.
 LESSON_MAX_CITATIONS: Final = 12
@@ -59,8 +70,13 @@ _LABEL_LINE = re.compile(
 )
 _CITES_LINE = re.compile(rf"^\s{{0,3}}{_EMPHASIS}\s*cites?\s*{_EMPHASIS}\s*:\s*(.*)$", re.IGNORECASE)
 _HANDLE = re.compile(r"\be(\d{1,2})\b", re.IGNORECASE)
-_DECLINED = re.compile(r"^\W*no notes\W*$", re.IGNORECASE)
+_DECLINED = re.compile(r"^[\W_]*no notes[\W_]*$", re.IGNORECASE)  # A2: _ is emphasis too (__NO NOTES__, _NO NOTES_)
 _NOT_SLUG = re.compile(r"[^a-z0-9]+")
+# A2: what SQLite cannot store whole: a NUL ends its length() and keyword search, and a lone surrogate is no UTF-8.
+_UNSTORABLE = re.compile(r"[\x00\ud800-\udfff]")
+# A2: what cannot stand in one line of an exit note: every control character, the line and paragraph separators (each
+# ends a line for str.splitlines), and lone surrogates.
+_NOT_ONE_LINE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
 
 
 @dataclass(frozen=True)
@@ -97,12 +113,17 @@ def _heading(line: str) -> tuple[str, str] | None:
 def parse_lesson(text: object) -> LessonLearned | None:
     """The lesson in ``text``, or None when ``text`` is not in the format (D6).
 
-    The four sections must each appear once, in order, each non-empty and at most ``LESSON_SECTION_MAX_CHARS``
+    The four sections must each appear once, in order, each non-empty, together at most ``LESSON_MAX_CHARS``
     characters. A heading is a markdown heading (``## Observation``), the name alone on its line (``**Observation**``,
     ``Observation``) or a label with a colon (``Observation: text``). Text before the first heading is not part of the
     lesson and is dropped. A ``Cites:`` line belongs to ``parse_citations`` and is never part of a section.
+
+    A2: the format is closed under ``LessonLearned.render``. A section whose text would read as a heading or a
+    ``Cites:`` line once rendered on its own line (``Observation: Discussion: ...``) is refused, so every accepted
+    lesson is written, stored and read back unchanged. Text SQLite cannot store whole (a NUL, a lone surrogate) is
+    refused.
     """
-    if type(text) is not str:
+    if type(text) is not str or _UNSTORABLE.search(text) is not None:
         return None
     sections: list[tuple[str, list[str]]] = []
     for line in text.splitlines():
@@ -117,8 +138,10 @@ def parse_lesson(text: object) -> LessonLearned | None:
     if tuple(name for name, _lines in sections) != LESSON_SECTIONS:
         return None
     bodies = tuple("\n".join(lines).strip() for _name, lines in sections)
-    if any(not body or len(body) > LESSON_SECTION_MAX_CHARS for body in bodies):
+    if any(not body for body in bodies) or sum(len(body) for body in bodies) > LESSON_MAX_CHARS:
         return None
+    if any(_heading(line) is not None or _CITES_LINE.match(line) for body in bodies for line in body.splitlines()):
+        return None  # A2: rendered on its own line, this text would open a section or be read as citations
     return LessonLearned(*bodies)
 
 
@@ -183,3 +206,45 @@ def exit_note_header(callsign: str, agent_type: str, timeline_id: str) -> str:
 def exit_note_body(callsign: str, agent_type: str, timeline_id: str, lesson: LessonLearned) -> str:
     """An exit note's body: its origin line, then the rendered lesson. Nothing else is written into a note."""
     return f"{exit_note_header(callsign, agent_type, timeline_id)}\n\n{lesson.render()}"
+
+
+def is_exit_note_text(value: object, max_chars: int) -> bool:
+    """A2: whether ``value`` can stand in an exit note's envelope and origin line.
+
+    A string of at most ``max_chars`` characters that is not blank and is one line: no control character, no line or
+    paragraph separator, no lone surrogate. SQLite stores the value as UTF-8 and a NUL would end its ``length()`` and
+    keyword search; a line break in a callsign would put another heading into the origin line.
+    """
+    return (
+        type(value) is str and bool(value.strip()) and len(value) <= max_chars and _NOT_ONE_LINE.search(value) is None
+    )
+
+
+def exit_note_provenance_ok(timeline_id: object, callsign: object, agent_type: object, author_did: object) -> bool:
+    """A2: whether an exit note's provenance can be written into its envelope and origin line, each within its bound.
+
+    The one check for the stand-down, before it asks an agent, and for the promotion's rule.
+    """
+    return all(
+        is_exit_note_text(value, max_chars)
+        for value, max_chars in (
+            (timeline_id, EXIT_NOTE_TIMELINE_MAX_CHARS),
+            (callsign, EXIT_NOTE_CALLSIGN_MAX_CHARS),
+            (agent_type, EXIT_NOTE_AGENT_TYPE_MAX_CHARS),
+            (author_did, EXIT_NOTE_DID_MAX_CHARS),
+        )
+    )
+
+
+def exit_note_lesson(callsign: str, agent_type: str, timeline_id: str, content: object) -> LessonLearned | None:
+    """A2: the lesson of a canonical exit-note body, or None.
+
+    Canonical: ``content`` is exactly ``exit_note_body`` of these fields and the lesson it holds, so the text the
+    Captain reviews in Ship's Records is the text the archive receives, and nothing the parser would drop (a preamble,
+    a ``Cites:`` line) is ever archived. The stand-down checks its own body with it before writing; the promotion
+    withholds a note it refuses.
+    """
+    lesson = parse_lesson(content)
+    if lesson is None or content != exit_note_body(callsign, agent_type, timeline_id, lesson):
+        return None
+    return lesson

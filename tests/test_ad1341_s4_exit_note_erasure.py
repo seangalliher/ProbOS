@@ -12,15 +12,19 @@ from __future__ import annotations
 import ast
 import asyncio
 import dataclasses
+import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 import probos
+from probos.api import create_app
 from probos.knowledge.archive_promotion import exit_note_citations, plan_promotion
 from probos.knowledge.archive_store import PromotionOutcome, SourceKind, VetoOutcome
-from probos.knowledge.erasure import ErasureManager, ExitNotesBlockErasure
+from probos.knowledge.erasure import ArchiveCitationsBlockErasure, ErasureManager, ExitNotesBlockErasure
+from probos.routers import security
 from probos.stand_down import CrewMember, TurnOutcome, run_stand_down
 from probos.types import EpisodeStoreOutcome
 from tests.test_ad1340_s1_eviction import _episode, _memory, _raw
@@ -29,6 +33,7 @@ from tests.test_ad1341_s1_archive_store import _rows, _store
 from tests.test_ad1341_s1_reset_and_erase import _SHIP, _config, _data_dir, _records, _reset
 from tests.test_ad1341_s3_erasure_cascade import _traced, _traces
 from tests.test_ad1341_s3_review_cli import _veto
+from tests.test_ad1341_s4_lessons import _deny_reading
 from tests.test_ad1341_s4_stand_down import _reply
 
 _SRC = Path(probos.__file__).resolve().parent
@@ -44,6 +49,10 @@ _MATCHED = {"episode": [_CITED], "agent": [_CITED, _OTHER], "resource": [_CITED]
 _AGENT = CrewMember(
     agent_id="slot-surgeon", agent_type="surgeon", sovereign_id="agent-a", did=f"did:probos:{_SHIP}:agent-a",
     callsign="Chapel",
+)
+_SECOND = CrewMember(  # A2: a second billet, so two notes can cite one episode
+    agent_id="slot-pathologist", agent_type="pathologist", sovereign_id="agent-a",
+    did=f"did:probos:{_SHIP}:pathologist", callsign="Selar",
 )
 
 
@@ -63,8 +72,8 @@ def _live(em: Any) -> list[str]:
     return sorted(_raw(em, [_CITED, _OTHER])["ids"])
 
 
-async def _stand_down(records: Any, *, cites: str = "e1", shown: int = 0) -> str:
-    """A real stand-down in which agent-a is shown one of its episodes (``_CITED`` by default) as e1."""
+async def _stand_down(records: Any, *, cites: str = "e1", shown: int = 0, agent: CrewMember = _AGENT) -> str:
+    """A real stand-down in which ``agent`` is shown one of agent-a's episodes (``_CITED`` by default) as e1."""
 
     async def ask(member: CrewMember, prompt: str) -> str:
         return _reply(cites)
@@ -72,7 +81,7 @@ async def _stand_down(records: Any, *, cites: str = "e1", shown: int = 0) -> str
     async def recall(member: CrewMember) -> list[Any]:
         return [_episodes()[shown]]
 
-    report = await run_stand_down((_AGENT,), ask=ask, recall=recall, records=records, timeline_id=_SHIP)
+    report = await run_stand_down((agent,), ask=ask, recall=recall, records=records, timeline_id=_SHIP)
     assert [turn.outcome for turn in report.turns] == [TurnOutcome.WRITTEN]  # premise
     return report.turns[0].path
 
@@ -139,10 +148,37 @@ async def test_a_refused_erasure_for_a_note_keeps_the_cited_episodes_attachment_
         await store.close()
 
 
+@pytest.mark.parametrize("target", ["episode", "agent", "resource"])
+async def test_s3_s_archive_refusal_comes_before_this_slice_s_when_both_cite_the_episode(
+    tmp_path: Path, target: str,
+) -> None:
+    """A2 (M3-F4): an archived note and a pending note both cite the target. S3's check runs first at every entry
+    point, so the erasure is refused for the archive entry, and this slice's refusal is never reached."""
+    records = _records(_data_dir(tmp_path))
+    archived = await _stand_down(records)
+    pending = await _stand_down(records, agent=_SECOND)
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        plan = await plan_promotion(records, timeline_id=_SHIP)
+        first = next(record for record in plan.records if record.source_ref == archived)
+        assert await store.promote_entry(first) is PromotionOutcome.CREATED
+        citations = await exit_note_citations(records, store)
+        assert citations == {_CITED: (pending,)}  # premise: the archived note is S3's; the pending one is this slice's
+        async with _memory(tmp_path / "vessel", "archive") as rig:
+            await _stored(rig.em)
+            with pytest.raises(ArchiveCitationsBlockErasure):
+                await _forget(_manager(rig.em, citations, store), target)
+            assert _live(rig.em) == [_CITED, _OTHER]
+    finally:
+        await store.close()
+
+
 @pytest.mark.parametrize("target", ["episode", "agent"])
 async def test_the_captain_vetoes_the_note_then_the_forget_route_erases_the_episodes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, target: str,
 ) -> None:
+    caplog.set_level(logging.WARNING)
     config, data_dir = _config(tmp_path), _data_dir(tmp_path)
     records = _records(data_dir)
     path = await _stand_down(records)
@@ -162,6 +198,12 @@ async def test_the_captain_vetoes_the_note_then_the_forget_route_erases_the_epis
                 assert refused.json()["error"] == "exit_notes_cite_erased_episodes"
                 assert refused.json()["exit_note_paths"] == [path]
                 assert _live(rig.em) == [_CITED, _OTHER]
+                refusals = [
+                    record.getMessage() for record in caplog.records if "exit note(s)" in record.getMessage()
+                ]
+                assert refusals == [  # A2 (M3-F5): logged once, as a count: no path, episode id or note text
+                    "AD-1341 S4: an AD-754 erasure was refused: 1 exit note(s) awaiting promotion cite its episodes",
+                ]
 
                 # The Captain's veto, as the CLI runs it: its own event loop, so in a thread.
                 assert await asyncio.to_thread(_veto, monkeypatch, config, data_dir, path, "cites an erased episode") == 0
@@ -281,15 +323,81 @@ def test_only_the_forget_route_reads_exit_note_citations_and_only_the_manager_re
     assert raisers == {"knowledge/erasure.py"}
 
 
-async def test_a_note_written_after_the_request_read_its_citations_does_not_stop_it(tmp_path: Path) -> None:
+async def test_a_note_written_after_the_request_read_its_citations_does_not_stop_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D14's disclosed bound (register R2), through the real route (A2, M3-F3). The route reads the pending notes'
+    citations once, before it builds the manager. A note citing the episode that lands right after that read does
+    not stop the request; a second read would have counted it."""
     records = _records(_data_dir(tmp_path))
-    async with _memory(tmp_path / "vessel", "archive") as rig:
+    root = tmp_path / "vessel"
+    reads: list[dict[str, tuple[str, ...]]] = []
+    late: list[str] = []
+    real_read = security.exit_note_citations
+
+    async def read_then_a_late_note(store: Any, archive: Any) -> dict[str, tuple[str, ...]]:
+        reads.append(await real_read(store, archive))
+        if not late:
+            late.append(await _stand_down(records))  # lands after the read, before the manager is built
+        return reads[-1]
+
+    monkeypatch.setattr(security, "exit_note_citations", read_then_a_late_note)
+    async with _memory(root, "archive") as rig:
         await _stored(rig.em)
-        citations = await exit_note_citations(records, None)  # the route's one read, before any note exists
-        assert citations == {}
-        path = await _stand_down(records)  # a note citing _CITED lands after the read
-        assert await exit_note_citations(records, None) == {_CITED: (path,)}  # a second read would count it
+        runtime = _runtime(root, rig.em)
+        runtime.records_store = records
+        runtime.archive_store = None
+        runtime.config.archive.enabled = True
+        async with _client(runtime) as client:
+            answer = await _post(client, _FORGET, {"episode_id": _CITED})
 
-        result = await _manager(rig.em, citations).forget_episode(_CITED)
+        assert reads == [{}]  # one read per request, and it saw no note
+        assert await real_read(records, None) == {_CITED: (late[0],)}  # premise: a second read would count it
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["deleted_episode_ids"] == [_CITED]  # the disclosed bound: register R2
 
-        assert result.deleted_episode_ids == [_CITED]  # the disclosed bound: one read per request (register R2)
+
+@pytest.mark.parametrize("target", ["episode", "agent", "resource"])
+async def test_an_exit_note_the_route_cannot_read_now_refuses_the_erasure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str,
+) -> None:
+    """A2 (M3-F1): a valid note citing the episode, which the OS refuses to read during the request. The route answers
+    500 and erases nothing; once the note can be read, the refusal names it (the Captain's way through, unchanged).
+
+    A3: the shared ``_client`` re-raises the app's exception (``raise_app_exceptions=True``), so this test builds a
+    transport that answers as a served app does: Starlette's error middleware sends the 500, then re-raises, and the
+    transport keeps the response. A wrapper records what the app raised, so the 500 is proved to be the denied read.
+    """
+    records = _records(_data_dir(tmp_path))
+    path = await _stand_down(records)
+    root = tmp_path / "vessel"
+    async with _memory(root, "archive") as rig:
+        await _stored(rig.em)
+        runtime = _runtime(root, rig.em)
+        runtime.records_store = records
+        runtime.archive_store = None
+        runtime.config.archive.enabled = True
+        app = create_app(runtime)
+        raised: list[Exception] = []
+
+        async def served(scope: Any, receive: Any, send: Any) -> None:
+            try:
+                await app(scope, receive, send)
+            except Exception as exc:
+                raised.append(exc)
+                raise
+
+        transport = httpx.ASGITransport(app=served, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            _deny_reading(monkeypatch, records.repo_path / path)
+            failed = await _post(client, _FORGET, _TARGETS[target])
+            assert failed.status_code == 500, failed.text
+            assert failed.text == "Internal Server Error"  # what a served app sends: no path, no reason
+            assert [type(exc) for exc in raised] == [PermissionError]  # the denied read, and nothing else
+            assert _live(rig.em) == [_CITED, _OTHER]  # nothing was erased
+            monkeypatch.undo()
+            refused = await _post(client, _FORGET, _TARGETS[target])
+
+        assert len(raised) == 1  # the retry raised nothing
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["exit_note_paths"] == [path]

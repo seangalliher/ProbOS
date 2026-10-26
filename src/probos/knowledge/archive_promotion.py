@@ -33,13 +33,15 @@ from probos.knowledge.archive_store import (
     SourceState,
 )
 from probos.knowledge.lessons import (
+    EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_VERSION,
     EXIT_NOTES_DIR,
     LESSON_MAX_CITATIONS,
-    exit_note_header,
+    exit_note_lesson,
     exit_note_path,
-    parse_lesson,
+    exit_note_provenance_ok,
+    is_exit_note_text,
 )
 from probos.knowledge.records_store import RecordsStore
 
@@ -100,11 +102,14 @@ def _title_for(path: str, frontmatter: dict[str, Any]) -> str:
 def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
     """AD-1341 S4: an exit note as the Ship's Archive receives it, or None when it breaks the exit-note rule (D7, D9).
 
-    The rule: the ``exit_note`` envelope (version 1) names a timeline, a callsign, an agent type and the author's DID,
-    and lists at most ``LESSON_MAX_CITATIONS`` distinct episode ids; the path is the one ``exit_note_path`` gives for
-    that timeline and agent type; the author is the callsign; the body is the note's origin line followed by a lesson
-    in the format; the classification is ``ship`` or ``fleet`` (C1). The entry is attributed to the timeline that wrote
-    the note, not to the reset that promotes it, so a note a skipped promotion left behind keeps its own generation.
+    The rule: the ``exit_note`` envelope (version 1, an ``int``) names a timeline, a callsign, an agent type and the
+    author's DID, each one line within its bound (``exit_note_provenance_ok``), and lists at most
+    ``LESSON_MAX_CITATIONS`` distinct episode ids, each one line within its bound; the path is the one
+    ``exit_note_path`` gives for that timeline and agent type; the author is the callsign; the body is exactly the
+    note's origin line followed by a canonical lesson (``exit_note_lesson``), so what is archived is what the Captain
+    reviewed and what the rule parsed (A2); the classification is ``ship`` or ``fleet`` (C1). The entry is attributed
+    to the timeline that wrote the note, not to the reset that promotes it, so a note a skipped promotion left behind
+    keeps its own generation.
 
     Never raises for a document: every value ``PromotionRecord`` would refuse is checked here first, so one bad note is
     withheld and never stops a reset (S1 A3's rule). The one rule for the promotion and for ``exit_note_citations``.
@@ -113,14 +118,17 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
         return None
     frontmatter, content = document["frontmatter"], document.get("content")
     envelope = frontmatter.get(EXIT_NOTE_KEY)
-    if type(envelope) is not dict or envelope.get("version") != EXIT_NOTE_VERSION:
+    if type(envelope) is not dict:
+        return None
+    version = envelope.get("version")
+    if type(version) is not int or version != EXIT_NOTE_VERSION:  # A2: True and 1.0 equal 1 and are not it
         return None
     named = [envelope.get(field) for field in ("timeline_id", "callsign", "agent_type", "author_did")]
-    if any(type(value) is not str or not value.strip() for value in named):
+    if not exit_note_provenance_ok(*named):  # A2: one storable line each, within its bound
         return None
     note_timeline, callsign, agent_type, author_did = named
     cited = envelope.get("source_episode_ids")
-    if type(cited) is not list or any(type(item) is not str or not item.strip() for item in cited):
+    if type(cited) is not list or not all(is_exit_note_text(item, EXIT_NOTE_EPISODE_ID_MAX_CHARS) for item in cited):
         return None
     if len(cited) > LESSON_MAX_CITATIONS or len(set(cited)) != len(cited):
         return None
@@ -130,9 +138,8 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
         return None
     if path != expected_path or frontmatter.get("author") != callsign:
         return None
-    header = exit_note_header(callsign, agent_type, note_timeline)
-    if type(content) is not str or not content.startswith(f"{header}\n\n") or parse_lesson(content) is None:
-        return None
+    if exit_note_lesson(callsign, agent_type, note_timeline, content) is None:
+        return None  # A2: the body is exactly the origin line and a canonical lesson, or nothing is archived
     classification = frontmatter.get("classification")
     if type(classification) is not str or classification not in PROMOTABLE_CLASSIFICATIONS:
         return None  # C1: nothing narrower than ship reaches a later crew
@@ -162,9 +169,14 @@ async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | Non
     counts while ``source_state`` says CREATED; a vetoed, erased or already archived note does not (an archived one
     is S3's own check). With no open archive every valid note counts (fail closed: the next reset opens the archive
     and would promote it). Reads Ship's Records and the archive; writes nothing; any failure propagates.
+
+    A2 (M1-F1, M3-F1): the listing is strict, so a note file that exists but cannot be read now (a sharing violation, a
+    permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
+    UTF-8, or whose frontmatter does not parse, is never counted, because the promotion never archives it either: that
+    is a property of the file, not of the moment.
     """
     citing: dict[str, list[str]] = {}
-    for listed in await records.list_entries(EXIT_NOTES_DIR):
+    for listed in await records.list_entries(EXIT_NOTES_DIR, strict=True):
         path = listed["path"]
         if source_kind_for(path, listed["frontmatter"]) is not SourceKind.EXIT_NOTE:
             continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
@@ -204,6 +216,11 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
     its body is empty, or when it is narrower than ``ship`` (C1: a later crew reads every archived entry). An
     empty ``timeline_id`` raises as soon as there is anything to promote. A blank topic withholds nothing: the title
     falls back to the file name, then the records path (A3, F1).
+
+    AD-1341 S4: an exit note (``exit-notes/``) is the exception to both. ``_exit_note_record`` attributes it to the
+    timeline in its own envelope, never to ``timeline_id``, and a valid note never raises for an empty
+    ``timeline_id`` (the CLI refuses a run without an instance id before it plans). A note that breaks the rule is
+    withheld. The listing is not strict: a file that cannot be read at this moment is skipped, as S1 left it.
     """
     selected: list[PromotionRecord] = []
     withheld: list[str] = []
