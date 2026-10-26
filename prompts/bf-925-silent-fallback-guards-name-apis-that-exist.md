@@ -14,6 +14,8 @@
 
 **Amendment A2 (2026-10-26, `claude-architect`, on round 1 of the Diff Reviews: two `gpt-6.1-sol` reviewers, M1 and M2):** the M1 reviewer found, with the real classes, that §7.3's link block resolved each mention a second time after the dispatch's awaits, so a recipient replaced during the dispatch got the TaskEvent and its replacement the link (M1-1), and that a resolver bound without a dispatcher recorded links with no TaskEvent (M1-3). §7.3 now records the ids the AD-654d block dispatches to and links exactly those (new pair 1; pair 2's REPLACE changes); §7.7 adds two cases and `_RecordingDispatcher`; §10 re-anchors M1-6 to M1-8 and adds M1-13 and M1-14. The M1 reviewer also found `reconnected_count` (nats-py 2.14.0 has no such attribute) classified `duck` (M1-4: now a `finding`, 6 duck and 17 finding; R1) and D4's per-Chief cost wrong (M1-5). The M2 reviewer found §8's contract file name wrong (M2-2) and a stale median comment after §7.15 pair 2 (M2-3: the pair is extended by that line). Recorded, not fixed: a stopped store still attached reads as running in the Insights report (R12); AD-607's recall gate is never bound and would raise if it were (R13). **No source line of M2 changes**; in M2, only §7.15 pair 2's comment line and §8's text change.
 
+**Amendment A3 (2026-10-26, applied by the orchestrator, mechanical; round 2 of the Diff Reviews, a delta review of A2 by one `gpt-6.1-sol` reviewer):** finding R2-1 (P3, injected-only, introduced by A2): the recycle case's premise assertion (`resolve("Bones")` names the replacement) ran inside `_RecordingDispatcher`'s callback, and `create_post` catches an exception raised in the dispatch, so the case returned normally with its premise failed. The reviewer's smallest fix is applied: the assertion moves out of the callback, to directly after the awaited `create_post` and before the TaskEvent and weight assertions (§7.7, two edits). No source line changes; the case's first failing assertion on the base is unchanged. The same review confirmed every other round-1 disposition (M1-1, M1-3, M1-4, M1-5, M2-2, M2-3 fixed; M1-2 and M2-1 recorded as R12 and R13).
+
 ## 0. Premise: what is present on this tree
 
 | Claim of #1655 (anchors on `7808d182`) | On `72fae2dd` | Holds |
@@ -1271,11 +1273,13 @@ async def test_the_link_goes_to_the_agent_the_mention_was_dispatched_to(ward_roo
         await ward_room.registry.register(
             SimpleNamespace(id="bones-2", agent_type="medical_officer", pool="medical_officer", is_alive=True)
         )
-        assert ward_room.callsigns.resolve("Bones")["agent_id"] == "bones-2"  # premise: a later resolve names the replacement
 
     dispatcher = _RecordingDispatcher(during=replace_bones)
     ward_room.service.attach_dispatcher(dispatcher, ward_room.callsigns)
     await ward_room.service.create_post(ward_room.thread_id, "author-1", "@Bones please check the scan", author_callsign="Avery")
+    # premise, asserted here and not inside the dispatch (create_post catches an exception raised there, so
+    # the case would pass with its premise failed): the recipient was replaced, so a later resolve names the replacement
+    assert ward_room.callsigns.resolve("Bones")["agent_id"] == "bones-2"
     assert [event.target.agent_id for event in dispatcher.events] == ["bones-1"]  # premise: AD-654d unchanged
     assert _social(ward_room.router, "author-1", "bones-1") == pytest.approx(0.05)
     assert _social(ward_room.router, "author-1", "bones-2") == 0.0
