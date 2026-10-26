@@ -84,6 +84,14 @@ class _FakeMetadataOnlyMemory:
     async def get_by_ids(self, ids: list[str]) -> list[_Episode]:
         return []
 
+    async def iter_live_episodes(self) -> AsyncIterator[_Episode]:
+        """BF-939: the attachment-owner scan finds no other episode. These tests are about the extractor; a real
+        store's row that cannot be rebuilt makes that scan raise, which test_bf939_shared_attachment_ownership covers
+        (the episode is erased, then the failure is raised)."""
+        nothing: list[_Episode] = []
+        for episode in nothing:
+            yield episode
+
     async def get_episode_metadata(self, episode_id: str) -> dict:
         return self._metadata
 
