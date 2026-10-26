@@ -117,8 +117,9 @@ _YEOMAN_INTENT_DESCRIPTORS = [
 
 
 # Intent names that are pure reads — Yeoman publishes them as
-# ``autoApproveReadOnly`` so AD-753/AD-765 unattended modes do not gate them
-# behind quorum on every proactive run.
+# ``autoApproveReadOnly`` for the AD-753/AD-765 unattended modes. BF-927 (#1657):
+# the AD-753 gate (``consensus.quorum.vote_on_intent``) has no production caller
+# and nothing reads ``read_only_intents``, so this set gates nothing today.
 _YEOMAN_READ_ONLY_INTENTS: frozenset[str] = frozenset(
     {"daily_briefing", "schedule_lookup", "triage_inbox"}
 )

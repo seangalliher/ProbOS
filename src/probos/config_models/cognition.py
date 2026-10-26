@@ -276,25 +276,25 @@ class SelfModConfig(BaseModel):
 
 
 class WorkingMemoryConfig(BaseModel):
-    """AD-573: Unified agent working memory configuration."""
+    """AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours is read; AgentWorkingMemory uses its own defaults for everything else."""
 
-    token_budget: int = 3000  # Max tokens for working memory context
-    max_recent_actions: int = 10  # Ring buffer capacity
-    max_recent_observations: int = 5
-    max_recent_conversations: int = 5
-    max_events: int = 10
-    proactive_budget: int = 1500  # Lower budget for proactive (supplemental)
-    stale_threshold_hours: float = 24.0  # Entries older than this pruned on restore
-    conclusion_ttl_seconds: float = 1800.0
-    max_conclusions: int = 20
-    duty_budget: int = 600
-    social_budget: int = 800
-    ship_budget: int = 800
-    engagement_budget: int = 800
+    token_budget: int = Field(default=3000, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_recent_actions: int = Field(default=10, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_recent_observations: int = Field(default=5, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_recent_conversations: int = Field(default=5, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_events: int = Field(default=10, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    proactive_budget: int = Field(default=1500, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    stale_threshold_hours: float = Field(default=24.0, description="Read at warm boot: restored working-memory entries older than this are dropped.")
+    conclusion_ttl_seconds: float = Field(default=1800.0, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    max_conclusions: int = Field(default=20, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    duty_budget: int = Field(default=600, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    social_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    ship_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    engagement_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
 
 
 class MemoryBudgetConfig(BaseModel):
-    """AD-573: Memory budget accounting across recall tiers."""
+    """AD-573: Memory budget accounting across recall tiers. Inert: no production code reads this section to act on it (BF-926, #1656): nothing passes it to CognitiveAgent's memory_budget_config, so enabled and the budgets change nothing (#1324)."""
 
     enabled: bool = True
     total_budget_tokens: int = 4650
@@ -331,7 +331,7 @@ class DistillationConfig(BaseModel):
 
 
 class MetabolismConfig(BaseModel):
-    """AD-670: Working memory metabolism — active lifecycle management."""
+    """AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section to act on it (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324)."""
 
     enabled: bool = True
     decay_half_life_seconds: float = 3600.0
@@ -374,7 +374,7 @@ class RetroactiveConfig(BaseModel):
 
 
 class PinnedKnowledgeConfig(BaseModel):
-    """AD-579a: Pinned knowledge buffer configuration."""
+    """AD-579a: Pinned knowledge buffer configuration. Inert: no production code reads this section to act on it (BF-926, #1656): nothing passes it to AgentWorkingMemory's pinned_config, so no pinned-knowledge buffer is built (#1324)."""
 
     enabled: bool = True
     max_tokens: int = 150
@@ -383,7 +383,7 @@ class PinnedKnowledgeConfig(BaseModel):
 
 
 class TemporalValidityConfig(BaseModel):
-    """AD-579b: Temporal validity windows for episodic memory."""
+    """AD-579b: Temporal validity windows for episodic memory. Inert: no production code reads this section to act on it (BF-926, #1656): enabled and default_validity_hours change nothing (#1324)."""
 
     enabled: bool = True
     default_validity_hours: float = 0.0

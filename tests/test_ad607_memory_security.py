@@ -162,7 +162,8 @@ class TestRecallAnomalyValidation:
         cfg = MemorySecurityConfig()
         assert cfg.enforce_recall is False
         assert cfg.enforce_provenance is False
-        assert cfg.enforce_leak_guard is False
+        # BF-926 (#1656): the leak-guard flag is deleted (nothing read it; the guard only observes).
+        assert "enforce_leak_guard" not in MemorySecurityConfig.model_fields
         assert cfg.enforce_store is False
         assert cfg.anchor_mismatch_threshold == pytest.approx(0.7)
         assert cfg.dp_min_cohort_size == 3

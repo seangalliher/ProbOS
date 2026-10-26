@@ -182,7 +182,7 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AssignmentConfig': {'enabled
                                         'data_subdir': 'team_simulations'},
     'MemorySecurityConfig': {   'enforce_recall': False,
                                 'enforce_provenance': False,
-                                'enforce_leak_guard': False,
+                                # BF-926 (#1656): enforce_leak_guard is deleted; it promised redaction nothing performed.
                                 'enforce_store': False,
                                 'anchor_mismatch_threshold': 0.7,
                                 'dp_min_cohort_size': 3},

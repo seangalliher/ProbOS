@@ -533,7 +533,7 @@ class AnomalyWindowConfig(BaseModel):
 
 
 class ValidationFrameworkConfig(BaseModel):
-    """Validation framework configuration (AD-451)."""
+    """Validation framework configuration (AD-451). The ReconciliationEscalator is built, not invoked: nothing calls reconcile (BF-927, #1657)."""
 
     enabled: bool = True
     metadata_threshold: float = Field(default=0.85, ge=0.0, le=1.0)

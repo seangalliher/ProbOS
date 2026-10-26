@@ -252,7 +252,7 @@ def _wire_classification_gate(*, runtime: Any, config: "SystemConfig") -> bool:
     emit_fn = getattr(runtime, "emit_event", None)
     runtime.classification_gate = ClassificationGate(runtime, emit_event=emit_fn)  # public attribute (Wave 5 convention #1)
     logger.info(
-        "AD-530: ClassificationGate initialized (%d patterns)",
+        "AD-530: ClassificationGate built, not invoked (%d patterns): nothing calls check_disclosure (BF-927, #1657)",
         runtime.classification_gate.pattern_count,
     )
     return True
@@ -1207,7 +1207,7 @@ def _wire_autonomy_boundaries(*, runtime: Any, config: "SystemConfig") -> bool:
     runtime.boundary_registry = registry  # public attribute (Wave 5 convention #1)
     runtime.boundary_detector = detector  # public attribute (Wave 5 convention #1)
     logger.info(
-        "AD-511: Autonomy Boundaries v1 initialized (%d boundaries; %d patterns; observational)",
+        "AD-511: Autonomy Boundaries v1 built, not invoked (%d boundaries; %d patterns): nothing calls the detector's scan (BF-927, #1657)",
         len(registry.list_boundaries()),
         detector.pattern_count,
     )
@@ -4095,10 +4095,10 @@ async def finalize_startup(
         logger.info("AD-525: Creative Expression v1 wired during finalization")
 
     if _wire_classification_gate(runtime=runtime, config=config):
-        logger.info("AD-530: ClassificationGate v1 wired during finalization")
+        logger.info("AD-530: ClassificationGate v1 built, not invoked (BF-927, #1657)")
 
     if _wire_autonomy_boundaries(runtime=runtime, config=config):
-        logger.info("AD-511: Autonomy Boundaries v1 wired during finalization")
+        logger.info("AD-511: Autonomy Boundaries v1 built, not invoked (BF-927, #1657)")
 
     if _wire_curriculum_registry(runtime=runtime, config=config):
         logger.info("AD-507: Crew Development Framework v1 wired during finalization")
@@ -4325,7 +4325,7 @@ async def finalize_startup(
         risk_registry = ActionRiskRegistry(policies=policies)
         runtime._risk_registry = risk_registry
         logger.info(
-            "AD-676: ActionRiskRegistry initialized with %d actions",
+            "AD-676: ActionRiskRegistry built, not invoked (%d actions): nothing calls check_authorization (BF-927, #1657)",
             len(risk_registry.list_actions()),
         )
 
@@ -4333,7 +4333,7 @@ async def finalize_startup(
     from probos.mesh.disclosure import DisclosureRouter
     disclosure_router = DisclosureRouter()
     runtime._disclosure_router = disclosure_router
-    logger.info("AD-679: DisclosureRouter initialized")
+    logger.info("AD-679: DisclosureRouter built, not invoked: nothing calls filter_permitted; /system shows its clearance map only (BF-927, #1657)")
 
     # AD-439: Emergent Leadership Detector
     if config.emergent_leadership.enabled and runtime.ontology is not None:
@@ -4371,7 +4371,7 @@ async def finalize_startup(
             min_confidence_delta=config.validation_framework.min_confidence_delta,
             metadata_threshold=config.validation_framework.metadata_threshold,
         )
-        logger.info("AD-451: ValidationFramework wired (ReconciliationEscalator)")
+        logger.info("AD-451: ValidationFramework's ReconciliationEscalator built, not invoked: nothing calls reconcile (BF-927, #1657)")
 
     # AD-458 / AD-458b: Pre-flight validation runner (4 checks at default config)
     if config.pre_flight.enabled:
@@ -4555,7 +4555,11 @@ async def finalize_startup(
         runtime.input_validator = input_validator
         runtime.red_team_lead = red_team_lead
         await red_team_lead.start()
-        logger.info("AD-455: Security Team wired (4 services)")
+        logger.info("AD-455: RedTeamLead running (red-team pool health every %.0fs)", config.security.campaign_interval_seconds)
+        logger.info(
+            "AD-455: InputValidator, ThreatDetector and TrustIntegrityMonitor built, not invoked: "
+            "nothing screens inbound input or analyzes trust integrity (BF-927, #1657)"
+        )
 
     # AD-456: Security Infrastructure
     # Reconfigure existing CredentialStore (AD-395) with AD-456 rotation extension
@@ -4724,7 +4728,7 @@ async def finalize_startup(
                 metadata_key=config.ground_truth.quarantine_metadata_key,
             )
             logger.info(
-                "AD-528b: GroundTruthRejectionGate wired (metadata_key=%s)",
+                "AD-528b: GroundTruthRejectionGate built, not invoked (metadata_key=%s): its caller is AD-528b-2 (BF-927, #1657)",
                 config.ground_truth.quarantine_metadata_key,
             )
         else:
@@ -4762,7 +4766,7 @@ async def finalize_startup(
         else:
             runtime.ground_truth_trust_feedback = None
         logger.info(
-            "AD-528: GroundTruthVerifier wired (threshold=%.2f, window=%.0fs)",
+            "AD-528: GroundTruthVerifier built, not invoked (threshold=%.2f, window=%.0fs): only the uncalled rejection gate calls verify (BF-927, #1657)",
             config.ground_truth.threshold,
             config.ground_truth.event_window_seconds,
         )
