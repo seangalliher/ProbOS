@@ -56,8 +56,8 @@ Projects appear here only as technical design references. Positioning against th
 |---|---|---|---|
 | RAGFlow | 2026-05-08 | absorption | `ragflow-absorption.md` |
 | LoCoMo benchmark | 2026-05-08 | absorption | `locomo-benchmark-absorption.md` |
-| Memvid | 2026-04-05 | absorption | `memvid-evaluation.md` |
-| AI Meets Brain memory survey (arXiv 2512.23343) | 2026-04-12 | absorption | `agent-memory-survey-absorption.md` |
+| Memvid | 2026-10-22 | absorption | `memvid-evaluation.md`; AD-1341 S1 (#1569) Prior Art (append-only frames match the content-hash key; nothing new) |
+| AI Meets Brain memory survey (arXiv 2512.23343) | 2026-10-24 | absorption | `agent-memory-survey-absorption.md`; AD-1341 S2 (#1569) Prior Art, `prompts/ad-1341-s2-inherited-label.md` (abstract only; nothing on inheritance labelling) |
 | Governed Collaborative Memory (Cuadros et al., arXiv 2605.04264; selection regimes for shared memory) | 2026-10-25 | absorption | `coral-governed-memory-absorption.md` (read in full); draft amendments for the AD-1336 (#1558) child 8 graduation rule and for keeping declined proposals at intake |
 
 ## Protocols and standards (interval: 180 days)
