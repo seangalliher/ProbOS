@@ -4,13 +4,17 @@
 
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26 (Amendment A2)
 
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26 (Amendment A3)
+
 **Status:** build-ready. Slice 2 of 6 of #1569; it does not close the issue. **Tier HIGH:** it changes what every agent reads from the Oracle's archive tier, and a wrong label is the defect the Westworld and minority-report principles exist to prevent (inherited knowledge taken as one's own memory). No new AD or BF number. **Base:** `origin/main` `026a682f`, tree `cad2c0ee25686a5683fd0ba3be35463796b5cf35`, with S1 merged (`prompts/ad-1341-s1-archive-provenance-promotion.md`). **Captain:** nothing in this slice requires the Captain (D10).
 
 **Milestones:** M1 (code and tests, §7.1 to §7.4, including §7.3a and §7.3b from Amendment A2) and M2 (trackers, §8). Each is one Builder delegation and one local commit. The broad gate is the orchestrator's single canonical run, once, after M2 (`scripts/run_test_gate.py --label ad1341-s2 --receipt logs/gates/ad1341-s2.receipt.json`); the Builder runs only the focused gates in §4.
 
-**Tests:** new `tests/test_ad1341_s2_inherited_label.py`: 17 functions, 44 cases. No existing test changes: every existing archive assertion is a substring or metadata check that the label keeps (Absence S2-AV6), and no existing test's text holds a label or the origin notice (S2-AV9).
+**Tests:** new `tests/test_ad1341_s2_inherited_label.py`: 18 functions, 54 cases. No existing test changes: every existing archive assertion is a substring or metadata check that the label keeps (Absence S2-AV6), and no existing test's text holds a label or the origin notice (S2-AV9).
 
 **Amendment A2 (2026-10-26).** Round 1 of the HIGH review of M1 (`gpt-6.1-sol`, verdict NOT READY) found five findings; the orchestrator reproduced each on the candidate. (1) P2, ordinary reach under a supported setting: AD-1148's bound of a tool result keeps its head and its tail and elides the middle, so with any `tool_result_max_chars` from 1 to about the result's length the tail could carry archive text whose label was elided (the Captain's live cap of 6000 equals the `oracle_query` tool's own cap, so it does not reach it). Fixed: the elision marker carries `ARCHIVE_ORIGIN_NOTICE` whenever the text held a label (D12, §7.3a). (2) P2, ordinary when compaction is on: AD-547's summary could keep an archived fact and drop every label. Fixed: the summary opens with the notice whenever the summarised messages held a label or the notice (D12, §7.3b); which sentence is archived stays unmarked (RS2-9). (3) P2, introduced: the label's words took AD-688 graph-expansion token slots (an unrelated `crew` edge displaced a content edge; 7 more lookups at 100 generations). Fixed: expansion reads an archive parent without its label line (§7.2 pairs 5 and 6); disclosed effect 5's bound is withdrawn. (4) P2, injected-only, introduced: a skipped close whose timeline was only a tab and line breaks numbered a crew (SQLite's one-argument `trim` strips spaces only). Fixed: blankness is decided in Python (§7.1 pairs 3 and 7). (5) P3, injected-only, introduced: `format_refs` replaces the label's closing bracket at a 19-digit id with a 7-digit generation. Recorded with its exact bound (RS2-7); T7 now pins the bound. §5 gains the consumers after the renderers (rows 11 to 15, Absence S2-AV8); RS2-8 records pages an agent asks for at an offset.
+
+**Amendment A3 (2026-10-26).** Round 2, a delta review of A2 (`gpt-6.1-sol`, verdict NOT READY), confirmed A2's claims by execution and found three findings. The orchestrator reproduced finding 1 and traced its root cause. (1) P2, ordinary reach under supported non-default bounds, introduced by A2: `truncate_tool_output` reserves the origin notice in its marker budget, but the AD-1151 durable split (`_durable_head_tail`) still sized its slices from the bare marker. For an elided labelled result, the proportional shrink therefore rounded the durable head down a second time. At equal effective caps, the persisted trace lacked the last character of the head the model saw (caps 401, 1000, 1001, 1999, 2000 and 2999 on the real tool output), against AD-1151's guarantee that the trace is never bounded tighter than the transcript. The Captain's live caps (6,000 context, 8,192 durable) do not reach it. Fixed: one module helper, `_archive_origin_notice`, gives the notice to both, and `_durable_head_tail` reserves its length (keyword `notice_chars`, default 0). The durable slices then fill the same content budget and, at equal caps, equal the model's (§7.3a pairs 4 to 7; T16; L-4 to L-6). (2) P3, ordinary, not a regression: RS2-8 misstated the reach of paged reads. The offload threshold is 12,288 UTF-8 bytes, which needs no majority of multi-byte characters; a first read at an offset needs no labelled page before it; the pointer frame carries no origin line. Corrected in RS2-8, §5 row 15 and the not-consumers row, D2, D12 and both trackers. (3) P3, ordinary when the targeted lookup is enabled, not a regression: the AD-725 DM lookup cuts its rendered text again (`max_lookup_chars`), which A2's enumeration missed. It is a head-only cut and keeps the label first. Recorded in §5 row 5; S2-AV8 is re-run and narrowed. The reviewer recorded the following with nothing to change: RS2-7, RS2-9, T7, T10, T13 `[none]`, the fail-closed generation read, and the extra SQL call on an empty search. Not changed and reported separately: AD-1151's fixed 2:1 durable split (§9).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -51,7 +55,7 @@ No flag, no schema change, no change to the archive's contents, its score or the
 
 - **D1 (premises).** §0. S1's decisions stand; S2 only reads `generations`.
 - **D2 (where the label is attached).**
-  - **(A) chosen:** the rule and the data in the store module (`inheritance_label`, `ArchiveEntry.generation`: the archive's contract, in its lowest owning layer, as S1 D5 put the record types there); attached once, in `OracleService._query_archive`, the one path from the archive to any agent (Absence S2-AV1, S2-AV2). Downstream of the renderers, the two consumers that cut or rewrite the text an agent reads (AD-1148's elision, AD-547's compaction) put the fixed `ARCHIVE_ORIGIN_NOTICE`, from the same module, before what they keep (D12, A2).
+  - **(A) chosen:** the rule and the data in the store module (`inheritance_label`, `ArchiveEntry.generation`: the archive's contract, in its lowest owning layer, as S1 D5 put the record types there); attached once, in `OracleService._query_archive`, the one path from the archive to any agent (Absence S2-AV1, S2-AV2). Downstream of the renderers, the two consumers that cut a middle out of, or rewrite, the text an agent reads (AD-1148's elision, AD-547's compaction) put the fixed `ARCHIVE_ORIGIN_NOTICE`, from the same module, before what they keep (D12, A2). Head-only cuts (`format_refs`, the crew consult, the DM lookup) keep the label first. A page the agent asks for at an offset into an offloaded result is RS2-8 (A3).
   - (B) attach in the store (`search` returns labelled content): rejected. The stored content is what was archived and what `content_sha256` hashes (S1 D3), the Captain's erase prompt shows it, and whether an entry is "this crew's" is a runtime fact the store does not know.
   - (C) attach in each renderer (`query_formatted`, the tool, `format_refs`, the crew consult, the DM lookup): rejected. Five owners, and a sixth renderer would be unlabelled by default: fail-open.
   - (D) label only the `provenance`: rejected. `format_refs` (`oracle_service.py:843`) and the tool's envelope (`provenance.py:78-80`, `oracle_query_tool.py:148`) never render provenance.
@@ -84,7 +88,7 @@ No flag, no schema change, no change to the archive's contents, its score or the
 - **D10 (the Captain).** Nothing here meets a "Still requires the Captain" condition: it implements a principle the Captain set (#1569 item 5) without weakening any control. The label wording is in the envelope; the Captain may overrule it after the fact.
 - **D11 (tier).** HIGH (see the status line).
 - **D12 (consumers that cut or summarise an Oracle result after its renderer; A2).**
-  - **(A) chosen:** one fixed notice, `ARCHIVE_ORIGIN_NOTICE`, and one detector, `holds_archive_label` (an inheritance label's opening, the own-crew label or the notice anywhere in the text), both in the store module beside the labels. `truncate_tool_output` (AD-1148: every tool result at the loop's message boundary, the AD-1151 trace and the `oracle_query` tool's own last bound) appends the notice to its elision marker whenever the text holds a label. The tail always follows the marker, so every fragment cut loose from its label is introduced by the notice; the marker is sized with the notice, so the result still never exceeds `max_chars`. `SessionCompactor` (AD-547, in every loop that compacts) opens its summary with the notice whenever the messages it summarised held a label or an earlier notice, so a second compaction keeps it. Code adds it, outside the summarising model's control. No signature, return shape, config field or event changes; label-free text is byte-identical, and the unbounded path returns before the scan. A false positive (a file that quotes a label, such as `archive_store.py` read through `read_file`) only adds the notice: the safe direction.
+  - **(A) chosen:** one fixed notice, `ARCHIVE_ORIGIN_NOTICE`, and one detector, `holds_archive_label` (an inheritance label's opening, the own-crew label or the notice anywhere in the text), both in the store module beside the labels. `truncate_tool_output` (AD-1148: every tool result at the loop's message boundary, the AD-1151 trace and the `oracle_query` tool's own last bound) appends the notice to its elision marker whenever the text holds a label. The tail always follows the marker, so every fragment cut loose from its label is introduced by the notice; the marker is sized with the notice, so the result still never exceeds `max_chars`. The AD-1151 durable split reserves the same notice (`_durable_head_tail`'s keyword `notice_chars`, given by the module helper `_archive_origin_notice` that the bound also uses; A3). At equal caps the persisted trace therefore keeps every character the model saw, as AD-1151's upward clamp intends. `_durable_head_tail` is private; its new keyword has a default, so its two calls stay valid. `SessionCompactor` (AD-547, in every loop that compacts) opens its summary with the notice whenever the messages it summarised held a label or an earlier notice, so a second compaction keeps it. Code adds it, outside the summarising model's control. No signature, return shape, config field or event changes; label-free text is byte-identical, and the unbounded path returns before the scan. A false positive (a file that quotes a label, such as `archive_store.py` read through `read_file`) only adds the notice: the safe direction.
   - (B) bound at the source (the loop's cap reaches the tool, which drops whole entries): rejected. The cap is the loop's and would have to cross the tool contract, and it would cover neither compaction nor any other tool that returns archive text.
   - (C) an opt-out of AD-1148's elision for self-bounded tools: rejected. It removes the context cap AD-1148 exists to hold, and the tool's own last bound uses the same function.
   - (D) record finding 1 and narrow criterion 3: rejected. Any `tool_result_max_chars` from 1 to about 4,100 is a supported setting that reaches it on a normal three-entry result.
@@ -97,7 +101,7 @@ No flag, no schema change, no change to the archive's contents, its score or the
 3. Generations are numbered from the first close the archive recorded; earlier crews are not numbered.
 4. Several vessels sharing one archive file (S1 disclosed effect 7) share one generation count, and each reads the other's entries as inherited from "generation N" of that shared count (RS2-1).
 5. None for AD-688's graph expansion (A2): it reads an archive parent's content without its label line, so its tokens, `find_edges` lookups and edges are the base's (T15). M1 as first built read the label: the round-1 reviewer saw an unrelated `crew` edge displace a content edge, and 7 more lookups at 100 recorded generations (RS2-4, resolved).
-6. A tool result that holds an archive label and exceeds AD-1148's cap carries `ARCHIVE_ORIGIN_NOTICE` after its elision marker; its head and tail shrink by the notice's length, and the cap holds. The AD-1151 durable trace bounds through the same function and carries it too. An AD-547 summary of messages that held a label opens with the notice.
+6. A tool result that holds an archive label and exceeds AD-1148's cap carries `ARCHIVE_ORIGIN_NOTICE` after its elision marker; its head and tail shrink by the notice's length, and the cap holds. The AD-1151 durable trace bounds through the same function, carries it too, and reserves it in its own slices, so at equal caps the persisted output keeps every character the model saw (A3, T16). An AD-547 summary of messages that held a label opens with the notice.
 
 ## 4. Milestones
 
@@ -105,7 +109,7 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 
 | Milestone | Files (§7, §8) | Focused gate |
 |---|---|---|
-| **M1** the label | 7.1 `src/probos/knowledge/archive_store.py`; 7.2 `src/probos/cognitive/oracle_service.py`; 7.3 `src/probos/runtime.py`; 7.3a `src/probos/cognitive/swe_harness/agentic_loop.py`; 7.3b `src/probos/cognitive/swe_harness/session_compactor.py`; 7.4 new `tests/test_ad1341_s2_inherited_label.py` | `tests/test_ad1341_s2_inherited_label.py tests/test_ad1341_s1_archive_store.py tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_reset_and_erase.py tests/test_ad524_ships_archive.py tests/test_bf919_archive_isolation.py tests/test_bf679_oracle_records_reader_identity.py tests/test_ad1139_oracle_query_tool.py tests/test_ad1141_crew_loop_sigma.py tests/test_ad696_agentic_oracle_retrieval.py tests/test_ad688_oracle_graph_integration.py tests/test_ad686_oracle_semantic_tier.py tests/test_bf675_oracle_tier5_sovereignty.py tests/test_ad695_ship_health_oracle.py tests/test_layer_boundaries.py tests/test_ad680_public_runtime_api.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py tests/test_ad1148_tool_result_bounds.py tests/test_ad547_session_compactor.py tests/test_ad1142_crew_child_compaction.py tests/test_ad1167_conversational_compaction.py tests/test_ad1146_multiturn_messages.py tests/test_ad1147_parallel_tools.py tests/test_ad1151_durable_tool_outputs.py tests/test_ad545_agentic_loop.py tests/test_bf728_structured_tool_output.py tests/test_ad1240_tool_result_delivery.py tests/test_ad1324_srp_layout.py`, then `pwsh scripts/phantom-api-precheck.ps1 prompts/ad-1341-s2-inherited-label.md` (§12) |
+| **M1** the label | 7.1 `src/probos/knowledge/archive_store.py`; 7.2 `src/probos/cognitive/oracle_service.py`; 7.3 `src/probos/runtime.py`; 7.3a `src/probos/cognitive/swe_harness/agentic_loop.py`; 7.3b `src/probos/cognitive/swe_harness/session_compactor.py`; 7.4 new `tests/test_ad1341_s2_inherited_label.py` | `tests/test_ad1341_s2_inherited_label.py tests/test_ad1341_s1_archive_store.py tests/test_ad1341_s1_promotion.py tests/test_ad1341_s1_reset_and_erase.py tests/test_ad524_ships_archive.py tests/test_bf919_archive_isolation.py tests/test_bf679_oracle_records_reader_identity.py tests/test_ad1139_oracle_query_tool.py tests/test_ad1141_crew_loop_sigma.py tests/test_ad696_agentic_oracle_retrieval.py tests/test_ad688_oracle_graph_integration.py tests/test_ad686_oracle_semantic_tier.py tests/test_bf675_oracle_tier5_sovereignty.py tests/test_ad695_ship_health_oracle.py tests/test_layer_boundaries.py tests/test_ad680_public_runtime_api.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py tests/test_ad1148_tool_result_bounds.py tests/test_ad547_session_compactor.py tests/test_ad1142_crew_child_compaction.py tests/test_ad1167_conversational_compaction.py tests/test_ad1146_multiturn_messages.py tests/test_ad1147_parallel_tools.py tests/test_ad1151_durable_tool_outputs.py tests/test_ad545_agentic_loop.py tests/test_bf728_structured_tool_output.py tests/test_ad1240_tool_result_delivery.py tests/test_ad1324_srp_layout.py tests/test_ad1279_fault_finds_its_trace.py tests/test_bf760_trace_records_the_tools_length.py tests/test_bf761_budget_is_spent_on_real_content.py tests/test_ad1191_delegated_evidence.py tests/test_ad1316_real_effect_routes.py tests/test_ad1153_browser_agentic_loop.py tests/test_ad1203_trace_routes.py`, then `pwsh scripts/phantom-api-precheck.ps1 prompts/ad-1341-s2-inherited-label.md` (§12) |
 | **M2** trackers | §8 | `tests/test_ad1184_ad_ledger.py`; `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` |
 
 Write the new test file first and run it on the base: it must fail at import (`inheritance_label`), then each test must fail at the assertion §6 names once the names exist. If a test outside §7 fails only because an archive result's content now opens with the label, stop and report it (Absence S2-AV6 says none does); never delete or loosen a test.
@@ -118,7 +122,7 @@ Write the new test file first and run it on the base: it must fail at import (`i
 | 2 | same | the `oracle_query` tool (`oracle_query_tool.py:260-263`) through `ProvenanceEnvelope.render` (`provenance.py:78-80`) | marker line, then content; `_cap_entry` keeps the head (`:119-129`) | label first |
 | 3 | same | `format_refs(query_refs(...))` (`sub_tasks/query.py:346-362`; `oracle_service.py:788, 843-845`) | `[tier] ref_id (score) ` then `snippet[:200]`, the line cut at 119 characters plus "…" | label first and whole (T7) |
 | 4 | same | the AD-1141 crew consult (`crew_executor.py:697-745, 1808-1822`) | provenance marker, then content with whitespace collapsed (`:740`), cut at 400 (`:742-745`) | label first |
-| 5 | same | the AD-725 DM lookup (`dm_targeted_lookup.py:196-206, 242-262`) | `repr` of each result | label first in `content=` |
+| 5 | same | the AD-725 DM lookup (`dm_targeted_lookup.py:196-206, 242-262`), then `maybe_lookup`'s head cut (`truncated = content[: self._cfg.max_lookup_chars]`, `:156`; `max_lookup_chars` 1,500 by default, `config_models/agentic.py:184`), placed whole in the DM as a Targeted Recall block (`routers/agents.py:3152-3156, 3391-3392`; `dm_targeted_lookup.enabled`, off by default) | `repr` of each result, then its first `max_lookup_chars` characters | label first in `content=`; a head-only cut keeps it (round 2: rendered 8,661, model input 1,500, label before content; A3) |
 | 6 | same | AD-688 graph expansion (`oracle_service.py:1473-1525`) | tokens of `parent.content`, without its first line for an archive parent (`_expansion_text`, A2) | none: the base's tokens, lookups and edges (T15) |
 | 7 | archive `metadata` gains `generation`, `inherited` | `routers/system.py:729-730` (Captain's `GET /oracle`); `query_refs` keeps only its whitelist (`oracle_service.py:790-794`) | | new keys; refs unchanged |
 | 8 | `ArchiveEntry.generation` (defaulted) | `_query_archive`; `__main__.py:3393` (the erase prompt prints title, kind, ref, timeline only); `_FakeArchiveStore` | | none for the CLI; fakes default to None |
@@ -128,8 +132,8 @@ Write the new test file first and run it on the base: it must fail at import (`i
 | 12 | same | `OracleQueryTool._bounded` (`oracle_query_tool.py:353-372`), the tool's own last bound at 6,000 | a no-op: `_render` already fits (`:139-161`) | the notice too, if it ever elides |
 | 13 | same | AD-1151 durable trace (`agentic_loop.py:545-553`; persisted by `agentic_dispatch.py:4364-4529` with `origin="crew_trace"`) | head and tail at the durable cap | the notice too; an audit record, not a model request (Not verified item 6) |
 | 14 | the loop's message history, tool results included | AD-547 `SessionCompactor.compact` (`session_compactor.py:67-196`; built at `cognitive_agent.py:4945`, `crew_executor.py:424`, `startup/finalize.py:1816`; called at `agentic_loop.py:2293`) | the system prompt, the first user message and the last five messages verbatim; the rest replaced by a fast-tier summary | the notice opens the summary when the summarised messages held a label or the notice (A2; T13); which sentence is archived is not marked (RS2-9) |
-| 15 | same | paged readers: an AD-1240 workspace payload read with `read_file` at an offset (`result_offload.py:481-488, 564-606`), and `recall_artifact`'s pages (`recall_artifact_tool.py:290-308`) | the window the agent asks for | the first page holds the labels; a later page may open inside an entry (RS2-8) |
-| — | not consumers downstream: `agentic_loop.py:2600-2618` and `agentic_dispatch.py:3954-3964` (fits-whole checks for the work-pull and owned-steps tools: the whole text or `None`); `repair_verification.py:222-234` (a QA retry reads only `error`); `result_offload.py:564-565` (a result at or under 12,288 UTF-8 bytes stays on the legacy path, rows 11 and 14; an `oracle_query` result of at most 6,000 characters exceeds it only if most of its characters are multi-byte) | | | none |
+| 15 | same | paged readers: an AD-1240 workspace payload read with `read_file` at an offset (`result_offload.py:481-488, 564-606`), and `recall_artifact`'s pages (`recall_artifact_tool.py:290-308`) | the window the agent asks for, at any offset, the first read included | the pointer frame carries no origin line, and any window may open inside an entry whose label lies before it (RS2-8, corrected in A3) |
+| — | not consumers downstream: `agentic_loop.py:2600-2618` and `agentic_dispatch.py:3954-3964` (fits-whole checks for the work-pull and owned-steps tools: the whole text or `None`); `repair_verification.py:222-234` (a QA retry reads only `error`); `result_offload.py:564-565` (a result at or under 12,288 UTF-8 bytes stays on the legacy path, rows 11 and 14; above it, AD-1240 offloads the result whatever its character count: row 15 and RS2-8) | | | none |
 | — | not consumers: `introspect.py:846-848`, `organizer_agents.py:151-153`, `commands_knowledge.py:91-93` query only `semantic` (and `episodic`); the archive is not in their tiers | | | none |
 
 ## 6. Tests
@@ -155,8 +159,11 @@ All in `tests/test_ad1341_s2_inherited_label.py`. On the base, and on M1 as firs
 | T13 | `test_a_compaction_summary_opens_with_the_archive_origin_when_it_summarised_archive_text[label, earlier-notice, none]` | A2 finding 2, the real `SessionCompactor` with a summariser that names no source: the summary opens with the notice after a label or an earlier notice, and is unchanged otherwise | `summaries == [...]` |
 | T14 | `test_archive_text_is_recognised_by_any_label_or_the_notice[generation, earlier-crew, this-crew, notice, plain, unbracketed]` | `holds_archive_label`; the notice is clean under the real `_CAPABILITY_GAP_RE` (AD-1148 DD-3, AD-1142 DD-11) | `holds_archive_label(text) is holds` |
 | T15 | `test_graph_expansion_reads_an_archive_entry_without_its_label` | A2 finding 3: the real Oracle and edge store; expansion looks up exactly the tokens of the entry without its label, and the label's `crew` edge is not reached | `recording.tokens == _extract_entity_tokens(...)` |
+| T16 | `test_the_durable_trace_keeps_every_character_the_model_saw_of_an_archive_tool_result[401, 402, 1000, 1001, 1999, 2000, 2000-raised-from-1000, 2001, 2999, 3000]` | A3 (round-2 finding 1), AD-1151's guarantee for a labelled result: the real `oracle_query` output goes through the real trace writer (`WorkItemAgenticExecutor._persist_tool_trace`, `resolve_tool_trace_bounds`, `build_tool_trace_payload`) into a real `FilesystemAttachmentStore`. At equal effective caps, including a durable cap below the context cap that the resolver raises, the persisted head starts with the head the model saw, both tails open with the notice, and the persisted tail ends with the model's | base: `seen_rest.startswith(notice) and kept_rest.startswith(notice)` (no notice); A2's candidate: `kept_head.startswith(seen_head)` |
 
-**Tests-first (A2).** Against M1 as first built (`d616da93`), the file fails at collection (`ARCHIVE_ORIGIN_NOTICE`). On M1 with A2's §7.1, but not §7.2 pairs 5 and 6, §7.3a or §7.3b, exactly 8 cases fail: T11 (3), T12 (2), T13 `[label]` and `[earlier-notice]` (2), and T15 (1). With §7.1 pair 7's filter reverted to M1's SQL, T1, T4, T5 and T6 fail (8 cases). With §7.1 alone on the base, 23 of 44 fail. T7, T10, T13 `[none]` and T14 pass on M1's behaviour: they pin a bound, a premise, a control and the detector.
+**Tests-first (A2).** Against M1 as first built (`d616da93`), the file fails at collection (`ARCHIVE_ORIGIN_NOTICE`). On M1 with A2's §7.1, but not §7.2 pairs 5 and 6, §7.3a or §7.3b, exactly 18 cases fail: T11 (3), T12 (2), T13 `[label]` and `[earlier-notice]` (2), T15 (1) and T16 (10, at the notice assertion: no notice is added). With §7.1 pair 7's filter reverted to M1's SQL, T1, T4, T5 and T6 fail (8 cases). With §7.1 alone on the base, 33 of 54 fail (T16's 10 among them). T7, T10, T13 `[none]` and T14 pass on M1's behaviour: they pin a bound, a premise, a control and the detector.
+
+**Tests-first (A3).** On A2's candidate (`d3da5d72`: §7.3a pairs 1 to 3 only), exactly 7 cases fail, all in T16 at `kept_head.startswith(seen_head)`: `[401]`, `[1000]`, `[1001]`, `[1999]`, `[2000]`, `[2000-raised-from-1000]`, `[2999]` (the round-2 probe's measurements; the orchestrator confirms by running). `[402]`, `[2001]` and `[3000]` pass there, because the second rounding happens to give the same head at those caps: they are controls. Every other case passes on A2's candidate. With pair 6's `- notice_chars` removed or pair 7's argument set to 0, the same 7 fail (L-5, L-6).
 
 ## 7. The contract
 
@@ -616,7 +623,7 @@ REPLACE:
     # AD-1341 S2 (A2): a Ship's Archive label in the text means the tail slice may begin inside an archived entry
     # whose label was elided. The tail always follows the marker, so the origin notice placed after the marker
     # introduces every such fragment. It is part of the marker and sized with it, so the cap still holds.
-    notice = f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(text) else ""
+    notice = _archive_origin_notice(text)
 
     # Size the marker against the largest omission this call can report, so the
     # marker rendered with the real (smaller or equal) count is always within
@@ -645,6 +652,87 @@ REPLACE:
         + notice
         + text[len(text) - tail :]
     )
+```
+
+Pair 4 (A3: one expression for the notice, used by the bound and by the durable split):
+
+SEARCH:
+```python
+    "region.] ...\n\n"
+)
+
+
+def truncate_tool_output(
+```
+REPLACE:
+```python
+    "region.] ...\n\n"
+)
+
+
+def _archive_origin_notice(text: str) -> str:
+    """AD-1341 S2 (A2, A3): the origin notice ``truncate_tool_output`` adds after its marker for ``text``, or ``""``.
+
+    The one expression for it in this module: the bound adds it, and the AD-1151 durable split
+    (``_durable_head_tail``) reserves its length, so both are sized from the same budget.
+    """
+    return f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(text) else ""
+
+
+def truncate_tool_output(
+```
+
+Pair 5 (A3: the durable split takes the notice's length):
+
+SEARCH:
+```python
+def _durable_head_tail(output_max_chars: int, original_chars: int) -> tuple[int, int]:
+```
+REPLACE:
+```python
+def _durable_head_tail(
+    output_max_chars: int, original_chars: int, *, notice_chars: int = 0,
+) -> tuple[int, int]:
+```
+
+Pair 6 (A3: the budget reserves it):
+
+SEARCH:
+```python
+    marker; ``truncate_tool_output`` renders as much of the marker as fits and
+    never consults the slices in that case.
+    """
+    budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars))
+```
+REPLACE:
+```python
+    marker; ``truncate_tool_output`` renders as much of the marker as fits and
+    never consults the slices in that case.
+
+    AD-1341 S2 (A3): ``notice_chars`` is the length of the archive origin notice
+    ``truncate_tool_output`` adds after its marker for the same text
+    (``len(_archive_origin_notice(text))``). Reserving it here makes head + tail
+    equal that function's content budget, so it never rescales these slices a
+    second time, and at equal caps the durable head is the head the model saw.
+    """
+    budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars)) - notice_chars
+```
+
+Pair 7 (A3: the trace passes it):
+
+SEARCH:
+```python
+            head_chars, tail_chars = _durable_head_tail(output_max_chars, len(original))
+```
+REPLACE:
+```python
+            # AD-1341 S2 (A3): reserve the origin notice truncate_tool_output adds for this text, so the durable
+            # slices fill its content budget exactly and are not rounded down a second time.
+            head_chars, tail_chars = _durable_head_tail(
+                output_max_chars,
+                len(original),
+                notice_chars=len(_archive_origin_notice(original)),
+            )
 ```
 
 ### 7.3b `src/probos/cognitive/swe_harness/session_compactor.py`
@@ -706,14 +794,18 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 import re
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 import probos
+from probos.attachments.filesystem_store import FilesystemAttachmentStore
+from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.crew_executor import _render_commons_block
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.dm_targeted_lookup import LookupDispatcher
@@ -725,7 +817,7 @@ from probos.cognitive.swe_harness.agentic_loop import (
     truncate_tool_output,
 )
 from probos.cognitive.swe_harness.session_compactor import SessionCompactor
-from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, ToolUseBlock
+from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, ToolCallResult, ToolUseBlock
 from probos.config import AgenticLoopConfig
 from probos.knowledge.archive_store import (
     ARCHIVE_ORIGIN_NOTICE,
@@ -1314,6 +1406,67 @@ async def test_graph_expansion_reads_an_archive_entry_without_its_label(tmp_path
     assert recording.tokens == _extract_entity_tokens(f"[convergence_report] t-alpha\n{short}")
     expanded = [(r.metadata["edge_id"], r.metadata["matched_token"]) for r in results if r.source_tier == "graph"]
     assert expanded == [("content-edge", "actuator")]
+
+
+# --- T16: the AD-1151 durable trace keeps all the model saw of an archive tool result (A3) -----------------------
+
+
+def _kept(bounded: str) -> tuple[str, str]:
+    """The head AD-1148 kept before its elision marker, and what follows the marker: the notice, then the tail."""
+    head = bounded.split(_ELISION_MARKER.split("{omitted}", 1)[0], 1)[0]
+    return head, bounded.partition(_MARKER_END)[2]
+
+
+@pytest.mark.parametrize(
+    ("context_cap", "trace_cap"),
+    [
+        (401, 401), (402, 402), (1000, 1000), (1001, 1001), (1999, 1999),
+        (2000, 2000), (2000, 1000), (2001, 2001), (2999, 2999), (3000, 3000),
+    ],
+    ids=["401", "402", "1000", "1001", "1999", "2000", "2000-raised-from-1000", "2001", "2999", "3000"],
+)
+async def test_the_durable_trace_keeps_every_character_the_model_saw_of_an_archive_tool_result(
+    tmp_path: Path, context_cap: int, trace_cap: int,
+) -> None:
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        await _plant(store, ("t-alpha", "t-beta", "t-open"))
+        text = await _agent_text(_oracle(store, "t-now"), "oracle-tool", "coolant drift")
+    finally:
+        await store.close()
+    cfg = AgenticLoopConfig(tool_result_max_chars=context_cap, tool_trace_output_max_chars=trace_cap)
+    bounds = resolve_tool_result_bounds(cfg)
+    # What the loop's message boundary hands the model (`_bound_tool_output`; T12 runs it through the real loop).
+    seen = truncate_tool_output(
+        text,
+        max_chars=bounds["tool_result_max_chars"],
+        head_chars=bounds["tool_result_head_chars"],
+        tail_chars=bounds["tool_result_tail_chars"],
+    )
+    attachments = FilesystemAttachmentStore(tmp_path / "attachments")
+    try:
+        ref = await WorkItemAgenticExecutor(llm_client=None)._persist_tool_trace(
+            SimpleNamespace(
+                tool_calls=[ToolCallRequest(name="oracle_query", id="archive-call", timestamp=1.0)],
+                tool_results=[ToolCallResult(id="archive-call", output=text)],
+            ),
+            SimpleNamespace(config=SimpleNamespace(agentic_loop=cfg), attachment_store=attachments),
+            "archive-reader",
+        )
+        assert ref is not None, "premise: the real trace writer persisted the trace"
+        (entry,) = json.loads(await attachments.read(ref))
+    finally:
+        attachments.close()
+    # premise: a labelled result that both bounds elide (the resolver raises a durable cap below the context cap)
+    assert holds_archive_label(text) and len(text) > context_cap and entry["output_truncated"] is True
+    notice = f"{ARCHIVE_ORIGIN_NOTICE}\n"
+    seen_head, seen_rest = _kept(seen)
+    kept_head, kept_rest = _kept(entry["output"])
+    # AD-1151: the durable trace is never bounded tighter than what the model saw.
+    assert kept_head.startswith(seen_head), (len(seen_head), len(kept_head))
+    assert seen_rest.startswith(notice) and kept_rest.startswith(notice)
+    assert kept_rest.endswith(seen_rest.removeprefix(notice))
 ```
 
 ## 8. Tracking (tracker pairs; M2's commit)
@@ -1332,7 +1485,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1341 S2 (2026-10-26), #1569 slice 2 of 6 -- a later crew reads the Ship's Archive as inherited knowledge, labelled with the crew generation it came from, never as its own memory.** Every Ship's Archive read now fills `ArchiveEntry.generation`: the place of the entry's timeline's first close among the closes `generations` attributes to a timeline (a skip with no instance id, or only whitespace, numbers no crew; a second close does not renumber one). `inheritance_label` (in `knowledge/archive_store.py`) gives one of three labels: `[Inherited from the crew of generation N: not your own memory]`, `[Inherited from an earlier crew: not your own memory]` when no close is recorded, and `[Archived by this crew: a record, not a memory]` for the reading crew's own timeline. The Oracle's archive tier, the one path from the archive to an agent, makes the label the first line of every result and adds `generation` and `inherited` to its metadata, so `query_formatted`, the `oracle_query` tool, memory refs, the crew consult and the DM lookup all hand an agent the label before the knowledge (memory refs keep it whole while the entry id's and generation's digits total at most 25). The two consumers that can cut that text loose from its label afterwards say so: AD-1148's elision of a tool result's middle and AD-547's compaction summary put a fixed Ship's Archive origin notice before what they keep whenever the text held a label. AD-688's graph expansion reads an archived entry without its label, so its lookups are unchanged. The runtime tells the Oracle this crew's timeline (the ontology's instance id) through `OracleService.attach_current_timeline`; until then, or if that fails, every entry reads as inherited. No flag, no schema change; the archive's contents, its score and the Oracle's tier order are unchanged. New: `tests/test_ad1341_s2_inherited_label.py` (the real store, Oracle, renderers, tool loop, compactor, edge store and real resets). The contract is `prompts/ad-1341-s2-inherited-label.md`.
+**AD-1341 S2 (2026-10-26), #1569 slice 2 of 6 -- a later crew reads the Ship's Archive as inherited knowledge, labelled with the crew generation it came from, never as its own memory.** Every Ship's Archive read now fills `ArchiveEntry.generation`: the place of the entry's timeline's first close among the closes `generations` attributes to a timeline (a skip with no instance id, or only whitespace, numbers no crew; a second close does not renumber one). `inheritance_label` (in `knowledge/archive_store.py`) gives one of three labels: `[Inherited from the crew of generation N: not your own memory]`, `[Inherited from an earlier crew: not your own memory]` when no close is recorded, and `[Archived by this crew: a record, not a memory]` for the reading crew's own timeline. The Oracle's archive tier, the one path from the archive to an agent, makes the label the first line of every result and adds `generation` and `inherited` to its metadata, so `query_formatted`, the `oracle_query` tool, memory refs, the crew consult and the DM lookup all hand an agent the label before the knowledge (memory refs keep it whole while the entry id's and generation's digits total at most 25). The two consumers that cut that text loose from its label on their own afterwards say so: AD-1148's elision of a tool result's middle and AD-547's compaction summary put a fixed Ship's Archive origin notice before what they keep whenever the text held a label. The AD-1151 durable trace reserves the same notice in its slices, so at equal caps it keeps everything the model saw. Head-only cuts (memory refs, the crew consult, the DM lookup) keep the label first. Not covered: a page an agent asks for at an offset into a result that AD-1240 offloaded (any result over 12,288 UTF-8 bytes), the first read included, can begin inside an entry with no label before it; a page-level origin line is the recorded follow-up. AD-688's graph expansion reads an archived entry without its label, so its lookups are unchanged. The runtime tells the Oracle this crew's timeline (the ontology's instance id) through `OracleService.attach_current_timeline`; until then, or if that fails, every entry reads as inherited. No flag, no schema change; the archive's contents, its score and the Oracle's tier order are unchanged. New: `tests/test_ad1341_s2_inherited_label.py` (the real store, Oracle, renderers, tool loop, compactor, edge store and real resets). The contract is `prompts/ad-1341-s2-inherited-label.md`.
 
 **BF-925 (2026-10-25), #1655 -- silent-fallback guards name APIs that exist.**
 ```
@@ -1351,12 +1504,12 @@ REPLACE:
 
 ### AD-1341 S2 -- A later crew reads the Ship's Archive as inherited knowledge, labelled with the crew generation it came from, never as its own memory (2026-10-26, #1569 slice 2 of 6)
 
-- *Scope.* Slice 2 of #1569 (Decision item 5 and its acceptance line), one code commit and one tracker commit. Files: `knowledge/archive_store.py` (`ArchiveEntry.generation`, `inheritance_label`, the two labels, the generation order, the origin notice and `holds_archive_label`), `cognitive/oracle_service.py` (`_query_archive`, `attach_current_timeline`, graph expansion without the label), `runtime.py` (one late bind), `cognitive/swe_harness/agentic_loop.py` (`truncate_tool_output`) and `cognitive/swe_harness/session_compactor.py` (the summary), and a new test. Contract: `prompts/ad-1341-s2-inherited-label.md`.
+- *Scope.* Slice 2 of #1569 (Decision item 5 and its acceptance line), one code commit and one tracker commit. Files: `knowledge/archive_store.py` (`ArchiveEntry.generation`, `inheritance_label`, the two labels, the generation order, the origin notice and `holds_archive_label`), `cognitive/oracle_service.py` (`_query_archive`, `attach_current_timeline`, graph expansion without the label), `runtime.py` (one late bind), `cognitive/swe_harness/agentic_loop.py` (`truncate_tool_output` and the AD-1151 durable split) and `cognitive/swe_harness/session_compactor.py` (the summary), and a new test. Contract: `prompts/ad-1341-s2-inherited-label.md`.
 - *D2 (where).* The rule and the data live in the store module; the label is attached once, in the Oracle's archive tier, the one path from the archive to an agent, as the first line of the result's content. Not in the store's content (it is what was archived and hashed), not in each renderer (a new renderer would be unlabelled), not in the provenance alone (two renderers never show it).
 - *D3 (generation N).* The place of the timeline's first close among the distinct non-blank timelines in `generations`, by id. A blank-timeline skip (blank by Python's `strip`; SQLite's `trim` strips spaces only) numbers nothing; a re-close does not renumber; a skipped close still ended a crew. Numbering starts at the first close the archive recorded.
 - *D4-D5 (the label).* Three fixed bracketed labels, each naming the origin first and then "not your own memory" (or "not a memory"); `generation` and `inherited` in the metadata. An entry of the reading crew's own timeline is "archived by this crew", never "inherited" (Westworld). Not attached, or failed, every entry reads as inherited: the error the minority-report principle tolerates. No callsign in the label, so a later crew member with an earlier crew's callsign never reads it as its own byline.
 - *D6-D7.* No flag (its off position would present inherited knowledge unlabelled). The archive's score and the tier order are unchanged; the label, not the rank, keeps inherited knowledge from reading as one's own.
-- *D12 (after the renderers).* AD-1148's elision of a tool result's middle and AD-547's compaction summary are the two consumers that can separate archive text from its label. Each puts a fixed Ship's Archive origin notice before what it keeps whenever the text held a label (or the notice); the notice is sized inside the cap and added by code, not by the summarising model. Rejected: bounding at the tool (the cap is the loop's), an opt-out of the cap, an instruction in the summariser's prompt alone (soft), and narrowing the claim. The notice cannot name the generation of a cut fragment or of a summary sentence.
+- *D12 (after the renderers).* AD-1148's elision of a tool result's middle and AD-547's compaction summary are the two consumers that separate archive text from its label on their own. Each puts a fixed Ship's Archive origin notice before what it keeps whenever the text held a label (or the notice). The notice is sized inside the cap and added by code, not by the summarising model, and the AD-1151 durable trace reserves it in its own slices, so at equal caps it keeps everything the model saw. Head-only cuts (memory refs, the crew consult, the DM lookup) keep the label first. Not covered, recorded as RS2-8: a page an agent asks for at an offset into a result that AD-1240 offloaded (over 12,288 UTF-8 bytes), the first read included, can begin inside an entry with no label before it; the follow-up is a page-level origin line. Rejected: bounding at the tool (the cap is the loop's), an opt-out of the cap, an instruction in the summariser's prompt alone (soft), and narrowing the claim. The notice cannot name the generation of a cut fragment or of a summary sentence.
 - *Disclosed effects.* Archive results open with the label line and carry two new metadata keys, also on the Captain's `GET /oracle`. One more small query per archive read. Vessels sharing one archive file share one generation count. A tool result holding a label that AD-1148 bounds, and an AD-547 summary of messages that held one, carry the origin notice. Memory refs cut the label's closing bracket only past 25 digits of entry id and generation together.
 - *Reversal.* Revert the S2 commits. Nothing persisted changes: the archive and `generations` are read, never written, by this slice.
 
@@ -1378,8 +1531,9 @@ REPLACE:
 - AD-607e's shard filter, the tool's sovereign-tier filter, BF-679's records reader rule.
 - Ship's Records that survive tier 2 and reach a later crew through Tier 2 (RS2-6); episodic memory and its write path (RS2-2); the ontology and its instance id.
 - `introspect`, the organizer and `/search`, which do not query the archive.
+- AD-1151's durable split for text without a label (`notice_chars` is 0 there), and its fixed 2:1 head:tail ratio. With a configured `tool_result_head_chars`:`tool_result_tail_chars` above 2:1, the persisted head can be shorter than the model's at equal caps, on the base too (`_durable_head_tail` never reads the context split). This is a pre-existing AD-1151 gap, reported for its own BF and not changed here (A3).
 
-## 10. Mutation rows (30 rows; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (33 rows; whole stripped lines, each occurring once in its file after §7)
 
 Tier HIGH: every changed production file has rows. Run each row against `tests/test_ad1341_s2_inherited_label.py` on the contract-applied tree, after an unmutated baseline run that passes. Restore each file before the next row.
 
@@ -1410,13 +1564,16 @@ Tier HIGH: every changed production file has rows. Run each row against `tests/t
 | S-K15 | `src/probos/knowledge/archive_store.py` | `return any(origin in text for origin in _ARCHIVE_ORIGINS)` | `return False` | T11; T12; T13 `[label]`; T14 |
 | O-7 | `src/probos/cognitive/oracle_service.py` | `return result.content.partition("\n")[2]` | `return result.content` | T15 |
 | O-8 | `src/probos/cognitive/oracle_service.py` | `tokens = _extract_entity_tokens(_expansion_text(parent))` | `tokens = _extract_entity_tokens(parent.content)` | T15 |
-| L-1 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `notice = f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(text) else ""` | `notice = ""` | T11; T12 |
+| L-1 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `notice = _archive_origin_notice(text)` | `notice = ""` | T11; T12; T16 |
 | L-2 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `sizing_marker = _ELISION_MARKER.format(omitted=len(text)) + notice` | `sizing_marker = _ELISION_MARKER.format(omitted=len(text))` | T11 (the result exceeds the cap) |
 | L-3 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `+ notice` | `+ ""` | T11; T12 |
+| L-4 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `return f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(text) else ""` | `return ""` | T11; T12; T16 (every case, at the notice) |
+| L-5 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars)) - notice_chars` | `budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars))` | T16 `[401]`, `[1000]`, `[1001]`, `[1999]`, `[2000]`, `[2000-raised-from-1000]`, `[2999]`. "The durable split sized from the bare marker" (A2's second rounding) |
+| L-6 | `src/probos/cognitive/swe_harness/agentic_loop.py` | `notice_chars=len(_archive_origin_notice(original)),` | `notice_chars=0,` | T16, the same seven cases. "The trace passes no notice" |
 | C-1 | `src/probos/cognitive/swe_harness/session_compactor.py` | `notice = f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(older_text) else ""` | `notice = ""` | T13 `[label]`, `[earlier-notice]` |
 | C-2 | `src/probos/cognitive/swe_harness/session_compactor.py` | `"content": f"[CONTEXT SUMMARY — earlier exchanges]\n{notice}{summary}",` | `"content": f"[CONTEXT SUMMARY — earlier exchanges]\n{summary}\n{notice}",` | T13 `[label]`, `[earlier-notice]` |
 
-O-6 was run as the 18th row of the M1 campaign; it is now a table row. Rows S-K1b and S-K12 onward come from Amendment A2; S-K1 and S-K3 are re-anchored on A2's Python filter.
+O-6 was run as the 18th row of the M1 campaign; it is now a table row. Rows S-K1b and S-K12 onward come from Amendment A2; S-K1 and S-K3 are re-anchored on A2's Python filter. Rows L-4 to L-6 come from Amendment A3, and L-1 is re-anchored on A3's `notice = _archive_origin_notice(text)`.
 
 ## 11. Verified Against Codebase (2026-10-24, HEAD `026a682f`, tree `cad2c0ee25686a5683fd0ba3be35463796b5cf35`)
 
@@ -1505,7 +1662,7 @@ src/probos/cognitive/swe_harness/agentic_loop.py
   66-67: from probos.fault_detection import ToolFaultCapture / from probos.fault_report import canonical_tool_id, error_signature   (7.3a pair 1)
   181-185: _ELISION_MARKER = ("\n\n... [truncated: {omitted} characters elided from the middle of this " ... "region.] ...\n\n")
   188-236: truncate_tool_output(text, *, max_chars, head_chars, tail_chars); 212 identity return; 215-219 sizing (7.3a pair 2); 231-236 return (7.3a pair 3)
-  321-341: _durable_head_tail sizes from the bare marker; truncate_tool_output shrinks head and tail when the notice is added, so the cap holds
+  321-341: _durable_head_tail sizes from the bare marker (base); the cap holds, but truncate_tool_output's proportional shrink then rounds the durable head down a second time for a labelled text (round-2 finding 1); A3's §7.3a pairs 5 to 7 reserve the notice
   545-553: the AD-1151 trace bounds each output through truncate_tool_output
   820-855: format_tool_result_content (836, 852); 858-879: build_tool_result_messages
   965-986: AgenticResult.tool_results; 1269-1291: __init__(*, llm_client, tool_executor, max_iterations, ..., compactor, compaction_threshold, structured_tool_messages, tool_result_max_chars, ...); 1464-1470: run(*, system_prompt, user_message, tools, context)
@@ -1551,7 +1708,32 @@ src/probos/ontology/service.py 55-61: VesselOntologyService(config_dir, data_dir
 src/probos/knowledge/__init__.py 3-22; store.py 26-29; edges.py 25; backfill.py 26-32; rejection_cache.py 18; mesh/routing.py 11-12: module-level imports, none of probos.cognitive
 tests/test_ad1341_s1_reset_and_erase.py 169-175: _data_dir writes ontology/instance_id; 364-380: a tier-2 reset deletes it
 tests/test_ad1142_crew_child_compaction.py 1195-1217: compaction strings clean under _CAPABILITY_GAP_RE; "[CONTEXT SUMMARY — earlier exchanges]" stays in the source (7.3b keeps it)
-tests/test_ad1324_srp_layout.py 22, 51: AgenticLoop keeps at most 13 methods (A2 adds none)
+tests/test_ad1324_srp_layout.py 22, 51: AgenticLoop keeps at most 13 methods (A2 adds none; A3 adds none: _archive_origin_notice is a module function)
+
+Amendment A3 (2026-10-26; agentic_loop.py as on the A2 candidate d3da5d72 where marked "cand", every other file as origin/main 8cee14d2)
+src/probos/cognitive/swe_harness/agentic_loop.py
+  184-188 (base): "region.] ...\n\n" / ) / (blank) / (blank) / def truncate_tool_output(   (7.3a pair 4)
+  cand 219: notice = f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(text) else ""; cand 224: sizing_marker = ... + notice; then head = content_budget * head // total when head + tail > content_budget (the second rounding)
+  123-124: TOOL_RESULT_HEAD_CHARS = 4000, TOOL_RESULT_TAIL_CHARS = 2000 (model head = content_budget * 4000 // 6000 = floor(2 * content_budget / 3))
+  280 (base): resolve_tool_trace_bounds clamps output_max_chars UP to a larger non-zero tool_result_max_chars
+  321 (base), cand 328: def _durable_head_tail(output_max_chars: int, original_chars: int) -> tuple[int, int]:   (7.3a pair 5)
+  334-337 (base), cand 341-344: docstring end; budget = output_max_chars - len(_ELISION_MARKER.format(omitted=original_chars))   (7.3a pair 6)
+  547 (base), cand 554: head_chars, tail_chars = _durable_head_tail(output_max_chars, len(original))   (7.3a pair 7); the only production caller
+  836, 852, 2611, 2871 (base): every other truncate_tool_output call passes the configured head/tail; none precomputes slices from _ELISION_MARKER
+src/probos/cognitive/agentic_dispatch.py
+  4364-4371: async def _persist_tool_trace(self, agentic_result, runtime, agent_id, *, resolve_tool_id=None) -> str | None
+  4398: strict only when runtime.effect_broker is set; 4437: runtime.attachment_store; 4465-4467: resolve_tool_trace_bounds(runtime.config.agentic_loop); 4493-4502: build_tool_trace_payload(...); 4523-4529: store.write(..., origin="crew_trace"); return content_hash
+  3958: owned-steps fits-whole check (configured head/tail)
+src/probos/attachments/filesystem_store.py 135: FilesystemAttachmentStore(root, *, io_workers=...); 192: close(); 380: async read(content_hash) -> bytes
+src/probos/cognitive/swe_harness/tool_call.py 680-685: ToolCallResult(id, output="", is_error=False)
+src/probos/config.py 3017, 3029, 3041, 3076: tool_result_max_chars 0, tool_result_head_chars 4000, tool_result_tail_chars 2000, tool_trace_output_max_chars 8192
+tests/test_ad1279_fault_finds_its_trace.py 110: _durable_head_tail(TRACE_CAP, len(error_text)) (positional; still valid); 505-534: WorkItemAgenticExecutor(llm_client=None)._persist_tool_trace into a real FilesystemAttachmentStore (T16's pattern)
+src/probos/cognitive/dm_targeted_lookup.py 115: maybe_lookup; 156: truncated = content[: self._cfg.max_lookup_chars]; 243: _stringify
+src/probos/config_models/agentic.py 184: max_lookup_chars: int = 1500; 1028: oracle_query_enabled: bool = False
+src/probos/routers/agents.py 3144-3156: the Targeted Recall block (dm_targeted_lookup.enabled); 3391-3392: prepended to the DM text; 3568-3580: the DM params, text whole, session_history = req.history[-10:]
+src/probos/execution/workspace_results.py 19: TOOL_RESULT_THRESHOLD_BYTES = 12_288
+src/probos/cognitive/swe_harness/result_offload.py 550: encoded_size in UTF-8 bytes; 558-563: a recovered read is admitted whole; 564-565: the threshold
+src/probos/cognitive/crew_executor.py 296-298, 656-670: a head cut of the agent's own previous output; 826-857: _compose_child_task_text joins the commons block whole
 ```
 
 ## Absence Verified (2026-10-24)
@@ -1591,10 +1773,12 @@ RUN: Grep `^from probos\.cognitive\.oracle_service|^import probos\.cognitive\.or
 FOUND: no module-level importer of `oracle_service`; `archive_store` imports nothing from `cognitive`.
 HOLDS: yes. The `probos.knowledge` package `__init__` (`edges`, `backfill`, `store`, `rejection_cache`) is already imported at module level by other `cognitive` modules (`nl_graph_query.py:25`, `relationship_inference.py:25`).
 
-**S2-AV8 (A2, 2026-10-26).** CLAIM: downstream of the renderers, only AD-1148's `truncate_tool_output` and AD-547's `SessionCompactor` cut or rewrite the text of an `oracle_query` result, or of an archive `OracleResult`, before a model reads it. Every other consumer passes it whole, refuses it whole, or pages it on the agent's request.
+**S2-AV8 (A2, 2026-10-26; re-run and narrowed in A3).** CLAIM: downstream of the renderers, only AD-1148's `truncate_tool_output` and AD-547's `SessionCompactor` cut a middle out of, or rewrite, the text of an `oracle_query` result or of an archive `OracleResult` before a model reads it. Every other consumer passes it whole, refuses it whole, cuts only its head (which keeps each label before its entry), or returns a page the agent asks for (RS2-8).
 RUN: Grep `truncate_tool_output|_bound_tool_output` in `src`; Grep `SessionCompactor\(|class \w*Compactor|def compact\(` in `src`; Grep `_executor\.invoke\(|tool_executor\.invoke\(|executor\.invoke\(` in `src`; Grep `oracle_query` in `src` (files, then content in the non-tool files); Grep `\["content"\]\s*=|content\[:|content\[-` and `"content":` in `src/probos/cognitive/swe_harness`; Grep `_oracle_context` in `src`; Grep `def _truncate|def truncate|middle|elide` in `cognitive/llm_client.py`; Grep `tool_trace_ref` in `src`; Read `result_offload.py:455-608`, `recall_artifact_tool.py:236-308`, `agentic_dispatch.py:3935-3974, 4364-4529`, `repair_verification.py:205-234`.
 FOUND: `truncate_tool_output` at `agentic_loop.py:548` (trace), `:836` and `:852` (message boundary), `:2611` (work-pull fits-whole check), `:2871` (`_bound_tool_output`, used at `:2166` and `:2183`), `agentic_dispatch.py:3958` (owned-steps fits-whole check), `oracle_query_tool.py:365` (the tool's own bound). One compactor class, `session_compactor.py:57`, built at `cognitive_agent.py:4945`, `crew_executor.py:424`, `startup/finalize.py:1816`, called at `agentic_loop.py:2293`. Tools are invoked only in the loop (`agentic_loop.py:2623`) and in the QA retry (`repair_verification.py:222`, which reads `error` only). Elsewhere `oracle_query` is only a name (`agent_work_runner.py:65`, `agent_mode.py`, the ANALYZE prompt text), plus `cognitive_agent.py:5706-5766`, which runs `query_formatted` (§5 row 1). In `swe_harness`, message content is written only at `agentic_loop.py:817, 879, 1584-1585, 1647, 1706-1708, 2045, 2170, 2321` and `session_compactor.py:145`; none cuts a tool result apart from the two consumers. `_oracle_context` is set at `cognitive_agent.py:5766, 11699, 11728` (the last is `tiers=["graph"]`) and read whole (`:10652-10664`, `:10947-10957`, `analyze.py:133`, `compose.py:500`). `llm_client.py` has no truncation. AD-1240's workspace frame carries an outline with keys and values omitted (`result_offload.py:481-488`, `:659-667`). `recall_artifact` pages any artifact in fixed windows (`recall_artifact_tool.py:290-308`).
-HOLDS: yes, with RS2-8: a page the agent asks for at an offset (a workspace payload read with `read_file`, `recall_artifact`'s next page) may begin inside an entry whose label is on an earlier page.
+RUN (A3): Grep `targeted_lookup|TargetedLookupResult|maybe_lookup\(` in `src`; Grep `targeted_recall_block` in `routers/agents.py`; Grep `\w\[:\s*[\w\.]+\]|\[-\s*\w+\s*:\]` in `routers/agents.py`; Grep `\[:\s*[A-Za-z_][\w\.]*\]|\[:\s*\d+\]` and `\[-\w|\[len\(|\[\w+ ?- ?\w+ ?:` in `cognitive/sub_tasks`; Grep `(text|message|content|block|context)\w*\[:\s*[\w\.]+\]|\[-\s*\w+\s*:\]` in `cognitive/cognitive_agent.py`; Grep `commons_block|_render_commons_block\(` in `cognitive/crew_executor.py`; Grep `_ELISION_MARKER|ELISION_MARKER|truncated: \{` in `src`.
+FOUND (A3): `dm_targeted_lookup.py:156`, `truncated = content[: self._cfg.max_lookup_chars]`, a head cut after `_stringify` that A2's run missed because it stopped at the renderer (§5 row 5). Its block is placed whole in the DM (`routers/agents.py:3152-3156, 3391-3392`), and the DM text reaches the agent whole (`:3568-3580`; `req.history[-10:]` keeps whole client-held messages). In `sub_tasks`, the only head cuts are of error and model text (`reflect.py:529, 579`; `evaluate.py:599, 604, 634`; `analyze.py:661`), and there is no tail or middle window. In `cognitive_agent.py`, `:457`, `:4555`, `:4585`, `:7364`, `:11402` and `:12516` cut hashes, personality text, a query and a reflection, never Oracle text. The crew consult block is joined whole into the child's first user message (`crew_executor.py:826-857`), which AD-547 keeps verbatim. Other elision markers: `agentic_dispatch.py:202, 207` and `tools/browser/actions.py:69` (browser page reads), and `crew_executor.py:297` (a head cut of the agent's own previous output, `:656-670`: model words, blind spot 12).
+HOLDS: yes, for the narrowed claim. Head-only cuts keep the label first: `_cap_entry` (row 2), `format_refs` (row 3), the crew consult's 400 characters (row 4) and the DM lookup's `max_lookup_chars` (row 5). The middle elision (AD-1148) and the summary (AD-547) carry the notice. A page the agent asks for, at any offset and the first read included, is RS2-8.
 
 **S2-AV9 (A2, 2026-10-26).** CLAIM: no existing test's text holds a label or the origin notice, so `truncate_tool_output` and `SessionCompactor` behave byte-identically for every existing test.
 RUN: Grep `\[Inherited from |\[Archived by this crew|Ship's Archive:` in `tests`; Grep `CONTEXT SUMMARY` in `tests`.
@@ -1608,7 +1792,7 @@ HOLDS: yes.
 3. **T8's wall time**: two real resets per case, as S1's R10 runs; expected a few seconds.
 4. **Callsign reuse (RS2-3):** whether a later crew can carry an earlier crew's callsign (`naming.py:92`, `AgentNamingPolicy`, validates self-chosen callsigns). It does not affect this slice (the label names no callsign, D4 C), but it decides whether RS2-3 is a real defect.
 5. **Fresh-interpreter imports (A2):** `python -c "import probos.cognitive.swe_harness.session_compactor"`, the same for `probos.cognitive.swe_harness.agentic_loop`, and for `probos.tools.oracle_query_tool`, each in a new process. I traced the module-level imports of the `probos.knowledge` package (`config`, `execution.command_env`, `security.pii_redaction`, `mesh.routing`, `protocols`, `types`), and none imports `probos.cognitive`; I could not run them.
-6. **The AD-1151 trace and `recall_artifact` (A2):** whether `recall_artifact` can read a `crew_trace` blob (`application/json`) as text. If it can, its pages are RS2-8's class; the trace's bounded outputs carry the notice in either case (§5 row 13).
+6. **The AD-1151 trace and `recall_artifact` (A2; answered in round 2):** the round-2 reviewer read an indexed `crew_trace` blob through `recall_artifact`, and a later window carried no origin: RS2-8's class. An unindexed trace was not found. The trace's bounded outputs carry the notice (§5 row 13).
 
 ## 12. Deterministic gate checks, resolved up front
 
@@ -1616,14 +1800,14 @@ HOLDS: yes.
 |---|---|
 | Phantom precheck, pattern 1 (runtime attributes) | The only match is the file name `runtime.py` (the census test's expected path, and prose), which resolves `py`: it occurs as `py =` or `py:` across `src` (144 hits). No line accesses a runtime attribute |
 | Pattern 2 (class attributes) | `OracleService.format_refs` and `OracleService._query_archive` exist; `LookupDispatcher._stringify` exists; enum members are upper case; no constant is a receiver (the label is an f-string, not a format call on a constant) |
-| Pattern 3 (capitalised calls) | Every capitalised call in the contract is a ProbOS or stdlib class that exists: `ArchiveStore`, `OracleService`, `OracleQueryTool`, `ArchiveEntry`, `PromotionRecord`, `GenerationRecord`, `OracleResult`, `ToolResult`, `VesselIdentity`, `VesselOntologyService`, `TypeError`, `Path`; A2 adds `ToolRegistry`, `ToolExecutor`, `AgenticLoop`, `AgenticLoopConfig`, `SessionCompactor`, `ToolCallRequest`, `ToolUseBlock`, `TextBlock`, `LLMResponse`, `SQLiteKnowledgeEdgeStore` and `KnowledgeEdge`, all present (§11a). `_FarArchive`, `_RecordingGraph`, `_ScriptedModel` and `_Summarizer` start with an underscore. SQL functions are lower case (`trim`, `min`), and no upper-case SQL function call appears anywhere in the text. A2's Oracle in T15 comes from the `_oracle` helper, so no `x = OracleService(...)` binding precedes `attach_current_timeline` |
-| AST helper (kwargs, fields, methods) | `ArchiveEntry`, `PromotionRecord` and `GenerationRecord` are built from `**fields`, so `generation=` is never a literal keyword; 7.1 pairs 7 and 8 put `generation=` only in an unbalanced fragment. No `x = OracleService(...)` binding precedes `attach_current_timeline`: oracles come from the `_new_oracle` and `_oracle` helpers. `write_entry`'s keywords match S1's use (`test_ad1341_s1_reset_and_erase.py:188-192`) |
+| Pattern 3 (capitalised calls) | Every capitalised call in the contract is a ProbOS or stdlib class that exists: `ArchiveStore`, `OracleService`, `OracleQueryTool`, `ArchiveEntry`, `PromotionRecord`, `GenerationRecord`, `OracleResult`, `ToolResult`, `VesselIdentity`, `VesselOntologyService`, `TypeError`, `Path`; A2 adds `ToolRegistry`, `ToolExecutor`, `AgenticLoop`, `AgenticLoopConfig`, `SessionCompactor`, `ToolCallRequest`, `ToolUseBlock`, `TextBlock`, `LLMResponse`, `SQLiteKnowledgeEdgeStore` and `KnowledgeEdge`, all present (§11a). A3 adds `FilesystemAttachmentStore`, `WorkItemAgenticExecutor`, `ToolCallResult` and the stdlib `SimpleNamespace`, all present (§11a, A3). `_FarArchive`, `_RecordingGraph`, `_ScriptedModel` and `_Summarizer` start with an underscore. SQL functions are lower case (`trim`, `min`), and no upper-case SQL function call appears anywhere in the text. A2's Oracle in T15 comes from the `_oracle` helper, so no `x = OracleService(...)` binding precedes `attach_current_timeline` |
+| AST helper (kwargs, fields, methods) | `ArchiveEntry`, `PromotionRecord` and `GenerationRecord` are built from `**fields`, so `generation=` is never a literal keyword; 7.1 pairs 7 and 8 put `generation=` only in an unbalanced fragment. No `x = OracleService(...)` binding precedes `attach_current_timeline`: oracles come from the `_new_oracle` and `_oracle` helpers. `write_entry`'s keywords match S1's use (`test_ad1341_s1_reset_and_erase.py:188-192`). A3's `notice_chars=` is introduced by §7.3a pair 5 in this contract; `WorkItemAgenticExecutor(llm_client=None)` and `AgenticLoopConfig(tool_result_max_chars=..., tool_trace_output_max_chars=...)` match `test_ad1279_fault_finds_its_trace.py:519-526` and `config.py:3017, 3076` |
 | Layer | `oracle_service.py` (cognitive) imports `knowledge.archive_store`, allowed (`test_layer_boundaries.py:51`); A2: so do `swe_harness/agentic_loop.py` and `swe_harness/session_compactor.py` (cognitive), the same allowed edge. `AgenticLoop` gains no method (`test_ad1324_srp_layout.py:51`) |
 | Store registry, `.db` literals, config facade | no table, no `.db` literal, no config field |
 | AD-1343 census, subprocess census | no new name in `STOP_CALLEES`, `GUARD_CALLEES` or `RECORDED`; no `.complete(`, `.finalize(` or `.report(`; no subprocess |
 | BF-919 isolation | every archive in the new test is under `tmp_path` |
 | Public surface (S1 A7) | `ArchiveStore` gains no public method (`_generation_numbers` is private) |
-| Size | `archive_store.py` about +70 lines; `oracle_service.py` about +40; `runtime.py` +12; `agentic_loop.py` +6; `session_compactor.py` +6; the new test about 560 |
+| Size | `archive_store.py` about +70 lines; `oracle_service.py` about +40; `runtime.py` +12; `agentic_loop.py` about +30 (A3: the notice helper, `_durable_head_tail`'s `notice_chars` and its caller); `session_compactor.py` +6; the new test about 610 |
 
 ## 13. Prior Art and Blind Spots
 
@@ -1662,25 +1846,25 @@ HOLDS: yes.
 11. Ship's Records that survive tier 2 reach a later crew through Tier 2 as `[ship's records]`, unlabelled by generation, beside the same document labelled in Tier 4. Register RS2-6 (#1569's item 5 names the Oracle's archive tier; a records-tier label is a separate decision).
 12. The label cannot stop a model from restating inherited knowledge as its own in its output; it is the strongest in-band cue available, beside the existing "not your personal experiences" framing. A compaction summary is such a restatement, made by the fast-tier model. A2 puts the notice before it, which says the summary may hold archive knowledge but not which sentence (RS2-9).
 13. **RS2-7 (A2, finding 5; recorded).** `format_refs` keeps 119 characters of a line (`oracle_service.py:843-845`). An archive line's prefix and generation label take 94 characters plus the digits of the entry id and of the generation. The whole label survives at 25 digits or fewer; at 26 only the closing bracket is cut, and "not your own memory" survives; the word "memory" starts to be cut at 27. Reaching 26 needs a 19-digit id (10^18 archive rows) with a 7-digit generation, or an 18-digit id with an 8-digit one; live ids start at 1. Fixing it would mean changing AD-462f's per-line cap or the refs prefix; neither is warranted at this reach. T7 pins the bound.
-14. **RS2-8 (A2; recorded).** Paged reads: an AD-1240 workspace payload read with `read_file` at an offset (`result_offload.py:481-488`), or `recall_artifact`'s next page (`recall_artifact_tool.py:290-308`), can begin inside an archive entry whose label is on an earlier page. The first page holds the labels, and the agent chose the offset into a document it was given labelled. A payload is written only for a result over 12,288 UTF-8 bytes (`result_offload.py:564`), which an `oracle_query` result (at most 6,000 characters) exceeds only if most of its characters are multi-byte. A page-level notice would change two delivery contracts outside this slice: considered, deferred.
+14. **RS2-8 (A2, corrected in A3; recorded).** Paged reads. AD-1240 offloads any tool result over 12,288 UTF-8 bytes (`TOOL_RESULT_THRESHOLD_BYTES`, `workspace_results.py:19`, compared in bytes at `result_offload.py:550, 564`). It hands the model a pointer frame whose outline omits keys and values (`result_offload.py:481-488, 659-667`), so the frame carries no origin line. The agent then reads the payload with `read_file` at an offset it chooses, and `recall_artifact` pages an artifact in fixed windows (`recall_artifact_tool.py:290-308`; an indexed `crew_trace` blob too, round 2). Any such read, the first included, can begin inside an archive entry whose label lies before the window: no labelled page need have been read first, and a recovered read reaches the model unchanged (`result_offload.py:558-563`). The threshold counts bytes, so an `oracle_query` result (at most 6,000 characters) crosses it whenever its UTF-8 encoding passes 12,288 bytes, with no majority of multi-byte characters needed. Round 2 measured 5,677 characters, 47% multi-byte, 13,682 bytes: the result was offloaded, and its first read, at offset 762, returned 200 unlabelled characters. Reach: any offloaded `oracle_query` result while AD-1240's workspace owner runs and the archive holds rows. What an operator can do today: keep the `oracle_query` tool off (`agentic_tools.oracle_query_enabled`, off by default, `config_models/agentic.py:1028`). The Oracle's other paths (§5 rows 1 and 3 to 5) are not tool results, so AD-1240 does not offload them. No setting changes the threshold. The fix, a page-level origin line in AD-1240's reads and `recall_artifact`'s windows, would change two delivery contracts outside this slice: considered, deferred, and recorded as the follow-up.
 15. **RS2-9 (A2, residue of findings 1 and 2; recorded).** The origin notice does not name the generation of a fragment AD-1148 cut loose, nor which sentence of an AD-547 summary restates archived knowledge. It says that the text may hold archived knowledge and that it is not the agent's memory. It is added by code and is present whenever it applies, but within a summary it cannot stop the summarising model from wording an archived fact as the crew's own finding (blind spot 12).
 
 ## 14. Diff Reviewer: properties to verify
 
-1. `_query_archive` is the only place in `src` that builds an archive-tier `OracleResult`, and every result it builds has `content` beginning with `inheritance_label(entry, current_timeline=self._current_timeline)` followed by a newline; nothing is placed before the label. List each renderer in §5 (rows 1 to 7) and confirm it keeps the head of `content` (for `format_refs`, the first 119 characters of the line: the whole label whenever the id's and generation's digits total at most 25, RS2-7). Then check each consumer after the renderers (rows 11 to 15, S2-AV8). `truncate_tool_output` must append `ARCHIVE_ORIGIN_NOTICE` and a newline to its elision marker whenever `holds_archive_label(text)`, size the marker with it, and never exceed `max_chars`. `SessionCompactor.compact` must put the notice first in the summary whenever the text it summarised holds a label or the notice. Confirm that nothing else between the tool or renderer and the next model request cuts, rewrites or drops archive text, and that both are byte-identical for text without a label.
+1. `_query_archive` is the only place in `src` that builds an archive-tier `OracleResult`, and every result it builds has `content` beginning with `inheritance_label(entry, current_timeline=self._current_timeline)` followed by a newline; nothing is placed before the label. List each renderer in §5 (rows 1 to 7) and confirm it keeps the head of `content` (for `format_refs`, the first 119 characters of the line: the whole label whenever the id's and generation's digits total at most 25, RS2-7). Then check each consumer after the renderers (rows 11 to 15, S2-AV8). `truncate_tool_output` must append `ARCHIVE_ORIGIN_NOTICE` and a newline to its elision marker whenever `holds_archive_label(text)`, size the marker with it, and never exceed `max_chars`. `SessionCompactor.compact` must put the notice first in the summary whenever the text it summarised holds a label or the notice. `_durable_head_tail` must reserve the same notice (`notice_chars`, from `_archive_origin_notice`) that `truncate_tool_output` adds for the same text, so that at equal effective caps the AD-1151 trace's head starts with the model's and its tail ends with the model's (T16). Confirm that nothing else between the tool or renderer and the next model request cuts a middle out of, or rewrites, archive text. Confirm that every other cut keeps only the head (rows 2 to 5, including the DM lookup's `max_lookup_chars`), that all of these are byte-identical for text without a label, and that RS2-8 states the reach of paged reads accurately (a byte threshold; any offset, the first read included; no origin line in the pointer).
 2. `inheritance_label` returns exactly one of the three texts. `LABEL_THIS_CREW` only when `current_timeline` is non-empty and equals `entry.timeline_id`; the generation label only for an `int` (not `bool`) of at least 1; otherwise `LABEL_EARLIER_CREW`. Each label names the origin and says it is not the reader's memory.
 3. `generation` is the 1-based place of the timeline's first close among distinct timelines with a non-blank `timeline_id`, ordered by that first close's id. A blank-timeline row numbers nothing, with blank meaning blank by Python's `str.strip` (a tab or a line break is blank), decided in `_generation_numbers` and not in SQL. A second close does not renumber; `promoted` and `skipped` both count. All three reads (`search`, `get_recent`, `entry_by_id`) fill it; `count` is unchanged; no read takes `_write_lock`; no method holding the lock calls `_generation_numbers`.
 4. The store's returned `content`, `title` and every existing field are what was archived; the label exists only in the Oracle's result. The archive file is never written by this slice.
 5. `attach_current_timeline` raises `TypeError` for a non-`str` and stores the stripped value; `__init__` starts it at `""`. The runtime calls it once, after `self.ontology` is assigned, with `self.ontology.get_vessel_identity().instance_id`, inside a `try` whose `except` logs a warning and continues. Trace the failure and the not-yet-attached state: both make every entry read as inherited, never an inherited entry as this crew's.
 6. The archive score, `provenance`, `source_tier`, the existing metadata keys, the tier list and order, the merge and `max_results` are byte-identical; the metadata gains exactly `generation` and `inherited`. No other tier's output changes, and AD-688's graph expansion reads an archive parent without its first line (`_expansion_text`), so its tokens, `find_edges` lookups and edges equal the base's on the same archive and graph (T15). Outside the Oracle, only text that holds a label or the notice changes.
-7. No existing test is edited. T1 to T9 use the real store, Oracle and renderers; T8 runs the real `probos reset` twice and reads through the real tool and `query_formatted`; T9 is the only source census. T10 runs the real ontology loader and a real reset. T11 to T13 run the real tool, `truncate_tool_output`, `ToolExecutor`, `AgenticLoop` and `SessionCompactor`; the models are scripted doubles, not live LLMs. T15 runs the real edge store. Every archive and edge store the tests create lies under `tmp_path`.
+7. No existing test is edited. T1 to T9 use the real store, Oracle and renderers; T8 runs the real `probos reset` twice and reads through the real tool and `query_formatted`; T9 is the only source census. T10 runs the real ontology loader and a real reset. T11 to T13 run the real tool, `truncate_tool_output`, `ToolExecutor`, `AgenticLoop` and `SessionCompactor`; the models are scripted doubles, not live LLMs. T15 runs the real edge store. T16 runs the real AD-1151 trace writer, `WorkItemAgenticExecutor._persist_tool_trace`, into a real `FilesystemAttachmentStore`. Every archive, edge and attachment store the tests create lies under `tmp_path`.
 8. `oracle_service.py` imports `probos.knowledge.archive_store` at module level and nothing in `src` imports `oracle_service` at module level (S2-AV7). Confirm that a fresh interpreter imports `probos.cognitive.oracle_service`, `probos.runtime`, `probos.cognitive.swe_harness.agentic_loop`, `probos.cognitive.swe_harness.session_compactor` and `probos.tools.oracle_query_tool` without a cycle (A2: the two `swe_harness` modules now import `probos.knowledge.archive_store` at module level, an allowed `cognitive` to `knowledge` edge).
 
 ## 15. Acceptance criteria
 
 1. Each archived entry an Oracle query returns carries its crew's generation from `generations` (D3), with `None` when no close is recorded (T1, T2; S-K1 to S-K4).
 2. A later crew's Oracle query returns an archived entry labelled as inherited from the earlier generation, never as its own memory; an entry its own crew archived is labelled as this crew's record (D4, D5; T3 to T5b; S-K5 to S-K11, O-1 to O-5).
-3. Every path from the archive to an agent puts an origin line before the archived text it carries. Each renderer puts the entry's own label first and whole (T6; O-2); in `format_refs` it is whole whenever the id's and generation's digits total at most 25 (T7, RS2-7). Where a later consumer cuts a tool result's middle (AD-1148) or summarises earlier messages (AD-547), the fixed archive origin notice comes before what it keeps (T11 to T13; S-K12 to S-K15, L-1 to L-3, C-1, C-2). Graph expansion reads an archive entry without its label (T15; O-7, O-8). Outside what a label can guarantee: a page the agent asks for at an offset (RS2-8), and a model's restatement in its own words, including a compaction summary's sentences (blind spot 12; RS2-2, RS2-9).
+3. Every path from the archive to an agent puts an origin line before the archived text it carries. Each renderer puts the entry's own label first and whole (T6; O-2); in `format_refs` it is whole whenever the id's and generation's digits total at most 25 (T7, RS2-7). Where a later consumer cuts a tool result's middle (AD-1148) or summarises earlier messages (AD-547), the fixed archive origin notice comes before what it keeps (T11 to T13; S-K12 to S-K15, L-1 to L-4, C-1, C-2), and the AD-1151 durable trace, sized with the same notice, keeps every character the model saw at equal caps (T16; L-5, L-6). Head-only cuts keep the label first (§5 rows 2 to 5). Graph expansion reads an archive entry without its label (T15; O-7, O-8). Outside what a label can guarantee: a page the agent asks for at an offset into an offloaded result, the first read included (RS2-8), and a model's restatement in its own words, including a compaction summary's sentences (blind spot 12; RS2-2, RS2-9).
 4. After two real resets, a third crew's Oracle, its `oracle_query` tool and `query_formatted` give each generation's knowledge its own label (T8).
 5. The runtime tells the Oracle this crew's timeline, once, from the ontology (T9; R-1), and that id is the timeline the real reset archives under and closes (T10).
 6. Every test in §6 fails on the base, and every mutation row in §10 is killed by the named test. One broad gate and one PR for M1 and M2; a cross-family review of M1 (tier HIGH).
