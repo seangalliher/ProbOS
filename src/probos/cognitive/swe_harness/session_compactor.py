@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from probos.knowledge.archive_store import ARCHIVE_ORIGIN_NOTICE, holds_archive_label  # AD-1341 S2 (A2)
 from probos.types import LLMRequest
 
 if TYPE_CHECKING:
@@ -140,9 +141,14 @@ class SessionCompactor:
             system_msg is None or id(original_user) != id(system_msg)
         ):
             compacted.append(original_user)
+        # AD-1341 S2 (A2): the summary is the model's words and may restate Ship's Archive knowledge without its
+        # label. When the summarised messages held a label (or an earlier summary's notice), code, not the model,
+        # puts the archive origin notice first, so restated archive knowledge never reaches the next request
+        # unlabelled. It cannot say which sentence is archived (RS2-9).
+        notice = f"{ARCHIVE_ORIGIN_NOTICE}\n" if holds_archive_label(older_text) else ""
         summary_msg: dict = {
             "role": "user",
-            "content": f"[CONTEXT SUMMARY — earlier exchanges]\n{summary}",
+            "content": f"[CONTEXT SUMMARY — earlier exchanges]\n{notice}{summary}",
         }
         compacted.append(summary_msg)
         compacted.extend(tail)
