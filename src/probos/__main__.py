@@ -65,9 +65,14 @@ if TYPE_CHECKING:
     import httpx
 
     from probos.config import SystemConfig
-    from probos.knowledge.archive_promotion import PromotionReview
-    from probos.knowledge.archive_store import ArchiveStore, SourceState
+    from datetime import datetime
+
+    from probos.knowledge.archive_ledger import ArchiveLedger, SnapshotEntry
+    from probos.knowledge.archive_promotion import PendingSource, PromotionReview
+    from probos.knowledge.archive_store import ArchiveStore, PromotionRecord, SourceState
+    from probos.knowledge.records_snapshot import SnapshotPlan
     from probos.knowledge.records_store import RecordsStore
+    from probos.protocols import DatabaseConnection
 
 
 def _default_data_dir() -> Path:
@@ -2975,7 +2980,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     if getattr(args, 'dry_run', False):
         _show_dry_run(tier, data_dir, active_task_count, console)
         if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
-            return _show_promotion_plan(config, data_dir, skip_reason, console)
+            return _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier)
         return 0
 
     # Confirmation prompt (skipped with -y)
@@ -3294,6 +3299,12 @@ async def _promote_into_archive(
                 f"No instance id: {len(plan.records)} record(s) cannot be attributed to a timeline. "
                 "Pass --skip-promotion REASON to reset without promoting them."
             )
+        unkeyed = len(_snapshot_plan(data_dir).files) if tier >= 3 else 0
+        if unkeyed:  # AD-1341 S6: a --full reset would delete them with no ship to key their snapshot by
+            return False, (
+                f"No instance id: Ship's Records hold {unkeyed} file(s) a --full reset would delete with no ship to "
+                "key their snapshot by. Pass --skip-promotion REASON to reset without promoting or snapshotting."
+            )
         return True, "No instance id and nothing to promote: no generation is recorded."
     archive = _configured_archive_store(config)
     await archive.initialize()
@@ -3303,8 +3314,12 @@ async def _promote_into_archive(
                 timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.SKIPPED, reason=skip_reason,
             )
             await archive.record_generation(skipped)
-            return True, f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}"
+            also = " The Ship's Records snapshot is skipped with it." if tier >= 3 else ""  # AD-1341 S6
+            return True, f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}{also}"
         promoted = await promote_ship_records(records, archive, timeline_id=timeline_id)
+        notes: list[str] = []
+        if tier >= 3:  # AD-1341 S6: what a --full reset deletes from Ship's Records is kept first, as one checked file
+            notes.append(await _snapshot_ship_records(config, data_dir, timeline_id))
         closed = GenerationRecord(
             timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.PROMOTED,
             created=len(promoted.created), present=len(promoted.present), erased=len(promoted.erased),
@@ -3317,10 +3332,140 @@ async def _promote_into_archive(
         f"Ship's Archive: {len(promoted.created)} promoted, {len(promoted.present)} already archived, "
         f"{len(promoted.erased)} erased by the Captain, {len(promoted.vetoed)} vetoed by the Captain, "
         f"{len(promoted.withheld)} withheld (timeline {timeline_id})."
+    ) + "".join(f"\n  {note}" for note in notes)
+
+
+#: AD-1341 S6: the Ship's Records directory a tier 3 reset deletes (``RESET_TIERS[3]["dirs"]``), so the one it keeps.
+_SNAPSHOT_SOURCE = "ship-records"
+
+
+def _generation_started(data_dir: Path) -> datetime | None:
+    """AD-1341 S6: when this ship's generation began: the modification time (UTC) of ``ontology/instance_id``, which
+    the ontology loader writes once, at the ship's first boot. None when there is no instance id."""
+    from datetime import UTC, datetime
+
+    id_file = data_dir / "ontology" / "instance_id"
+    if not id_file.is_file():
+        return None
+    return datetime.fromtimestamp(id_file.stat().st_mtime, UTC)
+
+
+def _snapshots_dir(config: SystemConfig) -> Path:
+    """AD-1341 S6: where Ship's Records snapshots are kept: beside the Ship's Archive's database (AD-1265's resolver)."""
+    from probos.config import resolve_archive_db_path
+    from probos.knowledge.records_snapshot import SNAPSHOT_DIR_NAME
+
+    return resolve_archive_db_path(config.archive).parent / SNAPSHOT_DIR_NAME
+
+
+def _snapshot_plan(data_dir: Path) -> SnapshotPlan:
+    """AD-1341 S6: what a snapshot of the Ship's Records a tier 3 reset deletes would hold. Opens no file."""
+    from probos.knowledge.records_snapshot import plan_snapshot
+
+    return plan_snapshot(data_dir / _SNAPSHOT_SOURCE)
+
+
+def _configured_ledger(config: SystemConfig) -> ArchiveLedger:
+    """AD-1341 S6: the reset's ledger in the Ship's Archive's file (the path startup opens), not yet initialised."""
+    from probos.config import resolve_archive_db_path
+    from probos.knowledge.archive_ledger import ArchiveLedger
+    from probos.storage.sqlite_factory import default_factory
+
+    return ArchiveLedger(str(resolve_archive_db_path(config.archive)), connection_factory=default_factory)
+
+
+async def _open_ledger(config: SystemConfig) -> ArchiveLedger:
+    """AD-1341 S6: the ledger, once the Ship's Archive itself has been opened (so brought to its schema) and closed."""
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    await archive.close()
+    ledger = _configured_ledger(config)
+    await ledger.initialize()
+    return ledger
+
+
+async def _records_listing(config: SystemConfig, root: Path) -> frozenset[str]:
+    """AD-1341 S6: the paths Ship's Records' own listing returns under ``root``, as the promotion's listing reads them."""
+    from probos.knowledge.records_store import RecordsStore
+
+    store = RecordsStore(config.records.model_copy(update={"repo_path": str(root)}), ontology=None)
+    return frozenset(entry["path"] for entry in await store.list_entries())
+
+
+async def _snapshot_ship_records(config: SystemConfig, data_dir: Path, timeline_id: str) -> str:
+    """AD-1341 S6: keep what a ``--full`` reset deletes from Ship's Records as one checked snapshot; say what was kept.
+
+    Written and checked under a temporary name, recorded in the archive's ledger, then published. Any failure removes
+    the temporary file and propagates, so the reset refuses with nothing deleted. The Markdown files Ship's Records'
+    own listing passes over (S1 register RA3-1: never promoted) are named, because the snapshot is where they survive.
+    """
+    from datetime import UTC, datetime
+
+    from probos.identity import generate_ship_did
+    from probos.knowledge.archive_ledger import SnapshotRecord
+    from probos.knowledge.records_snapshot import prepare_snapshot
+
+    root = data_dir / _SNAPSHOT_SOURCE
+    started = _generation_started(data_dir)
+    if started is None:  # read a moment ago as the timeline; another process removed it since
+        raise RuntimeError("AD-1341 S6: ontology/instance_id disappeared during the reset")
+    listed = await _records_listing(config, root)
+    ship_did = generate_ship_did(timeline_id)
+    prepared = prepare_snapshot(
+        root, _snapshots_dir(config), timeline_id=timeline_id, ship_did=ship_did, started=started,
+        ended=datetime.now(UTC),
+    )
+    if prepared is None:
+        return "Ship's Records snapshot: Ship's Records hold no file to keep."
+    result = prepared.result
+    ledger = _configured_ledger(config)
+    try:
+        await ledger.initialize()
+        snapshot_id = await ledger.record_snapshot(SnapshotRecord(
+            timeline_id=timeline_id, ship_did=ship_did, generation_started=result.generation_started,
+            generation_ended=result.generation_ended, relative_path=result.relative_path, sha256=result.sha256,
+            file_count=result.file_count, total_bytes=result.total_bytes,
+        ))
+        prepared.publish()  # AD-1341 S6: recorded first, then put in place
+    except BaseException:
+        prepared.discard()
+        raise
+    finally:
+        await ledger.close()
+    note = (
+        f"Ship's Records snapshot {snapshot_id}: {result.file_count} file(s), {result.total_bytes} bytes, kept as "
+        f"{result.relative_path} beside the Ship's Archive."
+    )
+    unlisted = [path for path in result.paths if path.endswith(".md") and path not in listed]
+    if unlisted:  # S1 register RA3-1: these were never promoted; the snapshot is where they survive
+        shown = ", ".join(unlisted[:10]) + (f" and {len(unlisted) - 10} more" if len(unlisted) > 10 else "")
+        note += f"\n  {len(unlisted)} Markdown file(s) Ship's Records cannot list, never promoted, are kept in it: {shown}"
+    return note
+
+
+def _show_snapshot_plan(config: SystemConfig, data_dir: Path, console: Console) -> None:
+    """AD-1341 S6: the dry run's view of the snapshot a ``--full`` reset would keep. Reads names and sizes only."""
+    from rich.markup import escape
+
+    from probos.knowledge.records_snapshot import SnapshotRefused
+
+    try:
+        plan = _snapshot_plan(data_dir)
+    except (SnapshotRefused, OSError) as exc:  # the reset itself would refuse; the dry run says so
+        console.print(f"  [yellow]⚠ The Ship's Records snapshot would refuse this reset: {escape(str(exc))}[/yellow]")
+        return
+    if not plan.files:
+        console.print("  Ship's Records snapshot: Ship's Records hold no file to keep.")
+        return
+    console.print(
+        f"  Ship's Records snapshot: {len(plan.files)} file(s), {plan.total_bytes} bytes, would be kept in "
+        f"{escape(str(_snapshots_dir(config)))} (.git/ and procedures/ left out)."
     )
 
 
-def _show_promotion_plan(config: SystemConfig, data_dir: Path, skip_reason: str | None, console: Console) -> int:
+def _show_promotion_plan(
+    config: SystemConfig, data_dir: Path, skip_reason: str | None, console: Console, *, tier: int = 2,
+) -> int:
     """``--dry-run`` at tier 2 or above: what the reset would promote. Reads Ship's Records; opens no archive.
 
     0 when the plan was shown (a reset that would refuse says so); 1 when Ship's Records could not be read.
@@ -3334,6 +3479,8 @@ def _show_promotion_plan(config: SystemConfig, data_dir: Path, skip_reason: str 
         return 0
     if skip_reason is not None:
         console.print(f"\n  Ship's Archive promotion would be skipped, recording: {escape(skip_reason.strip())}")
+        if tier >= 3:  # AD-1341 S6
+            console.print("  The Ship's Records snapshot would be skipped with it.")
         return 0
     try:
         timeline_id = _read_instance_id(data_dir)
@@ -3358,6 +3505,8 @@ def _show_promotion_plan(config: SystemConfig, data_dir: Path, skip_reason: str 
         )
     if plan.records and not timeline_id:
         console.print("  [yellow]⚠ No instance id: this reset would refuse without --skip-promotion REASON.[/yellow]")
+    if tier >= 3:
+        _show_snapshot_plan(config, data_dir, console)  # AD-1341 S6: what a --full reset would keep
     return 0
 
 
@@ -3376,6 +3525,10 @@ def _cmd_archive(args: argparse.Namespace) -> int:
         return _cmd_archive_pending(args)
     if command == "veto":  # AD-1341 S3: the Captain's veto
         return _cmd_archive_veto(args)
+    if command == "snapshots":  # AD-1341 S6: the Ship's Records snapshots --full resets kept
+        return _cmd_archive_snapshots(args)
+    if command == "erase-snapshot":  # AD-1341 S6: the Captain's erasure of one
+        return _cmd_archive_erase_snapshot(args)
     if command != "erase":
         print(
             "usage: probos archive erase ENTRY_ID --reason TEXT | pending | veto SOURCE_REF --reason TEXT "
@@ -3561,6 +3714,113 @@ async def _veto_pending_source(
         print("This source is already vetoed. Nothing changed.")
         return 0
     print("Vetoed: this source is never promoted into the Ship's Archive. The veto and its reason are recorded.")
+    return 0
+
+
+def _cmd_archive_snapshots(args: argparse.Namespace) -> int:
+    """``probos archive snapshots`` (AD-1341 S6): the Ship's Records snapshots ``--full`` resets kept.
+
+    Each with its id, name, whether its file is there (``present``, ``missing``) or the Captain erased it, what it
+    holds and the generation's dates. Reads the archive; records nothing. 0 shown; 1 the archive could not be read;
+    2 the archive disabled. Plain ``print``: a name is shown as text, never as markup.
+    """
+    config, _ = _load_config_with_fallback(getattr(args, "config", None))
+    if not config.archive.enabled:
+        print("The Ship's Archive is disabled (archive.enabled): no snapshot is kept.")
+        return 2
+    try:
+        entries = asyncio.run(_read_snapshot_entries(config))
+    except Exception as exc:  # nothing is recorded either way; the Captain sees why
+        print(f"The snapshots could not be read: {type(exc).__name__}: {exc}")
+        return 1
+    directory = _snapshots_dir(config)
+    print(f"Ship's Records snapshots: {len(entries)}, in {directory}")
+    for entry in entries:
+        print(
+            f"  {entry.id}: {entry.relative_path} {_snapshot_state(entry, directory)}; {entry.file_count} file(s), "
+            f"{entry.total_bytes} bytes; generation {entry.generation_started} to {entry.generation_ended}"
+        )
+    if entries:
+        print("Erase one: probos archive erase-snapshot SNAPSHOT_ID --reason TEXT.")
+    return 0
+
+
+def _snapshot_state(entry: SnapshotEntry, directory: Path) -> str:
+    """What ``probos archive snapshots`` shows of one snapshot's file (AD-1341 S6)."""
+    from probos.knowledge.records_snapshot import is_snapshot_relative_path
+
+    if entry.erased_at is not None:
+        return "(erased by the Captain)"
+    if not is_snapshot_relative_path(entry.relative_path):
+        return "(not a snapshot's name: never opened)"
+    return "(present)" if (directory / entry.relative_path).is_file() else "(missing)"
+
+
+async def _read_snapshot_entries(config: SystemConfig) -> tuple[SnapshotEntry, ...]:
+    """Every recorded snapshot; the ledger is closed on every exit (AD-1341 S6)."""
+    ledger = await _open_ledger(config)
+    try:
+        return await ledger.snapshot_entries()
+    finally:
+        await ledger.close()
+
+
+def _cmd_archive_erase_snapshot(args: argparse.Namespace) -> int:
+    """``probos archive erase-snapshot SNAPSHOT_ID --reason TEXT`` (AD-1341 S6): the Captain erases one snapshot.
+
+    The ledger's row is marked erased first (the reason and the time; no content), then the file is deleted, so no
+    snapshot is removed unrecorded. A deletion that fails is reported, and the same command finishes it. 0 erased,
+    already erased or declined; 1 no such snapshot, a row that names no snapshot, or a failure; 2 the archive
+    disabled, or a bad id or reason. Plain ``print``.
+    """
+    from probos.knowledge.archive_store import ARCHIVE_REASON_MAX_CHARS
+
+    config, _ = _load_config_with_fallback(getattr(args, "config", None))
+    if not config.archive.enabled:
+        print("The Ship's Archive is disabled (archive.enabled): there is no snapshot to erase.")
+        return 2
+    snapshot_id, reason = args.snapshot_id, args.reason
+    if snapshot_id <= 0:
+        print("A snapshot id is a positive integer, as probos archive snapshots lists it.")
+        return 2
+    if not reason.strip() or len(reason) > ARCHIVE_REASON_MAX_CHARS:
+        print(f"--reason needs 1 to {ARCHIVE_REASON_MAX_CHARS} characters.")
+        return 2
+    try:
+        return asyncio.run(_erase_snapshot(config, snapshot_id, reason, bool(getattr(args, "yes", False))))
+    except Exception as exc:  # the marker is one statement; the Captain sees why
+        print(f"The erasure failed: {type(exc).__name__}: {exc}")
+        return 1
+
+
+async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, confirmed: bool) -> int:
+    """Show the snapshot, ask unless ``--yes``, mark it erased, then delete its file. The ledger is closed on every exit."""
+    from probos.knowledge.records_snapshot import is_snapshot_relative_path
+
+    ledger = await _open_ledger(config)
+    try:
+        entry = await ledger.snapshot_by_id(snapshot_id)
+        if entry is None:
+            print(f"No Ship's Records snapshot has id {snapshot_id}.")
+            return 1
+        if not is_snapshot_relative_path(entry.relative_path):  # AD-1341 S6: a row never names a file outside the snapshots
+            print(f"Snapshot {snapshot_id} names {entry.relative_path!r}, which is not a snapshot's name. Nothing was erased.")
+            return 1
+        print(f"Ship's Records snapshot {entry.id}: {entry.relative_path} ({entry.file_count} file(s), timeline {entry.timeline_id})")
+        if entry.erased_at is None:
+            if not confirmed and input("  Erase it? Its file is deleted. [y/N]: ").strip().lower() != "y":
+                print("Aborted. Nothing was erased.")
+                return 0
+            await ledger.mark_snapshot_erased(snapshot_id, reason)  # the marker first
+    finally:
+        await ledger.close()
+    path = _snapshots_dir(config) / entry.relative_path
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"The erasure is recorded, but the file remains at {path}: {type(exc).__name__}: {exc}. Run the same command again.")
+        return 1
+    print(f"Erased Ship's Records snapshot {snapshot_id}: a marker keeps its name and the reason; its file is deleted.")
     return 0
 
 
@@ -3910,6 +4170,22 @@ def main() -> None:
     archive_veto.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
     archive_veto.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
     archive_veto.add_argument("--data-dir", type=Path, default=argparse.SUPPRESS, help="Data directory")
+    # AD-1341 S6: the Ship's Records snapshots --full resets kept beside the archive, and the Captain's erasure of one.
+    archive_snapshots = archive_sub.add_parser(
+        "snapshots", help="List the Ship's Records snapshots --full resets kept beside the Ship's Archive",
+    )
+    archive_snapshots.add_argument("--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML")
+    archive_erase_snapshot = archive_sub.add_parser(
+        "erase-snapshot", help="Erase one Ship's Records snapshot: a marker records it, then its file is deleted",
+    )
+    archive_erase_snapshot.add_argument("snapshot_id", type=int, help="The snapshot's id, as snapshots lists it")
+    archive_erase_snapshot.add_argument(
+        "--reason", type=str, required=True, help="Why, in 1-500 characters; it is recorded.",
+    )
+    archive_erase_snapshot.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
+    archive_erase_snapshot.add_argument(
+        "--config", "-c", type=Path, default=argparse.SUPPRESS, help="Path to config YAML",
+    )
 
     args = parser.parse_args()
 
