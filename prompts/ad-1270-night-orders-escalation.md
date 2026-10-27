@@ -12,6 +12,8 @@
 
 **Amendment A3 (`claude-architect`, 2026-10-27, after round 2 of the cross-family review of `5f4b57ed`: reviewer A READY, reviewer B NOT READY).** Every repair is in the new §7.9. §7.1 to §7.8 stay as the record. (1) **B r2 F2** (P3, injected-only, a regression A2 introduced; repaired): A2's T2 regex matched raw text. A comment showing an `emit_event` call, or a call emitting a longer name such as `red_alert_resolved`, failed the gate with no producer present. (2) **B r2 F1** (P2, injected-only, not a regression; repaired): the regex needed the quoted name right after the parenthesis, so `event_type=`, `event=`, `name=` and a space before the parenthesis passed. (3) **One change repairs both:** T2's two text scans become `_old_producer_calls`, a module-level AST helper in the test file. It is tested on 27 fixture sources: 11 it must flag, 10 it must not, 5 forms it does not resolve (R11) and 1 that does not parse (it raises). The `.set_alert_condition(` regex moves into the same helper, because it had F1's spacing miss and F2's comment match. The `EventType` check stays: it checks enum values, which no comment reaches. (4) **DECISIONS** now says what the helper does and names R11. PROGRESS never described T2 and is unchanged. (5) **Premise corrected:** the four `_emit_event(name, ...)` helpers forward to `runtime.emit_event` in production (`startup/finalize.py:2560`, `:2596-2598`; `security/pairing/service.py:61`, `:78`), so the `name` keyword is covered. **Recorded:** R11, extended to every form the helper does not resolve. **Shared contract:** yes, at the source-scan gate: T2 now rejects producers it missed and accepts text it wrongly rejected. No product signature, persisted shape, config, event or wire shape changes. Predicted: triggers 65 cases, delivery 11, §10 47 rows.
 
+**Amendment A4 (`claude-architect`, 2026-10-27, the round-three brake decision after round 3 of the cross-family review of `698950a9`: reviewer B NOT READY on G1 to G5; the orchestrator added this paragraph from the Architect's decision record).** **Decision: continue, narrowed.** Round 4 is one reviewer (B) over Amendment A4, a test-only repair of T2; every repair is in the new §7.10. (1) **G1** (P3, injected-only, a regression A3 introduced): T2 reads only the first positional argument. Every `emit_event*` method in `src/probos` except `_emit_event_local` takes the event first, the forwarders' keywords are payload, and no call binds the event by keyword (enumerated). The keyword forms move to R11 (g), injected-only. (2) **G2** (same class): files are decoded with `tokenize.open` (a BOM and a PEP 263 coding line), behind a new `_scan_tree` with a file-based test. (3) **G3**: the prefilter's effect is described as conditional, in the helper docstring, the DECISIONS sentence and R11 (d), with a fixture for each side. (4) **G4** is recorded as R11 (h), with a fixture. (5) **G5**: bare-setter and suffixed-callee fixtures added, and T2's reading is now tested; T2's one assertion line has no mutation row (R11). **Why not split:** the G1 defect sits in a line A4 deletes, the helper now flags a subset of what A3 flagged (so A4 cannot add a false rejection), and a split would discard 46 killed census rows for the same review round. Round 4 records injected-only recall and coverage gaps rather than repairing them; a false claim is repaired by deleting the claim. **If round 4 finds a regression caused by A4, no round 5 is run: the split to round 1's T2 (`82eac026`) is taken.** Predicted: triggers file 72 cases, delivery 11, census baseline 667, §10 at 51 rows.
+
 **Milestones and tiers:**
 - **M1, the trigger truth** (`watch_rotation.py`, the console command, tests). **STANDARD**: Captain-facing Night Orders behaviour and status.
 - **M2, delivery and isolation** (`runtime.py` hook, `bridge_alerts.py`, tests). **HIGH**: `ProbOSRuntime._emit_event` is the shared event-emission contract (AD-1195 durable offer, NATS, listeners).
@@ -1412,6 +1414,263 @@ REPLACE:
 A guard test (T2) fails when a producer lands in a form it can see: an `EventType` member with an old name, or a call it finds by parsing `src/probos`, either a `set_alert_condition` call or an `emit_event*` call whose event (the first positional argument, or the `event`, `event_type` or `name` keyword) is a string literal equal to an old name. Comments, docstrings and longer names such as `red_alert_resolved` do not count. It does not resolve an emitter under another name, a call through `getattr`, or a name held in a variable, written as an f-string or split across literals (#1324 register R11). Mapping a producer is one line.
 ```
 
+### 7.10 Repair round 3 (A4)
+
+These pairs apply to `698950a9` as one repair commit, in order. Each SEARCH occurs exactly once in its file at the time it is applied. A4-8 matches a substring of one long line. The working copies are CRLF. No production source changes. The helper change is a deletion: after A4, `_old_producer_calls` flags a subset of what A3 flagged on every source, so it cannot add a false rejection. Decoding with `tokenize.open` fails only where Python's importer also fails.
+
+**Discriminating run.** (1) A scratch oracle, not committed: copy A3's `_old_producer_calls` and `_EVENT_KEYWORDS` from `698950a9` and evaluate them on the A4 fixture sources. Predicted: exactly 5 disagreements with the A4 expectations, all G1 or keyword-scan cases: `ignores[payload-event-type]`, `ignores[payload-keyword-bound]`, `does_not_resolve[event-type-kw]`, `[event-kw]` and `[name-kw]`. The new `flags` cases and `does_not_resolve[normalised-callee]` agree with A3; they are coverage fixtures, not repairs. (2) The census: H-18 puts back a keyword scan (G1) and H-21 puts back the A3 decoding (G2). Both must be killed.
+
+**Verified on `698950a9` (2026-10-27):**
+```
+Read tests/test_ad1270_night_orders_triggers.py:1-185 -> imports :8-17; helper :46-81; T2 :97-104; fixtures :107-172
+Grep "_EVENT_KEYWORDS|tokenize|_scan_tree" tests/test_ad1270_night_orders_*.py -> :50, :78 only
+Grep "def _*emit_event\w*\(" src/probos -> builder.py:1331,1334 (self_, event_type, data); runtime.py:1930 (event_type, data);
+  protocols.py:244, runtime.py:2018 (event, data); runtime.py:1977 _emit_event_local(event: dict, type_str);
+  security/pairing/service.py:74 (name, payload); approval_gate.py:169, evolution_store.py:1253 (name, **payload); proposal.py:269 (name, proposal_id, action, **extra)
+grep -o DECISIONS.md -> :871 holds the A3-4 sentence verbatim
+Grep "import tokenize" tests -> tests/test_ad1270e2i_agentic_models.py:37 (precedent)
+```
+
+**Absence verified (2026-10-27):**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No call in `src/probos` binds the event by keyword | Grep, multiline, `emit_event\w*\s*\(\s*(event\|event_type\|name)\s*=` in `src/probos` | none | yes |
+| No PEP 263 coding line in `src/probos` | Grep `^#.*coding[:=]` in `src/probos` | `__main__.py:35`, a comment on line 35 (a coding line must be on line 1 or 2) | yes |
+
+**Pair A4-1 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+import ast
+import logging
+import math
+from io import StringIO
+```
+REPLACE:
+```
+import ast
+import logging
+import math
+import tokenize
+from io import StringIO
+```
+
+**Pair A4-2 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+_OLD_EVENT_NAMES = frozenset({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
+# The keywords that carry the event: ``event`` (``ProbOSRuntime.emit_event``), ``event_type``
+# (``_emit_event``) and ``name`` (the ``_emit_event(name, ...)`` helpers that forward to ``emit_event``).
+_EVENT_KEYWORDS = frozenset({"event", "event_type", "name"})
+
+
+def _old_producer_calls(source: str) -> list[tuple[int, str]]:
+    """Return ``(line, name)`` for each call in ``source`` that would produce an inert trigger today.
+
+    Flagged: a call whose callee (a name or an attribute) is ``set_alert_condition``; and a call whose
+    callee, with leading underscores stripped, starts with ``emit_event`` and whose first positional
+    argument, or ``event``, ``event_type`` or ``name`` keyword, is a string literal equal to an old
+    event name. Comments, docstrings and longer names never count. Not resolved (register R11 on
+    #1324): an emitter under another name, a call through ``getattr``, and a name held in a variable,
+    written as an f-string or not present whole in the text (adjacent literals, escapes), which the
+    prefilter skips. A source that may hold a producer and does not parse raises ``SyntaxError``:
+    the guard fails on a file it cannot read instead of passing it.
+    """
+```
+REPLACE:
+```
+_OLD_EVENT_NAMES = frozenset({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
+
+
+def _old_producer_calls(source: str) -> list[tuple[int, str]]:
+    """Return ``(line, name)`` for each call in ``source`` that would produce an inert trigger today.
+
+    Flagged: a call whose callee (a name or an attribute) is ``set_alert_condition``; and a call whose
+    callee, with leading underscores stripped, starts with ``emit_event`` and whose first positional
+    argument is a string literal equal to an old event name. Keywords are never read (AD-1270 A4,
+    review B r3 G1): every ``emit_event*`` method in ``src/probos`` but ``_emit_event_local`` takes the
+    event as its first parameter, and the forwarders' keywords are payload. Comments, docstrings and
+    longer names never count.
+
+    Only a source whose text contains ``set_alert_condition``, or ``emit_event`` and an old name whole,
+    is parsed. In a parsed source the parser joins adjacent literals and decodes escapes, so those are
+    found; a name split or escaped that way, or a callee Python normalises (NFKC) to ``emit_event`` or
+    ``set_alert_condition``, is found only when the text also passes that filter. Not resolved
+    (register R11 on #1324): an event passed by keyword, an emitter under another name, a call through
+    ``getattr``, and a name held in a variable or written as an f-string. A source the filter admits
+    that does not parse raises ``SyntaxError``: the guard fails on a file it cannot read instead of
+    passing it.
+    """
+```
+
+**Pair A4-3 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+        if not callee.lstrip("_").startswith("emit_event"):
+            continue
+        for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:
+            if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:
+                hits.append((node.lineno, arg.value))
+    return sorted(hits)
+```
+REPLACE:
+```
+        if not callee.lstrip("_").startswith("emit_event"):
+            continue
+        # AD-1270 A4 (review B r3 G1): the event is the first positional argument; a keyword is payload or R11 (g).
+        for arg in node.args[:1]:
+            if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:
+                hits.append((node.lineno, arg.value))
+    return sorted(hits)
+
+
+def _scan_tree(root: Path) -> dict[str, list[tuple[int, str]]]:
+    """T2's scan: ``{path relative to root: hits}`` for each ``*.py`` file under ``root`` with a hit.
+
+    AD-1270 A4 (review B r3 G2): a file is decoded as the importer decodes it (``tokenize.open`` honours
+    a UTF-8 BOM and a PEP 263 coding line), so a valid module never fails the scan by its encoding.
+    """
+    found: dict[str, list[tuple[int, str]]] = {}
+    for path in root.rglob("*.py"):
+        with tokenize.open(path) as handle:
+            hits = _old_producer_calls(handle.read())
+        if hits:
+            found[path.relative_to(root).as_posix()] = hits
+    return found
+```
+
+**Pair A4-4 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+    texts = {p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py")}
+    # AD-1270 A3: calls found by parsing (see _old_producer_calls); what it cannot see is register R11 on #1324.
+    found = {p: _old_producer_calls(t) for p, t in texts.items()}
+    assert {p: hits for p, hits in found.items() if hits} == {}
+```
+REPLACE:
+```
+    # AD-1270 A3, A4: calls found by parsing (_old_producer_calls over _scan_tree); blind spots are R11 on #1324.
+    assert _scan_tree(_SRC) == {}
+```
+
+**Pair A4-5 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+        ('emit_event("trust_change", {})\n', [(1, "trust_change")]),
+        ('rt._emit_event(event_type="trust_change", data={})\n', [(1, "trust_change")]),
+        ('rt.emit_event(event="security_alert")\n', [(1, "security_alert")]),
+        ('self._emit_event(name="alert_condition_change", payload={})\n', [(1, "alert_condition_change")]),
+        ('log(rt.emit_event("security_alert", {}))\n', [(1, "security_alert")]),
+        ('log(rt.emit_event("security_alert", {}))\nrt.emit_event("red_alert", {})\n',
+         [(1, "security_alert"), (2, "red_alert")]),
+        ('svc.set_alert_condition("RED")\n', [(1, "set_alert_condition")]),
+        ('svc.set_alert_condition ("RED")\n', [(1, "set_alert_condition")]),
+    ],
+    ids=["positional", "space-before-paren", "split-lines", "bare-name", "event-type-kw", "event-kw", "name-kw",
+         "nested", "two-calls", "set-alert", "set-alert-space"],
+)
+def test_old_producer_calls_flags_a_literal_producer(source: str, expected: list[tuple[int, str]]) -> None:
+    """AD-1270 A3 (review B r2 F1): every supported way of naming the event in a direct call is found."""
+```
+REPLACE:
+```
+        ('emit_event("trust_change", {})\n', [(1, "trust_change")]),
+        ('self._emit_event_fn("alert_condition_change", {})\n', [(1, "alert_condition_change")]),
+        ('log(rt.emit_event("security_alert", {}))\n', [(1, "security_alert")]),
+        ('log(rt.emit_event("security_alert", {}))\nrt.emit_event("red_alert", {})\n',
+         [(1, "security_alert"), (2, "red_alert")]),
+        ('x = "security_alert"\nrt.emit_event("red_" "alert", {})\n', [(2, "red_alert")]),
+        ('svc.set_alert_condition("RED")\n', [(1, "set_alert_condition")]),
+        ('svc.set_alert_condition ("RED")\n', [(1, "set_alert_condition")]),
+        ('set_alert_condition("RED")\n', [(1, "set_alert_condition")]),
+    ],
+    ids=["positional", "space-before-paren", "split-lines", "bare-name", "suffixed-callee", "nested", "two-calls",
+         "split-literal-admitted", "set-alert", "set-alert-space", "set-alert-bare"],
+)
+def test_old_producer_calls_flags_a_literal_producer(source: str, expected: list[tuple[int, str]]) -> None:
+    """AD-1270 A3, A4: a direct call naming an old event as its first positional argument is found."""
+```
+
+**Pair A4-6 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+        'rt.emit_event("build_failure", data="red_alert")\n',
+        'def set_alert_condition(self, condition):\n    pass\n',
+        'rt.emit_event("build_failure", {}\n',
+        'def (:\n',
+    ],
+    ids=["comment", "docstring", "longer-name", "longer-name-trust", "other-callee", "second-positional",
+         "other-keyword", "definition-only", "unparsable-without-old-name", "unparsable-unrelated"],
+)
+```
+REPLACE:
+```
+        'rt.emit_event("build_failure", data="red_alert")\n',
+        'self._emit_event("build_failure", event_type="red_alert")\n',
+        'self._emit_event(name="build_failure", event_type="red_alert")\n',
+        'def set_alert_condition(self, condition):\n    pass\n',
+        'rt.emit_event("build_failure", {}\n',
+        'def (:\n',
+    ],
+    ids=["comment", "docstring", "longer-name", "longer-name-trust", "other-callee", "second-positional",
+         "other-keyword", "payload-event-type", "payload-keyword-bound", "definition-only",
+         "unparsable-without-old-name", "unparsable-unrelated"],
+)
+```
+
+**Pair A4-7 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+        'rt.emit_event("red_" "alert", {})\n',
+    ],
+    ids=["alias", "getattr", "variable", "f-string", "split-literal"],
+)
+def test_old_producer_calls_does_not_resolve_these_forms(source: str) -> None:
+    """Register R11 on #1324: forms the guard does not resolve. If one starts to match, update R11 and DECISIONS."""
+    assert _old_producer_calls(source) == []
+
+
+def test_a_source_the_guard_cannot_parse_fails_it() -> None:
+    """AD-1270 A3: a file that may hold a producer and does not parse fails T2 instead of being skipped."""
+    with pytest.raises(SyntaxError):
+        _old_producer_calls('rt.emit_event("red_alert", {}\n')
+```
+REPLACE:
+```
+        'rt.emit_event("red_" "alert", {})\n',
+        'rt._emit_event(event_type="trust_change", data={})\n',
+        'rt.emit_event(event="security_alert")\n',
+        'self._emit_event(name="alert_condition_change", payload={})\n',
+        'rt.\uff45mit_event("red_alert", {})\n',
+    ],
+    ids=["alias", "getattr", "variable", "f-string", "split-literal", "event-type-kw", "event-kw", "name-kw",
+         "normalised-callee"],
+)
+def test_old_producer_calls_does_not_resolve_these_forms(source: str) -> None:
+    """Register R11 on #1324: forms the guard does not resolve; split-literal and normalised-callee only because
+    the filter skips the file. If one starts to match, update R11 and DECISIONS."""
+    assert _old_producer_calls(source) == []
+
+
+def test_a_source_the_guard_cannot_parse_fails_it() -> None:
+    """AD-1270 A3: a file that may hold a producer and does not parse fails T2 instead of being skipped."""
+    with pytest.raises(SyntaxError):
+        _old_producer_calls('rt.emit_event("red_alert", {}\n')
+
+
+def test_the_tree_scan_decodes_each_file_as_the_importer_does(tmp_path: Path) -> None:
+    """AD-1270 A4 (review B r3 G2, G5): T2's own scan reads a BOM file and a PEP 263 file as Python does."""
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "bom_markers.py").write_bytes(b'\xef\xbb\xbfMARKERS = ("emit_event", "red_alert")\n')
+    (tmp_path / "latin1.py").write_bytes(b"# -*- coding: latin-1 -*-\nLABEL = '\xe9'\n")
+    (tmp_path / "pkg" / "bom_producer.py").write_bytes(b'\xef\xbb\xbfrt.emit_event("red_alert", {})\n')
+    assert _scan_tree(tmp_path) == {"pkg/bom_producer.py": [(1, "red_alert")]}
+```
+
+**Pair A4-8 (`DECISIONS.md`).** SEARCH:
+```
+A guard test (T2) fails when a producer lands in a form it can see: an `EventType` member with an old name, or a call it finds by parsing `src/probos`, either a `set_alert_condition` call or an `emit_event*` call whose event (the first positional argument, or the `event`, `event_type` or `name` keyword) is a string literal equal to an old name. Comments, docstrings and longer names such as `red_alert_resolved` do not count. It does not resolve an emitter under another name, a call through `getattr`, or a name held in a variable, written as an f-string or split across literals (#1324 register R11). Mapping a producer is one line.
+```
+REPLACE:
+```
+A guard test (T2) fails when a producer lands in a form it can see: an `EventType` member with an old name, or a call it finds by parsing `src/probos` (each file decoded as Python decodes it), either a `set_alert_condition` call or an `emit_event*` call whose first positional argument is a string literal equal to an old name. Comments, docstrings, keyword arguments (the forwarders' keywords are payload) and longer names such as `red_alert_resolved` do not count. A file is parsed only if its text contains `set_alert_condition`, or `emit_event` and an old name whole, so a name split across literals or escaped, or a callee spelled so that Python normalises it to one of those names, is found only when the file's text passes that filter. It does not resolve an event passed by keyword, an emitter under another name, a call through `getattr`, or a name held in a variable or written as an f-string (#1324 register R11). Mapping a producer is one line.
+```
+
+Then regenerate the ledger as in A3. Predicted counts: the triggers file has 72 cases (65 + 7), the census baseline is 667 passed, and the focused union is 1,051 (1,044 + 7).
+
 ## 8. Tracking (M3's commit)
 
 `PROGRESS.md`. Re-anchor on S6's merge; the paragraph goes first.
@@ -1461,7 +1720,7 @@ Parent checklist (the orchestrator, on #1324): tick the Night Orders item with t
 - `TrustUpdateEvent` (still never built; the producer emits the string form).
 - No config field, event type, route, HXI view or schema.
 
-## 10. Mutation rows (47 rows after A3; one campaign on the assembled tree after an unmutated baseline of both new files passes)
+## 10. Mutation rows (51 rows after A4, which retired H-9, H-11 and H-16; one campaign on the assembled tree after an unmutated baseline of both new files passes)
 
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -1501,21 +1760,25 @@ Parent checklist (the orchestrator, on #1324): tick the Night Orders item with t
 | H-4 | A3 | `test_ad1270_night_orders_triggers.py` | `callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""` | `callee = func.attr if isinstance(func, ast.Attribute) else ""` | `test_old_producer_calls_flags_a_literal_producer[bare-name]` |
 | H-5 | A3 | `test_ad1270_night_orders_triggers.py` | `if callee == "set_alert_condition":` | `if False:` | `test_old_producer_calls_flags_a_literal_producer[set-alert]`, `test_old_producer_calls_flags_a_literal_producer[set-alert-space]` |
 | H-6 | A3 | `test_ad1270_night_orders_triggers.py` | `hits.append((node.lineno, callee))` | `pass` | `test_old_producer_calls_flags_a_literal_producer[set-alert]`, `test_old_producer_calls_flags_a_literal_producer[set-alert-space]` |
-| H-7 | A3 | `test_ad1270_night_orders_triggers.py` | `if not callee.lstrip("_").startswith("emit_event"):` | `if not callee.startswith("emit_event"):` | `test_old_producer_calls_flags_a_literal_producer[event-type-kw]`, `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
+| H-7 | A3 | `test_ad1270_night_orders_triggers.py` | `if not callee.lstrip("_").startswith("emit_event"):` | `if not callee.startswith("emit_event"):` | `test_old_producer_calls_flags_a_literal_producer[suffixed-callee]` (A4: the callee is `_emit_event_fn`; the keyword fixtures that killed it are now unresolved forms) |
 | H-8 | A3 | `test_ad1270_night_orders_triggers.py` | `if not callee.lstrip("_").startswith("emit_event"):` | `if False:` | `test_old_producer_calls_ignores_what_is_not_a_producer[other-callee]`, `test_old_producer_calls_does_not_resolve_these_forms[alias]`, `test_old_producer_calls_does_not_resolve_these_forms[getattr]` |
-| H-9 | A3 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `for arg in node.args[:1]:` | `test_old_producer_calls_flags_a_literal_producer[event-type-kw]`, `test_old_producer_calls_flags_a_literal_producer[event-kw]`, `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
-| H-10 | A3 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `for arg in node.args + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `test_old_producer_calls_ignores_what_is_not_a_producer[second-positional]` |
-| H-11 | A3 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `for arg in node.args[:1] + [kw.value for kw in node.keywords]:` | `test_old_producer_calls_ignores_what_is_not_a_producer[other-keyword]` |
+| H-10 | A3, A4 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1]:` | `for arg in node.args:` | `test_old_producer_calls_ignores_what_is_not_a_producer[second-positional]` |
 | H-12 | A3 | `test_ad1270_night_orders_triggers.py` | `if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:` | `if isinstance(arg, ast.Constant) and str(arg.value).startswith(tuple(_OLD_EVENT_NAMES)):` | `test_old_producer_calls_ignores_what_is_not_a_producer[longer-name]`, `test_old_producer_calls_ignores_what_is_not_a_producer[longer-name-trust]` |
 | H-13 | A3 | `test_ad1270_night_orders_triggers.py` | `if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:` | `if arg.value in _OLD_EVENT_NAMES:` | `test_old_producer_calls_does_not_resolve_these_forms[variable]`, `test_old_producer_calls_does_not_resolve_these_forms[f-string]` (a `Name` or `JoinedStr` has no `value`, so the mutant raises `AttributeError`) |
 | H-14 | A3 | `test_ad1270_night_orders_triggers.py` | `hits.append((node.lineno, arg.value))` | `pass` | `test_old_producer_calls_flags_a_literal_producer[positional]` |
 | H-15 | A3 | `test_ad1270_night_orders_triggers.py` | `return sorted(hits)` | `return hits` | `test_old_producer_calls_flags_a_literal_producer[two-calls]` (`ast.walk` is breadth-first, so the nested line-1 call is found after the line-2 call) |
-| H-16 | A3 | `test_ad1270_night_orders_triggers.py` | `_EVENT_KEYWORDS = frozenset({"event", "event_type", "name"})` | `_EVENT_KEYWORDS = frozenset({"event", "event_type"})` | `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
-| H-17 | A3 | `test_ad1270_night_orders_triggers.py` | `_OLD_EVENT_NAMES = frozenset({"trust_change", "alert_condition_change", "security_alert", "red_alert"})` | `_OLD_EVENT_NAMES = frozenset({"trust_change", "security_alert", "red_alert"})` | `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
+| H-17 | A3 | `test_ad1270_night_orders_triggers.py` | `_OLD_EVENT_NAMES = frozenset({"trust_change", "alert_condition_change", "security_alert", "red_alert"})` | `_OLD_EVENT_NAMES = frozenset({"trust_change", "security_alert", "red_alert"})` | `test_old_producer_calls_flags_a_literal_producer[suffixed-callee]` (A4: the only flagged case naming `alert_condition_change`) |
+| H-18 | A4 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1]:` | `for arg in node.args[:1] + [kw.value for kw in node.keywords]:` | `test_old_producer_calls_ignores_what_is_not_a_producer[payload-event-type]`, `test_old_producer_calls_ignores_what_is_not_a_producer[payload-keyword-bound]`, `test_old_producer_calls_does_not_resolve_these_forms[event-type-kw]` (G1: a keyword scan reads payload as the event) |
+| H-19 | A4 | `test_ad1270_night_orders_triggers.py` | `if callee == "set_alert_condition":` | `if isinstance(func, ast.Attribute) and callee == "set_alert_condition":` | `test_old_producer_calls_flags_a_literal_producer[set-alert-bare]` (G5) |
+| H-20 | A4 | `test_ad1270_night_orders_triggers.py` | `if not callee.lstrip("_").startswith("emit_event"):` | `if callee.lstrip("_") != "emit_event":` | `test_old_producer_calls_flags_a_literal_producer[suffixed-callee]` (G5) |
+| H-21 | A4 | `test_ad1270_night_orders_triggers.py` | `with tokenize.open(path) as handle:` | `with open(path, encoding="utf-8") as handle:` | `test_the_tree_scan_decodes_each_file_as_the_importer_does` (G2: the BOM file raises `SyntaxError`; the latin-1 file raises `UnicodeDecodeError`) |
+| H-22 | A4 | `test_ad1270_night_orders_triggers.py` | `if hits:` | `if True:` | `test_the_tree_scan_decodes_each_file_as_the_importer_does` |
+| H-23 | A4 | `test_ad1270_night_orders_triggers.py` | `found[path.relative_to(root).as_posix()] = hits` | `found[path.name] = hits` | `test_the_tree_scan_decodes_each_file_as_the_importer_does` |
+| H-24 | A4 | `test_ad1270_night_orders_triggers.py` | `return found` | `return {}` | `test_the_tree_scan_decodes_each_file_as_the_importer_does` |
 
-Each line occurs once in its file after §7 and §7.9. Lines with no row, and why: the docstrings; `_score_text`'s `"?"` branch (display only); the `"nothing"` arm of `Escalates on` (display only). In `_old_producer_calls` (A3), these have no row: the prefilter's `return []`, whose removal H-3's killers catch; `hits: list[tuple[int, str]] = []`; the `for node in ast.walk(ast.parse(source)):` line; `if not isinstance(node, ast.Call):`; `func = node.func`; and the two `continue` lines. Any whole-line mutant of these raises or empties every result, so every flagged case kills it.
+Each line occurs once in its file after §7 and §7.9. Lines with no row, and why: the docstrings; `_score_text`'s `"?"` branch (display only); the `"nothing"` arm of `Escalates on` (display only). In `_old_producer_calls` (A3), these have no row: the prefilter's `return []`, whose removal H-3's killers catch; `hits: list[tuple[int, str]] = []`; the `for node in ast.walk(ast.parse(source)):` line; `if not isinstance(node, ast.Call):`; `func = node.func`; and the two `continue` lines. Any whole-line mutant of these raises or empties every result, so every flagged case kills it. A4: three lines of `_scan_tree` have no row: `found: dict[str, list[tuple[int, str]]] = {}`, `for path in root.rglob("*.py"):` and `hits = _old_producer_calls(handle.read())`. A whole-line mutant of any of them raises or empties the scan, which the tree test's expected producer catches. T2's `assert _scan_tree(_SRC) == {}` has no row: on a producer-free tree any weakening of it passes (R11, the G5 residue).
 
-Killed-by cells are census-ready. They name full pytest function names in code spans, with a single parametrised case written `name[id]`. A cell names no function only for R-9, the equivalent mutant. Census of record: orchestrator, 2026-10-27, on `427546b8`: 24 killed, 2 survived (R-7, R-9), baseline 627 passed. A1 changes only D2, so after A1 rerun the unmutated baseline and the rows that claim D2: W-2, B-1, R-4, R-7, R-8. Expected: 25 killed, R-9 survived and recorded as equivalent. Measured (census d, on A1): 25 killed, R-9 survived. **A2:** three source files change, so no row's overlay matches the census of record. Rerun the whole campaign of 30 rows on the repaired tree. Predicted: baseline 633 passed, 29 killed, R-9 survived (qualified above). Measured on `5f4b57ed`: 29 of 30 killed, R-9 survived. **A3:** only `tests/test_ad1270_night_orders_triggers.py` changes. No source file a W, C, B or R row mutates changes, and none of their named killers changes. The `5f4b57ed` rerun therefore stays the campaign of record for those 30 rows. Run the unmutated baseline and the 17 H rows on the repaired tree. The H rows mutate the test file's own helper, so the File cell is under `tests/`. Predicted: baseline 660 passed and 17 H rows killed, so 46 of 47 rows are killed overall, with R-9 survived (equivalent).
+Killed-by cells are census-ready. They name full pytest function names in code spans, with a single parametrised case written `name[id]`. A cell names no function only for R-9, the equivalent mutant. Census of record: orchestrator, 2026-10-27, on `427546b8`: 24 killed, 2 survived (R-7, R-9), baseline 627 passed. A1 changes only D2, so after A1 rerun the unmutated baseline and the rows that claim D2: W-2, B-1, R-4, R-7, R-8. Expected: 25 killed, R-9 survived and recorded as equivalent. Measured (census d, on A1): 25 killed, R-9 survived. **A2:** three source files change, so no row's overlay matches the census of record. Rerun the whole campaign of 30 rows on the repaired tree. Predicted: baseline 633 passed, 29 killed, R-9 survived (qualified above). Measured on `5f4b57ed`: 29 of 30 killed, R-9 survived. **A3:** only `tests/test_ad1270_night_orders_triggers.py` changes. No source file a W, C, B or R row mutates changes, and none of their named killers changes. The `5f4b57ed` rerun therefore stays the campaign of record for those 30 rows. Run the unmutated baseline and the 17 H rows on the repaired tree. The H rows mutate the test file's own helper, so the File cell is under `tests/`. Predicted: baseline 660 passed and 17 H rows killed, so 46 of 47 rows are killed overall, with R-9 survived (equivalent). Measured (census g, on `698950a9`): baseline 660 passed, 46 killed, R-9 survived. **A4:** again only `tests/test_ad1270_night_orders_triggers.py` changes, so the `5f4b57ed` campaign stays the campaign of record for the 30 W, C, B and R rows. Run the unmutated baseline and all 21 H rows on the repaired tree. Predicted: baseline 667 passed and 21 H rows killed, so 50 of 51 rows are killed, with R-9 survived (equivalent).
 
 ## 11. Verified Against Codebase (2026-10-27, on `a2390998`)
 
@@ -1594,10 +1857,16 @@ Read startup/finalize.py:4210-4224
 15. T2 rejects a literal `emit_event*` call naming any of the four old names, and nothing claims it catches an aliased emitter. *(A3: superseded by 16 to 19.)*
 
 **A3 (round 3, the delta only; a shared contract at the source-scan gate):**
-16. `_old_producer_calls` flags exactly two kinds of call. The first: a callee (`Name.id` or `Attribute.attr`) that, with leading underscores stripped, starts with `emit_event`, and whose first positional argument, or `event`, `event_type` or `name` keyword, is a `Constant` **equal** to one of the four old names. The second: any call whose callee is `set_alert_condition`. Nothing in a comment, docstring or other string is flagged, and neither is a longer name, a second positional or another keyword.
-17. A source the prefilter admits that does not parse raises `SyntaxError`; a source it excludes is not parsed and returns `[]`. The prefilter can exclude a flaggable call only when the name does not appear whole in the text (R11 d).
+16. `_old_producer_calls` flags exactly two kinds of call. The first: a callee (`Name.id` or `Attribute.attr`) that, with leading underscores stripped, starts with `emit_event`, and whose first positional argument, or `event`, `event_type` or `name` keyword, is a `Constant` **equal** to one of the four old names. The second: any call whose callee is `set_alert_condition`. Nothing in a comment, docstring or other string is flagged, and neither is a longer name, a second positional or another keyword. *(A4: the keyword clause is superseded by 20.)*
+17. A source the prefilter admits that does not parse raises `SyntaxError`; a source it excludes is not parsed and returns `[]`. The prefilter can exclude a flaggable call only when the name does not appear whole in the text (R11 d). *(A4: superseded by 22; a normalised callee is excluded too, R11 h.)*
 18. On the real tree, T2 passes and the prefilter parses exactly 4 files (`runtime.py`, `workforce.py`, `watch_rotation.py`, `ontology/service.py`). The `EventType` check stays. `re` is no longer imported. No other test changed. The delivery file and every `src` file are unchanged since `5f4b57ed`.
 19. The fixture tests discriminate: each H row in §10 is killed by its named case. The DECISIONS sentence claims no more than 16 and 17, and names R11.
+
+**A4 (round 4, the delta only; the source-scan gate). Behaviour A4 did not change is out of scope. A recall gap or a coverage gap is recorded in R11, not repaired.**
+20. `_old_producer_calls` reads no keyword argument. The event is the first positional argument only, so `self._emit_event("build_failure", event_type="red_alert")` and its keyword-bound twin return `[]`. On every source, the hits are a subset of A3's. Every `emit_event*` definition in `src/probos` except `_emit_event_local` takes the event first, and no call there binds it by keyword (§7.10 enumerations).
+21. T2 is `assert _scan_tree(_SRC) == {}`. `_scan_tree` decodes with `tokenize.open`, so a valid UTF-8-BOM or PEP 263 module never fails it, and a genuine syntax error in an admitted file still raises.
+22. The helper docstring, the DECISIONS sentence and R11 describe the prefilter as conditional. A split or escaped name, or an NFKC-normalised callee, is found exactly when the file's text passes the filter (`[split-literal-admitted]` against `[split-literal]` and `[normalised-callee]`). The keyword forms are recorded (R11 g), not claimed.
+23. Since `698950a9`, only the triggers test file, the DECISIONS sentence and the ledger capture line changed.
 
 ## 15. Acceptance criteria
 
@@ -1612,6 +1881,7 @@ Read startup/finalize.py:4210-4224
 - [ ] #1324's Night Orders checklist item is ticked with the commit and receipt; the register rows are posted on #1324.
 - [ ] A2: the §7.8 tests failed over the candidate's source as §6 predicts (5 cases) before the source pairs were applied. §7.8 is committed. The §10 campaign was rerun (30 rows). Round 2 reviewed the delta against §14 items 11-15.
 - [ ] A3: §7.9 applied as one commit. The A2-predicate oracle disagreed with the fixtures where §7.9 predicts (10). The triggers file passes (65 cases). The baseline (660) and the 17 H rows were run. Round 3 (reviewer B) reviewed the delta against §14 items 16-19, including the real-tree consumer check. The ledger was regenerated.
+- [ ] A4: §7.10 applied as one commit. The A3 oracle disagrees with the A4 fixtures in exactly the 5 cases §7.10 names. The triggers file passes (72 cases). The baseline (667) and the 21 H rows were run (50 of 51 killed overall, R-9 equivalent). Round 4 (reviewer B) reviewed the delta against §14 items 20-23. The ledger was regenerated.
 - [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1324)
@@ -1626,5 +1896,5 @@ Read startup/finalize.py:4210-4224
 - **R8.** Mutation census (orchestrator, 2026-10-27, on `427546b8`): 24 of 26 killed. Mutation R-7 (`if alert is None:`) survived because D2's second update was not a crossing and never reached the service. Amendment A1 gives D2 a second crossing inside the cooldown and asserts that no delivery is scheduled; R-7 closes when the rerun kills it. Mutation R-9 is equivalent (an inactive manager's `check_escalation` is already False). W-2 and B-1 were killed, but by T3b and D7, not by D2 as first claimed; A1's D2 assertions are predicted to make D2 a second killer of both. *A2:* census d on A1 measured 25 killed, with R-9 survived. Both round-1 reviewers showed R-9 is equivalent for paging and status, but not for logging (§10 row).
 - **R9.** (Review A F2; P3; injected-only; not a regression.) If `loop.create_task` fails after `check_night_orders_escalation` has built the alert, the `deliver_bridge_alert` coroutine is never awaited and that alert's 300 s cooldown is spent. Only an injected fault reaches this: the loop was fetched as running one line earlier. Closing it needs a cooldown-release method owned by the service (frozen srp debt, R3) or building the alert after scheduling. Owner: AD-1270h, the `BridgeAlertService` decomposition.
 - **R10.** (Review A F3; P3; injected-only.) `tasks.add` runs after the task exists, so a host whose `_event_listener_tasks` is `None` logs a failure and leaves an unretained task. Only a BF-708 borrowed-method host can be in that state; production initialises a set (`runtime.py:1435-1438`). Trigger: the next change to the hook. The fix is to bind `self._event_listener_tasks.add` before the alert is built.
-- **R11.** (B3 residue, extended in A3 after review B r2 F1; P2; injected-only.) T2 finds a producer in three forms. The first is an `EventType` member with an old value. The other two are calls it finds by parsing `src/probos` (`_old_producer_calls`): a `set_alert_condition` call, and a call to an `emit_event*` method whose first positional argument, or `event`, `event_type` or `name` keyword, is a string literal equal to an old name. It does not resolve: (a) an emitter under another name (`fire = rt.emit_event`, or the forwarders' own `self._emit(name, ...)`); (b) a call through `getattr`; (c) a name held in a variable, passed through `**kwargs`, or written as an f-string, even one with no placeholder; (d) a name that does not appear whole in the text (adjacent literals, escapes), which the prefilter skips without parsing; (e) `_emit_event_local(event, type_str)`, which bypasses the Night Orders hook (`runtime.py:1949` against `:1966`, `:1975`), so it is not a producer the map could use; (f) a producer outside `src/probos`. `test_old_producer_calls_does_not_resolve_these_forms` pins (a) to (d) with the fixtures `[alias]`, `[getattr]`, `[variable]`, `[f-string]` and `[split-literal]`. If one of those starts to match, update this row and DECISIONS. Owner: same as R1. The slice that wires an alert-condition writer, or AD-455b, maps the trigger in the same change; T2 is a backstop, not a guarantee.
+- **R11.** (B3 residue, extended in A3 after review B r2 F1, narrowed in A4 after review B r3 G1 to G5; P2; injected-only.) T2 finds a producer in three forms. The first is an `EventType` member with an old value. The other two are calls it finds by parsing `src/probos`, each file decoded as Python decodes it (`_scan_tree`, `_old_producer_calls`): a `set_alert_condition` call, and a call to an `emit_event*` method whose first positional argument is a string literal equal to an old name. A file is parsed only if its text contains `set_alert_condition`, or `emit_event` and an old name whole. It does not resolve: (a) an emitter under another name (`fire = rt.emit_event`, or the forwarders' own `self._emit(name, ...)`); (b) a call through `getattr`; (c) a name held in a variable, passed through `**kwargs`, or written as an f-string, even one with no placeholder; (d) a name split across adjacent literals or written with escapes, found only when the file's text passes the filter above (A4, G3: inside a parsed file the parser joins them); (e) `_emit_event_local(event, type_str)`, which bypasses the Night Orders hook (`runtime.py:1949` against `:1966`, `:1975`), so it is not a producer the map could use; (f) a producer outside `src/probos`; (g) an event passed by keyword (`event=`, `event_type=`, `name=`). A4 reads only the first positional argument, because the forwarders take payload as keywords (`approval_gate.py:169`, `evolution_store.py:1253`, `proposal.py:269`) and A3's keyword scan read payload as the event (G1). No call in `src/probos` binds the event by keyword (enumerated 2026-10-27). (h) A callee spelled with characters Python normalises (NFKC) to `emit_event` or `set_alert_condition`, found only when the file's text passes the filter (G4). `test_old_producer_calls_does_not_resolve_these_forms` pins (a) to (d), (g) and (h) with `[alias]`, `[getattr]`, `[variable]`, `[f-string]`, `[split-literal]`, `[event-type-kw]`, `[event-kw]`, `[name-kw]` and `[normalised-callee]`. `test_old_producer_calls_flags_a_literal_producer[split-literal-admitted]` pins (d)'s admitted half. T2's own assertion line has no mutation row: on a producer-free tree any weakening of it passes, and the scan it calls is pinned by `test_the_tree_scan_decodes_each_file_as_the_importer_does` (G5). If a fixture starts to match, update this row and DECISIONS. Owner: same as R1. The slice that wires an alert-condition writer, or AD-455b, maps the trigger in the same change; T2 is a backstop, not a guarantee.
 - **R12.** (Found during A2 verification. It predates AD-1270: `git blame` dates `commands_autonomous.py:155-175` to `5452ff13`, 2026-03-30. Ordinary reach.) The console accepts any float TTL. With `0` or a negative TTL, the console prints "Night Orders set" for an order that is already expired: the Captain believes orders are on and nothing escalates. With `nan`, or a TTL negative enough that `expires_at <= 0`, the order never expires (`watch_rotation.py:288-290`). It is outside AD-1270's diff; a BF is recommended.
