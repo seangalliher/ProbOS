@@ -453,6 +453,40 @@ async def promote_ship_records(
     )
 
 
+#: AD-1341 S6: a nature description's source reference, ``nature-description/{timeline_id}``: one per crew generation.
+NATURE_DESCRIPTION_PREFIX = "nature-description/"
+
+
+async def promote_nature_description(archive: ArchiveStore, record: PromotionRecord) -> PromotionOutcome:
+    """AD-1341 S6: archive one generation's nature description (``probos.knowledge.nature_description`` builds it).
+
+    The Captain's amendment of 2026-10-16: procedures and skills persist as nature and are never promoted; the archive
+    gets a description of what a crew developed and why. Only a ``NATURE_DESCRIPTION`` record with its
+    ``nature-description/`` reference and no source episodes is accepted. ``promote_entry`` then applies the
+    idempotence key and the Captain's erasure markers and vetoes, as for every source.
+    """
+    if (
+        type(record) is not PromotionRecord
+        or record.source_kind is not SourceKind.NATURE_DESCRIPTION
+        or not record.source_ref.startswith(NATURE_DESCRIPTION_PREFIX)
+        or record.source_episode_ids
+    ):
+        raise ValueError("AD-1341 S6: only a nature description, citing no episode, is promoted here")
+    outcome = await archive.promote_entry(record)
+    logger.info("AD-1341 S6: nature description %s: %s", record.source_ref, outcome.value)
+    return outcome
+
+
+async def review_nature_description(archive: ArchiveStore, record: PromotionRecord) -> PendingSource:
+    """AD-1341 S6: what promoting this generation's nature description now would do. Reads; records nothing.
+
+    The review service's read of the archive (``source_state``), as ``review_promotion`` is for Ship's Records, so
+    ``probos archive pending`` shows the description as the reset would treat it, and ``source_state`` stays named in
+    ``src`` by this module alone (``tests/test_ad1341_s3_veto_store.py``).
+    """
+    return PendingSource(record, await archive.source_state(record))
+
+
 @dataclass(frozen=True)
 class PendingSource:
     """AD-1341 S3: one source the next promotion would consider, and what promoting it now would do."""

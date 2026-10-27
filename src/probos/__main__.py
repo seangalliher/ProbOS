@@ -3317,7 +3317,7 @@ async def _promote_into_archive(
             also = " The Ship's Records snapshot is skipped with it." if tier >= 3 else ""  # AD-1341 S6
             return True, f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}{also}"
         promoted = await promote_ship_records(records, archive, timeline_id=timeline_id)
-        notes: list[str] = []
+        notes: list[str] = [await _describe_nature(data_dir, archive, timeline_id)]  # AD-1341 S6: tiers 2 and 3
         if tier >= 3:  # AD-1341 S6: what a --full reset deletes from Ship's Records is kept first, as one checked file
             notes.append(await _snapshot_ship_records(config, data_dir, timeline_id))
         closed = GenerationRecord(
@@ -3333,6 +3333,51 @@ async def _promote_into_archive(
         f"{len(promoted.erased)} erased by the Captain, {len(promoted.vetoed)} vetoed by the Captain, "
         f"{len(promoted.withheld)} withheld (timeline {timeline_id})."
     ) + "".join(f"\n  {note}" for note in notes)
+
+
+async def _open_read_only(path: str) -> DatabaseConnection:
+    """AD-1341 S6: open a database the reset only reads, through SQLite's ``mode=ro`` (BF-906): never created."""
+    from probos.storage.sqlite_factory import default_factory
+
+    return await default_factory.connect(path, read_only=True)
+
+
+async def _nature_record(data_dir: Path, timeline_id: str) -> PromotionRecord | None:
+    """AD-1341 S6: this generation's nature description, built one way for the reset, the dry run, pending and veto."""
+    from probos.knowledge.nature_description import PROCEDURES_DB, nature_description_record
+
+    started = _generation_started(data_dir)
+    if started is None or not timeline_id:
+        return None
+    return await nature_description_record(
+        data_dir / PROCEDURES_DB, _open_read_only, timeline_id=timeline_id, started=started,
+    )
+
+
+async def _describe_nature(data_dir: Path, archive: ArchiveStore, timeline_id: str) -> str:
+    """AD-1341 S6: archive this generation's nature description before the reset; say what became of it."""
+    from probos.knowledge.archive_promotion import promote_nature_description
+
+    record = await _nature_record(data_dir, timeline_id)
+    if record is None:
+        return "Nature description: this generation developed no Cognitive JIT procedure, so there is none."
+    outcome = await promote_nature_description(archive, record)
+    return f"Nature description {record.source_ref}: {outcome.value}."
+
+
+async def _pending_nature(config: SystemConfig, data_dir: Path) -> PendingSource | None:
+    """AD-1341 S6: the nature description the next reset would archive, with what promoting it now would do."""
+    from probos.knowledge.archive_promotion import review_nature_description
+
+    record = await _nature_record(data_dir, _read_instance_id(data_dir))
+    if record is None:
+        return None
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        return await review_nature_description(archive, record)  # S3's census: only archive_promotion names source_state
+    finally:
+        await archive.close()
 
 
 #: AD-1341 S6: the Ship's Records directory a tier 3 reset deletes (``RESET_TIERS[3]["dirs"]``), so the one it keeps.
@@ -3487,6 +3532,7 @@ def _show_promotion_plan(
         plan = asyncio.run(
             plan_promotion(_reset_records_store(config, data_dir), timeline_id=timeline_id or _UNATTRIBUTED_TIMELINE)
         )
+        nature = asyncio.run(_nature_record(data_dir, timeline_id))  # AD-1341 S6: the description the reset would archive
     except Exception as exc:  # the dry run reports it; nothing is touched either way
         console.print(
             f"[red]✗[/red] The promotion plan could not be read: {escape(type(exc).__name__)}: {escape(str(exc))}"
@@ -3498,6 +3544,10 @@ def _show_promotion_plan(
         console.print(f"    + {escape(record.source_ref)}")
     for path in plan.withheld:
         console.print(f"    - withheld: {escape(path)}")
+    if nature is not None:  # AD-1341 S6: the Captain reads what a later crew would
+        console.print(f"    + {escape(nature.source_ref)} (the nature description):")
+        for line in nature.content.splitlines():
+            console.print(f"      {escape(line)}")
     if plan.records:  # AD-1341 S3: the Captain reviews, and may veto, before the reset promotes
         console.print(
             "  [dim]probos archive pending shows what each would do now; "
@@ -3597,6 +3647,7 @@ def _cmd_archive_pending(args: argparse.Namespace) -> int:
     timeline_id = _read_instance_id(data_dir) or _UNATTRIBUTED_TIMELINE
     try:
         review = asyncio.run(_review_pending_promotion(config, data_dir, timeline_id))
+        nature = asyncio.run(_pending_nature(config, data_dir))  # AD-1341 S6: this generation's nature description
     except Exception as exc:  # nothing is recorded either way; the Captain sees why
         print(f"The review could not be read: {type(exc).__name__}: {exc}")
         return 1
@@ -3606,9 +3657,11 @@ def _cmd_archive_pending(args: argparse.Namespace) -> int:
     )
     for pending in review.sources:
         print(f"  {_pending_label(pending.state)}: {pending.record.source_ref}")
+    if nature is not None:  # AD-1341 S6: the next reset would archive it too; probos archive veto keeps it out
+        print(f"  {_pending_label(nature.state)}: {nature.record.source_ref}")
     for path in review.withheld:
         print(f"  - withheld: {path}")
-    if review.sources:
+    if review.sources or nature is not None:
         print(
             "Veto a source: probos archive veto SOURCE_REF --reason TEXT. "
             "Erase an archived entry: probos archive erase ENTRY_ID --reason TEXT."
@@ -3676,7 +3729,7 @@ async def _veto_pending_source(
     config: SystemConfig, data_dir: Path, source_ref: str, reason: str, confirmed: bool,
 ) -> int:
     """Find the pending source, show it, ask unless ``--yes``, then record the veto. The archive is closed on every exit."""
-    from probos.knowledge.archive_promotion import plan_promotion
+    from probos.knowledge.archive_promotion import NATURE_DESCRIPTION_PREFIX, plan_promotion
     from probos.knowledge.archive_store import VetoOutcome
 
     timeline_id = _read_instance_id(data_dir)
@@ -3684,6 +3737,9 @@ async def _veto_pending_source(
         _reset_records_store(config, data_dir), timeline_id=timeline_id or _UNATTRIBUTED_TIMELINE,
     )
     record = next((item for item in plan.records if item.source_ref == source_ref), None)
+    if record is None and source_ref.startswith(NATURE_DESCRIPTION_PREFIX):  # AD-1341 S6: this generation's description
+        nature = await _nature_record(data_dir, timeline_id)
+        record = nature if nature is not None and nature.source_ref == source_ref else None
     if record is None:
         print(
             f"{source_ref} is not a source the next promotion would archive (not in Ship's Records, not eligible, "
