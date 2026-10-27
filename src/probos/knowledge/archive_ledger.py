@@ -3,6 +3,9 @@ reset kept.
 
 ``archive_snapshots`` holds no content: each snapshot's timeline, ship DID, generation dates, file name, the file's
 SHA-256, its file count and size (``probos.knowledge.records_snapshot`` writes the file beside the archive).
+``nature_clearances`` (M3) holds no content either: each ``--clean-slate``, its timeline and tier, what it cleared and
+how many procedures the store held, recorded before anything is deleted (``record_nature_clearance``, reached only
+from ``probos reset``).
 ``ArchiveStore`` owns the schema and its version (``archive_store._SCHEMA``). The ledger opens the same file on a
 connection of its own, and only once the store has brought it to that version, so a ledger write never shares a
 transaction with an entry's (S1 D16). It is its own class because ``ArchiveStore`` is at the repository's SRP method
@@ -17,6 +20,7 @@ trigger (``scripts/check_architecture_principles.py``).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -44,6 +48,10 @@ _SNAPSHOT_BY_ID_SQL = f"SELECT {_SNAPSHOT_COLUMNS} FROM archive_snapshots WHERE 
 # The Captain's erasure marks the row once; a second erasure keeps the first reason and time.
 _SNAPSHOT_ERASE_SQL = (
     "UPDATE archive_snapshots SET erased_at = ?, erase_reason = ? WHERE id = ? AND erased_at IS NULL"
+)
+_NATURE_CLEARANCE_SQL = (
+    "INSERT INTO nature_clearances (timeline_id, reset_tier, cleared, procedure_count, cleared_at) "
+    "VALUES (?, ?, ?, ?, ?)"
 )
 
 
@@ -102,6 +110,26 @@ class SnapshotEntry:
     recorded_at: float
     erased_at: float | None = None
     erase_reason: str = ""
+
+
+@dataclass(frozen=True)
+class NatureClearanceRecord:
+    """AD-1341 S6: the Captain's clean slate at a reset, for ``nature_clearances``: what is cleared, never content."""
+
+    timeline_id: str
+    reset_tier: int
+    cleared: tuple[str, ...]
+    procedure_count: int
+
+    def __post_init__(self) -> None:
+        if type(self.timeline_id) is not str:
+            raise ValueError("AD-1341 S6: timeline_id is a string (empty when the ship has no instance id)")
+        if type(self.reset_tier) is not int or self.reset_tier not in (2, 3):  # AD-1341 S6: tier 1 keeps the crew
+            raise ValueError("AD-1341 S6: a clean slate is part of a reset of tier 2 or 3")
+        if type(self.cleared) is not tuple or any(type(item) is not str or not item.strip() for item in self.cleared):
+            raise ValueError("AD-1341 S6: cleared is a tuple of data-directory names")
+        if type(self.procedure_count) is not int or self.procedure_count < -1:
+            raise ValueError("AD-1341 S6: procedure_count is a count, or -1 when the store could not be counted")
 
 
 def _row_to_snapshot(row: Any) -> SnapshotEntry:
@@ -229,3 +257,23 @@ class ArchiveLedger:
             return None
         logger.warning("AD-1341 S6: the Captain erased Ship's Records snapshot %d", snapshot_id)
         return _row_to_snapshot(row)
+
+    async def record_nature_clearance(self, clearance: NatureClearanceRecord) -> int:
+        """Record the Captain's clean slate before it deletes nature; reached only from ``probos reset``."""
+        if type(clearance) is not NatureClearanceRecord:
+            raise TypeError("AD-1341 S6: record_nature_clearance takes a NatureClearanceRecord")
+        params = (
+            clearance.timeline_id.strip(), clearance.reset_tier, json.dumps(list(clearance.cleared)),
+            clearance.procedure_count, time.time(),
+        )
+        async with self._write_lock:  # S1 D16: the marker commits or rolls back alone
+            if not self._db:
+                raise RuntimeError("ArchiveLedger not initialized")
+            try:
+                cursor = await self._db.execute(_NATURE_CLEARANCE_SQL, params)
+                await self._db.commit()
+            except BaseException:
+                await _rollback_quietly(self._db)
+                raise
+        logger.warning("AD-1341 S6: the Captain's clean slate is recorded (tier %d)", clearance.reset_tier)
+        return cursor.lastrowid

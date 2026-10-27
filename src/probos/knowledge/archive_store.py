@@ -19,7 +19,8 @@ episode it would erase, until the Captain has erased that entry.
 AD-1341 S6: ``_SCHEMA`` also creates ``archive_snapshots``, the content-free
 record of each Ship's Records snapshot a ``--full`` reset kept beside the
 archive. Its rows are written by ``probos.knowledge.archive_ledger``, on a
-connection of its own, never by this class.
+connection of its own, never by this class. So are those of
+``nature_clearances``, the content-free marker of each ``--clean-slate``.
 
 Each entry records the timeline (instance) it came from, its source kind and
 reference, the content's SHA-256, its classification (``ship`` or ``fleet``: a
@@ -301,6 +302,15 @@ CREATE TABLE IF NOT EXISTS archive_snapshots (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_snapshots_path ON archive_snapshots(relative_path);
+
+CREATE TABLE IF NOT EXISTS nature_clearances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timeline_id TEXT NOT NULL,
+    reset_tier INTEGER NOT NULL,
+    cleared TEXT NOT NULL DEFAULT '[]',
+    procedure_count INTEGER NOT NULL,
+    cleared_at REAL NOT NULL
+);
 """
 
 # AD-1341 schema v1: the provenance columns, each added to a v0 table only where absent, so a migration that

@@ -174,3 +174,18 @@ async def nature_description_record(
         await db.close()
     facts = tuple(ProcedureFact.from_row(row) for row in rows)
     return describe_nature(timeline_id, started, facts, developed=developed, active=active)
+
+
+async def count_procedures(db_path: Path, open_read_only: Callable[[str], Awaitable[DatabaseConnection]]) -> int:
+    """AD-1341 S6 (M3): how many procedures the store holds, for the clean slate's marker; 0 with no store.
+
+    Opened read-only, as ``nature_description_record`` does; any error propagates.
+    """
+    if not db_path.is_file():
+        return 0
+    db = await open_read_only(str(db_path))
+    try:
+        cursor = await db.execute("SELECT COUNT(*) FROM procedure_records")
+        return int((await cursor.fetchone())[0])
+    finally:
+        await db.close()

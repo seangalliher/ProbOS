@@ -1,0 +1,347 @@
+"""AD-1341 S6 (#1569), M3: ``probos reset --clean-slate`` clears nature, recorded first, and nothing else.
+
+Real objects: the real ``_cmd_reset`` and ``main`` on a temporary data directory, a ``procedures.db`` with the
+procedure store's own schema, the real ``ArchiveStore`` and ``ArchiveLedger``. The config loader is the one stand-in;
+a deletion or a marker that fails is injected, because the platform cannot fail one on demand. No test reaches a real
+data directory (the autouse fixture), and nothing here clears anything outside ``tmp_path``.
+"""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import os
+import sqlite3
+import sys
+from argparse import Namespace
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import probos
+from probos import __main__ as cli
+from probos.knowledge.archive_ledger import ArchiveLedger, NatureClearanceRecord
+from probos.cognitive.procedure_store import _SCHEMA as _PROCEDURE_SCHEMA
+from probos.config import ArchiveConfig, KnowledgeConfig, SystemConfig
+from probos.knowledge.archive_promotion import promote_nature_description
+from probos.knowledge.archive_store import ArchiveStore
+from probos.knowledge.nature_description import PROCEDURES_DB, describe_nature
+from probos.storage.sqlite_factory import default_factory
+
+_SRC = Path(probos.__file__).resolve().parent
+_SHIP = "ship-did-alpha-0001"
+_BOOT = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+_B = _BOOT.timestamp()
+_ROWS = (
+    {"id": "p-0", "name": "Inherited routine", "created_at": _B - 86400.0},
+    {"id": "p-1", "name": "Coolant drift triage", "created_at": _B + 60.0, "total_completions": 8},
+    {"id": "p-2", "name": "Sensor first", "evolution_type": "FIX", "created_at": _B + 120.0},
+    {"id": "p-3", "name": "Purge before isolating", "is_negative": 1, "created_at": _B + 180.0},
+)
+#: Data-directory files no reset tier lists and the clean slate must leave alone.
+_KEPT_STORES = ("cognitive_skills.db", "skill_grants.db", "profile_qualifications.db")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_data_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every platform data and home path points under ``tmp_path``, and the CLI's default data directory raises."""
+    home = tmp_path / "platform"
+    for name in ("LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOME", "XDG_DATA_HOME"):
+        monkeypatch.setenv(name, str(home / name.lower()))
+
+    def _refuse() -> Path:
+        raise AssertionError("AD-1341 S6: a test reached the platform data directory")
+
+    monkeypatch.setattr(cli, "_default_data_dir", _refuse)
+
+
+def _archive_db(tmp_path: Path) -> Path:
+    return tmp_path / "archive" / "archive.db"
+
+
+def _config(tmp_path: Path, *, archive_enabled: bool = True) -> SystemConfig:
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir(exist_ok=True)
+    (tmp_path / "archive").mkdir(exist_ok=True)
+    section = ArchiveConfig(enabled=archive_enabled, db_path=str(_archive_db(tmp_path)))
+    return SystemConfig(knowledge=KnowledgeConfig(repo_path=str(knowledge)), archive=section)
+
+
+def _data_dir(tmp_path: Path) -> Path:
+    data_dir = tmp_path / "data"
+    (data_dir / "ontology").mkdir(parents=True)
+    id_file = data_dir / "ontology" / "instance_id"
+    id_file.write_text(f"{_SHIP}\n", encoding="utf-8")
+    os.utime(id_file, (_B, _B))  # the ship's first boot
+    for name in ("events.db", "trust.db", "ward_room.db"):  # tiers 1, 2 and 3
+        (data_dir / name).write_text(name, encoding="utf-8")
+    return data_dir
+
+
+def _nature(data_dir: Path) -> None:
+    """The procedure store's directory as the vessel leaves it: the index, the challenger ledger, the semantic index."""
+    path = data_dir / PROCEDURES_DB
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.executescript(_PROCEDURE_SCHEMA)
+        for row in _ROWS:
+            columns, marks = ", ".join(row), ", ".join("?" for _ in row)
+            connection.execute(f"INSERT INTO procedure_records ({columns}) VALUES ({marks})", tuple(row.values()))
+        connection.commit()
+    finally:
+        connection.close()
+    (path.parent / "procedures_challenges.db").write_bytes(b"ledger")
+    (path.parent / "chroma").mkdir()
+    (path.parent / "chroma" / "index.bin").write_bytes(b"index")
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    if not root.exists():
+        return {}
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes() for path in sorted(root.rglob("*")) if path.is_file()
+    }
+
+
+def _rows(path: Path, sql: str, params: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
+    connection = sqlite3.connect(str(path))
+    try:
+        return connection.execute(sql, params).fetchall()
+    finally:
+        connection.close()
+
+
+def _reset(monkeypatch: pytest.MonkeyPatch, config: SystemConfig, data_dir: Path, **flags: Any) -> Any:
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr(cli, "_load_config_with_fallback", lambda _path: (config, None))
+    values: dict[str, Any] = {
+        "yes": True, "soft": False, "full": False, "dry_run": False, "wipe_records": False, "config": None,
+        "data_dir": data_dir, "skip_promotion": None, "clean_slate": False,
+    }
+    values.update(flags)
+    return cli._cmd_reset(Namespace(**values))
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    try:
+        if sys.platform == "win32":
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"this host cannot create a directory link: {exc}")
+
+
+async def _an_earlier_entry(tmp_path: Path) -> None:
+    store = ArchiveStore(str(_archive_db(tmp_path)), connection_factory=default_factory)
+    await store.initialize()
+    try:
+        await promote_nature_description(store, describe_nature("ship-did-earlier-0000", _BOOT, (), developed=1, active=0))
+    finally:
+        await store.close()
+
+
+@pytest.mark.parametrize("full", [False, True], ids=["tier2", "tier3"])
+def test_a_clean_slate_describes_records_and_clears_nature_and_touches_nothing_else(
+    full: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    for name in _KEPT_STORES:
+        (data_dir / name).write_bytes(name.encode("utf-8"))
+    (data_dir / "archives").mkdir()
+    (data_dir / "archives" / "ward_room_2026-01-01_000000.db").write_bytes(b"an older backup")
+    captain = tmp_path / "captain" / "system.yaml"
+    captain.parent.mkdir()
+    captain.write_text("archive:\n  enabled: true\n", encoding="utf-8")
+    config = _config(tmp_path)
+    asyncio.run(_an_earlier_entry(tmp_path))
+    before = _tree(data_dir)
+
+    assert _reset(monkeypatch, config, data_dir, full=full, clean_slate=True) == 0
+
+    assert not (data_dir / "procedures").exists()
+    archive = _archive_db(tmp_path)
+    assert _rows(archive, "SELECT timeline_id, reset_tier, cleared, procedure_count FROM nature_clearances") == [
+        (_SHIP, 3 if full else 2, '["procedures/"]', 4),
+    ]
+    assert _rows(archive, "SELECT timeline_id FROM archive WHERE source_kind = 'nature_description' ORDER BY id") == [
+        ("ship-did-earlier-0000",), (_SHIP,),
+    ]  # the earlier entry kept, and this crew's nature described before it was cleared
+    deleted = {"events.db", "trust.db", "ontology/instance_id"} | ({"ward_room.db"} if full else set())
+    after = {
+        path: content for path, content in _tree(data_dir).items()
+        if path != "probos.pid.lock" and not (path.startswith("archives/ward_room_") and path not in before)
+    }
+    assert after == {
+        path: content for path, content in before.items() if path not in deleted and not path.startswith("procedures/")
+    }
+    assert captain.read_text(encoding="utf-8") == "archive:\n  enabled: true\n"
+    assert _tree(tmp_path / "knowledge") == {}
+    assert "Nature cleared (--clean-slate): procedures/" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("flags", [{"soft": True}, {}, {"full": True}], ids=["tier1", "tier2", "tier3"])
+def test_without_clean_slate_nature_persists_at_every_tier(
+    flags: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    before = _tree(data_dir / "procedures")
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, **flags) == 0
+
+    assert _tree(data_dir / "procedures") == before
+    assert "Nature kept: procedures/ (Cognitive JIT procedures)" in capsys.readouterr().out
+    if _archive_db(tmp_path).exists():
+        assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM nature_clearances") == [(0,)]
+
+
+@pytest.mark.parametrize("case", ["soft", "archive-disabled"])
+def test_a_clean_slate_that_does_not_apply_or_cannot_be_recorded_changes_nothing(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    before = _tree(data_dir)
+    config = _config(tmp_path, archive_enabled=case != "archive-disabled")
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True, **({"soft": True} if case == "soft" else {})) == 2
+
+    assert _tree(data_dir) == before  # no pidfile lock either: refused before anything is opened
+    assert not _archive_db(tmp_path).exists()
+
+
+def test_an_interrupted_clean_slate_is_finished_by_running_it_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    config = _config(tmp_path)
+    real_rmtree = cli.shutil.rmtree
+    calls: list[Path] = []
+
+    def _fails_once(path: Any, *args: Any, **kwargs: Any) -> None:
+        calls.append(Path(path))
+        if len(calls) == 1:
+            (Path(path) / "procedures_challenges.db").unlink()  # part of it went before the failure
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(cli.shutil, "rmtree", _fails_once)
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True) == 1
+    assert "did not finish" in capsys.readouterr().out
+    assert (data_dir / "trust.db").is_file() and (data_dir / "ontology" / "instance_id").is_file()  # no tier loop
+    assert (data_dir / PROCEDURES_DB).is_file()
+    assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances") == [(4,)]  # recorded first
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True) == 0  # the same command finishes it
+    assert not (data_dir / "procedures").exists() and not (data_dir / "trust.db").exists()
+    assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances ORDER BY id") == [(4,), (4,)]
+
+
+def test_a_clean_slate_whose_marker_cannot_be_written_deletes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    before = _tree(data_dir / "procedures")
+
+    async def _refuses(self: ArchiveLedger, clearance: NatureClearanceRecord) -> int:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ArchiveLedger, "record_nature_clearance", _refuses)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, clean_slate=True) == 1
+
+    assert "could not be recorded" in capsys.readouterr().out
+    assert _tree(data_dir / "procedures") == before
+    assert (data_dir / "trust.db").is_file()
+
+
+def test_the_dry_run_and_the_confirmation_name_what_a_clean_slate_clears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    config = _config(tmp_path)
+
+    assert _reset(monkeypatch, config, data_dir, dry_run=True, clean_slate=True) == 0
+    out = capsys.readouterr().out
+    assert "Nature (--clean-slate)" in out and "Cognitive JIT procedures, their challengers and index" in out
+
+    assert _reset(monkeypatch, config, data_dir, dry_run=True) == 0
+    out = capsys.readouterr().out
+    assert "Nature (--clean-slate)" not in out and "Cognitive JIT procedures: nature, kept by design" in out
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+    assert _reset(monkeypatch, config, data_dir, yes=False, clean_slate=True) == 0  # declined
+    assert "Nature (--clean-slate)" in capsys.readouterr().out
+    assert (data_dir / PROCEDURES_DB).is_file() and not _archive_db(tmp_path).exists()
+
+
+def test_a_link_at_the_procedures_name_is_refused_and_never_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = _data_dir(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep", encoding="utf-8")
+    _link_dir(data_dir / "procedures", outside)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, clean_slate=True) == 1
+
+    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
+    assert (data_dir / "trust.db").is_file()
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM nature_clearances") == [(0,)]  # refused before the marker
+
+
+def test_only_the_cli_records_a_clean_slate() -> None:
+    naming: set[str] = set()
+    for path in sorted(_SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Attribute) and node.attr == "record_nature_clearance") or (
+                isinstance(node, ast.Constant) and node.value == "record_nature_clearance"
+            ):
+                naming.add(path.relative_to(_SRC).as_posix())
+    assert naming == {"__main__.py"}
+
+
+def test_main_parses_clean_slate(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Namespace] = []
+
+    def _command(args: Namespace) -> int:
+        seen.append(args)
+        return 3
+
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)  # no repository .env into the worker
+    monkeypatch.setattr(asyncio, "set_event_loop_policy", lambda policy: None)  # main sets one on Windows
+    monkeypatch.setattr(cli, "_cmd_reset", _command)
+    monkeypatch.setattr("sys.argv", ["probos", "reset", "--yes", "--clean-slate"])
+
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+
+    assert exited.value.code == 3
+    assert [args.clean_slate for args in seen] == [True]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"reset_tier": 1}, {"reset_tier": 4}, {"reset_tier": True}, {"procedure_count": -2}, {"procedure_count": 1.0},
+     {"cleared": ["procedures/"]}, {"cleared": (" ",)}, {"timeline_id": None}],
+    ids=["tier-1", "tier-4", "tier-bool", "count-below", "count-float", "cleared-list", "cleared-blank", "timeline"],
+)
+def test_a_clean_slate_marker_holds_only_what_it_may(change: dict[str, Any]) -> None:
+    good: dict[str, Any] = {"timeline_id": _SHIP, "reset_tier": 2, "cleared": ("procedures/",), "procedure_count": 0}
+    NatureClearanceRecord(**good)  # premise
+    NatureClearanceRecord(**{**good, "timeline_id": "", "procedure_count": -1})  # no instance id; an unread store
+    with pytest.raises(ValueError):
+        NatureClearanceRecord(**{**good, **change})

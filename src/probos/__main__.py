@@ -2797,7 +2797,29 @@ def _find_chromadb_uuid_dirs(data_dir: Path) -> list[Path]:
     return result
 
 
-def _show_confirmation_prompt(tier: int, data_dir: Path, active_task_count: int, console: Console) -> bool:
+#: AD-1341 S6: the data directory's nature, which only --clean-slate clears (the procedure store, ``runtime.py``).
+_NATURE_DIR = "procedures"
+
+
+def _nature_rows(table: Table, data_dir: Path, clean_slate: bool) -> None:
+    """AD-1341 S6: what ``--clean-slate`` clears, as the confirmation and the dry run show it."""
+    if clean_slate:
+        table.add_row("\n[bold]Nature (--clean-slate)[/bold]", "", "")
+        table.add_row(
+            f"  • {_NATURE_DIR}/", "Cognitive JIT procedures, their challengers and index",
+            _get_file_size(data_dir / _NATURE_DIR),
+        )
+
+
+def _nature_preserved(clean_slate: bool) -> list[tuple[str, str, str]]:
+    """AD-1341 S6: nature kept (without ``--clean-slate``) and the skill catalog, which no reset touches."""
+    kept = [] if clean_slate else [(f"{_NATURE_DIR}/", "Cognitive JIT procedures: nature, kept by design", "")]
+    return [*kept, ("config/skills/", "Skill catalog: part of the installation, never cleared", "")]
+
+
+def _show_confirmation_prompt(
+    tier: int, data_dir: Path, active_task_count: int, console: Console, *, clean_slate: bool = False,
+) -> bool:
     """Show Rich confirmation prompt with tier details. Returns True if user confirms."""
     tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}
     targets = _collect_tier_targets(tier, data_dir)
@@ -2819,6 +2841,7 @@ def _show_confirmation_prompt(tier: int, data_dir: Path, active_task_count: int,
         table.add_row(f"\n[bold]{tier_labels[t]}[/bold]", "", "")
         for name, purpose, size in items:
             table.add_row(f"  • {name}", purpose, size)
+    _nature_rows(table, data_dir, clean_slate)  # AD-1341 S6: the confirmation names what a clean slate clears
 
     # What will be preserved
     preserved_items = []
@@ -2830,6 +2853,7 @@ def _show_confirmation_prompt(tier: int, data_dir: Path, active_task_count: int,
             preserved_items.append((dname + "/", _file_purpose(dname), ""))
     # Always preserved
     preserved_items.append(("archives/", "Ward Room backups", ""))
+    preserved_items += _nature_preserved(clean_slate)  # AD-1341 S6: the confirmation names nature kept
 
     if preserved_items:
         table.add_row("\n[bold green]Preserved:[/bold green]", "", "")
@@ -2854,7 +2878,9 @@ def _show_confirmation_prompt(tier: int, data_dir: Path, active_task_count: int,
     return answer == "y"
 
 
-def _show_dry_run(tier: int, data_dir: Path, active_task_count: int, console: Console) -> None:
+def _show_dry_run(
+    tier: int, data_dir: Path, active_task_count: int, console: Console, *, clean_slate: bool = False,
+) -> None:
     """Show what would be cleared without making changes."""
     _show_confirmation_prompt.__wrapped__ = True  # just reuse the display
     tier_names = {1: "Reboot", 2: "Recommissioning", 3: "Maiden Voyage"}
@@ -2876,6 +2902,7 @@ def _show_dry_run(tier: int, data_dir: Path, active_task_count: int, console: Co
         table.add_row(f"\n[bold]{tier_labels[t]}[/bold]", "", "")
         for name, purpose, size in items:
             table.add_row(f"  • {name}", purpose, size)
+    _nature_rows(table, data_dir, clean_slate)  # AD-1341 S6: the dry run names what a clean slate clears
 
     preserved_items = []
     for t in range(tier + 1, 4):
@@ -2885,6 +2912,7 @@ def _show_dry_run(tier: int, data_dir: Path, active_task_count: int, console: Co
         for dname in RESET_TIERS[t].get("dirs", []):
             preserved_items.append((dname + "/", _file_purpose(dname), ""))
     preserved_items.append(("archives/", "Ward Room backups", ""))
+    preserved_items += _nature_preserved(clean_slate)  # AD-1341 S6: the dry run names nature kept
 
     if preserved_items:
         table.add_row("\n[bold green]Preserved:[/bold green]", "", "")
@@ -2911,8 +2939,9 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     """Handle ``probos reset`` — tiered reset system (BF-070). Returns the exit code (AD-1341 S1).
 
     0 done, declined or a dry run; 1 refused with nothing deleted (a vessel owns the data directory, the Ship's
-    Archive lies inside what the reset deletes, or the promotion of a tier 2 or 3 reset failed); 2 a
-    ``--skip-promotion`` without a usable reason.
+    Archive lies inside what the reset deletes, or the promotion of a tier 2 or 3 reset failed; AD-1341 S6: or its
+    snapshot, or a ``--clean-slate`` that could not be recorded or finished, before the tier loop); 2 a
+    ``--skip-promotion`` without a usable reason, or a ``--clean-slate`` with ``--soft`` or a disabled archive.
     At tier 2 and above what the crew published is promoted into the Ship's Archive before the tier loop.
     """
     console = Console()
@@ -2932,6 +2961,10 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         if problem:
             console.print(f"[red]✗[/red] {problem}")
             return 2
+    clean_slate = bool(getattr(args, 'clean_slate', False))  # AD-1341 S6: the Captain's opt-in reset of nature
+    if clean_slate and tier < 2:  # AD-1341 S6: --soft keeps the crew, so there is no new crew to start clean
+        console.print("[red]✗[/red] --clean-slate applies to a reset of tier 2 or above; --soft keeps the crew.")
+        return 2
 
     # Load config to find knowledge repo_path
     config, _ = _load_config_with_fallback(getattr(args, 'config', None))
@@ -2943,6 +2976,13 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     data_dir_knowledge = data_dir / "knowledge"
     if not repo_path.is_dir() and data_dir_knowledge.is_dir():
         repo_path = data_dir_knowledge
+
+    if clean_slate and not config.archive.enabled:  # AD-1341 S6: a clean slate is never unrecorded
+        console.print(
+            "[red]✗[/red] --clean-slate records what it clears in the Ship's Archive, which is disabled "
+            "(archive.enabled). Nothing was changed."
+        )
+        return 2
 
     # AD-1341 S1 A4 (F3): refuse a reset that would delete the Ship's Archive. Every tier and a dry run too, before
     # the scheduled-task read, the confirmation and the pidfile; nothing is opened or touched.
@@ -2978,14 +3018,14 @@ def _cmd_reset(args: argparse.Namespace) -> int:
 
     # --dry-run: show what would happen and exit
     if getattr(args, 'dry_run', False):
-        _show_dry_run(tier, data_dir, active_task_count, console)
+        _show_dry_run(tier, data_dir, active_task_count, console, clean_slate=clean_slate)
         if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
             return _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier)
         return 0
 
     # Confirmation prompt (skipped with -y)
     if not getattr(args, 'yes', False):
-        if not _show_confirmation_prompt(tier, data_dir, active_task_count, console):
+        if not _show_confirmation_prompt(tier, data_dir, active_task_count, console, clean_slate=clean_slate):
             console.print("[dim]Aborted.[/dim]")
             return 0
 
@@ -3011,6 +3051,11 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         if promote_first and not _promote_before_reset(config, tier, data_dir, skip_reason, console):
             console.print("[red]✗[/red] probos reset refused before deleting anything.")
             return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted
+        # AD-1341 S6: --clean-slate clears nature after the promotion (which described it) and before the tier loop, so
+        # a failure here leaves every crew file in place and the same command finishes it.
+        if clean_slate and not _clear_nature(config, tier, data_dir, console):
+            console.print("[red]✗[/red] probos reset refused before its tier loop; the crew's files are untouched.")
+            return 1
 
         # ── Execute reset ──
         tier_counts: dict[int, int] = {}
@@ -3153,6 +3198,11 @@ def _cmd_reset(args: argparse.Namespace) -> int:
             preserved.append(dname + "/")
     preserved.append("archives/")
     console.print(f"\n  Preserved: {', '.join(preserved)}")
+    if clean_slate:  # AD-1341 S6
+        console.print("  Nature cleared (--clean-slate): procedures/ (Cognitive JIT procedures)")
+    else:
+        console.print("  Nature kept: procedures/ (Cognitive JIT procedures)")
+    console.print("  The skill catalog (config/skills) is part of the installation; no reset touches it.")
 
     if archive_path:
         console.print(f"\n  Ward Room archived to: {archive_path}")
@@ -3880,6 +3930,68 @@ async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, c
     return 0
 
 
+def _clear_nature(config: SystemConfig, tier: int, data_dir: Path, console: Console) -> bool:
+    """AD-1341 S6: ``--clean-slate``. Record the clearance in the Ship's Archive, then delete nature; True when done.
+
+    Nature here is the procedure store's directory (``procedures/``: ``procedures.db``, the AD-1326 challenger ledger
+    and the procedures' semantic index). The marker is written first, so nature is never deleted unrecorded. A link,
+    a junction or a file at that name is refused, never followed. A deletion that fails part-way is reported; the
+    reset refuses before its tier loop, and the same command finishes it. The skill catalog (``config/skills``), the
+    Captain's grants, the Ship's Archive and its snapshots are never touched.
+    """
+    from rich.markup import escape
+
+    procedures = data_dir / _NATURE_DIR
+    if procedures.is_symlink() or procedures.is_junction():  # AD-1341 S6: never followed out of the data directory
+        console.print(f"[red]✗[/red] {escape(str(procedures))} is a link; --clean-slate clears only the data directory's own.")
+        return False
+    if procedures.exists() and not procedures.is_dir():
+        console.print(f"[red]✗[/red] {escape(str(procedures))} is not the procedure store's directory; nothing was cleared.")
+        return False
+    try:
+        count = asyncio.run(_record_nature_clearance(config, data_dir, tier))  # AD-1341 S6: the marker first
+    except Exception as exc:  # the marker failed, so nothing is deleted; the Captain sees why
+        console.print(
+            f"[red]✗[/red] The clean slate could not be recorded, so nothing was cleared: "
+            f"{escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return False
+    try:
+        if procedures.exists():
+            shutil.rmtree(procedures, onerror=_force_remove_readonly)
+    except OSError as exc:
+        console.print(
+            f"[red]✗[/red] The clean slate is recorded but did not finish: {escape(type(exc).__name__)}: "
+            f"{escape(str(exc))}. Run the same command again."
+        )
+        return False  # AD-1341 S6: the deletion is recorded and unfinished; the reset refuses before its tier loop
+    console.print(f"  Nature cleared (--clean-slate): {_NATURE_DIR}/ held {count} procedure(s); recorded in the Ship's Archive.")
+    return True
+
+
+async def _record_nature_clearance(config: SystemConfig, data_dir: Path, tier: int) -> int:
+    """AD-1341 S6: the clean slate's marker: the timeline, the tier, what is cleared and the procedures it held."""
+    from probos.knowledge.archive_ledger import NatureClearanceRecord
+    from probos.knowledge.nature_description import PROCEDURES_DB, count_procedures
+
+    try:
+        count = await count_procedures(data_dir / PROCEDURES_DB, _open_read_only)
+    except Exception:  # log-and-degrade: an unreadable store is still the Captain's to clear; the marker says -1
+        logging.getLogger(__name__).warning(
+            "AD-1341 S6: the procedure store could not be counted before the clean slate", exc_info=True,
+        )
+        count = -1
+    cleared = (f"{_NATURE_DIR}/",) if (data_dir / _NATURE_DIR).exists() else ()
+    ledger = await _open_ledger(config)
+    try:
+        await ledger.record_nature_clearance(NatureClearanceRecord(
+            timeline_id=_read_instance_id(data_dir), reset_tier=tier, cleared=cleared, procedure_count=count,
+        ))
+    finally:
+        await ledger.close()
+    return count
+
+
 def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
     """Handle read-only git objects on Windows."""
     import stat
@@ -4192,6 +4304,10 @@ def main() -> None:
         "--skip-promotion", type=str, default=None, metavar="REASON",
         help="AD-1341: reset without promoting Ship's Records into the Ship's Archive first; "
              "the reason (1-500 characters) is recorded",
+    )
+    reset_parser.add_argument(
+        "--clean-slate", action="store_true",
+        help="AD-1341 S6: with tier 2 or 3, also clear nature (the Cognitive JIT procedure store), recorded first",
     )
 
     # --- probos archive (AD-1341 S1, S3): the Captain's erasure, review and veto ---
