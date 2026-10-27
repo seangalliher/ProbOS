@@ -6,6 +6,8 @@
 
 **Re-anchored and reformatted by the orchestrator (2026-10-27).** (1) **Base:** `origin/main` `71ff4785834902c5985ae57344761d23a42245d7`, the merge of AD-1341 S6 (PR #1689). Its tree, `628f874a7b04a5e34878d84f6479e98b314a6cc1`, is the tree the Architect drafted on (`a2390998`), so every SEARCH below applies unchanged. (2) **Pair format:** the Architect wrote each pair as `Pair N:` with bare `SEARCH` and `REPLACE` lines inside one fence, and the 7.6 and section 8 pairs with no label at all; the apply tool reads `SEARCH:` and `REPLACE:` labels with a fence each, so the orchestrator converted all 14 pairs by tool (a round trip proved every body byte for byte; the 7.6 and section 8 labels now name their file). (3) **DECISIONS.md pair (section 8):** moved from the top of the Era V section to after AD-1341 S6's entry, where the file's recent entries are appended in date order; it also carries the just-culture entry the Captain asked to have recorded (#1569 comment 1; follow-up #1690, entry (d)), text by the Architect's 2026-10-27 consult. (4) **M3 also regenerates the AD ledger:** `python scripts/gen_ad_ledger.py`, then stage the two files it rewrites (`docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json`); without it `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` fail (measured on the orchestrator's oracle: 3 failures, then 33 passed). (5) **Dates:** every `2026-10-2X` in section 8 becomes the date of M3's commit.
 
+**Amendment A1 (`claude-architect`, 2026-10-27, after the orchestrator's census of `427546b8`: 24 killed, 2 survived).** (1) **R-7 closed:** D2 now drives a second crossing of the same agent inside the 300 s cooldown. It asserts that the hook reached the service (the conn manager was called twice) and that no delivery was scheduled. It also asserts that the update that stays below the floor matched nothing. D2's body changes; the case count does not. (2) **R-9 recorded as equivalent:** an inactive manager's `check_escalation` is already False. Its §10 row names no test. (3) **§10 made census-ready:** every Killed-by cell names full function names, with `[id]` for a single case. W-2 and B-1 name their measured killers (T3b, D7) plus D2, which A1's assertions are predicted to make a second killer of both. (4) **§6 corrected:** the triggers file holds 32 cases. M2's file fails on 10 of 11 cases on its base: D3 passes there, as a negative case, and mutation R-2 kills it. (5) **Not changed:** §7.1 to §7.4 and §8. Rerun after A1: the baseline, then W-2, B-1, R-4, R-7, R-8.
+
 **Milestones and tiers:**
 - **M1, the trigger truth** (`watch_rotation.py`, the console command, tests). **STANDARD**: Captain-facing Night Orders behaviour and status.
 - **M2, delivery and isolation** (`runtime.py` hook, `bridge_alerts.py`, tests). **HIGH**: `ProbOSRuntime._emit_event` is the shared event-emission contract (AD-1195 durable offer, NATS, listeners).
@@ -64,7 +66,7 @@ The other three triggers can never fire: their event names are never emitted. `t
 
 ## 4. Milestones
 
-Write each milestone's new test file first and run it on the milestone's base: it must fail at import (§6). If a test outside §7 fails, stop and report it; never delete or loosen a test. Run each focused gate with `d:/ProbOS/.venv/Scripts/pytest.exe -n 0`.
+Write each milestone's new test file first and run it on the milestone's base: M1's must fail at collection, and M2's must fail on every case except D3, a negative case that passes on the old hook too (§6). If a test outside §7 fails, stop and report it; never delete or loosen a test. Run each focused gate with `d:/ProbOS/.venv/Scripts/pytest.exe -n 0`.
 
 | Milestone | Tier | Files (§7) | Focused gate |
 |---|---|---|---|
@@ -84,9 +86,9 @@ Write each milestone's new test file first and run it on the milestone's base: i
 
 ## 6. Tests
 
-On each milestone's base, every test in its new file fails at import:
-- M1: `ImportError: cannot import name 'NIGHT_ORDER_TRIGGER_EVENTS' from 'probos.watch_rotation'`.
-- M2: `AttributeError` from the `MagicMock(spec=BridgeAlertService)` / `check_night_orders_escalation` cases. Every chain case also fails: no thread is created, and the base raises `AttributeError: 'BridgeAlertService' object has no attribute 'add_alert'`.
+On each milestone's base, the new file fails as follows (measured by the orchestrator, 2026-10-27):
+- M1: collection fails, so every case fails: `ImportError: cannot import name 'NIGHT_ORDER_TRIGGER_EVENTS' from 'probos.watch_rotation'` (1 error during collection).
+- M2 (on the M1 stage): 10 of the 11 cases fail. D4 ×3 and D7 ×2 raise `AttributeError` (no `check_night_orders_escalation`). D1, D5 and D6 `[router]` raise `AttributeError: 'BridgeAlertService' object has no attribute 'add_alert'`. D6 `[bridge_alerts]` finds no gap logged. D2 fails because the old map keys `trust_change`, so a `trust_update` matches nothing (after A1, its first failing assertion is `call_count == 1`, which sees 0). **D3 passes on the base**, as a negative case must: the old hook also declines a refused build and a trigger the order does not list. It still bites: on the assembled tree, mutation R-2 (the `mgr.check_escalation` test dropped) fails it.
 
 | ID | File | Case | Proves |
 |---|---|---|---|
@@ -99,14 +101,14 @@ On each milestone's base, every test in its new file fails at import:
 | T4 | triggers | `test_status_names_the_triggers_that_can_never_fire` ×3; `test_a_custom_trigger_with_no_producer_is_reported_and_logged`; `test_wired_triggers_report_nothing_inert_and_log_nothing`; `test_inactive_status_is_unchanged` | disclosure |
 | T5 | triggers | `test_the_console_says_which_triggers_never_fire`; `test_a_fully_wired_order_prints_no_inert_line` | operator surface |
 | D1 | delivery | `test_a_build_failure_under_night_orders_pages_the_captain_and_is_still_dispatched` | **the crossing test:** real emit → real Night Orders → real service → real router → Ward Room thread and an `action_required` notification, with the listener and durable offer intact |
-| D2 | delivery | `test_a_trust_crossing_pages_once` | the trust chain end to end |
+| D2 | delivery | `test_a_trust_crossing_pages_once` | the trust chain end to end. An update that stays below the floor matches nothing (D3). A second crossing inside the 300 s cooldown reaches the service, which declines it, so no delivery is scheduled and no second thread is created (R-7, R6) |
 | D3 | delivery | `test_a_refused_build_or_an_unlisted_trigger_pages_nobody` | negative chain |
 | D4 | delivery | `test_an_escalation_that_raises_never_costs_the_event_its_dispatch` ×3 | isolation |
 | D5 | delivery | `test_outside_an_event_loop_nothing_is_paged_and_the_cooldown_is_not_spent` | D5 |
 | D6 | delivery | `test_without_a_bridge_alert_path_the_event_is_dispatched_and_the_gap_is_logged` ×2 | partial hosts |
 | D7 | delivery | `test_the_alert_is_deduplicated_per_subject_and_suppressible`; `test_a_trust_drop_alert_names_the_agent_and_its_scores` | service contract |
 
-Expected new cases: triggers 30, delivery 11. The orchestrator measures the focused lists on its oracle.
+Expected new cases: triggers 32, delivery 11 (measured on the orchestrator's oracle `427546b8`; the table above sums to 32). Measured there before A1: M1's focused list 333 passed, M2's 736 passed, and the §10 census baseline over its seven files 627 passed. A1 changes D2's body, not the number of cases, so the expected counts stay delivery 11, M2 736 and census 627. The orchestrator re-measures.
 
 ## 7. The contract
 
@@ -855,7 +857,13 @@ async def test_a_trust_crossing_pages_once() -> None:
     await host.settle()
     host.emit_event(EventType.TRUST_UPDATE, {"agent_id": "a1", "old_score": _F - 0.1, "new_score": _F - 0.2})
     await host.settle()
-    assert len(host.events) == 2 and len(host.offers) == 2
+    assert host.conn_manager.check_escalation.call_count == 1  # staying below the floor is no crossing (D3)
+    # A second crossing inside the 300 s cooldown matches; the service declines it (R6, AD-580).
+    host.emit_event(EventType.TRUST_UPDATE, {"agent_id": "a1", "old_score": _F + 0.05, "new_score": _F - 0.05})
+    assert host.conn_manager.check_escalation.call_count == 2
+    assert [t for t in host._event_listener_tasks if not t.done()] == []  # a declined alert is never delivered
+    await host.settle()
+    assert len(host.events) == 3 and len(host.offers) == 3
     host.wr.create_thread.assert_awaited_once()
     assert host.wr.create_thread.await_args.kwargs["title"] == "[ALERT] Night Orders escalation: trust_drop"
 
@@ -1000,34 +1008,36 @@ Parent checklist (the orchestrator, on #1324): tick the Night Orders item with t
 
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
-| W-1 | M1 | `watch_rotation.py` | `if trigger == "build_failure" and data.get("not_executed") is True:` | `if trigger == "build_failure" and data.get("not_executed"):` | `test_build_failure_raises_unless_the_request_ran_nothing[string-true]`, `[int-one]` |
-| W-2 | M1 | `watch_rotation.py` | `if not (old >= trust_floor > new):  # once, as the score crosses below the floor` | `if not (new < trust_floor):` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[already-below]`, `test_a_trust_crossing_pages_once` |
-| W-3 | M1 | same | same | `if not (old > trust_floor > new):` | `...[from-floor]` |
-| W-4 | M1 | same | same | `if not (old >= trust_floor >= new):` | `...[lands-on-floor]` |
-| W-5 | M1 | `watch_rotation.py` | `return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)` | `return isinstance(value, (int, float)) and math.isfinite(value)` | `...[bool]` |
-| W-6 | M1 | same | same | `return isinstance(value, (int, float)) and not isinstance(value, bool)` | `...[inf]` |
-| W-7 | M1 | `watch_rotation.py` | `"trust_update": "trust_drop",` | `"trust_change": "trust_drop",` | `test_every_mapped_event_has_a_production_producer`, `...[crosses]` |
+| W-1 | M1 | `watch_rotation.py` | `if trigger == "build_failure" and data.get("not_executed") is True:` | `if trigger == "build_failure" and data.get("not_executed"):` | `test_build_failure_raises_unless_the_request_ran_nothing[string-true]`, `test_build_failure_raises_unless_the_request_ran_nothing[int-one]` |
+| W-2 | M1 | `watch_rotation.py` | `if not (old >= trust_floor > new):  # once, as the score crosses below the floor` | `if not (new < trust_floor):` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[already-below]`, `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[floor-hit]`, `test_a_trust_crossing_pages_once` (A1: the stay-below update now matches, so `call_count == 1` sees 2) |
+| W-3 | M1 | `watch_rotation.py` | `if not (old >= trust_floor > new):  # once, as the score crosses below the floor` | `if not (old > trust_floor > new):` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[from-floor]` |
+| W-4 | M1 | `watch_rotation.py` | `if not (old >= trust_floor > new):  # once, as the score crosses below the floor` | `if not (old >= trust_floor >= new):` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[lands-on-floor]` |
+| W-5 | M1 | `watch_rotation.py` | `return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)` | `return isinstance(value, (int, float)) and math.isfinite(value)` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[bool]` |
+| W-6 | M1 | `watch_rotation.py` | `return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)` | `return isinstance(value, (int, float)) and not isinstance(value, bool)` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[inf]` |
+| W-7 | M1 | `watch_rotation.py` | `"trust_update": "trust_drop",` | `"trust_change": "trust_drop",` | `test_every_mapped_event_has_a_production_producer`, `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[crosses]` |
 | W-8 | M1 | `watch_rotation.py` | `"inert_triggers": sorted(set(self._orders.escalation_triggers) - WIRED_NIGHT_ORDER_TRIGGERS),` | `"inert_triggers": [],` | `test_status_names_the_triggers_that_can_never_fire` |
 | W-9 | M1 | `watch_rotation.py` | `if inert:` | `if False:` | `test_a_custom_trigger_with_no_producer_is_reported_and_logged` |
-| W-10 | M1 | `watch_rotation.py` | `if not (_is_score(old) and _is_score(new)):` | `if False:` | `...[str]`, `...[missing]` |
+| W-10 | M1 | `watch_rotation.py` | `if not (_is_score(old) and _is_score(new)):` | `if False:` | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[str]`, `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[missing]`, `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[bool]`, `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor[inf]` |
 | C-1 | M1 | `commands_autonomous.py` | `if status["inert_triggers"]:` | `if False:` | `test_the_console_says_which_triggers_never_fire` |
 | C-2 | M1 | `commands_autonomous.py` | `inert = rt._night_orders_mgr.get_status()["inert_triggers"]` | `inert = []` | `test_the_console_says_which_triggers_never_fire` |
-| B-1 | M2 | `bridge_alerts.py` | `if not self._should_emit(key):  # AD-580: cooldown, dismiss, resolve and mute apply` | `if False:` | `test_the_alert_is_deduplicated_per_subject_and_suppressible`, `test_a_trust_crossing_pages_once` |
+| B-1 | M2 | `bridge_alerts.py` | `if not self._should_emit(key):  # AD-580: cooldown, dismiss, resolve and mute apply` | `if False:` | `test_the_alert_is_deduplicated_per_subject_and_suppressible`, `test_a_trust_crossing_pages_once` (A1: the second crossing inside the cooldown is no longer declined, so a delivery is scheduled) |
 | B-2 | M2 | `bridge_alerts.py` | `key = f"night_orders:{trigger}:{subject}" if subject else f"night_orders:{trigger}"` | `key = f"night_orders:{trigger}"` | `test_the_alert_is_deduplicated_per_subject_and_suppressible` |
 | B-3 | M2 | `bridge_alerts.py` | `id=str(uuid.uuid4()), severity=AlertSeverity.ALERT, source="night_orders",` | `id=str(uuid.uuid4()), severity=AlertSeverity.ADVISORY, source="night_orders",` | `test_a_build_failure_under_night_orders_pages_the_captain_and_is_still_dispatched`, `test_the_alert_is_deduplicated_per_subject_and_suppressible` |
 | B-4 | M2 | `bridge_alerts.py` | `message = str(details.get("message") or details.get("error") or "no detail")[:_NIGHT_ORDERS_DETAIL_MAX]` | `message = str(details.get("message") or details.get("error") or "no detail")` | `test_the_alert_is_deduplicated_per_subject_and_suppressible` |
 | B-5 | M2 | `bridge_alerts.py` | `related_agent_id=(subject or None) if trigger == "trust_drop" else None,` | `related_agent_id=None,` | `test_a_trust_drop_alert_names_the_agent_and_its_scores` |
-| R-1 | M2 | `runtime.py` | `except Exception:  # AD-1270 (#1324): log and degrade; the event still reaches durable offer and dispatch` | `except ZeroDivisionError:  # AD-1270 (#1324): log and degrade; the event still reaches durable offer and dispatch` | `test_an_escalation_that_raises_never_costs_the_event_its_dispatch` ×3, `test_outside_an_event_loop_...` |
+| R-1 | M2 | `runtime.py` | `except Exception:  # AD-1270 (#1324): log and degrade; the event still reaches durable offer and dispatch` | `except ZeroDivisionError:  # AD-1270 (#1324): log and degrade; the event still reaches durable offer and dispatch` | `test_an_escalation_that_raises_never_costs_the_event_its_dispatch`, `test_outside_an_event_loop_nothing_is_paged_and_the_cooldown_is_not_spent` |
 | R-2 | M2 | `runtime.py` | `if trigger is None or not mgr.check_escalation(trigger):` | `if trigger is None:` | `test_a_refused_build_or_an_unlisted_trigger_pages_nobody` |
-| R-3 | M2 | `runtime.py` | `loop = asyncio.get_running_loop()  # before the alert is built, so an undeliverable alert never spends its cooldown` | `loop = None` | `test_outside_an_event_loop_nothing_is_paged_and_the_cooldown_is_not_spent`, `test_a_build_failure_under_night_orders_...` |
-| R-4 | M2 | `runtime.py` | `tasks.add(task)` | `pass` | `test_a_build_failure_under_night_orders_...` (`len(_event_listener_tasks) == 1`) |
-| R-5 | M2 | `runtime.py` | `if not alerts or not router:` | `if not alerts:` | `test_without_a_bridge_alert_path_...[router]` |
-| R-6 | M2 | `runtime.py` | `conn.check_escalation(trigger, details)` | `pass` | `test_a_build_failure_under_night_orders_...`, `test_bf897_...::test_an_unmarked_build_failure_still_escalates` |
-| R-7 | M2 | `runtime.py` | `if alert is None:` | `if False:` | `test_a_trust_crossing_pages_once` (the second emit hands `None` to `deliver_bridge_alert`, which raises `AttributeError` on `alert.severity`, so the escalation fails before posting) |
+| R-3 | M2 | `runtime.py` | `loop = asyncio.get_running_loop()  # before the alert is built, so an undeliverable alert never spends its cooldown` | `loop = None` | `test_outside_an_event_loop_nothing_is_paged_and_the_cooldown_is_not_spent`, `test_a_build_failure_under_night_orders_pages_the_captain_and_is_still_dispatched` |
+| R-4 | M2 | `runtime.py` | `tasks.add(task)` | `pass` | `test_a_build_failure_under_night_orders_pages_the_captain_and_is_still_dispatched`, `test_a_trust_crossing_pages_once` |
+| R-5 | M2 | `runtime.py` | `if not alerts or not router:` | `if not alerts:` | `test_without_a_bridge_alert_path_the_event_is_dispatched_and_the_gap_is_logged[router]` |
+| R-6 | M2 | `runtime.py` | `conn.check_escalation(trigger, details)` | `pass` | `test_a_build_failure_under_night_orders_pages_the_captain_and_is_still_dispatched`, `test_an_unmarked_build_failure_still_escalates` (BF-897's file) |
+| R-7 | M2 | `runtime.py` | `if alert is None:` | `if False:` | `test_a_trust_crossing_pages_once` (A1: the second crossing inside the cooldown reaches this line with `None`; under the mutant a `deliver_bridge_alert(None)` task is scheduled, so the unfinished-task assertion fails) |
 | R-8 | M2 | `runtime.py` | `trigger = night_order_trigger(event_type, details, trust_floor=TRUST_FLOOR_CONN)` | `trigger = night_order_trigger(event_type, details, trust_floor=0.0)` | `test_a_trust_crossing_pages_once` |
-| R-9 | M2 | `runtime.py` | `if not mgr or not mgr.active:` | `if not mgr:` | none expected: an inactive manager's `check_escalation` returns False (`watch_rotation.py:363`), so this is outcome-equivalent. Record it as an equivalent mutant and return it to the Architect; do not add a test |
+| R-9 | M2 | `runtime.py` | `if not mgr or not mgr.active:` | `if not mgr:` | none: **equivalent mutant**. An inactive `NightOrdersManager` already returns False from `check_escalation` (`watch_rotation.py:419-423`, re-reading the idempotent `active` property, `:308-314`), so the mutant only adds a call to the pure `night_order_trigger`. It is observable only with a manager whose `active` is false while `check_escalation` is true, which the production class cannot be. The census runs it on all files and reports it survived; record it as equivalent, with no test |
 
 Each line occurs once in its file after §7. Lines with no row, and why: the docstrings; `_score_text`'s `"?"` branch (display only); the `"nothing"` arm of `Escalates on` (display only).
+
+Killed-by cells are census-ready. They name full pytest function names in code spans, with a single parametrised case written `name[id]`. A cell names no function only for R-9, the equivalent mutant. Census of record: orchestrator, 2026-10-27, on `427546b8`: 24 killed, 2 survived (R-7, R-9), baseline 627 passed. A1 changes only D2, so after A1 rerun the unmutated baseline and the rows that claim D2: W-2, B-1, R-4, R-7, R-8. Expected: 25 killed, R-9 survived and recorded as equivalent.
 
 ## 11. Verified Against Codebase (2026-10-27, on `a2390998`)
 
@@ -1092,7 +1102,7 @@ Read startup/finalize.py:4210-4224
 
 **M2:**
 5. `_check_night_order_escalation` raises nothing for any exception from Night Orders, `ConnManager`, the service, the loop lookup or task creation; `_emit_event` still offers the event to `durable_events` and dispatches it.
-6. A match under an active order with a service, a router and a running loop schedules exactly one `deliver_bridge_alert` task, held in `_event_listener_tasks` until done.
+6. A match under an active order with a service, a router and a running loop schedules exactly one `deliver_bridge_alert` task, held in `_event_listener_tasks` until done. A match the service declines (inside the cooldown, or suppressed under AD-580) schedules none: `deliver_bridge_alert` is never handed `None`.
 7. Outside a running loop, the service is not called, so the cooldown is unspent.
 8. The alert is ALERT severity, keyed `night_orders:{trigger}[:{subject}]`, subject ≤ 64 characters, message ≤ 500, and passes `_should_emit` (cooldown and AD-580 suppression).
 9. BF-897's tests pass unchanged: the refusal is not escalated; an unmarked failure calls `conn_manager.check_escalation` once.
@@ -1101,7 +1111,7 @@ Read startup/finalize.py:4210-4224
 ## 15. Acceptance criteria
 
 - [ ] M1 to M3 built in order, one delegation and one local commit each, staged by explicit path.
-- [ ] Each new test file failed on its milestone's base (§6) before the code was written.
+- [ ] Each new test file failed on its milestone's base as §6 states (M1 at collection; M2 on every case but D3, the negative case) before the code was written.
 - [ ] Each focused gate (§4) passes with `-n 0`; `check_architecture_principles.py --check` passes after M2.
 - [ ] M2 has a cross-family review (`gpt-6.1-sol`) against §14, with its findings repaired.
 - [ ] The §10 campaign runs once on the assembled tree; every row is killed, or recorded as equivalent (R-9), or returned to the Architect.
@@ -1120,3 +1130,4 @@ Read startup/finalize.py:4210-4224
 - **R5.** Delivery tasks in `_event_listener_tasks` are not drained at shutdown; a page raised during shutdown may be lost. Same as BF-639 listener tasks.
 - **R6.** A trust score oscillating across the floor pages once per crossing, beyond the 300 s per-agent cooldown.
 - **R7.** No AD-1270a exercise receipt: steps 2 and 3 have no producer yet (`platform-maturity-program.md:755-758`). D1 is the crossing evidence until then.
+- **R8.** Mutation census (orchestrator, 2026-10-27, on `427546b8`): 24 of 26 killed. Mutation R-7 (`if alert is None:`) survived because D2's second update was not a crossing and never reached the service. Amendment A1 gives D2 a second crossing inside the cooldown and asserts that no delivery is scheduled; R-7 closes when the rerun kills it. Mutation R-9 is equivalent (an inactive manager's `check_escalation` is already False). W-2 and B-1 were killed, but by T3b and D7, not by D2 as first claimed; A1's D2 assertions are predicted to make D2 a second killer of both.
