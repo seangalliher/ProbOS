@@ -2578,7 +2578,7 @@ def test_an_erasure_refuses_a_temporary_name_whose_identity_cannot_be_shown(
     assert "cannot be shown" in out and "Nothing was erased." in out
     assert _snapshot_files(tmp_path) == sorted([snapshot, other])
     assert other.read_bytes() == b"another attempt's file"
-    assert _erasures(tmp_path) == [(None, None)]  # refused before the marker
+    assert _erasures(tmp_path) == [(None, "")]  # refused before the marker
 
     other.unlink()  # the Captain, having checked it
     assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="again", yes=True) == 0
