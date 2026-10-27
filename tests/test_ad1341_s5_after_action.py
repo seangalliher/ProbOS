@@ -27,7 +27,7 @@ from probos.after_action import (
     review_prompt,
     run_after_action,
 )
-from probos.api import _BLOCKED_COMMANDS
+from probos.api import _BLOCKED_COMMANDS, _handle_slash_command
 from probos.config import SystemConfig
 from probos.experience.commands import commands_after_action
 from probos.experience.shell import ProbOSShell
@@ -82,7 +82,7 @@ async def _recall(member: CrewMember) -> list[Any]:
 
 async def _run(records: Any, turns: _Turns, **overrides: Any) -> Any:
     options: dict[str, Any] = {
-        "subject": _SUBJECT, "flagged_at": _FLAGGED, "reviewers": _CHAIN, "ask": turns.ask, "recall": _recall,
+        "subject": _SUBJECT, "flagged_at": _FLAGGED, "reviewers": lambda: _CHAIN, "ask": turns.ask, "recall": _recall,
         "records": records, "timeline_id": _SHIP,
     }
     options.update(overrides)
@@ -339,6 +339,11 @@ async def test_after_action_is_a_console_command_the_hxi_cannot_reach() -> None:
     for arg in ("", "Pulaski", ": no callsign", "Pulaski:   "):
         await commands_after_action.cmd_after_action(MagicMock(), console, arg)
     assert console.export_text().count("Usage: /after-action CALLSIGN: SUBJECT") == 4
+    for text in ("/after-action Pulaski: coolant drift", "/AFTER-ACTION Pulaski: coolant drift"):
+        runtime = MagicMock()
+        answer = await _handle_slash_command(text, runtime)  # the HXI chat's and the channel adapters' route
+        assert answer["response"] == "/after-action is only available in the CLI terminal, not the HXI chat."
+        assert runtime.mock_calls == []  # Amendment A3: refused before the shell, the bus or Ship's Records is touched
 
 
 async def test_the_vessel_sends_each_turn_as_a_bounded_captain_s_message(
@@ -389,8 +394,86 @@ async def test_a_billet_no_one_can_fill_is_vacant_and_never_the_author(tmp_path:
         "reviewer-is-the-author": _AUTHOR,
     }[case]
 
-    report = await _run(records, turns, reviewers=(("superior", superior), ("counselor_or_xo", _COUNSELOR)))
+    report = await _run(records, turns, reviewers=lambda: (("superior", superior), ("counselor_or_xo", _COUNSELOR)))
 
     assert [review.outcome for review in report.reviews] == ["vacant", "endorsed"]
     assert turns.asked == ["surgeon", "counselor"]  # nobody without an identity, and never the author, is asked
     assert report.endorsed  # one endorsement and a vacancy admit it (D5)
+
+
+_RELIEF = CrewMember(
+    agent_id="slot-diagnostician-relief", agent_type="diagnostician", sovereign_id="sov-diagnostician-relief",
+    did=f"did:probos:{_SHIP}:diagnostician-relief", callsign="Bones",
+)
+#: Amendment A3 (B1): the crew when the Captain flags, the slot whose turn changes it, the crew after, who is asked.
+_ROSTER_CHANGES: dict[str, tuple[tuple[CrewMember, ...], str, tuple[CrewMember, ...], list[str]]] = {
+    "superior-filled-during-the-author-s-turn": (
+        (_AUTHOR, _COUNSELOR, _XO), "slot-surgeon", _CREW, ["slot-surgeon", "slot-diagnostician", "slot-counselor"],
+    ),
+    "superior-replaced-during-the-author-s-turn": (
+        _CREW, "slot-surgeon", (_AUTHOR, _RELIEF, _COUNSELOR, _XO),
+        ["slot-surgeon", "slot-diagnostician-relief", "slot-counselor"],
+    ),
+    "counselor-filled-during-the-superior-s-turn": (
+        (_AUTHOR, _CHIEF), "slot-diagnostician", (_AUTHOR, _CHIEF, _COUNSELOR),
+        ["slot-surgeon", "slot-diagnostician", "slot-counselor"],
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_ROSTER_CHANGES))
+async def test_each_stage_is_reviewed_by_whoever_holds_its_billet_when_it_is_asked(
+    tmp_path: Path, ontology: VesselOntologyService, case: str,
+) -> None:
+    before, during, after, asked = _ROSTER_CHANGES[case]
+    records = _records(_data_dir(tmp_path))
+    replies = {
+        "slot-surgeon": _reply("e1"), "slot-diagnostician": "ENDORSE", "slot-diagnostician-relief": "ENDORSE",
+        "slot-counselor": "ENDORSE",
+    }
+    roster = list(before)
+    sent: list[str] = []
+
+    async def send(intent: Any) -> IntentResult:
+        sent.append(intent.target_agent_id)
+        here = any(member.agent_id == intent.target_agent_id for member in roster)  # a slot that left answers nothing
+        if intent.target_agent_id == during:
+            roster[:] = after  # the pool fills or replaces a billet while this turn runs
+        return IntentResult(
+            intent_id=intent.id, agent_id=intent.target_agent_id, success=here,
+            result=replies[intent.target_agent_id] if here else None,
+        )
+
+    ontology.get_vessel_identity = lambda: SimpleNamespace(instance_id=_SHIP)  # type: ignore[method-assign]
+    runtime = MagicMock()
+    runtime.config = SystemConfig()
+    runtime.records_store = records
+    runtime.ontology = ontology
+    runtime.intent_bus.send = send
+    runtime.episodic_memory = None
+    with patch("probos.after_action.crew_for_stand_down", side_effect=lambda _runtime: tuple(roster)):
+        report = await after_action_vessel(runtime, "Pulaski", _SUBJECT)
+
+    assert sent == asked  # each stage asked the holder of its billet at that stage, never a slot that had left
+    assert [(review.outcome, review.callsign) for review in report.reviews] == [
+        ("endorsed", "Bones"), ("endorsed", "Troi"),
+    ]
+    assert report.endorsed
+
+
+async def test_a_billet_that_cannot_be_resolved_is_not_reviewed(tmp_path: Path) -> None:
+    records = _records(_data_dir(tmp_path))
+    turns = _Turns({"surgeon": _reply("e1"), "diagnostician": "ENDORSE", "counselor": "ENDORSE"})
+    calls: list[int] = []
+
+    def reviewers() -> Any:
+        calls.append(len(calls))
+        if len(calls) > 1:  # the shape check passes; the crew read fails when the first stage is resolved
+            raise RuntimeError("registry unavailable")
+        return _CHAIN
+
+    report = await _run(records, turns, reviewers=reviewers)
+
+    assert report.outcome is AfterActionOutcome.WRITTEN and not report.endorsed
+    assert [review.outcome for review in report.reviews] == ["not_reviewed", "not_reviewed"]
+    assert turns.asked == ["surgeon"]  # an unknown holder is never taken for a vacancy

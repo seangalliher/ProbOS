@@ -480,12 +480,42 @@ async def review_promotion(records: RecordsStore, archive: ArchiveStore, *, time
     return PromotionReview(sources=tuple(sources), withheld=plan.withheld)
 
 
+#: AD-1341 S5 (D9, Amendment A3): one UTC day in seconds. POSIX time counts no leap seconds, so every day is this long.
+_DAY_SECONDS = 86_400.0
+
+
+def _captains_log_day_end(ref: str) -> float | None:
+    """The end of a Captain's log file's UTC day (seconds since the epoch), or None for a name its writer never gives.
+
+    ``RecordsStore.append_captains_log`` appends to ``captains-log/YYYY-MM-DD.md``, the day read from the UTC clock in
+    the same synchronous step as the write, so a day's file takes no entry once that day has ended. It stamps
+    ``created`` and never ``updated``.
+    """
+    try:
+        day = date.fromisoformat(ref.removeprefix("captains-log/").removesuffix(".md"))
+    except ValueError:
+        return None
+    if ref != f"captains-log/{day.isoformat()}.md":
+        return None  # the writer's own name only: date.fromisoformat also reads 20261026 and 2026-W44-1
+    return datetime.fromisoformat(f"{day.isoformat()}T00:00:00+00:00").timestamp() + _DAY_SECONDS
+
+
 def is_settled(record: PromotionRecord, settled_before: float) -> bool:
     """AD-1341 S5 (D9): whether a source was last updated at or before ``settled_before`` (seconds since the epoch).
 
     Read from the record's ``record_updated`` (Ship's Records' ``updated``, an ISO 8601 time with its offset). A time
     with no offset, or one that does not parse, is not settled: such a source waits for the reset's promotion.
+
+    Amendment A3: a Captain's log carries no ``updated`` (its writer stamps none) and takes no entry after its UTC day,
+    so it settles once its day has ended at or before ``settled_before`` and, if it carries an ``updated``, once that
+    has settled too. A Captain's log under any other name never settles here; the reset still promotes it.
     """
+    if record.source_kind is SourceKind.CAPTAINS_LOG:
+        ended = _captains_log_day_end(record.source_ref)
+        if ended is None or ended > settled_before:
+            return False
+        if not record.metadata.get("record_updated"):
+            return True  # the writer's own form: its day is over, so no entry can follow
     stamp = record.metadata.get("record_updated")
     if type(stamp) is not str:
         return False

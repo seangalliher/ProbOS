@@ -82,7 +82,11 @@ _REVIEW_REPLY = re.compile(r"^[\W_]*(endorse|return)(?:[\W_].*)?$", re.IGNORECAS
 
 
 class AfterActionOutcome(StrEnum):
-    """What the author's turn came to. Only WRITTEN wrote a report; ALREADY_WRITTEN found one at the path."""
+    """What the author's turn came to. WRITTEN: the report's write completed. ALREADY_WRITTEN: one was at the path.
+
+    A write cut off after it published (FAILED or TIMED_OUT) leaves the report at the result's path, and it is a
+    promotion source like any other (S4 A4; Amendment A3). An outcome with no path left nothing at the path.
+    """
 
     WRITTEN = "written"
     DECLINED = "declined"
@@ -135,6 +139,8 @@ class AfterActionRefused(Exception):
 
 Ask = Callable[[CrewMember, str], Awaitable[str | None]]
 Recall = Callable[[CrewMember], Awaitable[Sequence[Any]]]
+#: AD-1341 S5 (D5, Amendment A3): the review stages and their holders, as the crew is when it is called.
+Reviewers = Callable[[], Sequence[tuple[str, CrewMember | None]]]
 
 
 def _can_review(member: CrewMember) -> bool:
@@ -154,7 +160,8 @@ def chain_of_command_reviewers(
     By billet, resolved at the time of the review: the superior is whoever fills the post the author's post reports to;
     the second stage is whoever fills the first of ``SECOND_REVIEW_POSTS`` that is neither the author's billet nor the
     superior's. A billet is filled by the first crew agent of its type, in crew order, whose identity the envelope can
-    hold. Nobody reviews their own report. With no ontology every stage is vacant.
+    hold. Nobody reviews their own report. With no ontology every stage is vacant. ``after_action_vessel`` has
+    ``run_after_action`` call it again before each stage, on the crew as it is then (Amendment A3).
     """
     first_of_type: dict[str, CrewMember] = {}
     for member in crew:
@@ -231,7 +238,7 @@ async def run_after_action(
     *,
     subject: str,
     flagged_at: str,
-    reviewers: Sequence[tuple[str, CrewMember | None]],
+    reviewers: Reviewers,
     ask: Ask,
     recall: Recall,
     records: RecordsStore,
@@ -242,8 +249,11 @@ async def run_after_action(
 ) -> AfterActionReport:
     """Ask ``author`` for one report on ``subject``, have the chain review it, and write it once (D3 to D7).
 
-    ``reviewers`` is one ``(stage, member or None)`` per ``REVIEW_STAGES`` entry, in order
-    (``chain_of_command_reviewers``). ``ask`` delivers a prompt and returns the reply (None for no reply); ``recall``
+    ``reviewers`` returns one ``(stage, member or None)`` per ``REVIEW_STAGES`` entry, in order
+    (``chain_of_command_reviewers`` on the crew as it is then). It is called before anyone is asked, to check that
+    shape, and again before each stage, so a stage is asked of whoever holds its billet after every earlier turn; a
+    stage whose holder cannot be read is not reviewed (D5, Amendment A3). ``ask`` delivers a prompt and returns the
+    reply (None for no reply); ``recall``
     returns the author's most recent episodes. Each turn has one deadline, ``turn_seconds`` after it begins and never
     past the window, that its reply must meet. The window bounds every turn and the write, and no write begins once it
     has closed. A report already at its path is never written over, and then nobody is asked.
@@ -254,7 +264,8 @@ async def run_after_action(
     """
     if turn_seconds <= 0 or window_seconds <= 0:
         raise ValueError("AD-1341 S5: an after-action report's bounds must be positive")
-    if [stage for stage, _member in reviewers] != list(REVIEW_STAGES):
+    resolved = reviewers()  # the shape is checked before anyone is asked; each stage resolves its holder again (D5)
+    if [stage for stage, _member in resolved] != list(REVIEW_STAGES):
         raise ValueError("AD-1341 S5: one reviewer entry per review stage, in order")
     if not is_exit_note_text(subject, AFTER_ACTION_SUBJECT_MAX_CHARS):
         raise AfterActionRefused(
@@ -317,9 +328,18 @@ async def run_after_action(
     cited = parse_citations(reply, offered)
 
     reviews: list[ReviewResult] = []
-    for stage, reviewer in reviewers:
+    for stage in REVIEW_STAGES:
         if reviews and reviews[-1].outcome in (REVIEW_RETURNED, REVIEW_NOT_REVIEWED):
             reviews.append(ReviewResult(stage, REVIEW_NOT_REVIEWED))  # D5: the review ended at the stage before
+            continue
+        try:
+            reviewer = dict(reviewers()).get(stage)  # D5 (Amendment A3): the billet's holder now, after every earlier turn
+        except Exception:  # log-and-degrade: an unknown holder is not a vacancy, so the stage is not reviewed
+            logger.warning(
+                "AD-1341 S5: the %s billet for %s's report could not be resolved; that stage is not reviewed", stage,
+                author.callsign, exc_info=True,
+            )
+            reviews.append(ReviewResult(stage, REVIEW_NOT_REVIEWED))
             continue
         if reviewer is None or not _can_review(reviewer) or reviewer.agent_type == author.agent_type:
             reviews.append(ReviewResult(stage, REVIEW_VACANT))  # D5: nobody fills the billet; never the author
@@ -416,7 +436,8 @@ async def after_action_vessel(
         author,
         subject=subject.strip(),
         flagged_at=time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now())),
-        reviewers=chain_of_command_reviewers(author, crew, ontology),
+        # D5 (Amendment A3): a fresh crew, with its identities, for each stage, so a billet filled or refilled meanwhile counts
+        reviewers=lambda: chain_of_command_reviewers(author, crew_for_stand_down(runtime), ontology),
         ask=_ask,
         recall=_recall,
         records=records,

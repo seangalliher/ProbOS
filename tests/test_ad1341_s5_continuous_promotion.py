@@ -25,10 +25,10 @@ from probos.after_action import run_after_action
 from probos.cognitive.dreaming import DreamingEngine
 from probos.cognitive.oracle_service import OracleService
 from probos.config import ArchivePromotionConfig, SystemConfig
+from probos.knowledge import records_store as records_store_module
 from probos.knowledge.archive_promotion import is_settled, promote_settled
 from probos.knowledge.archive_store import LABEL_THIS_CREW, ArchiveStore, PromotionRecord, SourceKind
 from probos.knowledge.continuous_promotion import continuous_promotion_step, wire_continuous_promotion
-from probos.knowledge.erasure import exclusive_with_erasure
 from probos.stand_down import CrewMember
 from probos.storage.sqlite_factory import default_factory
 from probos.tools.oracle_query_tool import OracleQueryTool
@@ -66,7 +66,7 @@ async def _report(records: Any) -> str:
 
     report = await run_after_action(
         _AUTHOR, subject="Coolant drift alarm", flagged_at="20261027T015500Z",
-        reviewers=(("superior", _CHIEF), ("counselor_or_xo", _COUNSELOR)), ask=ask, recall=recall,
+        reviewers=lambda: (("superior", _CHIEF), ("counselor_or_xo", _COUNSELOR)), ask=ask, recall=recall,
         records=records, timeline_id=_SHIP,
     )
     assert report.endorsed  # premise
@@ -143,14 +143,26 @@ async def test_the_step_waits_for_an_erasure_in_progress_and_never_archives_what
         await _stored(rig.em)
         store = _store(tmp_path)
         await store.initialize()
+        inside, release = asyncio.Event(), asyncio.Event()
+        evict = rig.em.evict_by_ids
+
+        async def paused_evict(*args: Any, **kwargs: Any) -> Any:
+            inside.set()  # the real erasure is in its critical section: its archive check done, its evict not begun
+            await release.wait()
+            return await evict(*args, **kwargs)
+
+        rig.em.evict_by_ids = paused_evict  # type: ignore[method-assign]  # Amendment A3 (C2): the manager's own lock
         try:
-            async with exclusive_with_erasure(rig.em):  # an erasure holds its lock: checked, not yet erased
-                task = asyncio.create_task(_step(records, store, rig.em)())
-                done, _pending = await asyncio.wait({task}, timeout=2.0)
-                assert task not in done  # the step waits for the erasure
-                await rig.em.evict_by_ids([_CITED], reason="user_request", disposition=EvictionDisposition.ERASE)
+            erasure = asyncio.create_task(_manager(rig.em, None, store).forget_episode(_CITED))
+            await asyncio.wait_for(inside.wait(), timeout=5.0)
+            task = asyncio.create_task(_step(records, store, rig.em)())
+            done, _pending = await asyncio.wait({task}, timeout=1.0)
+            assert task not in done  # the step waits for the erasure ErasureManager is running
+            release.set()
+            await erasure
             report = await task
         finally:
+            release.set()
             await store.close()
     assert report.created == () and report.waiting == (path,)
     assert _archived(tmp_path) == []
@@ -178,6 +190,77 @@ def _record(updated: str) -> PromotionRecord:
 def test_a_source_settles_at_its_last_update_plus_the_settle_time(updated: str, offset: float, settled: bool) -> None:
     base = datetime(2026, 10, 26, 12, tzinfo=timezone.utc).timestamp()
     assert is_settled(_record(updated), base + offset) is settled
+
+
+def _log(ref: str, updated: str) -> PromotionRecord:
+    return PromotionRecord(
+        timeline_id=_SHIP, source_kind=SourceKind.CAPTAINS_LOG, source_ref=ref, title="Captain's log",
+        content="c", classification="ship", metadata={"record_updated": updated},
+    )
+
+
+@pytest.mark.parametrize(
+    ("ref", "updated", "offset", "settled"),
+    [
+        ("captains-log/2026-10-26.md", "", 0.0, True),
+        ("captains-log/2026-10-26.md", "", -0.001, False),
+        ("captains-log/2026-10-26.md", "2026-10-26T20:00:00+00:00", 0.0, True),
+        ("captains-log/2026-10-26.md", "2026-10-27T06:00:00+00:00", 0.0, False),
+        ("captains-log/20261026.md", "", 0.0, False),
+        ("captains-log/notes.md", "", 0.0, False),
+    ],
+    ids=[
+        "at-the-day-s-end", "just-before", "updated-within-the-day", "updated-after-the-day", "not-the-writer-s-name",
+        "no-day",
+    ],
+)
+def test_a_captain_s_log_settles_at_the_end_of_its_day_plus_the_settle_time(
+    ref: str, updated: str, offset: float, settled: bool,
+) -> None:
+    ended = datetime(2026, 10, 27, tzinfo=timezone.utc).timestamp()  # 2026-10-26 ends here (Amendment A3, C1)
+    assert is_settled(_log(ref, updated), ended + offset) is settled
+
+
+class _WriterClock(datetime):
+    """The Captain's log writer's clock (``records_store.datetime``), set by the test."""
+
+    at = datetime(2026, 10, 26, 9, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:  # type: ignore[override]
+        return cls.at if tz is None else cls.at.astimezone(tz)
+
+
+async def test_the_captain_s_log_from_its_writer_settles_once_its_day_has_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = _records(_data_dir(tmp_path))
+    monkeypatch.setattr(records_store_module, "datetime", _WriterClock)
+    monkeypatch.setattr(_WriterClock, "at", datetime(2026, 10, 26, 9, tzinfo=timezone.utc))
+    created = await records.append_captains_log("Coolant drift at the start of the watch.")
+    monkeypatch.setattr(_WriterClock, "at", datetime(2026, 10, 26, 23, 59, 59, tzinfo=timezone.utc))
+    appended = await records.append_captains_log("The drift was a stuck sensor.")
+    monkeypatch.setattr(_WriterClock, "at", datetime(2026, 10, 27, tzinfo=timezone.utc))
+    next_day = await records.append_captains_log("A quiet watch.")
+    assert created == appended == "captains-log/2026-10-26.md" and next_day == "captains-log/2026-10-27.md"  # premise
+    assert "updated" not in (await records.read_entry(created, ""))["frontmatter"]  # premise: the writer stamps none
+    ended = datetime(2026, 10, 27, tzinfo=timezone.utc).timestamp()
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+
+        def step(now: float) -> Any:
+            return continuous_promotion_step(
+                records=lambda: records, archive=lambda: store, memory=lambda: None, timeline_id=lambda: _SHIP,
+                settle_seconds=86_400.0, max_created=8, clock=lambda: now,
+            )
+
+        early = await step(ended + 86_400.0 - 0.001)()
+        settled = await step(ended + 86_400.0)()
+    finally:
+        await store.close()
+    assert early.created == () and set(early.waiting) == {created, next_day}
+    assert settled.created == (created,) and settled.waiting == (next_day,)  # Amendment A3 (C1): the whole day, once
 
 
 async def test_the_step_promotes_a_source_only_once_it_has_settled(tmp_path: Path) -> None:
@@ -282,6 +365,15 @@ async def test_a_full_dream_cycle_runs_the_step_once_and_survives_its_failure(ca
         report = await _engine(broken).dream_cycle()
     assert broken.await_count == 1 and report is not None
     assert "AD-1341 S5: continuous promotion failed" in caplog.text
+
+    class PastTheStep(Exception):
+        """Step 2 (the prune) raises it, so the cycle shows it got there."""
+
+    later = _engine(AsyncMock(side_effect=RuntimeError("archive locked")))
+    later.episodic_memory = MagicMock(recent=AsyncMock(return_value=[MagicMock()]))  # episodes to replay
+    later._prune_weights = MagicMock(side_effect=PastTheStep())  # type: ignore[method-assign]
+    with pytest.raises(PastTheStep):  # Amendment A3 (C3): the dream goes on past a failed step to its later steps
+        await later.dream_cycle()
 
 
 def test_continuous_promotion_is_off_by_default_with_bounded_settings() -> None:
