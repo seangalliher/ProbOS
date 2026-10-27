@@ -21,7 +21,9 @@ Each milestone is one Builder delegation and one local commit, built in order. T
 
 **Amendment A1 (2026-10-27, `claude-architect`, census on the oracle `4fd61f91`):** 48 of 49 rows were killed. D-6 survived because N1's procedures were created in the same order as their completions. 7.12 now creates the anti-pattern first (p-3 at `_B + 30.0`) and asserts that premise, so `_EXPECTED` pins the listing's order. P-18 now names the ledger test alone: the CLI checks `erased_at` before it marks, so X12's rerun never reaches that guard. Only 7.12, §6, §10 and §14 change. No test is added, so §4's lists and the census baseline keep their counts.
 
-**Amendment A2 (2026-10-27, `claude-architect`, round 1 of the cross-family review on `f9afeb59`, tree `61e4fce9`: reviewers A, B and C all NOT READY):** most findings share one shape: a guard placed after the first write, or a check of one path of a set. A2 adds one reset preflight (`_reset_preflight`, shared by the dry run) that refuses, before the confirmation, the pidfile and the promotion, every refusal it can know: the snapshot's plan, root, key and destination (M1) and, with `--clean-slate`, the shape of `procedures/` (M3). S1 A4's overlap also protects the snapshots directory at every tier (M1) and counts `procedures/` with `--clean-slate` (M3). The snapshot is published by a hard link that never replaces a name, reads its root with `lstat`, refuses a link in its destination and reads its tag files back; the erasure checks what it deletes before its marker (M1). The description is read before the snapshot and archived after it, once per generation; `pending` and the veto print its text; its read-only claim is narrowed (M2). The generation's close is recorded last, after any clean slate (M3). A-F8 is recorded (R29). Changed: §2, §3, §4, §5, §6, §7 (7.1, 7.5, 7.6, 7.8 to 7.10, 7.12, 7.17, 7.18), §8, §9, §10 (70 rows), §11, §12, §13, §14, §15 and the register (R14, R15, R28 to R40). Expected (analysis): the new files 43, 21 and 28 cases; the focused lists M1 692, M2 586 and M3 689 passed, 1 skipped each; the census baseline 138.
+**Amendment A2 (2026-10-27, `claude-architect`, round 1 of the cross-family review on `f9afeb59`, tree `61e4fce9`: reviewers A, B and C all NOT READY):** most findings share one shape: a guard placed after the first write, or a check of one path of a set. A2 adds one reset preflight (`_reset_preflight`, shared by the dry run) that refuses, before the confirmation, the pidfile and the promotion, every refusal it can know: the snapshot's plan, root, key and destination (M1) and, with `--clean-slate`, the shape of `procedures/` (M3). S1 A4's overlap also protects the snapshots directory at every tier (M1) and counts `procedures/` with `--clean-slate` (M3). The snapshot is published by a hard link that never replaces a name, reads its root with `lstat`, refuses a link in its destination and reads its tag files back; the erasure checks what it deletes before its marker (M1). The description is read before the snapshot and archived after it, once per generation; `pending` and the veto print its text; its read-only claim is narrowed (M2). The generation's close is recorded last, after any clean slate (M3). A-F8 is recorded (R29). Changed: §2, §3, §4, §5, §6, §7 (7.1, 7.5, 7.6, 7.8 to 7.10, 7.12, 7.17, 7.18), §8, §9, §10 (70 rows), §11, §12, §13, §14, §15 and the register (R14, R15, R28 to R40). Expected (analysis, before A3): the new files 43, 21 and 28 cases; the focused lists M1 692, M2 586 and M3 689 passed, 1 skipped each; the census baseline 138.
+
+**Amendment A3 (2026-10-27, `claude-architect`, census on the A2 oracle `47568aa7`, tree `d3bd66a8`):** 69 of 70 rows were killed. P-8 (`if bag_zip.namelist() != expected:`) survived. A2's tag read-back (P-33's line) opens every tag file by name, so X3's `member-missing` case now refuses at that open (`KeyError`) even with the member-list check disabled. The one thing that check alone refuses is a member the bag does not list, and no test wrote one. 7.6 adds the fault `member-extra` (one more member after `bagit.txt`), so X3 has ten cases and P-8's killer is that case. `member-missing` stays: a missing tag file refuses, whichever check sees it. No production change: the check is correct; only its test data had stopped reaching it. Changed: §3 (D5's map), §4, §6 (X3), 7.6, §10 (the closing notes; the rows and their count are unchanged), the A3 verification, §14 (4) and the register (R41). The pair counts are unchanged. Expected (analysis): the new files 44, 21 and 28 cases; the focused lists M1 693, M2 587 and M3 690 passed, 1 skipped each; the census baseline 139.
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
@@ -124,7 +126,7 @@ No config field, event type, API route or HXI view. `ArchiveStore` gains no meth
 | Decision | Tests |
 |---|---|
 | D2, D3, D4 | X1 (the real reset; byte-for-byte payload, manifest, bag-info, row; no later crew reads it), X6, X8, X10 |
-| D5 | X3 (nine faults through the real reset), X6 (both bounds, exactly at and one beyond), X7 (a link is never followed), X9 |
+| D5 | X3 (ten faults through the real reset; A3: a member the bag does not list), X6 (both bounds, exactly at and one beyond), X7 (a link is never followed), X9 |
 | D6 | X1, X3 (nothing deleted, no temporary file, no generation row), X3 `not-recorded` (the row fails after the file was written) |
 | D7 | X11 (the ledger's row, unique path, the marker once, version check), X12 (list; erase; decline; a failed unlink then the rerun), X12b (a tampered row, a disabled archive, bad arguments), X13 (census) |
 | D8 | X4, X5, X2 |
@@ -162,7 +164,7 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 | **M3** the clean slate | HIGH | 7.13 `src/probos/knowledge/archive_store.py`; 7.14 `docs/development/store-baseline.yaml`; 7.15 `src/probos/knowledge/archive_ledger.py`; 7.16 `src/probos/knowledge/nature_description.py`; 7.17 `src/probos/__main__.py`; 7.18 new `tests/test_ad1341_s6_clean_slate.py` | `tests/test_ad1341_s6_clean_slate.py tests/test_ad1341_s6_nature_description.py tests/test_ad1341_s6_records_snapshot.py tests/test_ad1341_s1_reset_and_erase.py tests/test_ad1341_s1_archive_store.py tests/test_ad1341_s3_review_cli.py tests/test_reset_integration.py tests/test_bf902_fts_reconciliation.py tests/test_ad1340_s1_restore_reset.py tests/test_distribution.py tests/test_proactive.py tests/test_identity_deterministic.py tests/test_ad1256_store_registry.py tests/test_layer_boundaries.py tests/test_ad1270b_architecture_fitness.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py`; then `check_store_registry.py --check` and `check_architecture_principles.py --check` |
 | **M4** trackers | docs | §8 | `tests/test_ad1184_ad_ledger.py`; `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` |
 
-The oracle slices the milestones by heading: M1 is `### 7.1 ` to `### 7.7 `, M2 `### 7.7 ` to `### 7.13 `, M3 `### 7.13 ` to `## 8.`. Each subsection holds one milestone's pairs only. No measured counts yet: the orchestrator measures each list on its oracle. **A2 expected (analysis):** M1's list 692 passed and 1 skipped (684 + 8), M2's 586 and 1 (574 + 8 + 4), M3's 689 and 1 (670 + 8 + 4 + 7); the new files 43, 21 and 28 cases. A host that cannot create a junction skips X7c, X12d, X16, C7[junction] and C11[junction], as it skipped X7 and C7.
+The oracle slices the milestones by heading: M1 is `### 7.1 ` to `### 7.7 `, M2 `### 7.7 ` to `### 7.13 `, M3 `### 7.13 ` to `## 8.`. Each subsection holds one milestone's pairs only. No measured counts yet: the orchestrator measures each list on its oracle. **A2 expected (analysis), with A3's one case:** M1's list 693 passed and 1 skipped (684 + 8 + 1), M2's 587 and 1 (574 + 8 + 4 + 1), M3's 690 and 1 (670 + 8 + 4 + 7 + 1); the new files 44, 21 and 28 cases. A host that cannot create a junction skips X7c, X12d, X16, C7[junction] and C11[junction], as it skipped X7 and C7.
 
 ## 5. Consumers of every value this changes
 
@@ -201,7 +203,7 @@ The last column is the assertion each test fails at once the names exist but the
 |---|---|---|---|
 | X1 | `test_a_full_reset_keeps_ship_records_as_one_checked_bag_before_it_deletes_them` | the real seam: producers write, the real reset snapshots, the row, the bag read back byte for byte, RA3-1's file named, the generation closed, a later crew's Oracle reads none of it | `(snapshot,) = _snapshot_files(tmp_path)` (base: none) |
 | X2 | `test_a_tier2_reset_keeps_ship_records_and_takes_no_snapshot` | D3: tier 2 snapshots nothing | `archive_snapshots` does not exist (base) |
-| X3 | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing[9 faults]` | D5, D6: link, both bounds, grew, shrank, unreadable, reads back wrong, member missing, row refused; A2: the three the preflight knows (link, both bounds) leave the archive unopened | `== 1` (base: 0); on `f9afeb59`, `not _archive_db(tmp_path).exists()` for the three |
+| X3 | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing[10 faults]` | D5, D6: link, both bounds, grew, shrank, unreadable, reads back wrong, member missing, row refused; A2: the three the preflight knows (link, both bounds) leave the archive unopened; A3: a member the bag does not list (`member-extra`, P-8's one killer) | `== 1` (base: 0); on `f9afeb59`, `not _archive_db(tmp_path).exists()` for the three; `member-extra` passes on `f9afeb59` and `47568aa7` (it pins the member-list check) |
 | X4 | `test_skip_promotion_skips_the_snapshot_with_it_and_says_so` | D8 | the "skipped with it" line |
 | X5 | `test_without_an_instance_id_a_full_reset_of_ship_records_refuses` | D8; tier 2 unchanged | `== 1` |
 | X6 | `test_the_plan_lists_every_file_but_git_and_procedures_within_its_bounds` | D3, D5: the exclusions are top-level only; at both bounds and one beyond; missing root; a root that is a file; an empty tree writes nothing | (new) |
@@ -1767,7 +1769,7 @@ def test_a_tier2_reset_keeps_ship_records_and_takes_no_snapshot(tmp_path: Path, 
 
 _FAULTS = (
     "link", "too-many-files", "too-many-bytes", "grew", "shrank", "unreadable", "reads-back-wrong",
-    "member-missing", "not-recorded",
+    "member-missing", "member-extra", "not-recorded",
 )
 #: A2: the faults the reset's preflight knows before anything is written: the archive is never even opened.
 _PREFLIGHT_FAULTS = ("link", "too-many-files", "too-many-bytes")
@@ -1812,6 +1814,13 @@ def _inject(fault: str, records: Path, tmp_path: Path, monkeypatch: pytest.Monke
                 real_text(bag_zip, name, text, stamp)
 
         monkeypatch.setattr(records_snapshot, "_write_text", _no_bag_info)
+    elif fault == "member-extra":  # A3: a member the bag does not list; only the member-list check refuses it (P-8)
+        def _one_more(bag_zip: Any, name: str, text: str, stamp: Any) -> None:
+            real_text(bag_zip, name, text, stamp)
+            if name.endswith("/bagit.txt"):  # after the last member the bag lists
+                real_text(bag_zip, name.removesuffix("bagit.txt") + "unlisted.txt", "unlisted\n", stamp)
+
+        monkeypatch.setattr(records_snapshot, "_write_text", _one_more)
     else:  # "not-recorded": the file is written and checked, then the ledger refuses its row
         async def _ledger_refuses(self: ArchiveLedger, snapshot: SnapshotRecord) -> int:
             raise sqlite3.OperationalError("database is locked")
@@ -4719,7 +4728,8 @@ The heading's count is the row count: 36 for M1 (P-1 to P-36), 16 for M2 (D-1 to
 - P-28 survives X16's first reset part only if `prepare_snapshot`'s own check refuses, which happens after the archive was opened; X16 asserts that no archive file exists, so the row is killed.
 - K-4 is killed on Windows, where a junction's `lstat` is a directory. On POSIX the next line refuses a symlink as "not a directory", so there it is outcome-equivalent.
 - K-14's junction case kills it; its file case is outcome-equivalent, because no description is read through a file.
-- The baseline run is the three new files and `tests/test_ad1341_s3_veto_store.py`: 138 cases by analysis. P-3 and P-4 mutate the same line; restore between them. D-6 is killed only because N1 creates its anti-pattern first (p-3 at `_B + 30.0`). When the creation order equals the completions order, the mutated `ORDER BY` lists the same lines; N1's premise assertion keeps the data from drifting back (A1). P-18 names the ledger test alone. `_erase_snapshot` marks only when `entry.erased_at is None`, so X12's rerun never reaches the `UPDATE`. `AND erased_at IS NULL` is the ledger's own guard: it keeps the first reason when two `erase-snapshot` commands both read the row unmarked, for example while one waits at its confirmation prompt (A1). K-3 leaves nature in place, so C1's `not (data_dir / "procedures").exists()` fails. K-5 skips the marker: C1's `nature_clearances` row is missing, and C5 (which makes the marker fail) deletes nature, so `procedures/` is gone where C5 expects it.
+- **A3:** P-8 is killed only by X3's `member-extra` case. Since A2 the tag read-back (P-33's line) opens every listed member by name, so a missing member (`member-missing`) refuses there too (`KeyError`) and no longer reaches the member-list check. A member the bag does not list is opened by neither loop. `member-missing` stays in X3, with no row of its own.
+- The baseline run is the three new files and `tests/test_ad1341_s3_veto_store.py`: 139 cases by analysis (A3: 138 and `member-extra`). P-3 and P-4 mutate the same line; restore between them. D-6 is killed only because N1 creates its anti-pattern first (p-3 at `_B + 30.0`). When the creation order equals the completions order, the mutated `ORDER BY` lists the same lines; N1's premise assertion keeps the data from drifting back (A1). P-18 names the ledger test alone. `_erase_snapshot` marks only when `entry.erased_at is None`, so X12's rerun never reaches the `UPDATE`. `AND erased_at IS NULL` is the ledger's own guard: it keeps the first reason when two `erase-snapshot` commands both read the row unmarked, for example while one waits at its confirmation prompt (A1). K-3 leaves nature in place, so C1's `not (data_dir / "procedures").exists()` fails. K-5 skips the marker: C1's `nature_clearances` row is missing, and C5 (which makes the marker fail) deletes nature, so `procedures/` is gone where C5 expects it.
 
 ## 11. Verified Against Codebase (2026-10-27, on `4b3101f3`: the S5 repair candidate, S5 Amendment A3 in)
 
@@ -4824,6 +4834,29 @@ logs/ad1341s6r1/review-ad1341s6-{a,b,c}-r1.md  the findings, their locations and
 | A2-AV4 | `_show_promotion_plan`, `_promote_before_reset` and `_clear_nature` each have one caller, `_cmd_reset` | Grep the names in the repository | `__main__.py:3023`, `:3051`, `:3056`, and the contracts | yes |
 | A2-AV5 | No `src` module reads `st_reparse_tag` or `IO_REPARSE_TAG` yet | Grep `IO_REPARSE_TAG\|st_reparse_tag` in `*.py` | none (`file_access.py` uses `st_file_attributes & 0x400`) | yes |
 
+## A3 verification (2026-10-27, on `47568aa7`, tree `d3bd66a8`)
+
+```
+grep -n "namelist|_digest(bag_zip.open|for name in expected" src/probos/knowledge/records_snapshot.py
+  297: if bag_zip.namelist() != expected:                     (P-8)
+  300: the payload loop opens each listed payload member by name
+  302-303: A2's tag loop opens each listed tag member by name (P-33)
+grep -n "member-missing|_no_bag_info" tests/test_ad1341_s6_records_snapshot.py
+  272, 311-316: the one fault that changes the bag's members; it leaves out bag-info.txt, which :303 opens (KeyError)
+logs/ad1341s6a3/evidence-ad1341s6census-d.txt
+  11: P-8 SURVIVED ... CLAIMED-NOT-FAILING [43 passed]
+  61: P-33 KILLED by X8b [1 failed, 42 passed]: X8b's names are intact, so P-8's check is not what kills it
+src/probos/__main__.py:3582-3597: prepare_snapshot, then record_snapshot, then publish: a bag that passes _verify_bag completes the reset
+```
+
+## Absence Verified (A3, 2026-10-27)
+
+| Id | Claim | Run | Found | Holds |
+|---|---|---|---|---|
+| A3-AV1 | No S6 test writes a bag member `_verify_bag` does not expect | Grep `writestr\|_write_text\|ZipFile\(\|namelist` in `tests/test_ad1341_s6_*.py` | the records-snapshot file only: 241-243 (reads), 281 and 316 (`member-missing` omits one), 437-438 (asserts the list), 770 (X8b flips a byte in place) | yes |
+| A3-AV2 | Nothing but `_verify_bag` reads a bag back | Grep `zipfile\|prepare_snapshot\|_verify_bag` in `src/probos` | `records_snapshot.py` only; `__main__.py:3574, 3582` import and call `prepare_snapshot` | yes |
+| A3-AV3 | No test counts X3's cases or names its ids | Grep `_FAULTS\b` in `tests/` | the S6 file 270, 275, 324, 340; `_WALK_FAULTS` (S4) and `_RECORDING_FAULTS` (BF-939) are other names | yes |
+
 ## Absence Verified (2026-10-27)
 
 | Id | Claim | Run | Found | Holds |
@@ -4907,7 +4940,7 @@ Each holds on the assembled tree. Brief the cross-family reviewer with these, on
 1. A tier 3 reset that completes has, before its tier loop ran, one published snapshot whose payload equals every regular file of `{data_dir}/ship-records` except the top-level `.git/` and `procedures/`, byte for byte, and one `archive_snapshots` row naming it with the file's SHA-256.
 2. A tier 3 reset whose snapshot the preflight refuses exits 1 having opened no archive: no promotion, description, row, generation or file. The preflight refuses a link, junction or special file at the root or inside, a root that cannot be inspected, either bound, no instance id or one that cannot name a directory, and a link or junction at the snapshots directory or the timeline's. A snapshot that fails while it is written or checked exits 1 with every data file unchanged, no snapshot or temporary file, no `archive_snapshots` row and no `generations` row. A publish that fails, or a crash between the row and the publish, leaves its row, never deleted, which `probos archive snapshots` shows as `(missing)`, and no `generations` row (A2, A-F7).
 3. No snapshot is ever written over, at prepare or at publish, even by a name that appears after every check: publication is a hard link, and a file system without hard links refuses. The row is recorded before the file is published.
-4. `plan_snapshot` never follows a link or junction, the root included; only a root that is not there is an empty plan; every other `OSError` of the root's `lstat` and of the walk propagates. The read-back reads every member to its end, the tag files included.
+4. `plan_snapshot` never follows a link or junction, the root included; only a root that is not there is an empty plan; every other `OSError` of the root's `lstat` and of the walk propagates. The read-back reads every member to its end, the tag files included, and refuses a bag whose members are not exactly those written, in order (A3: an extra member too).
 5. The erasure of a snapshot deletes only a regular file, at a path that matches the snapshot name pattern, inside a snapshots directory and a timeline directory that are neither links nor junctions; otherwise it exits 1 with nothing marked or deleted. It marks its row before it deletes the file, keeps the first reason (the ledger's `AND erased_at IS NULL`, even when two erasures both read the row unmarked), and never deletes a row.
 6. Only `__main__.py` imports `records_snapshot` or `archive_ledger`; no agent, service or Oracle tier reads a snapshot.
 7. A tier 2 reset and a dry run write no snapshot; a dry run opens no archive. A dry run whose reset would refuse says so and never says a snapshot would be kept (A-F5).
@@ -4990,3 +5023,4 @@ What S6 finds and does not fix, each with its reason. S1 RA3-1 closes (D9). F-64
 **R38.** (Process, S6 round 1) Every refusal test on a destructive path captures *all* durable state before and after (every archive table, the data directory, the link's target) and asserts it unchanged; "exit 1 and the target intact" is not a refusal test. All three reviewers found the same class in three milestones: a guard placed after the first write (the link refusal after the description was archived; the generation closed before a clearance that could fail), or one path of a set checked (the archive against the tier targets but not the clean slate's; the archive file but not the snapshot destination; names but not the components they resolve through). Every test asserted the exit code and the target, so all passed.
 **R39.** (Process) A contract that adds a deletion target or a protected path lists the deletion set × protected paths cross product in §5 and §14, with one test per new pair and a link at every component of each path (root, intermediate, final), not only inside a walk; and puts every knowable refusal in one preflight that the dry run shares.
 **R40.** (Process) Every refusal branch of a new destructive function gets a §10 row or a register line saying why not. The file branch of `_clear_nature` had neither; the Builder flagged it, and a mutant disabling it left all 21 tests passing.
+**R41.** (Process, A3) A guard added behind an older one can take the older guard's only killing data. A2's tag read-back also refuses a missing tag member, so X3's `member-missing` no longer reached P-8's member-list check. That check then refused only a member the bag does not list, and no test wrote one; the census found it, not a review. When an amendment adds a guard on a path that already has a §10 row, recheck that row's fault data against the new guard, and give each guard a fault only it refuses.
