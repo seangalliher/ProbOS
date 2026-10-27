@@ -10,6 +10,8 @@
 
 **Amendment A2 (`claude-architect`, 2026-10-27, after round 1 of the cross-family review of `894526c6`: reviewer A READY, reviewer B NOT READY).** Every repair is in the new §7.8. §7.1 to §7.7 and §8 stay as the record of the original build. (1) **B1** (P2, ordinary, regression): when the TTL has already run out (`/night-orders maintenance -1`), the console's template branch indexed `inert_triggers` on a status that is exactly `{"active": False}`. It raised `KeyError` after printing "Night Orders set". It now reads the field only from an active status. (2) **B2** (P2, ordinary): the hook's docstring and the PROGRESS paragraph said the event "reaches its durable row". So did this contract's §7.6 docstring and §8 PROGRESS text, which §7.8 supersedes. The durable router routes neither `build_failure` nor `trust_update`. What is true: a hook failure no longer stops the durable offer, the NATS publish or the local dispatch. (3) **B3** (P2, injected-only): T2 also rejects a literal `emit_event*` call naming any of the four old event names. DECISIONS and D2 now say what T2 does not catch: a producer behind a renamed emitter (register R11). (4) **B4** (P3, injected-only): `_is_score` no longer converts an int to float, so a finite integer too large for a float counts as a score instead of raising `OverflowError`. (5) **B5** (P3, injected-only): T3b gains two cases with a valid old score and an invalid new one. (6) **Review A F1** (P2, injected-only): a raising `ConnManager.check_escalation` is now logged on its own and the page still goes. D4's `[conn]` case pinned the lost page; it becomes D4b, which asserts delivery. **Recorded, not repaired:** review A F2 and F3 (register R9, R10) and B3's alias forms (R11). **Corrected:** register R4 (not every bridge-alert delivery is fire-and-forget) and R8 (mutation R-9 is equivalent for paging and status, not for logging). **Found while verifying, outside this diff:** R12, a console TTL defect that predates AD-1270 (a BF is recommended). **Shared contract:** unchanged (no signature, persisted shape, config, event or wire shape; an inactive `get_status()` is still exactly `{"active": False}`), so round 2 reviews the delta. Predicted: triggers 38 cases, delivery 11, §10 30 rows.
 
+**Amendment A3 (`claude-architect`, 2026-10-27, after round 2 of the cross-family review of `5f4b57ed`: reviewer A READY, reviewer B NOT READY).** Every repair is in the new §7.9. §7.1 to §7.8 stay as the record. (1) **B r2 F2** (P3, injected-only, a regression A2 introduced; repaired): A2's T2 regex matched raw text. A comment showing an `emit_event` call, or a call emitting a longer name such as `red_alert_resolved`, failed the gate with no producer present. (2) **B r2 F1** (P2, injected-only, not a regression; repaired): the regex needed the quoted name right after the parenthesis, so `event_type=`, `event=`, `name=` and a space before the parenthesis passed. (3) **One change repairs both:** T2's two text scans become `_old_producer_calls`, a module-level AST helper in the test file. It is tested on 27 fixture sources: 11 it must flag, 10 it must not, 5 forms it does not resolve (R11) and 1 that does not parse (it raises). The `.set_alert_condition(` regex moves into the same helper, because it had F1's spacing miss and F2's comment match. The `EventType` check stays: it checks enum values, which no comment reaches. (4) **DECISIONS** now says what the helper does and names R11. PROGRESS never described T2 and is unchanged. (5) **Premise corrected:** the four `_emit_event(name, ...)` helpers forward to `runtime.emit_event` in production (`startup/finalize.py:2560`, `:2596-2598`; `security/pairing/service.py:61`, `:78`), so the `name` keyword is covered. **Recorded:** R11, extended to every form the helper does not resolve. **Shared contract:** yes, at the source-scan gate: T2 now rejects producers it missed and accepts text it wrongly rejected. No product signature, persisted shape, config, event or wire shape changes. Predicted: triggers 65 cases, delivery 11, §10 47 rows.
+
 **Milestones and tiers:**
 - **M1, the trigger truth** (`watch_rotation.py`, the console command, tests). **STANDARD**: Captain-facing Night Orders behaviour and status.
 - **M2, delivery and isolation** (`runtime.py` hook, `bridge_alerts.py`, tests). **HIGH**: `ProbOSRuntime._emit_event` is the shared event-emission contract (AD-1195 durable offer, NATS, listeners).
@@ -58,7 +60,7 @@ The other three triggers can never fire: their event names are never emitted. `t
 ## 3. Decisions
 
 - **D1. The rule lives in `watch_rotation.py`**, the owner of the trigger vocabulary. It takes `trust_floor` as an argument, so `watch_rotation` imports nothing from `config`. The runtime passes `TRUST_FLOOR_CONN`, which it already imports (`runtime.py:111`).
-- **D2. Inert, not invented.** Giving `red_alert` or `security_alert` a producer would be new capability, which is paused. The templates keep both names, because they become live the day a producer lands. Status, the console and a log line say they never fire. A guard test (T2) fails when a producer appears in one of the usual forms: an `EventType` member with an old name, a `set_alert_condition` call, or (A2) a literal `emit_event*` call naming an old event. A producer behind a renamed emitter is not caught (register R11).
+- **D2. Inert, not invented.** Giving `red_alert` or `security_alert` a producer would be new capability, which is paused. The templates keep both names, because they become live the day a producer lands. Status, the console and a log line say they never fire. A guard test (T2) fails when a producer appears in one of the usual forms: an `EventType` member with an old name, a `set_alert_condition` call, or a call to an `emit_event*` method (leading underscores stripped) whose event, the first positional argument or the `event`, `event_type` or `name` keyword, is a string literal equal to an old name. A2 added the emission check. A3 makes both call checks parse the source with `_old_producer_calls` instead of matching text, so comments and longer names never count. An emitter under another name, a call through `getattr`, and a name held in a variable, written as an f-string or split across literals are not resolved (register R11).
 - **D3. Trust pages on the crossing** (`old >= floor > new`). An update that stays below the floor never pages again. The bridge-alert cooldown (300 s) applies per agent on top.
 - **D4. Build in the service, deliver from the caller**, as all ten-plus other alert kinds do. The cost is one cohesive method on frozen srp debt; the baseline row is unchanged (R3).
 - **D5. Fetch the loop before the alert is built.** Outside a running loop the alert is never built, so it never uses up its cooldown. (A2: if scheduling fails after the alert is built, the cooldown is still spent; register R9.)
@@ -95,7 +97,8 @@ On each milestone's base, the new file fails as follows (measured by the orchest
 | ID | File | Case | Proves |
 |---|---|---|---|
 | T1 | triggers | `test_every_mapped_event_has_a_production_producer` | the map names producers (source premise) |
-| T2 | triggers | `test_the_inert_triggers_still_have_no_producer` | guard: fails when a producer lands |
+| T2 | triggers | `test_the_inert_triggers_still_have_no_producer` | guard: fails when a producer lands (A3: through `_old_producer_calls`, which parses `src/probos`) |
+| T2c | triggers | `test_old_producer_calls_flags_a_literal_producer` ×11; `test_old_producer_calls_ignores_what_is_not_a_producer` ×10; `test_old_producer_calls_does_not_resolve_these_forms` ×5; `test_a_source_the_guard_cannot_parse_fails_it` | A3 (review B r2 F1, F2): the helper flags positional, keyword (`event`, `event_type`, `name`), spaced, split and nested literal calls and `set_alert_condition` calls. It ignores comments, docstrings, longer names, other callees, a second positional and other keywords. It pins the forms it does not resolve (R11) and raises on a source it cannot parse |
 | T2b | triggers | `test_every_template_trigger_is_wired_or_known_inert` | template vocabulary |
 | T3 | triggers | `test_build_failure_raises_unless_the_request_ran_nothing` ×6 | BF-897 parity |
 | T3b | triggers | `test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor` ×14 | crossing, bounds, bool/inf/NaN/str/None; A2: an invalid new score beside a valid old one (`[new-bool]`, `[new-neg-inf]`), a finite integer too large for a float (`[huge-int]`) |
@@ -111,7 +114,7 @@ On each milestone's base, the new file fails as follows (measured by the orchest
 | D6 | delivery | `test_without_a_bridge_alert_path_the_event_is_dispatched_and_the_gap_is_logged` ×2 | partial hosts |
 | D7 | delivery | `test_the_alert_is_deduplicated_per_subject_and_suppressible`; `test_a_trust_drop_alert_names_the_agent_and_its_scores` | service contract |
 
-Expected new cases: triggers 32, delivery 11 (measured on the orchestrator's oracle `427546b8`; the table above sums to 32). Measured there before A1: M1's focused list 333 passed, M2's 736 passed, and the §10 census baseline over its seven files 627 passed. A1 changes D2's body, not the number of cases, so the expected counts stay delivery 11, M2 736 and census 627. The orchestrator re-measures. **A2 (predicted):** triggers 38 (T3b +3, T5 +3), delivery 11 (D4 −1, D4b +1); M1's list 339, M2's 742, the census baseline 633. Over the candidate's source with the A2 tests applied, five cases fail: `[huge-int]` (`OverflowError`) and the three expired-template cases (`KeyError: 'inert_triggers'`) in the triggers file, and D4b (`create_thread` awaited 0 times).
+Expected new cases: triggers 32, delivery 11 (measured on the orchestrator's oracle `427546b8`; the table above sums to 32). Measured there before A1: M1's focused list 333 passed, M2's 736 passed, and the §10 census baseline over its seven files 627 passed. A1 changes D2's body, not the number of cases, so the expected counts stay delivery 11, M2 736 and census 627. The orchestrator re-measures. **A2 (predicted):** triggers 38 (T3b +3, T5 +3), delivery 11 (D4 −1, D4b +1); M1's list 339, M2's 742, the census baseline 633. Over the candidate's source with the A2 tests applied, five cases fail: `[huge-int]` (`OverflowError`) and the three expired-template cases (`KeyError: 'inert_triggers'`) in the triggers file, and D4b (`create_thread` awaited 0 times). **A3 (predicted):** triggers 65 (T2c +27), delivery 11; M1's list 366, M2's 769, the census baseline 660. No production source changes, so no case fails over the candidate's source. The discriminating run is §7.9's A2-predicate oracle, with 10 disagreements.
 
 ## 7. The contract
 
@@ -1195,6 +1198,220 @@ REPLACE:
 A guard test (T2) fails when a producer lands in one of the usual forms (an `EventType` member with an old name, a `set_alert_condition` call, or a literal `emit_event*` call naming an old event); a producer behind a renamed emitter is not caught (#1324 register R11). Mapping a producer is one line.
 ```
 
+### 7.9 Repair round 2 (A3)
+
+These pairs apply to `5f4b57ed`, after §7.8, as one repair commit. Apply A3-1 to A3-3 together, since A3-1 removes `import re` and A3-3 removes its last use. Then run the triggers file and the oracle below. Then apply A3-4. Each SEARCH occurs exactly once in its file. A3-4 matches a substring of one long line. The working copies are CRLF.
+
+No production source changes, so every new case passes over the candidate. The discriminating run is the **A2-predicate oracle**. In a scratch script (not committed), evaluate each of the 27 fixture sources with `bool(re.search(r"\.set_alert_condition\(", s) or re.search(r"""emit_event\w*\(\s*["'](?:security_alert|red_alert|alert_condition_change|trust_change)""", s))` and compare the result with the expected truth (flags True; ignores and does-not-resolve False; the syntax case expects a raise).
+
+| Fixture | A2 predicate | Expected | Class |
+|---|---|---|---|
+| `flags[space-before-paren]`, `[event-type-kw]`, `[event-kw]`, `[name-kw]`, `[set-alert-space]` | False | True | F1: missed producer |
+| `ignores[comment]`, `[docstring]`, `[longer-name]`, `[longer-name-trust]` | True | False | F2: false rejection |
+| `test_a_source_the_guard_cannot_parse_fails_it` | returns | raises `SyntaxError` | A3 decision |
+| the other 17 | agree | — | — |
+
+**Prior art (internal):** parsing source in tests is an existing repo pattern (`ast.walk(ast.parse(` in `tests/test_bf891_*`, `test_bf890_*`, `test_bf877_*`, `test_bf875_*`, `test_bf811_*`). No external search: this is ProbOS-specific plumbing.
+
+**Verified on `5f4b57ed` (2026-10-27):**
+```
+Read tests/test_ad1270_night_orders_triggers.py:1-120 -> imports :8-10; _source :42-43; T2 :59-68
+Grep "\bre\." tests/test_ad1270_night_orders_triggers.py -> :64, :68 only
+Grep "def _*emit_event\w*\(" src/probos -> builder.py:1331,1334; protocols.py:244; runtime.py:1930,1977,2018;
+  security/pairing/service.py:74; cognitive/self_improvement/approval_gate.py:169, evolution_store.py:1253, proposal.py:269
+Read security/pairing/service.py:74-80 (self._emit(name, payload)); Grep :61 self._emit = emit_event
+Read cognitive/self_improvement/approval_gate.py:169-175 (self._emit(name, payload))
+Grep startup/finalize.py -> :2560 emit = getattr(runtime, "emit_event", None); :2596-2598 ApprovalGate(event_emit_fn=emit)
+Grep "_emit_event_local\(|_check_night_order_escalation\(" src/probos -> runtime.py:1949 (hook), :1966, :1975 (local dispatch)
+Grep the A2-12 sentence in DECISIONS.md -> 1 match (:871)
+pyproject.toml:9 requires-python = ">=3.12"
+wc -l runtime.py 7011, workforce.py 12150, watch_rotation.py 424, ontology/service.py 650
+```
+
+**Absence verified (2026-10-27):**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No call in `src/probos` is flagged today | Grep `["'](security_alert\|red_alert\|alert_condition_change\|trust_change)["']` and `set_alert_condition` in `src/probos` | list items, dict keys and comments only (`conn.py:54,56,202`; `config_models/knowledge.py:310`; `workforce.py:804,822,840`; `cognitive/importance_scorer.py:26`; `watch_rotation.py:190,197,204,216`); the def at `ontology/service.py:105` | yes |
+| The prefilter parses 4 files | files with `emit_event` (157) ∩ files with an old name (8) = `runtime.py`, `workforce.py`; files with `set_alert_condition` = `watch_rotation.py`, `ontology/service.py` | 4 files, 20,235 lines | yes |
+| PROGRESS does not describe T2 | Grep `guard test\|literal emission` and `\bT2\b` in `PROGRESS.md` | `:417`, `:961`, `:963`, `:993`, none in the AD-1270 paragraph (`:3`) | yes |
+
+**Pair A3-1 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+from __future__ import annotations
+
+import logging
+import math
+import re
+from io import StringIO
+```
+REPLACE:
+```
+from __future__ import annotations
+
+import ast
+import logging
+import math
+from io import StringIO
+```
+
+**Pair A3-2 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+def _source(*parts: str) -> str:
+    return _SRC.joinpath(*parts).read_text(encoding="utf-8")
+
+
+# --- T1, T2: the map names producers, and only producers ---------------------
+```
+REPLACE:
+```
+def _source(*parts: str) -> str:
+    return _SRC.joinpath(*parts).read_text(encoding="utf-8")
+
+
+# AD-1270 A3 (review B round 2, F1 and F2): T2 finds producers by parsing, not by matching text.
+_OLD_EVENT_NAMES = frozenset({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
+# The keywords that carry the event: ``event`` (``ProbOSRuntime.emit_event``), ``event_type``
+# (``_emit_event``) and ``name`` (the ``_emit_event(name, ...)`` helpers that forward to ``emit_event``).
+_EVENT_KEYWORDS = frozenset({"event", "event_type", "name"})
+
+
+def _old_producer_calls(source: str) -> list[tuple[int, str]]:
+    """Return ``(line, name)`` for each call in ``source`` that would produce an inert trigger today.
+
+    Flagged: a call whose callee (a name or an attribute) is ``set_alert_condition``; and a call whose
+    callee, with leading underscores stripped, starts with ``emit_event`` and whose first positional
+    argument, or ``event``, ``event_type`` or ``name`` keyword, is a string literal equal to an old
+    event name. Comments, docstrings and longer names never count. Not resolved (register R11 on
+    #1324): an emitter under another name, a call through ``getattr``, and a name held in a variable,
+    written as an f-string or not present whole in the text (adjacent literals, escapes), which the
+    prefilter skips. A source that may hold a producer and does not parse raises ``SyntaxError``:
+    the guard fails on a file it cannot read instead of passing it.
+    """
+    emits_old = "emit_event" in source and any(name in source for name in _OLD_EVENT_NAMES)
+    if not emits_old and "set_alert_condition" not in source:
+        return []  # neither form can be present, so the source is not parsed
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+        if callee == "set_alert_condition":
+            hits.append((node.lineno, callee))
+        if not callee.lstrip("_").startswith("emit_event"):
+            continue
+        for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:
+            if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:
+                hits.append((node.lineno, arg.value))
+    return sorted(hits)
+
+
+# --- T1, T2: the map names producers, and only producers ---------------------
+```
+
+**Pair A3-3 (`tests/test_ad1270_night_orders_triggers.py`).** SEARCH:
+```
+def test_the_inert_triggers_still_have_no_producer() -> None:
+    """If this fails, a producer exists now: map it in NIGHT_ORDER_TRIGGER_EVENTS."""
+    values = {m.value for m in EventType}
+    assert values.isdisjoint({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
+    texts = {p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py")}
+    assert [p for p, t in texts.items() if re.search(r"\.set_alert_condition\(", t)] == []
+    # AD-1270 A2 (B3): a literal emission of any of the four old names. A producer behind a renamed
+    # emitter is not caught (register R11 on #1324); resolving aliases is out of proportion here.
+    emitted = r"""emit_event\w*\(\s*["'](?:security_alert|red_alert|alert_condition_change|trust_change)"""
+    assert [p for p, t in texts.items() if re.search(emitted, t)] == []
+```
+REPLACE:
+```
+def test_the_inert_triggers_still_have_no_producer() -> None:
+    """If this fails, a producer exists now: map it in NIGHT_ORDER_TRIGGER_EVENTS."""
+    values = {m.value for m in EventType}
+    assert values.isdisjoint(_OLD_EVENT_NAMES)
+    texts = {p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py")}
+    # AD-1270 A3: calls found by parsing (see _old_producer_calls); what it cannot see is register R11 on #1324.
+    found = {p: _old_producer_calls(t) for p, t in texts.items()}
+    assert {p: hits for p, hits in found.items() if hits} == {}
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('rt.emit_event("red_alert", {})\n', [(1, "red_alert")]),
+        ('rt.emit_event ("red_alert", {})\n', [(1, "red_alert")]),
+        ('rt.emit_event(\n    "red_alert",\n    {},\n)\n', [(1, "red_alert")]),
+        ('emit_event("trust_change", {})\n', [(1, "trust_change")]),
+        ('rt._emit_event(event_type="trust_change", data={})\n', [(1, "trust_change")]),
+        ('rt.emit_event(event="security_alert")\n', [(1, "security_alert")]),
+        ('self._emit_event(name="alert_condition_change", payload={})\n', [(1, "alert_condition_change")]),
+        ('log(rt.emit_event("security_alert", {}))\n', [(1, "security_alert")]),
+        ('log(rt.emit_event("security_alert", {}))\nrt.emit_event("red_alert", {})\n',
+         [(1, "security_alert"), (2, "red_alert")]),
+        ('svc.set_alert_condition("RED")\n', [(1, "set_alert_condition")]),
+        ('svc.set_alert_condition ("RED")\n', [(1, "set_alert_condition")]),
+    ],
+    ids=["positional", "space-before-paren", "split-lines", "bare-name", "event-type-kw", "event-kw", "name-kw",
+         "nested", "two-calls", "set-alert", "set-alert-space"],
+)
+def test_old_producer_calls_flags_a_literal_producer(source: str, expected: list[tuple[int, str]]) -> None:
+    """AD-1270 A3 (review B r2 F1): every supported way of naming the event in a direct call is found."""
+    assert _old_producer_calls(source) == expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '# e.g. rt.emit_event("red_alert", {})\nx = 1\n',
+        '"""Page with rt.emit_event("red_alert", {}) or svc.set_alert_condition("RED")."""\n',
+        'rt.emit_event("red_alert_resolved", {})\n',
+        'rt.emit_event("trust_change_summary", {})\n',
+        'rt.emit_event("build_failure", {})\nrt.publish("red_alert", {})\n',
+        'rt.emit_event("build_failure", "red_alert")\n',
+        'rt.emit_event("build_failure", data="red_alert")\n',
+        'def set_alert_condition(self, condition):\n    pass\n',
+        'rt.emit_event("build_failure", {}\n',
+        'def (:\n',
+    ],
+    ids=["comment", "docstring", "longer-name", "longer-name-trust", "other-callee", "second-positional",
+         "other-keyword", "definition-only", "unparsable-without-old-name", "unparsable-unrelated"],
+)
+def test_old_producer_calls_ignores_what_is_not_a_producer(source: str) -> None:
+    """AD-1270 A3 (review B r2 F2): text that only mentions a producer, or names a longer event, is not one."""
+    assert _old_producer_calls(source) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'fire = rt.emit_event\nfire("red_alert", {})\n',
+        'getattr(rt, "emit_event")("red_alert", {})\n',
+        'name = "red_alert"\nrt.emit_event(name, {})\n',
+        'rt.emit_event(f"red_alert", {})\n',
+        'rt.emit_event("red_" "alert", {})\n',
+    ],
+    ids=["alias", "getattr", "variable", "f-string", "split-literal"],
+)
+def test_old_producer_calls_does_not_resolve_these_forms(source: str) -> None:
+    """Register R11 on #1324: forms the guard does not resolve. If one starts to match, update R11 and DECISIONS."""
+    assert _old_producer_calls(source) == []
+
+
+def test_a_source_the_guard_cannot_parse_fails_it() -> None:
+    """AD-1270 A3: a file that may hold a producer and does not parse fails T2 instead of being skipped."""
+    with pytest.raises(SyntaxError):
+        _old_producer_calls('rt.emit_event("red_alert", {}\n')
+```
+
+**Pair A3-4 (`DECISIONS.md`).** SEARCH:
+```
+A guard test (T2) fails when a producer lands in one of the usual forms (an `EventType` member with an old name, a `set_alert_condition` call, or a literal `emit_event*` call naming an old event); a producer behind a renamed emitter is not caught (#1324 register R11). Mapping a producer is one line.
+```
+REPLACE:
+```
+A guard test (T2) fails when a producer lands in a form it can see: an `EventType` member with an old name, or a call it finds by parsing `src/probos`, either a `set_alert_condition` call or an `emit_event*` call whose event (the first positional argument, or the `event`, `event_type` or `name` keyword) is a string literal equal to an old name. Comments, docstrings and longer names such as `red_alert_resolved` do not count. It does not resolve an emitter under another name, a call through `getattr`, or a name held in a variable, written as an f-string or split across literals (#1324 register R11). Mapping a producer is one line.
+```
+
 ## 8. Tracking (M3's commit)
 
 `PROGRESS.md`. Re-anchor on S6's merge; the paragraph goes first.
@@ -1244,7 +1461,7 @@ Parent checklist (the orchestrator, on #1324): tick the Night Orders item with t
 - `TrustUpdateEvent` (still never built; the producer emits the string form).
 - No config field, event type, route, HXI view or schema.
 
-## 10. Mutation rows (30 rows after A2; one campaign on the assembled tree after an unmutated baseline of both new files passes)
+## 10. Mutation rows (47 rows after A3; one campaign on the assembled tree after an unmutated baseline of both new files passes)
 
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -1278,10 +1495,27 @@ Parent checklist (the orchestrator, on #1324): tick the Night Orders item with t
 | C-3 | M1 | `commands_autonomous.py` | `inert = status["inert_triggers"] if status["active"] else []` | `inert = status["inert_triggers"]` | `test_a_template_order_that_is_already_expired_does_not_break_the_console` (A2, B1) |
 | R-10 | M2 | `runtime.py` | `except Exception:  # AD-1270 A2 (#1324): ConnManager's log is bookkeeping; its failure must not cost the Captain the page` | `except ZeroDivisionError:  # AD-1270 A2 (#1324): ConnManager's log is bookkeeping; its failure must not cost the Captain the page` | `test_a_conn_log_that_raises_still_pages_the_captain` (A2, review A F1) |
 | R-9 | M2 | `runtime.py` | `if not mgr or not mgr.active:` | `if not mgr:` | none: **equivalent for paging and status, not for logging** (A2 qualification, both round-1 reviewers). With an inactive manager the mutant calls the rule. An input that makes the rule raise is then logged once under the mutant and not at all on the candidate. After A2's `_is_score` fix the only such input is a truthy `details` that is not a mapping. Nothing pages either way. Recorded, no test. The original note follows: **equivalent mutant**. An inactive `NightOrdersManager` already returns False from `check_escalation` (`watch_rotation.py:419-423`, re-reading the idempotent `active` property, `:308-314`), so the mutant only adds a call to the pure `night_order_trigger`. It is observable only with a manager whose `active` is false while `check_escalation` is true, which the production class cannot be. The census runs it on all files and reports it survived; record it as equivalent, with no test |
+| H-1 | A3 | `test_ad1270_night_orders_triggers.py` | `emits_old = "emit_event" in source and any(name in source for name in _OLD_EVENT_NAMES)` | `emits_old = "emit_event" in source` | `test_old_producer_calls_ignores_what_is_not_a_producer[unparsable-without-old-name]` (now parsed, so it raises `SyntaxError`) |
+| H-2 | A3 | `test_ad1270_night_orders_triggers.py` | `if not emits_old and "set_alert_condition" not in source:` | `if not emits_old:` | `test_old_producer_calls_flags_a_literal_producer[set-alert]`, `test_old_producer_calls_flags_a_literal_producer[set-alert-space]` |
+| H-3 | A3 | `test_ad1270_night_orders_triggers.py` | `if not emits_old and "set_alert_condition" not in source:` | `if False:` | `test_old_producer_calls_ignores_what_is_not_a_producer[unparsable-without-old-name]`, `test_old_producer_calls_ignores_what_is_not_a_producer[unparsable-unrelated]` |
+| H-4 | A3 | `test_ad1270_night_orders_triggers.py` | `callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""` | `callee = func.attr if isinstance(func, ast.Attribute) else ""` | `test_old_producer_calls_flags_a_literal_producer[bare-name]` |
+| H-5 | A3 | `test_ad1270_night_orders_triggers.py` | `if callee == "set_alert_condition":` | `if False:` | `test_old_producer_calls_flags_a_literal_producer[set-alert]`, `test_old_producer_calls_flags_a_literal_producer[set-alert-space]` |
+| H-6 | A3 | `test_ad1270_night_orders_triggers.py` | `hits.append((node.lineno, callee))` | `pass` | `test_old_producer_calls_flags_a_literal_producer[set-alert]`, `test_old_producer_calls_flags_a_literal_producer[set-alert-space]` |
+| H-7 | A3 | `test_ad1270_night_orders_triggers.py` | `if not callee.lstrip("_").startswith("emit_event"):` | `if not callee.startswith("emit_event"):` | `test_old_producer_calls_flags_a_literal_producer[event-type-kw]`, `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
+| H-8 | A3 | `test_ad1270_night_orders_triggers.py` | `if not callee.lstrip("_").startswith("emit_event"):` | `if False:` | `test_old_producer_calls_ignores_what_is_not_a_producer[other-callee]`, `test_old_producer_calls_does_not_resolve_these_forms[alias]`, `test_old_producer_calls_does_not_resolve_these_forms[getattr]` |
+| H-9 | A3 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `for arg in node.args[:1]:` | `test_old_producer_calls_flags_a_literal_producer[event-type-kw]`, `test_old_producer_calls_flags_a_literal_producer[event-kw]`, `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
+| H-10 | A3 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `for arg in node.args + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `test_old_producer_calls_ignores_what_is_not_a_producer[second-positional]` |
+| H-11 | A3 | `test_ad1270_night_orders_triggers.py` | `for arg in node.args[:1] + [kw.value for kw in node.keywords if kw.arg in _EVENT_KEYWORDS]:` | `for arg in node.args[:1] + [kw.value for kw in node.keywords]:` | `test_old_producer_calls_ignores_what_is_not_a_producer[other-keyword]` |
+| H-12 | A3 | `test_ad1270_night_orders_triggers.py` | `if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:` | `if isinstance(arg, ast.Constant) and str(arg.value).startswith(tuple(_OLD_EVENT_NAMES)):` | `test_old_producer_calls_ignores_what_is_not_a_producer[longer-name]`, `test_old_producer_calls_ignores_what_is_not_a_producer[longer-name-trust]` |
+| H-13 | A3 | `test_ad1270_night_orders_triggers.py` | `if isinstance(arg, ast.Constant) and arg.value in _OLD_EVENT_NAMES:` | `if arg.value in _OLD_EVENT_NAMES:` | `test_old_producer_calls_does_not_resolve_these_forms[variable]`, `test_old_producer_calls_does_not_resolve_these_forms[f-string]` (a `Name` or `JoinedStr` has no `value`, so the mutant raises `AttributeError`) |
+| H-14 | A3 | `test_ad1270_night_orders_triggers.py` | `hits.append((node.lineno, arg.value))` | `pass` | `test_old_producer_calls_flags_a_literal_producer[positional]` |
+| H-15 | A3 | `test_ad1270_night_orders_triggers.py` | `return sorted(hits)` | `return hits` | `test_old_producer_calls_flags_a_literal_producer[two-calls]` (`ast.walk` is breadth-first, so the nested line-1 call is found after the line-2 call) |
+| H-16 | A3 | `test_ad1270_night_orders_triggers.py` | `_EVENT_KEYWORDS = frozenset({"event", "event_type", "name"})` | `_EVENT_KEYWORDS = frozenset({"event", "event_type"})` | `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
+| H-17 | A3 | `test_ad1270_night_orders_triggers.py` | `_OLD_EVENT_NAMES = frozenset({"trust_change", "alert_condition_change", "security_alert", "red_alert"})` | `_OLD_EVENT_NAMES = frozenset({"trust_change", "security_alert", "red_alert"})` | `test_old_producer_calls_flags_a_literal_producer[name-kw]` |
 
-Each line occurs once in its file after §7. Lines with no row, and why: the docstrings; `_score_text`'s `"?"` branch (display only); the `"nothing"` arm of `Escalates on` (display only).
+Each line occurs once in its file after §7 and §7.9. Lines with no row, and why: the docstrings; `_score_text`'s `"?"` branch (display only); the `"nothing"` arm of `Escalates on` (display only). In `_old_producer_calls` (A3), these have no row: the prefilter's `return []`, whose removal H-3's killers catch; `hits: list[tuple[int, str]] = []`; the `for node in ast.walk(ast.parse(source)):` line; `if not isinstance(node, ast.Call):`; `func = node.func`; and the two `continue` lines. Any whole-line mutant of these raises or empties every result, so every flagged case kills it.
 
-Killed-by cells are census-ready. They name full pytest function names in code spans, with a single parametrised case written `name[id]`. A cell names no function only for R-9, the equivalent mutant. Census of record: orchestrator, 2026-10-27, on `427546b8`: 24 killed, 2 survived (R-7, R-9), baseline 627 passed. A1 changes only D2, so after A1 rerun the unmutated baseline and the rows that claim D2: W-2, B-1, R-4, R-7, R-8. Expected: 25 killed, R-9 survived and recorded as equivalent. Measured (census d, on A1): 25 killed, R-9 survived. **A2:** three source files change, so no row's overlay matches the census of record. Rerun the whole campaign of 30 rows on the repaired tree. Predicted: baseline 633 passed, 29 killed, R-9 survived (qualified above).
+Killed-by cells are census-ready. They name full pytest function names in code spans, with a single parametrised case written `name[id]`. A cell names no function only for R-9, the equivalent mutant. Census of record: orchestrator, 2026-10-27, on `427546b8`: 24 killed, 2 survived (R-7, R-9), baseline 627 passed. A1 changes only D2, so after A1 rerun the unmutated baseline and the rows that claim D2: W-2, B-1, R-4, R-7, R-8. Expected: 25 killed, R-9 survived and recorded as equivalent. Measured (census d, on A1): 25 killed, R-9 survived. **A2:** three source files change, so no row's overlay matches the census of record. Rerun the whole campaign of 30 rows on the repaired tree. Predicted: baseline 633 passed, 29 killed, R-9 survived (qualified above). Measured on `5f4b57ed`: 29 of 30 killed, R-9 survived. **A3:** only `tests/test_ad1270_night_orders_triggers.py` changes. No source file a W, C, B or R row mutates changes, and none of their named killers changes. The `5f4b57ed` rerun therefore stays the campaign of record for those 30 rows. Run the unmutated baseline and the 17 H rows on the repaired tree. The H rows mutate the test file's own helper, so the File cell is under `tests/`. Predicted: baseline 660 passed and 17 H rows killed, so 46 of 47 rows are killed overall, with R-9 survived (equivalent).
 
 ## 11. Verified Against Codebase (2026-10-27, on `a2390998`)
 
@@ -1357,7 +1591,13 @@ Read startup/finalize.py:4210-4224
 12. A raising `ConnManager.check_escalation` is logged once under its own message, and the alert is still built and delivered. Any other raise in the hook still reaches the outer handler. `_emit_event` still offers the event to `durable_events` and dispatches it.
 13. `_is_score` accepts every non-bool `int` (compared exactly with the float floor) and only finite floats. No numeric or bool score makes `night_order_trigger` raise.
 14. No shipped text claims persistence. The hook's docstring, PROGRESS and DECISIONS say only that a hook failure no longer stops the durable offer, the NATS publish or dispatch.
-15. T2 rejects a literal `emit_event*` call naming any of the four old names, and nothing claims it catches an aliased emitter.
+15. T2 rejects a literal `emit_event*` call naming any of the four old names, and nothing claims it catches an aliased emitter. *(A3: superseded by 16 to 19.)*
+
+**A3 (round 3, the delta only; a shared contract at the source-scan gate):**
+16. `_old_producer_calls` flags exactly two kinds of call. The first: a callee (`Name.id` or `Attribute.attr`) that, with leading underscores stripped, starts with `emit_event`, and whose first positional argument, or `event`, `event_type` or `name` keyword, is a `Constant` **equal** to one of the four old names. The second: any call whose callee is `set_alert_condition`. Nothing in a comment, docstring or other string is flagged, and neither is a longer name, a second positional or another keyword.
+17. A source the prefilter admits that does not parse raises `SyntaxError`; a source it excludes is not parsed and returns `[]`. The prefilter can exclude a flaggable call only when the name does not appear whole in the text (R11 d).
+18. On the real tree, T2 passes and the prefilter parses exactly 4 files (`runtime.py`, `workforce.py`, `watch_rotation.py`, `ontology/service.py`). The `EventType` check stays. `re` is no longer imported. No other test changed. The delivery file and every `src` file are unchanged since `5f4b57ed`.
+19. The fixture tests discriminate: each H row in §10 is killed by its named case. The DECISIONS sentence claims no more than 16 and 17, and names R11.
 
 ## 15. Acceptance criteria
 
@@ -1371,6 +1611,7 @@ Read startup/finalize.py:4210-4224
 - [ ] The orchestrator's single broad gate passes with its receipt.
 - [ ] #1324's Night Orders checklist item is ticked with the commit and receipt; the register rows are posted on #1324.
 - [ ] A2: the §7.8 tests failed over the candidate's source as §6 predicts (5 cases) before the source pairs were applied. §7.8 is committed. The §10 campaign was rerun (30 rows). Round 2 reviewed the delta against §14 items 11-15.
+- [ ] A3: §7.9 applied as one commit. The A2-predicate oracle disagreed with the fixtures where §7.9 predicts (10). The triggers file passes (65 cases). The baseline (660) and the 17 H rows were run. Round 3 (reviewer B) reviewed the delta against §14 items 16-19, including the real-tree consumer check. The ledger was regenerated.
 - [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1324)
@@ -1385,5 +1626,5 @@ Read startup/finalize.py:4210-4224
 - **R8.** Mutation census (orchestrator, 2026-10-27, on `427546b8`): 24 of 26 killed. Mutation R-7 (`if alert is None:`) survived because D2's second update was not a crossing and never reached the service. Amendment A1 gives D2 a second crossing inside the cooldown and asserts that no delivery is scheduled; R-7 closes when the rerun kills it. Mutation R-9 is equivalent (an inactive manager's `check_escalation` is already False). W-2 and B-1 were killed, but by T3b and D7, not by D2 as first claimed; A1's D2 assertions are predicted to make D2 a second killer of both. *A2:* census d on A1 measured 25 killed, with R-9 survived. Both round-1 reviewers showed R-9 is equivalent for paging and status, but not for logging (§10 row).
 - **R9.** (Review A F2; P3; injected-only; not a regression.) If `loop.create_task` fails after `check_night_orders_escalation` has built the alert, the `deliver_bridge_alert` coroutine is never awaited and that alert's 300 s cooldown is spent. Only an injected fault reaches this: the loop was fetched as running one line earlier. Closing it needs a cooldown-release method owned by the service (frozen srp debt, R3) or building the alert after scheduling. Owner: AD-1270h, the `BridgeAlertService` decomposition.
 - **R10.** (Review A F3; P3; injected-only.) `tasks.add` runs after the task exists, so a host whose `_event_listener_tasks` is `None` logs a failure and leaves an unretained task. Only a BF-708 borrowed-method host can be in that state; production initialises a set (`runtime.py:1435-1438`). Trigger: the next change to the hook. The fix is to bind `self._event_listener_tasks.add` before the alert is built.
-- **R11.** (B3 residue; P2; injected-only.) T2 does not catch a producer reached through a renamed emitter. Owner: same as R1. The slice that wires an alert-condition writer, or AD-455b, maps the trigger in the same change; T2 is a backstop, not a guarantee.
+- **R11.** (B3 residue, extended in A3 after review B r2 F1; P2; injected-only.) T2 finds a producer in three forms. The first is an `EventType` member with an old value. The other two are calls it finds by parsing `src/probos` (`_old_producer_calls`): a `set_alert_condition` call, and a call to an `emit_event*` method whose first positional argument, or `event`, `event_type` or `name` keyword, is a string literal equal to an old name. It does not resolve: (a) an emitter under another name (`fire = rt.emit_event`, or the forwarders' own `self._emit(name, ...)`); (b) a call through `getattr`; (c) a name held in a variable, passed through `**kwargs`, or written as an f-string, even one with no placeholder; (d) a name that does not appear whole in the text (adjacent literals, escapes), which the prefilter skips without parsing; (e) `_emit_event_local(event, type_str)`, which bypasses the Night Orders hook (`runtime.py:1949` against `:1966`, `:1975`), so it is not a producer the map could use; (f) a producer outside `src/probos`. `test_old_producer_calls_does_not_resolve_these_forms` pins (a) to (d) with the fixtures `[alias]`, `[getattr]`, `[variable]`, `[f-string]` and `[split-literal]`. If one of those starts to match, update this row and DECISIONS. Owner: same as R1. The slice that wires an alert-condition writer, or AD-455b, maps the trigger in the same change; T2 is a backstop, not a guarantee.
 - **R12.** (Found during A2 verification. It predates AD-1270: `git blame` dates `commands_autonomous.py:155-175` to `5452ff13`, 2026-03-30. Ordinary reach.) The console accepts any float TTL. With `0` or a negative TTL, the console prints "Night Orders set" for an order that is already expired: the Captain believes orders are on and nothing escalates. With `nan`, or a TTL negative enough that `expires_at <= 0`, the order never expires (`watch_rotation.py:288-290`). It is outside AD-1270's diff; a BF is recommended.
