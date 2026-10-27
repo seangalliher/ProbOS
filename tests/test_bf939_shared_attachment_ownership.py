@@ -366,13 +366,17 @@ _UNWIND_S = 10.0  # A-6: a cancelled erasure must have ended within it; exceedin
 
 
 async def _overlapping(*erasures: Awaitable[Any]) -> list[Any]:
-    """A-6 (B3-1): run ``erasures`` together within ``_OVERLAP_BUDGET_S``, and never return or raise while one runs.
+    """A-6 (B3-1), A-7 (R4-1 to R4-3): run ``erasures`` together within ``_OVERLAP_BUDGET_S``, then drain them.
 
     ``asyncio.gather`` stops supervising once a child raises (the handshake's ``pytest.fail``, say): the others run
     on past the caller's cleanup, against a client and stores that are closing. Here each erasure is a task this
-    helper holds; on every way out, each unfinished one is cancelled and awaited, so the caller's ``finally`` and
-    context exits run after the last erasure has ended. One still running ``_UNWIND_S`` after its cancellation fails
-    the test.
+    helper holds, and on every way out it waits for each unfinished one, so the caller's ``finally`` and context
+    exits run after the last erasure has ended. One not yet cancelled is cancelled once. One ``gather`` has already
+    cancelled (the budget expired, or the caller was cancelled) is only awaited: a second cancellation would
+    interrupt its own awaited cleanup (R4-1). A cancellation of the caller during the drain is held until the drain
+    ends, then raised (R4-3). The drain is bounded: an erasure still running ``_UNWIND_S`` after the drain began fails
+    the test with an ``AssertionError`` raised while that erasure still runs, and the original failure is its
+    ``__context__``. That is the one way out before every erasure has ended (R4-2).
     """
     tasks = [asyncio.ensure_future(erasure) for erasure in erasures]
     try:
@@ -380,13 +384,23 @@ async def _overlapping(*erasures: Awaitable[Any]) -> list[Any]:
     finally:
         unfinished = [task for task in tasks if not task.done()]
         for task in unfinished:
-            task.cancel()
-        if unfinished:
-            done, stuck = await asyncio.wait(unfinished, timeout=_UNWIND_S)
-            for ended in done:
-                if not ended.cancelled():
-                    ended.exception()  # retrieved, so asyncio never reports it as "never retrieved"
-            assert not stuck, f"{len(stuck)} overlapping erasure(s) still ran {_UNWIND_S} s after cancellation"
+            if not task.cancelling():  # A-7 (R4-1): never twice; a second cancel interrupts its cleanup
+                task.cancel()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _UNWIND_S
+        interrupted = False  # A-7 (R4-3): set when the caller is cancelled during the drain
+        while (running := [task for task in unfinished if not task.done()]) and loop.time() < deadline:
+            try:
+                await asyncio.wait(running, timeout=deadline - loop.time())
+            except asyncio.CancelledError:  # A-7 (R4-3): the caller was cancelled; drain first, raise below
+                interrupted = True
+        for ended in unfinished:
+            if ended.done() and not ended.cancelled():
+                ended.exception()  # retrieved, so asyncio never reports it as "never retrieved"
+        stuck = [task for task in unfinished if not task.done()]
+        assert not stuck, f"{len(stuck)} overlapping erasure(s) still ran {_UNWIND_S} s after cancellation"
+        if interrupted:
+            raise asyncio.CancelledError  # A-7 (R4-3): the caller's cancellation, deferred until the drain ended
 
 
 def _a_handshake_that_fails(
@@ -850,5 +864,85 @@ async def test_a_failed_overlap_ends_the_other_erasure_before_its_stores_close(
                 tmp_path, monkeypatch, "two-episodes",
             )
         assert events[:2] == ["held call unwound", "attachment store closed"]
+    finally:
+        await _end_stragglers(before)
+
+
+# --- T20, T21: a cancelled overlap awaits each erasure's own cleanup (A-7, R4-1, R4-3) --------------------------------
+
+
+@pytest.mark.parametrize("way_out", ["caller-cancelled", "budget-expired"])
+async def test_a_cancelled_overlap_awaits_each_erasures_own_cleanup(
+    monkeypatch: pytest.MonkeyPatch, way_out: str,
+) -> None:
+    """R4-1 (A-7): when the caller is cancelled or the budget expires, ``gather`` cancels both erasures itself. The
+    first ends at once; the second's cleanup awaits, as closing a client does. ``_overlapping`` must wait for that
+    cleanup, not cancel the second erasure again, which would interrupt it. Its waits are 0.05 s each."""
+    started: list[asyncio.Task[Any]] = []
+    both_started = asyncio.Event()
+    events: list[str] = []
+
+    async def erasure(cleanup_awaits: bool) -> None:
+        task = asyncio.current_task()
+        assert task is not None
+        started.append(task)
+        if len(started) == 2:
+            both_started.set()
+        try:
+            await asyncio.Event().wait()  # never set: only a cancellation ends it
+        finally:
+            if cleanup_awaits:
+                await asyncio.sleep(0.05)  # an awaited cleanup: a second cancellation would end it here
+                events.append("second erasure's cleanup finished")
+
+    expected: type[BaseException] = asyncio.CancelledError if way_out == "caller-cancelled" else TimeoutError
+    if way_out == "budget-expired":
+        monkeypatch.setitem(globals(), "_OVERLAP_BUDGET_S", 0.05)
+    before = asyncio.all_tasks()
+    caller = asyncio.create_task(_overlapping(erasure(False), erasure(True)))
+    try:
+        await asyncio.wait_for(both_started.wait(), _UNWIND_S)
+        if way_out == "caller-cancelled":
+            caller.cancel()
+        with pytest.raises(expected):
+            await caller
+        assert events == ["second erasure's cleanup finished"]  # awaited to its end, never interrupted
+        assert all(task.done() for task in started)  # nothing outlives the helper
+        assert [task.cancelling() for task in started] == [1, 1]  # each cancelled once, by gather
+    finally:
+        await _end_stragglers(before)
+
+
+async def test_a_caller_cancelled_during_the_drain_still_waits_for_the_other_erasure() -> None:
+    """R4-3 (A-7): the first erasure fails, so ``_overlapping`` cancels the second and waits for its cleanup, which
+    awaits. The caller is cancelled during that wait. The helper must go on waiting, so the cleanup has finished when
+    the caller's ``await`` returns, and must then raise the cancellation, not the first erasure's error. Its one wait
+    is the 0.05 s cleanup."""
+    second_started = asyncio.Event()
+    cleanup_began = asyncio.Event()
+    events: list[str] = []
+
+    async def failing() -> None:
+        await asyncio.wait_for(second_started.wait(), _UNWIND_S)
+        raise ValueError("the first erasure failed")
+
+    async def held() -> None:
+        second_started.set()
+        try:
+            await asyncio.Event().wait()  # never set: only a cancellation ends it
+        finally:
+            cleanup_began.set()
+            await asyncio.sleep(0.05)  # an awaited cleanup, under way when the caller is cancelled
+            events.append("second erasure's cleanup finished")
+
+    before = asyncio.all_tasks()
+    caller = asyncio.create_task(_overlapping(failing(), held()))
+    try:
+        await asyncio.wait_for(cleanup_began.wait(), _UNWIND_S)
+        assert not caller.done()  # premise: the caller is in the drain, waiting for the held erasure
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):  # the deferred cancellation, never the first erasure's ValueError
+            await caller
+        assert events == ["second erasure's cleanup finished"]  # the drain ended before the caller did
     finally:
         await _end_stragglers(before)
