@@ -57,7 +57,6 @@ def test_every_mapped_event_has_a_production_producer() -> None:
 
 
 def test_the_inert_triggers_still_have_no_producer() -> None:
-    """If this fails, a producer exists now: map it in NIGHT_ORDER_TRIGGER_EVENTS."""
     values = {m.value for m in EventType}
     assert values.isdisjoint({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
     texts = {p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py")}
