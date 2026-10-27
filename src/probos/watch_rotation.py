@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -203,6 +206,55 @@ NIGHT_ORDER_TEMPLATES: dict[str, dict[str, Any]] = {
     },
 }
 
+# AD-1270 (#1324): emitted event type -> the Night Orders trigger it raises.
+# Every key has a production producer: ``build_failure`` (``routers/build.py``)
+# and ``trust_update`` (``consensus/trust.py``, which carries ``old_score`` and
+# ``new_score``). The AD-471 map keyed ``trust_change``, ``alert_condition_change``
+# and ``security_alert``, which nothing emits, and read a ``new_trust`` field
+# nothing sends. ``red_alert`` and ``security_alert`` stay valid trigger names
+# but have no producer on this build (nothing calls
+# ``OntologyService.set_alert_condition``; nothing emits ``security_alert``),
+# so status reports them as inert instead of promising a page that never comes.
+NIGHT_ORDER_TRIGGER_EVENTS: Mapping[str, str] = MappingProxyType({
+    "build_failure": "build_failure",
+    "trust_update": "trust_drop",
+})
+WIRED_NIGHT_ORDER_TRIGGERS: frozenset[str] = frozenset(NIGHT_ORDER_TRIGGER_EVENTS.values())
+
+
+def night_order_trigger(
+    event_type: str,
+    details: Mapping[str, Any] | None,
+    *,
+    trust_floor: float,
+) -> str | None:
+    """The Night Orders trigger an emitted event raises, or ``None`` (AD-471, AD-1270 #1324).
+
+    ``build_failure`` raises ``build_failure`` unless the request ran nothing
+    (BF-897's ``not_executed`` marker, exactly ``True``). ``trust_update`` raises
+    ``trust_drop`` once, as the score crosses below ``trust_floor``
+    (``old >= floor > new``); an update that stays below the floor, or that
+    carries no finite numeric scores, raises nothing.
+    """
+    trigger = NIGHT_ORDER_TRIGGER_EVENTS.get(event_type)
+    if trigger is None:
+        return None
+    data = details or {}
+    if trigger == "build_failure" and data.get("not_executed") is True:
+        return None  # BF-897: a refused request ran nothing, so there is no failure to escalate
+    if trigger == "trust_drop":
+        old, new = data.get("old_score"), data.get("new_score")
+        if not (_is_score(old) and _is_score(new)):
+            return None
+        if not (old >= trust_floor > new):  # once, as the score crosses below the floor
+            return None
+    return trigger
+
+
+def _is_score(value: Any) -> bool:
+    # AD-1270 A2 (#1324): an int is exact and always finite; math.isfinite would convert it to float and overflow
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (isinstance(value, int) or math.isfinite(value))
+
 
 @dataclass
 class NightOrders:
@@ -316,6 +368,12 @@ class NightOrdersManager:
             "Night Orders set (template=%s, ttl=%.1fh, triggers=%s)",
             template or "custom", ttl_hours, escalation_triggers or [],
         )
+        inert = sorted(set(self._orders.escalation_triggers) - WIRED_NIGHT_ORDER_TRIGGERS)
+        if inert:
+            logger.warning(
+                "AD-1270: Night Orders triggers %s have no producer on this build and will never page the Captain",
+                inert,
+            )
         return self._orders
 
     def expire(self) -> dict[str, Any]:
@@ -356,6 +414,7 @@ class NightOrdersManager:
             "can_approve_builds": self._orders.can_approve_builds,
             "alert_boundary": self._orders.alert_boundary,
             "escalation_triggers": self._orders.escalation_triggers,
+            "inert_triggers": sorted(set(self._orders.escalation_triggers) - WIRED_NIGHT_ORDER_TRIGGERS),
         }
 
     def check_escalation(self, trigger: str) -> bool:

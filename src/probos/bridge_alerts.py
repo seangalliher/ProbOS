@@ -20,6 +20,16 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
+# AD-1270 (#1324): what of an event's payload a Night Orders alert may carry.
+_NIGHT_ORDERS_SUBJECT_MAX = 64
+_NIGHT_ORDERS_DETAIL_MAX = 500
+
+
+def _score_text(value: Any) -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{value:.2f}"
+    return "?"
+
 
 class AlertSeverity(str, Enum):
     """Bridge Alert severity levels."""
@@ -48,7 +58,7 @@ class BridgeAlertService:
     """Evaluates monitoring signals and produces alerts for Ward Room + notifications.
 
     The service itself does NOT post to the Ward Room — it returns BridgeAlert
-    objects that the runtime delivers via _deliver_bridge_alert().
+    objects that the caller delivers via ``WardRoomRouter.deliver_bridge_alert``.
     """
 
     # BF-691/BF-712: class-level default so an instance built with
@@ -342,6 +352,39 @@ class BridgeAlertService:
             detail=f"Agent {agent_id} experienced a trust drop of {drop:.2f} in a single event.",
             department=None, dedup_key=key,
             related_agent_id=agent_id,
+        )
+        self._record(a)
+        return a
+
+    def check_night_orders_escalation(
+        self, trigger: str, details: dict[str, Any],
+    ) -> BridgeAlert | None:
+        """AD-471 / AD-1270 (#1324): the alert that pages the Captain under Night Orders.
+
+        ALERT severity, so delivery posts to the ship channel and raises an
+        ``action_required`` notification. Deduplicated per trigger and subject
+        (the build id or the agent id) and suppressible like every alert (AD-580).
+        Only the subject, the scores and a bounded message reach the text.
+        """
+        subject = str(details.get("build_id") or details.get("agent_id") or "")[:_NIGHT_ORDERS_SUBJECT_MAX]
+        key = f"night_orders:{trigger}:{subject}" if subject else f"night_orders:{trigger}"
+        if not self._should_emit(key):  # AD-580: cooldown, dismiss, resolve and mute apply
+            return None
+        if trigger == "trust_drop":
+            detail = (
+                f"Agent {subject or 'unknown'} fell below the conn trust floor "
+                f"({_score_text(details.get('old_score'))} \u2192 {_score_text(details.get('new_score'))}) "
+                "while Night Orders were set."
+            )
+        else:
+            message = str(details.get("message") or details.get("error") or "no detail")[:_NIGHT_ORDERS_DETAIL_MAX]
+            detail = f"Night Orders escalation ({trigger}): {message}"
+        a = BridgeAlert(
+            id=str(uuid.uuid4()), severity=AlertSeverity.ALERT, source="night_orders",
+            alert_type=f"night_orders_{trigger}",
+            title=f"Night Orders escalation: {trigger}",
+            detail=detail, department=None, dedup_key=key,
+            related_agent_id=(subject or None) if trigger == "trust_drop" else None,
         )
         self._record(a)
         return a

@@ -141,6 +141,10 @@ async def cmd_night_orders(runtime: ProbOSRuntime, console: Console, args: str) 
             console.print(f"  Invoked: {status['invoked_count']} times")
             console.print(f"  Builds: {'allowed' if status['can_approve_builds'] else 'not allowed'}")
             console.print(f"  Alert boundary: {status['alert_boundary']}")
+            triggers = status["escalation_triggers"]
+            console.print(f"  Escalates on: {', '.join(triggers) if triggers else 'nothing'}")
+            if status["inert_triggers"]:
+                console.print(f"  [yellow]Never fires on this build: {', '.join(status['inert_triggers'])}[/yellow]")
 
     elif subcmd == "expire":
         result = rt._night_orders_mgr.expire()
@@ -169,6 +173,12 @@ async def cmd_night_orders(runtime: ProbOSRuntime, console: Console, args: str) 
         console.print(f"[bold]Night Orders set: {tpl['name']}[/bold]")
         console.print(f"  {tpl['description']}")
         console.print(f"  TTL: {ttl}h")
+        status = rt._night_orders_mgr.get_status()
+        # AD-1270 A2 (#1324): a TTL that has already run out leaves the order inactive, and an
+        # inactive status is exactly {"active": False}, with no inert_triggers key.
+        inert = status["inert_triggers"] if status["active"] else []
+        if inert:
+            console.print(f"  [yellow]Never fires on this build: {', '.join(inert)}[/yellow]")
 
     else:
         # Custom Night Orders — treat entire arg as instruction

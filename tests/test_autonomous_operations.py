@@ -15,12 +15,14 @@ import pytest
 
 from probos.conn import ConnManager, ConnState
 from probos.runtime import ProbOSRuntime
+from probos.config import TRUST_FLOOR_CONN
 from probos.watch_rotation import (
     NightOrders,
     NightOrdersManager,
     WatchManager,
     WatchType,
     NIGHT_ORDER_TEMPLATES,
+    night_order_trigger,
 )
 
 
@@ -403,40 +405,27 @@ class TestExecutionPath:
         assert "conn_authority" not in context
 
     def test_night_orders_escalation_trust_drop(self):
-        """Set Night Orders with trust_drop escalation. Verify bridge alert on low trust."""
-        rt = MagicMock(spec=ProbOSRuntime)
+        """A trust_update that crosses below the conn floor raises trust_drop under Night Orders."""
+        # AD-1270 (#1324): this test checked only check_escalation and named a
+        # bridge alert it never exercised; it now calls the production rule with
+        # the producer's own fields (consensus/trust.py). The chain is
+        # tests/test_ad1270_night_orders_delivery.py.
         night_mgr = NightOrdersManager()
-        night_mgr.set_night_orders(
-            instructions=[],
-            escalation_triggers=["trust_drop"],
+        night_mgr.set_night_orders(instructions=[], escalation_triggers=["trust_drop"])
+        trigger = night_order_trigger(
+            "trust_update", {"old_score": 0.7, "new_score": 0.5}, trust_floor=TRUST_FLOOR_CONN,
         )
-        rt._night_orders_mgr = night_mgr
-        rt.conn_manager = ConnManager()
-
-        # Mock bridge alerts
-        rt.bridge_alerts = MagicMock(spec=BridgeAlertService)
-
-        # Simulate the escalation check
-        # Test the escalation logic directly on the manager
-        assert night_mgr.check_escalation("trust_drop") is True
+        assert trigger == "trust_drop"
+        assert night_mgr.check_escalation(trigger) is True
 
     def test_night_orders_escalation_ignored_above_floor(self):
-        """Trust above floor (0.8) does not escalate."""
-        night_mgr = NightOrdersManager()
-        night_mgr.set_night_orders(
-            instructions=[],
-            escalation_triggers=["trust_drop"],
-        )
-
-        # Simulate the runtime check logic inline
-        details = {"new_trust": 0.8}
-        trigger = "trust_drop"
-
-        # The runtime's _check_night_order_escalation would return early
-        # because new_trust >= 0.6. Let's verify the logic:
-        new_trust = details.get("new_trust", 1.0)
-        should_skip = new_trust >= 0.6
-        assert should_skip is True  # Would not reach check_escalation
+        """A trust_update that stays above the conn floor raises nothing."""
+        # AD-1270 (#1324): this test re-implemented the old inline rule on a
+        # ``new_trust`` field no producer sends, so it pinned the defect; it now
+        # calls the production rule.
+        assert night_order_trigger(
+            "trust_update", {"old_score": 0.9, "new_score": 0.8}, trust_floor=TRUST_FLOOR_CONN,
+        ) is None
 
 
 # ── Conn status/API tests ──────────────────────────────────────────

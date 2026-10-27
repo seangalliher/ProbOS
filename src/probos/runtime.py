@@ -2135,55 +2135,61 @@ class ProbOSRuntime:
         return post.id in CONN_ELIGIBLE_POSTS
 
     def _check_night_order_escalation(self, event_type: str, details: dict[str, Any] | None = None) -> None:
-        """Check if a runtime event should trigger Night Orders escalation.
+        """Page the Captain when an emitted event matches an active Night Orders trigger (AD-471).
 
-        Called from event emission points (trust changes, alert changes,
-        build results). If the event matches a Night Orders escalation trigger,
-        fires a bridge alert to wake the Captain.
+        AD-1270 (#1324): ``_emit_event`` calls this before durable offer and
+        dispatch, so it never raises: a failure is logged and the event still
+        goes to the durable offer (the durable router decides whether it is
+        persisted), the NATS publish when connected, and its local listeners. The trigger
+        rule lives beside the templates (``watch_rotation.night_order_trigger``);
+        ``BridgeAlertService.check_night_orders_escalation`` builds the alert
+        (deduplicated, and suppressible by the Captain, AD-580) and
+        ``WardRoomRouter.deliver_bridge_alert`` delivers it, as every other bridge
+        alert is delivered. A borrowed-method host (BF-708) may lack any
+        collaborator, so each is read with ``getattr``.
         """
-        if not hasattr(self, '_night_orders_mgr') or not self._night_orders_mgr:
-            return
-        if not self._night_orders_mgr.active:
-            return
-
-        # Map runtime events to Night Orders trigger names
-        trigger_map = {
-            "trust_change": "trust_drop",
-            "alert_condition_change": "red_alert",
-            "build_failure": "build_failure",
-            "security_alert": "security_alert",
-        }
-        trigger = trigger_map.get(event_type)
-        if not trigger:
-            return
-
-        # Additional condition checks
-        if trigger == "build_failure" and details and details.get("not_executed") is True:
-            return  # BF-897: a refused request ran nothing, so there is no failure to escalate
-        if trigger == "trust_drop" and details:
-            # Only escalate if trust dropped below floor
-            new_trust = details.get("new_trust", 1.0)
-            if new_trust >= TRUST_FLOOR_CONN:  # Not below floor
+        try:
+            mgr = getattr(self, "_night_orders_mgr", None)
+            if not mgr or not mgr.active:
                 return
-        if trigger == "red_alert" and details:
-            new_level = details.get("new_level", "")
-            if new_level.lower() != "red":
-                return
+            from probos.watch_rotation import night_order_trigger
 
-        # Check against Night Orders escalation triggers
-        if self._night_orders_mgr.check_escalation(trigger):
-            # Also notify conn manager
-            if self.conn_manager:
-                self.conn_manager.check_escalation(trigger, details)
-            # Fire bridge alert
-            if hasattr(self, 'bridge_alerts') and self.bridge_alerts:
-                self.bridge_alerts.add_alert(
-                    severity="critical",
-                    title=f"Night Orders escalation: {trigger}",
-                    source="night_orders",
-                    details=details or {},
-                )
+            trigger = night_order_trigger(event_type, details, trust_floor=TRUST_FLOOR_CONN)
+            if trigger is None or not mgr.check_escalation(trigger):
+                return
             logger.warning("Night Orders escalation triggered: %s", trigger)
+            conn = getattr(self, "conn_manager", None)
+            if conn:
+                try:
+                    conn.check_escalation(trigger, details)
+                except Exception:  # AD-1270 A2 (#1324): ConnManager's log is bookkeeping; its failure must not cost the Captain the page
+                    logger.warning(
+                        "AD-1270: ConnManager escalation failed for %s; the bridge alert still proceeds",
+                        trigger,
+                        exc_info=True,
+                    )
+            alerts = getattr(self, "bridge_alerts", None)
+            router = getattr(self, "ward_room_router", None)
+            if not alerts or not router:
+                logger.warning(
+                    "AD-1270: Night Orders escalation %s has no bridge-alert path; the Captain is not paged",
+                    trigger,
+                )
+                return
+            loop = asyncio.get_running_loop()  # before the alert is built: outside a running loop no alert is built, so no cooldown is spent
+            tasks = self._event_listener_tasks
+            alert = alerts.check_night_orders_escalation(trigger, details or {})
+            if alert is None:
+                return  # inside the cooldown, or suppressed by the Captain (AD-580)
+            task = loop.create_task(router.deliver_bridge_alert(alert), name="night-orders-escalation")
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+        except Exception:  # AD-1270 (#1324): log and degrade; the event still reaches durable offer and dispatch
+            logger.warning(
+                "AD-1270: Night Orders escalation failed for event %s; the event is still dispatched",
+                event_type,
+                exc_info=True,
+            )
 
     async def _on_build_complete(self, build: Any) -> None:
         """Callback fired when a dispatched build finishes (AD-375)."""
