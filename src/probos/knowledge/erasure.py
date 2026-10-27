@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import dataclasses
 import json
 import logging
 import re
+import weakref
 from collections.abc import AsyncIterator, Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -64,10 +67,16 @@ class ErasureResult:
     timestamps: list[str]
     deleted_episode_ids: list[str]
     deleted_attachment_ids: list[str]
+    # BF-939 (#1683): each attachment kept because an episode this request did not erase still names it, with those
+    # episodes (both sorted). Last, with a default, so every construction stays valid.
+    retained_attachments: dict[str, list[str]] = dataclasses.field(default_factory=dict)
 
 
 class ErasureCascadeIncomplete(Exception):
     """AD-1340: a cascade erased what it could, and some matching episodes are not erased.
+
+    BF-939 (#1683): ``forget_episode`` raises it too, with ``failures`` empty, when its attachment-owner scan failed
+    and the episode was erased all the same: an owner the scan did not reach was not checked.
 
     ``result`` is what was erased, ``failures`` maps each episode id whose erase raised to the original error, and
     ``enumeration_error`` is the first scan failure, the live scan's before the archive's (BF-905); the matches both
@@ -125,6 +134,133 @@ async def _live_episodes(memory: Any) -> AsyncIterator[Any]:
         yield episode
 
 
+@dataclasses.dataclass
+class _RecordingFailures:
+    """BF-939 (A-4): the first error recording an episode's attachment owners raised, and how many episodes failed."""
+
+    first: Exception | None = None
+    count: int = 0
+
+
+def _recording_owners(
+    matches: Callable[[Any], bool],
+    owners: dict[str, set[str]],
+    attachment_ids_of: Callable[[Any], set[str]],
+    wanted: set[str] | None,
+    failures: _RecordingFailures,
+) -> Callable[[Any], bool]:
+    """BF-939 (#1683): ``matches``, also recording each scanned episode as an owner of the attachment ids it names.
+
+    The scan a cascade already makes is the owner scan, so the check adds no read. Owners are keyed by episode id,
+    so an episode's own archived versions never count as another owner. ``wanted`` limits what is recorded (one
+    episode's ids, on the single path); None records every id. A module function, so ``ErasureManager`` stays within
+    its 15-method SRP trigger.
+
+    A-4: a recording that raises never ends the scan and never skips the episode's own match. The first error and
+    the count go in ``failures``; ``_matching_ids`` reports the owner map as incomplete, so the erasure proceeds and
+    then raises (D5).
+    """
+
+    def predicate(episode: Any) -> bool:
+        episode_id = str(getattr(episode, "id", ""))
+        if episode_id:
+            try:
+                named = attachment_ids_of(episode)
+            except Exception as exc:  # BF-939 (A-4): recording never ends the scan or skips a match; the caller raises it
+                failures.count += 1
+                if failures.first is None:
+                    failures.first = exc
+            else:
+                for attachment_id in named if wanted is None else named & wanted:
+                    owners.setdefault(attachment_id, set()).add(episode_id)
+        return matches(episode)
+
+    return predicate
+
+
+def _last_turns(owners: Mapping[str, set[str]], request: list[str]) -> dict[str, int]:
+    """BF-939: for each attachment id the owner scan saw a request member name, the turn of the last such member."""
+    turn_of = {episode_id: index for index, episode_id in enumerate(request)}
+    last: dict[str, int] = {}
+    for attachment_id, named in owners.items():
+        turns = [turn_of[episode_id] for episode_id in named if episode_id in turn_of]
+        if turns:
+            last[attachment_id] = max(turns)
+    return last
+
+
+def _decide_attachments(
+    turn: int,
+    candidates: set[str],
+    owners: Mapping[str, set[str]],
+    last_turns: Mapping[str, int],
+    request: set[str],
+    intact: set[str],
+) -> tuple[set[str], dict[str, list[str]]]:
+    """BF-939 (#1683): which attachments to unlink in this turn, and which to keep, with the episodes holding each.
+
+    An attachment is decided in the turn of the last request member that names it (``last_turns``; one only this
+    member's own records name is decided now), before that member is erased, so AD-1340's order (unlink, then
+    evict) holds for the member that decides it. It is unlinked unless an episode outside the request, or a member
+    left whole (``intact``: refused, or failed before its erase began), still names it; then it is kept and
+    reported. ``owners`` maps an attachment id to every scanned episode id naming it.
+    """
+    unlink: set[str] = set()
+    kept: dict[str, list[str]] = {}
+    for attachment_id in sorted(candidates):
+        if last_turns.get(attachment_id, turn) > turn:
+            continue  # BF-939: a later member names it and decides it in its own turn
+        named = owners.get(attachment_id, set())
+        holders = (named - request) | (named & intact)
+        if holders:
+            kept[attachment_id] = sorted(holders)
+        else:
+            unlink.add(attachment_id)
+    return unlink, kept
+
+
+async def _unlink_attachments(store: Any | None, attachment_ids: set[str]) -> list[str]:
+    """Unlink each attachment; return the sorted ids the store reported as removed (BF-939: was a manager method)."""
+    if store is None:
+        return []
+    unlinked: list[str] = []
+    for attachment_id in sorted(attachment_ids):
+        if await store.unlink(attachment_id):
+            unlinked.append(attachment_id)
+    return unlinked
+
+
+# BF-939 (A-4): one erasure lock per episodic memory, shared by every ErasureManager built on it (the route builds one
+# per request). Weakly keyed, so an entry goes with its memory; the value holds the lock's loop, never the memory.
+_ERASURE_LOCKS: weakref.WeakKeyDictionary[Any, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _one_erasure_at_a_time(memory: Any | None) -> contextlib.AbstractAsyncContextManager[Any]:
+    """BF-939 (A-4): hold this around a whole erasure on ``memory``: its checks, scan, decision, unlink and evict.
+
+    Two overlapping erasures that each scanned before the other erased would each keep a shared attachment for the
+    episode the other erases, and leave a file no record names. One at a time, each sees the other's finished
+    erasure. Not re-entrant: no public erasure method calls another. Taken before, never inside, the memory's store
+    write lock (``evict_by_ids`` takes that one). It does not serialize ``store()`` (register G2) or the attachment
+    store's other lifetimes (G9). An ``asyncio.Lock`` binds to the first loop it waits on, so a new loop gets a new
+    lock (``agents/http_fetch.py`` keys its locks by loop for the same reason). No memory, nothing to serialize.
+
+    A-5: ``memory`` keys a weak registry, so it must be hashable and weakly referenceable (every memory in use is).
+    One loop at a time holds a memory's entry: erasures on one memory from two event loops running at once are not
+    serialized with each other (production runs one loop; register G10).
+    """
+    if memory is None:  # BF-939 (A-4): no memory, nothing to serialize
+        return contextlib.nullcontext()
+    loop = asyncio.get_running_loop()
+    held = _ERASURE_LOCKS.get(memory)
+    if held is None or held[0] is not loop:
+        held = (loop, asyncio.Lock())
+        _ERASURE_LOCKS[memory] = held
+    return held[1]
+
+
 class ExitNotesBlockErasure(Exception):
     """AD-1341 S4 (D14): exit notes the next reset would archive cite episodes this erasure would erase; none erased.
 
@@ -171,17 +307,55 @@ class ErasureManager:
         self._archive_store = archive_store
 
     async def forget_episode(self, episode_id: str, reason: str = "user_request") -> ErasureResult:
-        """Delete one episode and related attachment refs, then mark audit rows.
+        """Delete one episode and the attachments no other episode names, then mark audit rows.
 
         The attachments are unlinked BEFORE the episode is erased (AD-1340): delete what a record names before
-        you delete the record. The attachment ids exist only in the episode's own records, and a failed erase has
-        already removed them by the time it raises, so a retry could never find them again. ``mark_deleted`` runs
-        only after a successful erase; an erase failure is raised as the original typed error, unwrapped.
+        you delete the record. The attachment ids exist only in the episode's own records, and a failed erase may
+        already have removed them when it raises (``_erase_ids`` tries every phase before raising), so a retry might
+        never find them again. ``mark_deleted`` runs only after a successful erase; an erase failure is raised as the
+        original typed error, unwrapped.
+
+        BF-939 (#1683): the attachment store is content-addressed, so one file can hold bytes several episodes name.
+        An attachment another live or archived episode still names is kept, and listed in ``retained_attachments``
+        with those episodes; it goes when the last episode naming it is erased. Only when this episode names an
+        attachment are the live and archived episodes scanned, once, for the other owners. Owners outside episodic
+        memory (thread pins, chat, work items, artifacts) are not checked: an attachment only they hold is unlinked,
+        as before. If the scan fails, the episode is still erased, an attachment is kept only for an owner the scan
+        reached, and ``ErasureCascadeIncomplete`` is raised after the erase (under-erasing is the worse failure,
+        BF-868).
+
+        A-4: erasures on one episodic memory run one at a time, whichever manager runs them, so two overlapping
+        requests never each keep a shared attachment for the episode the other erases; a request may wait for one
+        already running. An owner recording that raises counts as a failed scan, and the scan goes on past it. A
+        concurrent ``store()`` is not serialized (register G2).
         """
-        await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased
-        _refuse_while_an_exit_note_cites(self._exit_note_citations, [episode_id])  # AD-1341 S4: before anything is erased
-        attachment_ids = await self._attachment_ids_for_episode(episode_id)
-        unlinked = await self._delete_attachments(attachment_ids)
+        async with _one_erasure_at_a_time(self._episodic_memory):  # BF-939 (A-4): scan, decide and erase as one
+            await _refuse_while_the_archive_cites(self._archive_store, [episode_id])  # AD-1341 S3: before anything is erased
+            _refuse_while_an_exit_note_cites(self._exit_note_citations, [episode_id])  # AD-1341 S4: before anything is erased
+            attachment_ids = await self._attachment_ids_for_episode(episode_id)
+            owners: dict[str, set[str]] = {}
+            scan_error: Exception | None = None
+            if attachment_ids and self._attachment_store is not None:  # BF-939: one owner scan, only when a blob could go
+                _found, scan_error = await self._matching_ids(lambda _episode: False, owners, attachment_ids)
+            unlink, kept = _decide_attachments(0, attachment_ids, owners, {}, {episode_id}, set())
+            result = await self._erase_episode(episode_id, reason, unlink, kept)
+        if scan_error is not None:
+            logger.warning(
+                "BF-939: the attachment-owner scan failed, so an owner it did not reach was not checked; "
+                "the episode was erased and the failure is raised",
+            )
+            raise ErasureCascadeIncomplete(result, {}, scan_error) from scan_error
+        return result
+
+    async def _erase_episode(
+        self, episode_id: str, reason: str, unlink: set[str], kept: dict[str, list[str]],
+    ) -> ErasureResult:
+        """Unlink ``unlink``, erase the episode, then mark its audit rows; ``kept`` is reported (BF-939).
+
+        The one erase path of ``forget_episode`` and the cascades, after their checks, so AD-1340's order (unlink,
+        then evict) is written once.
+        """
+        unlinked = await _unlink_attachments(self._attachment_store, unlink)
         deleted_episodes = 0
         if self._episodic_memory is not None and hasattr(self._episodic_memory, "evict_by_ids"):
             # AD-1340: erasure is explicit, never derived from the caller's
@@ -200,6 +374,7 @@ class ErasureManager:
             timestamps=[self._now_iso()],
             deleted_episode_ids=[episode_id] if deleted_episodes > 0 else [],
             deleted_attachment_ids=unlinked,
+            retained_attachments=kept,
         )
 
     async def forget_resource(self, resource_path: str) -> ErasureResult:
@@ -214,9 +389,11 @@ class ErasureManager:
             serialized = json.dumps(self._episode_to_dict(episode), sort_keys=True, default=str).lower()
             return needle in serialized
 
-        matching_ids, enumeration_error = await self._matching_ids(mentions_resource)
-        await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: a resource's matches
-        return await self._forget_all(matching_ids, enumeration_error)
+        async with _one_erasure_at_a_time(self._episodic_memory):  # BF-939 (A-4): a resource's scan and erasures as one
+            owners: dict[str, set[str]] = {}  # BF-939: the same scan records every episode's attachments
+            matching_ids, enumeration_error = await self._matching_ids(mentions_resource, owners)
+            await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: a resource's matches
+            return await self._forget_all(matching_ids, enumeration_error, owners)
 
     async def forget_agent_memory(self, agent_id: str) -> ErasureResult:
         """Delete all episodes involving a specific agent.
@@ -229,11 +406,15 @@ class ErasureManager:
         def involves_agent(episode: Any) -> bool:
             return agent_id in list(getattr(episode, "agent_ids", []) or [])
 
-        matching_ids, enumeration_error = await self._matching_ids(involves_agent)
-        await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: an agent's matches
-        return await self._forget_all(matching_ids, enumeration_error)
+        async with _one_erasure_at_a_time(self._episodic_memory):  # BF-939 (A-4): an agent's scan and erasures as one
+            owners: dict[str, set[str]] = {}  # BF-939: the same scan records every episode's attachments
+            matching_ids, enumeration_error = await self._matching_ids(involves_agent, owners)
+            await _refuse_while_the_archive_cites(self._archive_store, matching_ids)  # AD-1341 S3: an agent's matches
+            return await self._forget_all(matching_ids, enumeration_error, owners)
 
-    async def _matching_ids(self, matches: Callable[[Any], bool]) -> tuple[list[str], Exception | None]:
+    async def _matching_ids(
+        self, matches: Callable[[Any], bool], owners: dict[str, set[str]] | None = None, wanted: set[str] | None = None,
+    ) -> tuple[list[str], Exception | None]:
         """The ids of the candidate episodes ``matches`` accepts, and the first error that cut a scan short, if any.
 
         BF-905: the live store and the archive are scanned separately, live first, so a failure of one never skips
@@ -242,13 +423,32 @@ class ErasureManager:
         Under-erasing is the worse failure (BF-868). An archived version is NOT dropped because its id is also live
         (AD-1340 R1): deterministic ids can have a live rewrite that differs from the archived version, and the
         predicate must see both; duplicate ids are removed here.
+
+        BF-939 (#1683): with ``owners``, every scanned episode's declared attachment ids (only the ``wanted`` ones, if
+        given) are recorded in it by episode id, in this same pass, so the owner check adds no read. A-4: only with an
+        attachment store wired (without one nothing can be unlinked, so the scan is the base's); a recording that
+        raises never ends the scan, and is the error returned when neither scan failed.
         """
         memory = self._episodic_memory
         if memory is None:
             return [], None  # F-130 (#1523) owns the unwired case: no episodic memory, nothing to scan
+        failures = _RecordingFailures()  # BF-939 (A-4): what the owner recording raised, if anything
+        if owners is not None and self._attachment_store is not None:  # BF-939: one pass both matches and records each episode's attachment owners
+            matches = _recording_owners(
+                matches, owners, lambda episode: self._extract_attachment_ids(self._episode_to_dict(episode)), wanted,
+                failures,
+            )
         live, live_error = await self._scan("live", _live_episodes(memory), matches)
         archived, archive_error = await self._scan("archive", self._archived_episodes(), matches)
         enumeration_error = live_error if live_error is not None else archive_error
+        if failures.first is not None:
+            logger.warning(
+                "BF-939: recording the attachment owners of %d scanned episode(s) failed (%s); they were still "
+                "matched, the owner map is incomplete, and the failure is raised after the erasure",
+                failures.count, type(failures.first).__name__,
+            )
+        if enumeration_error is None and failures.first is not None:
+            enumeration_error = failures.first  # BF-939 (A-4): the scans' own errors first, then the recording's
         found = live + archived
         return list(dict.fromkeys(episode_id for episode_id in found if episode_id)), enumeration_error
 
@@ -270,18 +470,54 @@ class ErasureManager:
             return found, exc  # BF-905: the matches found before the failure are still erased
         return found, None
 
-    async def _forget_all(self, episode_ids: list[str], enumeration_error: Exception | None) -> ErasureResult:
-        """Erase each episode in turn; raise ``ErasureCascadeIncomplete`` if the scan or any erase failed."""
+    async def _forget_all(
+        self, episode_ids: list[str], enumeration_error: Exception | None, owners: dict[str, set[str]],
+    ) -> ErasureResult:
+        """Erase each episode in turn; raise ``ErasureCascadeIncomplete`` if the scan or any erase failed.
+
+        BF-939 (#1683): ``owners`` maps each attachment id the scan saw to every episode naming it. Each match passes
+        the per-episode checks ``forget_episode`` makes, then the one erase path, with no second owner scan. An
+        attachment is decided in the turn of the last match naming it: unlinked unless an episode outside the
+        matches, or a match left whole (refused, or failed before its erase began), still names it; then it is kept
+        and reported in ``retained_attachments``. After a failed scan the map is incomplete, and an attachment is
+        unlinked when every owner the scan reached is a match (under-erasing is the worse failure, BF-868).
+        """
         _refuse_while_an_exit_note_cites(self._exit_note_citations, episode_ids)  # AD-1341 S4: a scan's matches, first
+        if enumeration_error is not None and owners:
+            logger.warning(
+                "BF-939: the erasure scan failed, so the attachment-owner map is incomplete; an attachment is "
+                "unlinked when every owner the scan reached is erased by this request",
+            )
+        request = set(episode_ids)
+        last_turns = _last_turns(owners, episode_ids)
+        due: dict[int, set[str]] = {}
+        for attachment_id, last_turn in last_turns.items():
+            due.setdefault(last_turn, set()).add(attachment_id)
+        decided: set[str] = set()
+        intact: set[str] = set()
+        retained: dict[str, set[str]] = {}
         total_count = 0
         deleted_episodes: list[str] = []
         deleted_attachments: set[str] = set()
         failures: dict[str, Exception] = {}
-        for episode_id in episode_ids:
+        for turn, episode_id in enumerate(episode_ids):
+            began = False
             try:
-                result = await self.forget_episode(episode_id)
+                # AD-1341 S3 (D10) and S4: the per-episode checks forget_episode makes, unchanged (S4 register R17)
+                await _refuse_while_the_archive_cites(self._archive_store, [episode_id])
+                _refuse_while_an_exit_note_cites(self._exit_note_citations, [episode_id])
+                attachment_ids = await self._attachment_ids_for_episode(episode_id)
+                candidates = (attachment_ids | due.get(turn, set())) - decided
+                unlink, kept = _decide_attachments(turn, candidates, owners, last_turns, request, intact)
+                decided |= unlink | set(kept)
+                for attachment_id, holders in kept.items():
+                    retained.setdefault(attachment_id, set()).update(holders)
+                began = True
+                result = await self._erase_episode(episode_id, "user_request", unlink, kept)
             except Exception as exc:
                 failures[episode_id] = exc  # erase the rest, then raise one error naming every failure
+                if not began:
+                    intact.add(episode_id)  # BF-939: its records stand, so it still holds what it names
                 logger.error(
                     "AD-1340: erasing episode %s failed: %r; "
                     "the remaining episodes are still erased, then the failure is raised",
@@ -297,6 +533,7 @@ class ErasureManager:
             timestamps=[self._now_iso()],
             deleted_episode_ids=deleted_episodes,
             deleted_attachment_ids=sorted(deleted_attachments),
+            retained_attachments={key: sorted(value) for key, value in sorted(retained.items())},
         )
         if failures or enumeration_error is not None:
             cause = enumeration_error if enumeration_error is not None else next(iter(failures.values()))
@@ -359,16 +596,6 @@ class ErasureManager:
             for archived_meta in await self._episodic_memory.get_archived_metadata_versions(episode_id):
                 ids |= self._extract_attachment_ids(archived_meta)
         return ids
-
-    async def _delete_attachments(self, attachment_ids: set[str]) -> list[str]:
-        """Unlink each attachment; return the sorted ids the store reported as removed."""
-        if self._attachment_store is None:
-            return []
-        unlinked: list[str] = []
-        for attachment_id in sorted(attachment_ids):
-            if await self._attachment_store.unlink(attachment_id):
-                unlinked.append(attachment_id)
-        return unlinked
 
     def _extract_attachment_ids(self, payload: Any) -> set[str]:
         """Read attachment ids from the fields DECLARED to carry them.

@@ -103,6 +103,18 @@ async def request_erasure(
     AD-1341 S3: while a Ship's Archive entry cites an episode this request would erase, nothing is erased and the
     answer is 409 with the entries' ids. The archive is append-only for agents and services, so this route never
     erases an entry: the Captain erases each with ``probos archive erase ENTRY_ID --reason TEXT``, then retries.
+
+    BF-939 (#1683): attachments are content-addressed, so one stored file can hold bytes several episodes name. An
+    erasure removes the matched episodes' records and every attachment no other episode names. An attachment that an
+    episode outside this request still names is kept, and ``retained_attachment_ids`` maps it to those episodes:
+    erase them too to remove it. Attachment references held outside episodic memory (thread pins, chat, work items,
+    artifacts) are not checked, so an attachment only they hold is removed, as before.
+
+    A-4: overlapping erasure requests run one at a time, so a request can wait for one already running (a cascade
+    over 100k episodes takes about 15 s). An episode stored while an erasure runs is not covered by its owner check
+    (register G2). A 500 carries no erasure result (BF-905 D6; the body is the framework's plain-text ``Internal
+    Server Error``): an erasure that raised after erasing, a cascade's or a single episode's whose owner scan
+    failed, reports neither what it erased nor what it kept (register G3).
     """
     archive = getattr(runtime, "archive_store", None)  # AD-1341 S3: consulted only when it is a real store
     citations = await _pending_exit_note_citations(runtime, archive)  # AD-1341 S4 (D14): once, before any erase
@@ -158,6 +170,7 @@ async def request_erasure(
         "timestamps": result.timestamps,
         "deleted_episode_ids": result.deleted_episode_ids,
         "deleted_attachment_ids": result.deleted_attachment_ids,
+        "retained_attachment_ids": result.retained_attachments,  # BF-939: each kept attachment -> the episodes naming it
     }
 
 
