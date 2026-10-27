@@ -26,7 +26,7 @@ from probos.cognitive.dreaming import DreamingEngine
 from probos.cognitive.oracle_service import OracleService
 from probos.config import ArchivePromotionConfig, SystemConfig
 from probos.knowledge import records_store as records_store_module
-from probos.knowledge.archive_promotion import is_settled, promote_settled
+from probos.knowledge.archive_promotion import is_settled, promote_settled, promote_ship_records
 from probos.knowledge.archive_store import LABEL_THIS_CREW, ArchiveStore, PromotionRecord, SourceKind
 from probos.knowledge.continuous_promotion import continuous_promotion_step, wire_continuous_promotion
 from probos.stand_down import CrewMember
@@ -217,8 +217,8 @@ def _log(ref: str, updated: str) -> PromotionRecord:
 def test_a_captain_s_log_settles_at_the_end_of_its_day_plus_the_settle_time(
     ref: str, updated: str, offset: float, settled: bool,
 ) -> None:
-    ended = datetime(2026, 10, 27, tzinfo=timezone.utc).timestamp()  # 2026-10-26 ends here (Amendment A3, C1)
-    assert is_settled(_log(ref, updated), ended + offset) is settled
+    settles = datetime(2026, 10, 27, 1, tzinfo=timezone.utc).timestamp()  # 2026-10-26's end and its hour (A4, C2-1)
+    assert is_settled(_log(ref, updated), settles + offset) is settled
 
 
 class _WriterClock(datetime):
@@ -244,7 +244,7 @@ async def test_the_captain_s_log_from_its_writer_settles_once_its_day_has_ended(
     next_day = await records.append_captains_log("A quiet watch.")
     assert created == appended == "captains-log/2026-10-26.md" and next_day == "captains-log/2026-10-27.md"  # premise
     assert "updated" not in (await records.read_entry(created, ""))["frontmatter"]  # premise: the writer stamps none
-    ended = datetime(2026, 10, 27, tzinfo=timezone.utc).timestamp()
+    ended = datetime(2026, 10, 27, 1, tzinfo=timezone.utc).timestamp()  # the day's end and its hour (A4, C2-1)
     store = _store(tmp_path)
     await store.initialize()
     try:
@@ -261,6 +261,89 @@ async def test_the_captain_s_log_from_its_writer_settles_once_its_day_has_ended(
         await store.close()
     assert early.created == () and set(early.waiting) == {created, next_day}
     assert settled.created == (created,) and settled.waiting == (next_day,)  # Amendment A3 (C1): the whole day, once
+
+
+class _StallingClock(datetime):
+    """A writer clock that moves on inside one call: its first read is just before midnight, every later one after."""
+
+    reads: list[datetime] = []
+
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:  # type: ignore[override]
+        if cls.reads:
+            at = datetime(2026, 10, 27, 0, 0, 1, 141_000, tzinfo=timezone.utc)
+        else:
+            at = datetime(2026, 10, 26, 23, 59, 59, 750_000, tzinfo=timezone.utc)
+        cls.reads.append(at)
+        return at if tz is None else at.astimezone(tz)
+
+
+def _log_step(records: Any, store: Any, now: float) -> Any:
+    """The continuous step at ``now``, with the default 24-hour settle time and no memory (a log cites nothing)."""
+    return continuous_promotion_step(
+        records=lambda: records, archive=lambda: store, memory=lambda: None, timeline_id=lambda: _SHIP,
+        settle_seconds=86_400.0, max_created=8, clock=lambda: now,
+    )
+
+
+async def test_a_captain_s_log_entry_written_across_midnight_keeps_its_whole_settle_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Amendment A4 (round 2's C2-1): one writer call reads the day before midnight and its entry's time after it, so
+    the earlier day's file takes a later entry. The hour's grace keeps that entry's whole settle window."""
+    records = _records(_data_dir(tmp_path))
+    monkeypatch.setattr(records_store_module, "datetime", _WriterClock)
+    monkeypatch.setattr(_WriterClock, "at", datetime(2026, 10, 26, 9, tzinfo=timezone.utc))
+    ref = await records.append_captains_log("Coolant drift at the start of the watch.")
+    monkeypatch.setattr(_StallingClock, "reads", [])
+    monkeypatch.setattr(records_store_module, "datetime", _StallingClock)
+    assert await records.append_captains_log("Written across midnight.") == ref == "captains-log/2026-10-26.md"
+    day_read, entry_read = _StallingClock.reads  # premise: the one call read the clock twice
+    midnight = datetime(2026, 10, 27, tzinfo=timezone.utc).timestamp()
+    assert day_read.timestamp() < midnight < entry_read.timestamp()  # premise: either side of midnight
+    assert "### 00:00:01 UTC\n\nWritten across midnight." in (await records.read_entry(ref, ""))["content"]
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        at_the_day_s_end = await _log_step(records, store, midnight + 86_400.0)()
+        within_the_entry_s_window = await _log_step(records, store, entry_read.timestamp() + 86_400.0 - 0.001)()
+        after_the_grace = await _log_step(records, store, midnight + 3_600.0 + 86_400.0)()
+    finally:
+        await store.close()
+    assert at_the_day_s_end.created == () and at_the_day_s_end.waiting == (ref,)
+    assert within_the_entry_s_window.created == () and within_the_entry_s_window.waiting == (ref,)
+    assert after_the_grace.created == (ref,)  # 3,598.859 s past the entry's own 24 hours
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ["updated:", "updated: false", "updated: {at: '2026-11-30T00:00:00+00:00'}", "updated: ''"],
+    ids=["null", "false", "a-mapping-holding-a-later-time", "empty"],
+)
+async def test_a_captain_s_log_whose_stored_update_is_not_a_time_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: str,
+) -> None:
+    """Amendment A4 (round 2's C2-2): only a log with no ``updated`` takes the day rule. One whose ``updated`` is
+    present but not a time (a damaged or hand-edited file) waits, through the real writer and plan; the reset still
+    promotes it."""
+    records = _records(_data_dir(tmp_path))
+    monkeypatch.setattr(records_store_module, "datetime", _WriterClock)
+    monkeypatch.setattr(_WriterClock, "at", datetime(2026, 10, 26, 9, tzinfo=timezone.utc))
+    ref = await records.append_captains_log("Coolant drift at the start of the watch.")
+    path = records.repo_path / ref
+    raw = path.read_text(encoding="utf-8")
+    assert raw.count("status: published\n") == 1  # premise: the writer's frontmatter
+    path.write_text(raw.replace("status: published\n", f"status: published\n{stored}\n"), encoding="utf-8")
+    assert "updated" in (await records.read_entry(ref, ""))["frontmatter"]  # premise: present, as stored
+    store = _store(tmp_path)
+    await store.initialize()
+    try:
+        waited = await _log_step(records, store, datetime(2026, 11, 27, tzinfo=timezone.utc).timestamp())()
+        reset = await promote_ship_records(records, store, timeline_id=_SHIP)
+    finally:
+        await store.close()
+    assert waited.created == () and waited.waiting == (ref,)
+    assert reset.created == (ref,)  # the reset promotes it as before
 
 
 async def test_the_step_promotes_a_source_only_once_it_has_settled(tmp_path: Path) -> None:

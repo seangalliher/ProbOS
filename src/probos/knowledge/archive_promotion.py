@@ -411,6 +411,7 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
                     "department": _stored_text(frontmatter.get("department")),
                     "record_created": _stored_text(frontmatter.get("created")),
                     "record_updated": _stored_text(frontmatter.get("updated")),
+                    **_unreadable_update(kind, frontmatter),  # AD-1341 S5 (A4, C2-2): Captain's logs only
                 },
             )
         )
@@ -483,13 +484,37 @@ async def review_promotion(records: RecordsStore, archive: ArchiveStore, *, time
 #: AD-1341 S5 (D9, Amendment A3): one UTC day in seconds. POSIX time counts no leap seconds, so every day is this long.
 _DAY_SECONDS = 86_400.0
 
+#: AD-1341 S5 (D9, Amendment A4, round 2's C2-1): how long after its UTC day ends a Captain's log still waits. One
+#: writer call reads the clock for the day and again for the entry, so a call that stalls across midnight writes a
+#: later entry into the earlier day's file. An hour covers every stall the vessel runs through; a longer one (a
+#: suspended machine, a hung disk) shortens that entry's window by the excess (register R22).
+_CAPTAINS_LOG_GRACE_SECONDS = 3_600.0
+
+#: AD-1341 S5 (Amendment A4, round 2's C2-2): the plan record's mark for a Captain's log whose stored ``updated`` is
+#: present but archives as no value (``_unreadable_update``).
+_UPDATE_UNREADABLE = "record_updated_unreadable"
+
+
+def _unreadable_update(kind: SourceKind, frontmatter: dict[str, Any]) -> dict[str, bool]:
+    """AD-1341 S5 (Amendment A4, round 2's C2-2): the mark for a Captain's log whose ``updated`` is present but no text.
+
+    ``_stored_text`` archives null, false, a container or an empty string as no value, as it does a missing field, so
+    without the mark ``is_settled`` would read such a log as its writer's unstamped form and settle it by its day. A
+    missing ``updated`` is not marked. Only a Captain's log is marked: every other kind already waits on an empty
+    ``record_updated`` (it does not parse), so its record is unchanged.
+    """
+    if kind is SourceKind.CAPTAINS_LOG and "updated" in frontmatter and not _stored_text(frontmatter["updated"]):
+        return {_UPDATE_UNREADABLE: True}
+    return {}
+
 
 def _captains_log_day_end(ref: str) -> float | None:
     """The end of a Captain's log file's UTC day (seconds since the epoch), or None for a name its writer never gives.
 
-    ``RecordsStore.append_captains_log`` appends to ``captains-log/YYYY-MM-DD.md``, the day read from the UTC clock in
-    the same synchronous step as the write, so a day's file takes no entry once that day has ended. It stamps
-    ``created`` and never ``updated``.
+    ``RecordsStore.append_captains_log`` appends to ``captains-log/YYYY-MM-DD.md``. It reads the UTC clock for the day
+    at the start of one synchronous call, again for the entry's time, and then writes. So a call that begins after the
+    day has ended never writes to that day's file, but one that begins before midnight and stalls can (Amendment A4,
+    round 2's C2-1: ``_CAPTAINS_LOG_GRACE_SECONDS``). It stamps ``created`` and never ``updated``.
     """
     try:
         day = date.fromisoformat(ref.removeprefix("captains-log/").removesuffix(".md"))
@@ -506,16 +531,21 @@ def is_settled(record: PromotionRecord, settled_before: float) -> bool:
     Read from the record's ``record_updated`` (Ship's Records' ``updated``, an ISO 8601 time with its offset). A time
     with no offset, or one that does not parse, is not settled: such a source waits for the reset's promotion.
 
-    Amendment A3: a Captain's log carries no ``updated`` (its writer stamps none) and takes no entry after its UTC day,
-    so it settles once its day has ended at or before ``settled_before`` and, if it carries an ``updated``, once that
-    has settled too. A Captain's log under any other name never settles here; the reset still promotes it.
+    Amendment A3: a Captain's log carries no ``updated`` (its writer stamps none), so it settles once its UTC day has
+    ended and, if it carries an ``updated``, once that has settled too. Amendment A4 (round 2): the day's end counts
+    only ``_CAPTAINS_LOG_GRACE_SECONDS`` later, because one writer call can stall across midnight (C2-1). Only a
+    missing ``updated`` takes the day rule alone; one present but not text (``_UPDATE_UNREADABLE``) never settles here
+    (C2-2). A Captain's log under another Markdown name (a compact or ISO-week date, a nested path) never settles here,
+    and the reset still promotes it; a file that is not Markdown is no Ship's Records source on either path (C2-3).
     """
     if record.source_kind is SourceKind.CAPTAINS_LOG:
         ended = _captains_log_day_end(record.source_ref)
-        if ended is None or ended > settled_before:
+        if ended is None or ended + _CAPTAINS_LOG_GRACE_SECONDS > settled_before:
             return False
+        if record.metadata.get(_UPDATE_UNREADABLE) is True:
+            return False  # Amendment A4 (C2-2): a stored updated that is not a time is not a missing one
         if not record.metadata.get("record_updated"):
-            return True  # the writer's own form: its day is over, so no entry can follow
+            return True  # the writer's own form: its day and the hour's grace have passed
     stamp = record.metadata.get("record_updated")
     if type(stamp) is not str:
         return False
