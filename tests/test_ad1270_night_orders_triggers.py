@@ -62,7 +62,10 @@ def test_the_inert_triggers_still_have_no_producer() -> None:
     assert values.isdisjoint({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
     texts = {p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py")}
     assert [p for p, t in texts.items() if re.search(r"\.set_alert_condition\(", t)] == []
-    assert [p for p, t in texts.items() if re.search(r"""emit_event\w*\(\s*["']security_alert""", t)] == []
+    # AD-1270 A2 (B3): a literal emission of any of the four old names. A producer behind a renamed
+    # emitter is not caught (register R11 on #1324); resolving aliases is out of proportion here.
+    emitted = r"""emit_event\w*\(\s*["'](?:security_alert|red_alert|alert_condition_change|trust_change)"""
+    assert [p for p, t in texts.items() if re.search(emitted, t)] == []
 
 
 def test_every_template_trigger_is_wired_or_known_inert() -> None:
@@ -104,9 +107,14 @@ def test_build_failure_raises_unless_the_request_ran_nothing(details: Any, expec
         (True, False, None),
         ("0.7", "0.5", None),
         (None, _F - 0.1, None),
+        # AD-1270 A2 (B5): a valid old score beside an invalid new one that the comparison alone would accept
+        (_F + 0.1, False, None),
+        (_F + 0.1, -math.inf, None),
+        # AD-1270 A2 (B4): a finite integer too large for a float is still a score
+        (10**400, _F - 0.1, "trust_drop"),
     ],
     ids=["crosses", "from-floor", "already-below", "lands-on-floor", "rises", "floor-hit",
-         "inf", "nan", "bool", "str", "missing"],
+         "inf", "nan", "bool", "str", "missing", "new-bool", "new-neg-inf", "huge-int"],
 )
 def test_trust_update_raises_trust_drop_once_as_it_crosses_the_floor(old: Any, new: Any, expected: str | None) -> None:
     assert _trigger("trust_update", {"agent_id": "a1", "old_score": old, "new_score": new}) == expected
@@ -193,3 +201,17 @@ async def test_a_fully_wired_order_prints_no_inert_line() -> None:
     text = _out(console)
     assert "Escalates on: build_failure" in text
     assert "Never fires" not in text
+
+
+@pytest.mark.parametrize("template", ["maintenance", "build", "quiet"])
+@pytest.mark.asyncio
+async def test_a_template_order_that_is_already_expired_does_not_break_the_console(template: str) -> None:
+    """AD-1270 A2 (B1): the console accepts a TTL that has already run out, so the status is exactly
+    ``{"active": False}``; the console must not index ``inert_triggers`` on it. A negative TTL, not 0:
+    a TTL of 0 may still be active at the clock's resolution."""
+    rt = _runtime()
+    console = _console()
+    await commands_autonomous.cmd_night_orders(rt, console, f"{template} -1")
+    assert rt._night_orders_mgr.orders is not None
+    assert rt._night_orders_mgr.get_status() == {"active": False}
+    assert "Never fires" not in _out(console)

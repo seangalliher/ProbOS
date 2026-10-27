@@ -121,7 +121,7 @@ async def test_a_refused_build_or_an_unlisted_trigger_pages_nobody() -> None:
         host.wr.create_thread.assert_not_awaited()
 
 
-@pytest.mark.parametrize("raiser", ["alerts", "orders", "conn"])
+@pytest.mark.parametrize("raiser", ["alerts", "orders"])  # AD-1270 A2: a raising conn log no longer stops the page (D4b)
 @pytest.mark.asyncio
 async def test_an_escalation_that_raises_never_costs_the_event_its_dispatch(
     raiser: str, caplog: pytest.LogCaptureFixture,
@@ -133,8 +133,6 @@ async def test_an_escalation_that_raises_never_costs_the_event_its_dispatch(
         host._night_orders_mgr = MagicMock()
         host._night_orders_mgr.active = True
         host._night_orders_mgr.check_escalation.side_effect = RuntimeError("boom")
-    if raiser == "conn":
-        host.conn_manager.check_escalation.side_effect = RuntimeError("boom")
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         host.emit_event(EventType.BUILD_FAILURE, {"build_id": "b3", "message": "m"})
     await host.settle()
@@ -142,6 +140,21 @@ async def test_an_escalation_that_raises_never_costs_the_event_its_dispatch(
     assert len(host.offers) == 1
     assert any("Night Orders escalation failed for event build_failure" in m for m in _messages(caplog))
     host.wr.create_thread.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_conn_log_that_raises_still_pages_the_captain(caplog: pytest.LogCaptureFixture) -> None:
+    """AD-1270 A2 (review A F1): ``ConnManager.check_escalation`` is bookkeeping; its failure is logged and the page goes."""
+    host = _Host()
+    host.conn_manager.check_escalation.side_effect = RuntimeError("boom")
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        host.emit_event(EventType.BUILD_FAILURE, {"build_id": "b5", "message": "m"})
+    await host.settle()
+    assert len(host.events) == 1 and len(host.offers) == 1
+    host.wr.create_thread.assert_awaited_once()
+    messages = _messages(caplog)
+    assert any("ConnManager escalation failed for build_failure" in m for m in messages)
+    assert not any("Night Orders escalation failed" in m for m in messages)
 
 
 def test_outside_an_event_loop_nothing_is_paged_and_the_cooldown_is_not_spent(

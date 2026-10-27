@@ -173,7 +173,10 @@ async def cmd_night_orders(runtime: ProbOSRuntime, console: Console, args: str) 
         console.print(f"[bold]Night Orders set: {tpl['name']}[/bold]")
         console.print(f"  {tpl['description']}")
         console.print(f"  TTL: {ttl}h")
-        inert = rt._night_orders_mgr.get_status()["inert_triggers"]
+        status = rt._night_orders_mgr.get_status()
+        # AD-1270 A2 (#1324): a TTL that has already run out leaves the order inactive, and an
+        # inactive status is exactly {"active": False}, with no inert_triggers key.
+        inert = status["inert_triggers"] if status["active"] else []
         if inert:
             console.print(f"  [yellow]Never fires on this build: {', '.join(inert)}[/yellow]")
 

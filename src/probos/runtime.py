@@ -2139,7 +2139,8 @@ class ProbOSRuntime:
 
         AD-1270 (#1324): ``_emit_event`` calls this before durable offer and
         dispatch, so it never raises: a failure is logged and the event still
-        reaches its durable row, its NATS publish and its listeners. The trigger
+        goes to the durable offer (the durable router decides whether it is
+        persisted), the NATS publish when connected, and its local listeners. The trigger
         rule lives beside the templates (``watch_rotation.night_order_trigger``);
         ``BridgeAlertService.check_night_orders_escalation`` builds the alert
         (deduplicated, and suppressible by the Captain, AD-580) and
@@ -2159,7 +2160,14 @@ class ProbOSRuntime:
             logger.warning("Night Orders escalation triggered: %s", trigger)
             conn = getattr(self, "conn_manager", None)
             if conn:
-                conn.check_escalation(trigger, details)
+                try:
+                    conn.check_escalation(trigger, details)
+                except Exception:  # AD-1270 A2 (#1324): ConnManager's log is bookkeeping; its failure must not cost the Captain the page
+                    logger.warning(
+                        "AD-1270: ConnManager escalation failed for %s; the bridge alert still proceeds",
+                        trigger,
+                        exc_info=True,
+                    )
             alerts = getattr(self, "bridge_alerts", None)
             router = getattr(self, "ward_room_router", None)
             if not alerts or not router:
@@ -2168,7 +2176,7 @@ class ProbOSRuntime:
                     trigger,
                 )
                 return
-            loop = asyncio.get_running_loop()  # before the alert is built, so an undeliverable alert never spends its cooldown
+            loop = asyncio.get_running_loop()  # before the alert is built: outside a running loop no alert is built, so no cooldown is spent
             tasks = self._event_listener_tasks
             alert = alerts.check_night_orders_escalation(trigger, details or {})
             if alert is None:

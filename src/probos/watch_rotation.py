@@ -252,7 +252,8 @@ def night_order_trigger(
 
 
 def _is_score(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    # AD-1270 A2 (#1324): an int is exact and always finite; math.isfinite would convert it to float and overflow
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (isinstance(value, int) or math.isfinite(value))
 
 
 @dataclass
