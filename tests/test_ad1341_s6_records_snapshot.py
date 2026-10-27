@@ -900,8 +900,10 @@ def test_a_snapshot_is_written_only_into_the_snapshots_directory_itself(
 
 
 def _posix_stat() -> Any:
-    """The ``stat`` module as a POSIX build has it: no ``IO_REPARSE_TAG_*`` or ``FILE_ATTRIBUTE_*`` name (A4).
+    """A POSIX build's ``stat`` module, stricter: no ``IO_REPARSE_TAG_*`` (Windows-only) and no ``FILE_ATTRIBUTE_*``.
 
+    A5: ``Lib/stat.py`` defines the 17 ``FILE_ATTRIBUTE_*`` constants on every platform; they are removed here too,
+    and no S6 module reads either set (X18's scan), so no result depends on the difference (A4).
     Swapped in for ``records_snapshot.stat`` only, never deleted from the interpreter's ``stat``: the standard library
     reads those names itself on Windows (``ntpath.isjunction``)."""
     return types.SimpleNamespace(**{
@@ -971,6 +973,48 @@ def test_an_erasure_leaves_a_temporary_name_that_is_another_file(
     assert _snapshot_files(tmp_path) == [other] and other.read_bytes()[:2] == b"PK"
 
 
+def test_an_erasure_refuses_a_temporary_name_whose_identity_cannot_be_shown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A5 (A-R3-F1): ``os.path.samestat`` compares ``st_dev`` and ``st_ino``, and an index of 0 identifies no file.
+    With every index reported as 0, another file at the temporary name refuses the erasure before its marker: exit 1,
+    both names and the row unchanged. Once the Captain removes it, the same command erases: a zero index with no
+    temporary name beside the snapshot is unaffected. Injected at the module's status boundary: no file system is
+    known to report 0 where a hard link succeeds (R48). On ``77b65917`` the first erasure removed the other file."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    assert _reset(monkeypatch, config, data_dir, full=True) == 0
+    (snapshot,) = _snapshot_files(tmp_path)
+    other = records_snapshot.temporary_name(snapshot)
+    other.write_bytes(b"another attempt's file")
+    assert not os.path.samestat(os.lstat(snapshot), os.lstat(other))  # premise: two files, real indices differ
+    real_lstat = records_snapshot.lstat_or_none
+
+    def _no_file_index(path: Path) -> Any:
+        status = real_lstat(path)
+        if status is None:
+            return None
+        return types.SimpleNamespace(
+            st_mode=status.st_mode, st_dev=status.st_dev, st_ino=0,
+            st_reparse_tag=getattr(status, "st_reparse_tag", 0),
+        )
+
+    monkeypatch.setattr(records_snapshot, "lstat_or_none", _no_file_index)
+    capsys.readouterr()
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="drill", yes=True) == 1
+    out = capsys.readouterr().out
+    assert "cannot be shown" in out and "Nothing was erased." in out
+    assert _snapshot_files(tmp_path) == sorted([snapshot, other])
+    assert other.read_bytes() == b"another attempt's file"
+    assert _erasures(tmp_path) == [(None, "")]  # refused before the marker
+
+    other.unlink()  # the Captain, having checked it
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="again", yes=True) == 0
+    assert _snapshot_files(tmp_path) == [] and _erasures(tmp_path)[0][1] == "again"
+
+
 def test_a_status_is_judged_by_its_mode_and_only_a_junction_s_tag(monkeypatch: pytest.MonkeyPatch) -> None:
     """A4 (A-R2-F1): ``is_link_status`` names nothing a POSIX build's ``stat`` lacks. A POSIX status (no
     ``st_reparse_tag``) is judged by its mode; a Windows status is a link by its mode or a junction's tag, and any
@@ -986,7 +1030,10 @@ def test_a_status_is_judged_by_its_mode_and_only_a_junction_s_tag(monkeypatch: p
     for relative in (
         "knowledge/records_snapshot.py", "knowledge/archive_ledger.py", "knowledge/nature_description.py", "__main__.py",
     ):
-        text = (_SRC / relative).read_text(encoding="utf-8-sig")
+        path = _SRC / relative
+        if relative == "knowledge/nature_description.py" and not path.exists():  # M2's file: absent on M1's tree only
+            continue
+        text = path.read_text(encoding="utf-8-sig")
         assert re.search(r"\bstat\.(IO_REPARSE_TAG_|FILE_ATTRIBUTE_)|\bst_file_attributes\b", text) is None, relative
 
 

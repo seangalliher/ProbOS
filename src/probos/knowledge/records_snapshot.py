@@ -183,11 +183,21 @@ def retained_alias(final: Path) -> Path | None:
     names are read with ``lstat``, never followed, and share a device and file id (``os.path.samestat``). Another
     attempt's temporary file, a copy with equal bytes, a link or a directory there is another file and is never
     named. None when either name is absent; any other ``OSError`` propagates.
+
+    A5 (A-R3-F1): ``samestat`` compares ``st_dev`` and ``st_ino`` only, and ``st_ino`` identifies a file only when it
+    is nonzero, so two indices of 0 prove nothing. When both names exist and either index is 0, this raises
+    ``SnapshotRefused``: the erasure keeps both names and refuses; it never guesses.
     """
     alias = temporary_name(final)
     final_status, alias_status = lstat_or_none(final), lstat_or_none(alias)
     if final_status is None or alias_status is None:
         return None
+    if not (final_status.st_ino and alias_status.st_ino):  # A5 (A-R3-F1): an index of 0 identifies no file
+        raise SnapshotRefused(
+            f"{alias} is beside the snapshot, and this file system reports no usable file index, so whether "
+            "it is the snapshot's own file cannot be shown; both names are kept: check it, remove it by hand, "
+            "then run the command again"
+        )
     return alias if os.path.samestat(final_status, alias_status) else None  # one file under two names
 
 

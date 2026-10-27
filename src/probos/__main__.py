@@ -3986,7 +3986,7 @@ def _cmd_archive_erase_snapshot(args: argparse.Namespace) -> int:
 
 async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, confirmed: bool) -> int:
     """Show the snapshot, ask unless ``--yes``, mark it erased, then delete its file. The ledger is closed on every exit."""
-    from probos.knowledge.records_snapshot import is_snapshot_relative_path, retained_alias
+    from probos.knowledge.records_snapshot import SnapshotRefused, is_snapshot_relative_path, retained_alias
 
     ledger = await _open_ledger(config)
     try:
@@ -4014,7 +4014,7 @@ async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, c
         alias = retained_alias(path)  # AD-1341 S6 A4 (A-R2-F2): the temporary name publish could not remove
         for name in (*([alias] if alias is not None else []), path):  # A4: the alias first, so a rerun still finds it
             name.unlink(missing_ok=True)
-    except OSError as exc:
+    except (OSError, SnapshotRefused) as exc:  # A5: a refusal here means the name changed after the check (R28)
         print(f"The erasure is recorded, but the file remains at {path}: {type(exc).__name__}: {exc}. Run the same command again.")
         return 1
     print(f"Erased Ship's Records snapshot {snapshot_id}: a marker keeps its name and the reason; its file is deleted.")
@@ -4027,11 +4027,12 @@ def _snapshot_file_problem(directory: Path, relative_path: str) -> str:
     Neither the snapshots directory nor the timeline's directory may be a link or junction, and what stands at the
     snapshot's own name, when anything does, must be a regular file: an erasure deletes only a snapshot inside the
     snapshots directory. Nothing there is fine (a ``missing`` row may still be marked). Any other ``OSError``
-    propagates, and the erasure fails before its marker.
+    propagates, and the erasure fails before its marker. A5 (A-R3-F1): a temporary name beside the snapshot whose
+    identity cannot be shown (``retained_alias`` refuses: a file index of 0) is refused here too, before the marker.
     """
     import stat
 
-    from probos.knowledge.records_snapshot import is_link_or_junction, lstat_or_none
+    from probos.knowledge.records_snapshot import SnapshotRefused, is_link_or_junction, lstat_or_none, retained_alias
 
     path = directory / relative_path
     for component in (directory, path.parent):
@@ -4040,6 +4041,10 @@ def _snapshot_file_problem(directory: Path, relative_path: str) -> str:
     status = lstat_or_none(path)
     if status is not None and not stat.S_ISREG(status.st_mode):  # a directory, a link or a special file there
         return f"{path} is not a snapshot's file"
+    try:
+        retained_alias(path)  # AD-1341 S6 A5 (A-R3-F1): a temporary name of unknown identity refuses before the marker
+    except SnapshotRefused as exc:
+        return str(exc)
     return ""
 
 

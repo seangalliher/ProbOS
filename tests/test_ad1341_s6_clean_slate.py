@@ -463,8 +463,10 @@ def test_a_refused_dry_run_reads_nothing_through_the_procedures_link(
 
 
 def _posix_stat() -> Any:
-    """The ``stat`` module as a POSIX build has it: no ``IO_REPARSE_TAG_*`` or ``FILE_ATTRIBUTE_*`` name (A4).
+    """A POSIX build's ``stat`` module, stricter: no ``IO_REPARSE_TAG_*`` (Windows-only) and no ``FILE_ATTRIBUTE_*``.
 
+    A5: ``Lib/stat.py`` defines the 17 ``FILE_ATTRIBUTE_*`` constants on every platform; they are removed here too,
+    and no S6 module reads either set, so no result depends on the difference (A4).
     Swapped in for ``records_snapshot.stat`` only, never deleted from the interpreter's ``stat``."""
     return types.SimpleNamespace(**{
         name: value for name, value in vars(stat).items()
