@@ -224,8 +224,11 @@ def test_source_kinds_are_closed_and_none_is_an_episode() -> None:
     # cites that agent's episodes by id; it is not an episode, so the assertion below still holds.
     # AD-1341 S5: so does the after-action report, a lesson after an event the Captain flagged, endorsed by the chain of
     # command; it too cites episodes by id and is not one.
+    # AD-1341 S6: so does the nature description, which says which procedures a crew developed and why; it cites no
+    # episode and holds no procedure.
     assert {kind.value for kind in SourceKind} == {
         "convergence_report", "published_report", "captains_log", "notebook_finding", "exit_note", "after_action",
+        "nature_description",
     }
     assert not any("episode" in kind.value for kind in SourceKind)
     assert PROMOTABLE_CLASSIFICATIONS == frozenset({"ship", "fleet"})

@@ -16,6 +16,12 @@ in ``archive_vetoes`` that holds no title, content or hash, and that
 manager reads ``entry_ids_citing`` and erases nothing while an entry cites an
 episode it would erase, until the Captain has erased that entry.
 
+AD-1341 S6: ``_SCHEMA`` also creates ``archive_snapshots``, the content-free
+record of each Ship's Records snapshot a ``--full`` reset kept beside the
+archive. Its rows are written by ``probos.knowledge.archive_ledger``, on a
+connection of its own, never by this class. So are those of
+``nature_clearances``, the content-free marker of each ``--clean-slate``.
+
 Each entry records the timeline (instance) it came from, its source kind and
 reference, the content's SHA-256, its classification (``ship`` or ``fleet``: a
 later crew reads every entry) and when it was archived. ``generations`` records
@@ -102,6 +108,7 @@ class SourceKind(StrEnum):
     NOTEBOOK_FINDING = "notebook_finding"
     EXIT_NOTE = "exit_note"  # AD-1341 S4: a lesson a crew agent leaves for its successor; it cites episodes, never is one
     AFTER_ACTION_REPORT = "after_action"  # AD-1341 S5: a lesson after a flagged event, endorsed by the chain; cites episodes
+    NATURE_DESCRIPTION = "nature_description"  # AD-1341 S6: which procedures a crew developed and why; never a procedure
 
 
 class PromotionOutcome(StrEnum):
@@ -278,6 +285,32 @@ CREATE TABLE IF NOT EXISTS archive_vetoes (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_vetoes_source ON archive_vetoes(source_kind, source_ref);
+
+CREATE TABLE IF NOT EXISTS archive_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timeline_id TEXT NOT NULL,
+    ship_did TEXT NOT NULL,
+    generation_started TEXT NOT NULL,
+    generation_ended TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    file_count INTEGER NOT NULL,
+    total_bytes INTEGER NOT NULL,
+    recorded_at REAL NOT NULL,
+    erased_at REAL,
+    erase_reason TEXT NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_snapshots_path ON archive_snapshots(relative_path);
+
+CREATE TABLE IF NOT EXISTS nature_clearances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timeline_id TEXT NOT NULL,
+    reset_tier INTEGER NOT NULL,
+    cleared TEXT NOT NULL DEFAULT '[]',
+    procedure_count INTEGER NOT NULL,
+    cleared_at REAL NOT NULL
+);
 """
 
 # AD-1341 schema v1: the provenance columns, each added to a v0 table only where absent, so a migration that
