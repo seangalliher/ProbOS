@@ -4030,3 +4030,17 @@ Each is a property that holds on the candidate:
 **R24.** (Amendment A4; process.) Round 1 and round 2 each found a defect in a rule whose premise was an unverified claim about a producer. A3's premise was "no entry after the day ends". Its absence searches showed there was no other writer; they did not show that the one writer's call cannot straddle midnight, because a synchronous call with no await is atomic against other coroutines, not against the clock. A premise about a producer's timing is verified by driving that producer's clock inside one call (K4e), not by enumerating its callers.
 
 **R25.** (Amendment A4; process.) Round 1's C1 was a consumer rule that needed a field (`updated`) the real producer never writes, tested only with fixtures that carried it. Round 2's C2-2 was the same seam from the other side: the producer's conversion erased a difference (present against absent) that the consumer's new rule depended on. A test for a new input rule runs the real producer, under the conditions the rule distinguishes (K4d, K4e, K4f).
+
+## 16. Validation of record (2026-10-27, win32)
+
+The same record as `DECISIONS.md`'s *Validation of record* bullet for this slice, with the evidence names (the files folder of the orchestrator's session).
+
+**Mutation campaign.** The 51 rows of section 10, one at a time on the assembled tree (`4a829a6b`, tree `1f16abb539a3`: `origin/main` `391796cb` plus this contract (A4) and the milestones and two repairs applied by tool), whole-line mutation, each row run against the tests it names, pytest without `-x`: **51 of 51 killed**; the unmutated baseline over the five files is 220 passed (`evidence-ad1341s5census-final3.txt`; the earlier campaigns: `-final` 40 of 40 on the first candidate, `-final2` 46 of 46 after A3). The first run of the final campaign with another runner reported every row INERT ("file not found exactly once") and was discarded: the runner of record is `run_census_s4.ps1`.
+
+**Tests first.** Each new file fails at collection over its milestone's base (`evidence-ad1341s5-m1-tests-first.txt` and the orchestrator's `s5-tf-m1-base`, `-m2-base`, `-m3-base`); each repair's amended files over the previous candidate's source: A3's fail 37 of 81 cases (`evidence-s5-repair-tf-e.txt`), A4's 7 of 35 (`-f`).
+
+**Focused lists.** M1 698 passed and 1 skipped, M2 448, M3 1307, on the assembled candidate (`evidence-s5-g-m{1,2,3}-focused.txt`); the new files alone 45, 51 and 35 cases. The expected counts of section 4 (analysis) held.
+
+**Stress.** The M2 and M3 files 5 of 5 runs after A3 and the M3 file 5 of 5 after A4 (`s5-stress-*`, `s5-stress2-*`).
+
+**Review.** M1 to M3 by `gpt-6.1-sol` (`max`) in three rounds (`review-ad1341s5-{a,b,c}-r1.md`, `-{b,c}-r2.md`, `-c-r3.md`): round 1 A READY (one injected-only P2: R8), B NOT READY (P2), C NOT READY (P1 and three P3), repaired by A3; round 2 (the delta of A3's repair) B READY, C NOT READY (two P2 that A3 introduced and two P3), repaired by A4; round 3 (the delta of A4's repair, one reviewer) **READY**, with R22 the only retained limit. The Architect decided every amendment; nothing needed the Captain.
