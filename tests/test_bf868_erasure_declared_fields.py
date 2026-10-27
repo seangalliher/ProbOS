@@ -506,9 +506,11 @@ async def test_an_empty_anchors_json_is_not_reported_as_a_failure(
     ids=["p1_group_fanout", "p2_captain_vision", "p3_perception", "p5_dm_timing"],
 )
 async def test_forget_resource_cascade_erases_every_producer(make_episode) -> None:
-    """``forget_resource`` fans out to ``forget_episode``, so a gap in the
-    extractor is inherited by the whole cascade -- the Captain asks to forget a
-    resource and the attachments quietly stay."""
+    """``forget_resource`` reads each match's attachments with the extractor
+    ``forget_episode`` uses, so a gap in the extractor is inherited by the whole
+    cascade -- the Captain asks to forget a resource and the attachments quietly
+    stay. (BF-939: the cascade no longer calls ``forget_episode``; it runs the
+    per-episode checks, then the private erase path ``_erase_episode``.)"""
     episode = make_episode(_REAL)
     episode.user_input = f"{episode.user_input} /var/log/secret.png"
     store = _FakeAttachmentStore()
@@ -529,7 +531,7 @@ async def test_forget_resource_cascade_erases_every_producer(make_episode) -> No
     ids=["p1_group_fanout", "p2_captain_vision", "p5_dm_timing"],
 )
 async def test_forget_agent_memory_cascade_erases_every_producer(make_episode) -> None:
-    """Same inheritance through the agent cascade. ``_p3_perception_anchor`` is
+    """The same extractor, through the agent cascade. ``_p3_perception_anchor`` is
     excluded: its production shape carries no ``agent_ids`` (the AD-733 anchor
     is written without an observer), so it is not selectable by this cascade."""
     episode = make_episode(_REAL)

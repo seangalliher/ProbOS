@@ -21,9 +21,10 @@ from tests.test_ad1340_s2a_lookup_route import _client, _post, _runtime
 from tests.test_bf939_shared_attachment_ownership import (
     _BODY as _SHARED_BODY,
     _FIRST,
+    _OVERLAP_BUDGET_S,
     _SECOND,
     _SHA as _SHARED_SHA,
-    _rendezvous_after_the_archive_scan,
+    _trace_overlapping_erasures,
     _two_owners,
 )
 
@@ -137,22 +138,25 @@ async def test_overlapping_forget_requests_leave_nothing_downloadable_once_every
             await attachments.write(_SHARED_SHA, _SHARED_BODY, "text/plain")
             for episode in _two_owners():
                 assert await rig.em.store(episode) is EpisodeStoreOutcome.STORED
-            arrivals = _rendezvous_after_the_archive_scan(monkeypatch, rig.em)
+            trace = _trace_overlapping_erasures(monkeypatch, rig.em)
 
             async with _client(runtime) as client:
                 before = await client.get(f"/api/chat/attachments/{_SHARED_SHA}")
                 assert before.status_code == 200, before.text  # premise: the file is served ...
                 assert before.content == _SHARED_BODY  # ... and both episodes name it
-                answers = await asyncio.gather(
-                    *(_post(client, _FORGET, body) for body in _OVERLAPPING_REQUESTS[form]),
+                # A-5 (B2-1): one budget for both requests end to end. ``_post``'s 10 s bounds one independent request,
+                # and would count this request's wait behind the other erasure against it.
+                answers = await asyncio.wait_for(
+                    asyncio.gather(*(client.post(_FORGET, json=body) for body in _OVERLAPPING_REQUESTS[form])),
+                    _OVERLAP_BUDGET_S,
                 )
                 after = await client.get(f"/api/chat/attachments/{_SHARED_SHA}")
 
             assert [answer.status_code for answer in answers] == [200, 200], [answer.text for answer in answers]
+            trace.assert_one_at_a_time()  # A-5: read from the erasure lock itself, never from timing
             assert after.status_code == 404  # B1: every owner is erased, so nothing may still serve the bytes
             assert sorted(sha for answer in answers for sha in answer.json()["deleted_attachment_ids"]) == [_SHARED_SHA]
             assert _raw(rig.em, ["ep-000", "ep-001"])["ids"] == []
-            assert arrivals == [0, 0]  # the two erasures' scans never overlapped
         finally:
             chat_router._ATTACHMENT_STORE_CACHE.pop(id(runtime), None)
             attachments.close()

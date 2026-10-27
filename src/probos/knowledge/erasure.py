@@ -246,6 +246,10 @@ def _one_erasure_at_a_time(memory: Any | None) -> contextlib.AbstractAsyncContex
     write lock (``evict_by_ids`` takes that one). It does not serialize ``store()`` (register G2) or the attachment
     store's other lifetimes (G9). An ``asyncio.Lock`` binds to the first loop it waits on, so a new loop gets a new
     lock (``agents/http_fetch.py`` keys its locks by loop for the same reason). No memory, nothing to serialize.
+
+    A-5: ``memory`` keys a weak registry, so it must be hashable and weakly referenceable (every memory in use is).
+    One loop at a time holds a memory's entry: erasures on one memory from two event loops running at once are not
+    serialized with each other (production runs one loop; register G10).
     """
     if memory is None:  # BF-939 (A-4): no memory, nothing to serialize
         return contextlib.nullcontext()

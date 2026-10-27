@@ -360,7 +360,8 @@ async def test_each_entry_point_scans_for_owners_at_most_once_and_keeps_the_per_
 # --- T12, T13: overlapping erasures run one at a time (A-4, B1) -----------------------------------------------------
 
 _FIRST, _SECOND = "/srv/bf939/first.log", "/srv/bf939/second.log"
-_OVERLAP_WAIT_S = 1.0
+_HANDSHAKE_S = 60.0  # A-5: bounds one wait; exceeding it FAILS the test, and no assertion depends on it
+_OVERLAP_BUDGET_S = 150.0  # A-5: both erasures end to end, queueing included; under pytest-timeout's 180 s
 
 
 def _two_owners() -> tuple[Episode, Episode]:
@@ -372,34 +373,85 @@ def _two_owners() -> tuple[Episode, Episode]:
     )
 
 
-def _rendezvous_after_the_archive_scan(monkeypatch: pytest.MonkeyPatch, em: Any) -> list[int]:
-    """B1's interleaving, made deterministic, for two erasures on ``em``.
+@dataclasses.dataclass
+class _LockTrace:
+    """A-5 (A2-2): what two overlapping erasures did with the erasure lock, recorded at the lock itself.
 
-    Each archive scan, after its last row, waits up to ``_OVERLAP_WAIT_S`` for the other erasure's scan to finish
-    too. Unserialized, both scans finish before either erasure decides (the race reviewer B reproduced); serialized,
-    the first waits alone, then decides, unlinks and evicts before the second scans. Returns, per finished scan, how
-    many other finished scans were still waiting then: ``[0, 0]`` means the two never overlapped.
+    ``steps`` holds, in order, ``(n, "requested")``, ``(n, "granted")`` and ``(n, "released")`` for the n-th lock
+    request (0, then 1), and ``(None, "scanned")`` each time an archive scan ends. ``locks`` and ``held_at_request``
+    hold, per request, the lock it got and whether that lock was held when it asked.
     """
-    inner = em.iter_archived_episodes
-    waiting = [0]
-    arrivals: list[int] = []
-    both = asyncio.Event()
 
-    async def rendezvous(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+    steps: list[tuple[int | None, str]] = dataclasses.field(default_factory=list)
+    locks: list[Any] = dataclasses.field(default_factory=list)
+    held_at_request: list[bool] = dataclasses.field(default_factory=list)
+    scans_ended: int = 0
+    ready: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+
+    def progressed(self) -> None:
+        """The handshake: a scan waiting at its end goes on once the other erasure has asked for the lock or, with no
+        lock, has ended its own scan. With the lock, the other cannot scan while this one holds it."""
+        if len(self.locks) >= 2 or self.scans_ended >= 2:
+            self.ready.set()
+
+    def assert_one_at_a_time(self) -> None:
+        assert len(self.locks) == 2  # both erasures asked for the erasure lock
+        assert self.locks[0] is self.locks[1]  # one lock for the memory, whichever manager asked
+        assert self.held_at_request == [False, True]  # the second asked while the first held it: they overlapped
+        assert self.steps == [
+            (0, "requested"), (0, "granted"), (1, "requested"), (None, "scanned"), (0, "released"),
+            (1, "granted"), (None, "scanned"), (1, "released"),
+        ]  # granted only after the first's release, and each archive scan ended inside its own erasure's hold
+
+
+def _trace_overlapping_erasures(monkeypatch: pytest.MonkeyPatch, em: Any) -> _LockTrace:
+    """B1's interleaving, forced by a handshake, with one-at-a-time read from the erasure lock itself (A-5).
+
+    ``_one_erasure_at_a_time`` is wrapped, and the real lock is still taken: each request records the lock and
+    whether it was held, then its grant and release. Each archive scan of ``em``, after its last row, waits until
+    the other erasure has asked for the lock or ended its own scan. Serialized, the holder waits for the other's
+    request, which then queues; unserialized, both scans end before either decides (the race reviewer B
+    reproduced), and the trace shows fewer than two requests or two locks. Nothing is inferred from an interval:
+    the one wait is bounded by ``_HANDSHAKE_S``, and exceeding it fails the test.
+    """
+    from probos.knowledge import erasure  # local, as T13's import: on a tree without A-4 only these tests fail
+
+    real = erasure._one_erasure_at_a_time
+    trace = _LockTrace()
+
+    @contextlib.asynccontextmanager
+    async def observed(lock: Any) -> AsyncIterator[None]:
+        request = len(trace.locks)
+        trace.locks.append(lock)
+        trace.held_at_request.append(lock.locked())
+        trace.steps.append((request, "requested"))
+        trace.progressed()
+        async with lock:
+            trace.steps.append((request, "granted"))
+            try:
+                yield
+            finally:
+                trace.steps.append((request, "released"))
+
+    def one_erasure_at_a_time(memory: Any) -> Any:
+        return observed(real(memory))
+
+    inner = em.iter_archived_episodes
+
+    async def handshake(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
         async for episode in inner(*args, **kwargs):
             yield episode
-        arrivals.append(waiting[0])
-        if len(arrivals) == 2:
-            both.set()
-        waiting[0] += 1
+        trace.scans_ended += 1
+        trace.progressed()
         try:
-            with contextlib.suppress(TimeoutError):  # serialized: nothing else can reach its scan meanwhile
-                await asyncio.wait_for(both.wait(), _OVERLAP_WAIT_S)
-        finally:
-            waiting[0] -= 1
+            await asyncio.wait_for(trace.ready.wait(), _HANDSHAKE_S)
+        except TimeoutError:
+            pytest.fail(f"the other erasure neither asked for the erasure lock nor ended its scan in {_HANDSHAKE_S} s")
+        trace.steps.append((None, "scanned"))
 
-    monkeypatch.setattr(em, "iter_archived_episodes", rendezvous)
-    return arrivals
+    monkeypatch.setattr(erasure, "_one_erasure_at_a_time", one_erasure_at_a_time)
+    monkeypatch.setattr(em, "iter_archived_episodes", handshake)
+    return trace
 
 
 _OVERLAPS: dict[str, tuple[Any, Any]] = {
@@ -417,25 +469,28 @@ _OVERLAPS: dict[str, tuple[Any, Any]] = {
 async def test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every_owner_is_erased(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overlap: str,
 ) -> None:
-    """B1: two managers on one memory, as the route builds one per request, each erasing one of two owners."""
+    """B1: two managers on one memory, as the route builds one per request, each erasing one of two owners. A-5: one
+    at a time is read from the erasure lock's own trace (``_trace_overlapping_erasures``), never from timing."""
     async with _vessel(tmp_path) as (rig, attachments):
         await _stored(rig.em, list(_two_owners()))
-        arrivals = _rendezvous_after_the_archive_scan(monkeypatch, rig.em)
+        trace = _trace_overlapping_erasures(monkeypatch, rig.em)
         erase_first, erase_second = _OVERLAPS[overlap]
 
-        results = await asyncio.gather(
-            erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments)),
+        results = await asyncio.wait_for(
+            asyncio.gather(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments))),
+            _OVERLAP_BUDGET_S,
         )
 
+        trace.assert_one_at_a_time()
         assert not await attachments.exists(_SHA)  # B1: no owner remains, so neither erasure may keep it
         assert sorted(sha for result in results for sha in result.deleted_attachment_ids) == [_SHA]
         assert sorted(sha for result in results for sha in result.retained_attachments) == [_SHA]  # kept once, then removed
         assert _raw(rig.em, [_A, _B])["ids"] == []
-        assert arrivals == [0, 0]  # the two scans never overlapped
 
 
 class _AnyMemory:
-    """A stand-in key: the erasure lock needs only an object it can weakly reference."""
+    """A stand-in key: the erasure lock's registry needs an object that is hashable and can be weakly referenced
+    (A-5); a plain class's instance is both."""
 
 
 def test_the_erasure_lock_is_one_per_memory_and_follows_the_running_loop() -> None:
@@ -563,3 +618,98 @@ async def test_an_owner_recording_failure_on_the_single_path_still_reaches_the_o
         assert str(incomplete.value.enumeration_error) == f"injected: recording the owners of {_B} failed"
         assert incomplete.value.result.deleted_episode_ids == [_A]
         assert sorted(_raw(rig.em, [_A, _B, _C])["ids"]) == [_B, _C]
+
+
+# --- T16: no erasure calls a public erasure method, so the lock never waits on itself (A-5, A2-1) ------------------
+
+_PUBLIC_ERASURES = ("forget_episode", "forget_resource", "forget_agent_memory")
+
+
+@pytest.mark.parametrize("entry", ["episode", "agent", "resource"])
+async def test_no_erasure_calls_a_public_erasure_method(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str,
+) -> None:
+    """A2-1 (A-5): the erasure lock is not re-entrant, so a public erasure method that called another, or itself,
+    would wait forever on the lock its caller holds. Each public method is replaced on the class by a spy that fails
+    the test on entry, so a nested call fails here at once instead of hanging until the suite's timeout."""
+    real = {name: getattr(ErasureManager, name) for name in _PUBLIC_ERASURES}
+    nested: list[str] = []
+
+    def spy(name: str) -> Any:
+        async def called(self: ErasureManager, *args: Any, **kwargs: Any) -> Any:
+            nested.append(name)
+            pytest.fail(f"an erasure called the public {name}, which would wait on the erasure lock it holds")
+
+        return called
+
+    async with _vessel(tmp_path) as (rig, attachments):
+        await _stored(rig.em, [_naming(0, resource=True), _naming(1, resource=True)])
+        manager = _manager(rig, attachments)
+        for name in _PUBLIC_ERASURES:
+            monkeypatch.setattr(ErasureManager, name, spy(name))
+
+        if entry == "episode":
+            result = await real["forget_episode"](manager, _A)
+            assert result.deleted_episode_ids == [_A]
+            assert result.retained_attachments == {_SHA: [_B]}  # premise: the single path scanned and decided
+        else:
+            erase = real["forget_agent_memory" if entry == "agent" else "forget_resource"]
+            result = await erase(manager, "agent-a" if entry == "agent" else _RESOURCE)
+            assert sorted(result.deleted_episode_ids) == [_A, _B]  # premise: the cascade erased both matches ...
+            assert result.deleted_attachment_ids == [_SHA]  # ... and decided the shared file once
+
+    assert nested == []
+
+
+# --- T17: a scan's own error outranks an owner recording's (A-5, A2-5) ---------------------------------------------
+
+
+def _fail_scan_after_its_last_row(monkeypatch: pytest.MonkeyPatch, em: Any, name: str, error: Exception) -> None:
+    """Make ``em.<name>`` raise ``error`` after yielding every row, so every episode is still scanned and recorded."""
+    inner = getattr(em, name)
+
+    async def failing(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        async for episode in inner(*args, **kwargs):
+            yield episode
+        raise error
+
+    monkeypatch.setattr(em, name, failing)
+
+
+_PRIORITY_CASES = [
+    pytest.param(entry, scans, id=f"{entry}-{scans}")
+    for entry in ("episode", "agent")
+    for scans in ("archive", "live-archive")
+]
+
+
+@pytest.mark.parametrize(("entry", "scans"), _PRIORITY_CASES)
+async def test_a_scans_own_error_is_raised_before_an_owner_recording_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str, scans: str,
+) -> None:
+    """A2-5 (A-5): an owner recording fails and a scan fails in one erasure. The error raised is the live scan's,
+    else the archive scan's, never the recording's (``_matching_ids``), on the single path and on a cascade."""
+    async with _vessel(tmp_path) as (rig, attachments):
+        await _stored(
+            rig.em,
+            [_naming(0), _naming(1, agent="agent-b", attachment=False), _naming(2, agent="agent-b", attachment=False)],
+            archived=[_C],
+        )
+        manager = _manager(rig, attachments)
+        seen = _fail_recording_for(monkeypatch, manager, "extraction", _B)
+        live_error = LookupError("injected: the live scan failed after its last row")
+        archive_error = RuntimeError("injected: the archive scan failed after its last row")
+        if scans == "live-archive":
+            _fail_scan_after_its_last_row(monkeypatch, rig.em, "iter_live_episodes", live_error)
+        _fail_scan_after_its_last_row(monkeypatch, rig.em, "iter_archived_episodes", archive_error)
+
+        with pytest.raises(ErasureCascadeIncomplete) as incomplete:
+            if entry == "episode":
+                await manager.forget_episode(_A)
+            else:
+                await manager.forget_agent_memory("agent-a")
+
+        assert _B in seen  # premise: ep-001's owner recording was attempted, and failed
+        assert incomplete.value.enumeration_error is (live_error if scans == "live-archive" else archive_error)
+        assert incomplete.value.failures == {}
+        assert incomplete.value.result.deleted_episode_ids == [_A]
