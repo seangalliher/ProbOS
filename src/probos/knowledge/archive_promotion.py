@@ -16,12 +16,19 @@ narrower than ``ship`` or has nothing to archive, and promotes the rest with the
   ``exit_note_citations`` is the AD-754 erasure's read of the citations the next promotion would archive.
 - AD-1341 S3: a source the Captain vetoed is reported as vetoed and never archived. ``review_promotion`` is the
   Captain's review of the next run (``probos archive pending``): it reads, and records nothing.
+- AD-1341 S5: an after-action report (``after-action/``) is a source with its own rule (``_after_action_record``):
+  S4's exit-note rule plus the chain-of-command review, so only a report its chain endorsed is archived.
+  ``promote_settled`` is the continuous promotion (a dream step, default off): the same plan, settled sources only, a
+  bounded batch, and a citing source only inside the AD-754 erasure lock while its episodes are live.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any
 
 from probos.knowledge.archive_store import (
@@ -33,11 +40,19 @@ from probos.knowledge.archive_store import (
     SourceState,
 )
 from probos.knowledge.lessons import (
+    AFTER_ACTION_DIR,
+    AFTER_ACTION_KEY,
+    AFTER_ACTION_SUBJECT_MAX_CHARS,
+    AFTER_ACTION_VERSION,
     EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_VERSION,
     EXIT_NOTES_DIR,
     LESSON_MAX_CITATIONS,
+    REVIEW_ENDORSED,
+    after_action_lesson,
+    after_action_path,
+    after_action_review_ok,
     exit_note_lesson,
     exit_note_path,
     exit_note_provenance_ok,
@@ -70,6 +85,8 @@ def source_kind_for(path: str, frontmatter: Any) -> SourceKind | None:
         return None
     if path.startswith(f"{EXIT_NOTES_DIR}/"):
         return SourceKind.EXIT_NOTE  # AD-1341 S4: every exit note is a source; _exit_note_record withholds a bad one
+    if path.startswith(f"{AFTER_ACTION_DIR}/"):
+        return SourceKind.AFTER_ACTION_REPORT  # AD-1341 S5: every report is a source; _after_action_record withholds a bad one
     author = frontmatter.get("author")
     status = frontmatter.get("status")
     if path.startswith("reports/convergence/"):
@@ -85,15 +102,25 @@ def source_kind_for(path: str, frontmatter: Any) -> SourceKind | None:
     return None
 
 
+#: AD-1341 S5 (D17, register F-661): the frontmatter values ``_stored_text`` converts. ``datetime`` is a ``date``.
+_SCALARS = (str, int, float, bool, date)
+
+
 def _stored_text(value: object) -> str:
     """AD-1341 S4 (A5, round 3 R3-M1-2): a stored frontmatter value as archive text; never raises.
+
+    AD-1341 S5 (F-661): only a scalar converts. A list, a mapping or any other object is archived as no value: a YAML
+    alias chain deeper than the recursion limit made ``str()`` raise ``RecursionError``, and a graph whose every level
+    names the one below twice made it run for an exponential time, which would stall the dream step and the reset.
 
     ``str()`` raises ``ValueError`` for an integer longer than Python's integer-string limit (4,300 digits by default,
     ``sys.set_int_max_str_digits``), which YAML builds from ``0x...``; one such value stopped the plan and the whole
     reset. It is archived as no value, as a missing one is. Every other value converts exactly as ``str()`` did.
     """
+    if not value or not isinstance(value, _SCALARS):
+        return ""  # AD-1341 S5 (F-661): a container, an alias graph included, is never walked by str()
     try:
-        return str(value or "")
+        return str(value)
     except ValueError:  # A5 (R3-M1-2): an integer longer than Python's integer-string limit
         logger.warning("AD-1341 S4: a stored Ship's Records value cannot be shown as text; it is archived empty")
         return ""
@@ -177,40 +204,126 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
     )
 
 
-async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | None) -> dict[str, tuple[str, ...]]:
-    """AD-1341 S4 (D14): each episode id cited by an exit note the next promotion would archive, with those notes.
+def _after_action_record(path: str, document: Any) -> PromotionRecord | None:
+    """AD-1341 S5: an after-action report as the Ship's Archive receives it, or None when it breaks the rule (D4, D5).
 
-    The notes are read as the promotion reads them (``_exit_note_record``, the one rule). With an open archive a note
-    counts while ``source_state`` says CREATED; a vetoed, erased or already archived note does not (an archived one
-    is S3's own check). With no open archive every valid note counts (fail closed: the next reset opens the archive
+    S4's exit-note rule with the report's own envelope, plus the chain-of-command review. The envelope (version 1, an
+    ``int``) names a timeline, a callsign, an agent type and the author's DID (``exit_note_provenance_ok``), the flag's
+    time, a one-line subject and at most ``LESSON_MAX_CITATIONS`` distinct episode ids. The path is ``after_action_path``
+    of them, and the author is the callsign. The body is exactly the canonical report (``after_action_lesson``), the
+    recorded review admits it (``after_action_review_ok``), and the classification is ``ship`` or ``fleet`` (C1). The
+    entry is attributed to the timeline that wrote the report. Never raises for a document. The one rule for the reset,
+    the continuous step and the erasure's citation read.
+    """
+    if type(document) is not dict or type(document.get("frontmatter")) is not dict:
+        return None
+    frontmatter, content = document["frontmatter"], document.get("content")
+    envelope = frontmatter.get(AFTER_ACTION_KEY)
+    if type(envelope) is not dict:
+        return None
+    version = envelope.get("version")
+    if type(version) is not int or version != AFTER_ACTION_VERSION:  # True and 1.0 equal 1 and are not it (S4 A2)
+        return None
+    named = [envelope.get(field) for field in ("timeline_id", "callsign", "agent_type", "author_did")]
+    if not exit_note_provenance_ok(*named):
+        return None
+    report_timeline, callsign, agent_type, author_did = named
+    flagged_at, subject = envelope.get("flagged_at"), envelope.get("subject")
+    if not is_exit_note_text(subject, AFTER_ACTION_SUBJECT_MAX_CHARS):
+        return None
+    cited = envelope.get("source_episode_ids")
+    if type(cited) is not list or not all(is_exit_note_text(item, EXIT_NOTE_EPISODE_ID_MAX_CHARS) for item in cited):
+        return None
+    if len(cited) > LESSON_MAX_CITATIONS or len(set(cited)) != len(cited):
+        return None
+    try:
+        expected_path = after_action_path(report_timeline, agent_type, flagged_at)
+    except ValueError:
+        return None
+    if path != expected_path or frontmatter.get("author") != callsign:
+        return None
+    if after_action_lesson(callsign, agent_type, report_timeline, content) is None:
+        return None
+    if not after_action_review_ok(envelope.get("review"), agent_type):
+        return None  # AD-1341 S5 (D5): no endorsement by the chain of command, no canon
+    classification = frontmatter.get("classification")
+    if type(classification) is not str or classification not in PROMOTABLE_CLASSIFICATIONS:
+        return None  # C1: nothing narrower than ship reaches a later crew
+    endorsed_by = [entry["callsign"] for entry in envelope["review"] if entry.get("outcome") == REVIEW_ENDORSED]
+    return PromotionRecord(
+        timeline_id=report_timeline,  # the timeline that wrote the report, not the promoting run's
+        source_kind=SourceKind.AFTER_ACTION_REPORT,
+        source_ref=path,
+        title=f"After-action report of {callsign}",
+        content=content,
+        classification=classification,
+        author_callsign=callsign,
+        author_agent_type=agent_type,
+        author_did=author_did,
+        source_episode_ids=tuple(cited),  # the author's own offered episodes, by id; never their text
+        metadata={
+            "status": _stored_text(frontmatter.get("status")),
+            "record_created": _stored_text(frontmatter.get("created")),
+            "record_updated": _stored_text(frontmatter.get("updated")),
+            "flagged_at": flagged_at,
+            "subject": subject,
+            "endorsed_by": endorsed_by,
+        },
+    )
+
+
+def _lesson_record(path: str, document: Any) -> PromotionRecord | None:
+    """AD-1341 S5: the one rule of a lesson source, by its directory: an after-action report's, or an exit note's."""
+    if path.startswith(f"{AFTER_ACTION_DIR}/"):
+        return _after_action_record(path, document)
+    return _exit_note_record(path, document)
+
+
+#: AD-1341 S5: the Ship's Records directories whose documents cite episodes: exit notes and after-action reports.
+_LESSON_DIRS = (EXIT_NOTES_DIR, AFTER_ACTION_DIR)
+
+
+async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | None) -> dict[str, tuple[str, ...]]:
+    """AD-1341 S4 (D14), S5: each episode id cited by a lesson the next promotion would archive, with those lessons.
+
+    The lessons are read as the promotion reads them (``_lesson_record``, the one rule). With an open archive a lesson
+    counts while ``source_state`` says CREATED; a vetoed, erased or already archived one does not (an archived one is
+    S3's own check). With no open archive every valid lesson counts (fail closed: the next reset opens the archive
     and would promote it). Reads Ship's Records and the archive; writes nothing; any failure propagates.
 
-    A2 (M1-F1, M3-F1): the listing is strict, so a note file that exists but cannot be read now (a sharing violation, a
-    permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
+    A2 (M1-F1, M3-F1): each listing is strict, so a lesson file that exists but cannot be read now (a sharing violation,
+    a permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
     UTF-8, or whose frontmatter does not parse, is never counted, because the promotion never archives it either: that
     is a property of the file, not of the moment.
 
-    A5 (7.3a's table, O6): each listed note is read again through ``read_entry``, whose ``Path.exists`` answers False
-    for errors ``pathlib`` reads as "not there". A ship-wide note the strict listing returned and the second read
+    A5 (7.3a's table, O6): each listed lesson is read again through ``read_entry``, whose ``Path.exists`` answers False
+    for errors ``pathlib`` reads as "not there". A ship-wide lesson the strict listing returned and the second read
     cannot find raises: it was there a moment ago, so whether the next promotion would archive it is unknown.
+
+    AD-1341 S5: after-action reports (``after-action/``) are read too, so ``/forget`` refuses while a report its chain
+    endorsed, awaiting promotion, cites a matched episode. The name and the route's 409 code
+    (``exit_notes_cite_erased_episodes``) are kept, so no caller or wire contract changes; the paths say which
+    documents they are (register R10).
     """
     citing: dict[str, list[str]] = {}
-    for listed in await records.list_entries(EXIT_NOTES_DIR, strict=True):
-        path = listed["path"]
-        if source_kind_for(path, listed["frontmatter"]) is not SourceKind.EXIT_NOTE:
-            continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
-        document = await records.read_entry(path, ARCHIVE_READER)
-        classification = listed["frontmatter"].get("classification")
-        listed_readable = type(classification) is str and classification in PROMOTABLE_CLASSIFICATIONS
-        if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now: never "no citations"
-            raise OSError(f"AD-1341 S4: the exit note {path} was listed but cannot be found now")
-        record = _exit_note_record(path, document)
-        if record is None or not record.source_episode_ids:
-            continue
-        if archive is not None and (await archive.source_state(record)).outcome is not PromotionOutcome.CREATED:
-            continue
-        for episode_id in record.source_episode_ids:
-            citing.setdefault(episode_id, []).append(path)
+    for directory in _LESSON_DIRS:
+        for listed in await records.list_entries(directory, strict=True):
+            path = listed["path"]
+            kind = source_kind_for(path, listed["frontmatter"])
+            if kind is not SourceKind.EXIT_NOTE and kind is not SourceKind.AFTER_ACTION_REPORT:
+                continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
+            document = await records.read_entry(path, ARCHIVE_READER)
+            classification = listed["frontmatter"].get("classification")
+            listed_readable = type(classification) is str and classification in PROMOTABLE_CLASSIFICATIONS
+            if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now
+                raise OSError(f"AD-1341 S4: the lesson {path} was listed but cannot be found now")
+            record = _lesson_record(path, document)
+            if record is None or not record.source_episode_ids:
+                continue
+            if archive is not None and (await archive.source_state(record)).outcome is not PromotionOutcome.CREATED:
+                continue
+            for episode_id in record.source_episode_ids:
+                citing.setdefault(episode_id, []).append(path)
     return {episode_id: tuple(paths) for episode_id, paths in citing.items()}
 
 
@@ -231,6 +344,7 @@ class PromotionReport:
     erased: tuple[str, ...]
     withheld: tuple[str, ...]
     vetoed: tuple[str, ...] = ()  # AD-1341 S3: sources the Captain vetoed; never archived
+    waiting: tuple[str, ...] = ()  # AD-1341 S5: left for a later continuous step or the reset (not settled, or unchecked)
 
 
 async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> PromotionPlan:
@@ -245,6 +359,9 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
     timeline in its own envelope, never to ``timeline_id``, and a valid note never raises for an empty
     ``timeline_id`` (the CLI refuses a run without an instance id before it plans). A note that breaks the rule is
     withheld. The listing is not strict: a file that cannot be read at this moment is skipped, as S1 left it.
+
+    AD-1341 S5: an after-action report (``after-action/``) is the same kind of exception, with its own rule
+    (``_after_action_record``): only a report its chain of command endorsed is selected.
     """
     selected: list[PromotionRecord] = []
     withheld: list[str] = []
@@ -255,6 +372,13 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
         document = await records.read_entry(path, ARCHIVE_READER)
         if document is None:
             withheld.append(path)
+            continue
+        if path.startswith(f"{AFTER_ACTION_DIR}/"):  # AD-1341 S5: a report carries its own provenance and its review
+            report = _after_action_record(path, document)
+            if report is None:
+                withheld.append(path)
+            else:
+                selected.append(report)
             continue
         if path.startswith(f"{EXIT_NOTES_DIR}/"):  # AD-1341 S4: an exit note carries its own provenance
             note = _exit_note_record(path, document)
@@ -287,6 +411,7 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
                     "department": _stored_text(frontmatter.get("department")),
                     "record_created": _stored_text(frontmatter.get("created")),
                     "record_updated": _stored_text(frontmatter.get("updated")),
+                    **_unreadable_update(kind, frontmatter),  # AD-1341 S5 (A4, C2-2): Captain's logs only
                 },
             )
         )
@@ -354,3 +479,146 @@ async def review_promotion(records: RecordsStore, archive: ArchiveStore, *, time
     plan = await plan_promotion(records, timeline_id=timeline_id)
     sources = [PendingSource(record, await archive.source_state(record)) for record in plan.records]
     return PromotionReview(sources=tuple(sources), withheld=plan.withheld)
+
+
+#: AD-1341 S5 (D9, Amendment A3): one UTC day in seconds. POSIX time counts no leap seconds, so every day is this long.
+_DAY_SECONDS = 86_400.0
+
+#: AD-1341 S5 (D9, Amendment A4, round 2's C2-1): how long after its UTC day ends a Captain's log still waits. One
+#: writer call reads the clock for the day and again for the entry, so a call that stalls across midnight writes a
+#: later entry into the earlier day's file. An hour covers every stall the vessel runs through; a longer one (a
+#: suspended machine, a hung disk) shortens that entry's window by the excess (register R22).
+_CAPTAINS_LOG_GRACE_SECONDS = 3_600.0
+
+#: AD-1341 S5 (Amendment A4, round 2's C2-2): the plan record's mark for a Captain's log whose stored ``updated`` is
+#: present but archives as no value (``_unreadable_update``).
+_UPDATE_UNREADABLE = "record_updated_unreadable"
+
+
+def _unreadable_update(kind: SourceKind, frontmatter: dict[str, Any]) -> dict[str, bool]:
+    """AD-1341 S5 (Amendment A4, round 2's C2-2): the mark for a Captain's log whose ``updated`` is present but no text.
+
+    ``_stored_text`` archives null, false, a container or an empty string as no value, as it does a missing field, so
+    without the mark ``is_settled`` would read such a log as its writer's unstamped form and settle it by its day. A
+    missing ``updated`` is not marked. Only a Captain's log is marked: every other kind already waits on an empty
+    ``record_updated`` (it does not parse), so its record is unchanged.
+    """
+    if kind is SourceKind.CAPTAINS_LOG and "updated" in frontmatter and not _stored_text(frontmatter["updated"]):
+        return {_UPDATE_UNREADABLE: True}
+    return {}
+
+
+def _captains_log_day_end(ref: str) -> float | None:
+    """The end of a Captain's log file's UTC day (seconds since the epoch), or None for a name its writer never gives.
+
+    ``RecordsStore.append_captains_log`` appends to ``captains-log/YYYY-MM-DD.md``. It reads the UTC clock for the day
+    at the start of one synchronous call, again for the entry's time, and then writes. So a call that begins after the
+    day has ended never writes to that day's file, but one that begins before midnight and stalls can (Amendment A4,
+    round 2's C2-1: ``_CAPTAINS_LOG_GRACE_SECONDS``). It stamps ``created`` and never ``updated``.
+    """
+    try:
+        day = date.fromisoformat(ref.removeprefix("captains-log/").removesuffix(".md"))
+    except ValueError:
+        return None
+    if ref != f"captains-log/{day.isoformat()}.md":
+        return None  # the writer's own name only: date.fromisoformat also reads 20261026 and 2026-W44-1
+    return datetime.fromisoformat(f"{day.isoformat()}T00:00:00+00:00").timestamp() + _DAY_SECONDS
+
+
+def is_settled(record: PromotionRecord, settled_before: float) -> bool:
+    """AD-1341 S5 (D9): whether a source was last updated at or before ``settled_before`` (seconds since the epoch).
+
+    Read from the record's ``record_updated`` (Ship's Records' ``updated``, an ISO 8601 time with its offset). A time
+    with no offset, or one that does not parse, is not settled: such a source waits for the reset's promotion.
+
+    Amendment A3: a Captain's log carries no ``updated`` (its writer stamps none), so it settles once its UTC day has
+    ended and, if it carries an ``updated``, once that has settled too. Amendment A4 (round 2): the day's end counts
+    only ``_CAPTAINS_LOG_GRACE_SECONDS`` later, because one writer call can stall across midnight (C2-1). Only a
+    missing ``updated`` takes the day rule alone; one present but not text (``_UPDATE_UNREADABLE``) never settles here
+    (C2-2). A Captain's log under another Markdown name (a compact or ISO-week date, a nested path) never settles here,
+    and the reset still promotes it; a file that is not Markdown is no Ship's Records source on either path (C2-3).
+    """
+    if record.source_kind is SourceKind.CAPTAINS_LOG:
+        ended = _captains_log_day_end(record.source_ref)
+        if ended is None or ended + _CAPTAINS_LOG_GRACE_SECONDS > settled_before:
+            return False
+        if record.metadata.get(_UPDATE_UNREADABLE) is True:
+            return False  # Amendment A4 (C2-2): a stored updated that is not a time is not a missing one
+        if not record.metadata.get("record_updated"):
+            return True  # the writer's own form: its day and the hour's grace have passed
+    stamp = record.metadata.get("record_updated")
+    if type(stamp) is not str:
+        return False
+    try:
+        updated = datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    if updated.tzinfo is None:
+        return False
+    return updated.timestamp() <= settled_before
+
+
+async def promote_settled(
+    records: RecordsStore,
+    archive: ArchiveStore,
+    *,
+    timeline_id: str,
+    settled_before: float,
+    max_created: int,
+    cited_live: Callable[[tuple[str, ...]], Awaitable[bool]],
+    exclusive: Callable[[], AbstractAsyncContextManager[Any]],
+) -> PromotionReport:
+    """AD-1341 S5 (D8 to D13): one continuous promotion. Archive settled sources, at most ``max_created`` new entries.
+
+    The reset's own plan and rules (``plan_promotion``), so nothing reaches the archive here that the reset would not.
+    A source is promoted only once it has settled (``is_settled``), so the Captain's review (``probos archive pending``,
+    ``probos archive veto``) keeps a window before canon. A source the archive would not take now (present, erased,
+    vetoed: ``source_state``) is passed over without a write. A source that cites episodes is promoted inside
+    ``exclusive()`` (the AD-754 erasure lock) and only when ``cited_live`` says every cited episode is live, so no
+    erasure runs between that check and the insert, nor between an erasure's own citation check and its erase (S3
+    register R3). Anything else waits (``waiting``) for a later step or the reset; sources after the batch is full are
+    not considered this time. No model call. Each write is ``promote_entry``'s one statement, so a step cut off part-way
+    leaves only whole entries and the next step finds them present. Any failure propagates: the dream step logs it.
+    """
+    if type(max_created) is not int or max_created < 1:
+        raise ValueError("AD-1341 S5: max_created is a positive integer")
+    plan = await plan_promotion(records, timeline_id=timeline_id)
+    created: list[str] = []
+    present: list[str] = []
+    erased: list[str] = []
+    vetoed: list[str] = []
+    waiting: list[str] = []
+    by_outcome = {
+        PromotionOutcome.CREATED: created,
+        PromotionOutcome.PRESENT: present,
+        PromotionOutcome.ERASED: erased,
+        PromotionOutcome.VETOED: vetoed,
+    }
+    for record in plan.records:
+        if len(created) >= max_created:
+            break  # D10: the batch is full; the rest are considered by the next step
+        if not is_settled(record, settled_before):
+            waiting.append(record.source_ref)
+            continue
+        state = (await archive.source_state(record)).outcome
+        if state is not PromotionOutcome.CREATED:
+            by_outcome[state].append(record.source_ref)  # D10: no write for what the archive would not take
+            continue
+        if not record.source_episode_ids:
+            by_outcome[await archive.promote_entry(record)].append(record.source_ref)
+            continue
+        async with exclusive():  # D11 (S3 R3): no erasure between the check below and the insert
+            if not await cited_live(record.source_episode_ids):
+                waiting.append(record.source_ref)  # a cited episode is not live: erased, demoted, or unreadable
+                continue
+            outcome = await archive.promote_entry(record)
+        by_outcome[outcome].append(record.source_ref)
+    logger.info(
+        "AD-1341 S5: continuous promotion for timeline %s: %d created, %d already archived, %d erased by the Captain, "
+        "%d vetoed by the Captain, %d waiting, %d withheld",
+        timeline_id, len(created), len(present), len(erased), len(vetoed), len(waiting), len(plan.withheld),
+    )
+    return PromotionReport(
+        created=tuple(created), present=tuple(present), erased=tuple(erased), withheld=plan.withheld,
+        vetoed=tuple(vetoed), waiting=tuple(waiting),
+    )

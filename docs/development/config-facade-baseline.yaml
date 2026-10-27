@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1886
-  field_definitions: 1875
+  canonical_dump_leaves: 1889
+  field_definitions: 1879
   incidental: 13
-  own_models: 228
-  owned: 296
-  public_names: 309
-canonical_dump_sha256: d3e9858f41400c79083c82c30d70a7a66eb56843809092670951bc3a95d6cfe0
+  own_models: 229
+  owned: 297
+  public_names: 310
+canonical_dump_sha256: c18b99268f01f55bd02b949e094d2a3e291b2c7fb876e3fdc7580f5045f0a011
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -151,6 +151,7 @@ names:
   Any: {kind: class, removable_in: e3, tier: incidental}
   ApprovalInboxConfig: {kind: model, tier: owned}
   ArchiveConfig: {kind: model, tier: owned}
+  ArchivePromotionConfig: {kind: model, tier: owned}
   AssignmentConfig: {kind: model, tier: owned}
   AttachmentsConfig: {kind: model, tier: owned}
   AttentionConfig: {kind: model, tier: owned}
@@ -597,6 +598,16 @@ models:
     fields:
     - {default: 'True', name: enabled}
     - {default: '''''', name: db_path}
+  ArchivePromotionConfig:
+    qualname: ArchivePromotionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: 8a4c2160bf6c8b9ea56a4d6b180133be22d9683c61f2c51f425562d9bccf61ec
+    fields:
+    - {default: 'False', name: enabled}
+    - {default: '24.0', name: settle_hours}
+    - {default: '8', name: max_per_cycle}
   AssignmentConfig:
     qualname: AssignmentConfig
     bases:
@@ -3410,7 +3421,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1dfb423f29770dde72e65d6a0e299859c61ef3e0dfc54b82d76e68361585980a
+    schema_sha256: af634e7ef49b4388d3e8437bc332fcc49ecc2a1f89fb932e37f98ee28b2978be
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3538,6 +3549,7 @@ models:
     - {default: CommunicationsConfig(...), name: communications}
     - {default: WorkforceConfig(...), name: workforce}
     - {default: <required>, has_default_factory: true, name: agent_work}
+    - {default: <required>, has_default_factory: true, name: archive_promotion}
     - {default: TemporalConfig(...), name: temporal}
     - {default: QualificationConfig(...), name: qualification}
     - {default: OrientationConfig(...), name: orientation}

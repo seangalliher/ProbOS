@@ -5420,6 +5420,10 @@ async def finalize_startup(
         # set via constructor — only fires if Phase 4 had it as None.
         if hasattr(runtime, '_records_store') and runtime._records_store:
             engine.set_records_store(runtime._records_store)
+        # AD-1341 S5 (#1569): the Ship's Archive continuous promotion, a dream step; off unless archive_promotion.enabled
+        from probos.knowledge.continuous_promotion import wire_continuous_promotion
+
+        wire_continuous_promotion(runtime, engine)
 
     # --- BF-100: Wire EmergentDetector to DreamScheduler for dream suppression ---
     if runtime.dream_scheduler and getattr(runtime, '_emergent_detector', None):

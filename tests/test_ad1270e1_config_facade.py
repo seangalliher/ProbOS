@@ -1518,10 +1518,10 @@ def test_committed_baseline_records_the_measured_surface(
     """The numbers AD-1270e1 was drafted against, re-measured on this tree."""
     counts = baseline["surface_counts"]
 
-    assert counts["public_names"] == 309  # AD-1347 S1 (#1627) adds AgentWorkConfig (308 -> 309)
-    assert counts["owned"] == 296  # AD-1347 S1 (#1627): AgentWorkConfig is owned (295 -> 296)
+    assert counts["public_names"] == 310  # AD-1341 S5 (#1569) adds ArchivePromotionConfig (309 -> 310)
+    assert counts["owned"] == 297  # AD-1341 S5 (#1569): ArchivePromotionConfig is owned (296 -> 297)
     assert counts["incidental"] == 13
-    assert counts["own_models"] == 228  # AD-1347 S1 (#1627): AgentWorkConfig (227 -> 228)
+    assert counts["own_models"] == 229  # AD-1341 S5 (#1569): ArchivePromotionConfig (228 -> 229)
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
     # AD-1190 adds the four default-None delegation_tree_max_* ceilings (1787 -> 1791).
     # AD-1189 adds the default-0 deferred_tool_schema_threshold_bytes (1791 -> 1792).
@@ -1556,10 +1556,11 @@ def test_committed_baseline_records_the_measured_surface(
     # BF-924 (#1654) removes CounselorConfig's four unread fields: enabled, profile_retention_days,
     # alert_on_red and alert_on_yellow (1880 -> 1876).
     # BF-926 (#1656) removes security.memory.enforce_leak_guard, which nothing read (1876 -> 1875).
-    assert counts["field_definitions"] == 1875  # AD-1206 intentionally adds github_repository.
+    # AD-1341 S5 (#1569) adds ArchivePromotionConfig's three fields and SystemConfig.archive_promotion (1875 -> 1879).
+    assert counts["field_definitions"] == 1879  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
-    assert len(baseline["names"]) == 309  # AD-1347 S1 (#1627): AgentWorkConfig
-    assert len(baseline["models"]) == 229  # AD-1347 S1 (#1627): AgentWorkConfig
+    assert len(baseline["names"]) == 310  # AD-1341 S5 (#1569): ArchivePromotionConfig
+    assert len(baseline["models"]) == 230  # AD-1341 S5 (#1569): ArchivePromotionConfig
 
 
 def test_committed_baseline_records_the_awkward_models(
@@ -1794,7 +1795,7 @@ def test_check_is_green_on_the_committed_baseline() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "config facade check passed" in proc.stdout
-    assert "names=309" in proc.stdout  # AD-1347 S1 (#1627): AgentWorkConfig
+    assert "names=310" in proc.stdout  # AD-1341 S5 (#1569): ArchivePromotionConfig
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:

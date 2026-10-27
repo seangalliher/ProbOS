@@ -2356,6 +2356,16 @@ AD-1347 S1 (#1627): work crew agents create for themselves and request from coll
 | `ttl_seconds` | `int` | `86400` | ≥ 60, ≤ 604800 |  |
 | `max_depth` | `int` | `2` | ≥ 1, ≤ 5 |  |
 
+## `archive_promotion`
+
+AD-1341 S5 (#1569): continuous promotion into the Ship's Archive, a dream step.
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `enabled` | `bool` | `False` | — |  |
+| `settle_hours` | `float` | `24.0` | ≥ 0.0, ≤ 720.0 |  |
+| `max_per_cycle` | `int` | `8` | ≥ 1, ≤ 100 |  |
+
 ## `temporal`
 
 AD-502: Temporal awareness configuration.

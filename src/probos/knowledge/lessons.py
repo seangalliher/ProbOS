@@ -258,3 +258,93 @@ def exit_note_lesson(callsign: str, agent_type: str, timeline_id: str, content: 
     if lesson is None or content != exit_note_body(callsign, agent_type, timeline_id, lesson):
         return None
     return lesson
+
+
+# --- AD-1341 S5 (#1569): the after-action report and its chain-of-command review -------------------------------------
+
+#: Where after-action reports live in Ship's Records, the frontmatter key of their envelope, its version and the status
+#: a report is written at.
+AFTER_ACTION_DIR: Final = "after-action"
+AFTER_ACTION_KEY: Final = "after_action"
+AFTER_ACTION_VERSION: Final = 1
+AFTER_ACTION_STATUS: Final = "submitted"
+#: The longest subject the Captain may flag, one line. It stands in the envelope and the prompt, never in the body
+#: (D4: the Oracle-entry budget of ``LESSON_MAX_CHARS``).
+AFTER_ACTION_SUBJECT_MAX_CHARS: Final = 160
+
+#: The chain-of-command review (#1569 comment 1, item 3), in order: the author's superior in the chain of command (a
+#: department chief, or the first officer for a chief), then the Counselor, or the first officer (XO) when the Counselor
+#: wrote the report or is the superior.
+REVIEW_STAGES: Final = ("superior", "counselor_or_xo")
+REVIEW_ENDORSED: Final = "endorsed"
+REVIEW_RETURNED: Final = "returned"
+REVIEW_NOT_REVIEWED: Final = "not_reviewed"
+REVIEW_VACANT: Final = "vacant"
+
+_FLAGGED_AT = re.compile(r"\d{8}T\d{6}Z")
+
+
+def after_action_path(timeline_id: str, agent_type: str, flagged_at: str) -> str:
+    """The one Ship's Records path of a report: ``after-action/{timeline}/{agent_type}-{flagged}.md`` (S5 D4, D12).
+
+    Keyed by billet and by the moment the Captain flagged the event (UTC, ``YYYYMMDDTHHMMSSZ``, lower-cased in the
+    path), as exit notes are keyed by billet. ValueError for a stamp in any other form, or for a timeline or agent type
+    with no letter or digit.
+    """
+    if type(flagged_at) is not str or _FLAGGED_AT.fullmatch(flagged_at) is None:
+        raise ValueError("AD-1341 S5: flagged_at must be a UTC stamp YYYYMMDDTHHMMSSZ")
+    timeline, billet = _slug(timeline_id, "timeline_id"), _slug(agent_type, "agent_type")
+    return f"{AFTER_ACTION_DIR}/{timeline}/{billet}-{flagged_at.lower()}.md"
+
+
+def after_action_header(callsign: str, agent_type: str, timeline_id: str) -> str:
+    """A report's fixed first line: who wrote it, of which crew, and that it is a record, not a memory."""
+    return (
+        f"After-action report by {callsign} ({agent_type}) of the crew of timeline {timeline_id}. "
+        "A record, not a memory."
+    )
+
+
+def after_action_body(callsign: str, agent_type: str, timeline_id: str, lesson: LessonLearned) -> str:
+    """A report's body: its origin line, then the rendered lesson. Nothing else, the Captain's subject included."""
+    return f"{after_action_header(callsign, agent_type, timeline_id)}\n\n{lesson.render()}"
+
+
+def after_action_lesson(callsign: str, agent_type: str, timeline_id: str, content: object) -> LessonLearned | None:
+    """The lesson of a canonical report body, or None: the one rule for the writer and the promotion (as S4's A2)."""
+    lesson = parse_lesson(content)
+    if lesson is None or content != after_action_body(callsign, agent_type, timeline_id, lesson):
+        return None
+    return lesson
+
+
+def after_action_review_ok(review: object, author_agent_type: object) -> bool:
+    """AD-1341 S5 (D5): whether a report's recorded chain-of-command review admits it to the Ship's Archive.
+
+    Exactly one entry per stage of ``REVIEW_STAGES``, in order. Each is ``endorsed`` by a reviewer whose callsign, agent
+    type and DID can stand in the envelope, or ``vacant`` (no crew agent fills the billet). At least one stage is
+    endorsed, no endorser holds the author's billet, and no billet endorses twice. A returned or unreviewed stage, or
+    anything else, never admits the report. The one rule for the writer's report, the promotion and the erasure's read.
+    """
+    if type(review) is not list or len(review) != len(REVIEW_STAGES):
+        return False
+    endorsers: set[str] = set()
+    for stage, entry in zip(REVIEW_STAGES, review, strict=True):
+        if type(entry) is not dict or entry.get("stage") != stage:
+            return False
+        outcome = entry.get("outcome")
+        if outcome == REVIEW_VACANT:
+            continue
+        if outcome != REVIEW_ENDORSED:
+            return False  # D5: a returned or unreviewed stage keeps the report out of canon
+        reviewer = entry.get("agent_type")
+        if not (
+            is_exit_note_text(entry.get("callsign"), EXIT_NOTE_CALLSIGN_MAX_CHARS)
+            and is_exit_note_text(reviewer, EXIT_NOTE_AGENT_TYPE_MAX_CHARS)
+            and is_exit_note_text(entry.get("did"), EXIT_NOTE_DID_MAX_CHARS)
+        ):
+            return False
+        if reviewer == author_agent_type or reviewer in endorsers:
+            return False  # D5: nobody reviews their own report, and one billet endorses once
+        endorsers.add(reviewer)
+    return bool(endorsers)  # D5: a report no one in the chain endorsed never reaches canon on its own

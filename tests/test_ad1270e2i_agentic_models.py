@@ -160,6 +160,8 @@ CROSS_FIELD_BOUND_VALUES: dict[tuple[str, str, str], float] = {
 REMAINING_TRUE_LEAVES: tuple[str, ...] = (
     # AD-1347 S1 (#1627): a new leaf beside WorkforceConfig; it moves with the workforce group in batch 10.
     "AgentWorkConfig",
+    # AD-1341 S5 (#1569): a new leaf after AgentWorkConfig; in batch 10 it joins ArchiveConfig's module.
+    "ArchivePromotionConfig",
     "BootCampPhaseConfig",
     "ConsultationDeliveryConfig",
     "ConsultationDispatchConfig",
