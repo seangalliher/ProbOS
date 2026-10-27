@@ -13,7 +13,9 @@ import asyncio
 import io
 import os
 import sqlite3
+import stat
 import sys
+import types
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +30,7 @@ from probos.knowledge.archive_ledger import ArchiveLedger, NatureClearanceRecord
 from probos.cognitive.procedure_store import _SCHEMA as _PROCEDURE_SCHEMA
 from probos.config import ArchiveConfig, KnowledgeConfig, SystemConfig
 from probos.knowledge.archive_promotion import promote_nature_description
+from probos.knowledge import records_snapshot
 from probos.knowledge.archive_store import ArchiveStore
 from probos.knowledge.nature_description import PROCEDURES_DB, describe_nature
 from probos.storage.sqlite_factory import default_factory
@@ -384,10 +387,11 @@ def test_an_archive_inside_the_procedure_store_refuses_a_clean_slate(
 
 
 def test_a_skipped_promotion_is_closed_only_after_its_clean_slate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A2 (C-F3): with ``--skip-promotion`` too, a clearance that fails leaves no generation closed; the rerun
-    closes it once, as skipped."""
+    closes it once, as skipped. A4 (C-R2-F2): the skip's message is printed before the clearance and the close, so
+    it says the reason will be recorded, never that it is."""
     data_dir = _data_dir(tmp_path)
     _nature(data_dir)
     config = _config(tmp_path)
@@ -403,12 +407,82 @@ def test_a_skipped_promotion_is_closed_only_after_its_clean_slate(
     monkeypatch.setattr(cli.shutil, "rmtree", _fails_once)
 
     assert _reset(monkeypatch, config, data_dir, clean_slate=True, skip_promotion="drill") == 1
+    out = capsys.readouterr().out
+    assert "the reason is recorded" not in out  # A4 (C-R2-F2): no generation row holds it yet
+    assert "the reason will be recorded with the generation's close: drill" in out
     assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]
 
     assert _reset(monkeypatch, config, data_dir, clean_slate=True, skip_promotion="drill") == 0
     assert _rows(_archive_db(tmp_path), "SELECT reset_tier, outcome, reason FROM generations") == [
         (2, "skipped", "drill"),
     ]
+
+
+@pytest.mark.parametrize("full", [False, True], ids=["tier2", "tier3"])
+def test_a_refused_dry_run_reads_nothing_through_the_procedures_link(
+    full: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A4 (R2-B1, C-R2-F1): a dry run whose preflight refuses a link at ``procedures`` prints the refusal and nothing
+    else. It neither sizes the refused directory nor opens ``procedures.db`` through it, so the link's WAL-mode
+    target gains no ``-wal`` or ``-shm`` file and none of its text is shown."""
+    data_dir = _data_dir(tmp_path)
+    config = _config(tmp_path)
+    sibling = _odd_procedures("junction", data_dir, tmp_path)
+    store = sibling / PROCEDURES_DB
+    connection = sqlite3.connect(str(store))
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)  # premise: the vessel's mode
+    finally:
+        connection.close()
+    names = sorted(os.listdir(store.parent))
+    before = _tree(sibling)
+    opened: list[str] = []
+    sized: list[Path] = []
+    real_open, real_size = cli._open_read_only, cli._get_file_size
+
+    async def _counted(path: str) -> Any:
+        opened.append(path)
+        return await real_open(path)
+
+    def _measured(path: Path) -> str:
+        sized.append(path)
+        return real_size(path)
+
+    monkeypatch.setattr(cli, "_open_read_only", _counted)
+    monkeypatch.setattr(cli, "_get_file_size", _measured)
+
+    assert _reset(monkeypatch, config, data_dir, dry_run=True, clean_slate=True, full=full) == 0
+
+    assert opened == []  # 2a1b6319: procedures.db opened once, through the link, by the promotion plan
+    assert [path for path in sized if path.name == "procedures"] == []
+    assert sorted(os.listdir(store.parent)) == names and _tree(sibling) == before  # no -wal, no -shm
+    out = capsys.readouterr().out
+    assert "This reset would refuse" in out and "is a link" in out
+    assert "Coolant drift triage" not in out  # none of the target's text
+    assert not _archive_db(tmp_path).exists()
+
+
+def _posix_stat() -> Any:
+    """The ``stat`` module as a POSIX build has it: no ``IO_REPARSE_TAG_*`` or ``FILE_ATTRIBUTE_*`` name (A4).
+
+    Swapped in for ``records_snapshot.stat`` only, never deleted from the interpreter's ``stat``."""
+    return types.SimpleNamespace(**{
+        name: value for name, value in vars(stat).items()
+        if not name.startswith(("_", "IO_REPARSE_TAG_", "FILE_ATTRIBUTE_"))
+    })
+
+
+def test_a_clean_slate_needs_no_windows_only_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A4 (A-R2-F1): with ``records_snapshot`` seeing a POSIX build's ``stat``, the clean slate's checks judge
+    ``procedures/`` by its mode and the reset clears it (on ``2a1b6319`` the preflight raised ``AttributeError``)."""
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    monkeypatch.setattr(records_snapshot, "stat", _posix_stat())
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, clean_slate=True) == 0
+
+    assert not (data_dir / "procedures").exists()
+    assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances") == [(4,)]
 
 
 def test_only_the_cli_records_a_clean_slate() -> None:

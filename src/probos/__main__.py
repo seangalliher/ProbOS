@@ -3023,13 +3023,14 @@ def _cmd_reset(args: argparse.Namespace) -> int:
 
     # --dry-run: show what would happen and exit
     if getattr(args, 'dry_run', False):
+        if refusal:  # AD-1341 S6 A4: a reset that would refuse does nothing, so its dry run reads nothing more
+            console.print("  [yellow]⚠ This reset would refuse, writing and deleting nothing:[/yellow]")
+            console.print(f"    {refusal}", markup=False, emoji=False)
+            console.print("\n  [dim][DRY RUN] No changes made.[/dim]")
+            return 0  # AD-1341 S6 A4 (R2-B1, C-R2-F1): no tier table, plan or description reads the refused path
         _show_dry_run(tier, data_dir, active_task_count, console, clean_slate=clean_slate)
         if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
-            shown = _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier, snapshot=not refusal)
-            if refusal:  # AD-1341 S6 A2: the dry run says the reset would refuse, never that a snapshot would be kept
-                console.print("  [yellow]⚠ This reset would refuse, writing and deleting nothing:[/yellow]")
-                console.print(f"    {refusal}", markup=False, emoji=False)
-            return shown
+            return _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier)
         return 0
     if refusal:  # AD-1341 S6 A2: before the confirmation, the pidfile and the promotion, so nothing is written
         console.print("[red]✗[/red] probos reset refused before writing anything:")
@@ -3393,7 +3394,10 @@ async def _promote_into_archive(
                 timeline_id=timeline_id, reset_tier=tier, outcome=GenerationOutcome.SKIPPED, reason=skip_reason,
             )
             also = " The Ship's Records snapshot is skipped with it." if tier >= 3 else ""  # AD-1341 S6
-            message = f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}{also}"
+            message = (  # AD-1341 S6 A4 (C-R2-F2): printed before the clearance and the close, so "will be"
+                f"Ship's Archive promotion skipped; the reason will be recorded with the generation's close: "
+                f"{skip_reason.strip()}{also}"
+            )
             return True, message, skipped  # AD-1341 S6 A2 (C-F3): _close_generation records it, after any clean slate
         promoted = await promote_ship_records(records, archive, timeline_id=timeline_id)
         nature = await _nature_record(data_dir, timeline_id)  # AD-1341 S6 A2: read before the snapshot
@@ -3633,7 +3637,6 @@ def _show_snapshot_plan(config: SystemConfig, data_dir: Path, console: Console) 
 
 def _show_promotion_plan(
     config: SystemConfig, data_dir: Path, skip_reason: str | None, console: Console, *, tier: int = 2,
-    snapshot: bool = True,
 ) -> int:
     """``--dry-run`` at tier 2 or above: what the reset would promote. Reads Ship's Records; opens no archive.
 
@@ -3679,7 +3682,7 @@ def _show_promotion_plan(
         )
     if plan.records and not timeline_id:
         console.print("  [yellow]⚠ No instance id: this reset would refuse without --skip-promotion REASON.[/yellow]")
-    if tier >= 3 and snapshot:  # AD-1341 S6 A2: never when the preflight says the reset would refuse
+    if tier >= 3:  # AD-1341 S6 A4: only a dry run whose preflight refuses nothing reaches this plan
         _show_snapshot_plan(config, data_dir, console)  # AD-1341 S6: what a --full reset would keep
     return 0
 
@@ -3935,7 +3938,9 @@ def _snapshot_state(entry: SnapshotEntry, directory: Path) -> str:
     """What ``probos archive snapshots`` shows of one snapshot's file (AD-1341 S6)."""
     from probos.knowledge.records_snapshot import is_snapshot_relative_path
 
-    if entry.erased_at is not None:
+    if entry.erased_at is not None:  # AD-1341 S6 A4: an erasure that did not finish says so until it does
+        if is_snapshot_relative_path(entry.relative_path) and os.path.lexists(directory / entry.relative_path):
+            return "(erased by the Captain; its file remains: run probos archive erase-snapshot again)"
         return "(erased by the Captain)"
     if not is_snapshot_relative_path(entry.relative_path):
         return "(not a snapshot's name: never opened)"
@@ -3981,7 +3986,7 @@ def _cmd_archive_erase_snapshot(args: argparse.Namespace) -> int:
 
 async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, confirmed: bool) -> int:
     """Show the snapshot, ask unless ``--yes``, mark it erased, then delete its file. The ledger is closed on every exit."""
-    from probos.knowledge.records_snapshot import is_snapshot_relative_path
+    from probos.knowledge.records_snapshot import is_snapshot_relative_path, retained_alias
 
     ledger = await _open_ledger(config)
     try:
@@ -4006,7 +4011,9 @@ async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, c
         await ledger.close()
     path = _snapshots_dir(config) / entry.relative_path
     try:
-        path.unlink(missing_ok=True)
+        alias = retained_alias(path)  # AD-1341 S6 A4 (A-R2-F2): the temporary name publish could not remove
+        for name in (*([alias] if alias is not None else []), path):  # A4: the alias first, so a rerun still finds it
+            name.unlink(missing_ok=True)
     except OSError as exc:
         print(f"The erasure is recorded, but the file remains at {path}: {type(exc).__name__}: {exc}. Run the same command again.")
         return 1

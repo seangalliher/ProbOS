@@ -60,6 +60,10 @@ _RELATIVE_PATH = re.compile(rf"{_TIMELINE}/\d{{8}}T\d{{6}}Z_\d{{8}}T\d{{6}}Z\.zi
 
 _ZipStamp = tuple[int, int, int, int, int, int]
 
+#: AD-1341 S6 A4 (A-R2-F1): a junction's reparse tag, IO_REPARSE_TAG_MOUNT_POINT's documented value (MS-FSCC
+#: 2.1.2.1). The ``stat`` module defines that name on Windows builds only, so the value is this module's own.
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
 
 class SnapshotRefused(Exception):
     """What a snapshot cannot hold or cannot read. The reset refuses, and nothing is deleted."""
@@ -108,7 +112,8 @@ class PreparedSnapshot:
         ``os.link`` never replaces an existing name, on Windows and POSIX alike, so a file that appears at the final
         name at any moment is never written over: it refuses. A file system without hard links refuses too (fail
         closed: never a rename that may replace). Once the link exists the snapshot is in place; a temporary name that
-        cannot then be removed is logged, not raised.
+        cannot then be removed is logged, not raised: it is the same file under a second name, which the Captain's
+        erasure removes first (A4, ``retained_alias``).
         """
         try:
             os.link(self.temp_path, self.final_path)  # A2: no-replace on Windows and POSIX; an existing name refuses
@@ -150,15 +155,40 @@ def lstat_or_none(path: Path) -> os.stat_result | None:
 
 
 def is_link_status(status: os.stat_result) -> bool:
-    """AD-1341 S6 A2: whether an ``lstat`` result is a symbolic link or a Windows junction (D5's rule, one place)."""
+    """AD-1341 S6 A2: whether an ``lstat`` result is a symbolic link or a Windows junction (D5's rule, one place).
+
+    A4 (A-R2-F1): it names nothing a POSIX build lacks. The ``stat`` module has the junction's tag on Windows builds
+    only, so the comparison uses this module's constant; a POSIX status has no tag and is judged by its mode.
+    """
     reparse_tag = getattr(status, "st_reparse_tag", 0)  # a Windows-only field; POSIX has none
-    return stat.S_ISLNK(status.st_mode) or reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+    return stat.S_ISLNK(status.st_mode) or reparse_tag == _IO_REPARSE_TAG_MOUNT_POINT  # A4: no Windows-only name
 
 
 def is_link_or_junction(path: Path) -> bool:
     """AD-1341 S6 A2: whether ``path`` is a link or junction. False when nothing is there; other errors propagate."""
     status = lstat_or_none(path)
     return status is not None and is_link_status(status)
+
+
+def temporary_name(final: Path) -> Path:
+    """AD-1341 S6 A4: the name a snapshot is written and checked under before ``publish``: ``.{name}.partial``."""
+    return final.with_name(f".{final.name}.partial")
+
+
+def retained_alias(final: Path) -> Path | None:
+    """AD-1341 S6 A4 (A-R2-F2): the temporary name ``publish`` could not remove after its link, or None.
+
+    ``publish`` links the final name, then removes the temporary one; a removal that fails (a sharing violation on
+    Windows) leaves the snapshot's own file under a second name. It is named here only when it is that file: both
+    names are read with ``lstat``, never followed, and share a device and file id (``os.path.samestat``). Another
+    attempt's temporary file, a copy with equal bytes, a link or a directory there is another file and is never
+    named. None when either name is absent; any other ``OSError`` propagates.
+    """
+    alias = temporary_name(final)
+    final_status, alias_status = lstat_or_none(final), lstat_or_none(alias)
+    if final_status is None or alias_status is None:
+        return None
+    return alias if os.path.samestat(final_status, alias_status) else None  # one file under two names
 
 
 def plan_snapshot(root: Path) -> SnapshotPlan:
@@ -224,7 +254,7 @@ def prepare_snapshot(
         raise SnapshotRefused(f"a snapshot named {relative} exists already")
     info = _bag_info(plan, timeline_id=timeline_id, ship_did=ship_did, started=started, ended=ended)
     final.parent.mkdir(parents=True, exist_ok=True)
-    temp = final.with_name(f".{final.name}.partial")
+    temp = temporary_name(final)  # A4: one builder of the name, which the erasure also looks for
     bag = final.stem
     stamp: _ZipStamp = tuple(_utc(ended).timetuple()[:6])  # type: ignore[assignment]
     raw = open(temp, "xb")  # exclusive: never another attempt's file  # noqa: SIM115

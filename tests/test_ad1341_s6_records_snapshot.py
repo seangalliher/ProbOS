@@ -15,10 +15,13 @@ import asyncio
 import dataclasses
 import hashlib
 import os
+import re
 import shutil
 import sqlite3
+import stat
 import struct
 import sys
+import types
 import zipfile
 import zlib
 from argparse import Namespace
@@ -847,6 +850,7 @@ def test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse(
 
     out = capsys.readouterr().out
     assert "This reset would refuse" in out
+    assert "Institutional Knowledge" not in out  # A4 (R2-B1): a refused dry run shows no tier table, reads nothing more
     assert "No instance id: Ship's Records hold 1 file(s)" in out
     assert "would be kept" not in out
     assert not _archive_db(tmp_path).exists()
@@ -890,3 +894,119 @@ def test_a_snapshot_is_written_only_into_the_snapshots_directory_itself(
 
     assert (data2 / "semantic" / "older.zip").read_bytes() == b"an older snapshot"
     assert "the Ship's Archive is inside what this reset deletes" in capsys.readouterr().out
+
+
+# --- A4: the round-2 repairs ---------------------------------------------------------------------------------------
+
+
+def _posix_stat() -> Any:
+    """The ``stat`` module as a POSIX build has it: no ``IO_REPARSE_TAG_*`` or ``FILE_ATTRIBUTE_*`` name (A4).
+
+    Swapped in for ``records_snapshot.stat`` only, never deleted from the interpreter's ``stat``: the standard library
+    reads those names itself on Windows (``ntpath.isjunction``)."""
+    return types.SimpleNamespace(**{
+        name: value for name, value in vars(stat).items()
+        if not name.startswith(("_", "IO_REPARSE_TAG_", "FILE_ATTRIBUTE_"))
+    })
+
+
+def test_an_erasure_removes_the_temporary_name_a_publish_could_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A4 (A-R2-F2): a temporary name ``publish`` could not remove after its link is the snapshot's own file under a
+    second name. The erasure removes it first, then the snapshot; while either remains it exits 1 and the listing says
+    the file remains; the same command finishes it. The denial is injected: POSIX has no sharing violation."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    real_unlink = Path.unlink
+    denied: list[Path] = []
+
+    def _shared(self: Path, missing_ok: bool = False) -> None:
+        if self.name.endswith(".partial") and len(denied) < 2:  # the publish's removal, then the erasure's first
+            denied.append(self)
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", _shared)
+    assert _reset(monkeypatch, config, data_dir, full=True) == 0
+    snapshot, alias = sorted(_snapshot_files(tmp_path), key=lambda path: path.name.startswith("."))
+    assert alias.name == f".{snapshot.name}.partial"
+    assert os.path.samestat(os.lstat(snapshot), os.lstat(alias))  # premise: one file, two names
+    relative = snapshot.relative_to(_snapshots_dir(tmp_path)).as_posix()
+    capsys.readouterr()
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="drill", yes=True) == 1
+    assert snapshot.is_file() and alias.is_file()  # the alias first: the final name is still there to find it by
+    assert "Run the same command again" in capsys.readouterr().out
+    assert _archive(monkeypatch, config, "snapshots") == 0
+    assert (
+        f"  1: {relative} (erased by the Captain; its file remains: run probos archive erase-snapshot again);"
+        in capsys.readouterr().out
+    )
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="again", yes=True) == 0
+    assert _snapshot_files(tmp_path) == [] and len(denied) == 2
+    assert _erasures(tmp_path)[0][1] == "drill"  # the first reason stands
+    assert _archive(monkeypatch, config, "snapshots") == 0
+    assert f"  1: {relative} (erased by the Captain);" in capsys.readouterr().out
+
+
+def test_an_erasure_leaves_a_temporary_name_that_is_another_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A4 (A-R2-F2): only the snapshot's own file is removed under its temporary name; another file there (another
+    attempt's, or a copy with the same bytes) is never touched. Identity decides, not the name or the content."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    assert _reset(monkeypatch, config, data_dir, full=True) == 0
+    (snapshot,) = _snapshot_files(tmp_path)
+    other = snapshot.with_name(f".{snapshot.name}.partial")
+    other.write_bytes(snapshot.read_bytes())  # the same bytes, another file
+    assert not os.path.samestat(os.lstat(snapshot), os.lstat(other))  # premise
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="drill", yes=True) == 0
+
+    assert _snapshot_files(tmp_path) == [other] and other.read_bytes()[:2] == b"PK"
+
+
+def test_a_status_is_judged_by_its_mode_and_only_a_junction_s_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A4 (A-R2-F1): ``is_link_status`` names nothing a POSIX build's ``stat`` lacks. A POSIX status (no
+    ``st_reparse_tag``) is judged by its mode; a Windows status is a link by its mode or a junction's tag, and any
+    other reparse tag (a cloud placeholder) is not a link. No S6 module names a Windows-only ``stat`` attribute."""
+    monkeypatch.setattr(records_snapshot, "stat", _posix_stat())
+    status = types.SimpleNamespace
+
+    assert records_snapshot.is_link_status(status(st_mode=stat.S_IFDIR | 0o755)) is False
+    assert records_snapshot.is_link_status(status(st_mode=stat.S_IFREG | 0o644)) is False
+    assert records_snapshot.is_link_status(status(st_mode=stat.S_IFLNK | 0o777)) is True
+    assert records_snapshot.is_link_status(status(st_mode=stat.S_IFDIR, st_reparse_tag=0xA0000003)) is True  # junction
+    assert records_snapshot.is_link_status(status(st_mode=stat.S_IFREG, st_reparse_tag=0x9000001A)) is False  # cloud
+    for relative in (
+        "knowledge/records_snapshot.py", "knowledge/archive_ledger.py", "knowledge/nature_description.py", "__main__.py",
+    ):
+        text = (_SRC / relative).read_text(encoding="utf-8-sig")
+        assert re.search(r"\bstat\.(IO_REPARSE_TAG_|FILE_ATTRIBUTE_)|\bst_file_attributes\b", text) is None, relative
+
+
+@pytest.mark.parametrize("command", ["full", "dry-run", "erasure"])
+def test_a_full_reset_its_dry_run_and_an_erasure_need_no_windows_only_name(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A4 (A-R2-F1): the real commands, with ``records_snapshot`` seeing a POSIX build's ``stat``, finish as they do
+    on Windows (on ``2a1b6319`` each raised ``AttributeError``; the erasure reported it and exited 1)."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    if command == "erasure":
+        assert _reset(monkeypatch, config, data_dir, full=True) == 0  # premise, with the platform's own stat
+    monkeypatch.setattr(records_snapshot, "stat", _posix_stat())
+
+    if command == "erasure":
+        assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="drill", yes=True) == 0
+        assert _snapshot_files(tmp_path) == [] and _erasures(tmp_path)[0][1] == "drill"
+    else:
+        assert _reset(monkeypatch, config, data_dir, full=True, dry_run=command == "dry-run") == 0
+        assert len(_snapshot_files(tmp_path)) == (1 if command == "full" else 0)
+        assert (data_dir / "trust.db").exists() is (command == "dry-run")
