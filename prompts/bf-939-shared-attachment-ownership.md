@@ -2130,7 +2130,16 @@ prompts/ad-1341-s4-lessons-and-stand-down.md:5381  R17: "One read per erasure al
 gh issue view 1683 --json title,state        "BF-939: erasing an episode unlinks a content-addressed attachment ...", OPEN
 ```
 
-**Measured cost (the orchestrator fills this before the build):** <paste the probe's `BF939_COST` lines for 10000 and 100000, base and built tree, with host and date>.
+**Measured cost (the orchestrator; the Captain's host, win32, 2026-10-26 and 27).** The probe's `BF939_COST` lines, base `4d0161c5` and the A-4 repair's production code (`57822b3a`; A-5 to A-8 leave it byte-equal apart from docstrings), from `evidence-bf939-probe-base-10k.txt`, `evidence-bf939-probe-base-100k-b.txt` and `evidence-bf939-probe-built-c.txt`:
+
+```text
+base  10000:  BF939_COST size=10000 live=9000 archived=1000 owners=100 live_scan_s=1.20 archive_scan_s=0.03 record_s=0.16 forget_episode_s=0.02 forget_agent_s=1.11 single_kept=0 cascade_deleted=2
+base  100000: BF939_COST size=100000 live=90000 archived=10000 owners=1000 live_scan_s=14.03 archive_scan_s=0.47 record_s=2.13 forget_episode_s=0.04 forget_agent_s=13.85 single_kept=0 cascade_deleted=2
+A-4   10000:  BF939_COST size=10000 live=9000 archived=1000 owners=100 live_scan_s=1.38 archive_scan_s=0.04 record_s=0.17 forget_episode_s=1.42 forget_agent_s=1.46 single_kept=1 cascade_deleted=2
+A-4   100000: BF939_COST size=100000 live=90000 archived=10000 owners=1000 live_scan_s=13.33 archive_scan_s=0.37 record_s=1.69 forget_episode_s=14.63 forget_agent_s=14.41 single_kept=1 cascade_deleted=2
+```
+
+The limits hold: the single path at 100,000 episodes takes 14.63 s (at most 30 s) and `record_s` is 1.69 s, 12% of the two scans (at most 50%).
 
 ## Absence Verified (2026-10-26)
 
@@ -2723,3 +2732,21 @@ The orchestrator re-verifies these on the real post-S4 merge. If one changed, th
 **G10.** A-4's lock is per memory object and per process, with no queue limit or timeout. A `/forget` request waits for any erasure already running on the vessel: about 15 s behind a cascade, or behind a single erasure of an episode that names an attachment, at 100k episodes (§11). A second process erasing the same stores would not be serialized; the vessel runs one `probos serve` (the AD-816 pidfile, `__main__.py:2987-2998`). A bounded owner index (G5) would shorten the wait. The lock is also per event loop: the registry holds one `(loop, lock)` entry per memory and replaces it when another loop asks, so erasures on one memory from two loops running at once are not serialized (reviewer A reproduced it in round 2). Production runs one loop per process; T13 covers loops that run one after the other. The key must be hashable and weakly referenceable; every memory in use is (§11a AV12).
 
 **G11.** `_overlapping`'s two bounds do not add up to a bound on its lifetime. Source: round 5, R5-5, P3, injected-only, not a regression: the `wait_for(gather(...))` orchestration is unchanged since `059cb74a`, and the reviewer reproduced it on `593bbeec` (`logs/bf939/review-r5-a.md`, `test_budget_and_drain_bound_do_not_bound_a_gather_waiting_for_both_cleanups`). When the budget expires or the caller is cancelled while every erasure is inside an awaited cleanup, `gather` ends only when one of them ends. The helper waits inside `wait_for`, its drain and `_UNWIND_S` have not begun, and pytest-timeout (180 s) ends the wait instead. No BF-939 double reaches it: T19's and RT4's held call cleans up synchronously, and T20's and T21's first erasure ends at once. The helper is test-only (AV29), so production is unaffected. A-8 discloses it in the helper's docstring, §12 and §14. The follow-up: replace `wait_for(gather(...))` with `asyncio.wait(tasks, timeout=_OVERLAP_BUDGET_S, return_when=FIRST_EXCEPTION)`, so the helper owns every cancellation and budget expiry enters the bounded drain directly. That removes `gather`'s own cancellation, and with it R4-1's count check. It also needs its own rule for which failure to raise when several erasures fail in one step. Not done here: it rewrites the helper's orchestration. `asyncio.TaskGroup` also waits for its children without a bound.
+
+## 16. Validation of record (2026-10-27, win32)
+
+The same record as `DECISIONS.md`'s *Validation of record* bullet for BF-939, with the evidence names (the files folder of the orchestrator's session).
+
+**Mutation campaign.** The 40 rows of §10 (E-1 to E-39 and R-1), one at a time on the assembled tree (`8167f244`, tree `c7c3f35e236f`: `origin/main` `4d0161c5` plus this contract (A-8) and the milestones and five repairs applied by tool), whole-line mutation, each row run against the tests it names, pytest without `-x`: **40 of 40 killed**, each by its claimed test; the unmutated baseline over the two new files is 62 passed (`evidence-bf939census-ga.txt` for E-1 to E-19 without E-13, `-gb` for E-20 to R-1). E-13's mutant waits forever on the non-re-entrant lock in the first cascade test of the file, so its whole-file run ends in pytest's timeout with no verdict; on its listed killers alone (T16) it is killed (2 failed, 1 passed, no hang: `evidence-bf939census-g13.txt`).
+
+**Tests first.** M1's file over the base fails 18 of 22 cases at an assertion (`evidence-bf939-testsfirst-m1-base.txt`) and M2's route test fails at `KeyError: 'retained_attachment_ids'` (`-m2-base`); each repair's tests were run over the previous candidate's source: A-4's over `5fbf19b2` fail 21 of 45; A-5's fail 25 of 86 there and pass 86 of 86 over A-4's; A-6, A-7 and A-8 change only test files, so their tests pass over the unchanged production (56 of 56, 52 of 52 and 55 of 55: `evidence-bf939-repair-tf-{e0,f0,g0}.txt`), and the census rows E-29 to E-39 are what they discriminate.
+
+**Focused lists.** 445 (M1, 15 files) and 278 (M2, 10 files) passed, 0 skips, on the oracle and on the real tree (`evidence-bf939-g1-assembled-m1.txt`, `-m2.txt`).
+
+**Stress.** The ownership file 5 of 5 runs of 55 passed and the route file 5 of 5 of 7 (`evidence-bf939-stress-*-g-*.txt`).
+
+**Review.** M1 and M2 by `gpt-6.1-sol` (`max`) in six rounds. Round 1 (whole reviews, two reviewers) NOT READY: one P1 (two overlapping `/forget` requests each kept a shared file for the episode the other erased) and one P2 introduced (an owner-recording failure ended the scan), repaired by A-4; three P2 on the base recorded (G3, G7, G8). Rounds 2 to 5 (the delta of each repair) NOT READY each time with P3 only and none in production: eight in A-4's tests, census and wording (A-5), two in A-5's tests (A-6), three in A-6's test helper (A-7) and five in A-7's helper and wording (A-8; one recorded as G11). Round 6 (one reviewer, the delta of A-8) **READY**, with G11 the only item, already disclosed. The Architect decided every amendment (A-4 to A-8) and the three round-three brakes (continue each time); nothing needed the Captain.
+
+**A note on AV29 (round 6).** The A-8 header says every caller already passes coroutines. Four operational call sites do (T12, T20, T21 and RT3's `client.post(...)`); T22 passes invalid inputs on purpose, to pin the refusal.
+
+**Cost.** See the measured block in §11.
