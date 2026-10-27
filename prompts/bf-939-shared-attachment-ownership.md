@@ -12,14 +12,15 @@
 - **A-3 (S4 register R17 is not closed here).** The cascade keeps both per-episode checks, S3's archive check (D10) and S4's exit-note check. It drops only the per-episode **owner scan**, which the single path would otherwise run once per match. R17's own text says one read per erasure is not enough, because S3's E8 needs the per-episode re-read (`prompts/ad-1341-s4-lessons-and-stand-down.md:5381`; `tests/test_ad1341_s3_erasure_cascade.py:317-365`). Removing it would change S3's refusal, which this build must not touch. R17 stays S5's.
 - **A-4 (round 1 of the cross-family review, 2026-10-26: NOT READY, one P1).** Five repairs, all inside the envelope: no control is weakened, and the Captain line below still holds. (1) **B1 (P1):** two overlapping erasures on one memory each kept a shared attachment for the episode the other erased. Both answered 200, and the file outlived every owner (`logs/bf939/review-r1-b.md` B1; the route builds a manager per request, `routers/security.py:115`). Each public erasure method now runs whole under `_one_erasure_at_a_time(memory)`, a module-level `asyncio.Lock` per memory, weakly keyed, with a new lock for a new event loop. That covers every manager on one memory, not only the route (T12, T13, RT3). A re-check after the erase was rejected: it adds a second full scan and is still racy against `store()`, which stays G2. (2) **A1 (P2, a regression):** an owner recording that raised ended the scan, so an unrelated episode hid later matches, even with no attachment store wired. The recorder now keeps the first failure and goes on matching. `_matching_ids` reports it after the scans' own errors, so the erasure proceeds and then raises (D5). With no attachment store, nothing is recorded (T14, T15). (3) **A4:** T11 gets explicit ids. (4) **B3:** §6's T7 cell is corrected. (5) **B4:** a route test with two kept attachments and a two-holder list (RT2). `forget_episode`'s docstring claimed a failed erase always removed the attachment ids; it now says "may" (A3; no behaviour change). A2, A3, B2 and the file's other lifetimes are register rows (G3, G7 to G10). New pair 0 (standard-library imports): M1 has 12 pairs, 16 in all. Updated: §4, §5, §6, §10 (27 rows), §12 to §15 and the register. The A-4 evidence is in §11a.
 - **A-5 (round 2 of the cross-family review, 2026-10-27: NOT READY, no P1 or P2, eight P3 in A-4's tests, census and wording).** All inside the envelope; no production behaviour changes. (1) **A2-1:** E-13's mutant waits forever on the non-re-entrant lock, so its row hung instead of failing. New T16 replaces each public erasure method on the class with a spy that fails on entry and runs all three entry points; E-13 is killed by T16[agent] and T16[resource] and no longer claims T11[agent]. The lock stays non-re-entrant. (2) **A2-2, B2-1:** T12 and RT3 no longer infer serialization from a 1 s rendezvous. `_trace_overlapping_erasures` wraps `_one_erasure_at_a_time` (the real lock is still taken), records each request, grant and release, and holds each archive scan at its end until the other erasure has asked for the lock (or, with no lock, ended its own scan). The tests assert that trace; a bound exceeded only fails them. RT3's requests get their own end-to-end budget instead of `_post`'s 10 s. (3) **A2-5:** new T17 pins the error priority (the live scan's, then the archive scan's, then the recording's) by identity on both paths; new rows E-27 and E-28. (4) **A2-3 = B2-2, A2-4, B2-3 (wording):** the 500 is a plain-text `Internal Server Error` with no erasure result (the route's docstring, §8, G3); the lock's key must be hashable and weakly referenceable (`_one_erasure_at_a_time`'s docstring, T13); two `test_bf868` docstrings no longer say the cascades call `forget_episode` (7.2 pairs 2 and 3). (5) G10 states the per-loop bound. M1 has 14 pairs, 18 in all. Updated: Tests, §4, §6, §10 (29 rows), §12 to §15 and the register. The A-5 evidence is in §11b.
+- **A-6 (round 3 of the cross-family review, 2026-10-27: reviewer A READY with one P3, reviewer B NOT READY with one P3).** Both are fixed, in the two test files only. No production line changes, so no shared contract changes. (1) **B3-1 (P3, a regression A-5 introduced):** when the handshake failed, the bounded gather stopped supervising the other erasure. RT3, and T12, which has the same shape, then closed their client and stores while that erasure still ran (reviewer B: 1 pending request on `059cb74a`, 0 on `57822b3a`; `logs/bf939/review-r3-b.md`). New `_overlapping` holds both erasures as tasks. On every way out, it cancels and awaits each unfinished one, bounded by `_UNWIND_S`; exceeding that bound fails the test. T12 and RT3 run their pair through it. New T19 and RT4 drive the failure path with one 0.05 s wait: `_a_handshake_that_fails` holds the second call until it is cancelled and patches `_HANDSHAKE_S`. Each test asserts the held call unwound before the attachment store closed. New rows E-30 to E-34. (2) **A3-1 (P3, inherited, coverage only):** with one injected recording fault, the first error and the last were the same error (`logs/bf939/review-r3-a.md`). New T18 injects two distinct errors and asserts by identity that the first is raised, on both paths. Its row is E-29, which §10 had listed as equivalent. Neither finding becomes a register row: both are fixed here. Updated: Tests, §4, §6, §10 (35 rows), §12 to §15. The A-6 evidence is in §11c.
 
 **Captain:** nothing here meets a Captain condition. Option (a) is inside the envelope: AD-754 protects the requester from the erased episode's content staying recoverable *through that episode*, and that still holds; the blob stays only while an episode nobody asked to erase names the same bytes. The Captain may overrule after the fact with option (d), erase by content: keep unlinking, and mark and report the other episode's reference as erased.
 
 **Milestones and tiers:** M1 is the ownership rule in `erasure.py` (HIGH). M2 is the route's report (HIGH, wire contract). M3 is the trackers. Each milestone is one Builder delegation and one local commit, built in order. Review: cross-family (`gpt-6.1-sol`) for M1 and M2. One mutation campaign runs on the assembled tree (§10). The broad gate runs once, after M3: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf939 --receipt logs/gates/bf939.receipt.json`.
 
 **Tests:**
-- New `tests/test_bf939_shared_attachment_ownership.py` (M1): 17 functions, 46 cases (A-4 adds T12 with three cases, T13 with one, T14 with twelve and T15 with one; A-5 adds T16 with three and T17 with four, and rewrites T12's helper).
-- New `tests/test_bf939_forget_route.py` (M2): 3 functions, 6 cases (A-4 adds RT2 with one case and RT3 with four).
+- New `tests/test_bf939_shared_attachment_ownership.py` (M1): 19 functions, 49 cases (A-4 adds T12 with three cases, T13 with one, T14 with twelve and T15 with one; A-5 adds T16 with three and T17 with four, and rewrites T12's helper; A-6 adds T18 with two and T19 with one, and runs T12's pair through `_overlapping`).
+- New `tests/test_bf939_forget_route.py` (M2): 4 functions, 7 cases (A-4 adds RT2 with one case and RT3 with four; A-6 adds RT4 with one, and runs RT3's pair through `_overlapping`).
 - Updated `tests/test_bf868_erasure_declared_fields.py` (M1): one fake memory gains an empty `iter_live_episodes`, with the reason inline; A-5 corrects two docstrings that still said the cascades call `forget_episode` (B2-3).
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
@@ -79,7 +80,7 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 | **M2** the route's report | HIGH | 7.4 `src/probos/routers/security.py`; 7.5 new `tests/test_bf939_forget_route.py` | `tests/test_bf939_forget_route.py tests/test_bf939_shared_attachment_ownership.py tests/test_ad1341_s3_erasure_cascade.py tests/test_ad1341_s4_exit_note_erasure.py tests/test_bf905_erasure_live_scan.py tests/test_ad1340_s2a_lookup_route.py tests/test_ad1340_s2b_restore_route.py tests/test_ad1025b_path_anchoring.py tests/test_ad1270b_architecture_fitness.py tests/test_layer_boundaries.py` |
 | **M3** trackers | docs | §8 | `tests/test_ad1184_ad_ledger.py`; `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` |
 
-M1's list includes every test file that builds an `ErasureManager` (Grep `ErasureManager\b` over `tests/`: nine files, 42 occurrences). **Expected focused counts** (home-guard runner, `-Workers 4`, measured 2026-10-26): **M1: 412 passed** (390 on the merged base's 14 existing files, plus the new file's 22 cases) and **M2: 239 passed** (216 on the merged base's 8 existing files, plus the new file's 22 cases and the route test). **After A-4 (expected; the orchestrator measures and corrects):** **M1: 429** (390 plus the new file's 39 cases) and **M2: 261** (216 plus the new file's 39 cases and the route file's 6). **After A-5 (expected; the orchestrator measures and corrects):** **M1: 436** (390 plus the new file's 46 cases) and **M2: 268** (216 plus the new file's 46 cases and the route file's 6). No skips; the warnings are third-party deprecations.
+M1's list includes every test file that builds an `ErasureManager` (Grep `ErasureManager\b` over `tests/`: nine files, 42 occurrences). **Expected focused counts** (home-guard runner, `-Workers 4`, measured 2026-10-26): **M1: 412 passed** (390 on the merged base's 14 existing files, plus the new file's 22 cases) and **M2: 239 passed** (216 on the merged base's 8 existing files, plus the new file's 22 cases and the route test). **After A-4 (expected; the orchestrator measures and corrects):** **M1: 429** (390 plus the new file's 39 cases) and **M2: 261** (216 plus the new file's 39 cases and the route file's 6). **After A-5 (expected; the orchestrator measures and corrects):** **M1: 436** (390 plus the new file's 46 cases) and **M2: 268** (216 plus the new file's 46 cases and the route file's 6). **After A-6 (expected; the orchestrator measures and corrects):** **M1: 439** (390 plus the new file's 49 cases) and **M2: 272** (216 plus the new file's 49 cases and the route file's 7). No skips; the warnings are third-party deprecations.
 
 ## 5. Consumers of every value this changes
 
@@ -113,16 +114,19 @@ New file `tests/test_bf939_shared_attachment_ownership.py` (M1). Real `EpisodicM
 | T9 | `test_an_owner_the_failed_scan_reached_still_keeps_the_attachment[episode, agent]` | D5: an owner seen before the scan failed keeps the blob | `[episode]` does not raise; `[agent]` `AttributeError` |
 | T10 | `test_an_owner_the_failed_scan_could_not_read_does_not_keep_the_attachment[episode, agent]` | D5's disclosed bound: under-erasing is the worse failure | `[episode]` does not raise; `[agent]` passes |
 | T11 | `test_each_entry_point_scans_for_owners_at_most_once_and_keeps_the_per_episode_citation_check[agent, episode-with-attachment, episode-without-attachment, refused]` | One live and one archive scan per cascade; 1 + N archive citation reads (S3 D10, unchanged: A-3); the single path scans only when the episode declares an attachment; a refusal scans nothing | `[episode-with-attachment]` live 0 ≠ 1; the others pass |
-| T12 | `test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every_owner_is_erased[two-episodes, two-resources, agent-and-episode]` | B1 (A-4): two managers on one memory are run together with `asyncio.gather`, each erasing one of two owners. A-5: `_trace_overlapping_erasures` wraps `_one_erasure_at_a_time` (the real lock is still taken) and records each request, whether the lock was held then, the grant and the release. Each archive scan waits at its end until the other erasure has asked for the lock (or, with no lock, ended its own scan). The trace must show two requests on one lock, the second made while the first held it and granted only after the first's release, each archive scan ending inside its own hold. The file goes, it is kept once and removed once. Every wait is bounded, and a bound exceeded fails the test | `5fbf19b2`, `4d0161c5`: `AttributeError: _one_erasure_at_a_time` (the helper reads it). Without the lock (E-18 to E-20) it fails at `assert_one_at_a_time` on any host |
+| T12 | `test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every_owner_is_erased[two-episodes, two-resources, agent-and-episode]` | B1 (A-4): two managers on one memory are run together by `_overlapping` (A-6: it cancels and awaits the other if one fails), each erasing one of two owners. A-5: `_trace_overlapping_erasures` wraps `_one_erasure_at_a_time` (the real lock is still taken) and records each request, whether the lock was held then, the grant and the release. Each archive scan waits at its end until the other erasure has asked for the lock (or, with no lock, ended its own scan). The trace must show two requests on one lock, the second made while the first held it and granted only after the first's release, each archive scan ending inside its own hold. The file goes, it is kept once and removed once. Every wait is bounded, and a bound exceeded fails the test | `5fbf19b2`, `4d0161c5`: `AttributeError: _one_erasure_at_a_time` (the helper reads it). Without the lock (E-18 to E-20) it fails at `assert_one_at_a_time` on any host |
 | T13 | `test_the_erasure_lock_is_one_per_memory_and_follows_the_running_loop` | One lock per memory within a loop, another memory's lock is separate, a new loop gets a new lock (checked by contention in two `asyncio.run` loops), and no memory means no lock | both: `ImportError` (the import is local, so only this test fails) |
 | T14 | `test_an_owner_recording_failure_never_ends_a_cascades_scan[<agent-serialization, agent-extraction, resource-extraction>-<live, archived>-<wired, unwired>]` (12 ids, e.g. `agent-serialization-live-wired`) | A1 (A-4): an unrelated ep-001 whose owner recording raises never hides the later match ep-002. Wired: the erasure proceeds, then raises the recording error (`failures == {}`) and logs it. Unwired: nothing is recorded and nothing raises. The resource cascade's own serialization fault ends the scan on the base too, so it is excluded | `5fbf19b2`: wired, `deleted_episode_ids == [_A]`; unwired, raises `ErasureCascadeIncomplete`. `4d0161c5`: wired, does not raise; unwired, passes (a guard) |
 | T15 | `test_an_owner_recording_failure_on_the_single_path_still_reaches_the_owners_after_it` | A1 on the single path: the scan goes on past the failure, so the later owner ep-002 keeps the file. The failure is raised after the erase | `5fbf19b2`: `retained_attachments == {}` (the scan stopped at ep-001). `4d0161c5`: does not raise |
 | T16 | `test_no_erasure_calls_a_public_erasure_method[episode, agent, resource]` | A2-1 (A-5): the lock is not re-entrant, so no public erasure method may call another, or itself. Each is replaced on the class by a spy that fails on entry, and each entry point runs to the end through its saved real method (premise: what it erased and decided). A nested call fails at once, never by a hang | `57822b3a`, `5fbf19b2`: passes (a guard). `4d0161c5`: `[agent]` and `[resource]` fail (the cascade called `forget_episode` per match); `[episode]`: `AttributeError: retained_attachments` |
 | T17 | `test_a_scans_own_error_is_raised_before_an_owner_recording_error[episode-archive, episode-live-archive, agent-archive, agent-live-archive]` | A2-5 (A-5): ep-001's owner recording fails, and the archive scan (or both scans) fails after its last row. The error raised is the live scan's, else the archive scan's, never the recording's, asserted by identity; `failures == {}`; ep-000 is erased | `57822b3a`: passes. `5fbf19b2`: fails (the recording error ended the live scan and is raised). `4d0161c5`: fails (no owner recording: `_B in seen`; `[episode-*]` does not raise) |
+| T18 | `test_of_two_owner_recording_failures_the_first_is_raised[episode, agent]` | A3-1 (A-6): the owner recordings of ep-001 and then ep-002 raise two distinct errors. The scan reaches both (premise: `reached == [ep-001, ep-002]`). The error raised is ep-001's, by identity, on the single path and on a cascade; `failures == {}`; only ep-000 is erased | `059cb74a`: passes (a guard; E-29's last-wins mutant fails it). `4d0161c5`: `pytest.raises` fails (no owner recording, so nothing raises) |
+| T19 | `test_a_failed_overlap_ends_the_other_erasure_before_its_stores_close` | B3-1 (A-6), T12's failure path. `_a_handshake_that_fails` holds the second `forget_episode` until it is cancelled, so it never asks for the lock, and patches `_HANDSHAKE_S` to 0.05 s. T12[two-episodes] must fail with the handshake's `pytest.fail`, and `events[:2]` must be `["held call unwound", "attachment store closed"]`: `_overlapping` ended the held erasure before `_vessel` closed the store. `_end_stragglers` ends anything a broken tree leaves | `059cb74a` (E-33 restores its T12 line): fails at `events[:2]`, which is `["attachment store closed"]`; the held erasure was still pending when the store closed |
 
 New file `tests/test_bf939_forget_route.py` (M2): `test_the_forget_route_reports_the_attachment_it_kept_and_removes_it_with_the_last_episode`. The real app goes through S2a's `_client` with a real `FilesystemAttachmentStore` on the runtime. The first answer is 200 with `retained_attachment_ids == {sha: [other]}` and `deleted_count == 1`. The second is `deleted_attachment_ids == [sha]` and `deleted_count == 2`. On the base: `KeyError 'retained_attachment_ids'`. A-4 adds two tests to the file; for §10's labels, the test above is RT1 ("the route test"):
 - **RT2** `test_the_forget_route_maps_each_kept_attachment_to_its_own_sorted_holders`. ep-000 names two attachments, ep-001 names one of them and ep-002 names both. Erasing ep-000 answers `retained_attachment_ids == {photo: [ep-001, ep-002], chart: [ep-002]}`, with the keys in sorted order (B4: reversing a holder list or swapping two entries' holders fails it). On both bases: `KeyError`.
-- **RT3** `test_overlapping_forget_requests_leave_nothing_downloadable_once_every_owner_is_erased[episode, agent, resource, agent-and-episode]`. This is B1 through the real app: two `/forget` requests are run together with `asyncio.gather` under T12's lock trace and handshake, inside one end-to-end budget (`_OVERLAP_BUDGET_S`; A-5, B2-1: `_post`'s 10 s bounds one independent request and would count the queue against it). The real download route (`GET /api/chat/attachments/{hash}`, `routers/chat.py:1258-1284`) then reads the same store, seeded in the router's cache as `test_ad1124_crew_session_contract.py:1699-1708` does. Both requests answer 200, the trace passes T12's `assert_one_at_a_time`, the download answers 404 and the file is removed once. `5fbf19b2`, `4d0161c5`: `AttributeError: _one_erasure_at_a_time` (the helper reads it). Without the lock (E-18 to E-20) it fails at the trace on any host.
+- **RT3** `test_overlapping_forget_requests_leave_nothing_downloadable_once_every_owner_is_erased[episode, agent, resource, agent-and-episode]`. This is B1 through the real app: two `/forget` requests are run together by `_overlapping` (A-6) under T12's lock trace and handshake, inside one end-to-end budget (`_OVERLAP_BUDGET_S`; A-5, B2-1: `_post`'s 10 s bounds one independent request and would count the queue against it). The real download route (`GET /api/chat/attachments/{hash}`, `routers/chat.py:1258-1284`) then reads the same store, seeded in the router's cache as `test_ad1124_crew_session_contract.py:1699-1708` does. Both requests answer 200, the trace passes T12's `assert_one_at_a_time`, the download answers 404 and the file is removed once. `5fbf19b2`, `4d0161c5`: `AttributeError: _one_erasure_at_a_time` (the helper reads it). Without the lock (E-18 to E-20) it fails at the trace on any host.
+- **RT4** `test_a_failed_overlap_ends_the_other_request_before_its_stores_close` (A-6, B3-1). This is RT3's failure path. `_a_handshake_that_fails` holds the second request at `_pending_exit_note_citations` (`routers/security.py:120`, before the manager is built, so before any lock) until it is cancelled, and patches `_HANDSHAKE_S` to 0.05 s. RT3[episode] must fail with the handshake's `pytest.fail`, and `events[:2]` must be `["held call unwound", "attachment store closed"]`: the held request ended inside the client's lifetime, before RT3 closed its store. At `059cb74a` (E-34 restores its RT3 line) it fails at `events[:2]`, which is `["attachment store closed"]`: the request is still pending, as reviewer B measured.
 
 **Doubles without `iter_live_episodes`.**
 - `test_bf868_erasure_declared_fields.py::_FakeMetadataOnlyMemory` (`:73-92`) gets an empty `iter_live_episodes` in 7.2. Without it, the 7 single-path cases that declare an attachment would raise from the owner scan: `test_each_producer_erases_through_the_flat_metadata_fallback` ×4, `test_p4_image_gen_metadata_attachment_id_is_erased`, `test_unparseable_outcomes_json_degrades_and_logs` and `test_an_empty_anchors_json_is_not_reported_as_a_failure`.
@@ -742,7 +746,7 @@ import dataclasses
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -1091,6 +1095,80 @@ async def test_each_entry_point_scans_for_owners_at_most_once_and_keeps_the_per_
 _FIRST, _SECOND = "/srv/bf939/first.log", "/srv/bf939/second.log"
 _HANDSHAKE_S = 60.0  # A-5: bounds one wait; exceeding it FAILS the test, and no assertion depends on it
 _OVERLAP_BUDGET_S = 150.0  # A-5: both erasures end to end, queueing included; under pytest-timeout's 180 s
+_UNWIND_S = 10.0  # A-6: a cancelled erasure must have ended within it; exceeding it FAILS the test
+
+
+async def _overlapping(*erasures: Awaitable[Any]) -> list[Any]:
+    """A-6 (B3-1): run ``erasures`` together within ``_OVERLAP_BUDGET_S``, and never return or raise while one runs.
+
+    ``asyncio.gather`` stops supervising once a child raises (the handshake's ``pytest.fail``, say): the others run
+    on past the caller's cleanup, against a client and stores that are closing. Here each erasure is a task this
+    helper holds; on every way out, each unfinished one is cancelled and awaited, so the caller's ``finally`` and
+    context exits run after the last erasure has ended. One still running ``_UNWIND_S`` after its cancellation fails
+    the test.
+    """
+    tasks = [asyncio.ensure_future(erasure) for erasure in erasures]
+    try:
+        return await asyncio.wait_for(asyncio.gather(*tasks), _OVERLAP_BUDGET_S)
+    finally:
+        unfinished = [task for task in tasks if not task.done()]
+        for task in unfinished:
+            task.cancel()
+        if unfinished:
+            done, stuck = await asyncio.wait(unfinished, timeout=_UNWIND_S)
+            for ended in done:
+                if not ended.cancelled():
+                    ended.exception()  # retrieved, so asyncio never reports it as "never retrieved"
+            assert not stuck, f"{len(stuck)} overlapping erasure(s) still ran {_UNWIND_S} s after cancellation"
+
+
+def _a_handshake_that_fails(
+    monkeypatch: pytest.MonkeyPatch, real: Callable[..., Awaitable[Any]],
+) -> tuple[Callable[..., Awaitable[Any]], list[str]]:
+    """A-6 (B3-1): T12's and RT3's failure path, whose one wait is a 0.05 s handshake.
+
+    Returns a stand-in for ``real`` and the ``events`` it records. Its first call waits until a second call has
+    started, then runs ``real``. The second is held until it is cancelled, so it never asks for the erasure lock, and
+    the first erasure's handshake fails 0.05 s after its archive scan ends (``_HANDSHAKE_S`` is patched). ``events``
+    records ``"held call unwound"`` when the held call's cancellation ends it, and ``"attachment store closed"`` at
+    each ``FilesystemAttachmentStore.close``, in order.
+    """
+    events: list[str] = []
+    second_started = asyncio.Event()
+    calls = 0
+
+    async def held(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.wait_for(second_started.wait(), _UNWIND_S)  # both have started before either erases
+            return await real(*args, **kwargs)
+        second_started.set()
+        try:
+            await asyncio.Event().wait()  # never set: only a cancellation ends the held call
+        finally:
+            events.append("held call unwound")
+        return None  # not reached: the wait above ends only by cancellation
+
+    real_close = FilesystemAttachmentStore.close
+
+    def close(self: FilesystemAttachmentStore) -> None:
+        events.append("attachment store closed")
+        real_close(self)
+
+    monkeypatch.setattr(FilesystemAttachmentStore, "close", close)
+    monkeypatch.setitem(globals(), "_HANDSHAKE_S", 0.05)
+    return held, events
+
+
+async def _end_stragglers(before: set[asyncio.Task[Any]]) -> None:
+    """A-6: cancel and await what a failure test would leave running (on a tree without ``_overlapping``'s cleanup,
+    the held call), so nothing outlives the test."""
+    stragglers = [straggler for straggler in asyncio.all_tasks() - before if not straggler.done()]
+    for straggler in stragglers:
+        straggler.cancel()
+    if stragglers:
+        await asyncio.wait(stragglers, timeout=_UNWIND_S)
 
 
 def _two_owners() -> tuple[Episode, Episode]:
@@ -1205,10 +1283,7 @@ async def test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every
         trace = _trace_overlapping_erasures(monkeypatch, rig.em)
         erase_first, erase_second = _OVERLAPS[overlap]
 
-        results = await asyncio.wait_for(
-            asyncio.gather(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments))),
-            _OVERLAP_BUDGET_S,
-        )
+        results = await _overlapping(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments)))
 
         trace.assert_one_at_a_time()
         assert not await attachments.exists(_SHA)  # B1: no owner remains, so neither erasure may keep it
@@ -1442,6 +1517,74 @@ async def test_a_scans_own_error_is_raised_before_an_owner_recording_error(
         assert incomplete.value.enumeration_error is (live_error if scans == "live-archive" else archive_error)
         assert incomplete.value.failures == {}
         assert incomplete.value.result.deleted_episode_ids == [_A]
+
+
+# --- T18: of two owner recording failures, the first is raised (A-6, A3-1) -----------------------------------------
+
+
+@pytest.mark.parametrize("entry", ["episode", "agent"])
+async def test_of_two_owner_recording_failures_the_first_is_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str,
+) -> None:
+    """A3-1 (A-6): the owner recordings of ep-001 and then ep-002 raise two distinct errors. The scan reaches both,
+    and the error raised is ep-001's, by identity, on the single path and on a cascade."""
+    async with _vessel(tmp_path) as (rig, attachments):
+        await _stored(
+            rig.em,
+            [_naming(0), _naming(1, agent="agent-b", attachment=False), _naming(2, agent="agent-b", attachment=False)],
+        )
+        order = [episode.id async for episode in rig.em.iter_live_episodes()]
+        assert order.index(_B) < order.index(_C)  # premise: ep-001 is scanned before ep-002
+        manager = _manager(rig, attachments)
+        errors = {
+            _B: ValueError("injected: recording the owners of ep-001 failed"),
+            _C: TypeError("injected: recording the owners of ep-002 failed"),
+        }
+        reached: list[str] = []
+        inner = manager._extract_attachment_ids  # test-only private access, as _fail_recording_for
+
+        def failing(value: Any) -> Any:
+            episode_id = value.get("id") if isinstance(value, dict) else None
+            if episode_id in errors:
+                reached.append(episode_id)
+                raise errors[episode_id]
+            return inner(value)
+
+        monkeypatch.setattr(manager, "_extract_attachment_ids", failing)
+
+        with pytest.raises(ErasureCascadeIncomplete) as incomplete:
+            if entry == "episode":
+                await manager.forget_episode(_A)
+            else:
+                await manager.forget_agent_memory("agent-a")
+
+        assert reached == [_B, _C]  # premise: both recordings were reached, ep-001's first
+        assert incomplete.value.enumeration_error is errors[_B]  # the first, never the last
+        assert incomplete.value.failures == {}
+        assert incomplete.value.result.deleted_episode_ids == [_A]
+        assert sorted(_raw(rig.em, [_A, _B, _C])["ids"]) == [_B, _C]
+
+
+# --- T19: a failed overlap ends the other erasure before the stores close (A-6, B3-1) -------------------------------
+
+
+async def test_a_failed_overlap_ends_the_other_erasure_before_its_stores_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3-1 (A-6), T12's failure path: the second ``forget_episode`` is held before it can ask for the erasure lock,
+    so the first's handshake fails. ``_overlapping`` must cancel and await the held erasure before T12's stores
+    close. Its one wait is the patched 0.05 s handshake."""
+    held, events = _a_handshake_that_fails(monkeypatch, ErasureManager.forget_episode)
+    monkeypatch.setattr(ErasureManager, "forget_episode", held)
+    before = asyncio.all_tasks()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="neither asked for the erasure lock"):
+            await test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every_owner_is_erased(
+                tmp_path, monkeypatch, "two-episodes",
+            )
+        assert events[:2] == ["held call unwound", "attachment store closed"]
+    finally:
+        await _end_stragglers(before)
 ```
 
 ### 7.4 `src/probos/routers/security.py` (M2)
@@ -1509,15 +1652,18 @@ import pytest
 
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.routers import chat as chat_router
+from probos.routers import security as security_router
 from probos.types import EpisodeStoreOutcome
 from tests.test_ad1340_s1_eviction import _episode, _memory, _raw
 from tests.test_ad1340_s2a_lookup_route import _client, _post, _runtime
 from tests.test_bf939_shared_attachment_ownership import (
     _BODY as _SHARED_BODY,
     _FIRST,
-    _OVERLAP_BUDGET_S,
     _SECOND,
     _SHA as _SHARED_SHA,
+    _a_handshake_that_fails,
+    _end_stragglers,
+    _overlapping,
     _trace_overlapping_erasures,
     _two_owners,
 )
@@ -1639,11 +1785,10 @@ async def test_overlapping_forget_requests_leave_nothing_downloadable_once_every
                 assert before.status_code == 200, before.text  # premise: the file is served ...
                 assert before.content == _SHARED_BODY  # ... and both episodes name it
                 # A-5 (B2-1): one budget for both requests end to end. ``_post``'s 10 s bounds one independent request,
-                # and would count this request's wait behind the other erasure against it.
-                answers = await asyncio.wait_for(
-                    asyncio.gather(*(client.post(_FORGET, json=body) for body in _OVERLAPPING_REQUESTS[form])),
-                    _OVERLAP_BUDGET_S,
-                )
+                # and would count this request's wait behind the other erasure against it. A-6 (B3-1): if one request
+                # fails, ``_overlapping`` cancels and awaits the other here, before the client and the stores close.
+                requests = (client.post(_FORGET, json=body) for body in _OVERLAPPING_REQUESTS[form])
+                answers = await _overlapping(*requests)
                 after = await client.get(f"/api/chat/attachments/{_SHARED_SHA}")
 
             assert [answer.status_code for answer in answers] == [200, 200], [answer.text for answer in answers]
@@ -1654,6 +1799,26 @@ async def test_overlapping_forget_requests_leave_nothing_downloadable_once_every
         finally:
             chat_router._ATTACHMENT_STORE_CACHE.pop(id(runtime), None)
             attachments.close()
+
+
+async def test_a_failed_overlap_ends_the_other_request_before_its_stores_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3-1 (A-6), RT3's failure path: the second request is held at admission, before it can ask for the erasure
+    lock, so the first's handshake fails. RT3 must cancel and await the held request before its client and stores
+    close. Its one wait is the patched 0.05 s handshake."""
+    real = security_router._pending_exit_note_citations  # test-only private access: the route's admission step
+    held, events = _a_handshake_that_fails(monkeypatch, real)
+    monkeypatch.setattr(security_router, "_pending_exit_note_citations", held)
+    before = asyncio.all_tasks()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="neither asked for the erasure lock"):
+            await test_overlapping_forget_requests_leave_nothing_downloadable_once_every_owner_is_erased(
+                tmp_path, monkeypatch, "episode",
+            )
+        assert events[:2] == ["held call unwound", "attachment store closed"]
+    finally:
+        await _end_stragglers(before)
 ```
 
 ## 8. Tracking (tracker pairs; M3's commit)
@@ -1716,9 +1881,9 @@ REPLACE:
 - The memory's store write lock, and every writer that is not an erasure (`store()`, the reaper, qualification cleanup): A-4's lock lives in `erasure.py` and serializes erasures only.
 - No new flag, `EventType`, route, config field, table or `.db` file.
 
-## 10. Mutation rows (29 rows; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (35 rows; whole stripped lines, each occurring once in its file after §7)
 
-One campaign on the assembled tree (M1 and M2 applied), after an unmutated baseline run of both new test files passes. Restore the file between rows. E-1 and E-2 mutate the same line, and so do E-9 and E-24, and E-23 and E-27. E-13's mutant waits forever in every cascade test except T16 (the lock is not re-entrant, by design), so, as for every row, run only its listed killers. RT1 is "the route test"; RT2 and RT3 are the route file's A-4 tests (§6).
+One campaign on the assembled tree (M1 and M2 applied), after an unmutated baseline run of both new test files passes. Restore the file between rows. E-1 and E-2 mutate the same line, and so do E-9 and E-24, and E-23 and E-27. E-13's mutant waits forever in every cascade test except T16 (the lock is not re-entrant, by design), so, as for every row, run only its listed killers. RT1 is "the route test"; RT2 and RT3 are the route file's A-4 tests (§6). RT4 is its A-6 test; T18 and T19 are the new file's (§6). E-30 to E-34 (A-6) mutate the two test files: they pin `_overlapping`'s cleanup and the two tests' use of it. E-33 and E-34 put back `059cb74a`'s expressions (E-34 writes the budget as `150.0`, because the route file no longer imports `_OVERLAP_BUDGET_S`). Each of E-32's killers fails after `_UNWIND_S` (10 s): the stuck-check's `AssertionError` replaces the handshake's `pytest.fail`. E-31's killer is named by analysis: no suspension point lies between `_overlapping`'s raise and `_vessel`'s synchronous `attachments.close()`. RT4 may also kill it. Measure it, and report a survivor as a census finding.
 
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -1750,6 +1915,12 @@ One campaign on the assembled tree (M1 and M2 applied), after an unmutated basel
 | E-26 | M1 | same | `_ERASURE_LOCKS[memory] = held` | `pass` | T13, T12[two-episodes] |
 | E-27 | M1 | same | `if enumeration_error is None and failures.first is not None:` | `if failures.first is not None:` | T17[episode-archive], T17[agent-live-archive] |
 | E-28 | M1 | same | `enumeration_error = live_error if live_error is not None else archive_error` | `enumeration_error = archive_error if archive_error is not None else live_error` | T17[episode-live-archive], T17[agent-live-archive] |
+| E-29 | M1 | same | `if failures.first is None:` | `if True:` | T18[episode], T18[agent] |
+| E-30 | M1 | `tests/test_bf939_shared_attachment_ownership.py` | `unfinished = [task for task in tasks if not task.done()]` | `unfinished = []` | T19, RT4 |
+| E-31 | M1 | same | `done, stuck = await asyncio.wait(unfinished, timeout=_UNWIND_S)` | `done, stuck = set(), set()` | T19 |
+| E-32 | M1 | same | `task.cancel()` | `pass` | T19, RT4 |
+| E-33 | M1 | same | `results = await _overlapping(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments)))` | `results = await asyncio.wait_for(asyncio.gather(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments))), _OVERLAP_BUDGET_S)` | T19 |
+| E-34 | M2 | `tests/test_bf939_forget_route.py` | `answers = await _overlapping(*requests)` | `answers = await asyncio.wait_for(asyncio.gather(*requests), 150.0)` | RT4 |
 | R-1 | M2 | `src/probos/routers/security.py` | `"retained_attachment_ids": result.retained_attachments,  # BF-939: each kept attachment -> the episodes naming it` | `"retained_attachment_ids": {},` | the route test, RT2 |
 
 Not given a row, each with the reason:
@@ -1757,7 +1928,7 @@ Not given a row, each with the reason:
 - `candidates = (attachment_ids | due.get(turn, set())) - decided` and `decided |= unlink | set(kept)`: defence against the scan and the per-episode read disagreeing. On a real store the read includes everything the scan saw: the same rows rebuilt, plus BF-868's raw fallback (`erasure.py:345-360`). So both mutants survive, and are recorded as equivalent there.
 - The WARNING lines: log only; T8 asserts the single path's, and T14 (wired) asserts A-4's recording line.
 - `failures.count += 1`: log only.
-- `if failures.first is None:` → `if True:` keeps the last failure instead of the first; equivalent with one injected fault (T14, T15).
+- (A-6, A3-1) `if failures.first is None:` → `if True:` was listed here as equivalent, with one injected fault. T18 injects two, so it is now row E-29.
 - The A-4 docstrings (`forget_episode`, `_recording_owners`, `_matching_ids`, `_one_erasure_at_a_time`, the route): text only.
 
 Campaign of record: name the base tree and each file's sha256, and list the rows to re-run if a file differs, as BF-905's DECISIONS entry did.
@@ -1984,6 +2155,58 @@ AV20 CLAIM: E-28's line occurs once in erasure.py
      HOLDS: yes
 ```
 
+## 11c. Verified for A-6 (2026-10-27, HEAD `059cb74a`, tree `2b08ba51bee03099e4759a20b6751afd8baf95c5`)
+
+```
+git rev-parse HEAD^{tree}   2b08ba51bee03099e4759a20b6751afd8baf95c5
+Read logs/bf939/review-r3-a.md (207 lines) and review-r3-b.md (180 lines), whole; logs/bf939/probe-r3b-test_rt3_failure_regression.py
+  (54 lines: the second admission at security._pending_exit_note_citations held 90 s; the 60 s handshake fails)
+Read tests/test_bf939_forget_route.py:143-162   RT3: wait_for(gather(...), _OVERLAP_BUDGET_S) inside `async with _client`;
+  its finally pops the cache entry and closes the store (B3-1's lines :149-151, :161-162)
+Read tests/test_bf939_shared_attachment_ownership.py:362-364, 441-454, 479-482   _HANDSHAKE_S read at call time (:447);
+  pytest.fail at :449; T12's wait_for(gather(...)) inside `async with _vessel`: RT3's shape, so B3-1 holds for T12 by analysis
+Read tests/test_bf939_shared_attachment_ownership.py:66-74   _vessel closes the attachment store synchronously in its finally
+Read tests/test_bf939_shared_attachment_ownership.py:527-547, 667-716   _fail_recording_for patches the instance's
+  _extract_attachment_ids and reads value.get("id"); T17's fixture (ep-001, ep-002 agent-b, no attachment) is T18's, unarchived
+grep -n "def close" src/probos/attachments/filesystem_store.py   192: def close(self) -> None:   (sync; the recorder wraps it)
+Read tests/test_ad1340_s2a_lookup_route.py:213-219   _client: create_app + ASGITransport + AsyncClient; it closes no store
+Read src/probos/routers/security.py:81-93, 119-135   :120 _pending_exit_note_citations, before ErasureManager (:121) and any lock
+Read src/probos/knowledge/erasure.py:309-332   forget_episode takes the lock as its first statement (:332)
+Read src/probos/knowledge/erasure.py:164-176, 441-453   the recorder keeps the first error (:171-172); _matching_ids returns it
+  when neither scan failed (:450-451)
+grep -n "requires-python|asyncio_mode" pyproject.toml   9: >=3.12; 181: auto
+Reviewer A, round 3 §4: pytest's Failed is a BaseException, so `except Exception` (_scan, the app's middleware) passes it on
+Reviewer B, round 3: "Merely wrapping gather() in wait_for() does not supervise siblings after a child exception";
+  explicit-cancellation controls drained their requests
+SEARCH uniqueness (Grep -o over this contract at 059cb74a): every A-6 anchor once: :14, :21, :22, :82, :116 ("two managers on
+  one memory ..."), :121-123, :125 (two anchors, each once), :745, :1093, :1208-1211, :1442-1445, :1511, :1517-1523,
+  :1641-1646, :1653-1657, :1719, :1721, :1752, :1760, :1987, :2138, :2141, :2155, :2175, :2189, :2194, :2204, :2205, :2207
+```
+
+## Absence Verified (A-6, 2026-10-27)
+
+```
+AV21 CLAIM: only the two BF-939 test files (and this contract) use _OVERLAP_BUDGET_S or _HANDSHAKE_S, so dropping the route
+     file's import of the budget breaks nothing, and A-6's new names collide with nothing
+     RUN:   Grep "_OVERLAP_BUDGET_S|_HANDSHAKE_S|_overlapping\(|_a_handshake_that_fails|_end_stragglers|_UNWIND_S" (repository, logs/ excluded)
+     FOUND: tests/test_bf939_forget_route.py, tests/test_bf939_shared_attachment_ownership.py, this contract
+     HOLDS: yes
+AV22 CLAIM: the two files have no other gather, task creation or cancellation to convert
+     RUN:   Grep "_UNWIND_S|_overlapping\b|_a_handshake_that_fails|_end_stragglers|security_router|\.cancel\(\)|all_tasks|asyncio\.gather|ensure_future" tests/test_bf939_*.py
+     FOUND: test_bf939_shared_attachment_ownership.py:480 (T12) and test_bf939_forget_route.py:150 (RT3), both asyncio.gather; nothing else
+     HOLDS: yes
+AV23 CLAIM: E-29's line occurs once in erasure.py
+     RUN:   Grep "if failures\.first is None:" src/probos/knowledge/erasure.py
+     FOUND: 171
+     HOLDS: yes
+AV24 CLAIM: nothing in T12's or RT3's lifetime closes a FilesystemAttachmentStore before the test's own close
+     RUN:   Grep "FilesystemAttachmentStore" tests/test_ad1340_s1_eviction.py;  Grep "FilesystemAttachmentStore\(|\.close\(\)" src/probos/routers/chat.py;
+            Grep "close_attachment_store\(" src
+     FOUND: none;  chat.py:1020 (a cache miss builds one; RT3 seeds the cache), :1042 (inside close_attachment_store);
+            its callers: chat.py:1023 (built after shutdown's close point) and startup/shutdown.py:109, :1627 (shutdown only)
+     HOLDS: yes (T19 and RT4 read events[:2], so a later close cannot fail them)
+```
+
 ## Not verified (the orchestrator verifies by running)
 
 1. **The cost probe.** Save the file below as `tests/_bf939_probe_owner_scan_cost.py` in a scratch checkout, so the suite's conftest isolation applies. Never commit it.
@@ -2135,10 +2358,10 @@ The orchestrator re-verifies these on the real post-S4 merge. If one changed, th
 |---|---|
 | SRP | `ErasureManager` stays at 15 direct methods: `_delete_attachments` moves out and `_erase_episode` comes in. Four new module functions. A-4 adds `_RecordingFailures` (a dataclass), `_one_erasure_at_a_time` and the `_ERASURE_LOCKS` registry outside the class, and about 15 lines inside it (the class body is about 405 lines on `5fbf19b2`, under the 500-line trigger, `check_architecture_principles.py:187`) |
 | Layer | `erasure.py`'s project imports are unchanged (`Callable`, `Mapping` are already imported); A-4 adds the standard-library `asyncio`, `contextlib` and `weakref` (pair 0). `routers/security.py` imports nothing new |
-| Phantom precheck | New names: `_recording_owners`, `_last_turns`, `_decide_attachments`, `_unlink_attachments`, `_erase_episode`, `retained_attachments`, `_CountedArchive`, `_vessel`, `_naming`, `_stored`, `_cannot_rebuild`, `_count_scans`; A-4: `_RecordingFailures`, `_one_erasure_at_a_time`, `_ERASURE_LOCKS`, `_FIRST`, `_SECOND`, `_two_owners`, `_OVERLAPS`, `_AnyMemory`, `_fail_recording_for`, `_RECORDING_FAULTS`, `_PHOTO`, `_CHART`, `_PHOTO_SHA`, `_CHART_SHA`, `_OVERLAPPING_REQUESTS`; A-5: `_HANDSHAKE_S`, `_OVERLAP_BUDGET_S`, `_LockTrace`, `_trace_overlapping_erasures`, `_PUBLIC_ERASURES`, `_fail_scan_after_its_last_row`, `_PRIORITY_CASES` (A-5 removes `_OVERLAP_WAIT_S` and `_rendezvous_after_the_archive_scan`). Every other name is verified in §11, §11a or §11b |
+| Phantom precheck | New names: `_recording_owners`, `_last_turns`, `_decide_attachments`, `_unlink_attachments`, `_erase_episode`, `retained_attachments`, `_CountedArchive`, `_vessel`, `_naming`, `_stored`, `_cannot_rebuild`, `_count_scans`; A-4: `_RecordingFailures`, `_one_erasure_at_a_time`, `_ERASURE_LOCKS`, `_FIRST`, `_SECOND`, `_two_owners`, `_OVERLAPS`, `_AnyMemory`, `_fail_recording_for`, `_RECORDING_FAULTS`, `_PHOTO`, `_CHART`, `_PHOTO_SHA`, `_CHART_SHA`, `_OVERLAPPING_REQUESTS`; A-5: `_HANDSHAKE_S`, `_OVERLAP_BUDGET_S`, `_LockTrace`, `_trace_overlapping_erasures`, `_PUBLIC_ERASURES`, `_fail_scan_after_its_last_row`, `_PRIORITY_CASES` (A-5 removes `_OVERLAP_WAIT_S` and `_rendezvous_after_the_archive_scan`); A-6: `_UNWIND_S`, `_overlapping`, `_a_handshake_that_fails`, `_end_stragglers` and the import alias `security_router`, and the route file stops importing `_OVERLAP_BUDGET_S` (AV21). Every other name is verified in §11, §11a, §11b or §11c |
 | Kwarg check | `ErasureManager(memory, attachments, None, archive_store=)` (`erasure.py:156-163`); `_matching_ids(matches, owners, wanted)` is new; `FilesystemAttachmentStore.write(sha, body, mime)` as S3 uses it; `em.evict_by_ids(ids, reason=)` |
 | Hidden pins | S4 `raisers`/`importers` (`:321-323`), S3 `_naming("entry_ids_citing") == {"knowledge/erasure.py"}`, `ErasureManager(` built only in `routers/security.py` (S3 `:296-305`). All still hold: no new raise site of `ExitNotesBlockErasure`, no new caller of `entry_ids_citing`, no new builder. bf905's ERROR-message counts (`:272`, `:296`, `:354-358`) hold: the new logs are WARNING and say "BF-939", never "BF-905" (A-4's recording line too; bf905 filters ERROR records by text, `test_bf905_erasure_live_scan.py:81-82`). A-4 re-indents the S3 and S4 calls in `forget_episode`; their pins match by AST, not text (`test_ad1341_s3_erasure_cascade.py:299`, `test_ad1341_s4_exit_note_erasure.py:303-323`) |
-| Unowned tasks | none |
+| Unowned tasks | none in production. A-6's test helper `_overlapping` holds every task it creates, and cancels and awaits each unfinished one before it returns or raises; `_end_stragglers` ends whatever a failure test would otherwise leave |
 | Store registry and config | no table, `.db` or config field |
 
 ## 13. Prior Art and Blind Spots
@@ -2153,6 +2376,7 @@ The orchestrator re-verifies these on the real post-S4 merge. If one changed, th
 - No GDPR guidance was found on whether shared deduplicated bytes must go with one subject's erasure. That is not needed here: the bytes stay only for another, unerased episode's record.
 - **A-4 (no new search; the question is internal).** Docker's rule above (one collector, and nothing else mutating during the sweep) is why erasures are serialized rather than re-checked: a re-check is a second mark phase, still racy against an upload. Internal prior art, adapted rather than copied: `agents/http_fetch.py:176-187` keys its `asyncio.Lock`s by event loop because a contended lock binds to its loop. Here the key is the memory, held weakly so the entry goes with the memory (the lock never references it), and the loop is checked on each lookup. Rejected: holding the memory's `_store_write_lock` (`episodic.py:1466`, `:1962-1969`) around the erasure, because `evict_by_ids` takes it inside (`:2918`, `:3193`, `:3237`; `:3225`); and a lock owned by `EpisodicMemory`, which would add a second file and an accessor every memory double would need. No reference-project row examined (no storage row, as above).
 - **A-5 (no new search: test design for this repository's own lock).** A synchronization property is asserted on the primitive's own event trace, with a handshake that forces the overlap, instead of being inferred from a wait that expired: a test that passes because a timer ran out cannot tell a lock from a slow host (reviewer A, round 2). Bounds only fail tests. A spy that fails on entry turns a would-be self-deadlock into an assertion (T16). No reference-project row examined.
+- **A-6 (no new search: test plumbing with a standard-library answer).** Structured concurrency, as `asyncio.TaskGroup` (Python 3.11+) and trio's nurseries implement it, cancels and awaits a group's other tasks when one fails, so no child outlives its scope. Adopted: that rule, in a 20-line helper (`_overlapping`). Rejected: `TaskGroup` itself, because it raises a child's failure inside an exception group, and pytest's `Failed` is a `BaseException` but not `KeyboardInterrupt` or `SystemExit`. These tests and the census read the handshake's `pytest.fail` and the budget's `TimeoutError` unwrapped. <https://docs.python.org/3/library/asyncio-task.html#task-groups>. No reference-project row examined.
 
 **Blind spots found:**
 1. A match refused mid-cascade sharing a blob (T6). The decision's mutant 2 is reframed as "count a refused match as erased" (E-2).
@@ -2173,6 +2397,8 @@ The orchestrator re-verifies these on the real post-S4 merge. If one changed, th
 16. A census mutant that deadlocks on the non-re-entrant lock and gives no verdict (A2-1; T16).
 17. A concurrency test that passes without the lock when a scan is slower than its wait (A2-2; T12's trace), and a per-request timeout that counts the queue (B2-1; RT3's budget).
 18. Erasures on one memory from two event loops at once (G10).
+19. A bound that fails a test inside one of two gathered erasures leaves the other running past the test's cleanup, against closed stores (B3-1; `_overlapping`, T19, RT4).
+20. A priority test with one injected fault per source cannot tell the first error from the last (A3-1; T18).
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -2186,12 +2412,14 @@ The orchestrator re-verifies these on the real post-S4 merge. If one changed, th
 8. `ErasureResult.retained_attachments` holds only attachments not unlinked, each with sorted, non-empty holders. No attachment is in both `deleted_attachment_ids` and `retained_attachments` of one result. `count` is unchanged in meaning.
 9. `ErasureManager` has 15 direct methods. `_delete_attachments` has no remaining reference.
 10. The route adds exactly one key, `retained_attachment_ids`, and changes no other key, status or refusal body.
-11. The new tests use the real memory, attachment store, manager, archive, CLI erase and app route, and from A-4 also the real download route. The only stand-ins are BF-905's schema drift, R12's participant-index fault, the counting wrappers, A-4's recording faults, A-5's lock trace and archive-scan handshake (T12, RT3), T16's spies, T17's scan faults, and T13's bare key. Every store lies under `tmp_path`.
+11. The new tests use the real memory, attachment store, manager, archive, CLI erase and app route, and from A-4 also the real download route. The only stand-ins are BF-905's schema drift, R12's participant-index fault, the counting wrappers, A-4's recording faults, A-5's lock trace and archive-scan handshake (T12, RT3), T16's spies, T17's scan faults, T13's bare key, and A-6's held call, close recorder and two recording faults (T18, T19, RT4). Every store lies under `tmp_path`.
 12. Each of `forget_episode`, `forget_resource` and `forget_agent_memory` holds `_one_erasure_at_a_time(self._episodic_memory)` around its whole body: the refusals, the scan, the decisions, and every unlink, evict and audit mark. The single path raises a failed scan only after the lock is released. No public erasure method calls another, or itself (T16's spies fail on entry). The erasure lock is taken before the memory's store write lock, never inside it. There is no lock when the memory is None, one lock per memory object, and a new lock in a new event loop.
 13. An owner recording that raises never ends a scan and never skips a match. Its first error is reported, after the erasure, only when neither scan failed (live first, then archive, then the recording); T17 asserts the raised error by identity on both paths. With no attachment store wired nothing is recorded, so an unwired cascade serializes no more episodes than the base.
 14. On the single path, a recording failure for another episode lets the scan reach the owners after it, and `ErasureCascadeIncomplete(result, {}, error)` is raised after the erase.
 15. The disclosures match A-4. `forget_episode`'s and the route's docstrings state the serialization, that `store()` is not serialized, and the 500 that carries no erasure result (the framework's plain-text `Internal Server Error`). `forget_episode` no longer claims a failed erase always removed the attachment ids. `_one_erasure_at_a_time`'s docstring and T13 say the key is hashable and weakly referenceable, and the docstring states the per-loop bound.
 16. (A-5) T12 and RT3 pass only from the lock's trace: two requests on one lock, the second made while the first held it, granted after the first's release, each archive scan ending inside its own hold. Every bounded wait fails the test when exceeded, and no assertion depends on an interval. RT3's requests run inside their own end-to-end budget.
+17. (A-6) T12 and RT3 run their two erasures only through `_overlapping`, which returns or raises only after every erasure it started has ended. An unfinished one is cancelled and awaited inside the caller's client and store lifetimes, and one still running `_UNWIND_S` after its cancellation fails the test. T19 and RT4 drive the failed handshake with one 0.05 s wait and see the held call unwind before the attachment store closes; without the cleanup they fail at that order.
+18. (A-6) When two owner recordings fail in one scan, the scan reaches both, and the first error is raised, by identity, on the single path and on a cascade (T18).
 
 ## 15. Acceptance criteria
 
@@ -2201,10 +2429,10 @@ The orchestrator re-verifies these on the real post-S4 merge. If one changed, th
 4. A failed owner scan never blocks an erasure and is always raised (T8 to T10; E-11, E-12).
 5. Each entry point scans for owners at most once. S3's per-episode citation check is unchanged (T11; E-10). No erasure calls a public erasure method, so the lock never waits on itself (T16; E-13).
 6. S3's and S4's refusals, BF-868's extraction and AD-1340's order and retention pass their own tests unedited (M1 gate).
-7. Two overlapping erasures on one memory, through any pair of entry points or managers, leave no file once every owner is erased, and the download route then answers 404 (T12, RT3, read from the lock's own trace; E-18 to E-20, E-26). The lock follows the running loop and needs no memory (T13; E-21, E-25).
-8. An owner recording that raises never shrinks an erasure, on a cascade or the single path. With no attachment store wired, nothing is recorded (T14, T15; E-22 to E-24). A scan's own error outranks a recording error, the live scan's first (T17; E-27, E-28).
+7. Two overlapping erasures on one memory, through any pair of entry points or managers, leave no file once every owner is erased, and the download route then answers 404 (T12, RT3, read from the lock's own trace; E-18 to E-20, E-26). If the overlap fails, neither test closes a store while the other erasure still runs (T19, RT4; E-30 to E-34). The lock follows the running loop and needs no memory (T13; E-21, E-25).
+8. An owner recording that raises never shrinks an erasure, on a cascade or the single path. With no attachment store wired, nothing is recorded (T14, T15; E-22 to E-24). A scan's own error outranks a recording error, the live scan's first (T17; E-27, E-28). Of two recording errors, the first is raised, by identity (T18; E-29).
 9. The route maps each kept attachment to its own sorted holders (RT2; R-1).
-10. Every §10 row is killed by the named test. One broad gate and one PR; cross-family review of M1 and M2 (round 2: a delta review of A-4; round 3: a delta review of A-5).
+10. Every §10 row is killed by the named test. One broad gate and one PR; cross-family review of M1 and M2 (round 2: a delta review of A-4; round 3: a delta review of A-5; round 4: one reviewer on the delta of A-6).
 11. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1523)
