@@ -1,18 +1,12 @@
-# AD-1270 (#1324): production classes that nothing in production uses, each with its reviewed disposition.
+# AD-1270 (#1324): production classes that nothing in production uses, each with its disposition.
 # Regenerate with: python -P scripts/check_dormant_classes.py --update-baseline
 # It keeps reviewed rows, adds new classes as 'unreviewed' and drops rows that are no longer dormant.
 # disposition: wire, retire or staged (owner: an issue or AD), or false-positive (note: why).
 # One row per class and nothing more: no description, status or test data. It is not a capability registry.
 classes:
-  agent_onboarding.py::AgentOnboardingService:
-    disposition: unreviewed
   agents/corrupted.py::CorruptedFileReaderAgent:
     disposition: unreviewed
   agents/federation_recall_agent.py::FederationRecallAgent:
-    disposition: unreviewed
-  agents/operations/coordinator.py::CoordinatorAgent:
-    disposition: unreviewed
-  agents/operations/resource_allocator.py::ResourceAllocatorAgent:
     disposition: unreviewed
   avatars/asset_manifest.py::AssetManifest:
     disposition: unreviewed
@@ -34,8 +28,6 @@ classes:
     disposition: unreviewed
   cognitive/chain_checkpoint.py::ChainCheckpointStore:
     disposition: unreviewed
-  cognitive/consultation.py::ConsultationProtocol:
-    disposition: unreviewed
   cognitive/dm/action_dispatcher.py::ActionDispatcher:
     disposition: unreviewed
   cognitive/elastic_commission.py::CommissionReceipt:
@@ -48,16 +40,6 @@ classes:
   cognitive/elastic_commission.py::TeamView:
     disposition: unreviewed
   cognitive/episodic_mock.py::MockEpisodicMemory:
-    disposition: unreviewed
-  cognitive/expertise_directory.py::ExpertMatch:
-    disposition: unreviewed
-  cognitive/expertise_directory.py::ExpertiseDirectory:
-    disposition: unreviewed
-  cognitive/expertise_directory.py::ExpertiseProfile:
-    disposition: unreviewed
-  cognitive/failure_distiller.py::ComparativeInsight:
-    disposition: unreviewed
-  cognitive/failure_distiller.py::FailureDistiller:
     disposition: unreviewed
   cognitive/gap_aggregation.py::FederatedGapSnapshot:
     disposition: unreviewed
@@ -137,10 +119,6 @@ classes:
     disposition: unreviewed
   cognitive/retrieval_practice.py::RetrievalPracticeResult:
     disposition: unreviewed
-  cognitive/retroactive_evolver.py::EvolutionReport:
-    disposition: unreviewed
-  cognitive/retroactive_evolver.py::RetroactiveEvolver:
-    disposition: unreviewed
   cognitive/salience_filter.py::SalienceFilter:
     disposition: wire
     owner: '#1324'
@@ -157,12 +135,6 @@ classes:
   cognitive/skill_forge.py::ForgeResult:
     disposition: unreviewed
   cognitive/skill_forge.py::SkillForge:
-    disposition: unreviewed
-  cognitive/source_governance.py::IntrospectiveFaithfulnessResult:
-    disposition: unreviewed
-  cognitive/storage_gate.py::StorageDecision:
-    disposition: unreviewed
-  cognitive/storage_gate.py::StorageGate:
     disposition: unreviewed
   consensus/quorum.py::QuorumResult:
     disposition: unreviewed

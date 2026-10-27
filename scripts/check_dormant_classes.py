@@ -16,15 +16,21 @@ counts. A use inside the class's own module counts only from module-level code, 
 definition with a registering decorator, or from a top-level definition that is itself live.
 
 Names are matched, not resolved (the shape of vulture's dead-code scan and of BF-926's
-``check_config_readers.py``), so it under-reports: two classes with one name are live together,
-and a use from a dormant module still counts. It cannot see a class built from ``config/``, an
-entry point or a name assembled at run time. Protocols, enums, exceptions, TypedDicts,
-NamedTuples and pydantic models are schema rather than capability and are not reported; nor are
-private classes.
+``check_config_readers.py``), with one exception: an import alias. After ``from m import X as Y``
+anywhere in a module, a function body included, a value use of ``Y`` in that module, or a base
+written as ``Y``, also counts as ``X``. An alias that is only imported or only annotates is not a
+use, and an alias belongs to the module that imports it. ``import m as n`` needs no rule: ``n.X``
+reads ``X``. So it under-reports: two classes with one name are live together, a use from a
+dormant module still counts, and a use of an alias counts for every name the module imports under
+it. It over-reports a class that only a path it cannot see reaches: ``config/``, an entry point,
+``getattr`` or an import with a computed name, or an alias imported under that alias from the
+module that made it. Protocols, enums, exceptions, TypedDicts, NamedTuples and pydantic models are
+schema rather than capability and are not reported; nor are private classes.
 
-The baseline holds one row per dormant class and its reviewed disposition (wire, retire or
-staged, each with an owner issue or AD; or false-positive, with a note) and nothing else, so it
-does not become a second capability registry (``platform-maturity-program.md``, AD-1270a).
+The baseline holds one row per dormant class and its disposition and nothing else: ``unreviewed``
+until a reviewer sets wire, retire or staged (each with an owner issue or AD) or false-positive
+(with a note). Holding nothing else keeps it from becoming a second capability registry
+(``platform-maturity-program.md``, AD-1270a).
 
 Usage::
 
@@ -59,7 +65,7 @@ INERT_DECORATORS = frozenset({
 })
 TYPE_TESTS = frozenset({"isinstance", "issubclass"})
 HEADER = (
-    "# AD-1270 (#1324): production classes that nothing in production uses, each with its reviewed disposition.\n"
+    "# AD-1270 (#1324): production classes that nothing in production uses, each with its disposition.\n"
     "# Regenerate with: python -P scripts/check_dormant_classes.py --update-baseline\n"
     "# It keeps reviewed rows, adds new classes as 'unreviewed' and drops rows that are no longer dormant.\n"
     "# disposition: wire, retire or staged (owner: an issue or AD), or false-positive (note: why).\n"
@@ -153,17 +159,35 @@ def _uses(root: ast.AST) -> set[str]:
     return found
 
 
+def _aliases(tree: ast.Module) -> dict[str, set[str]]:
+    """``{Y: {X, ...}}`` for each ``from m import X as Y`` anywhere in the module, a function body included."""
+    aliases: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.asname and alias.asname != alias.name:
+                    aliases.setdefault(alias.asname, set()).add(alias.name)
+    return aliases
+
+
+def _resolve(names: set[str], aliases: dict[str, set[str]]) -> set[str]:
+    """``names`` and the original name behind each alias among them."""
+    return names.union(*(aliases.get(name, set()) for name in names))
+
+
 def _parse_module(path: str, tree: ast.Module) -> _Module:
     module = _Module(path)
+    aliases = _aliases(tree)
     for node in tree.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            module.root_uses |= _uses(node)
+            module.root_uses |= _resolve(_uses(node), aliases)
             continue
-        module.symbols.setdefault(node.name, set()).update(_uses(node))
+        module.symbols.setdefault(node.name, set()).update(_resolve(_uses(node), aliases))
         if any(_last_name(decorator) not in INERT_DECORATORS for decorator in node.decorator_list):
             module.registered.add(node.name)
         if isinstance(node, ast.ClassDef):
-            module.classes[node.name] = (node.lineno, [_last_name(base) for base in node.bases])
+            bases = _resolve({_last_name(base) for base in node.bases}, aliases)
+            module.classes[node.name] = (node.lineno, sorted(bases))
     return module
 
 
@@ -276,7 +300,7 @@ def merge(report: Report, rows: dict[str, dict[str, Any]]) -> dict[str, dict[str
 
 
 def render_baseline(merged: dict[str, dict[str, str]]) -> str:
-    """The baseline text: sorted, ASCII, no timestamps and no absolute paths."""
+    """The baseline text: sorted, ASCII and without a timestamp. Keys are relative paths; a retained owner or note is kept as written."""
     import yaml
 
     body = yaml.safe_dump(
@@ -309,7 +333,11 @@ def render(report: Report, rows: dict[str, dict[str, Any]]) -> str:
 
 
 def _emit(text: str) -> None:
-    """Write ``text`` and a newline as UTF-8 with LF line ends, whatever the host's console does."""
+    """Write ``text`` and a newline as UTF-8 with LF line ends to stdout's byte buffer.
+
+    A stdout without a ``buffer`` (a text-only stream) gets ``print``, so that stream's own newline
+    translation applies.
+    """
     stream = getattr(sys.stdout, "buffer", None)
     if stream is None:
         print(text)
@@ -320,20 +348,30 @@ def _emit(text: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Print the findings, rewriting the baseline first when asked. Returns 0 on every path."""
+    """Print the findings, rewriting the baseline first when asked. Returns 0 on every path.
+
+    ``--help`` is answered here, not by argparse, so its first line also starts with ``PREFIX`` and it
+    is written through ``_emit``.
+    """
     try:
-        parser = argparse.ArgumentParser(description="Report production classes nothing in production uses (report-only).")
+        parser = argparse.ArgumentParser(
+            description="Report production classes nothing in production uses (report-only).", add_help=False
+        )
+        parser.add_argument("-h", "--help", action="store_true", help="show this help and check nothing")
         mode = parser.add_mutually_exclusive_group()
         mode.add_argument("--check", action="store_true", help="compare the tree with the baseline (the default)")
         mode.add_argument("--update-baseline", action="store_true", help="rewrite the baseline, keeping reviewed rows")
         parser.add_argument("--src", default=str(DEFAULT_SOURCE), help="source tree scanned")
-        parser.add_argument("--baseline", default=str(DEFAULT_BASELINE), help="reviewed baseline file")
+        parser.add_argument("--baseline", default=str(DEFAULT_BASELINE), help="baseline file of dispositions")
         args, unknown = parser.parse_known_args(argv)
     except SystemExit as exc:  # argparse exits on a malformed command line; this check never does
         if exc.code not in (0, None):
             _emit(f"{PREFIX}could not parse the arguments (argparse exit {exc.code}); nothing checked")
         return 0
     try:
+        if args.help:
+            _emit(f"{PREFIX}help; nothing checked\n{parser.format_help().rstrip()}")
+            return 0  # help is the whole output
         report = build_report(Path(args.src))
         scan_complete = not report.warnings
         baseline = Path(args.baseline)

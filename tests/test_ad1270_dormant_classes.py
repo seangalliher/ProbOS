@@ -322,3 +322,97 @@ def test_modules_are_read_in_posix_path_order_on_every_host(tmp_path: Path) -> N
     report = checker.build_report(source)
 
     assert report.warnings == ["skipped pkg/B.py: SyntaxError", "skipped pkg/a.py: SyntaxError"]
+
+
+# --- T9, T10 (A1): import aliases and --help ----------------------------------------------
+
+_ALIAS_DEFS = '''\
+from dataclasses import dataclass
+from typing import Protocol as P
+
+from pydantic import BaseModel as BM
+
+
+class AliasedBuilt: ...
+class AliasedInFunction: ...
+class FirstOnLine: ...
+class SecondOnLine: ...
+class AliasedAnnotationOnly: ...
+class SameAliasElsewhere: ...
+class NotAliasedUnused: ...
+class AliasedPort(P): ...
+class AliasedModel(BM): ...
+
+
+@dataclass(frozen=True)
+class BuiltByHelper:
+    value: int = 0
+
+
+def make_built():
+    return BuiltByHelper()
+'''
+
+_ALIAS_USER = '''\
+from pkg.defs import AliasedAnnotationOnly as _Ann
+from pkg.defs import AliasedBuilt as _Built
+from pkg.defs import FirstOnLine as _First, SecondOnLine as _Second
+from pkg.defs import NotAliasedUnused
+from pkg.defs import make_built as _make
+
+PAIR = (_First, _Second)
+CURRENT: _Ann | None = None
+
+
+def run(x: _Ann) -> _Ann:
+    _Built()
+    _make()
+    return x
+
+
+def lazy():
+    from pkg.defs import AliasedInFunction as _Lazy
+
+    return _Lazy()
+'''
+
+_ALIAS_OTHER = '''\
+from pkg.defs import SameAliasElsewhere as _Built
+
+
+def typed(x: _Built) -> None:
+    return None
+'''
+
+
+def test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value(tmp_path: Path) -> None:
+    source = _tree(
+        tmp_path / "src", {"pkg/defs.py": _ALIAS_DEFS, "pkg/user.py": _ALIAS_USER, "pkg/other.py": _ALIAS_OTHER}
+    )
+
+    report = checker.build_report(source)
+
+    assert [candidate.key for candidate in report.dormant] == [
+        "pkg/defs.py::AliasedAnnotationOnly",
+        "pkg/defs.py::NotAliasedUnused",
+        "pkg/defs.py::SameAliasElsewhere",
+    ]
+    assert report.warnings == []
+
+
+def test_help_starts_with_the_prefix_and_is_written_lf_utf8(tmp_path: Path) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable, "-P", str(_SCRIPT), "--help",
+            "--src", str(tmp_path / "src"), "--baseline", str(tmp_path / "absent.yaml"),
+        ],
+        capture_output=True, timeout=300, cwd=_REPO_ROOT,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.startswith(checker.PREFIX.encode("ascii") + b"help; nothing checked\n")
+    assert b"\r" not in completed.stdout
+    assert completed.stdout.endswith(b"\n")
+    assert b"--update-baseline" in completed.stdout
+    assert b"dormant class(es)" not in completed.stdout  # help is the whole output: nothing is scanned
+    assert completed.stderr == b""
