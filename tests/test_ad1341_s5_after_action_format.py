@@ -314,7 +314,8 @@ async def test_a_frontmatter_value_that_is_a_container_is_archived_as_no_value(
     started = time.perf_counter()
     plan = await plan_promotion(records, timeline_id=_SHIP)
 
-    assert time.perf_counter() - started < 2.0  # the graph is never walked
+    # A hang guard only: a walked graph raises RecursionError or fails the assertions below. A CI runner took 2.1 s here (0.65 s on the author's host).
+    assert time.perf_counter() - started < 30.0
     [record] = plan.records
     assert record.source_ref == "reports/alias.md"
     if field == "topic":
