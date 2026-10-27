@@ -261,6 +261,17 @@ def _one_erasure_at_a_time(memory: Any | None) -> contextlib.AbstractAsyncContex
     return held[1]
 
 
+def exclusive_with_erasure(memory: Any | None) -> contextlib.AbstractAsyncContextManager[Any]:
+    """AD-1341 S5 (D11): the AD-754 erasure lock of ``memory``, for a writer that must not interleave with an erasure.
+
+    The continuous promotion holds it while it checks that a lesson's cited episodes are live and archives the lesson,
+    so an erasure on ``memory`` runs wholly before or wholly after (S3 register R3). It is the lock every erasure holds
+    (BF-939, ``_one_erasure_at_a_time``), with that lock's rules: not re-entrant, one per event loop, and no memory, no
+    lock.
+    """
+    return _one_erasure_at_a_time(memory)
+
+
 class ExitNotesBlockErasure(Exception):
     """AD-1341 S4 (D14): exit notes the next reset would archive cite episodes this erasure would erase; none erased.
 

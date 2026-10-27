@@ -3593,6 +3593,20 @@ class AgentWorkConfig(BaseModel):
         return self
 
 
+class ArchivePromotionConfig(BaseModel):
+    """AD-1341 S5 (#1569): continuous promotion into the Ship's Archive, a dream step.
+
+    Default off, so the criteria can be calibrated (#1569 Decision 7): while off, the archive is written only by
+    ``probos reset``. ``settle_hours`` keeps the Captain's review (``probos archive pending``, ``probos archive veto``)
+    open for that long after a source's last update; ``max_per_cycle`` bounds the new entries one full dream cycle
+    writes.
+    """
+
+    enabled: bool = False
+    settle_hours: float = Field(default=24.0, ge=0.0, le=720.0)
+    max_per_cycle: int = Field(default=8, ge=1, le=100)
+
+
 class QualificationConfig(BaseModel):
     """Configuration for the Crew Qualification Battery (AD-566)."""
 
@@ -4033,6 +4047,7 @@ class SystemConfig(BaseModel):
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
     agent_work: AgentWorkConfig = Field(default_factory=AgentWorkConfig)  # AD-1347 S1 (#1627)
+    archive_promotion: ArchivePromotionConfig = Field(default_factory=ArchivePromotionConfig)  # AD-1341 S5 (default OFF)
     temporal: TemporalConfig = TemporalConfig()
     qualification: QualificationConfig = QualificationConfig()
     orientation: OrientationConfig = OrientationConfig()

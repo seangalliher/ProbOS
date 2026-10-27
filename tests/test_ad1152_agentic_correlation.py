@@ -312,6 +312,9 @@ async def _off_observation(
     # BF-918's spoken-audio retention (seconds) was added after this capture too; this agentic-loop
     # observation stores no spoken audio.
     assert config["attachments"].pop("tts_audio_retention_seconds") == 900
+    # AD-1341 S5's continuous-promotion section was added after this capture too. It is default off, and while off
+    # no dream step writes the Ship's Archive; this agentic-loop observation runs no dream cycle.
+    assert config.pop("archive_promotion") == {"enabled": False, "settle_hours": 24.0, "max_per_cycle": 8}
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

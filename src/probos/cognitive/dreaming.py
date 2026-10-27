@@ -84,6 +84,7 @@ class DreamingEngine:
     _knowledge_linter: Any = None
     _quality_trigger: Any = None
     _quality_router: Any = None
+    _continuous_promotion: Any = None  # AD-1341 S5: the Ship's Archive dream step; None, the default, runs none
 
     def __init__(
         self,
@@ -211,6 +212,11 @@ class DreamingEngine:
     def set_rejection_cache(self, cache: Any) -> None:
         """AD-690: Late-bind SQLiteRejectionCache (adopted in finalize phase)."""
         self._rejection_cache = cache
+
+    def set_continuous_promotion(self, step: Any) -> None:
+        """AD-1341 S5: late-bind the Ship's Archive continuous promotion (an async callable), run once per full dream
+        cycle; None runs none. Wired only when the Captain enables ``archive_promotion``."""
+        self._continuous_promotion = step
 
     @property
     def last_clusters(self) -> list[Any]:
@@ -457,6 +463,14 @@ class DreamingEngine:
 
         # Step 0: Flush any un-consolidated episodes (compose with micro-dream)
         micro_report = await self.micro_dream()
+
+        # Step 0b: Ship's Archive continuous promotion (AD-1341 S5), default off. Before the no-episode return: what it
+        # promotes is Ship's Records, not this cycle's episodes. Log-and-degrade: it never fails a dream.
+        if self._continuous_promotion is not None:
+            try:
+                await self._continuous_promotion()
+            except Exception:
+                logger.warning("AD-1341 S5: continuous promotion failed; the dream goes on", exc_info=True)
 
         episodes = await self.episodic_memory.recent(k=self.config.replay_episode_count)
 

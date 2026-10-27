@@ -25,8 +25,10 @@ narrower than ``ship`` or has nothing to archive, and promotes the rest with the
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from probos.knowledge.archive_store import (
@@ -342,6 +344,7 @@ class PromotionReport:
     erased: tuple[str, ...]
     withheld: tuple[str, ...]
     vetoed: tuple[str, ...] = ()  # AD-1341 S3: sources the Captain vetoed; never archived
+    waiting: tuple[str, ...] = ()  # AD-1341 S5: left for a later continuous step or the reset (not settled, or unchecked)
 
 
 async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> PromotionPlan:
@@ -475,3 +478,87 @@ async def review_promotion(records: RecordsStore, archive: ArchiveStore, *, time
     plan = await plan_promotion(records, timeline_id=timeline_id)
     sources = [PendingSource(record, await archive.source_state(record)) for record in plan.records]
     return PromotionReview(sources=tuple(sources), withheld=plan.withheld)
+
+
+def is_settled(record: PromotionRecord, settled_before: float) -> bool:
+    """AD-1341 S5 (D9): whether a source was last updated at or before ``settled_before`` (seconds since the epoch).
+
+    Read from the record's ``record_updated`` (Ship's Records' ``updated``, an ISO 8601 time with its offset). A time
+    with no offset, or one that does not parse, is not settled: such a source waits for the reset's promotion.
+    """
+    stamp = record.metadata.get("record_updated")
+    if type(stamp) is not str:
+        return False
+    try:
+        updated = datetime.fromisoformat(stamp)
+    except ValueError:
+        return False
+    if updated.tzinfo is None:
+        return False
+    return updated.timestamp() <= settled_before
+
+
+async def promote_settled(
+    records: RecordsStore,
+    archive: ArchiveStore,
+    *,
+    timeline_id: str,
+    settled_before: float,
+    max_created: int,
+    cited_live: Callable[[tuple[str, ...]], Awaitable[bool]],
+    exclusive: Callable[[], AbstractAsyncContextManager[Any]],
+) -> PromotionReport:
+    """AD-1341 S5 (D8 to D13): one continuous promotion. Archive settled sources, at most ``max_created`` new entries.
+
+    The reset's own plan and rules (``plan_promotion``), so nothing reaches the archive here that the reset would not.
+    A source is promoted only once it has settled (``is_settled``), so the Captain's review (``probos archive pending``,
+    ``probos archive veto``) keeps a window before canon. A source the archive would not take now (present, erased,
+    vetoed: ``source_state``) is passed over without a write. A source that cites episodes is promoted inside
+    ``exclusive()`` (the AD-754 erasure lock) and only when ``cited_live`` says every cited episode is live, so no
+    erasure runs between that check and the insert, nor between an erasure's own citation check and its erase (S3
+    register R3). Anything else waits (``waiting``) for a later step or the reset; sources after the batch is full are
+    not considered this time. No model call. Each write is ``promote_entry``'s one statement, so a step cut off part-way
+    leaves only whole entries and the next step finds them present. Any failure propagates: the dream step logs it.
+    """
+    if type(max_created) is not int or max_created < 1:
+        raise ValueError("AD-1341 S5: max_created is a positive integer")
+    plan = await plan_promotion(records, timeline_id=timeline_id)
+    created: list[str] = []
+    present: list[str] = []
+    erased: list[str] = []
+    vetoed: list[str] = []
+    waiting: list[str] = []
+    by_outcome = {
+        PromotionOutcome.CREATED: created,
+        PromotionOutcome.PRESENT: present,
+        PromotionOutcome.ERASED: erased,
+        PromotionOutcome.VETOED: vetoed,
+    }
+    for record in plan.records:
+        if len(created) >= max_created:
+            break  # D10: the batch is full; the rest are considered by the next step
+        if not is_settled(record, settled_before):
+            waiting.append(record.source_ref)
+            continue
+        state = (await archive.source_state(record)).outcome
+        if state is not PromotionOutcome.CREATED:
+            by_outcome[state].append(record.source_ref)  # D10: no write for what the archive would not take
+            continue
+        if not record.source_episode_ids:
+            by_outcome[await archive.promote_entry(record)].append(record.source_ref)
+            continue
+        async with exclusive():  # D11 (S3 R3): no erasure between the check below and the insert
+            if not await cited_live(record.source_episode_ids):
+                waiting.append(record.source_ref)  # a cited episode is not live: erased, demoted, or unreadable
+                continue
+            outcome = await archive.promote_entry(record)
+        by_outcome[outcome].append(record.source_ref)
+    logger.info(
+        "AD-1341 S5: continuous promotion for timeline %s: %d created, %d already archived, %d erased by the Captain, "
+        "%d vetoed by the Captain, %d waiting, %d withheld",
+        timeline_id, len(created), len(present), len(erased), len(vetoed), len(waiting), len(plan.withheld),
+    )
+    return PromotionReport(
+        created=tuple(created), present=tuple(present), erased=tuple(erased), withheld=plan.withheld,
+        vetoed=tuple(vetoed), waiting=tuple(waiting),
+    )
