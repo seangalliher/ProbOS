@@ -17,6 +17,15 @@ Each milestone is one Builder delegation and one local commit, staged by explici
 
 **Line endings:** new files are written LF; the script writes the baseline with `newline="\n"` and its output as UTF-8 bytes with LF.
 
+**Amendment A1 (2026-10-27, after round 1 of the M1 review; `claude-architect`).** A1 repairs M1 (`935acb6a`) in one commit before M2, by the pairs in §7.4. §7.1 to §7.3 keep M1's text; where §7.4 differs, §7.4 wins.
+1. **F1:** an import alias counts as its original name where the importing module uses it as a value or a base (D1, D2). The review step's 14 alias rows leave the scan, so the baseline at A1 holds 171 rows: the 52 seeds and 119 for the review step's table (predicted).
+2. **F3:** `main` answers `--help` itself, prefix first, through `_emit`.
+3. **F4 to F6:** three false statements are narrowed: `HEADER` and the module docstring ("reviewed"), `render_baseline`'s docstring (absolute paths) and `_emit`'s (LF on a text-only stdout).
+4. **Recorded, not repaired:** round 1's F2 (R7) and the `NullPolicyEngine` recall limit (R8).
+5. **Tests:** T9 and T10 are added, so the file is predicted at 20 cases.
+6. **Mutation campaign:** the §10 campaign of record moves to the A1 commit, and every row D-1 to D-64 reruns on it. M1's campaign (51 of 51 killed) is superseded because both pinned files change.
+7. **Baseline:** `--update-baseline` regenerates it at A1; it is not edited by a pair (§7.4).
+
 ---
 
 ## 0. Premise: what is present on this tree
@@ -55,10 +64,16 @@ So slices 3 and 4 (working memory, onboarding) have no reproducible acceptance c
 
 - **D1. A use is a value reference; reachability runs inside the module.**
   - Counted as uses: a call, `Name.x`, `module.Name`, a base, a decorator, the class passed as a value, and a string whose last `.` or `:` segment is the name.
+  - **Aliases (A1).** After `from m import X as Y` anywhere in a module (a function body included), a value use of `Y` in that module counts as a use of `X`, and a base written `Y` reaches D3 as `X`. An alias that is only imported, or only used in an annotation, is not a use. Aliases are per module: two modules that alias different classes to one name each resolve only their own.
   - Not counted: imports, annotations, assignment targets, `__all__`, `isinstance`/`issubclass`, `is`/`is not` operands, and `if TYPE_CHECKING:` bodies.
   - A use from another module always counts. A use in the class's own module counts only from module-level code, from a top-level definition with a non-inert decorator, or from a top-level definition that is itself live (a fixed point).
   - Rejected: whole-program reachability from entry points (brittle: one missed root marks a subsystem dormant), and other-module uses only (the audit's false positives).
-- **D2. Names are matched, not resolved** (vulture's model and BF-926's). The check under-reports and never over-reports through an unresolved import. Two classes with one name are live together, and a use from a dormant module still counts. Documented in the module docstring.
+- **D2. Names are matched, not resolved, except an import alias (A1)** (vulture's model and BF-926's).
+  - **What the check does.** It matches a use to every class of that name. It resolves `from m import X as Y` within the importing module (D1). `import m as n` needs no rule, because `n.X` reads `X`.
+  - **So it under-reports.** Two classes with one name are live together, a use from a dormant module still counts, and a use of an alias counts every name its module imports under it.
+  - **What it does not do.** It does not follow `getattr` or an import with a computed name, `config/`, an entry point, or an alias imported again under that alias from the module that made it. A class reached only that way is reported although it is live (R2, R3; AV7 finds no such class alias today).
+  - **Measured on `935acb6a`** with the alias rule patched in (`logs/ad1270/evidence-ad1270dc-alias-probe.txt`): 185 dormant classes became 171, removing exactly the review step's 14 alias rows and adding none. A1's code also resolves bases and keeps every original an alias names. Both can only remove rows, and none is predicted on this tree.
+  - Documented in the module docstring.
 - **D3. Schema kinds and private classes are not reported:** Protocol, Enum family, exceptions, TypedDict, NamedTuple, and pydantic `BaseModel`/`RootModel`/`BaseSettings`, matched by base name transitively across the tree. Validation builds them, which AST cannot see. They are vocabulary, not capability.
 - **D4. Report-only; no test asserts real-tree findings.** One real-tree case asserts exit 0 and the prefix only. The check is not a `run_test_gate.py` phase. Making it a phase, or adding a test that `--check` is clean, would make it a gate: HIGH and the Captain's call (as with BF-926).
 - **D5. The baseline holds dispositions only.** One row per class: `disposition`, plus `owner` (an issue or AD) for `wire`, `retire` and `staged`, or `note` for `false-positive`. No description, status, AD tag, line count or test data. That keeps it a fitness baseline rather than a second capability registry (`platform-maturity-program.md:255`). Line numbers appear in the output only. Keys are `<POSIX path relative to src/probos>::<Class>`.
@@ -98,6 +113,10 @@ Write the new test file first and run it on M1's base. It must fail at collectio
 
 On M1's base the new file fails at collection, so every case errors: `FileNotFoundError` from `spec.loader.exec_module` (predicted). There is no negative case that passes on the base.
 
+(A1) With §7.4's test pair applied over `935acb6a`'s script, T1 to T8 pass and the two A1 cases fail (predicted):
+- **T9** fails at its first assertion. The dormant list holds ten keys, not three: the seven classes reached through an alias or based on one are reported too.
+- **T10** fails at its second assertion. stdout starts with `usage:`, not `PREFIX`.
+
 | ID | Case | Proves |
 |---|---|---|
 | T1 | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` | every use and non-use rule in D1, the in-module fixed point, D3 exclusions, sorted keys |
@@ -108,8 +127,10 @@ On M1's base the new file fails at collection, so every case errors: `FileNotFou
 | T6 | `test_the_command_line_exits_zero_with_lf_utf8_output` | the command line: exit 0, LF bytes, a finding line |
 | T7 | `test_the_output_names_no_absolute_path` | host-independent output |
 | T8 | `test_modules_are_read_in_posix_path_order_on_every_host` | Windows and Linux read modules in the same order |
+| T9 | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` | (A1) an alias used as a value in a function, imported and used inside a function body, used at module level (two on one import line), naming a helper that builds a dataclass, and naming a schema base, counts as its original. An annotation-only alias, the same alias name in another module and a plain unused import do not. |
+| T10 | `test_help_starts_with_the_prefix_and_is_written_lf_utf8` | (A1) `--help` from the command line: prefix first, LF bytes, nothing scanned |
 
-Predicted: 18 cases; the focused list is predicted at those plus BF-926's file. The orchestrator measures both.
+Predicted: 18 cases at M1 and 20 after A1; the focused list is predicted at those plus BF-926's file. The orchestrator measures both.
 
 ## 7. The contract
 
@@ -820,6 +841,306 @@ def test_modules_are_read_in_posix_path_order_on_every_host(tmp_path: Path) -> N
 | `events.py::TrustUpdateEvent` | retire | `#1324` | AD-527 typed form never built; the producer emits trust_update as a dict that carries old_score, which this class lacks |
 | `events.py::<each other Group E name, §0>` (42 rows) | retire | `#1324` | AD-527 typed form never built; producers emit the EventType with a dict |
 
+### 7.4 Repair 1 (A1)
+
+These pairs are written against M1's files as committed at `935acb6a`. Each SEARCH occurs once in its file, matched on the LF blob (the Windows working copy may be CRLF).
+
+**Order:**
+1. Apply pair T-1 first and run the test file over `935acb6a`'s script. Predicted: 18 passed, 2 failed (§6).
+2. Apply S-1 to S-6, then run M1's focused gate.
+3. Regenerate the baseline (the last paragraph of this section).
+4. Commit the three files.
+
+**Pair S-1 (`scripts/check_dormant_classes.py`).** SEARCH:
+```
+Names are matched, not resolved (the shape of vulture's dead-code scan and of BF-926's
+``check_config_readers.py``), so it under-reports: two classes with one name are live together,
+and a use from a dormant module still counts. It cannot see a class built from ``config/``, an
+entry point or a name assembled at run time. Protocols, enums, exceptions, TypedDicts,
+NamedTuples and pydantic models are schema rather than capability and are not reported; nor are
+private classes.
+
+The baseline holds one row per dormant class and its reviewed disposition (wire, retire or
+staged, each with an owner issue or AD; or false-positive, with a note) and nothing else, so it
+does not become a second capability registry (``platform-maturity-program.md``, AD-1270a).
+```
+REPLACE:
+```
+Names are matched, not resolved (the shape of vulture's dead-code scan and of BF-926's
+``check_config_readers.py``), with one exception: an import alias. After ``from m import X as Y``
+anywhere in a module, a function body included, a value use of ``Y`` in that module, or a base
+written as ``Y``, also counts as ``X``. An alias that is only imported or only annotates is not a
+use, and an alias belongs to the module that imports it. ``import m as n`` needs no rule: ``n.X``
+reads ``X``. So it under-reports: two classes with one name are live together, a use from a
+dormant module still counts, and a use of an alias counts for every name the module imports under
+it. It over-reports a class that only a path it cannot see reaches: ``config/``, an entry point,
+``getattr`` or an import with a computed name, or an alias imported under that alias from the
+module that made it. Protocols, enums, exceptions, TypedDicts, NamedTuples and pydantic models are
+schema rather than capability and are not reported; nor are private classes.
+
+The baseline holds one row per dormant class and its disposition and nothing else: ``unreviewed``
+until a reviewer sets wire, retire or staged (each with an owner issue or AD) or false-positive
+(with a note). Holding nothing else keeps it from becoming a second capability registry
+(``platform-maturity-program.md``, AD-1270a).
+```
+
+**Pair S-2 (`scripts/check_dormant_classes.py`).** SEARCH:
+```
+    "# AD-1270 (#1324): production classes that nothing in production uses, each with its reviewed disposition.\n"
+```
+REPLACE:
+```
+    "# AD-1270 (#1324): production classes that nothing in production uses, each with its disposition.\n"
+```
+
+**Pair S-3 (`scripts/check_dormant_classes.py`).** SEARCH:
+```
+def _parse_module(path: str, tree: ast.Module) -> _Module:
+    module = _Module(path)
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module.root_uses |= _uses(node)
+            continue
+        module.symbols.setdefault(node.name, set()).update(_uses(node))
+        if any(_last_name(decorator) not in INERT_DECORATORS for decorator in node.decorator_list):
+            module.registered.add(node.name)
+        if isinstance(node, ast.ClassDef):
+            module.classes[node.name] = (node.lineno, [_last_name(base) for base in node.bases])
+    return module
+```
+REPLACE:
+```
+def _aliases(tree: ast.Module) -> dict[str, set[str]]:
+    """``{Y: {X, ...}}`` for each ``from m import X as Y`` anywhere in the module, a function body included."""
+    aliases: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.asname and alias.asname != alias.name:
+                    aliases.setdefault(alias.asname, set()).add(alias.name)
+    return aliases
+
+
+def _resolve(names: set[str], aliases: dict[str, set[str]]) -> set[str]:
+    """``names`` and the original name behind each alias among them."""
+    return names.union(*(aliases.get(name, set()) for name in names))
+
+
+def _parse_module(path: str, tree: ast.Module) -> _Module:
+    module = _Module(path)
+    aliases = _aliases(tree)
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module.root_uses |= _resolve(_uses(node), aliases)
+            continue
+        module.symbols.setdefault(node.name, set()).update(_resolve(_uses(node), aliases))
+        if any(_last_name(decorator) not in INERT_DECORATORS for decorator in node.decorator_list):
+            module.registered.add(node.name)
+        if isinstance(node, ast.ClassDef):
+            bases = _resolve({_last_name(base) for base in node.bases}, aliases)
+            module.classes[node.name] = (node.lineno, sorted(bases))
+    return module
+```
+
+**Pair S-4 (`scripts/check_dormant_classes.py`).** SEARCH:
+```
+    """The baseline text: sorted, ASCII, no timestamps and no absolute paths."""
+```
+REPLACE:
+```
+    """The baseline text: sorted, ASCII and without a timestamp. Keys are relative paths; a retained owner or note is kept as written."""
+```
+
+**Pair S-5 (`scripts/check_dormant_classes.py`).** SEARCH:
+```
+    """Write ``text`` and a newline as UTF-8 with LF line ends, whatever the host's console does."""
+```
+REPLACE:
+```
+    """Write ``text`` and a newline as UTF-8 with LF line ends to stdout's byte buffer.
+
+    A stdout without a ``buffer`` (a text-only stream) gets ``print``, so that stream's own newline
+    translation applies.
+    """
+```
+
+**Pair S-6 (`scripts/check_dormant_classes.py`).** SEARCH:
+```
+def main(argv: list[str] | None = None) -> int:
+    """Print the findings, rewriting the baseline first when asked. Returns 0 on every path."""
+    try:
+        parser = argparse.ArgumentParser(description="Report production classes nothing in production uses (report-only).")
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument("--check", action="store_true", help="compare the tree with the baseline (the default)")
+        mode.add_argument("--update-baseline", action="store_true", help="rewrite the baseline, keeping reviewed rows")
+        parser.add_argument("--src", default=str(DEFAULT_SOURCE), help="source tree scanned")
+        parser.add_argument("--baseline", default=str(DEFAULT_BASELINE), help="reviewed baseline file")
+        args, unknown = parser.parse_known_args(argv)
+    except SystemExit as exc:  # argparse exits on a malformed command line; this check never does
+        if exc.code not in (0, None):
+            _emit(f"{PREFIX}could not parse the arguments (argparse exit {exc.code}); nothing checked")
+        return 0
+    try:
+        report = build_report(Path(args.src))
+```
+REPLACE:
+```
+def main(argv: list[str] | None = None) -> int:
+    """Print the findings, rewriting the baseline first when asked. Returns 0 on every path.
+
+    ``--help`` is answered here, not by argparse, so its first line also starts with ``PREFIX`` and it
+    is written through ``_emit``.
+    """
+    try:
+        parser = argparse.ArgumentParser(
+            description="Report production classes nothing in production uses (report-only).", add_help=False
+        )
+        parser.add_argument("-h", "--help", action="store_true", help="show this help and check nothing")
+        mode = parser.add_mutually_exclusive_group()
+        mode.add_argument("--check", action="store_true", help="compare the tree with the baseline (the default)")
+        mode.add_argument("--update-baseline", action="store_true", help="rewrite the baseline, keeping reviewed rows")
+        parser.add_argument("--src", default=str(DEFAULT_SOURCE), help="source tree scanned")
+        parser.add_argument("--baseline", default=str(DEFAULT_BASELINE), help="baseline file of dispositions")
+        args, unknown = parser.parse_known_args(argv)
+    except SystemExit as exc:  # argparse exits on a malformed command line; this check never does
+        if exc.code not in (0, None):
+            _emit(f"{PREFIX}could not parse the arguments (argparse exit {exc.code}); nothing checked")
+        return 0
+    try:
+        if args.help:
+            _emit(f"{PREFIX}help; nothing checked\n{parser.format_help().rstrip()}")
+            return 0  # help is the whole output
+        report = build_report(Path(args.src))
+```
+
+**Pair T-1 (`tests/test_ad1270_dormant_classes.py`).** SEARCH:
+```
+def test_modules_are_read_in_posix_path_order_on_every_host(tmp_path: Path) -> None:
+    source = _tree(tmp_path / "src", {"pkg/a.py": "def (:\n", "pkg/B.py": "def (:\n"})
+
+    report = checker.build_report(source)
+
+    assert report.warnings == ["skipped pkg/B.py: SyntaxError", "skipped pkg/a.py: SyntaxError"]
+```
+REPLACE:
+```
+def test_modules_are_read_in_posix_path_order_on_every_host(tmp_path: Path) -> None:
+    source = _tree(tmp_path / "src", {"pkg/a.py": "def (:\n", "pkg/B.py": "def (:\n"})
+
+    report = checker.build_report(source)
+
+    assert report.warnings == ["skipped pkg/B.py: SyntaxError", "skipped pkg/a.py: SyntaxError"]
+
+
+# --- T9, T10 (A1): import aliases and --help ----------------------------------------------
+
+_ALIAS_DEFS = '''\
+from dataclasses import dataclass
+from typing import Protocol as P
+
+from pydantic import BaseModel as BM
+
+
+class AliasedBuilt: ...
+class AliasedInFunction: ...
+class FirstOnLine: ...
+class SecondOnLine: ...
+class AliasedAnnotationOnly: ...
+class SameAliasElsewhere: ...
+class NotAliasedUnused: ...
+class AliasedPort(P): ...
+class AliasedModel(BM): ...
+
+
+@dataclass(frozen=True)
+class BuiltByHelper:
+    value: int = 0
+
+
+def make_built():
+    return BuiltByHelper()
+'''
+
+_ALIAS_USER = '''\
+from pkg.defs import AliasedAnnotationOnly as _Ann
+from pkg.defs import AliasedBuilt as _Built
+from pkg.defs import FirstOnLine as _First, SecondOnLine as _Second
+from pkg.defs import NotAliasedUnused
+from pkg.defs import make_built as _make
+
+PAIR = (_First, _Second)
+CURRENT: _Ann | None = None
+
+
+def run(x: _Ann) -> _Ann:
+    _Built()
+    _make()
+    return x
+
+
+def lazy():
+    from pkg.defs import AliasedInFunction as _Lazy
+
+    return _Lazy()
+'''
+
+_ALIAS_OTHER = '''\
+from pkg.defs import SameAliasElsewhere as _Built
+
+
+def typed(x: _Built) -> None:
+    return None
+'''
+
+
+def test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value(tmp_path: Path) -> None:
+    source = _tree(
+        tmp_path / "src", {"pkg/defs.py": _ALIAS_DEFS, "pkg/user.py": _ALIAS_USER, "pkg/other.py": _ALIAS_OTHER}
+    )
+
+    report = checker.build_report(source)
+
+    assert [candidate.key for candidate in report.dormant] == [
+        "pkg/defs.py::AliasedAnnotationOnly",
+        "pkg/defs.py::NotAliasedUnused",
+        "pkg/defs.py::SameAliasElsewhere",
+    ]
+    assert report.warnings == []
+
+
+def test_help_starts_with_the_prefix_and_is_written_lf_utf8(tmp_path: Path) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable, "-P", str(_SCRIPT), "--help",
+            "--src", str(tmp_path / "src"), "--baseline", str(tmp_path / "absent.yaml"),
+        ],
+        capture_output=True, timeout=300, cwd=_REPO_ROOT,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.startswith(checker.PREFIX.encode("ascii") + b"help; nothing checked\n")
+    assert b"\r" not in completed.stdout
+    assert completed.stdout.endswith(b"\n")
+    assert b"--update-baseline" in completed.stdout
+    assert b"dormant class(es)" not in completed.stdout  # help is the whole output: nothing is scanned
+    assert completed.stderr == b""
+```
+
+**Baseline at the A1 commit (a command, not a pair).** Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_dormant_classes.py --update-baseline`. It must print `baseline rewritten: docs/development/dormant-class-baseline.yaml`.
+- `git diff --stat` on the baseline is predicted at 1 insertion and 29 deletions: line 1 loses "reviewed ", and the 14 alias rows (two lines each) are dropped. Nothing else changes.
+- Then `--check` is predicted to print `171 dormant class(es): 0 new, 119 without a reviewed disposition, 0 baseline row(s) no longer dormant`.
+- A pair is not used because the script writes `HEADER` itself, so a hand-written header would be a second copy that could drift. The drop of the 14 rows is the rule under test.
+
+**What T9 covers:**
+- An aliased class built by a function: `_Built`.
+- An alias imported inside a function body: `_Lazy`.
+- Two aliases on one line, used at module level: `PAIR`.
+- An aliased helper that builds a dataclass: `_make` → `BuiltByHelper`.
+- Aliased schema bases: `P`, `BM`.
+- An alias used only in annotations, which stays dormant: `_Ann`.
+- The same alias name in another module, which does not leak: `other.py`.
+- A non-aliased unused import, still reported: `NotAliasedUnused`.
+
 ## 8. Tracking (M2's commit)
 
 **Pair U1 (`PROGRESS.md`).** SEARCH:
@@ -831,7 +1152,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1270 (2026-10-2X), #1324 slice 2 -- the dormant-class check.** `scripts/check_dormant_classes.py` lists the production classes that nothing live uses, against a reviewed baseline, `docs/development/dormant-class-baseline.yaml`: one row per class, with its disposition (wire, retire or staged with an owner issue or AD, or false-positive with a note) and nothing else, so it is not a capability registry. A use is a value reference (a call, an attribute read, a base, a decorator, the class passed as a value, a string naming it); imports, annotations, `__all__`, `isinstance` and `is` tests and `TYPE_CHECKING` blocks are not uses, and a use inside the class's own module counts only from live code. It replaces the 2026-10-16 built-but-dormant audit, whose method missed loop and factory construction (25 qualification probes, the work-item pull tools, `RecreationTurnSupport`) and counted same-module use as none (`PolicyWindow`, `ProvenanceEnvelope`, `PerformanceReview`, `IgnoreSpec`, `ReaderIdentity`, `CommunicationQualityProbe`). Report-only: exit 0 on every input, not a `run_test_gate.py` phase, and no test asserts what it finds in the real tree. `--update-baseline` keeps reviewed rows, adds new classes as `unreviewed` and drops classes that became live, so the working-memory and onboarding slices can take "these rows leave the list" as acceptance. `OntologyService.set_alert_condition` (no caller) is a method, outside a class check, and stays on #1324's register. New: `tests/test_ad1270_dormant_classes.py`. The contract is `prompts/ad-1270-dormant-class-check.md`.
+**AD-1270 (2026-10-2X), #1324 slice 2 -- the dormant-class check.** `scripts/check_dormant_classes.py` lists the production classes that nothing live uses, against a reviewed baseline, `docs/development/dormant-class-baseline.yaml`: one row per class, with its disposition (wire, retire or staged with an owner issue or AD, or false-positive with a note) and nothing else, so it is not a capability registry. A use is a value reference (a call, an attribute read, a base, a decorator, the class passed as a value, a string naming it); imports, annotations, `__all__`, `isinstance` and `is` tests and `TYPE_CHECKING` blocks are not uses, and a use inside the class's own module counts only from live code; a name imported under an alias (`from m import X as Y`) counts as `X` where that module uses `Y` as a value or a base. It replaces the 2026-10-16 built-but-dormant audit, whose method missed loop and factory construction (25 qualification probes, the work-item pull tools, `RecreationTurnSupport`) and counted same-module use as none (`PolicyWindow`, `ProvenanceEnvelope`, `PerformanceReview`, `IgnoreSpec`, `ReaderIdentity`, `CommunicationQualityProbe`). Report-only: exit 0 on every input, not a `run_test_gate.py` phase, and no test asserts what it finds in the real tree. `--update-baseline` keeps reviewed rows, adds new classes as `unreviewed` and drops classes that became live, so the working-memory and onboarding slices can take "these rows leave the list" as acceptance. `OntologyService.set_alert_condition` (no caller) is a method, outside a class check, and stays on #1324's register. New: `tests/test_ad1270_dormant_classes.py`. The contract is `prompts/ad-1270-dormant-class-check.md`.
 
 ```
 
@@ -845,7 +1166,7 @@ REPLACE:
 ```
 ### AD-1270 (#1324) -- the dormant-class check: value uses with in-module reachability, a disposition-only baseline, report-only (2026-10-2X)
 
-**Decision.** `scripts/check_dormant_classes.py` reports a top-level class under `src/probos` as dormant when nothing live uses it as a value. Imports, annotations, `__all__`, `isinstance`/`issubclass`, `is` operands and `TYPE_CHECKING` blocks are not uses; a use from another module always counts; a use in the class's own module counts only from module-level code, a registering decorator or a live definition. Schema kinds (Protocol, Enum, exceptions, TypedDict, NamedTuple, pydantic models) and private classes are not reported. `docs/development/dormant-class-baseline.yaml` records only a disposition per class. The check exits 0 on every input; it is not a gate phase and no test asserts its real-tree findings. The 43 AD-527 typed events no producer builds are marked `retire` (their deletion is a later slice). **Why.** The 2026-10-16 audit's list could not be acceptance for the working-memory and onboarding slices: a quarter of it was live code its method could not see. A disposition-only baseline keeps the check a fitness report and not a second capability registry (`platform-maturity-program.md`). **Rejected.** Whole-program reachability from entry points (one missed root, a route decorator or a server string, marks a subsystem dormant). Other-module uses only (the audit's method). Counting annotations and imports as uses (it answers "is it named?", not "is it used?"). A suite test that `--check` is clean (a gate in effect: HIGH and the Captain's call). Unused methods, such as `OntologyService.set_alert_condition` (name matching on methods would flood; it stays on #1324's register).
+**Decision.** `scripts/check_dormant_classes.py` reports a top-level class under `src/probos` as dormant when nothing live uses it as a value. Imports, annotations, `__all__`, `isinstance`/`issubclass`, `is` operands and `TYPE_CHECKING` blocks are not uses; a use from another module always counts; a use in the class's own module counts only from module-level code, a registering decorator or a live definition; a name imported under an alias counts as its original where the importing module uses the alias as a value or a base (without this, 14 live classes were reported). Schema kinds (Protocol, Enum, exceptions, TypedDict, NamedTuple, pydantic models) and private classes are not reported. `docs/development/dormant-class-baseline.yaml` records only a disposition per class. The check exits 0 on every input; it is not a gate phase and no test asserts its real-tree findings. The 43 AD-527 typed events no producer builds are marked `retire` (their deletion is a later slice). **Why.** The 2026-10-16 audit's list could not be acceptance for the working-memory and onboarding slices: a quarter of it was live code its method could not see. A disposition-only baseline keeps the check a fitness report and not a second capability registry (`platform-maturity-program.md`). **Rejected.** Whole-program reachability from entry points (one missed root, a route decorator or a server string, marks a subsystem dormant). Other-module uses only (the audit's method). Counting annotations and imports as uses (it answers "is it named?", not "is it used?"). Counting an aliased import as a use of its original whether or not the alias is used (vulture's rule; an unused import is still an import). A suite test that `--check` is clean (a gate in effect: HIGH and the Captain's call). Unused methods, such as `OntologyService.set_alert_condition` (name matching on methods would flood; it stays on #1324's register).
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -883,7 +1204,7 @@ Parent checklist (the orchestrator, on #1324): add and tick a slice-2 item with 
 | D-17 | M1 | `scripts/check_dormant_classes.py` | `found.add(node.attr)` | `pass` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
 | D-18 | M1 | `scripts/check_dormant_classes.py` | `elif isinstance(node, ast.Constant) and isinstance(node.value, str):` | `elif False:` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
 | D-19 | M1 | `scripts/check_dormant_classes.py` | `found.add(re.split(r"[.:]", node.value)[-1])` | `found.add(node.value)` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
-| D-20 | M1 | `scripts/check_dormant_classes.py` | `module.root_uses \|= _uses(node)` | `pass` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
+| D-20 | M1 | `scripts/check_dormant_classes.py` | `module.root_uses \|= _resolve(_uses(node), aliases)` | `pass` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value`, `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
 | D-21 | M1 | `scripts/check_dormant_classes.py` | `if any(_last_name(decorator) not in INERT_DECORATORS for decorator in node.decorator_list):` | `if False:` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
 | D-22 | M1 | `scripts/check_dormant_classes.py` | `if users.get(name, set()) - {module.path} or name in module.root_uses or name in module.registered` | `if users.get(name, set()) or name in module.root_uses or name in module.registered` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
 | D-23 | M1 | `scripts/check_dormant_classes.py` | `frontier.append(name)` | `pass` | `test_a_class_is_dormant_unless_something_live_uses_it_as_a_value` |
@@ -915,14 +1236,28 @@ Parent checklist (the orchestrator, on #1324): add and tick a slice-2 item with 
 | D-49 | M1 | `scripts/check_dormant_classes.py` | `report.warnings.append("baseline not rewritten: the scan was incomplete or the baseline could not be read")` | `pass` | `test_the_baseline_is_not_rewritten_from_an_incomplete_scan_or_an_unreadable_baseline[an incomplete scan]`, `test_the_baseline_is_not_rewritten_from_an_incomplete_scan_or_an_unreadable_baseline[an unreadable baseline]` |
 | D-50 | M1 | `scripts/check_dormant_classes.py` | `report.warnings.extend(f"ignored argument {item!r}" for item in unknown)` | `pass` | `test_the_check_exits_zero_on_every_input[an unknown argument]` |
 | D-51 | M1 | `scripts/check_dormant_classes.py` | `except Exception as exc:  # report-only: a failure to report is itself only reported` | `except ZeroDivisionError as exc:  # report-only: a failure to report is itself only reported` | `test_the_check_exits_zero_on_every_input[a baseline in a missing directory]` |
+| D-52 | M1 | `scripts/check_dormant_classes.py` | `for node in ast.walk(tree):` | `for node in tree.body:` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-53 | M1 | `scripts/check_dormant_classes.py` | `if isinstance(node, ast.ImportFrom):` | `if False:` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-54 | M1 | `scripts/check_dormant_classes.py` | `if alias.asname and alias.asname != alias.name:` | `if False:` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-55 | M1 | `scripts/check_dormant_classes.py` | `aliases.setdefault(alias.asname, set()).add(alias.name)` | `pass` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-56 | M1 | `scripts/check_dormant_classes.py` | `return names.union(*(aliases.get(name, set()) for name in names))` | `return names` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-57 | M1 | `scripts/check_dormant_classes.py` | `module.root_uses \|= _resolve(_uses(node), aliases)` | `module.root_uses \|= _uses(node)` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-58 | M1 | `scripts/check_dormant_classes.py` | `module.symbols.setdefault(node.name, set()).update(_resolve(_uses(node), aliases))` | `module.symbols.setdefault(node.name, set()).update(_uses(node))` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-59 | M1 | `scripts/check_dormant_classes.py` | `bases = _resolve({_last_name(base) for base in node.bases}, aliases)` | `bases = {_last_name(base) for base in node.bases}` | `test_an_import_alias_counts_as_its_original_name_where_it_is_used_as_a_value` |
+| D-60 | M1 | `scripts/check_dormant_classes.py` | `if args.help:` | `if False:` | `test_help_starts_with_the_prefix_and_is_written_lf_utf8` |
+| D-61 | M1 | `scripts/check_dormant_classes.py` | `_emit(f"{PREFIX}help; nothing checked\n{parser.format_help().rstrip()}")` | `pass` | `test_help_starts_with_the_prefix_and_is_written_lf_utf8` |
+| D-62 | M1 | `scripts/check_dormant_classes.py` | `return 0  # help is the whole output` | `pass` | `test_help_starts_with_the_prefix_and_is_written_lf_utf8` |
+| D-63 | M1 | `scripts/check_dormant_classes.py` | `parser.add_argument("-h", "--help", action="store_true", help="show this help and check nothing")` | `pass` | `test_help_starts_with_the_prefix_and_is_written_lf_utf8` |
+| D-64 | M1 | `scripts/check_dormant_classes.py` | `description="Report production classes nothing in production uses (report-only).", add_help=False` | `description="Report production classes nothing in production uses (report-only).",` | `test_help_starts_with_the_prefix_and_is_written_lf_utf8` |
 
-The `|` characters in the D-1 and D-20 cells are escaped as `\|` for the table; the line in the file has a plain `|`. Each line occurs once in the script. Lines with no row, and why:
+The `|` characters in the D-1, D-20 and D-57 cells are escaped as `\|` for the table; the line in the file has a plain `|`. Each line occurs once in the script; D-20 and D-57 are two mutants of one line. Rows D-52 to D-64 and D-20's new line are A1's. Lines with no row, and why:
 - the docstrings and `HEADER`: text only;
 - `TYPE_TESTS`: D-11 covers it;
 - `_where`, `render_baseline`, `_Module.uses` and `merged[candidate.key] = row`: every T2/T3 assertion depends on them, so a mutant fails the unmutated path broadly;
 - `live.add(name)`: a mutant would loop forever on reachability cycles in the real tree, so there is no row.
+- (A1) `aliases: dict[str, set[str]] = {}`, `return aliases`, `aliases = _aliases(tree)` and `module.classes[node.name] = (node.lineno, sorted(bases))`: a mutant breaks every scan (T1 and T9 fail broadly); `for alias in node.names:` is covered by D-54 and D-55.
 
-The census pins `scripts/check_dormant_classes.py` and `tests/test_ad1270_dormant_classes.py` from M1. If either file differs at census time, rerun every row.
+The census pins `scripts/check_dormant_classes.py` and `tests/test_ad1270_dormant_classes.py` from the A1 commit (M1's campaign of 51 rows is superseded: both files changed). If either file differs at census time, rerun every row. Predicted unmutated baseline: 20 passed.
 
 ## 11. Verified Against Codebase (2026-10-27, on `894526c6`; the citations into `runtime.py` re-read on `65f5e02b`)
 
@@ -956,6 +1291,8 @@ Grep pyproject.toml [project.scripts] -> probos = "probos.__main__:main" (a func
 | AV4 | `MemoryMetabolism`/`SalienceFilter`: imports and annotations only | Grep the names in `src/probos` | `agent_working_memory.py:26,29,291,328,568`; `config_models/cognition.py:334` (prose) | yes |
 | AV5 | No test enumerates `scripts/` | Grep `SCRIPTS.*glob\|scripts.*\.glob\(\|scripts.*iterdir` in `tests` | none | yes |
 | AV6 | No class path in `config/` | Grep `probos\.[a-z_.]+\.[A-Z][A-Za-z]+` in `config` | none | yes |
+| AV7 | (A1, 2026-10-27) No class is aliased at module level and so re-exportable under its alias | Grep `^\s*from \S+ import .*\b[A-Z]\w* as [A-Za-z]\w*` and `^\s+[A-Z]\w* as [A-Za-z]\w*,?\s*(#.*)?$` in `src/probos`; Grep the same in `**/__init__.py` | `admission/taxonomy.py:15` and `cognitive/standing_interests.py:57` (constants); `ward_room/threads.py:549`, `ward_room/messages.py:298,426`, `runtime.py:1661-1663` (inside functions); `cognitive/repair_issue.py:19` (`TraceReader as TraceReader`, same name); `__init__.py`: `doctor/__init__.py:24` (a module) | yes for capitalised names; aliased functions not enumerated |
+| AV8 | (A1, 2026-10-27) Nothing sets `runtime.action_dispatcher`, `teams_adapter`, `federation_hebbian_map` or `federation_cluster_monitor` (R11) | Grep `\b(action_dispatcher\|teams_adapter\|federation_hebbian_map\|federation_cluster_monitor)\b` in `src/probos`; Grep `setattr\((self\.)?(runtime\|self\|rt)\b` in `src/probos` | 12 lines: reads at `reply_pipeline.py:1070`, `routers/agent_actions.py:34`, `routers/teams_webhook.py:29`, `commands_status.py:165-166`; `= None` at `runtime.py:1309-1310`; the rest are docstrings, a log string and imports. `setattr`: `startup/shutdown.py:371,470,472`, each setting `None` | yes |
 
 ## Not verified (the orchestrator verifies by running)
 
@@ -977,6 +1314,7 @@ Grep pyproject.toml [project.scripts] -> probos = "probos.__main__:main" (a func
 - **External: vulture** (https://github.com/jendrikseipp/vulture), the closest analogue. It matches names over `ast`, reports unused classes at 60% confidence, and keeps a generated whitelist (`--make-whitelist`).
   - **Absorbed:** name matching, report-only, a generated record of accepted findings.
   - **Adapted:** our baseline carries a reviewed disposition instead of fake uses. Our rule counts value uses only, because the question is "is it used at run time?", not "is it named?".
+  - **Adapted (A1), aliases:** vulture's `_add_aliases` adds `name_and_alias.name` to `used_names` whenever an `asname` is imported (https://github.com/jendrikseipp/vulture/blob/main/vulture/core.py). We count the original only where the alias is used as a value or a base, because an unused import is not a use (D1).
   - **Rejected:** confidence percentages (the dispositions do that job) and `--ignore-names` (it hides findings without review).
 - **Reference projects:** `docs/research/reference-projects.md` has no dead-code tooling row. Its overdue rows were not examined (date used: 2026-10-27).
 - **Internal:**
@@ -998,23 +1336,32 @@ Grep pyproject.toml [project.scripts] -> probos = "probos.__main__:main" (a func
 
 ## 14. Diff Reviewer: properties to verify
 
-**M1:**
-1. `main` returns 0 for every argv and every file state, and its first output line starts with `PREFIX`.
+**M1 (as amended by A1):**
+1. `main` returns 0 for every argv and every file state, and its first output line starts with `PREFIX`. This includes `--help`, which `main` answers through `_emit` (A1).
 2. A class is reported if and only if the D1 rules find no live value use and D3 does not exclude it. Imports, annotations, `__all__`, `isinstance`/`issubclass` second arguments, `is` operands and `TYPE_CHECKING` bodies never make a class live.
+   - (A1) After `from m import X as Y` anywhere in a module, a value use of `Y` in that module, or a base written `Y`, counts as `X`. An alias that is only imported or only annotates does not. An alias in one module never resolves a name in another.
+   - (A1) The repair is monotone: it only adds names to use sets and bases, so it removes report rows and never adds one.
 3. `--update-baseline` never writes after a scan warning or from an unreadable or non-baseline document. When it writes, reviewed `disposition`/`owner`/`note` survive, new classes are `unreviewed`, and rows no longer dormant are dropped.
-4. The baseline and stdout are UTF-8 with LF, sorted, and contain no timestamp and no absolute path.
+4. The baseline and stdout are UTF-8 and sorted, with no timestamp.
+   - The header, the keys and every diagnostic line name no absolute path; a retained `owner` or `note` is kept as written (A1, F5).
+   - The baseline is LF. stdout is LF when it has a byte buffer; a text-only stdout gets `print`'s line ends (A1, F6).
 5. The script imports nothing from `probos` and writes no file other than `--baseline`.
 6. No test asserts which classes the real tree reports.
+7. (A1) Every claim in the module docstring, in `HEADER` and in the docstrings of `render_baseline`, `_emit` and `main` is true of the code at the commit.
 
 **M2:**
-7. `--check` reports 0 new, 0 without a reviewed disposition, 0 no longer dormant. No row carries fields other than `disposition`, `owner` and `note`.
+8. `--check` reports `171 dormant class(es): 0 new, 0 without a reviewed disposition, 0 baseline row(s) no longer dormant` (171 predicted). No row carries fields other than `disposition`, `owner` and `note`.
+9. (A1) None of the review step's 14 alias rows is in the baseline. The 119 applied rows equal its table less those 14, field for field, and no seed row changed.
+10. (A1) Each `owner` names an issue, or the AD of an issue, that exists and is OPEN. Each `false-positive` `note` is true of the tree at the commit: the `file:line` it cites says what the note claims. The U1 and U2 sentences are true of the code.
 
 ## 15. Acceptance criteria
 
 - [ ] M1 and M2 built in order with the review step between, one delegation and one local commit each, staged by explicit path.
 - [ ] The new test file failed at collection on M1's base before the script was written.
 - [ ] M1's focused gate passes with `-n 0`. The Builder's report contains the full `--check` output and any seed with no row.
-- [ ] The §10 campaign runs once on the M1 tree. Every row is killed, or recorded as host-equivalent (D-27, D-43, D-48 on Linux only), or returned to the Architect.
+- [ ] (A1) Over `935acb6a`'s script, T9 fails at its first assertion and T10 at its second, and the other 18 cases pass. On the A1 commit all 20 pass.
+- [ ] (A1) At the A1 commit, `--update-baseline` drops exactly the 14 alias rows and changes only the header's first line; `--check` then prints `0 new, 119 without a reviewed disposition, 0 baseline row(s) no longer dormant` (predicted).
+- [ ] The §10 campaign runs once on the A1 commit (it supersedes M1's). Every row D-1 to D-64 is killed, or recorded as host-equivalent (D-27, D-43, D-48 on Linux only), or returned to the Architect.
 - [ ] After M2, `--check` shows no findings. `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` pass.
 - [ ] The orchestrator's single broad gate passes with its receipt.
 - [ ] #1324 gets a ticked slice-2 checklist item with commits and receipt, and the register rows below.
@@ -1023,8 +1370,49 @@ Grep pyproject.toml [project.scripts] -> probos = "probos.__main__:main" (a func
 ## For the register (#1324)
 
 - **R1.** `OntologyService.set_alert_condition` has no caller (`ontology/service.py:105`), so `red_alert` never fires. It is a method, outside a class check. Owner: whichever slice gives the alert condition a writer.
-- **R2.** Names are matched, not resolved. Two classes with one name are live together, and a use from a dormant module counts. The check under-reports.
+- **R2.** Names are matched, not resolved, apart from A1's import-alias rule (D2).
+  - **Under-reports:**
+    - Two classes with one name are live together.
+    - A use from a dormant module counts.
+    - A use of an alias counts every name its module imports under it.
+    - An inert decorator imported under an alias (`from dataclasses import dataclass as dc`) counts as registering.
+    - `Y = X` counts `X` as used even when `Y` never is.
+  - **Over-reports** (a live class listed): a class reached only through an alias imported again under that alias from the module that made it (none for class names today, AV7), only through `getattr` or an import with a computed name, or as R3 says.
 - **R3.** Construction from `config/`, an entry point or a run-time-built name is invisible. None exists today (AV6; the entry point is a function).
 - **R4.** An owner issue that has closed is not detected offline. Example: the audit called `RegistryComponentSource` staged under AD-1287, but #1334 is CLOSED. The review step decides its row.
 - **R5.** Mutants D-27, D-43 and D-48 are killed only on Windows; on Linux they are equivalent.
 - **R6.** Retiring the 43 typed events (D6) is a later slice with a DECISIONS entry. Until then they stay listed as `retire`.
+- **R7.** (Round 1 F2: P2, reached only by injected faults, recorded.) `load_baseline` (`scripts/check_dormant_classes.py:236-252` at `935acb6a`) accepts any YAML document with a `classes` mapping.
+  - A duplicate class key keeps the last row with no warning, so a reviewed row can become `unreviewed`.
+  - An unsupported `schema_version` is accepted, and `--update-baseline` rewrites it as 1.
+  - An unrelated document with a `classes` mapping is treated as a baseline.
+  - **Reach:** a hand-edited or future-format baseline only. The loss shows in `git diff` and in `--check`'s output.
+  - **Smallest fix:** a `SafeLoader` subclass whose mapping constructor raises on a repeated key, and rejection of any `schema_version` other than 1 and of a non-mapping row. Each returns `None` with a warning, so `--update-baseline` does not write.
+  - Owner: #1324, the next slice that edits the script.
+- **R8.** (Round 1: P3, ordinary reach, by design.) A string constant's last `.`/`:` segment counts as a use (D1). So `NullPolicyEngine` (`governance/policy_engine.py:20`) is live only through the default `Field(default="NullPolicyEngine", ...)` at `config.py:2977`, whose own description says no production code acts on it. The check cannot tell an inert string from a lookup by name. Owner: #1659 (AD-1353), which that description names.
+- **R9.** (Review step F2: P3.) D3 matches schema kinds by base name, so a call protocol written without a `Protocol` base is reported: `cognitive/orders.py:36` `StandingOrderPredicate`, used only as an annotation (the default predicate is a function at `orders.py:51`). Its row is `false-positive`; no rule change.
+- **R10.** (Review step F3: P3.) The scan root is `src/probos`, so a class used only from `scripts/` is reported: `maturity/registry.py:34` `MaturityRegistry`, built by `load_default_registry` for `scripts/gen_capability_truth.py:44-48`. Its row is `false-positive`; widening the root would count tooling as production.
+- **R11.** (A product defect the check revealed; not a class finding.) Four `runtime` attributes are read by live code and never set to a value in `src/probos`, so each reader always takes its fallback (AV8):
+  - `runtime.action_dispatcher`: `cognitive/dm/reply_pipeline.py:1070` reads it with `getattr(..., None)` and, finding nothing, strips DM action markers with the warning at `:1073` ("AD-745: runtime.action_dispatcher missing; stripping markers"). `routers/agent_actions.py:34` returns `getattr(runtime, "action_dispatcher", None)`.
+  - `runtime.teams_adapter`: `routers/teams_webhook.py:29` reads `getattr(runtime, "teams_adapter", None)`.
+  - `runtime.federation_hebbian_map` and `runtime.federation_cluster_monitor`: set to `None` at `runtime.py:1309-1310` and read at `experience/commands/commands_status.py:165-166`. Nothing assigns another value.
+  - **Reproduce:** `rg -n "\b(action_dispatcher|teams_adapter|federation_hebbian_map|federation_cluster_monitor)\b" src/probos` lists 12 lines, and the only assignments among them are the two `= None` initialisers. `rg -n "setattr\((self\.)?(runtime|self|rt)\b" src/probos` lists only `startup/shutdown.py:371,470,472`, which set `None`.
+  - **Related class rows** (all `wire`, #1324): `cognitive/dm/action_dispatcher.py::ActionDispatcher`, `channels/teams_adapter.py::TeamsAdapter`, `federation/hebbian_map.py::FederationHebbianMap`, `federation/cluster_monitor.py::FederationClusterMonitor`.
+  - Owner: #1324. It is registered here; the discovery budget files no new issue.
+- **R12.** (Dispositions the Captain may overrule.)
+  - **Voice AD-474 substrate, `retire` ×4** (`voice/_substrate.py::BrowserSpeechRecognizer`, `SilentTextToSpeech`, `StaticWakeWordDetector`, `TranscriptionResult`). They are public re-exports of `probos.voice`, and the live speech output is `audio/tts/backends.py:22` `TTSBackend`. `_substrate.py:8` defers runtime wiring to AD-474c, which was never filed (`gh issue list --state all --search "AD-474c in:title"`: none). Alternative: `wire`.
+  - **Ward room, `retire` ×2** (`ward_room/models.py::WardRoomEndorsement`, `ChannelMembership`). They are public exports, and `test_public_apis.py` pins `WardRoomEndorsement`. The live paths return a dict (`ward_room/service.py:480`) or store SQL rows (`:489`).
+  - **Insights, `retire` ×2** (`cognitive/insights.py::TopicCount`, `CrewInteraction`). BF-925 left these two report sections with no source (`insights.py:23-28,82-83`). Retiring them removes two always-empty fields from the report's JSON. Alternative: build the counting store.
+  - **Channel adapters, `wire` ×4** (Gmail, Matrix, Teams, Telegram). All four have tests. Their configs are not in the main config, and `__main__.py:832-874` starts only Discord, Slack and Webhook. Alternative: `retire`.
+- **R13.** (Staged rows and pauses, checked 2026-10-27.)
+  - Seven rows are `staged` under AD-1353 (#1659), whose body begins "PAUSED: not actionable until the Captain lifts the new-capability pause". They stay dormant while the pause holds:
+    - `consensus/quorum.py::QuorumResult`
+    - `security/autonomy_boundaries.py::BoundaryProbingDetector`, `DisengagementResponse`, `ProbingPattern`, `ProtectiveDisengagement`
+    - `security/permission_model.py::PermissionConfig`
+    - `security/trust_integrity.py::TrustViolation`
+  - The four `security/container_sandbox.py` rows are `staged` under AD-1335 (#1557). That issue is OPEN with the label `enhancement`, and neither its body nor any comment mentions a pause (`gh issue view 1557 --json body,comments` filtered for `paus`: none). It is not marked paused.
+- **R14.** (The lowest-confidence `wire` rows; a later slice may turn them into `retire`.)
+  - `integrations/mcp_bridge/adapter.py::MCPToolAdapter`: the live MCP path is `cognitive/agentic_dispatch.py:1619` `_McpTool`.
+  - `tools/adapters.py::DeterministicFunctionAdapter`: `runtime.py:6701` says that path uses `InfraServiceAdapter`.
+  - `ward_room_pipeline.py::AgentResponse`: `merge_agent_responses` has no caller.
+  - `avatars/asset_manifest.py::AssetManifest`.
