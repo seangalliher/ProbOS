@@ -208,6 +208,12 @@ def _excerpt(text: object) -> str:
     return "".join(kept)
 
 
+#: AD-1341 S5: the episode offer and the presence check, shared with the after-action report (one rule each). Aliases,
+#: so S4's own lines and its mutation rows stay as they are.
+offer_episodes = _offer
+path_presence = _present
+
+
 def exit_notes_prompt(callsign: str, shown: Sequence[str]) -> str:
     """AD-1341 S4 (D4): the Captain's message for one agent's turn: why, what, that it is optional, where it goes."""
     episodes = "\n".join(shown) if shown else "(none could be read)"
