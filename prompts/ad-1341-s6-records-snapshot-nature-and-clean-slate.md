@@ -21,6 +21,8 @@ Each milestone is one Builder delegation and one local commit, built in order. T
 
 **Amendment A1 (2026-10-27, `claude-architect`, census on the oracle `4fd61f91`):** 48 of 49 rows were killed. D-6 survived because N1's procedures were created in the same order as their completions. 7.12 now creates the anti-pattern first (p-3 at `_B + 30.0`) and asserts that premise, so `_EXPECTED` pins the listing's order. P-18 now names the ledger test alone: the CLI checks `erased_at` before it marks, so X12's rerun never reaches that guard. Only 7.12, §6, §10 and §14 change. No test is added, so §4's lists and the census baseline keep their counts.
 
+**Amendment A2 (2026-10-27, `claude-architect`, round 1 of the cross-family review on `f9afeb59`, tree `61e4fce9`: reviewers A, B and C all NOT READY):** most findings share one shape: a guard placed after the first write, or a check of one path of a set. A2 adds one reset preflight (`_reset_preflight`, shared by the dry run) that refuses, before the confirmation, the pidfile and the promotion, every refusal it can know: the snapshot's plan, root, key and destination (M1) and, with `--clean-slate`, the shape of `procedures/` (M3). S1 A4's overlap also protects the snapshots directory at every tier (M1) and counts `procedures/` with `--clean-slate` (M3). The snapshot is published by a hard link that never replaces a name, reads its root with `lstat`, refuses a link in its destination and reads its tag files back; the erasure checks what it deletes before its marker (M1). The description is read before the snapshot and archived after it, once per generation; `pending` and the veto print its text; its read-only claim is narrowed (M2). The generation's close is recorded last, after any clean slate (M3). A-F8 is recorded (R29). Changed: §2, §3, §4, §5, §6, §7 (7.1, 7.5, 7.6, 7.8 to 7.10, 7.12, 7.17, 7.18), §8, §9, §10 (70 rows), §11, §12, §13, §14, §15 and the register (R14, R15, R28 to R40). Expected (analysis): the new files 43, 21 and 28 cases; the focused lists M1 692, M2 586 and M3 689 passed, 1 skipped each; the census baseline 138.
+
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF; match and write with the file's own endings. New files are written LF.
 
 ---
@@ -59,7 +61,7 @@ Four things are missing:
 
 ## 2. Solution overview
 
-- **M1, the snapshot.** At tier 3, after the promotion and before the generation's close, the reset copies every regular file of `{data_dir}/ship-records` (except the top-level `.git/` and `procedures/`) byte for byte into one ZIP file holding one BagIt bag (RFC 8493), at `{archive_dir}/ship-records-snapshots/{timeline_id}/{started}_{ended}.zip`. It is written under a temporary name, flushed, read back and checked, recorded in a new content-free table `archive_snapshots`, then published by one `os.replace`. Any failure refuses the reset with nothing deleted. The reset names the Markdown files Ship's Records cannot list (RA3-1). `probos archive snapshots` lists them; `probos archive erase-snapshot ID --reason TEXT` marks the row first, then deletes the file. The rows live in a new class, `ArchiveLedger` (`knowledge/archive_ledger.py`), on its own connection, because `ArchiveStore` is at the SRP method trigger. `ArchiveStore._SCHEMA` creates the table.
+- **M1, the snapshot.** At tier 3, after the promotion and before the generation's close, the reset copies every regular file of `{data_dir}/ship-records` (except the top-level `.git/` and `procedures/`) byte for byte into one ZIP file holding one BagIt bag (RFC 8493), at `{archive_dir}/ship-records-snapshots/{timeline_id}/{started}_{ended}.zip`. It is written under a temporary name, flushed, read back and checked, recorded in a new content-free table `archive_snapshots`, then published by one hard link that never replaces a name (A2). Any failure refuses the reset with nothing deleted, and every refusal that can be known beforehand comes before anything is written (A2's preflight). The reset names the Markdown files Ship's Records cannot list (RA3-1). `probos archive snapshots` lists them; `probos archive erase-snapshot ID --reason TEXT` marks the row first, then deletes the file. The rows live in a new class, `ArchiveLedger` (`knowledge/archive_ledger.py`), on its own connection, because `ArchiveStore` is at the SRP method trigger. `ArchiveStore._SCHEMA` creates the table.
 - **M2, the nature description.** At tier 2 and 3, after the promotion, the reset archives one `SourceKind.NATURE_DESCRIPTION` entry per generation (`nature-description/{timeline_id}`, `ship`): the Cognitive JIT procedures created since the ship's first boot, with each one's name, description, evolution, state, use counts and change summary, read read-only from `procedures.db`, never its steps, bounded to fit one Oracle tool entry, with no model call. `probos archive pending`, `veto` and `--dry-run` show it, and the Captain can veto it.
 - **M3, `--clean-slate`.** An opt-in flag for tier 2 or 3: after the promotion (which described nature) and before the tier loop, it records a content-free marker in `nature_clearances`, then deletes `{data_dir}/procedures/`. A failure refuses before the tier loop, and the same command finishes it. It needs the archive enabled. It never touches the skill catalog, the Captain's grants, the archive, the snapshots or `archives/`.
 - **M4.** Trackers.
@@ -76,16 +78,16 @@ No config field, event type, API route or HXI view. `ArchiveStore` gains no meth
   - (D) a `git bundle` of the records repository: rejected. It needs git, and it holds only committed state, so it misses a note a write left uncommitted (S4 F-652) and the working tree the promotion read.
   - (E) a copied directory: rejected. Not atomic, and no single digest to record or erase.
 - **D3 (what a snapshot holds).** Every regular file under `{data_dir}/ship-records`, the directory `RESET_TIERS[3]` deletes, so S6 keeps exactly what `--full` deletes. Every classification, private included: no ProbOS reader is built (Absence S6-AV4), so no agent gains a read path; the file is readable only by the account that already reads `data_dir`. **Reframing (for the record):** `private` protects a note from other agents, and the snapshot gives no agent access, so keeping the copy weakens no access control. Any later reader (AD-524 items 2 and 3) must apply the classification rule (register R5). **The Captain may overrule this** and keep only `ship` and `fleet`. Left out: the top-level `.git/` (history; the working tree is what the promotion read, register R4) and `procedures/` (procedure bodies stay in their store as nature: the amendment's "the procedure itself stays in its store"; with `--clean-slate` they are cleared deliberately). A custom `records.repo_path` outside the data directory is not deleted by `--full` and so not snapshotted (register R3).
-- **D4 (the key and the name).** `{timeline_id}/{started}_{ended}.zip` under `ship-records-snapshots/` beside the archive's database (`resolve_archive_db_path(config.archive).parent`). `timeline_id` is the instance id and must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (a UUID does); the ship DID (`did:probos:{timeline_id}`, `generate_ship_did`) goes in `bag-info.txt` (`External-Identifier`) and the row, because a DID's colons cannot name a Windows directory. `started` is the modification time of `ontology/instance_id` (the first boot, register R9); `ended` is the snapshot's time; both UTC. The snapshots directory cannot lie inside what a reset deletes: the archive's file is refused there (S1 A4), and the directory is that file's parent plus a fixed child name.
-- **D5 (bounds and refusals).** `SNAPSHOT_MAX_FILES = 100_000`, `SNAPSHOT_MAX_BYTES = 2 GiB` (uncompressed), module constants (register R8). Beyond either, the snapshot refuses. It also refuses, naming the path: a link or junction anywhere inside (never followed: it may lead out of Ship's Records; `is_symlink() or is_junction()`, the precedent `profile_components.py:47`), a special file, a file that cannot be read now, a file whose size changes between the listing and the copy, an instance id that cannot name a directory, and an existing snapshot of the same name. The walk is an explicit `os.scandir` whose every `OSError` propagates (S4 A5's lesson: `os.walk` swallows them).
-- **D6 (order, failure and interruption).** Inside S1's `_promote_into_archive`: promote Ship's Records → (M2) the nature description → (M1, tier 3) the snapshot: plan, write under `.{name}.partial`, flush and `fsync`, read back (member list, every payload SHA-256, zipfile's CRCs), compute the file's SHA-256, **record the row, then publish** (`os.replace`, refusing an existing name) → the generation's close (`record_generation`) → the tier loop. Any failure removes the temporary file and refuses the reset with nothing deleted. So a generation is closed only once its snapshot is in place. Interrupted (Ctrl+C, a crash): the tier loop has not run; the next run promotes again (idempotent: present), takes a new snapshot under a new name and closes the generation. A crash between the row and the rename leaves a row whose file is missing (`archive snapshots` shows `missing`; register R15). A failure after publishing (the generation row) leaves a complete snapshot, and the rerun adds a second (register R14).
-- **D7 (the ledger and the Captain's erasure).** `archive_snapshots` (timeline, ship DID, both dates, the relative path, the file's SHA-256, file count, bytes, recorded time, erased time and reason; unique on the path) is created by `ArchiveStore._SCHEMA`. Its writes are in `ArchiveLedger`, on a connection of its own, opened only once `ArchiveStore.initialize` has brought the file to version 1. Ranked: (a) chosen, a separate class; (b) three more `ArchiveStore` methods: rejected, `ArchiveStore` has 15 methods, the AD-1270 trigger (`SRP_MAX_DIRECT_METHODS = 15`, `>` fires), so one more is a new architecture violation; (c) a ledger sharing the store's connection through its private attributes: rejected (reach-through). `probos archive erase-snapshot ID --reason TEXT [--yes]` marks the row (reason and time) **before** it deletes the file, so no snapshot is removed unrecorded. A deletion that fails is reported (exit 1) and the same command finishes it. A row whose path is not a snapshot name is never opened. A row is never deleted; a second erasure keeps the first reason. The unlink does not overwrite the bytes (register R6). **What the Captain's review does to it:** a veto keeps a source out of canon; the snapshot keeps the Captain's copy of what the reset deletes, a vetoed or erased source's document included, as Ship's Records kept it before. **AD-754 (`/forget`):** a snapshot holds no episode, and the episodes its notes cite by id are wiped by the same reset; nothing changes for the erasure manager.
-- **D8 (the skip, a missing instance id, a disabled archive).** `--skip-promotion REASON` at tier 3 skips the snapshot too, and says so; the recorded reason covers both. Ranked: (a) chosen, one audited escape; (b) a separate `--skip-snapshot REASON`: rejected, a second escape for one decision ("carry nothing forward"); a Captain who wants promotion without the snapshot runs a tier 2 reset first. **The Captain may overrule (a).** With no instance id, a tier 3 reset whose Ship's Records hold any file refuses (no ship to key a snapshot by), unless `--skip-promotion`; tier 2 is unchanged (S1 RA1-2). With the archive disabled, nothing is promoted or snapshotted, as S1 D13 decided for promotion.
+- **D4 (the key and the name).** `{timeline_id}/{started}_{ended}.zip` under `ship-records-snapshots/` beside the archive's database (`resolve_archive_db_path(config.archive).parent`). `timeline_id` is the instance id and must match `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` (a UUID does); the ship DID (`did:probos:{timeline_id}`, `generate_ship_did`) goes in `bag-info.txt` (`External-Identifier`) and the row, because a DID's colons cannot name a Windows directory. `started` is the modification time of `ontology/instance_id` (the first boot, register R9); `ended` is the snapshot's time; both UTC. The snapshots directory cannot lie inside what a reset deletes: **A2 (A-F2)** resolves it (links, junctions, `..`, the platform's case rule) and S1 A4's overlap refuses, at every tier, a reset whose targets hold it, equal it or lie inside it; a link or junction at it or at the timeline's directory refuses a tier 3 reset in the preflight and again in `prepare_snapshot`. To keep snapshots elsewhere, move `archive.db_path`.
+- **D5 (bounds and refusals).** `SNAPSHOT_MAX_FILES = 100_000`, `SNAPSHOT_MAX_BYTES = 2 GiB` (uncompressed), module constants (register R8). Beyond either, the snapshot refuses. It also refuses, naming the path: a link or junction anywhere inside (never followed: it may lead out of Ship's Records; `is_symlink() or is_junction()`, the precedent `profile_components.py:47`), a special file, a file that cannot be read now, a file whose size changes between the listing and the copy, an instance id that cannot name a directory, and an existing snapshot of the same name. The walk is an explicit `os.scandir` whose every `OSError` propagates (S4 A5's lesson: `os.walk` swallows them). **A2 (A-F1):** the root itself is read with one `lstat` (`records_snapshot.lstat_or_none`): only a root that is not there is an empty plan; any other error propagates, and a root that is a link or junction refuses. The reset's preflight runs the plan before anything is written.
+- **D6 (order, failure and interruption).** **A2:** first the preflight (`_reset_preflight`, before the confirmation, the pidfile and the promotion, so a reset it refuses has written nothing). Then, inside S1's `_promote_into_archive`: promote Ship's Records → (M2) read the nature description → (M1, tier 3) the snapshot: plan, write under `.{name}.partial`, flush and `fsync`, read back (member list, every payload SHA-256, every member's CRC, the tag files included), compute the file's SHA-256, **record the row, then publish** (`os.link`, which never replaces a name; then the temporary name is removed; a file system without hard links refuses) → (M2) archive the description (B-F2: after the snapshot, so a snapshot that fails leaves none) → (M3) the clean slate, if asked → the generation's close (`_close_generation`, C-F3) → the tier loop. Any failure removes the temporary file and refuses the reset with nothing deleted. So a generation is closed only once its snapshot is in place. Interrupted (Ctrl+C, a crash): the tier loop has not run; the next run promotes again (idempotent: present), takes a new snapshot under a new name and closes the generation. A publish that fails, or a crash between the row and the link, leaves the row, never deleted, whose file is missing (`archive snapshots` shows `missing`; register R15; X3b, A-F7). A failure after publishing (the generation row) leaves a complete snapshot, and the rerun adds a second (register R14).
+- **D7 (the ledger and the Captain's erasure).** `archive_snapshots` (timeline, ship DID, both dates, the relative path, the file's SHA-256, file count, bytes, recorded time, erased time and reason; unique on the path) is created by `ArchiveStore._SCHEMA`. Its writes are in `ArchiveLedger`, on a connection of its own, opened only once `ArchiveStore.initialize` has brought the file to version 1. Ranked: (a) chosen, a separate class; (b) three more `ArchiveStore` methods: rejected, `ArchiveStore` has 15 methods, the AD-1270 trigger (`SRP_MAX_DIRECT_METHODS = 15`, `>` fires), so one more is a new architecture violation; (c) a ledger sharing the store's connection through its private attributes: rejected (reach-through). `probos archive erase-snapshot ID --reason TEXT [--yes]` marks the row (reason and time) **before** it deletes the file, so no snapshot is removed unrecorded. A deletion that fails is reported (exit 1) and the same command finishes it. A row whose path is not a snapshot name is never opened. **A2 (A-F3):** before its marker, the erasure refuses (exit 1, nothing marked or deleted) a snapshots directory or a timeline directory that is a link or junction, and anything but a regular file at the snapshot's name (`_snapshot_file_problem`); nothing there is fine, so a `missing` row can still be marked. A row is never deleted; a second erasure keeps the first reason. The unlink does not overwrite the bytes (register R6). **What the Captain's review does to it:** a veto keeps a source out of canon; the snapshot keeps the Captain's copy of what the reset deletes, a vetoed or erased source's document included, as Ship's Records kept it before. **AD-754 (`/forget`):** a snapshot holds no episode, and the episodes its notes cite by id are wiped by the same reset; nothing changes for the erasure manager.
+- **D8 (the skip, a missing instance id, a disabled archive).** `--skip-promotion REASON` at tier 3 skips the snapshot too, and says so; the recorded reason covers both. Ranked: (a) chosen, one audited escape; (b) a separate `--skip-snapshot REASON`: rejected, a second escape for one decision ("carry nothing forward"); a Captain who wants promotion without the snapshot runs a tier 2 reset first. **The Captain may overrule (a).** With no instance id, a tier 3 reset whose Ship's Records hold any file refuses (no ship to key a snapshot by), unless `--skip-promotion`; tier 2 is unchanged (S1 RA1-2). **A2 (A-F5):** that refusal is in the preflight, before anything is written, and the dry run shows it instead of promising a snapshot. With the archive disabled, nothing is promoted or snapshotted, as S1 D13 decided for promotion.
 - **D9 (RA3-1 and F-649).** **RA3-1 closes:** a file Ship's Records cannot list is copied byte for byte into the snapshot before tier 3 deletes it, and the reset names every Markdown file the listing passed over (at most ten, then a count). It is still never promoted (register R17). **F-649 closes at tier 3:** a file that cannot be read at the reset's moment refuses the snapshot, and the reset. Tier 2 deletes no record, so nothing changes there.
-- **D10 (the nature description: content, source, bounds).** One `ship`-classified `SourceKind.NATURE_DESCRIPTION` entry per generation, `source_ref = nature-description/{timeline_id}`, title "Procedures developed by the crew of timeline {timeline_id}", no author, no source episodes, written by `archive_promotion.promote_nature_description` (S1's census holds). **Content:** the count developed and the count active at the close; one line per procedure created at or after the ship's first boot, by completions: name, description, evolution type, state (active, retired, an anti-pattern), "c of s uses completed, f fell back", and an evolved one's change summary; "And N more in the procedure store." for the rest. **Never** `content_snapshot` (the steps) or any other column. **Source:** `{data_dir}/procedures/procedures.db`, opened read-only (`mode=ro`), only columns every version of `procedure_records` has (`procedure_store.py:97-124`). **No model call.** Each text is folded to one line with control and format characters removed and cut (name 60, text 120). **Bound:** the content is at most 900 characters, so the whole entry with its title, S2's longest label and the tool's marker fits one Oracle tool entry (1,200), as S4 did for notes (N2 proves it through the real tool). At most 10 procedures are read for listing. **Skills are not described** (ranked: (a) chosen, a fixed statement in the module docstring and DECISIONS: the catalog is part of the installation and no durable fact says which crew forged a skill, §0; (b) list every catalog skill: rejected, it would attribute the shipped skills to the crew; (c) list `origin = generated` rows: rejected, the origin is overwritten at every boot). **The Captain may overrule (a)** once the origin is durable (register R10). The lineage stays in the store (amendment item 2): the description names no agent.
-- **D11 (the description's governance).** Built by one function (`_nature_record` in `__main__.py`) for the reset, `--dry-run`, `probos archive pending` and `probos archive veto`. `pending` lists `nature-description/{timeline}` with what promoting it would do; `veto` accepts that reference; `--dry-run` prints the whole text. The veto is keyed by kind and reference (S3), so it holds whatever the content is at the reset. The Captain's `probos archive erase ENTRY_ID` removes an archived one, and its marker keeps it out at the next reset. Idempotent on content: a rerun of a refused reset on the same day with the same store archives nothing new.
-- **D12 (`--clean-slate`: semantics).** Name: `--clean-slate`, the amendment's own words. Tier 2 or 3 only (with `--soft` it exits 2: tier 1 keeps the crew). **Deletes:** `{data_dir}/procedures/` whole (`procedures.db`, the AD-1326 challenger ledger, the procedures' semantic index). **Never touches:** the skill catalog (`config/skills/`, part of the installation and its git checkout), `cognitive_skills.db` (its index, rebuilt from those files at boot), `skill_grants.db` (the Captain's grants), `profile_qualifications.db` (AD-1287, not wired, insert-only; register R12), the Ship's Archive and its snapshots, `archives/`, the Captain's config, and Ship's Records at tier 2 (its procedure YAML copies are never read back: Absence S6-AV2, register R11). Ranked: (a) chosen, a flag on tiers 2 and 3; (b) a tier 4: rejected, it would force Ship's Records' deletion to clear nature; (c) also delete generated skills under `config/skills`: rejected, files in the installation's checkout, and the origin is not durable. **The Captain may overrule (c).** A link or junction at `procedures`, or a file there, is refused before anything is recorded.
-- **D13 (`--clean-slate`: confirmation, marker, recovery).** The confirmation panel and `--dry-run` name what it clears ("Nature (--clean-slate)"); `--yes` skips the prompt, as every reset. It needs the archive enabled (exit 2 otherwise): the marker is never skipped. **Order:** after the promotion (whose description records the nature being cleared) and before the tier loop: the marker (`nature_clearances`: timeline, tier, the cleared names, the procedure count, or -1 if the store could not be counted, and the time) **then** the deletion. A failed marker deletes nothing; a failed deletion refuses before the tier loop (every crew file untouched) and the same command finishes it, recording a second marker (C4).
+- **D10 (the nature description: content, source, bounds).** One `ship`-classified `SourceKind.NATURE_DESCRIPTION` entry per generation, `source_ref = nature-description/{timeline_id}`, title "Procedures developed by the crew of timeline {timeline_id}", no author, no source episodes, written by `archive_promotion.promote_nature_description` (S1's census holds). **Content:** the count developed and the count active at the close; one line per procedure created at or after the ship's first boot, by completions: name, description, evolution type, state (active, retired, an anti-pattern), "c of s uses completed, f fell back", and an evolved one's change summary; "And N more in the procedure store." for the rest. **Never** `content_snapshot` (the steps) or any other column. **Source:** `{data_dir}/procedures/procedures.db`, opened read-only (`mode=ro`: the database's own bytes never change; for the vessel's WAL-mode store, `procedure_store.py:211`, SQLite may create or touch the `-wal` and `-shm` files beside it, `storage/sqlite_factory.py:28-31`; A2, B-F4, register R34), only columns every version of `procedure_records` has (`procedure_store.py:97-124`). **No model call.** Each text is folded to one line with control and format characters removed and cut (name 60, text 120). **Bound:** the content is at most 900 characters, so the whole entry with its title, S2's longest label and the tool's marker fits one Oracle tool entry (1,200), as S4 did for notes (N2 proves it through the real tool). At most 10 procedures are read for listing. **Skills are not described** (ranked: (a) chosen, a fixed statement in the module docstring and DECISIONS: the catalog is part of the installation and no durable fact says which crew forged a skill, §0; (b) list every catalog skill: rejected, it would attribute the shipped skills to the crew; (c) list `origin = generated` rows: rejected, the origin is overwritten at every boot). **The Captain may overrule (a)** once the origin is durable (register R10). The lineage stays in the store (amendment item 2): the description names no agent.
+- **D11 (the description's governance).** Built by one function (`_nature_record` in `__main__.py`) for the reset, `--dry-run`, `probos archive pending` and `probos archive veto`. `pending` lists `nature-description/{timeline}` with what promoting it would do; `veto` accepts that reference; `--dry-run` prints the whole text. The veto is keyed by kind and reference (S3), so it holds whatever the content is at the reset. The Captain's `probos archive erase ENTRY_ID` removes an archived one, and its marker keeps it out at the next reset. **One per generation (A2, B-F2):** once an entry is archived for `nature-description/{timeline}`, with any content, a later description of that generation is `present`, never a revision (`_nature_state` in `archive_promotion.py`, which `pending` reads too); the reset archives it after the snapshot, so only a clean slate or a close that fails can come between the two (register R30). `pending` and the veto's confirmation print its title and whole text (A2, B-F1).
+- **D12 (`--clean-slate`: semantics).** Name: `--clean-slate`, the amendment's own words. Tier 2 or 3 only (with `--soft` it exits 2: tier 1 keeps the crew). **Deletes:** `{data_dir}/procedures/` whole (`procedures.db`, the AD-1326 challenger ledger, the procedures' semantic index). **Never touches:** the skill catalog (`config/skills/`, part of the installation and its git checkout), `cognitive_skills.db` (its index, rebuilt from those files at boot), `skill_grants.db` (the Captain's grants), `profile_qualifications.db` (AD-1287, not wired, insert-only; register R12), the Ship's Archive and its snapshots, `archives/`, the Captain's config, and Ship's Records at tier 2 (its procedure YAML copies are never read back: Absence S6-AV2, register R11). Ranked: (a) chosen, a flag on tiers 2 and 3; (b) a tier 4: rejected, it would force Ship's Records' deletion to clear nature; (c) also delete generated skills under `config/skills`: rejected, files in the installation's checkout, and the origin is not durable. **The Captain may overrule (c).** A link or junction at `procedures`, or a file there, is refused by the preflight before anything is read through it, archived, recorded or closed, and again where it deletes (A2, B-F3, C-F2); so is a name there that cannot be inspected. With the flag, `procedures/` joins the targets S1 A4 protects the archive and its snapshots from (A2, C-F1), dry run included; `RESET_TIERS` is unchanged.
+- **D13 (`--clean-slate`: confirmation, marker, recovery).** The confirmation panel and `--dry-run` name what it clears ("Nature (--clean-slate)"); `--yes` skips the prompt, as every reset. It needs the archive enabled (exit 2 otherwise): the marker is never skipped. **Order:** after the promotion (whose description records the nature being cleared) and before the tier loop: the marker (`nature_clearances`: timeline, tier, the cleared names, the procedure count, or -1 if the store could not be counted, and the time) **then** the deletion, **then** the generation's close (A2, C-F3: `_promote_into_archive` returns the close and `_close_generation` records it, so a failed deletion leaves no closed generation; without the flag the close follows the promotion as before). A failed marker deletes nothing; a failed deletion refuses before the tier loop (every crew file untouched) and the same command finishes it, recording a second marker (C4).
 - **D14 (the Captain-facing statement, per tier).**
 
 | Tier | Deletes | Kept first in the Ship's Archive | Keeps |
@@ -131,6 +133,7 @@ No config field, event type, API route or HXI view. `ArchiveStore` gains no meth
 | D11 | N5 (pending, then the store changes, then veto, then the reset), N8 (dry run) |
 | D12 | C1 (both tiers: what is deleted, and everything else byte-identical), C2 (nature kept at every tier without the flag), C3, C7 |
 | D13 | C1 (the marker), C4 (recovery), C5 (a failed marker deletes nothing), C6 (confirmation and dry run), C10 |
+| A2 | X3, X3b, X7b, X7c, X8b, X9, X9b, X12d, X14b, X16 (M1); N5, N9, N9b, N10, N11 (M2); C4, C7, C11, C12, C13 (M3) |
 
 Each decision that says "one X for two reads" has a case that changes X between them:
 - **D6: one plan for the listing and the copy.** X3 `grew` and `shrank` change a file after `plan_snapshot` returned and before it is copied; the snapshot refuses.
@@ -142,10 +145,11 @@ Each decision that says "one X for two reads" has a case that changes X between 
 1. A tier 3 reset writes one snapshot (X1), refuses when it cannot (X3, X5), and prints what it kept and the files the listing passed over (X1). Bounds 100,000 files and 2 GiB (X6).
 2. `archive_snapshots` and `nature_clearances` in the archive's file; `user_version` 1 (X11, C1).
 3. `probos archive snapshots` and `probos archive erase-snapshot` (X12).
-4. `SourceKind` gains `nature_description` (7.11). Every tier 2 and 3 reset archives at most one description per content (N1, N7); at most 900 characters (N2).
+4. `SourceKind` gains `nature_description` (7.11). Every tier 2 and 3 reset archives at most one description per generation; a retried reset keeps the first (N1, N7, N9, N9b); at most 900 characters (N2).
 5. `pending`, `veto` and `--dry-run` show the description (N5, N8).
 6. `--clean-slate`, its marker and its refusals (C1-C7). The reset's summary says whether nature was kept or cleared (C1, C2).
 7. A snapshot copies up to 2 GiB synchronously and reads it back once (register R16).
+8. A2: new refusals, each before anything is written: a root or snapshot destination that is a link or junction or cannot be inspected (X7b, X7c, X16); an archive or snapshots directory inside or around what the reset deletes, `procedures/` included with `--clean-slate` (X16, C12); a link, junction or file at `procedures` (C7). At publish: a file system without hard links (X9b). The dry run says when the reset would refuse (X14b). The generation's close is recorded last (C4, C13).
 
 ## 4. Milestones
 
@@ -158,7 +162,7 @@ Each milestone is one Builder delegation and one local commit, built in order. R
 | **M3** the clean slate | HIGH | 7.13 `src/probos/knowledge/archive_store.py`; 7.14 `docs/development/store-baseline.yaml`; 7.15 `src/probos/knowledge/archive_ledger.py`; 7.16 `src/probos/knowledge/nature_description.py`; 7.17 `src/probos/__main__.py`; 7.18 new `tests/test_ad1341_s6_clean_slate.py` | `tests/test_ad1341_s6_clean_slate.py tests/test_ad1341_s6_nature_description.py tests/test_ad1341_s6_records_snapshot.py tests/test_ad1341_s1_reset_and_erase.py tests/test_ad1341_s1_archive_store.py tests/test_ad1341_s3_review_cli.py tests/test_reset_integration.py tests/test_bf902_fts_reconciliation.py tests/test_ad1340_s1_restore_reset.py tests/test_distribution.py tests/test_proactive.py tests/test_identity_deterministic.py tests/test_ad1256_store_registry.py tests/test_layer_boundaries.py tests/test_ad1270b_architecture_fitness.py tests/test_ad1343_seam_registry.py tests/test_ad1343_stop_seam_inventory.py`; then `check_store_registry.py --check` and `check_architecture_principles.py --check` |
 | **M4** trackers | docs | §8 | `tests/test_ad1184_ad_ledger.py`; `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` |
 
-The oracle slices the milestones by heading: M1 is `### 7.1 ` to `### 7.7 `, M2 `### 7.7 ` to `### 7.13 `, M3 `### 7.13 ` to `## 8.`. Each subsection holds one milestone's pairs only. No measured counts yet: the orchestrator measures each list on its oracle.
+The oracle slices the milestones by heading: M1 is `### 7.1 ` to `### 7.7 `, M2 `### 7.7 ` to `### 7.13 `, M3 `### 7.13 ` to `## 8.`. Each subsection holds one milestone's pairs only. No measured counts yet: the orchestrator measures each list on its oracle. **A2 expected (analysis):** M1's list 692 passed and 1 skipped (684 + 8), M2's 586 and 1 (574 + 8 + 4), M3's 689 and 1 (670 + 8 + 4 + 7); the new files 43, 21 and 28 cases. A host that cannot create a junction skips X7c, X12d, X16, C7[junction] and C11[junction], as it skipped X7 and C7.
 
 ## 5. Consumers of every value this changes
 
@@ -176,6 +180,11 @@ The oracle slices the milestones by heading: M1 is `### 7.1 ` to `### 7.7 `, M2 
 | `_show_confirmation_prompt`, `_show_dry_run` `clean_slate=` | `_cmd_reset` (their one callers, Absence S6-AV5) | keyword with default |
 | `args.clean_slate` | `_cmd_reset` via `getattr(..., False)`: every Namespace built by older tests lacks it | default off |
 | The reset summary's two new lines | the Captain's console; no test pins the summary (§11) | additive |
+| `_reset_preflight` (A2) | `_cmd_reset` only: the reset (exit 1 before the confirmation) and the dry run (a warning, exit 0) | new refusals, earlier |
+| `_archive_reset_overlap` (A2: the snapshots directory; `clean_slate=`) | `_cmd_reset` only (A2-AV1); its message's second line changes, the first (asserted at `test_ad1341_s1_reset_and_erase.py:785`) does not | refuses in new cases |
+| `_promote_before_reset` / `_promote_into_archive` return the generation's close (A2) | `_cmd_reset` / `_promote_before_reset` only; no test calls either (A2-AV1) | private signature |
+| `records_snapshot.lstat_or_none`, `is_link_status`, `is_link_or_junction` (A2) | `records_snapshot` itself and `__main__.py` (X13 holds) | new |
+| `archive_promotion._nature_state` (A2) | `promote_nature_description`, `review_nature_description` | private |
 
 ## 6. Tests
 
@@ -192,7 +201,7 @@ The last column is the assertion each test fails at once the names exist but the
 |---|---|---|---|
 | X1 | `test_a_full_reset_keeps_ship_records_as_one_checked_bag_before_it_deletes_them` | the real seam: producers write, the real reset snapshots, the row, the bag read back byte for byte, RA3-1's file named, the generation closed, a later crew's Oracle reads none of it | `(snapshot,) = _snapshot_files(tmp_path)` (base: none) |
 | X2 | `test_a_tier2_reset_keeps_ship_records_and_takes_no_snapshot` | D3: tier 2 snapshots nothing | `archive_snapshots` does not exist (base) |
-| X3 | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing[9 faults]` | D5, D6: link, both bounds, grew, shrank, unreadable, reads back wrong, member missing, row refused | `== 1` (base: 0) |
+| X3 | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing[9 faults]` | D5, D6: link, both bounds, grew, shrank, unreadable, reads back wrong, member missing, row refused; A2: the three the preflight knows (link, both bounds) leave the archive unopened | `== 1` (base: 0); on `f9afeb59`, `not _archive_db(tmp_path).exists()` for the three |
 | X4 | `test_skip_promotion_skips_the_snapshot_with_it_and_says_so` | D8 | the "skipped with it" line |
 | X5 | `test_without_an_instance_id_a_full_reset_of_ship_records_refuses` | D8; tier 2 unchanged | `== 1` |
 | X6 | `test_the_plan_lists_every_file_but_git_and_procedures_within_its_bounds` | D3, D5: the exclusions are top-level only; at both bounds and one beyond; missing root; a root that is a file; an empty tree writes nothing | (new) |
@@ -206,6 +215,15 @@ The last column is the assertion each test fails at once the names exist but the
 | X12c | `test_main_parses_the_snapshot_commands[2]` | the parser | (new) |
 | X13 | `test_only_the_cli_records_or_erases_a_snapshot_and_nothing_else_reads_one` | D3, D7: census | (new) |
 | X14 | `test_a_dry_run_shows_the_snapshot_a_full_reset_would_keep_and_writes_nothing` | dry run, and its refusal | the "Ship's Records snapshot:" line |
+| X3b | `test_a_publish_that_fails_leaves_its_row_shown_missing_and_deletes_nothing` | A2 (A-F7): the row stays, never deleted, shown `(missing)`; nothing deleted; no generation | passes on `f9afeb59` (pins the protocol) |
+| X7b | `test_a_ship_records_root_that_cannot_be_inspected_refuses` | A2 (A-F1) | `pytest.raises(PermissionError)`: DID NOT RAISE |
+| X7c | `test_a_ship_records_root_that_is_a_link_is_never_followed` | A2 (A-F1): plan and reset | `pytest.raises(SnapshotRefused, match="is a link")`: DID NOT RAISE |
+| X8b | `test_a_tag_file_that_reads_back_wrong_refuses_the_snapshot` | A2 (A-F6) | DID NOT RAISE |
+| X9 | (extended) `test_a_snapshot_is_never_written_over` | A2 (A-F4): a name that appears after every check | `racing.publish()`: DID NOT RAISE |
+| X9b | `test_a_file_system_without_hard_links_refuses_to_publish` | A2 (A-F4): fail closed, never a rename | DID NOT RAISE |
+| X12d | `test_an_erasure_deletes_only_a_regular_file_inside_the_snapshots_directory` | A2 (A-F3) | `_erasures(tmp_path) == [(None, "")]` (base: marked) |
+| X14b | `test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse` | A2 (A-F5) | `"This reset would refuse" in out` |
+| X16 | `test_a_snapshot_is_written_only_into_the_snapshots_directory_itself` | A2 (A-F2): prepare, the tier 3 preflight, the tier 2 overlap | `pytest.raises(SnapshotRefused, match="is a link")`: DID NOT RAISE |
 
 **M2, `tests/test_ad1341_s6_nature_description.py`:**
 
@@ -215,10 +233,14 @@ The last column is the assertion each test fails at once the names exist but the
 | N2 | `test_a_description_at_its_bound_reaches_a_later_crew_whole_through_the_oracle_tool[2]` | D10: 900 characters, "And N more", the real tool, worst label | (new) |
 | N3 | `test_nothing_to_describe_archives_nothing_and_creates_no_store[3]` | D10: no store (and none created), nothing since boot, no instance id | (new) |
 | N4 | `test_text_from_the_store_is_one_line_without_control_or_format_characters[7]` | D10 | (new) |
-| N5 | `test_the_captain_reviews_and_vetoes_a_description_before_the_reset` | D11: one builder; the store changes between the review and the reset | `+ would be promoted: nature-description/...` |
+| N5 | `test_the_captain_reviews_and_vetoes_a_description_before_the_reset` | D11: one builder; the store changes between the review and the reset; A2 (B-F1): `pending` and the veto print the whole text | `+ would be promoted: nature-description/...`; on `f9afeb59`, `f"    {line}" in out` |
 | N6 | `test_a_procedure_store_that_cannot_be_read_refuses_the_reset_and_deletes_nothing` | D6, D10 | `== 1` |
 | N7 | `test_only_a_nature_description_without_episodes_is_promoted_as_one` | D10: the writer's guards, idempotence | (new) |
 | N8 | `test_the_dry_run_shows_the_description_the_reset_would_archive` | D11 | the description's lines |
+| N9 | `test_a_retried_reset_keeps_one_description_per_generation` | A2 (B-F2): through the real reset and `pending` | `"  = already archived (entry 1): ..." in out` (base: a revision) |
+| N9b | `test_one_description_per_generation_whatever_its_content` | A2 (B-F2): the writer and the review | `is PromotionOutcome.PRESENT` (base: CREATED) |
+| N10 | `test_a_full_reset_whose_snapshot_fails_archives_no_description` | A2 (B-F2): archived after the snapshot | `== [(0,)]` (base: 1) |
+| N11 | `test_a_wal_mode_store_is_described_and_its_database_bytes_are_unchanged` | A2 (B-F4): the narrowed claim | passes on `f9afeb59` |
 
 **M3, `tests/test_ad1341_s6_clean_slate.py`:**
 
@@ -227,13 +249,16 @@ The last column is the assertion each test fails at once the names exist but the
 | C1 | `test_a_clean_slate_describes_records_and_clears_nature_and_touches_nothing_else[tier2, tier3]` | D12, D13: the real seam; marker; description first; every other file byte-identical; an earlier archive entry kept | `not (data_dir / "procedures").exists()` |
 | C2 | `test_without_clean_slate_nature_persists_at_every_tier[3]` | D12 | the "Nature kept" line |
 | C3 | `test_a_clean_slate_that_does_not_apply_or_cannot_be_recorded_changes_nothing[2]` | D12, D13: `--soft`; archive disabled | `== 2` |
-| C4 | `test_an_interrupted_clean_slate_is_finished_by_running_it_again` | D13: recovery | `== 1` |
+| C4 | `test_an_interrupted_clean_slate_is_finished_by_running_it_again` | D13: recovery; A2 (C-F3): no generation is closed until the clearance finishes | `== 1`; on `f9afeb59`, `generations == [(0,)]` |
 | C5 | `test_a_clean_slate_whose_marker_cannot_be_written_deletes_nothing` | D13 | `== 1` |
 | C6 | `test_the_dry_run_and_the_confirmation_name_what_a_clean_slate_clears` | D13 | the "Nature (--clean-slate)" row |
-| C7 | `test_a_link_at_the_procedures_name_is_refused_and_never_followed` | D12 | `== 1` |
+| C7 | `test_a_link_or_a_file_at_the_procedures_name_is_refused_before_anything_is_written[junction, file]` | D12; A2 (B-F3, C-F2): every archive table unchanged | `_archive_state(tmp_path) == archive_before` |
 | C8 | `test_only_the_cli_records_a_clean_slate` | census | (new) |
 | C9 | `test_main_parses_clean_slate` | the parser | argparse error (base) |
 | C10 | `test_a_clean_slate_marker_holds_only_what_it_may[8]` | D13 | (new) |
+| C11 | `test_the_clearance_refuses_a_link_or_a_file_again_where_it_deletes[junction, file]` | A2: the check repeated where it deletes | passes on `f9afeb59` |
+| C12 | `test_an_archive_inside_the_procedure_store_refuses_a_clean_slate[tier2, tier3, flag-off]` | A2 (C-F1) | the dry run's `== 1` (base: 0) |
+| C13 | `test_a_skipped_promotion_is_closed_only_after_its_clean_slate` | A2 (C-F3) with `--skip-promotion` | `== [(0,)]` (base: 1) |
 
 ## 7. The contract
 
@@ -257,10 +282,14 @@ snapshot can be checked by any BagIt validator.
 - Every other entry must be a regular file or a directory that can be read now. A link or junction (never followed),
   a special file, a file that cannot be read, or one whose size changes while it is copied refuses the snapshot, and
   with it the reset, before anything is deleted. So does a tree of more than ``SNAPSHOT_MAX_FILES`` files or
-  ``SNAPSHOT_MAX_BYTES`` bytes.
+  ``SNAPSHOT_MAX_BYTES`` bytes. AD-1341 S6 A2: so does a root that is a link or junction or cannot be inspected (only
+  a root that is not there is an empty plan), and a link or junction at the snapshots directory or the timeline's
+  directory the snapshot is written into.
 - The file is written under a temporary name beside its final one, flushed to disk, read back and checked against
-  what was written, and only then published (``PreparedSnapshot.publish``: one ``os.replace``). No snapshot is ever
-  written over. A file's modification time is not kept: every member carries the snapshot's time.
+  what was written (every member, the tag files too), and only then published (``PreparedSnapshot.publish``: one hard
+  link to the final name, which never replaces a name on Windows or POSIX, then the temporary name is removed). No
+  snapshot is ever written over; a file system without hard links refuses (fail closed). A file's modification time
+  is not kept: every member carries the snapshot's time.
 - Synchronous: the offline reset is its one caller.
 """
 
@@ -270,6 +299,7 @@ import hashlib
 import logging
 import os
 import re
+import stat
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -340,10 +370,23 @@ class PreparedSnapshot:
     final_path: Path
 
     def publish(self) -> None:
-        """One ``os.replace``. A file that appeared at the final name meanwhile is never written over."""
-        if os.path.lexists(self.final_path):  # a file that appeared meanwhile is never written over
-            raise SnapshotRefused(f"a snapshot named {self.result.relative_path} exists already")
-        os.replace(self.temp_path, self.final_path)
+        """A hard link from the temporary name to the final one, then the temporary name is removed (A2, A-F4).
+
+        ``os.link`` never replaces an existing name, on Windows and POSIX alike, so a file that appears at the final
+        name at any moment is never written over: it refuses. A file system without hard links refuses too (fail
+        closed: never a rename that may replace). Once the link exists the snapshot is in place; a temporary name that
+        cannot then be removed is logged, not raised.
+        """
+        try:
+            os.link(self.temp_path, self.final_path)  # A2: no-replace on Windows and POSIX; an existing name refuses
+        except FileExistsError:
+            raise SnapshotRefused(f"a snapshot named {self.result.relative_path} exists already") from None
+        except OSError as exc:
+            raise SnapshotRefused(
+                f"the snapshot cannot be published without a hard link on this file system ({exc}); keep the Ship's "
+                "Archive on a file system that has them, or pass --skip-promotion REASON"
+            ) from exc
+        _remove_quietly(self.temp_path)
 
     def discard(self) -> None:
         """Remove the temporary file, if it is still there."""
@@ -362,16 +405,43 @@ def snapshot_relative_path(timeline_id: str, started: datetime, ended: datetime)
     return f"{timeline_id}/{_stamp(started)}_{_stamp(ended)}.zip"
 
 
+def lstat_or_none(path: Path) -> os.stat_result | None:
+    """AD-1341 S6 A2: ``os.lstat(path)``, never following a link; None only when nothing is there.
+
+    Any other ``OSError`` propagates: a path that cannot be inspected is never taken for a missing one (A-F1).
+    """
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:  # only absence is None (A2, A-F1)
+        return None
+
+
+def is_link_status(status: os.stat_result) -> bool:
+    """AD-1341 S6 A2: whether an ``lstat`` result is a symbolic link or a Windows junction (D5's rule, one place)."""
+    reparse_tag = getattr(status, "st_reparse_tag", 0)  # a Windows-only field; POSIX has none
+    return stat.S_ISLNK(status.st_mode) or reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+
+
+def is_link_or_junction(path: Path) -> bool:
+    """AD-1341 S6 A2: whether ``path`` is a link or junction. False when nothing is there; other errors propagate."""
+    status = lstat_or_none(path)
+    return status is not None and is_link_status(status)
+
+
 def plan_snapshot(root: Path) -> SnapshotPlan:
     """Every regular file a snapshot of ``root`` would hold, in path order. Reads names and sizes; opens no file.
 
-    A missing root is an empty plan (a vessel with no Ship's Records). A link or junction, a special file or a tree
-    beyond the bounds refuses. Any ``OSError`` propagates: a directory that cannot be listed is never taken for an
-    empty one (an explicit walk, as S4 A5 chose over ``os.walk``, which swallows them).
+    Only a root that is not there is an empty plan (a vessel with no Ship's Records); a root that cannot be inspected
+    propagates its ``OSError``, and a root that is a link or junction refuses (A2, A-F1). A link or junction, a special
+    file or a tree beyond the bounds refuses. Any ``OSError`` propagates: a directory that cannot be listed is never
+    taken for an empty one (an explicit walk, as S4 A5 chose over ``os.walk``, which swallows them).
     """
-    if not os.path.lexists(root):
+    root_status = lstat_or_none(root)
+    if root_status is None:
         return SnapshotPlan(files=(), total_bytes=0)
-    if not root.is_dir():
+    if is_link_status(root_status):  # the root itself is never followed either (A2)
+        raise SnapshotRefused(f"Ship's Records at {root} is a link; a snapshot copies only what Ship's Records hold")
+    if not stat.S_ISDIR(root_status.st_mode):
         raise SnapshotRefused(f"Ship's Records at {root} is not a directory")
     files: list[SnapshotFile] = []
     total = 0
@@ -414,6 +484,9 @@ def prepare_snapshot(
     if not plan.files:
         return None
     final = snapshots_dir / relative
+    for directory in (snapshots_dir, final.parent):
+        if is_link_or_junction(directory):  # A2: written only into the snapshots directory itself
+            raise SnapshotRefused(f"{directory} is a link or junction; a snapshot is written only into its own directory")
     if os.path.lexists(final):  # a snapshot is never written over
         raise SnapshotRefused(f"a snapshot named {relative} exists already")
     info = _bag_info(plan, timeline_id=timeline_id, ship_did=ship_did, started=started, ended=ended)
@@ -493,6 +566,8 @@ def _verify_bag(temp: Path, bag: str, plan: SnapshotPlan, digests: dict[str, str
         for item in plan.files:
             if _digest(bag_zip.open(f"{bag}/data/{item.path}")) != digests[item.path]:  # zipfile also checks each CRC
                 raise SnapshotRefused(f"{item.path} does not read back as it was written")
+        for name in expected[len(plan.files):]:  # A2: the tag files too, read whole, so zipfile checks each CRC
+            _digest(bag_zip.open(name))
     return _digest(open(temp, "rb"))  # noqa: SIM115 -- closed by _digest
 
 
@@ -858,7 +933,7 @@ REPLACE:
 
 ### 7.5 `src/probos/__main__.py` (M1)
 
-Eleven pairs, in file order. `__main__.py` is not touched by S5.
+Twelve pairs, in file order (A2 added pair 1a, rewrote pair 2 and replaced pair 3). `__main__.py` is not touched by S5.
 
 **Pair 1, the annotation-only imports** (the names in the new helpers' signatures). SEARCH:
 ```python
@@ -878,30 +953,121 @@ REPLACE:
     from probos.protocols import DatabaseConnection
 ```
 
-**Pair 2, the dry run passes the tier.** SEARCH:
+**Pair 1a, S1 A4's message names the snapshots too (A2).** SEARCH:
 ```python
-        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
-            return _show_promotion_plan(config, data_dir, skip_reason, console)
+        console.print(
+            f"  archive.db_path is inside {overlap}; move it out of what a reset deletes. Nothing was changed.",
+            markup=False,
+        )
 ```
 REPLACE:
 ```python
-        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
-            return _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier)
+        console.print(
+            f"  archive.db_path, or the snapshots directory beside it, is inside or around {overlap}; move it out of "
+            "what a reset deletes. Nothing was changed.",  # AD-1341 S6 A2: the snapshots are protected too
+            markup=False,
+        )
 ```
 
-**Pair 3, no instance id at tier 3.** SEARCH:
+**Pair 2, the preflight, and the dry run passes the tier (A2).** SEARCH:
 ```python
-        return True, "No instance id and nothing to promote: no generation is recorded."
+    # --dry-run: show what would happen and exit
+    if getattr(args, 'dry_run', False):
+        _show_dry_run(tier, data_dir, active_task_count, console)
+        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
+            return _show_promotion_plan(config, data_dir, skip_reason, console)
+        return 0
 ```
 REPLACE:
 ```python
-        unkeyed = len(_snapshot_plan(data_dir).files) if tier >= 3 else 0
-        if unkeyed:  # AD-1341 S6: a --full reset would delete them with no ship to key their snapshot by
-            return False, (
-                f"No instance id: Ship's Records hold {unkeyed} file(s) a --full reset would delete with no ship to "
-                "key their snapshot by. Pass --skip-promotion REASON to reset without promoting or snapshotting."
-            )
-        return True, "No instance id and nothing to promote: no generation is recorded."
+    # AD-1341 S6 A2: every refusal that can be known before anything is written, shared by the dry run and the reset
+    refusal = _reset_preflight(config, tier, data_dir, skip_reason)
+
+    # --dry-run: show what would happen and exit
+    if getattr(args, 'dry_run', False):
+        _show_dry_run(tier, data_dir, active_task_count, console)
+        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
+            shown = _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier, snapshot=not refusal)
+            if refusal:  # AD-1341 S6 A2: the dry run says the reset would refuse, never that a snapshot would be kept
+                console.print("  [yellow]⚠ This reset would refuse, writing and deleting nothing:[/yellow]")
+                console.print(f"    {refusal}", markup=False, emoji=False)
+            return shown
+        return 0
+    if refusal:  # AD-1341 S6 A2: before the confirmation, the pidfile and the promotion, so nothing is written
+        console.print("[red]✗[/red] probos reset refused before writing anything:")
+        console.print(f"  {refusal}", markup=False, emoji=False)
+        return 1
+```
+
+**Pair 3, S1 A4's overlap protects the snapshots directory (A2, A-F2).** The no-instance-id refusal this pair added before A2 is now in `_reset_preflight` (pair 6), before anything is written. SEARCH:
+```python
+def _archive_reset_overlap(config: SystemConfig, tier: int, data_dir: Path, repo_path: Path) -> str:
+    """What a reset of ``tier`` deletes that is, or holds, the Ship's Archive; ``""`` when nothing (A4, F3).
+
+    The targets are what the tier loop removes for tiers 1 to ``tier``: each listed file; each listed directory,
+    whose contents go; ChromaDB's UUID-named directories; the knowledge store's subdirectories (only their ``.json``
+    and ``.py`` files go, but an archive there is refused too); and the instance id file. Both sides are resolved
+    (symlinks, ``..``) and compared with the platform's case rule. It reads paths only and opens nothing.
+    """
+    from probos.config import resolve_archive_db_path
+
+    if not config.archive.enabled:  # D13: the reset neither opens nor protects a disabled archive
+        return ""
+    archive = os.path.normcase(str(resolve_archive_db_path(config.archive).resolve()))
+    targets: list[Path] = []
+    for level in range(1, tier + 1):
+        tier_def = RESET_TIERS[level]
+        specials = tier_def.get("special", [])
+        targets += [data_dir / name for name in [*tier_def.get("files", []), *tier_def.get("dirs", [])]]
+        if "chromadb_uuid_dirs" in specials:
+            targets += _find_chromadb_uuid_dirs(data_dir)
+        if "knowledge_subdirs" in specials:
+            targets += [repo_path / sub for sub in _RESET_SUBDIRS]
+        if "ontology_instance_id" in specials:
+            targets.append(data_dir / "ontology" / "instance_id")
+    for target in targets:
+        resolved = os.path.normcase(str(target.resolve()))
+        if archive == resolved or archive.startswith(resolved.rstrip(os.sep) + os.sep):
+            return str(target)
+    return ""
+```
+REPLACE:
+```python
+def _archive_reset_overlap(config: SystemConfig, tier: int, data_dir: Path, repo_path: Path) -> str:
+    """What a reset of ``tier`` deletes that is, or holds, the Ship's Archive or its snapshots; ``""`` when nothing.
+
+    S1 A4 (F3): the targets are what the tier loop removes for tiers 1 to ``tier``: each listed file; each listed
+    directory, whose contents go; ChromaDB's UUID-named directories; the knowledge store's subdirectories (only their
+    ``.json`` and ``.py`` files go, but an archive there is refused too); and the instance id file. AD-1341 S6 A2
+    (A-F2): the snapshots directory beside the archive is protected at every tier too, in both directions (inside or
+    equal to a target, or a target inside it). Every side is resolved (symlinks, junctions, ``..``) and compared with
+    the platform's case rule, so no link or junction aliases one into another. It reads paths only and opens nothing.
+    """
+    from probos.config import resolve_archive_db_path
+
+    if not config.archive.enabled:  # D13: the reset neither opens nor protects a disabled archive
+        return ""
+    archive = os.path.normcase(str(resolve_archive_db_path(config.archive).resolve()))
+    snapshots = os.path.normcase(str(_snapshots_dir(config).resolve()))  # AD-1341 S6 A2: the snapshots too
+    targets: list[Path] = []
+    for level in range(1, tier + 1):
+        tier_def = RESET_TIERS[level]
+        specials = tier_def.get("special", [])
+        targets += [data_dir / name for name in [*tier_def.get("files", []), *tier_def.get("dirs", [])]]
+        if "chromadb_uuid_dirs" in specials:
+            targets += _find_chromadb_uuid_dirs(data_dir)
+        if "knowledge_subdirs" in specials:
+            targets += [repo_path / sub for sub in _RESET_SUBDIRS]
+        if "ontology_instance_id" in specials:
+            targets.append(data_dir / "ontology" / "instance_id")
+    for target in targets:
+        resolved = os.path.normcase(str(target.resolve()))
+        within = resolved.rstrip(os.sep) + os.sep
+        if archive == resolved or archive.startswith(within):
+            return str(target)
+        if snapshots == resolved or snapshots.startswith(within) or resolved.startswith(snapshots + os.sep):
+            return str(target)  # AD-1341 S6 A2: a reset never deletes a snapshot, nor a directory that holds one
+    return ""
 ```
 
 **Pair 4, the audited skip covers the snapshot.** SEARCH:
@@ -972,6 +1138,39 @@ def _snapshot_plan(data_dir: Path) -> SnapshotPlan:
     from probos.knowledge.records_snapshot import plan_snapshot
 
     return plan_snapshot(data_dir / _SNAPSHOT_SOURCE)
+
+
+def _reset_preflight(config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None) -> str:
+    """AD-1341 S6 A2: why this reset must refuse, known before anything is written; ``""`` when nothing does.
+
+    ``_cmd_reset`` runs it before the confirmation, the pidfile and the promotion, and its dry run shows it, so a reset
+    it refuses has promoted, described, snapshotted, recorded and closed nothing. At tier 3, with the archive enabled
+    and no ``--skip-promotion``: the Ship's Records snapshot's plan (the root and every entry: a link, a special file,
+    the bounds, a path that cannot be inspected), the instance id that keys it, and its destination (no link or
+    junction at the snapshots directory or the timeline's). Reads the instance id, names and sizes; opens no
+    database. The snapshot checks again where it writes (register R28).
+    """
+    from probos.knowledge.records_snapshot import SnapshotRefused, is_link_or_junction, snapshot_relative_path
+
+    if tier < 3 or not config.archive.enabled or skip_reason is not None:
+        return ""
+    try:
+        plan = _snapshot_plan(data_dir)
+        if not plan.files:
+            return ""
+        timeline_id, started = _read_instance_id(data_dir), _generation_started(data_dir)
+        if not timeline_id or started is None:  # AD-1341 S6: no ship to key the snapshot by
+            return (
+                f"No instance id: Ship's Records hold {len(plan.files)} file(s) a --full reset would delete with no "
+                "ship to key their snapshot by. Pass --skip-promotion REASON to reset without promoting or snapshotting."
+            )
+        snapshot_relative_path(timeline_id, started, started)  # an instance id that cannot name a directory refuses
+        for directory in (_snapshots_dir(config), _snapshots_dir(config) / timeline_id):
+            if is_link_or_junction(directory):  # AD-1341 S6 A2: a snapshot is never written through a link
+                return f"{directory} is a link or junction; a snapshot is written only into the snapshots directory."
+    except (SnapshotRefused, OSError, ValueError) as exc:
+        return f"The Ship's Records snapshot would refuse this reset: {exc}"
+    return ""
 
 
 def _configured_ledger(config: SystemConfig) -> ArchiveLedger:
@@ -1074,6 +1273,7 @@ def _show_snapshot_plan(config: SystemConfig, data_dir: Path, console: Console) 
 
 def _show_promotion_plan(
     config: SystemConfig, data_dir: Path, skip_reason: str | None, console: Console, *, tier: int = 2,
+    snapshot: bool = True,
 ) -> int:
 ```
 
@@ -1100,7 +1300,7 @@ REPLACE:
 ```python
     if plan.records and not timeline_id:
         console.print("  [yellow]⚠ No instance id: this reset would refuse without --skip-promotion REASON.[/yellow]")
-    if tier >= 3:
+    if tier >= 3 and snapshot:  # AD-1341 S6 A2: never when the preflight says the reset would refuse
         _show_snapshot_plan(config, data_dir, console)  # AD-1341 S6: what a --full reset would keep
     return 0
 ```
@@ -1216,6 +1416,10 @@ async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, c
         if not is_snapshot_relative_path(entry.relative_path):  # AD-1341 S6: a row never names a file outside the snapshots
             print(f"Snapshot {snapshot_id} names {entry.relative_path!r}, which is not a snapshot's name. Nothing was erased.")
             return 1
+        problem = _snapshot_file_problem(_snapshots_dir(config), entry.relative_path)  # A2: before the marker
+        if problem:
+            print(f"Snapshot {snapshot_id}: {problem}. Nothing was erased.")
+            return 1
         print(f"Ship's Records snapshot {entry.id}: {entry.relative_path} ({entry.file_count} file(s), timeline {entry.timeline_id})")
         if entry.erased_at is None:
             if not confirmed and input("  Erase it? Its file is deleted. [y/N]: ").strip().lower() != "y":
@@ -1232,6 +1436,28 @@ async def _erase_snapshot(config: SystemConfig, snapshot_id: int, reason: str, c
         return 1
     print(f"Erased Ship's Records snapshot {snapshot_id}: a marker keeps its name and the reason; its file is deleted.")
     return 0
+
+
+def _snapshot_file_problem(directory: Path, relative_path: str) -> str:
+    """AD-1341 S6 A2 (A-F3): why a recorded snapshot's path must not be erased, or ``""`` when it may. ``lstat`` only.
+
+    Neither the snapshots directory nor the timeline's directory may be a link or junction, and what stands at the
+    snapshot's own name, when anything does, must be a regular file: an erasure deletes only a snapshot inside the
+    snapshots directory. Nothing there is fine (a ``missing`` row may still be marked). Any other ``OSError``
+    propagates, and the erasure fails before its marker.
+    """
+    import stat
+
+    from probos.knowledge.records_snapshot import is_link_or_junction, lstat_or_none
+
+    path = directory / relative_path
+    for component in (directory, path.parent):
+        if is_link_or_junction(component):  # AD-1341 S6 A2: an erasure never follows one
+            return f"{component} is a link or junction; an erasure deletes only inside the snapshots directory"
+    status = lstat_or_none(path)
+    if status is not None and not stat.S_ISREG(status.st_mode):  # a directory, a link or a special file there
+        return f"{path} is not a snapshot's file"
+    return ""
 
 
 def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
@@ -1287,9 +1513,12 @@ import asyncio
 import dataclasses
 import hashlib
 import os
+import shutil
 import sqlite3
+import struct
 import sys
 import zipfile
+import zlib
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1540,6 +1769,8 @@ _FAULTS = (
     "link", "too-many-files", "too-many-bytes", "grew", "shrank", "unreadable", "reads-back-wrong",
     "member-missing", "not-recorded",
 )
+#: A2: the faults the reset's preflight knows before anything is written: the archive is never even opened.
+_PREFLIGHT_FAULTS = ("link", "too-many-files", "too-many-bytes")
 
 
 def _inject(fault: str, records: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1604,8 +1835,11 @@ def test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing(
     assert set(after) == set(before) | ({changed} if changed else set())  # Ship's Records and every tier file
     assert {path: content for path, content in after.items() if path != changed} == before
     assert _snapshot_files(tmp_path) == []  # no snapshot, and no temporary file left behind
-    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive_snapshots") == [(0,)]
-    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]  # closed only with its snapshot
+    if fault in _PREFLIGHT_FAULTS:  # A2: refused before anything is written: no promotion, description or row
+        assert not _archive_db(tmp_path).exists()
+    else:
+        assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive_snapshots") == [(0,)]
+        assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]  # closed only with its snapshot
     assert not (data_dir / "probos.pid").exists()
 
 
@@ -1712,7 +1946,7 @@ def test_a_prepared_snapshot_reads_back_as_written_and_is_published_once(tmp_pat
         assert f"{line}\n" in info
 
 
-def test_a_snapshot_is_never_written_over(tmp_path: Path) -> None:
+def test_a_snapshot_is_never_written_over(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "records"
     _files(root, {"a.md": b"a"})
     first = _prepare(root, tmp_path / "snaps")
@@ -1730,6 +1964,15 @@ def test_a_snapshot_is_never_written_over(tmp_path: Path) -> None:
     assert later.final_path.read_bytes() == b"someone else's file"
     later.discard()
     assert not later.temp_path.exists()
+
+    racing = _prepare(root, tmp_path / "snaps", ended=_ENDED.replace(second=7))
+    with monkeypatch.context() as patch:  # A2 (A-F4): the name appears after any check publish could make
+        patch.setattr(records_snapshot.os.path, "lexists", lambda _path: False)
+        racing.final_path.write_bytes(b"a racing writer's file")
+        with pytest.raises(SnapshotRefused, match="exists already"):
+            racing.publish()
+    assert racing.final_path.read_bytes() == b"a racing writer's file"
+    racing.discard()
 
 
 @pytest.mark.parametrize("timeline", ["", " ", "../ship", "ship/one", "ship one", "a" * 65, ".hidden", "ship\n", None])
@@ -1945,6 +2188,199 @@ def test_a_dry_run_shows_the_snapshot_a_full_reset_would_keep_and_writes_nothing
     _link_dir(records / "linked", outside)
     assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True, dry_run=True) == 0
     assert "The Ship's Records snapshot would refuse this reset" in capsys.readouterr().out
+
+
+# --- A2: the round-1 repairs ---------------------------------------------------------------------------------------
+
+
+def test_a_publish_that_fails_leaves_its_row_shown_missing_and_deletes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (A-F7): the row is recorded before the file is published, so a publish that fails leaves the row, never
+    deleted, which ``probos archive snapshots`` shows as missing; the reset refuses with nothing deleted."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    before = _data_files(data_dir)
+    config = _config(tmp_path)
+
+    def _no_space(self: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(records_snapshot.PreparedSnapshot, "publish", _no_space)
+
+    assert _reset(monkeypatch, config, data_dir, full=True) == 1
+
+    assert _data_files(data_dir) == before and _snapshot_files(tmp_path) == []
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive_snapshots") == [(1,)]  # the row stays
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]
+    capsys.readouterr()
+    assert _archive(monkeypatch, config, "snapshots") == 0
+    assert "(missing);" in capsys.readouterr().out
+
+
+def test_a_ship_records_root_that_cannot_be_inspected_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F1): only a root that is not there is an empty plan; an error inspecting it propagates."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    real_lstat = os.lstat
+
+    def _denied(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(path, (str, os.PathLike)) and Path(path) == root:
+            raise PermissionError(13, "Access is denied")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(records_snapshot.os, "lstat", _denied)
+    with pytest.raises(PermissionError):
+        plan_snapshot(root)
+
+
+def test_a_ship_records_root_that_is_a_link_is_never_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F1): a root that is a link or junction refuses, in the plan and in the reset, before anything is written."""
+    outside = tmp_path / "outside"
+    _files(outside, {"notebooks/a.md": b"OUTSIDE"})
+    _link_dir(tmp_path / "records-link", outside)
+    with pytest.raises(SnapshotRefused, match="is a link"):
+        plan_snapshot(tmp_path / "records-link")
+
+    data_dir = _data_dir(tmp_path)
+    _link_dir(data_dir / "ship-records", outside)
+    before = _tree(outside)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True) == 1
+
+    assert _tree(outside) == before and (data_dir / "trust.db").is_file()
+    assert not _archive_db(tmp_path).exists()  # refused before anything was written
+
+
+def test_a_tag_file_that_reads_back_wrong_refuses_the_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F6): the read-back reads the tag files whole too, so zipfile checks their CRCs."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    real_verify = records_snapshot._verify_bag
+
+    def _manifest_damaged(temp: Path, bag: str, plan: SnapshotPlan, digests: dict[str, str]) -> str:
+        with zipfile.ZipFile(temp) as bag_zip:
+            member = bag_zip.getinfo(f"{bag}/manifest-sha256.txt")
+        with open(temp, "r+b") as raw:
+            raw.seek(member.header_offset + 26)
+            name_length, extra_length = struct.unpack("<HH", raw.read(4))
+            raw.seek(member.header_offset + 30 + name_length + extra_length + member.compress_size // 2)
+            (byte,) = raw.read(1)
+            raw.seek(-1, os.SEEK_CUR)
+            raw.write(bytes([byte ^ 0xFF]))
+        return real_verify(temp, bag, plan, digests)
+
+    monkeypatch.setattr(records_snapshot, "_verify_bag", _manifest_damaged)
+    with pytest.raises((zipfile.BadZipFile, zlib.error, EOFError)):
+        _prepare(root, tmp_path / "snaps")
+    assert [path for path in (tmp_path / "snaps").rglob("*") if path.is_file()] == []  # the temporary file is removed
+
+
+def test_a_file_system_without_hard_links_refuses_to_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F4): publication is a hard link, never a rename that may replace; where links fail, it refuses."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    prepared = _prepare(root, tmp_path / "snaps")
+
+    def _unsupported(*args: Any, **kwargs: Any) -> None:
+        raise OSError(95, "Operation not supported")
+
+    monkeypatch.setattr(records_snapshot.os, "link", _unsupported)
+    with pytest.raises(SnapshotRefused, match="hard link"):
+        prepared.publish()
+    assert not prepared.final_path.exists() and prepared.temp_path.is_file()  # kept for the caller's discard
+    prepared.discard()
+    assert not prepared.temp_path.exists()
+
+
+def test_an_erasure_deletes_only_a_regular_file_inside_the_snapshots_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F3): before its marker, the erasure refuses a directory at the snapshot's name and a timeline directory
+    that is a link or junction; nothing is marked or deleted."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    assert _reset(monkeypatch, config, data_dir, full=True) == 0
+    (snapshot,) = _snapshot_files(tmp_path)
+    snapshot.unlink()
+    snapshot.mkdir()  # a directory where the snapshot's file was
+    (snapshot / "keep.txt").write_bytes(b"keep")
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="x", yes=True) == 1
+    assert (snapshot / "keep.txt").read_bytes() == b"keep" and _erasures(tmp_path) == [(None, "")]
+
+    shutil.rmtree(snapshot.parent)
+    outside = tmp_path / "outside"
+    _files(outside, {snapshot.name: b"OUTSIDE"})
+    _link_dir(snapshot.parent, outside)  # the timeline's directory leads out of the snapshots directory
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="x", yes=True) == 1
+    assert (outside / snapshot.name).read_bytes() == b"OUTSIDE" and _erasures(tmp_path) == [(None, "")]
+
+
+def test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (A-F5): the dry run and the reset share one preflight; no snapshot is promised that the reset would refuse."""
+    data_dir = _data_dir(tmp_path, instance_id="")
+    _files(data_dir / "ship-records", {"manuals/m.md": b"---\nauthor: shipyard\n---\nA manual, never a source.\n"})
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True, dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    assert "This reset would refuse" in out
+    assert "No instance id: Ship's Records hold 1 file(s)" in out
+    assert "would be kept" not in out
+    assert not _archive_db(tmp_path).exists()
+
+
+def test_a_snapshot_is_written_only_into_the_snapshots_directory_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (A-F2): a link or junction at the snapshots directory or the timeline's refuses the snapshot, in
+    ``prepare_snapshot`` and in the reset's preflight; at every tier the snapshots directory, resolved, may not be
+    inside or around what the reset deletes."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _link_dir(tmp_path / "snaps", elsewhere)
+    with pytest.raises(SnapshotRefused, match="is a link"):
+        _prepare(root, tmp_path / "snaps")
+    assert list(elsewhere.rglob("*")) == []
+
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    before = _data_files(data_dir)
+    _snapshots_dir(tmp_path).mkdir()
+    _link_dir(_snapshots_dir(tmp_path) / _SHIP, data_dir / "ship-records" / "reports")  # into what --full deletes
+
+    assert _reset(monkeypatch, config, data_dir, full=True) == 1
+
+    assert _data_files(data_dir) == before
+    assert not _archive_db(tmp_path).exists()  # the preflight refused before anything was written
+
+    base = tmp_path / "tier2"
+    data2 = _data_dir(base)
+    config2 = _config(base)
+    _files(data2 / "semantic", {"older.zip": b"an older snapshot"})
+    _link_dir(_snapshots_dir(base), data2 / "semantic")  # the snapshots directory is what tier 2 deletes
+    capsys.readouterr()
+
+    assert _reset(monkeypatch, config2, data2) == 1
+
+    assert (data2 / "semantic" / "older.zip").read_bytes() == b"an older snapshot"
+    assert "the Ship's Archive is inside what this reset deletes" in capsys.readouterr().out
 ```
 
 The first S6 import is `from probos.knowledge import records_snapshot` (placed before `probos.cognitive`, so it is the import that fails on M1's base; keep that order even if a formatter would sort it).
@@ -1988,7 +2424,9 @@ async def promote_nature_description(archive: ArchiveStore, record: PromotionRec
     The Captain's amendment of 2026-10-16: procedures and skills persist as nature and are never promoted; the archive
     gets a description of what a crew developed and why. Only a ``NATURE_DESCRIPTION`` record with its
     ``nature-description/`` reference and no source episodes is accepted. ``promote_entry`` then applies the
-    idempotence key and the Captain's erasure markers and vetoes, as for every source.
+    idempotence key and the Captain's erasure markers and vetoes, as for every source. A2 (B-F2): one per generation:
+    once an entry is archived for the reference, with any content, a later description is PRESENT and nothing is
+    written (``_nature_state``); other kinds keep S1's revisions.
     """
     if (
         type(record) is not PromotionRecord
@@ -1997,7 +2435,10 @@ async def promote_nature_description(archive: ArchiveStore, record: PromotionRec
         or record.source_episode_ids
     ):
         raise ValueError("AD-1341 S6: only a nature description, citing no episode, is promoted here")
-    outcome = await archive.promote_entry(record)
+    if (await _nature_state(archive, record)).outcome is PromotionOutcome.PRESENT:
+        outcome = PromotionOutcome.PRESENT  # A2 (B-F2): this generation's description is archived already
+    else:
+        outcome = await archive.promote_entry(record)
     logger.info("AD-1341 S6: nature description %s: %s", record.source_ref, outcome.value)
     return outcome
 
@@ -2009,7 +2450,16 @@ async def review_nature_description(archive: ArchiveStore, record: PromotionReco
     ``probos archive pending`` shows the description as the reset would treat it, and ``source_state`` stays named in
     ``src`` by this module alone (``tests/test_ad1341_s3_veto_store.py``).
     """
-    return PendingSource(record, await archive.source_state(record))
+    return PendingSource(record, await _nature_state(archive, record))
+
+
+async def _nature_state(archive: ArchiveStore, record: PromotionRecord) -> SourceState:
+    """AD-1341 S6 A2 (B-F2): what promoting a nature description would do. One per generation: an entry archived for
+    its reference, with any content, makes a later one PRESENT, never a revision; the first is kept."""
+    state = await archive.source_state(record)
+    if state.outcome is PromotionOutcome.CREATED and state.entry_ids:  # A2 (B-F2): one per generation
+        return SourceState(PromotionOutcome.PRESENT, state.entry_ids)
+    return state
 
 
 @dataclass(frozen=True)
@@ -2175,8 +2625,10 @@ async def nature_description_record(
     """The description of the procedures created since ``started``, or None when there is nothing to describe.
 
     None with no procedure store, or when no procedure was created since ``started``. The store is opened through
-    ``open_read_only`` (the CLI passes SQLite's ``mode=ro``), so a missing file is never created and nothing is
-    written. Any database error propagates, and the reset refuses.
+    ``open_read_only`` (the CLI passes SQLite's ``mode=ro``), so a missing file is never created and the database's
+    own bytes never change. A2 (B-F4): the vessel's store is in WAL mode (``procedure_store.py:211``), and a reader may
+    create or touch its ``-wal`` and ``-shm`` files (``storage/sqlite_factory.py:28-31``). Any database error
+    propagates, and the reset refuses.
     """
     if not db_path.is_file():  # no procedure store: this generation developed nothing to describe
         return None
@@ -2199,17 +2651,21 @@ async def nature_description_record(
 
 ### 7.10 `src/probos/__main__.py` (M2)
 
-Eight pairs, in file order; pair 1 and pair 2 anchor on M1's text.
+Nine pairs, in file order; pair 1 and pair 2 anchor on M1's text (A2 rewrote pairs 1, 2, 6 and 7 and added pair 9).
 
-**Pair 1, the description at tiers 2 and 3.** SEARCH:
+**Pair 1, the description at tiers 2 and 3: read before the snapshot, archived after it (A2, B-F2).** SEARCH:
 ```python
         notes: list[str] = []
         if tier >= 3:  # AD-1341 S6: what a --full reset deletes from Ship's Records is kept first, as one checked file
+            notes.append(await _snapshot_ship_records(config, data_dir, timeline_id))
 ```
 REPLACE:
 ```python
-        notes: list[str] = [await _describe_nature(data_dir, archive, timeline_id)]  # AD-1341 S6: tiers 2 and 3
+        nature = await _nature_record(data_dir, timeline_id)  # AD-1341 S6 A2: read before the snapshot
+        notes: list[str] = []
         if tier >= 3:  # AD-1341 S6: what a --full reset deletes from Ship's Records is kept first, as one checked file
+            notes.append(await _snapshot_ship_records(config, data_dir, timeline_id))
+        notes.insert(0, await _describe_nature(archive, nature))  # AD-1341 S6 A2: archived after the snapshot (B-F2)
 ```
 
 **Pair 2, the description's helpers.** SEARCH:
@@ -2237,11 +2693,14 @@ async def _nature_record(data_dir: Path, timeline_id: str) -> PromotionRecord | 
     )
 
 
-async def _describe_nature(data_dir: Path, archive: ArchiveStore, timeline_id: str) -> str:
-    """AD-1341 S6: archive this generation's nature description before the reset; say what became of it."""
+async def _describe_nature(archive: ArchiveStore, record: PromotionRecord | None) -> str:
+    """AD-1341 S6: archive this generation's nature description before the reset; say what became of it.
+
+    A2 (B-F2): the promotion reads ``record`` before the snapshot (an unreadable store refuses there) and archives it
+    here, after the snapshot, so a snapshot that fails leaves no description to duplicate on the retry.
+    """
     from probos.knowledge.archive_promotion import promote_nature_description
 
-    record = await _nature_record(data_dir, timeline_id)
     if record is None:
         return "Nature description: this generation developed no Cognitive JIT procedure, so there is none."
     outcome = await promote_nature_description(archive, record)
@@ -2322,7 +2781,10 @@ REPLACE:
     for pending in review.sources:
         print(f"  {_pending_label(pending.state)}: {pending.record.source_ref}")
     if nature is not None:  # AD-1341 S6: the next reset would archive it too; probos archive veto keeps it out
-        print(f"  {_pending_label(nature.state)}: {nature.record.source_ref}")
+        print(f"  {_pending_label(nature.state)}: {nature.record.source_ref} (the nature description):")
+        print(f"    {nature.record.title}")
+        for line in nature.record.content.splitlines():  # AD-1341 S6 A2 (B-F1): the Captain reads the text itself
+            print(f"    {line}")
     for path in review.withheld:
         print(f"  - withheld: {path}")
     if review.sources or nature is not None:
@@ -2336,7 +2798,7 @@ REPLACE:
 REPLACE:
 ```python
     from probos.knowledge.archive_promotion import NATURE_DESCRIPTION_PREFIX, plan_promotion
-    from probos.knowledge.archive_store import VetoOutcome
+    from probos.knowledge.archive_store import SourceKind, VetoOutcome
 ```
 
 **Pair 8, `veto` accepts it.** SEARCH:
@@ -2351,6 +2813,20 @@ REPLACE:
         nature = await _nature_record(data_dir, timeline_id)
         record = nature if nature is not None and nature.source_ref == source_ref else None
     if record is None:
+```
+
+**Pair 9, the veto's confirmation shows the description's text (A2, B-F1).** SEARCH (S3's text):
+```python
+    print(f"Ship's Records source {record.source_ref}: {record.title}")
+    print(f"  kind: {record.source_kind.value}")
+```
+REPLACE:
+```python
+    print(f"Ship's Records source {record.source_ref}: {record.title}")
+    print(f"  kind: {record.source_kind.value}")
+    if record.source_kind is SourceKind.NATURE_DESCRIPTION:  # AD-1341 S6 A2 (B-F1): the text it keeps out
+        for line in record.content.splitlines():
+            print(f"    {line}")
 ```
 
 ### 7.11 `tests/test_ad1341_s1_archive_store.py` (M2)
@@ -2400,11 +2876,16 @@ from typing import Any
 import pytest
 
 from probos import __main__ as cli
-from probos.knowledge.archive_promotion import NATURE_DESCRIPTION_PREFIX, promote_nature_description
+from probos.knowledge import records_snapshot
+from probos.knowledge.archive_promotion import (
+    NATURE_DESCRIPTION_PREFIX,
+    promote_nature_description,
+    review_nature_description,
+)
 from probos.cognitive.oracle_service import OracleService
 from probos.cognitive.procedure_store import _SCHEMA as _PROCEDURE_SCHEMA
 from probos.config import ArchiveConfig, KnowledgeConfig, SystemConfig
-from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome, SourceKind
+from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome, SourceKind, SourceState
 from probos.knowledge.nature_description import (
     NATURE_DESCRIPTION_MAX_CHARS,
     PROCEDURES_DB,
@@ -2661,7 +3142,11 @@ def test_the_captain_reviews_and_vetoes_a_description_before_the_reset(
     ref = f"{NATURE_DESCRIPTION_PREFIX}{_SHIP}"
 
     assert _archive(monkeypatch, config, "pending", data_dir=data_dir) == 0
-    assert f"  + would be promoted: {ref}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"  + would be promoted: {ref}" in out
+    assert f"    Procedures developed by the crew of timeline {_SHIP}" in out
+    for line in _EXPECTED.splitlines():  # A2 (B-F1): the Captain reviews the text itself, whole
+        assert f"    {line}" in out
 
     connection = sqlite3.connect(str(store))  # the store changes after the review: the reset's text differs
     connection.execute(
@@ -2672,7 +3157,7 @@ def test_the_captain_reviews_and_vetoes_a_description_before_the_reset(
     assert _archive(
         monkeypatch, config, "veto", data_dir=data_dir, source_ref=ref, reason="not this one", yes=True,
     ) == 0
-    capsys.readouterr()
+    assert "Late arrival" in capsys.readouterr().out  # A2 (B-F1): the veto shows the text it keeps out
 
     assert _reset(monkeypatch, config, data_dir) == 0
 
@@ -2732,6 +3217,111 @@ def test_the_dry_run_shows_the_description_the_reset_would_archive(
     for line in _EXPECTED.splitlines():
         assert f"      {line}" in out
     assert not _archive_db(tmp_path).exists()  # a dry run opens no archive
+
+
+def test_a_retried_reset_keeps_one_description_per_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (B-F2): a reset refused after its description was archived, retried after the store changed, archives no
+    second description of the same generation; the review says it is archived already."""
+    data_dir = _data_dir(tmp_path)
+    store = _procedure_store(data_dir, _ROWS)
+    config = _config(tmp_path)
+    ref = f"{NATURE_DESCRIPTION_PREFIX}{_SHIP}"
+    real_close = ArchiveStore.record_generation
+    attempts: list[Any] = []
+
+    async def _locked_once(self: ArchiveStore, closure: Any) -> Any:
+        attempts.append(closure)
+        if len(attempts) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return await real_close(self, closure)
+
+    monkeypatch.setattr(ArchiveStore, "record_generation", _locked_once)
+
+    assert _reset(monkeypatch, config, data_dir) == 1  # refused after the description was archived
+    archive = _archive_db(tmp_path)
+    descriptions = "SELECT content FROM archive WHERE source_kind = 'nature_description'"
+    assert _rows(archive, descriptions) == [(_EXPECTED,)]
+    assert (data_dir / "ontology" / "instance_id").is_file()
+
+    connection = sqlite3.connect(str(store))  # the vessel ran again before the retry: the store changed
+    connection.execute(
+        "INSERT INTO procedure_records (id, name, created_at) VALUES (?, ?, ?)", ("p-9", "Late arrival", _B + 999.0),
+    )
+    connection.commit()
+    connection.close()
+    capsys.readouterr()
+    assert _archive(monkeypatch, config, "pending", data_dir=data_dir) == 0
+    assert f"  = already archived (entry 1): {ref}" in capsys.readouterr().out
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+
+    assert f"Nature description {ref}: present." in capsys.readouterr().out
+    assert _rows(archive, descriptions) == [(_EXPECTED,)]  # one per generation: the first is kept
+    assert _rows(archive, "SELECT COUNT(*) FROM generations") == [(1,)]
+
+
+async def test_one_description_per_generation_whatever_its_content(tmp_path: Path) -> None:
+    """A2 (B-F2): once a generation's description is archived, a later one for the same reference is ``present``,
+    never a revision, in the writer and in the review alike."""
+    first = describe_nature(_SHIP, _BOOT, (), developed=1, active=0)
+    later = describe_nature(_SHIP, _BOOT, (), developed=2, active=1)
+    assert first.source_ref == later.source_ref and first.content != later.content  # premise
+    archive = ArchiveStore(str(tmp_path / "archive.db"), connection_factory=default_factory)
+    await archive.initialize()
+    try:
+        assert await promote_nature_description(archive, first) is PromotionOutcome.CREATED
+        assert await promote_nature_description(archive, later) is PromotionOutcome.PRESENT
+        assert await archive.count() == 1
+        review = await review_nature_description(archive, later)
+        assert review.state == SourceState(PromotionOutcome.PRESENT, (1,))
+    finally:
+        await archive.close()
+
+
+def test_a_full_reset_whose_snapshot_fails_archives_no_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (B-F2): the description is archived after the snapshot, so a snapshot that fails leaves none behind."""
+    data_dir = _data_dir(tmp_path)
+    _procedure_store(data_dir, _ROWS)
+    notebooks = data_dir / "ship-records" / "notebooks"
+    notebooks.mkdir(parents=True)
+    (notebooks / "a.md").write_bytes(b"a note")
+
+    def _sharing_violation(*args: Any, **kwargs: Any) -> str:
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+
+    monkeypatch.setattr(records_snapshot, "_copy_member", _sharing_violation)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True) == 1
+
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive WHERE source_kind = 'nature_description'") == [
+        (0,),
+    ]
+    assert (notebooks / "a.md").read_bytes() == b"a note"
+
+
+def test_a_wal_mode_store_is_described_and_its_database_bytes_are_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (B-F4): the vessel's store is in WAL mode (``procedure_store.py:211``). Read through ``mode=ro``, its
+    database bytes are unchanged; SQLite may create the ``-wal`` and ``-shm`` files beside it, as any reader may."""
+    data_dir = _data_dir(tmp_path)
+    store = _procedure_store(data_dir, _ROWS)
+    connection = sqlite3.connect(str(store))
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.close()
+    assert _rows(store, "PRAGMA journal_mode") == [("wal",)]  # premise
+    before = store.read_bytes()
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    for line in _EXPECTED.splitlines():
+        assert f"      {line}" in out
+    assert store.read_bytes() == before
 ```
 
 The first S6 import is `from probos.knowledge.archive_promotion import NATURE_DESCRIPTION_PREFIX, ...` (placed before `probos.cognitive`; keep that order).
@@ -2931,7 +3521,16 @@ async def count_procedures(db_path: Path, open_read_only: Callable[[str], Awaita
 
 ### 7.17 `src/probos/__main__.py` (M3)
 
-Fourteen pairs, in file order.
+Twenty-four pairs, in file order (A2 added pairs 0, 10a and 12a to 12h, and rewrote pairs 9, 10, 11 and 13).
+
+**Pair 0, the close's type for the annotations (A2).** SEARCH (M1's text):
+```python
+    from probos.knowledge.archive_store import ArchiveStore, PromotionRecord, SourceState
+```
+REPLACE:
+```python
+    from probos.knowledge.archive_store import ArchiveStore, GenerationRecord, PromotionRecord, SourceState
+```
 
 **Pair 1, the display helpers and the confirmation's signature.** SEARCH:
 ```python
@@ -3041,7 +3640,8 @@ REPLACE:
 ```python
     0 done, declined or a dry run; 1 refused with nothing deleted (a vessel owns the data directory, the Ship's
     Archive lies inside what the reset deletes, or the promotion of a tier 2 or 3 reset failed; AD-1341 S6: or its
-    snapshot, or a ``--clean-slate`` that could not be recorded or finished, before the tier loop); 2 a
+    snapshot, or a ``--clean-slate`` that could not be recorded or finished, or the generation's close, before the
+    tier loop; AD-1341 S6 A2: or a refusal its preflight knows before anything is written); 2 a
     ``--skip-promotion`` without a usable reason, or a ``--clean-slate`` with ``--soft`` or a disabled archive.
 ```
 
@@ -3064,9 +3664,11 @@ REPLACE:
     # Load config to find knowledge repo_path
 ```
 
-**Pair 9, and the archive to record it in.** SEARCH:
+**Pair 9, the archive to record it in, and `procedures/` among what the overlap protects the archive from (A2, C-F1).** SEARCH:
 ```python
     # AD-1341 S1 A4 (F3): refuse a reset that would delete the Ship's Archive. Every tier and a dry run too, before
+    # the scheduled-task read, the confirmation and the pidfile; nothing is opened or touched.
+    overlap = _archive_reset_overlap(config, tier, data_dir, repo_path)
 ```
 REPLACE:
 ```python
@@ -3078,35 +3680,42 @@ REPLACE:
         return 2
 
     # AD-1341 S1 A4 (F3): refuse a reset that would delete the Ship's Archive. Every tier and a dry run too, before
+    # the scheduled-task read, the confirmation and the pidfile; nothing is opened or touched.
+    overlap = _archive_reset_overlap(config, tier, data_dir, repo_path, clean_slate=clean_slate)  # AD-1341 S6 A2
 ```
 
-**Pair 10, the dry run and the confirmation show it.** SEARCH (M1's pair 2 is inside it):
+**Pair 10, the preflight checks the procedure store's directory, and the dry run shows the clean slate (A2).** SEARCH (M1's pair 2 text):
 ```python
+    refusal = _reset_preflight(config, tier, data_dir, skip_reason)
+
+    # --dry-run: show what would happen and exit
     if getattr(args, 'dry_run', False):
         _show_dry_run(tier, data_dir, active_task_count, console)
-        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
-            return _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier)
-        return 0
+```
+REPLACE:
+```python
+    refusal = _reset_preflight(config, tier, data_dir, skip_reason, clean_slate=clean_slate)
 
-    # Confirmation prompt (skipped with -y)
+    # --dry-run: show what would happen and exit
+    if getattr(args, 'dry_run', False):
+        _show_dry_run(tier, data_dir, active_task_count, console, clean_slate=clean_slate)
+```
+
+**Pair 10a, the confirmation shows it.** SEARCH:
+```python
     if not getattr(args, 'yes', False):
         if not _show_confirmation_prompt(tier, data_dir, active_task_count, console):
 ```
 REPLACE:
 ```python
-    if getattr(args, 'dry_run', False):
-        _show_dry_run(tier, data_dir, active_task_count, console, clean_slate=clean_slate)
-        if tier >= 2:  # AD-1341 S1: the promotion plan; reads Ship's Records, opens no archive, takes no pidfile
-            return _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier)
-        return 0
-
-    # Confirmation prompt (skipped with -y)
     if not getattr(args, 'yes', False):
         if not _show_confirmation_prompt(tier, data_dir, active_task_count, console, clean_slate=clean_slate):
 ```
 
-**Pair 11, the clean slate before the tier loop.** SEARCH:
+**Pair 11, the clean slate before the tier loop, and the generation's close last (A2, C-F3).** SEARCH:
 ```python
+        promote_first = tier >= 2  # AD-1341 S1: tier 1 keeps the crew, so it has nothing to promote
+        if promote_first and not _promote_before_reset(config, tier, data_dir, skip_reason, console):
             console.print("[red]✗[/red] probos reset refused before deleting anything.")
             return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted
 
@@ -3114,12 +3723,21 @@ REPLACE:
 ```
 REPLACE:
 ```python
+        promote_first = tier >= 2  # AD-1341 S1: tier 1 keeps the crew, so it has nothing to promote
+        promoted, closing = (  # AD-1341 S6 A2 (C-F3): the generation's close is recorded last, below
+            _promote_before_reset(config, tier, data_dir, skip_reason, console) if promote_first else (True, None)
+        )
+        if not promoted:
             console.print("[red]✗[/red] probos reset refused before deleting anything.")
             return 1  # AD-1341 S1: refused before the tier loop; nothing was deleted
         # AD-1341 S6: --clean-slate clears nature after the promotion (which described it) and before the tier loop, so
         # a failure here leaves every crew file in place and the same command finishes it.
         if clean_slate and not _clear_nature(config, tier, data_dir, console):
             console.print("[red]✗[/red] probos reset refused before its tier loop; the crew's files are untouched.")
+            return 1
+        # AD-1341 S6 A2 (C-F3): the generation is closed only once everything before the tier loop has succeeded
+        if closing is not None and not _close_generation(config, closing, console):
+            console.print("[red]✗[/red] probos reset refused before its tier loop; run the same command again.")
             return 1
 
         # ── Execute reset ──
@@ -3141,6 +3759,219 @@ REPLACE:
     console.print("  The skill catalog (config/skills) is part of the installation; no reset touches it.")
 ```
 
+**Pair 12a, the overlap's flag (A2, C-F1).** SEARCH (M1's text):
+```python
+def _archive_reset_overlap(config: SystemConfig, tier: int, data_dir: Path, repo_path: Path) -> str:
+```
+REPLACE:
+```python
+def _archive_reset_overlap(
+    config: SystemConfig, tier: int, data_dir: Path, repo_path: Path, *, clean_slate: bool = False,
+) -> str:
+```
+
+**Pair 12b, the clean slate's target (A2, C-F1); not added to `RESET_TIERS`.** SEARCH (M1's text):
+```python
+        if "ontology_instance_id" in specials:
+            targets.append(data_dir / "ontology" / "instance_id")
+    for target in targets:
+        resolved = os.path.normcase(str(target.resolve()))
+        within = resolved.rstrip(os.sep) + os.sep
+```
+REPLACE:
+```python
+        if "ontology_instance_id" in specials:
+            targets.append(data_dir / "ontology" / "instance_id")
+    if clean_slate:  # AD-1341 S6 A2: --clean-slate deletes the procedure store's directory too (C-F1)
+        targets.append(data_dir / _NATURE_DIR)
+    for target in targets:
+        resolved = os.path.normcase(str(target.resolve()))
+        within = resolved.rstrip(os.sep) + os.sep
+```
+
+**Pair 12c, the promotion returns the generation's close (A2, C-F3).** SEARCH (S1's text):
+```python
+def _promote_before_reset(
+    config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None, console: Console,
+) -> bool:
+    """Promote what the crew published into the Ship's Archive before a reset of tier 2 or above.
+
+    True when the reset may go on; False, having said why, when it must not, with nothing deleted. With the
+    archive disabled there is nowhere to promote to: a notice, and True (D13). That check comes before the one
+    ``asyncio.run``, so a caller already inside an event loop with the archive disabled
+    (``tests/test_bf902_fts_reconciliation.py``) never starts a second loop.
+    """
+    from rich.markup import escape
+
+    if not config.archive.enabled:
+        console.print(
+            "[yellow]⚠ The Ship's Archive is disabled (archive.enabled): "
+            "nothing is promoted before this reset.[/yellow]"
+        )
+        return True
+    try:
+        timeline_id = _read_instance_id(data_dir)  # before the tier loop deletes it
+        proceed, message = asyncio.run(_promote_into_archive(config, tier, data_dir, timeline_id, skip_reason))
+    except Exception as exc:  # any failure refuses the reset, and the Captain sees why
+        console.print(
+            f"[red]✗[/red] Ship's Archive promotion failed: {escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return False  # AD-1341 S1: a failed promotion refuses the reset
+    console.print(f"  {escape(message)}" if proceed else f"[red]✗[/red] {escape(message)}")
+    return proceed
+```
+REPLACE:
+```python
+def _promote_before_reset(
+    config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None, console: Console,
+) -> tuple[bool, GenerationRecord | None]:
+    """Promote what the crew published into the Ship's Archive before a reset of tier 2 or above.
+
+    (True, the generation's close) when the reset may go on; (False, None), having said why, when it must not, with
+    nothing deleted. AD-1341 S6 A2 (C-F3): the close is returned, not recorded: ``_cmd_reset`` records it with
+    ``_close_generation`` once any clean slate has finished, so no generation is closed while its crew's files
+    remain; None when there is nothing to close. With the archive disabled there is nowhere to promote to: a notice,
+    and (True, None) (D13). That check comes before the one ``asyncio.run``, so a caller already inside an event loop
+    with the archive disabled (``tests/test_bf902_fts_reconciliation.py``) never starts a second loop.
+    """
+    from rich.markup import escape
+
+    if not config.archive.enabled:
+        console.print(
+            "[yellow]⚠ The Ship's Archive is disabled (archive.enabled): "
+            "nothing is promoted before this reset.[/yellow]"
+        )
+        return True, None
+    try:
+        timeline_id = _read_instance_id(data_dir)  # before the tier loop deletes it
+        proceed, message, closing = asyncio.run(
+            _promote_into_archive(config, tier, data_dir, timeline_id, skip_reason)
+        )
+    except Exception as exc:  # any failure refuses the reset, and the Captain sees why
+        console.print(
+            f"[red]✗[/red] Ship's Archive promotion failed: {escape(type(exc).__name__)}: {escape(str(exc))}"
+        )
+        return False, None  # AD-1341 S1: a failed promotion refuses the reset
+    console.print(f"  {escape(message)}" if proceed else f"[red]✗[/red] {escape(message)}")
+    return proceed, closing if proceed else None
+```
+
+**Pair 12d, the promotion's signature and the no-instance-id branch.** SEARCH (S1's text):
+```python
+) -> tuple[bool, str]:
+    """The promotion run, or the recorded skip: (the reset may go on, what to tell the Captain).
+
+    Raises on any failure, and closes the archive on every exit. Without an instance id nothing can be
+    attributed (D9): anything to promote refuses, and a directory with nothing to promote has no generation to
+    record, so nothing is opened.
+    """
+    from probos.knowledge.archive_promotion import plan_promotion, promote_ship_records
+    from probos.knowledge.archive_store import GenerationOutcome, GenerationRecord
+
+    records = _reset_records_store(config, data_dir)
+    if skip_reason is None and not timeline_id:
+        plan = await plan_promotion(records, timeline_id=_UNATTRIBUTED_TIMELINE)
+        if plan.records:  # AD-1341 S1: nothing can be attributed without an instance id
+            return False, (
+                f"No instance id: {len(plan.records)} record(s) cannot be attributed to a timeline. "
+                "Pass --skip-promotion REASON to reset without promoting them."
+            )
+        return True, "No instance id and nothing to promote: no generation is recorded."
+```
+REPLACE:
+```python
+) -> tuple[bool, str, GenerationRecord | None]:
+    """The promotion run, or the skip: (the reset may go on, what to tell the Captain, the generation's close).
+
+    Raises on any failure, and closes the archive on every exit. Without an instance id nothing can be
+    attributed (D9): anything to promote refuses, and a directory with nothing to promote has no generation to
+    record, so nothing is opened. AD-1341 S6 A2 (C-F3): the close (promoted or skipped) is returned, never recorded
+    here: ``_cmd_reset`` records it with ``_close_generation`` once any clean slate has finished.
+    """
+    from probos.knowledge.archive_promotion import plan_promotion, promote_ship_records
+    from probos.knowledge.archive_store import GenerationOutcome, GenerationRecord
+
+    records = _reset_records_store(config, data_dir)
+    if skip_reason is None and not timeline_id:
+        plan = await plan_promotion(records, timeline_id=_UNATTRIBUTED_TIMELINE)
+        if plan.records:  # AD-1341 S1: nothing can be attributed without an instance id
+            return False, (
+                f"No instance id: {len(plan.records)} record(s) cannot be attributed to a timeline. "
+                "Pass --skip-promotion REASON to reset without promoting them."
+            ), None
+        return True, "No instance id and nothing to promote: no generation is recorded.", None
+```
+
+**Pair 12e, the skip's close is returned.** SEARCH (M1's pair 4 text):
+```python
+            await archive.record_generation(skipped)
+            also = " The Ship's Records snapshot is skipped with it." if tier >= 3 else ""  # AD-1341 S6
+            return True, f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}{also}"
+```
+REPLACE:
+```python
+            also = " The Ship's Records snapshot is skipped with it." if tier >= 3 else ""  # AD-1341 S6
+            message = f"Ship's Archive promotion skipped; the reason is recorded: {skip_reason.strip()}{also}"
+            return True, message, skipped  # AD-1341 S6 A2 (C-F3): _close_generation records it, after any clean slate
+```
+
+**Pair 12f, the promotion's close is returned.** SEARCH (S1's and M1's text):
+```python
+            withheld=len(promoted.withheld),
+        )
+        await archive.record_generation(closed)
+    finally:
+        await archive.close()
+    return True, (
+        f"Ship's Archive: {len(promoted.created)} promoted, {len(promoted.present)} already archived, "
+        f"{len(promoted.erased)} erased by the Captain, {len(promoted.vetoed)} vetoed by the Captain, "
+        f"{len(promoted.withheld)} withheld (timeline {timeline_id})."
+    ) + "".join(f"\n  {note}" for note in notes)
+```
+REPLACE:
+```python
+            withheld=len(promoted.withheld),
+        )  # AD-1341 S6 A2 (C-F3): returned; _close_generation records it after any clean slate
+    finally:
+        await archive.close()
+    message = (
+        f"Ship's Archive: {len(promoted.created)} promoted, {len(promoted.present)} already archived, "
+        f"{len(promoted.erased)} erased by the Captain, {len(promoted.vetoed)} vetoed by the Captain, "
+        f"{len(promoted.withheld)} withheld (timeline {timeline_id})."
+    ) + "".join(f"\n  {note}" for note in notes)
+    return True, message, closed
+```
+
+**Pair 12g, the preflight's flag.** SEARCH (M1's text):
+```python
+def _reset_preflight(config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None) -> str:
+```
+REPLACE:
+```python
+def _reset_preflight(
+    config: SystemConfig, tier: int, data_dir: Path, skip_reason: str | None, *, clean_slate: bool = False,
+) -> str:
+```
+
+**Pair 12h, the preflight checks the procedure store's directory first (A2, B-F3, C-F2).** SEARCH (M1's text):
+```python
+    if tier < 3 or not config.archive.enabled or skip_reason is not None:
+        return ""
+    try:
+        plan = _snapshot_plan(data_dir)
+```
+REPLACE:
+```python
+    if clean_slate:  # AD-1341 S6 A2: before the promotion reads the procedure store through it (B-F3, C-F2)
+        problem = _nature_dir_problem(data_dir)
+        if problem:
+            return problem
+    if tier < 3 or not config.archive.enabled or skip_reason is not None:
+        return ""
+    try:
+        plan = _snapshot_plan(data_dir)
+```
+
 **Pair 13, the clean slate.** SEARCH:
 ```python
 def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
@@ -3159,11 +3990,9 @@ def _clear_nature(config: SystemConfig, tier: int, data_dir: Path, console: Cons
     from rich.markup import escape
 
     procedures = data_dir / _NATURE_DIR
-    if procedures.is_symlink() or procedures.is_junction():  # AD-1341 S6: never followed out of the data directory
-        console.print(f"[red]✗[/red] {escape(str(procedures))} is a link; --clean-slate clears only the data directory's own.")
-        return False
-    if procedures.exists() and not procedures.is_dir():
-        console.print(f"[red]✗[/red] {escape(str(procedures))} is not the procedure store's directory; nothing was cleared.")
+    problem = _nature_dir_problem(data_dir)  # AD-1341 S6 A2: asked again where it deletes
+    if problem:
+        console.print(f"[red]✗[/red] {escape(problem)}")
         return False
     try:
         count = asyncio.run(_record_nature_clearance(config, data_dir, tier))  # AD-1341 S6: the marker first
@@ -3209,6 +4038,61 @@ async def _record_nature_clearance(config: SystemConfig, data_dir: Path, tier: i
     return count
 
 
+def _nature_dir_problem(data_dir: Path) -> str:
+    """AD-1341 S6 A2: why ``--clean-slate`` must not clear ``{data_dir}/procedures``, or ``""`` when it may.
+
+    One ``lstat``, never followed: a link or junction there (it may lead out of the data directory), anything but a
+    directory, or a name that cannot be inspected refuses. Nothing there is fine: nothing to clear. The preflight asks
+    before the promotion reads the store through it (B-F3, C-F2); ``_clear_nature`` asks again where it deletes.
+    """
+    import stat
+
+    from probos.knowledge.records_snapshot import is_link_status, lstat_or_none
+
+    procedures = data_dir / _NATURE_DIR
+    try:
+        status = lstat_or_none(procedures)
+    except OSError as exc:
+        return f"{procedures} cannot be inspected ({exc}); --clean-slate clears nothing it cannot see."
+    if status is None:
+        return ""
+    if is_link_status(status):  # AD-1341 S6: never followed out of the data directory
+        return f"{procedures} is a link; --clean-slate clears only the data directory's own."
+    if not stat.S_ISDIR(status.st_mode):  # AD-1341 S6 A2: a file at that name is refused too
+        return f"{procedures} is not the procedure store's directory; nothing was cleared."
+    return ""
+
+
+def _close_generation(config: SystemConfig, closing: GenerationRecord, console: Console) -> bool:
+    """AD-1341 S6 A2 (C-F3): record the generation's close, last before the tier loop; True when recorded.
+
+    After the promotion, the snapshot and any clean slate have succeeded, so the Ship's Archive never shows a
+    generation closed while its crew's files remain. A failure refuses the reset before its tier loop; the same
+    command finishes it (the promotion is idempotent, the description is kept once per generation).
+    """
+    from rich.markup import escape
+
+    try:
+        asyncio.run(_record_generation(config, closing))
+    except Exception as exc:  # the close failed; the reset refuses and the Captain sees why
+        console.print(
+            f"[red]✗[/red] The generation's close could not be recorded: {escape(type(exc).__name__)}: "
+            f"{escape(str(exc))}"
+        )
+        return False  # AD-1341 S6 A2: not closed; the reset refuses before its tier loop
+    return True
+
+
+async def _record_generation(config: SystemConfig, closing: GenerationRecord) -> None:
+    """AD-1341 S6 A2: S1's ``record_generation``, on its own archive connection; the archive is closed on every exit."""
+    archive = _configured_archive_store(config)
+    await archive.initialize()
+    try:
+        await archive.record_generation(closing)
+    finally:
+        await archive.close()
+
+
 def _force_remove_readonly(func, path, exc_info):  # noqa: ARG001
 ```
 
@@ -3244,6 +4128,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import io
 import os
 import sqlite3
 import sys
@@ -3253,6 +4138,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rich.console import Console
 
 import probos
 from probos import __main__ as cli
@@ -3371,8 +4257,8 @@ def _link_dir(link: Path, target: Path) -> None:
         pytest.skip(f"this host cannot create a directory link: {exc}")
 
 
-async def _an_earlier_entry(tmp_path: Path) -> None:
-    store = ArchiveStore(str(_archive_db(tmp_path)), connection_factory=default_factory)
+async def _an_earlier_entry(tmp_path: Path, archive: Path | None = None) -> None:
+    store = ArchiveStore(str(archive or _archive_db(tmp_path)), connection_factory=default_factory)
     await store.initialize()
     try:
         await promote_nature_description(store, describe_nature("ship-did-earlier-0000", _BOOT, (), developed=1, active=0))
@@ -3474,10 +4360,14 @@ def test_an_interrupted_clean_slate_is_finished_by_running_it_again(
     assert (data_dir / "trust.db").is_file() and (data_dir / "ontology" / "instance_id").is_file()  # no tier loop
     assert (data_dir / PROCEDURES_DB).is_file()
     assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances") == [(4,)]  # recorded first
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]  # A2 (C-F3): not closed yet
 
     assert _reset(monkeypatch, config, data_dir, clean_slate=True) == 0  # the same command finishes it
     assert not (data_dir / "procedures").exists() and not (data_dir / "trust.db").exists()
     assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances ORDER BY id") == [(4,), (4,)]
+    assert _rows(_archive_db(tmp_path), "SELECT timeline_id, reset_tier, outcome FROM generations") == [
+        (_SHIP, 2, "promoted"),
+    ]  # closed once, after the clearance finished
 
 
 def test_a_clean_slate_whose_marker_cannot_be_written_deletes_nothing(
@@ -3520,20 +4410,123 @@ def test_the_dry_run_and_the_confirmation_name_what_a_clean_slate_clears(
     assert (data_dir / PROCEDURES_DB).is_file() and not _archive_db(tmp_path).exists()
 
 
-def test_a_link_at_the_procedures_name_is_refused_and_never_followed(
+def _odd_procedures(shape: str, data_dir: Path, tmp_path: Path) -> Path:
+    """At ``{data_dir}/procedures``: a junction to a sibling's real procedure store, or a file. Returns what must
+    survive: the sibling, or the file."""
+    if shape == "junction":
+        sibling = tmp_path / "sibling"
+        _nature(sibling)
+        _link_dir(data_dir / "procedures", sibling / "procedures")
+        return sibling
+    (data_dir / "procedures").write_bytes(b"not the procedure store")
+    return data_dir / "procedures"
+
+
+def _kept(target: Path) -> Any:
+    return _tree(target) if target.is_dir() else target.read_bytes()
+
+
+def _archive_state(tmp_path: Path) -> list[list[tuple[Any, ...]]]:
+    """Every row count a reset could change in the archive's file."""
+    return [
+        _rows(_archive_db(tmp_path), f"SELECT COUNT(*) FROM {table}")
+        for table in ("archive", "generations", "archive_snapshots", "nature_clearances", "archive_vetoes")
+    ]
+
+
+@pytest.mark.parametrize("shape", ["junction", "file"])
+def test_a_link_or_a_file_at_the_procedures_name_is_refused_before_anything_is_written(
+    shape: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (B-F3, C-F2): refused by the preflight, before the promotion reads the store through it: nothing archived,
+    described, recorded or closed, and the link's target or the file unchanged."""
+    data_dir = _data_dir(tmp_path)
+    config = _config(tmp_path)
+    asyncio.run(_an_earlier_entry(tmp_path))
+    archive_before = _archive_state(tmp_path)
+    target = _odd_procedures(shape, data_dir, tmp_path)
+    before = _kept(target)
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True) == 1
+
+    assert _archive_state(tmp_path) == archive_before
+    assert _kept(target) == before
+    assert (data_dir / "trust.db").is_file() and (data_dir / "ontology" / "instance_id").is_file()
+    expected = "is a link" if shape == "junction" else "is not the procedure store's directory"
+    assert expected in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("shape", ["junction", "file"])
+def test_the_clearance_refuses_a_link_or_a_file_again_where_it_deletes(shape: str, tmp_path: Path) -> None:
+    """A2: ``_clear_nature`` asks again (the preflight asked first), so a change between the two is refused before
+    the marker, and nothing is followed or deleted."""
+    data_dir = _data_dir(tmp_path)
+    config = _config(tmp_path)
+    target = _odd_procedures(shape, data_dir, tmp_path)
+    before = _kept(target)
+
+    assert cli._clear_nature(config, 2, data_dir, Console(file=io.StringIO(), width=200)) is False
+
+    assert not _archive_db(tmp_path).exists()  # no marker
+    assert _kept(target) == before
+
+
+@pytest.mark.parametrize(
+    "flags", [{"clean_slate": True}, {"clean_slate": True, "full": True}, {}], ids=["tier2", "tier3", "flag-off"],
+)
+def test_an_archive_inside_the_procedure_store_refuses_a_clean_slate(
+    flags: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (C-F1): ``--clean-slate`` deletes ``procedures/``, so an archive there is inside what the reset deletes, at
+    either tier and in the dry run; without the flag ``procedures/`` is kept, and the archive in it."""
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    archive = data_dir / "procedures" / "archive" / "archive.db"
+    archive.parent.mkdir()
+    (tmp_path / "knowledge").mkdir()
+    config = SystemConfig(
+        knowledge=KnowledgeConfig(repo_path=str(tmp_path / "knowledge")),
+        archive=ArchiveConfig(enabled=True, db_path=str(archive)),
+    )
+    asyncio.run(_an_earlier_entry(tmp_path, archive))
+
+    if flags:
+        assert _reset(monkeypatch, config, data_dir, dry_run=True, **flags) == 1  # the dry run refuses too
+        before = _tree(data_dir / "procedures")
+        assert _reset(monkeypatch, config, data_dir, **flags) == 1
+        assert "the Ship's Archive is inside what this reset deletes" in capsys.readouterr().out
+        assert _tree(data_dir / "procedures") == before and (data_dir / "trust.db").is_file()
+    else:
+        assert _reset(monkeypatch, config, data_dir) == 0
+    assert ("ship-did-earlier-0000",) in _rows(archive, "SELECT timeline_id FROM archive")
+
+
+def test_a_skipped_promotion_is_closed_only_after_its_clean_slate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A2 (C-F3): with ``--skip-promotion`` too, a clearance that fails leaves no generation closed; the rerun
+    closes it once, as skipped."""
     data_dir = _data_dir(tmp_path)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "keep.txt").write_text("keep", encoding="utf-8")
-    _link_dir(data_dir / "procedures", outside)
+    _nature(data_dir)
+    config = _config(tmp_path)
+    real_rmtree = cli.shutil.rmtree
+    calls: list[Path] = []
 
-    assert _reset(monkeypatch, _config(tmp_path), data_dir, clean_slate=True) == 1
+    def _fails_once(path: Any, *args: Any, **kwargs: Any) -> None:
+        calls.append(Path(path))
+        if len(calls) == 1:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        real_rmtree(path, *args, **kwargs)
 
-    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
-    assert (data_dir / "trust.db").is_file()
-    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM nature_clearances") == [(0,)]  # refused before the marker
+    monkeypatch.setattr(cli.shutil, "rmtree", _fails_once)
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True, skip_promotion="drill") == 1
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True, skip_promotion="drill") == 0
+    assert _rows(_archive_db(tmp_path), "SELECT reset_tier, outcome, reason FROM generations") == [
+        (2, "skipped", "drill"),
+    ]
 
 
 def test_only_the_cli_records_a_clean_slate() -> None:
@@ -3595,7 +4588,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**AD-1341 S6 (2026-10-2X), #1569 slice 6 of 6 -- the `--full` Ship's Records snapshot, the nature description, and an opt-in `--clean-slate`.** A `--full` (tier 3) reset now keeps every Ship's Records file it deletes, except the git history (`.git/`) and the procedures' YAML copies (`procedures/`), as one ZIP file holding one BagIt bag (RFC 8493), at `ship-records-snapshots/{timeline}/{started}_{ended}.zip` beside the Ship's Archive's database. It is keyed by the ship's instance id (the ship DID is in `bag-info.txt`) and the generation's dates. The file is written under a temporary name, flushed, read back and checked, recorded in the archive's new content-free table `archive_snapshots`, then published by one rename. Any failure refuses the reset with nothing deleted. Bounds: 100,000 files and 2 GiB; a link, a special file, an unreadable file or one that changes while it is copied refuses too. No agent, service or Oracle tier reads a snapshot; it holds every classification, as Ship's Records do. The reset names the Markdown files Ship's Records cannot list, which the snapshot now keeps (S1 register RA3-1 closes; F-649 closes at tier 3). `probos archive snapshots` lists them; `probos archive erase-snapshot ID --reason TEXT` records the erasure first, then deletes the file. `--skip-promotion REASON` skips the snapshot too. Every tier 2 and 3 reset also archives one `nature_description` entry (`ship`): which Cognitive JIT procedures this crew developed since the ship's first boot, with each one's name, description, evolution, state, use counts and change summary, at most 900 characters, never a procedure's steps, with no model call. The Captain sees it in `pending` and `--dry-run` and can veto or erase it. Skills are not described: the catalog is part of the installation and keeps no durable record of who forged a skill. `--clean-slate` (tier 2 or 3, archive enabled) records a content-free marker in `nature_clearances`, then deletes `procedures/` (the procedure store, its challenger ledger and its index) before the tier loop; a failure refuses before the tier loop and the same command finishes it. It never touches `config/skills`, the Captain's skill grants, the archive, the snapshots or `archives/`. Two additive tables, `user_version` stays 1; one `SourceKind`; no config field, event type, API route or HXI view. New: `src/probos/knowledge/records_snapshot.py`, `src/probos/knowledge/archive_ledger.py`, `src/probos/knowledge/nature_description.py`, `tests/test_ad1341_s6_records_snapshot.py`, `tests/test_ad1341_s6_nature_description.py`, `tests/test_ad1341_s6_clean_slate.py`. The contract is `prompts/ad-1341-s6-records-snapshot-nature-and-clean-slate.md`.
+**AD-1341 S6 (2026-10-2X), #1569 slice 6 of 6 -- the `--full` Ship's Records snapshot, the nature description, and an opt-in `--clean-slate`.** A `--full` (tier 3) reset now keeps every Ship's Records file it deletes, except the git history (`.git/`) and the procedures' YAML copies (`procedures/`), as one ZIP file holding one BagIt bag (RFC 8493), at `ship-records-snapshots/{timeline}/{started}_{ended}.zip` beside the Ship's Archive's database. It is keyed by the ship's instance id (the ship DID is in `bag-info.txt`) and the generation's dates. The file is written under a temporary name, flushed, read back and checked, recorded in the archive's new content-free table `archive_snapshots`, then published by one hard link, which never replaces a name. Any failure refuses the reset with nothing deleted, and every refusal a reset can know beforehand (a link, junction or root that cannot be inspected; the bounds; no instance id; the archive or its snapshots inside or around what the reset deletes) comes before anything is written; the dry run says so. Bounds: 100,000 files and 2 GiB; a link, a special file, an unreadable file or one that changes while it is copied refuses too. No agent, service or Oracle tier reads a snapshot; it holds every classification, as Ship's Records do. The reset names the Markdown files Ship's Records cannot list, which the snapshot now keeps (S1 register RA3-1 closes; F-649 closes at tier 3). `probos archive snapshots` lists them; `probos archive erase-snapshot ID --reason TEXT` records the erasure first, then deletes the file. `--skip-promotion REASON` skips the snapshot too. Every tier 2 and 3 reset also archives one `nature_description` entry per generation (`ship`; a retried reset keeps the first): which Cognitive JIT procedures this crew developed since the ship's first boot, with each one's name, description, evolution, state, use counts and change summary, at most 900 characters, never a procedure's steps, with no model call. The Captain sees it in `pending` and `--dry-run` and can veto or erase it. Skills are not described: the catalog is part of the installation and keeps no durable record of who forged a skill. `--clean-slate` (tier 2 or 3, archive enabled) records a content-free marker in `nature_clearances`, then deletes `procedures/` (the procedure store, its challenger ledger and its index) before the tier loop; a failure refuses before the tier loop and the same command finishes it. A link, junction or file at `procedures`, or an archive inside it, refuses before anything is written, and the generation's close is recorded only after the clearance. It never touches `config/skills`, the Captain's skill grants, the archive, the snapshots or `archives/`. Two additive tables, `user_version` stays 1; one `SourceKind`; no config field, event type, API route or HXI view. New: `src/probos/knowledge/records_snapshot.py`, `src/probos/knowledge/archive_ledger.py`, `src/probos/knowledge/nature_description.py`, `tests/test_ad1341_s6_records_snapshot.py`, `tests/test_ad1341_s6_nature_description.py`, `tests/test_ad1341_s6_clean_slate.py`. The contract is `prompts/ad-1341-s6-records-snapshot-nature-and-clean-slate.md`.
 ```
 
 **`DECISIONS.md`** (before the `### Explicit delegation models` heading, so after S5's entry). SEARCH:
@@ -3608,12 +4601,12 @@ REPLACE:
 
 - *Scope.* Slice 6 of #1569 (Decision 2's snapshot, AD-524's item 1; the 2026-10-16 amendment's description entry and clean slate), three code commits and one tracker commit. Files: `knowledge/records_snapshot.py`, `knowledge/archive_ledger.py`, `knowledge/nature_description.py` (new), `knowledge/archive_store.py` (two tables, `SourceKind.NATURE_DESCRIPTION`), `knowledge/archive_promotion.py` (`promote_nature_description`, `review_nature_description`), `__main__.py`, `docs/development/store-baseline.yaml`, three new tests and one updated test. Contract: `prompts/ad-1341-s6-records-snapshot-nature-and-clean-slate.md`.
 - *D2-D5 (the snapshot).* One ZIP file holding one BagIt bag, beside the archive's database, keyed `{timeline}/{started}_{ended}`, recorded by a content-free row. Not an archive entry: the Oracle's archive tier reads every row with no reader filter, so an entry would give draft, department and private notes to every later crew (S1 C1). It keeps every classification because no reader exists; any later reader (AD-524 items 2 and 3) must apply the classification rule. A `git bundle` (misses uncommitted notes) and a copied directory (not atomic) were rejected. `.git/` and `procedures/` are left out. 100,000 files and 2 GiB; links are never followed. The Captain may overrule and keep only `ship` and `fleet`.
-- *D6 (order).* Promote, describe nature, snapshot (write, check, record, publish), close the generation, then the tier loop. Any failure refuses with nothing deleted, so a generation is closed only with its snapshot in place.
+- *D6 (order).* A preflight first refuses, before anything is written, whatever it can know: the snapshot's plan, root, key and destination; with `--clean-slate`, the shape of `procedures/`; and the archive and its snapshots against everything the reset deletes. Then: promote, read nature, snapshot (write, check, record, publish by a hard link that never replaces), archive the description, clear nature with `--clean-slate`, close the generation, then the tier loop. Any failure refuses with nothing deleted, so a generation is closed only with its snapshot in place and its clean slate done (A2).
 - *D7 (the ledger).* `ArchiveLedger`, a class of its own on its own connection, because `ArchiveStore` is at the SRP method trigger (15). The Captain's `erase-snapshot` marks the row before it deletes the file; a row is never deleted.
 - *D8.* `--skip-promotion REASON` skips the snapshot (and the description) too: one audited escape. The Captain may overrule with a separate flag.
-- *D10-D11 (the description).* One `ship` entry per generation, built from `procedures.db` read-only, no model call, at most 900 characters so the whole entry fits one Oracle tool entry, never `content_snapshot`. One builder serves the reset, `--dry-run`, `pending` and `veto`; the veto is keyed by kind and reference, so it holds whatever the content is at the reset. Skills are not described (the catalog's `origin` is rewritten at every boot); the Captain may overrule once the origin is durable.
+- *D10-D11 (the description).* One `ship` entry per generation (a retried reset keeps the first, whatever changed; `pending` and the veto show its whole text), built from `procedures.db` read-only, no model call, at most 900 characters so the whole entry fits one Oracle tool entry, never `content_snapshot`. One builder serves the reset, `--dry-run`, `pending` and `veto`; the veto is keyed by kind and reference, so it holds whatever the content is at the reset. Skills are not described (the catalog's `origin` is rewritten at every boot); the Captain may overrule once the origin is durable.
 - *D12-D13 (`--clean-slate`).* A flag on tiers 2 and 3, not a tier 4. It clears `procedures/` only, after the promotion (whose description records what is cleared) and before the tier loop, with its marker written first. It needs the archive enabled. The skill catalog (files in the installation), `skill_grants.db` (the Captain's grants) and AD-1287's profiles are left alone; the Captain may overrule.
-- *Disclosed effects.* A `--full` reset refuses in new cases (it fails closed) and copies up to 2 GiB synchronously. `archive_snapshots` and `nature_clearances` in the archive's file, `user_version` 1. `SourceKind` gains `nature_description`. `probos archive snapshots`, `probos archive erase-snapshot`, `probos reset --clean-slate`.
+- *Disclosed effects.* A `--full` reset refuses in new cases (it fails closed), each before anything is written: a link, junction or special file in Ship's Records or at its root, a root that cannot be inspected, either bound, no instance id, and a link or junction at the snapshots directory or the timeline's directory; and, at publish, a file system without hard links under the archive. Every reset refuses when the archive or its snapshots directory is inside or around what it deletes, `procedures/` included with `--clean-slate`, which also refuses a link, junction or file at `procedures`. It copies up to 2 GiB synchronously. `archive_snapshots` and `nature_clearances` in the archive's file, `user_version` 1. `SourceKind` gains `nature_description`. `probos archive snapshots`, `probos archive erase-snapshot`, `probos reset --clean-slate`.
 - *Reversal.* Revert the S6 commits. Snapshot files and their rows stay; the Captain deletes the directory by hand if wanted. Archived descriptions stay and read as before; `probos archive erase` removes one. A cleared procedure store is not restored by a revert: it was the Captain's opt-in deletion, recorded in `nature_clearances`.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -3630,7 +4623,7 @@ REPLACE:
 ## 9. What this does NOT change
 
 - `RESET_TIERS` and every tier's file list (the issue's "Do Not Build"). A tier deletes what it deleted; S6 adds what is kept first and one opt-in deletion.
-- The pidfile (AD-816), the archive-inside-the-reset refusal (S1 A4), `--dry-run`'s rule that it opens no archive and takes no pidfile (the snapshot plan and the description read Ship's Records and `procedures.db` read-only), `--yes`, and the exit codes other than the new refusals (7.17 pair 7).
+- The pidfile (AD-816), the archive-inside-the-reset refusal (S1 A4; A2 extends it to the snapshots directory and, with `--clean-slate`, to `procedures/`), `--dry-run`'s rule that it opens no archive and takes no pidfile (the snapshot plan and the description read Ship's Records and `procedures.db` read-only), `--yes`, and the exit codes other than the new refusals (7.17 pair 7).
 - S1's promotion, its key and idempotence; S2's label and generation numbering; S3's review, veto and `/forget` cascade; S4's notes and stand-down; S5's after-action report and continuous promotion (which never archives a description or takes a snapshot: it plans over Ship's Records only).
 - `ArchiveStore`'s methods (none added), `promote_entry`, `erase_entry`, `veto_source`, `source_state`, `user_version` (stays 1), the Oracle and its tool's 1,200-character cut.
 - The procedure store, its schema, `content_snapshot`, its YAML copies and AD-1326's challenger ledger: read read-only for the description, deleted only by `--clean-slate`.
@@ -3640,11 +4633,12 @@ REPLACE:
 - `config.py`, `config/system.yaml`, the AD-1185 manifest, the AD-1270 facade baseline and `config-reference.md`: no config field.
 - No `EventType`, API route, HXI view, model call, federation path or agent write.
 - `--skip-promotion` also skips the nature description, as it skips every promotion; with `--clean-slate` the marker is still written, so the clearance is recorded even when nothing is described (register R19).
+- `probos reset` at tier 1 (no promotion, no close) and at tiers 2 and 3 without `--clean-slate`: the generation is closed after the promotion as before, now by `_close_generation` on a second archive connection (A2, register R37).
 - Out of scope (D18): a snapshot reader or view, `--verify`, restore, `scout_reports/` and `workforce.db` in the snapshot, automatic after-action triggers, a durable skill origin, fleet sharing.
 
-## 10. Mutation rows (49 rows: 24 for M1, 13 for M2, 12 for M3; whole stripped lines, each occurring once in its file after §7)
+## 10. Mutation rows (70 rows: 36 for M1, 16 for M2, 18 for M3; whole stripped lines, each occurring once in its file after §7)
 
-One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseline run of the three new test files and `tests/test_ad1341_s3_veto_store.py` that passes. Run each row against the named tests and restore the file before the next row. A row whose mutant makes a named test hang (none is expected) counts as killed only under the campaign's per-test timeout. Lines with no row, and why: the in-loop `copied > item.size` guard (outcome-equivalent, R24), the `is_file` refusal (POSIX-only, R23), `_snapshot_state`'s `(not a snapshot's name: never opened)` branch (covered by P-12's line in `_erase_snapshot`; the listing's branch is display only, R21), `count = -1` in `_record_nature_clearance` (log-and-degrade, constructor-pinned by C10 only, R22), and the `started is None` race in `_snapshot_ship_records` (R20).
+One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseline run of the three new test files and `tests/test_ad1341_s3_veto_store.py` that passes. Run each row against the named tests and restore the file before the next row. A row whose mutant makes a named test hang (none is expected) counts as killed only under the campaign's per-test timeout. Lines with no row, and why: the in-loop `copied > item.size` guard (outcome-equivalent, R24), the `is_file` refusal (POSIX-only, R23), `_snapshot_state`'s `(not a snapshot's name: never opened)` branch (covered by P-12's line in `_erase_snapshot`; the listing's branch is display only, R21), `count = -1` in `_record_nature_clearance` (log-and-degrade, constructor-pinned by C10 only, R22), and the `started is None` race in `_snapshot_ship_records` (R20). A2 adds no row for: the inspection-error branch of `_nature_dir_problem` and the preflight's `except` (an `OSError` other than absence; injected only, R28); the hard-link fallback's `except OSError` (a clause, pinned by X9b, whose `match="hard link"` fails if the clause goes); `_remove_quietly` after the link (log-and-degrade); and two orders no single-line mutant reverses: the description after the snapshot (N10) and the close after the clearance (C4, C13).
 
 | # | M | File | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -3654,7 +4648,7 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | P-4 | M1 | `src/probos/knowledge/records_snapshot.py` | `if len(files) > SNAPSHOT_MAX_FILES or total > SNAPSHOT_MAX_BYTES:` | `if len(files) >= SNAPSHOT_MAX_FILES or total >= SNAPSHOT_MAX_BYTES:` | `test_the_plan_lists_every_file_but_git_and_procedures_within_its_bounds` |
 | P-5 | M1 | `src/probos/knowledge/records_snapshot.py` | `if copied != item.size:  # it shrank after it was listed` | `if False:` | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing` |
 | P-6 | M1 | `src/probos/knowledge/records_snapshot.py` | `if os.path.lexists(final):  # a snapshot is never written over` | `if False:` | `test_a_snapshot_is_never_written_over` |
-| P-7 | M1 | `src/probos/knowledge/records_snapshot.py` | `if os.path.lexists(self.final_path):  # a file that appeared meanwhile is never written over` | `if False:` | `test_a_snapshot_is_never_written_over` |
+| P-7 | M1 | `src/probos/knowledge/records_snapshot.py` | `os.link(self.temp_path, self.final_path)  # A2: no-replace on Windows and POSIX; an existing name refuses` | `os.replace(self.temp_path, self.final_path)` | `test_a_snapshot_is_never_written_over` |
 | P-8 | M1 | `src/probos/knowledge/records_snapshot.py` | `if bag_zip.namelist() != expected:` | `if False:` | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing` |
 | P-9 | M1 | `src/probos/knowledge/records_snapshot.py` | `if _digest(bag_zip.open(f"{bag}/data/{item.path}")) != digests[item.path]:  # zipfile also checks each CRC` | `if False:` | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing` |
 | P-10 | M1 | `src/probos/knowledge/records_snapshot.py` | `return path.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")` | `return path` | `test_a_prepared_snapshot_reads_back_as_written_and_is_published_once` |
@@ -3662,7 +4656,7 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | P-12 | M1 | `src/probos/__main__.py` | `if not is_snapshot_relative_path(entry.relative_path):  # AD-1341 S6: a row never names a file outside the snapshots` | `if False:` | `test_an_erasure_never_deletes_a_file_outside_the_snapshots` |
 | P-13 | M1 | `src/probos/__main__.py` | `await ledger.mark_snapshot_erased(snapshot_id, reason)  # the marker first` | `pass` | `test_the_captain_lists_and_erases_a_snapshot_with_the_marker_first` |
 | P-14 | M1 | `src/probos/__main__.py` | `prepared.discard()` | `pass` | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing` |
-| P-15 | M1 | `src/probos/__main__.py` | `if unkeyed:  # AD-1341 S6: a --full reset would delete them with no ship to key their snapshot by` | `if False:` | `test_without_an_instance_id_a_full_reset_of_ship_records_refuses` |
+| P-15 | M1 | `src/probos/__main__.py` | `if not timeline_id or started is None:  # AD-1341 S6: no ship to key the snapshot by` | `if False:` | `test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse` |
 | P-16 | M1 | `src/probos/__main__.py` | `if tier >= 3:  # AD-1341 S6: what a --full reset deletes from Ship's Records is kept first, as one checked file` | `if tier >= 2:` | `test_a_tier2_reset_keeps_ship_records_and_takes_no_snapshot` |
 | P-17 | M1 | `src/probos/__main__.py` | `unlisted = [path for path in result.paths if path.endswith(".md") and path not in listed]` | `unlisted = []` | `test_a_full_reset_keeps_ship_records_as_one_checked_bag_before_it_deletes_them` |
 | P-18 | M1 | `src/probos/knowledge/archive_ledger.py` | `"UPDATE archive_snapshots SET erased_at = ?, erase_reason = ? WHERE id = ? AND erased_at IS NULL"` | `"UPDATE archive_snapshots SET erased_at = ?, erase_reason = ? WHERE id = ?"` | `test_the_ledger_records_a_snapshot_without_its_content_and_marks_its_erasure_once` |
@@ -3681,14 +4675,14 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | D-7 | M2 | `src/probos/knowledge/nature_description.py` | `if not db_path.is_file():  # no procedure store: this generation developed nothing to describe` | `if False:` | `test_nothing_to_describe_archives_nothing_and_creates_no_store` |
 | D-8 | M2 | `src/probos/knowledge/archive_promotion.py` | `or not record.source_ref.startswith(NATURE_DESCRIPTION_PREFIX)` | `or False` | `test_only_a_nature_description_without_episodes_is_promoted_as_one` |
 | D-9 | M2 | `src/probos/knowledge/archive_promotion.py` | `or record.source_episode_ids` | `or False` | `test_only_a_nature_description_without_episodes_is_promoted_as_one` |
-| D-10 | M2 | `src/probos/__main__.py` | `notes: list[str] = [await _describe_nature(data_dir, archive, timeline_id)]  # AD-1341 S6: tiers 2 and 3` | `notes: list[str] = []` | `test_a_reset_archives_one_description_of_what_this_crew_developed_never_the_procedures` |
+| D-10 | M2 | `src/probos/__main__.py` | `notes.insert(0, await _describe_nature(archive, nature))  # AD-1341 S6 A2: archived after the snapshot (B-F2)` | `pass` | `test_a_reset_archives_one_description_of_what_this_crew_developed_never_the_procedures` |
 | D-11 | M2 | `src/probos/__main__.py` | `if nature is not None:  # AD-1341 S6: the next reset would archive it too; probos archive veto keeps it out` | `if False:` | `test_the_captain_reviews_and_vetoes_a_description_before_the_reset` |
 | D-12 | M2 | `src/probos/__main__.py` | `if record is None and source_ref.startswith(NATURE_DESCRIPTION_PREFIX):  # AD-1341 S6: this generation's description` | `if False:` | `test_the_captain_reviews_and_vetoes_a_description_before_the_reset` |
 | D-13 | M2 | `src/probos/__main__.py` | `if nature is not None:  # AD-1341 S6: the Captain reads what a later crew would` | `if False:` | `test_the_dry_run_shows_the_description_the_reset_would_archive` |
 | K-1 | M3 | `src/probos/__main__.py` | `if clean_slate and tier < 2:  # AD-1341 S6: --soft keeps the crew, so there is no new crew to start clean` | `if False:` | `test_a_clean_slate_that_does_not_apply_or_cannot_be_recorded_changes_nothing` |
 | K-2 | M3 | `src/probos/__main__.py` | `if clean_slate and not config.archive.enabled:  # AD-1341 S6: a clean slate is never unrecorded` | `if False:` | `test_a_clean_slate_that_does_not_apply_or_cannot_be_recorded_changes_nothing` |
 | K-3 | M3 | `src/probos/__main__.py` | `if clean_slate and not _clear_nature(config, tier, data_dir, console):` | `if False:` | `test_a_clean_slate_describes_records_and_clears_nature_and_touches_nothing_else` |
-| K-4 | M3 | `src/probos/__main__.py` | `if procedures.is_symlink() or procedures.is_junction():  # AD-1341 S6: never followed out of the data directory` | `if False:` | `test_a_link_at_the_procedures_name_is_refused_and_never_followed` |
+| K-4 | M3 | `src/probos/__main__.py` | `if is_link_status(status):  # AD-1341 S6: never followed out of the data directory` | `if False:` | `test_a_link_or_a_file_at_the_procedures_name_is_refused_before_anything_is_written` |
 | K-5 | M3 | `src/probos/__main__.py` | `count = asyncio.run(_record_nature_clearance(config, data_dir, tier))  # AD-1341 S6: the marker first` | `count = 0` | `test_a_clean_slate_describes_records_and_clears_nature_and_touches_nothing_else`, `test_a_clean_slate_whose_marker_cannot_be_written_deletes_nothing` |
 | K-6 | M3 | `src/probos/__main__.py` | `return False  # AD-1341 S6: the deletion is recorded and unfinished; the reset refuses before its tier loop` | `return True` | `test_an_interrupted_clean_slate_is_finished_by_running_it_again` |
 | K-7 | M3 | `src/probos/__main__.py` | `cleared = (f"{_NATURE_DIR}/",) if (data_dir / _NATURE_DIR).exists() else ()` | `cleared = ()` | `test_a_clean_slate_describes_records_and_clears_nature_and_touches_nothing_else` |
@@ -3697,8 +4691,35 @@ One campaign on the assembled tree (M1 to M3 applied), after an unmutated baseli
 | K-10 | M3 | `src/probos/__main__.py` | `console.print("  Nature kept: procedures/ (Cognitive JIT procedures)")` | `pass` | `test_without_clean_slate_nature_persists_at_every_tier` |
 | K-11 | M3 | `src/probos/knowledge/archive_ledger.py` | `if type(self.reset_tier) is not int or self.reset_tier not in (2, 3):  # AD-1341 S6: tier 1 keeps the crew` | `if type(self.reset_tier) is not int:` | `test_a_clean_slate_marker_holds_only_what_it_may` |
 | K-12 | M3 | `src/probos/knowledge/archive_ledger.py` | `if type(self.procedure_count) is not int or self.procedure_count < -1:` | `if type(self.procedure_count) is not int:` | `test_a_clean_slate_marker_holds_only_what_it_may` |
+| P-25 | M1 | `src/probos/knowledge/records_snapshot.py` | `except FileNotFoundError:  # only absence is None (A2, A-F1)` | `except OSError:` | `test_a_ship_records_root_that_cannot_be_inspected_refuses` |
+| P-26 | M1 | `src/probos/knowledge/records_snapshot.py` | `if is_link_status(root_status):  # the root itself is never followed either (A2)` | `if False:` | `test_a_ship_records_root_that_is_a_link_is_never_followed` |
+| P-27 | M1 | `src/probos/knowledge/records_snapshot.py` | `if is_link_or_junction(directory):  # A2: written only into the snapshots directory itself` | `if False:` | `test_a_snapshot_is_written_only_into_the_snapshots_directory_itself` |
+| P-28 | M1 | `src/probos/__main__.py` | `if is_link_or_junction(directory):  # AD-1341 S6 A2: a snapshot is never written through a link` | `if False:` | `test_a_snapshot_is_written_only_into_the_snapshots_directory_itself` |
+| P-29 | M1 | `src/probos/__main__.py` | `if snapshots == resolved or snapshots.startswith(within) or resolved.startswith(snapshots + os.sep):` | `if False:` | `test_a_snapshot_is_written_only_into_the_snapshots_directory_itself` |
+| P-30 | M1 | `src/probos/__main__.py` | `problem = _snapshot_file_problem(_snapshots_dir(config), entry.relative_path)  # A2: before the marker` | `problem = ""` | `test_an_erasure_deletes_only_a_regular_file_inside_the_snapshots_directory` |
+| P-31 | M1 | `src/probos/__main__.py` | `if status is not None and not stat.S_ISREG(status.st_mode):  # a directory, a link or a special file there` | `if False:` | `test_an_erasure_deletes_only_a_regular_file_inside_the_snapshots_directory` |
+| P-32 | M1 | `src/probos/__main__.py` | `if is_link_or_junction(component):  # AD-1341 S6 A2: an erasure never follows one` | `if False:` | `test_an_erasure_deletes_only_a_regular_file_inside_the_snapshots_directory` |
+| P-33 | M1 | `src/probos/knowledge/records_snapshot.py` | `for name in expected[len(plan.files):]:  # A2: the tag files too, read whole, so zipfile checks each CRC` | `for name in ():` | `test_a_tag_file_that_reads_back_wrong_refuses_the_snapshot` |
+| P-34 | M1 | `src/probos/__main__.py` | `shown = _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier, snapshot=not refusal)` | `shown = _show_promotion_plan(config, data_dir, skip_reason, console, tier=tier, snapshot=True)` | `test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse` |
+| P-35 | M1 | `src/probos/__main__.py` | `console.print(f"    {refusal}", markup=False, emoji=False)` | `pass` | `test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse`, `test_a_dry_run_shows_the_snapshot_a_full_reset_would_keep_and_writes_nothing` |
+| P-36 | M1 | `src/probos/__main__.py` | `if refusal:  # AD-1341 S6 A2: before the confirmation, the pidfile and the promotion, so nothing is written` | `if False:` | `test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing` |
+| D-14 | M2 | `src/probos/knowledge/archive_promotion.py` | `if state.outcome is PromotionOutcome.CREATED and state.entry_ids:  # A2 (B-F2): one per generation` | `if False:` | `test_one_description_per_generation_whatever_its_content`, `test_a_retried_reset_keeps_one_description_per_generation` |
+| D-15 | M2 | `src/probos/__main__.py` | `for line in nature.record.content.splitlines():  # AD-1341 S6 A2 (B-F1): the Captain reads the text itself` | `for line in ():` | `test_the_captain_reviews_and_vetoes_a_description_before_the_reset` |
+| D-16 | M2 | `src/probos/__main__.py` | `if record.source_kind is SourceKind.NATURE_DESCRIPTION:  # AD-1341 S6 A2 (B-F1): the text it keeps out` | `if False:` | `test_the_captain_reviews_and_vetoes_a_description_before_the_reset` |
+| K-13 | M3 | `src/probos/__main__.py` | `if not stat.S_ISDIR(status.st_mode):  # AD-1341 S6 A2: a file at that name is refused too` | `if False:` | `test_a_link_or_a_file_at_the_procedures_name_is_refused_before_anything_is_written` |
+| K-14 | M3 | `src/probos/__main__.py` | `if clean_slate:  # AD-1341 S6 A2: before the promotion reads the procedure store through it (B-F3, C-F2)` | `if False:` | `test_a_link_or_a_file_at_the_procedures_name_is_refused_before_anything_is_written` |
+| K-15 | M3 | `src/probos/__main__.py` | `problem = _nature_dir_problem(data_dir)  # AD-1341 S6 A2: asked again where it deletes` | `problem = ""` | `test_the_clearance_refuses_a_link_or_a_file_again_where_it_deletes` |
+| K-16 | M3 | `src/probos/__main__.py` | `if clean_slate:  # AD-1341 S6 A2: --clean-slate deletes the procedure store's directory too (C-F1)` | `if False:` | `test_an_archive_inside_the_procedure_store_refuses_a_clean_slate` |
+| K-17 | M3 | `src/probos/__main__.py` | `if closing is not None and not _close_generation(config, closing, console):` | `if False:` | `test_an_interrupted_clean_slate_is_finished_by_running_it_again`, `test_a_skipped_promotion_is_closed_only_after_its_clean_slate` |
+| K-18 | M3 | `src/probos/__main__.py` | `return False  # AD-1341 S6 A2: not closed; the reset refuses before its tier loop` | `return True` | `test_a_retried_reset_keeps_one_description_per_generation` |
 
-The heading's count is the row count: 24 for M1 (P-1 to P-24), 13 for M2 (D-1 to D-13), 12 for M3 (K-1 to K-12), 49 in all; the orchestrator's census recounts it. P-3 and P-4 mutate the same line; restore between them. D-6 is killed only because N1 creates its anti-pattern first (p-3 at `_B + 30.0`). When the creation order equals the completions order, the mutated `ORDER BY` lists the same lines; N1's premise assertion keeps the data from drifting back (A1). P-18 names the ledger test alone. `_erase_snapshot` marks only when `entry.erased_at is None`, so X12's rerun never reaches the `UPDATE`. `AND erased_at IS NULL` is the ledger's own guard: it keeps the first reason when two `erase-snapshot` commands both read the row unmarked, for example while one waits at its confirmation prompt (A1). K-3 leaves nature in place, so C1's `not (data_dir / "procedures").exists()` fails. K-5 skips the marker: C1's `nature_clearances` row is missing, and C5 (which makes the marker fail) deletes nature, so `procedures/` is gone where C5 expects it.
+The heading's count is the row count: 36 for M1 (P-1 to P-36), 16 for M2 (D-1 to D-16), 18 for M3 (K-1 to K-18), 70 in all; the orchestrator's census recounts it. **A2:**
+- P-15 is killed by X14b's message. With the line mutated, an empty instance id still refuses through `snapshot_relative_path`, with another message, so X5's exit code alone cannot kill it.
+- P-27 and K-15 are the checks repeated behind the preflight; only their direct tests (X16's `prepare` part, C11) reach them.
+- P-28 survives X16's first reset part only if `prepare_snapshot`'s own check refuses, which happens after the archive was opened; X16 asserts that no archive file exists, so the row is killed.
+- K-4 is killed on Windows, where a junction's `lstat` is a directory. On POSIX the next line refuses a symlink as "not a directory", so there it is outcome-equivalent.
+- K-14's junction case kills it; its file case is outcome-equivalent, because no description is read through a file.
+- The baseline run is the three new files and `tests/test_ad1341_s3_veto_store.py`: 138 cases by analysis. P-3 and P-4 mutate the same line; restore between them. D-6 is killed only because N1 creates its anti-pattern first (p-3 at `_B + 30.0`). When the creation order equals the completions order, the mutated `ORDER BY` lists the same lines; N1's premise assertion keeps the data from drifting back (A1). P-18 names the ledger test alone. `_erase_snapshot` marks only when `entry.erased_at is None`, so X12's rerun never reaches the `UPDATE`. `AND erased_at IS NULL` is the ledger's own guard: it keeps the first reason when two `erase-snapshot` commands both read the row unmarked, for example while one waits at its confirmation prompt (A1). K-3 leaves nature in place, so C1's `not (data_dir / "procedures").exists()` fails. K-5 skips the marker: C1's `nature_clearances` row is missing, and C5 (which makes the marker fail) deletes nature, so `procedures/` is gone where C5 expects it.
 
 ## 11. Verified Against Codebase (2026-10-27, on `4b3101f3`: the S5 repair candidate, S5 Amendment A3 in)
 
@@ -3763,6 +4784,46 @@ grep -n "^### (AD-1341|Explicit delegation models)" DECISIONS.md   575 S1, 748 S
 RFC 8493 (rfc-editor.org, fetched 2026-10-27): 2.1.1 bagit.txt is exactly two lines; 2.1.3 LF, CR, CRLF and "%" (and only those) MUST be percent-encoded in a manifest path; 2.2.2 Payload-Oxum is "OctetCount.StreamCount".
 ```
 
+## A2 verification (2026-10-27, on `f9afeb59`, tree `61e4fce9`)
+
+Each anchor was read on the candidate with the Read and Grep tools; the contract's code is blob-equal to it.
+
+```
+src/probos/__main__.py
+  64-74      TYPE_CHECKING imports; line 72 the archive_store names (7.17 pair 0)
+  2987-2996  S1 A4's comment, the overlap call and its two-line message (7.5 pair 1a; 7.17 pair 9)
+  3019-3030  the dry run and the confirmation (S1 text under M3; 7.5 pair 2, 7.17 pairs 10 and 10a)
+  3049-3060  promote_first, the refusal, the clean slate (7.17 pair 11)
+  3271-3299  _archive_reset_overlap, S1's text (7.5 pair 3)
+  3302-3329  _promote_before_reset, S1's text (7.17 pair 12c)
+  3332-3351, 3358  _promote_into_archive's head and no-id branch, S1's text (7.17 pair 12d); 3352-3357 were M1's pair 3, removed by A2
+  3362-3385  the skip and the close (7.17 pairs 12e, 12f)
+  3407-3415  _describe_nature (7.10 pair 2); 3456-3460 _snapshot_plan (7.5 pair 6)
+  3561-3563  _show_promotion_plan's signature; 3606-3610 the dry run's snapshot plan (7.5 pair 8)
+  3708-3711  pending's nature line (7.10 pair 6); 3782-3783 the veto's imports (pair 7); 3799-3800 its confirmation (pair 9)
+  3912-3930  _erase_snapshot (7.5 pair 10); 3933-3992 _clear_nature, _record_nature_clearance (7.17 pair 13)
+src/probos/knowledge/records_snapshot.py  15-21 docstring; 27-35 imports; 100-104 publish; 116-133 the plan's head; 174-178 prepare; 244-254 _verify_bag
+src/probos/knowledge/archive_promotion.py  34-41 imports PromotionOutcome and SourceState already; 475 promote_entry in promote_nature_description
+src/probos/knowledge/archive_store.py  114-121 PromotionOutcome; 139-149 SourceState; 534-572 promote_entry, keyed (kind, ref, sha256); 666-687 source_state: entry_ids for any content
+src/probos/storage/sqlite_factory.py  25-34 mode=ro's documented WAL side effect
+src/probos/cognitive/procedure_store.py  211 PRAGMA journal_mode=WAL
+src/probos/security/file_access.py  767-783 publish_file, "Atomic, no-replacement publication" by os.link; 505-513 is_reparse_point
+src/probos/infrastructure/backup.py  739-746 os.link with a logged copy fallback (AD-1265)
+tests/test_layer_boundaries.py  49 knowledge may import substrate only
+tests/test_ad1341_s1_reset_and_erase.py  751-788 the overlap cases ("outside" puts the archive at tmp_path/archive.db, its snapshots outside data_dir); 785 asserts the first message line only
+logs/ad1341s6r1/review-ad1341s6-{a,b,c}-r1.md  the findings, their locations and their executed evidence
+```
+
+## Absence Verified (A2, 2026-10-27)
+
+| Id | Claim | Run | Found | Holds |
+|---|---|---|---|---|
+| A2-AV1 | No test calls `_promote_into_archive`, `_promote_before_reset` or `_archive_reset_overlap`, or asserts the overlap message's second line | Grep `_promote_into_archive\|_promote_before_reset\|record_generation\|_archive_reset_overlap\|archive.db_path is inside\|is inside what this reset` in `tests/` | `record_generation` only in store tests and censuses; `test_ad1341_s1_reset_and_erase.py:785` (the first line) | yes |
+| A2-AV2 | No reset test asserts the promotion's failure line or the refusal lines A2 adds beside | Grep `promotion failed\|refused before deleting anything\|refused before its tier loop` in `tests/` | `test_ad1296_working_dir_ownership.py:685` (AD-1296's own), `test_ad1341_s5_continuous_promotion.py:450` (S5's log) | yes |
+| A2-AV3 | No test pins the skip or no-id promotion messages | Grep `the reason is recorded\|No instance id and nothing to promote\|promoted, .* already archived` in `tests/` | none | yes |
+| A2-AV4 | `_show_promotion_plan`, `_promote_before_reset` and `_clear_nature` each have one caller, `_cmd_reset` | Grep the names in the repository | `__main__.py:3023`, `:3051`, `:3056`, and the contracts | yes |
+| A2-AV5 | No `src` module reads `st_reparse_tag` or `IO_REPARSE_TAG` yet | Grep `IO_REPARSE_TAG\|st_reparse_tag` in `*.py` | none (`file_access.py` uses `st_file_attributes & 0x400`) | yes |
+
 ## Absence Verified (2026-10-27)
 
 | Id | Claim | Run | Found | Holds |
@@ -3810,6 +4871,7 @@ Every other SEARCH anchors on S1 to S4 text or older, or on S6's own earlier mil
 - **S1's closed `SourceKind` set:** updated in 7.11 with an inline reason, never loosened.
 - **AD-1343's seam registry:** S6 starts no agent's work and makes no model call; nothing to register.
 - **The AD ledger** (`gen_ad_ledger.py --check`) and `open-ads-report.md` are M4's.
+- **A2:** no store table, `ArchiveStore` or `ArchiveLedger` method, config field or event type is added. `records_snapshot` gains three public functions (`lstat_or_none`, `is_link_status`, `is_link_or_junction`), imported only by `__main__.py` (X13 holds). `archive_promotion` gains a private `_nature_state` that names `source_state` (S3's census holds: the same module). `record_generation` stays named in `src` by `__main__.py` alone. `_cmd_reset` grows about 20 lines; no class body changes. `knowledge/` imports only `stat` (the standard library), so the layer rule holds.
 
 ## 13. Prior Art and Blind Spots
 
@@ -3817,7 +4879,11 @@ Date used for `docs/research/reference-projects.md`: 2026-10-27. The snapshot is
 
 - **BagIt (RFC 8493), absorbed.** The snapshot is a serialized bag: one top-level directory named after the file, `bagit.txt`, `bag-info.txt` (with `Payload-Oxum` and `External-Identifier`), `manifest-sha256.txt` and `data/`. The manifest path encoding follows 2.1.3 exactly (LF, CR, CRLF and `%`, and only those). Any BagIt validator checks an extracted snapshot. A tag manifest is optional and left out. https://www.rfc-editor.org/rfc/rfc8493.html
 - **Library of Congress `bagit-python`, considered, not a dependency.** Its known gap (bagit-python issue 157: `%` not encoded) is why the encoding is hand-written and pinned by X8 (P-10). Adding a dependency for 80 lines was rejected. https://github.com/LibraryOfCongress/bagit-python/issues/157
-- **Write, fsync, verify, rename** (the standard atomic-publish pattern), absorbed: one `os.replace` after a read-back, with the row recorded before the rename (D6).
+- **Write, fsync, verify, publish without replacing**, adapted (A2, A-F4). `os.replace` replaces a name that appears after any check, so publication is a hard link: `link(2)` fails with `EEXIST`, and Windows' `CreateHardLinkW` fails when the name exists. The temporary name is then removed, and the row is still recorded first (D6).
+  - The repository's own precedent is `security/file_access.py:767-783` ("Atomic, no-replacement publication", by `os.link`).
+  - AD-1265's backups use `os.link` with a logged copy fallback (`infrastructure/backup.py:739-746`); A2 does not copy the fallback, because a fallback that may replace is the defect.
+  - Rejected: Windows-only `os.rename` (it replaces on POSIX) and Linux-only `renameat2(RENAME_NOREPLACE)`.
+  - No web search: the primitive's semantics are the platforms' documented behaviour, and the repository already relies on them.
 - **Voyager (skill library), considered, deferred** (reference row: passing, 2026-10-15; not overdue). A skill library keeps a description beside each skill; ProbOS's description entry is culture's record of nature, not the retrieval index, so nothing more is taken. AG-UI (never reviewed) is unrelated to this slice and not examined.
 - **Internal prior work:** AD-524's item 1 (`roadmap-era-5-completed.md:2523`), the 2026-10-16 amendment (nature, culture, nurture; the Captain's memory note "Nature, Culture, Nurture"), S1 C1 (who may read the archive), S4 A5 (`os.walk` swallows errors: hence the explicit `os.scandir` walk), BF-906 (`mode=ro`).
 
@@ -3829,6 +4895,9 @@ Date used for `docs/research/reference-projects.md`: 2026-10-27. The snapshot is
 5. The RA3-1 note also names `_archived/*.md`, which the listing skips by design, not because it cannot decode them (R18).
 6. Two resets within one second would name the same file; the second refuses (fail closed; R27).
 7. `--clean-slate` with `--skip-promotion` records the clearance with no description (R19).
+8. A2: a same-user process that swaps a path between the preflight and the write; the write-time checks narrow the gap, and the pidfile excludes only the vessel (R28).
+9. A2: `security/file_access.is_reparse_point` (any reparse point) was considered for the link checks and not imported: `knowledge/` may import only `substrate` (`tests/test_layer_boundaries.py:49`), and treating every reparse point as a link would also refuse cloud-file placeholders, a change beyond the findings. D5's rule (a symbolic link or a junction) lives in one place, `records_snapshot.is_link_status`.
+10. A2: a file system without hard links under the archive refuses every `--full` reset that has records to keep (R36).
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -3836,28 +4905,30 @@ Each holds on the assembled tree. Brief the cross-family reviewer with these, on
 
 **M1:**
 1. A tier 3 reset that completes has, before its tier loop ran, one published snapshot whose payload equals every regular file of `{data_dir}/ship-records` except the top-level `.git/` and `procedures/`, byte for byte, and one `archive_snapshots` row naming it with the file's SHA-256.
-2. A tier 3 reset that cannot make or record its snapshot exits 1 with every data file unchanged, no snapshot or temporary file, no `archive_snapshots` row and no `generations` row.
-3. No snapshot is ever written over, at prepare or at publish; the row is recorded before the file is published.
-4. `plan_snapshot` never follows a link or junction, and every `OSError` of its walk propagates.
-5. The erasure of a snapshot marks its row before it deletes the file, deletes only a path that matches the snapshot name pattern under the snapshots directory, keeps the first reason (the ledger's `AND erased_at IS NULL`, even when two erasures both read the row unmarked), and never deletes a row.
+2. A tier 3 reset whose snapshot the preflight refuses exits 1 having opened no archive: no promotion, description, row, generation or file. The preflight refuses a link, junction or special file at the root or inside, a root that cannot be inspected, either bound, no instance id or one that cannot name a directory, and a link or junction at the snapshots directory or the timeline's. A snapshot that fails while it is written or checked exits 1 with every data file unchanged, no snapshot or temporary file, no `archive_snapshots` row and no `generations` row. A publish that fails, or a crash between the row and the publish, leaves its row, never deleted, which `probos archive snapshots` shows as `(missing)`, and no `generations` row (A2, A-F7).
+3. No snapshot is ever written over, at prepare or at publish, even by a name that appears after every check: publication is a hard link, and a file system without hard links refuses. The row is recorded before the file is published.
+4. `plan_snapshot` never follows a link or junction, the root included; only a root that is not there is an empty plan; every other `OSError` of the root's `lstat` and of the walk propagates. The read-back reads every member to its end, the tag files included.
+5. The erasure of a snapshot deletes only a regular file, at a path that matches the snapshot name pattern, inside a snapshots directory and a timeline directory that are neither links nor junctions; otherwise it exits 1 with nothing marked or deleted. It marks its row before it deletes the file, keeps the first reason (the ledger's `AND erased_at IS NULL`, even when two erasures both read the row unmarked), and never deletes a row.
 6. Only `__main__.py` imports `records_snapshot` or `archive_ledger`; no agent, service or Oracle tier reads a snapshot.
-7. A tier 2 reset and a dry run write no snapshot; a dry run opens no archive.
+7. A tier 2 reset and a dry run write no snapshot; a dry run opens no archive. A dry run whose reset would refuse says so and never says a snapshot would be kept (A-F5).
 8. `--skip-promotion REASON` at tier 3 writes no snapshot and says so.
+9. At every tier, a reset refuses (exit 1, nothing opened) when the Ship's Archive's file or its snapshots directory, resolved through links and junctions and compared with the platform's case rule, is equal to, inside or around anything the reset deletes.
 
 **M2:**
-9. Every tier 2 and 3 reset with an instance id and at least one procedure created since `ontology/instance_id`'s modification time archives exactly one `nature_description` entry for the timeline, classified `ship`, citing no episode.
-10. The description's content never contains a procedure's `content_snapshot` or any column but the nine §7.9 reads, lists at most ten procedures in order of completions, most first (ties by creation, then id), is at most 900 characters, and its whole entry passes the Oracle tool's 1,200-character cut intact.
-11. `procedures.db` is opened only read-only (`mode=ro`) and is byte-identical after the reset reads it; a missing store is never created.
-12. `pending`, `veto`, `--dry-run` and the reset build the description with one function (`_nature_record`), and a veto by kind and reference keeps it out whatever its content at the reset.
-13. Only `archive_promotion.py` names `promote_entry` and `source_state`.
+10. Every tier 2 and 3 reset with an instance id and at least one procedure created since `ontology/instance_id`'s modification time archives exactly one `nature_description` entry for the timeline, classified `ship`, citing no episode. A retried reset of the same generation archives none: the first is kept, whatever changed, and `pending` shows it as already archived (A2, B-F2). It is archived after the snapshot, so a snapshot that fails leaves none.
+11. The description's content never contains a procedure's `content_snapshot` or any column but the nine §7.9 reads, lists at most ten procedures in order of completions, most first (ties by creation, then id), is at most 900 characters, and its whole entry passes the Oracle tool's 1,200-character cut intact.
+12. `procedures.db` is opened only read-only (`mode=ro`) and its database bytes are identical after the reset reads it; for a WAL-mode store SQLite may create or touch the `-wal` and `-shm` files beside it (B-F4); a missing store is never created.
+13. `pending`, `veto`, `--dry-run` and the reset build the description with one function (`_nature_record`). `pending` and the veto's confirmation print its title and whole text (B-F1). A veto by kind and reference keeps it out whatever its content at the reset.
+14. Only `archive_promotion.py` names `promote_entry` and `source_state`.
 
 **M3:**
-14. `--clean-slate` deletes `{data_dir}/procedures/` and nothing else beyond the tier's own files; `config/skills`, `cognitive_skills.db`, `skill_grants.db`, `profile_qualifications.db`, the archive, the snapshots and `archives/` are byte-identical.
-15. The `nature_clearances` marker is committed before any deletion; a marker that cannot be written deletes nothing.
-16. A deletion that fails leaves every crew file in place (the tier loop does not run), exits 1, and the same command finishes it with a second marker.
-17. `--clean-slate` with `--soft`, or with the archive disabled, exits 2 having changed nothing.
-18. A link, junction or file at `{data_dir}/procedures` is refused before anything is recorded and is never followed.
-19. Without `--clean-slate`, `procedures/` is unchanged at every tier.
+15. `--clean-slate` deletes `{data_dir}/procedures/` and nothing else beyond the tier's own files; `config/skills`, `cognitive_skills.db`, `skill_grants.db`, `profile_qualifications.db`, the archive, the snapshots and `archives/` are byte-identical.
+16. The `nature_clearances` marker is committed before any deletion; a marker that cannot be written deletes nothing.
+17. A deletion that fails leaves every crew file in place (the tier loop does not run), records no generation close, and exits 1; the same command finishes it with a second marker and one close. This holds with `--skip-promotion` too (C-F3).
+18. `--clean-slate` with `--soft`, or with the archive disabled, exits 2 having changed nothing.
+19. A link, junction or file at `{data_dir}/procedures`, or a name there that cannot be inspected, is refused (exit 1) before anything is read through it, archived, recorded or closed, so every archive table is unchanged. It is checked again where it deletes (B-F3, C-F2).
+20. With `--clean-slate`, an archive or snapshots directory inside `{data_dir}/procedures/` refuses the reset at tiers 2 and 3 and in the dry run; without the flag it does not (C-F1).
+21. Without `--clean-slate`, `procedures/` is unchanged at every tier, and the generation is closed after the promotion as before.
 
 ## 15. Acceptance criteria
 
@@ -3866,6 +4937,7 @@ Each holds on the assembled tree. Brief the cross-family reviewer with these, on
 - [ ] Each milestone's focused gate (§4) passes with `-n 0`, with `check_store_registry.py --check` and `check_architecture_principles.py --check` where listed.
 - [ ] No test or build step touches `%LOCALAPPDATA%\ProbOS`, `d:\ProbOS\data` or any real data directory; no `probos reset` or `--clean-slate` runs outside the tests' `tmp_path`.
 - [ ] Each of M1, M2 and M3 has a cross-family review (`gpt-6.1-sol`) against §14, with its findings repaired.
+- [ ] Amendment A2: round 2 of the cross-family review, one reviewer per milestone, against §14 as amended (1 to 21); the §10 campaign rerun on the assembled tree (70 rows: P-1 to P-36, D-1 to D-16, K-1 to K-18), with every row killed or returned to the Architect.
 - [ ] The §10 campaign runs once on the assembled tree after an unmutated baseline that passes; every row is killed by a named test, or the row returns to the Architect.
 - [ ] `tests/test_ad1341_s1_archive_store.py` and `tests/test_ad1341_s3_veto_store.py` pass unloosened (7.11's inline reason; S3's census holds).
 - [ ] `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` pass after M4.
@@ -3891,8 +4963,8 @@ What S6 finds and does not fix, each with its reason. S1 RA3-1 closes (D9). F-64
 **R11.** The procedures' YAML copies in `ship-records/procedures/` survive a tier 2 `--clean-slate` and are deleted unsnapshotted at tier 3; nothing reads them back (S6-AV2).
 **R12.** `--clean-slate` leaves `profile_qualifications.db` (AD-1287, not wired, insert-only) alone; revisit when AD-1287 is wired.
 **R13.** Writers outside ProbOS (F-643, F-657): the snapshot copies whatever such a writer left, as Ship's Records held it.
-**R14.** A failure after the snapshot is published (closing the generation) leaves a complete snapshot; the rerun takes a second one. Both are listed; the Captain may erase one.
-**R15.** A crash between recording the row and the rename leaves a row whose file is missing; `probos archive snapshots` shows `(missing)`.
+**R14.** A failure after the snapshot is published (archiving the description, the clean slate, or closing the generation) leaves a complete snapshot; the rerun takes a second one. Both are listed; the Captain may erase one.
+**R15.** A publish that fails (X3b), or a crash between recording the row and the link, leaves a row, never deleted, whose file is missing; `probos archive snapshots` shows `(missing)`.
 **R16.** A snapshot copies and reads back up to 2 GiB synchronously, with no progress output.
 **R17.** A Markdown file Ship's Records cannot decode is kept in the snapshot and named, but still never promoted.
 **R18.** The RA3-1 note also names `_archived/*.md`, which the listing skips by design (`records_store.py:1033`), not because it cannot decode them.
@@ -3905,3 +4977,16 @@ What S6 finds and does not fix, each with its reason. S1 RA3-1 closes (D9). F-64
 **R25.** No S6 test opens a pre-S6 v1 archive that already holds rows; the tables come from `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS` at every open. Measured once on a copy of the live archive (Not verified 2).
 **R26.** `probos archive erase-snapshot`'s `(missing)` path after an interrupted publish (R15) erases a row whose file is absent: `unlink(missing_ok=True)` succeeds and the row is marked. Correct, but untested.
 **R27.** Snapshot names have one-second resolution; two `--full` resets of one timeline within a second would collide, and the second refuses (fail closed).
+**R28.** (A2) The preflight's checks are repeated where each write happens (the snapshot's walk and destination, the clean slate's `_nature_dir_problem`, the erasure's `_snapshot_file_problem`). A same-user process that changes a path between a check and its write is outside ProbOS; the pidfile excludes only the vessel. A change caught at write time refuses after the earlier archive writes, which are idempotent. Reach: injected only.
+**R29.** (A2, A-F8, P3, injected only) `ArchiveLedger.initialize` checks `user_version` only, so an archive from before S6, opened by the ledger alone, passes, and its first read raises `OperationalError` (fail closed). Every production open follows `ArchiveStore.initialize` on the same file (`_open_ledger`; `_snapshot_ship_records` runs inside `_promote_into_archive` after `archive.initialize()`). A future caller that opens the ledger alone must open the store first.
+**R30.** (A2, B-F2) One description per generation: a generation that resumes after a refused reset and develops more procedures keeps its first description, and the retry reports `present`. Erasing that entry keeps the source out for good (S3), so the generation cannot be re-described. Reach: ordinary but narrow (a refusal after the description, a boot, a retry); with A2's order only a failed clean slate or close leaves it.
+**R31.** (A2) `probos archive snapshots` reports `(present)` by `is_file()`, which follows a link: display only. The erasure validates with `lstat` (P-30 to P-32).
+**R32.** (A2) A tier 3 reset checks only the current timeline's directory under the snapshots directory for a link; an older timeline's directory that is a junction is not inspected by the reset (the erasure refuses to delete through it). Reach: injected only.
+**R33.** (A2) Every reparse point other than a symbolic link or a junction (a cloud placeholder, an app-exec link) is not treated as a link by D5's rule; `security/file_access.is_reparse_point` is stricter and is not imported into `knowledge/`.
+**R34.** (A2, B-F4) A read-only open of a WAL-mode `procedures.db` may create or touch its `-wal` and `-shm` files; the main database is byte-identical (N11). `immutable=1` would avoid them, but is unsafe while the vessel writes (the dry run and `pending` run beside a live vessel).
+**R35.** (A2) A tier 3 reset walks Ship's Records twice (the preflight's plan and the snapshot's), names and sizes only, up to 100,000 entries.
+**R36.** (A2, A-F4) A file system without hard links under the Ship's Archive (FAT32, exFAT, some network shares) refuses every `--full` reset whose Ship's Records hold a file (fail closed). `--skip-promotion` or moving `archive.db_path` are the ways through.
+**R37.** (A2, C-F3) A tier 2 or 3 reset opens the archive once more, to record the generation's close (one connection, one INSERT).
+**R38.** (Process, S6 round 1) Every refusal test on a destructive path captures *all* durable state before and after (every archive table, the data directory, the link's target) and asserts it unchanged; "exit 1 and the target intact" is not a refusal test. All three reviewers found the same class in three milestones: a guard placed after the first write (the link refusal after the description was archived; the generation closed before a clearance that could fail), or one path of a set checked (the archive against the tier targets but not the clean slate's; the archive file but not the snapshot destination; names but not the components they resolve through). Every test asserted the exit code and the target, so all passed.
+**R39.** (Process) A contract that adds a deletion target or a protected path lists the deletion set × protected paths cross product in §5 and §14, with one test per new pair and a link at every component of each path (root, intermediate, final), not only inside a walk; and puts every knowable refusal in one preflight that the dry run shares.
+**R40.** (Process) Every refusal branch of a new destructive function gets a §10 row or a register line saying why not. The file branch of `_clear_nature` had neither; the Builder flagged it, and a mutant disabling it left all 21 tests passing.
