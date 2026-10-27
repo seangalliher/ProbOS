@@ -1,0 +1,429 @@
+# AD-1270 (#1324): production classes that nothing in production uses, each with its reviewed disposition.
+# Regenerate with: python -P scripts/check_dormant_classes.py --update-baseline
+# It keeps reviewed rows, adds new classes as 'unreviewed' and drops rows that are no longer dormant.
+# disposition: wire, retire or staged (owner: an issue or AD), or false-positive (note: why).
+# One row per class and nothing more: no description, status or test data. It is not a capability registry.
+classes:
+  agent_onboarding.py::AgentOnboardingService:
+    disposition: unreviewed
+  agents/corrupted.py::CorruptedFileReaderAgent:
+    disposition: unreviewed
+  agents/federation_recall_agent.py::FederationRecallAgent:
+    disposition: unreviewed
+  agents/operations/coordinator.py::CoordinatorAgent:
+    disposition: unreviewed
+  agents/operations/resource_allocator.py::ResourceAllocatorAgent:
+    disposition: unreviewed
+  avatars/asset_manifest.py::AssetManifest:
+    disposition: unreviewed
+  avatars/peer_perception.py::PeerObservation:
+    disposition: unreviewed
+  channels/gmail_adapter.py::GmailAdapter:
+    disposition: unreviewed
+  channels/matrix_adapter.py::MatrixAdapter:
+    disposition: unreviewed
+  channels/teams_adapter.py::TeamsAdapter:
+    disposition: unreviewed
+  channels/telegram_adapter.py::TelegramAdapter:
+    disposition: unreviewed
+  cognitive/anchor_quality.py::AnchorProfile:
+    disposition: unreviewed
+  cognitive/builder_specialist.py::SpecialistRouter:
+    disposition: unreviewed
+  cognitive/builder_specialist.py::SpecialtyMatchResult:
+    disposition: unreviewed
+  cognitive/chain_checkpoint.py::ChainCheckpointStore:
+    disposition: unreviewed
+  cognitive/consultation.py::ConsultationProtocol:
+    disposition: unreviewed
+  cognitive/dm/action_dispatcher.py::ActionDispatcher:
+    disposition: unreviewed
+  cognitive/elastic_commission.py::CommissionReceipt:
+    disposition: unreviewed
+  cognitive/elastic_commission.py::ElasticCommissionService:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/elastic_commission.py::SlotView:
+    disposition: unreviewed
+  cognitive/elastic_commission.py::TeamView:
+    disposition: unreviewed
+  cognitive/episodic_mock.py::MockEpisodicMemory:
+    disposition: unreviewed
+  cognitive/expertise_directory.py::ExpertMatch:
+    disposition: unreviewed
+  cognitive/expertise_directory.py::ExpertiseDirectory:
+    disposition: unreviewed
+  cognitive/expertise_directory.py::ExpertiseProfile:
+    disposition: unreviewed
+  cognitive/failure_distiller.py::ComparativeInsight:
+    disposition: unreviewed
+  cognitive/failure_distiller.py::FailureDistiller:
+    disposition: unreviewed
+  cognitive/gap_aggregation.py::FederatedGapSnapshot:
+    disposition: unreviewed
+  cognitive/insights.py::CrewInteraction:
+    disposition: unreviewed
+  cognitive/insights.py::TopicCount:
+    disposition: unreviewed
+  cognitive/memory_metabolism.py::AuditFlag:
+    disposition: unreviewed
+  cognitive/memory_metabolism.py::MemoryMetabolism:
+    disposition: wire
+    owner: '#1324'
+  cognitive/memory_metabolism.py::MetabolismReport:
+    disposition: unreviewed
+  cognitive/memory_security.py::MemorySecurityGate:
+    disposition: unreviewed
+  cognitive/memory_security.py::MemorySecurityRegistry:
+    disposition: unreviewed
+  cognitive/memory_security.py::StoreSecurityDecision:
+    disposition: unreviewed
+  cognitive/memory_transparency.py::MemoryProvenance:
+    disposition: unreviewed
+  cognitive/memory_transparency.py::MemoryTransparencyService:
+    disposition: unreviewed
+  cognitive/memory_transparency.py::TransparentMemory:
+    disposition: unreviewed
+  cognitive/orders.py::StandingOrderPredicate:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::CascadeSignalDetector:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::FrequencyDriftDetector:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::PatternFinding:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::PeerObservationMonitor:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::PermissionDenialPatternDetector:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::PrivilegedTierLeakageDetector:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::RegisterDriftDetector:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::StaticImpressionDetector:
+    disposition: unreviewed
+  cognitive/peer_observation_monitor.py::SycophancyPatternDetector:
+    disposition: unreviewed
+  cognitive/predictive_branching/executor.py::SpeculationRequest:
+    disposition: unreviewed
+  cognitive/predictive_branching/policy.py::NoOpIdleSpeculationPolicy:
+    disposition: unreviewed
+  cognitive/predictive_branching/policy.py::NoOpPreplayHook:
+    disposition: unreviewed
+  cognitive/priority4_cleanup.py::BoundaryEvolutionProposal:
+    disposition: unreviewed
+  cognitive/priority4_cleanup.py::CompetencyResult:
+    disposition: unreviewed
+  cognitive/priority4_cleanup.py::CurriculumRequirement:
+    disposition: unreviewed
+  cognitive/priority4_cleanup.py::DiagnosticActionResult:
+    disposition: unreviewed
+  cognitive/priority4_cleanup.py::MovingRangeChart:
+    disposition: unreviewed
+  cognitive/priority4_cleanup.py::PacingPolicy:
+    disposition: unreviewed
+  cognitive/profile_currency.py::LiveSkill:
+    disposition: unreviewed
+  cognitive/profile_currency.py::RegistryComponentSource:
+    disposition: unreviewed
+  cognitive/profile_qualification_store.py::ProfileOutcomeLearning:
+    disposition: unreviewed
+  cognitive/repair_approval.py::CandidateApprovalCheck:
+    disposition: unreviewed
+  cognitive/repair_candidate.py::RepairCandidate:
+    disposition: staged
+    owner: AD-1299 (#1352)
+  cognitive/repair_evidence_store.py::EvidenceAssessment:
+    disposition: unreviewed
+  cognitive/retrieval_practice.py::RetrievalPracticeResult:
+    disposition: unreviewed
+  cognitive/retroactive_evolver.py::EvolutionReport:
+    disposition: unreviewed
+  cognitive/retroactive_evolver.py::RetroactiveEvolver:
+    disposition: unreviewed
+  cognitive/salience_filter.py::SalienceFilter:
+    disposition: wire
+    owner: '#1324'
+  cognitive/salience_filter.py::SalienceScore:
+    disposition: unreviewed
+  cognitive/self_improvement/stage_contract.py::StageContract:
+    disposition: unreviewed
+  cognitive/self_improvement/versioning.py::AgentVersion:
+    disposition: unreviewed
+  cognitive/self_improvement/versioning.py::ShadowComparisonResult:
+    disposition: unreviewed
+  cognitive/self_perception.py::SelfPerceptionProjection:
+    disposition: unreviewed
+  cognitive/skill_forge.py::ForgeResult:
+    disposition: unreviewed
+  cognitive/skill_forge.py::SkillForge:
+    disposition: unreviewed
+  cognitive/source_governance.py::IntrospectiveFaithfulnessResult:
+    disposition: unreviewed
+  cognitive/storage_gate.py::StorageDecision:
+    disposition: unreviewed
+  cognitive/storage_gate.py::StorageGate:
+    disposition: unreviewed
+  consensus/quorum.py::QuorumResult:
+    disposition: unreviewed
+  consultation/refs.py::WorkspaceRef:
+    disposition: unreviewed
+  crew_development/boot_camp_extensions.py::ASchoolCurriculum:
+    disposition: wire
+    owner: '#1324'
+  crew_development/boot_camp_extensions.py::CompletionCriteriaGate:
+    disposition: wire
+    owner: '#1324'
+  crew_development/boot_camp_extensions.py::CurriculumProgressionTracker:
+    disposition: wire
+    owner: '#1324'
+  crew_development/boot_camp_extensions.py::GateDecision:
+    disposition: unreviewed
+  crew_development/boot_camp_extensions.py::GraduatedStimuliMonitor:
+    disposition: wire
+    owner: '#1324'
+  crew_development/boot_camp_extensions.py::StimuliRecommendation:
+    disposition: unreviewed
+  crew_development/discovery/cross_functional.py::CrossFunctionalSuggestion:
+    disposition: unreviewed
+  crew_development/discovery/strength_map.py::StrengthRecord:
+    disposition: unreviewed
+  earned_agency.py::UncertaintyContext:
+    disposition: unreviewed
+  events.py::AgentCapacityApproachingEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildFailureEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildGeneratedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildProgressEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildResolvedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildStartedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildSuccessEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CascadeConfabulationEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CircuitBreakerTripEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsensusEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationCompletedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationFailedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationRequestedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationTimeoutEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CorroborationProvenanceValidatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CorroborationVerifiedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CounselorAssessmentEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignFailureEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignGeneratedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignProgressEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignStartedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DreamCompleteEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::EmergenceMetricsEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::HebbianUpdateEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ObservableStateMismatchEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::PeerRepetitionDetectedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ProcedureFallbackLearningEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModFailureEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModImportApprovedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModProgressEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModRetryCompleteEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModStartedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModSuccessEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfMonitoringConcernEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::TaskExecutionCompleteEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::TrustCascadeEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::TrustUpdateEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomEchoDetectedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomEndorsementEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomPostCreatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomThreadCreatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomThreadUpdatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ZoneRecoveryEvent:
+    disposition: retire
+    owner: '#1324'
+  execution/authority.py::AdmissionRequest:
+    disposition: unreviewed
+  execution/authority.py::EnforcementSourceSnapshot:
+    disposition: unreviewed
+  execution/authority.py::ManifestPublicationRequest:
+    disposition: unreviewed
+  execution/effect_broker.py::EffectCoverageReport:
+    disposition: unreviewed
+  federation/a2a/client.py::A2AClient:
+    disposition: unreviewed
+  federation/cluster_monitor.py::FederationClusterMonitor:
+    disposition: unreviewed
+  federation/hebbian_map.py::FederationHebbianMap:
+    disposition: unreviewed
+  federation/mock_transport.py::MockFederationTransport:
+    disposition: unreviewed
+  federation/mock_transport.py::MockTransportBus:
+    disposition: unreviewed
+  federation/multicast_discovery.py::MulticastDiscovery:
+    disposition: unreviewed
+  governance/decision_queue.py::QueuedDecision:
+    disposition: unreviewed
+  holodeck/scenarios.py::ScenarioOutcome:
+    disposition: unreviewed
+  integrations/mcp_bridge/adapter.py::MCPToolAdapter:
+    disposition: unreviewed
+  integrations/sharepoint_routing.py::DocumentProvenance:
+    disposition: unreviewed
+  integrations/sharepoint_routing.py::SharePointLocation:
+    disposition: unreviewed
+  integrations/sharepoint_routing.py::SharePointRouter:
+    disposition: unreviewed
+  maturity/registry.py::MaturityRegistry:
+    disposition: unreviewed
+  mesh/nats_bus.py::MockNATSBus:
+    disposition: false-positive
+    note: test double kept in src for the tests; production names it only under TYPE_CHECKING
+  naming.py::FederationDisplayFormat:
+    disposition: unreviewed
+  packs/loader.py::PackLoadResult:
+    disposition: unreviewed
+  proactive.py::DailyBriefingScheduler:
+    disposition: unreviewed
+  proactive.py::ProactiveScanAgent:
+    disposition: unreviewed
+  security/autonomy_boundaries.py::BoundaryProbingDetector:
+    disposition: unreviewed
+  security/autonomy_boundaries.py::DisengagementResponse:
+    disposition: unreviewed
+  security/autonomy_boundaries.py::ProbingPattern:
+    disposition: unreviewed
+  security/autonomy_boundaries.py::ProtectiveDisengagement:
+    disposition: unreviewed
+  security/contagion.py::CommunicationContagionFirewall:
+    disposition: unreviewed
+  security/contagion.py::ContagionMatch:
+    disposition: unreviewed
+  security/contagion.py::ContagionScanner:
+    disposition: unreviewed
+  security/container_sandbox.py::CommandOutcome:
+    disposition: unreviewed
+  security/container_sandbox.py::ContainerExec:
+    disposition: unreviewed
+  security/container_sandbox.py::DockerContainerSandbox:
+    disposition: unreviewed
+  security/container_sandbox.py::InProcessContainerSandbox:
+    disposition: unreviewed
+  security/data_classification.py::ClassificationPolicy:
+    disposition: unreviewed
+  security/permission_card.py::PermissionCardManager:
+    disposition: unreviewed
+  security/permission_model.py::PermissionConfig:
+    disposition: unreviewed
+  security/trust_integrity.py::TrustViolation:
+    disposition: unreviewed
+  storage/registry.py::StoreRegistry:
+    disposition: unreviewed
+  substrate/durable_events.py::DurableAnswer:
+    disposition: unreviewed
+  substrate/telemetry.py::TelemetrySample:
+    disposition: unreviewed
+  task_sessions/browser.py::BrowserTask:
+    disposition: unreviewed
+  tools/adapters.py::DeterministicFunctionAdapter:
+    disposition: unreviewed
+  tools/work_permits.py::WorkPermit:
+    disposition: unreviewed
+  tools/work_permits.py::WorkPermitStore:
+    disposition: unreviewed
+  types.py::ConnectionWeight:
+    disposition: unreviewed
+  voice/_substrate.py::BrowserSpeechRecognizer:
+    disposition: unreviewed
+  voice/_substrate.py::SilentTextToSpeech:
+    disposition: unreviewed
+  voice/_substrate.py::StaticWakeWordDetector:
+    disposition: unreviewed
+  voice/_substrate.py::TranscriptionResult:
+    disposition: unreviewed
+  ward_room/models.py::ChannelMembership:
+    disposition: unreviewed
+  ward_room/models.py::WardRoomEndorsement:
+    disposition: unreviewed
+  ward_room_pipeline.py::AgentResponse:
+    disposition: unreviewed
+  watch_rotation.py::DutyShift:
+    disposition: unreviewed
+schema_version: 1
