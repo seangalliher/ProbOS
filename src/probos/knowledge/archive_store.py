@@ -101,6 +101,7 @@ class SourceKind(StrEnum):
     CAPTAINS_LOG = "captains_log"
     NOTEBOOK_FINDING = "notebook_finding"
     EXIT_NOTE = "exit_note"  # AD-1341 S4: a lesson a crew agent leaves for its successor; it cites episodes, never is one
+    AFTER_ACTION_REPORT = "after_action"  # AD-1341 S5: a lesson after a flagged event, endorsed by the chain; cites episodes
 
 
 class PromotionOutcome(StrEnum):

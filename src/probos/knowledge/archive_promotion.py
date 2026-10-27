@@ -16,12 +16,17 @@ narrower than ``ship`` or has nothing to archive, and promotes the rest with the
   ``exit_note_citations`` is the AD-754 erasure's read of the citations the next promotion would archive.
 - AD-1341 S3: a source the Captain vetoed is reported as vetoed and never archived. ``review_promotion`` is the
   Captain's review of the next run (``probos archive pending``): it reads, and records nothing.
+- AD-1341 S5: an after-action report (``after-action/``) is a source with its own rule (``_after_action_record``):
+  S4's exit-note rule plus the chain-of-command review, so only a report its chain endorsed is archived.
+  ``promote_settled`` is the continuous promotion (a dream step, default off): the same plan, settled sources only, a
+  bounded batch, and a citing source only inside the AD-754 erasure lock while its episodes are live.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from probos.knowledge.archive_store import (
@@ -33,11 +38,19 @@ from probos.knowledge.archive_store import (
     SourceState,
 )
 from probos.knowledge.lessons import (
+    AFTER_ACTION_DIR,
+    AFTER_ACTION_KEY,
+    AFTER_ACTION_SUBJECT_MAX_CHARS,
+    AFTER_ACTION_VERSION,
     EXIT_NOTE_EPISODE_ID_MAX_CHARS,
     EXIT_NOTE_KEY,
     EXIT_NOTE_VERSION,
     EXIT_NOTES_DIR,
     LESSON_MAX_CITATIONS,
+    REVIEW_ENDORSED,
+    after_action_lesson,
+    after_action_path,
+    after_action_review_ok,
     exit_note_lesson,
     exit_note_path,
     exit_note_provenance_ok,
@@ -70,6 +83,8 @@ def source_kind_for(path: str, frontmatter: Any) -> SourceKind | None:
         return None
     if path.startswith(f"{EXIT_NOTES_DIR}/"):
         return SourceKind.EXIT_NOTE  # AD-1341 S4: every exit note is a source; _exit_note_record withholds a bad one
+    if path.startswith(f"{AFTER_ACTION_DIR}/"):
+        return SourceKind.AFTER_ACTION_REPORT  # AD-1341 S5: every report is a source; _after_action_record withholds a bad one
     author = frontmatter.get("author")
     status = frontmatter.get("status")
     if path.startswith("reports/convergence/"):
@@ -85,15 +100,25 @@ def source_kind_for(path: str, frontmatter: Any) -> SourceKind | None:
     return None
 
 
+#: AD-1341 S5 (D17, register F-661): the frontmatter values ``_stored_text`` converts. ``datetime`` is a ``date``.
+_SCALARS = (str, int, float, bool, date)
+
+
 def _stored_text(value: object) -> str:
     """AD-1341 S4 (A5, round 3 R3-M1-2): a stored frontmatter value as archive text; never raises.
+
+    AD-1341 S5 (F-661): only a scalar converts. A list, a mapping or any other object is archived as no value: a YAML
+    alias chain deeper than the recursion limit made ``str()`` raise ``RecursionError``, and a graph whose every level
+    names the one below twice made it run for an exponential time, which would stall the dream step and the reset.
 
     ``str()`` raises ``ValueError`` for an integer longer than Python's integer-string limit (4,300 digits by default,
     ``sys.set_int_max_str_digits``), which YAML builds from ``0x...``; one such value stopped the plan and the whole
     reset. It is archived as no value, as a missing one is. Every other value converts exactly as ``str()`` did.
     """
+    if not value or not isinstance(value, _SCALARS):
+        return ""  # AD-1341 S5 (F-661): a container, an alias graph included, is never walked by str()
     try:
-        return str(value or "")
+        return str(value)
     except ValueError:  # A5 (R3-M1-2): an integer longer than Python's integer-string limit
         logger.warning("AD-1341 S4: a stored Ship's Records value cannot be shown as text; it is archived empty")
         return ""
@@ -177,40 +202,126 @@ def _exit_note_record(path: str, document: Any) -> PromotionRecord | None:
     )
 
 
-async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | None) -> dict[str, tuple[str, ...]]:
-    """AD-1341 S4 (D14): each episode id cited by an exit note the next promotion would archive, with those notes.
+def _after_action_record(path: str, document: Any) -> PromotionRecord | None:
+    """AD-1341 S5: an after-action report as the Ship's Archive receives it, or None when it breaks the rule (D4, D5).
 
-    The notes are read as the promotion reads them (``_exit_note_record``, the one rule). With an open archive a note
-    counts while ``source_state`` says CREATED; a vetoed, erased or already archived note does not (an archived one
-    is S3's own check). With no open archive every valid note counts (fail closed: the next reset opens the archive
+    S4's exit-note rule with the report's own envelope, plus the chain-of-command review. The envelope (version 1, an
+    ``int``) names a timeline, a callsign, an agent type and the author's DID (``exit_note_provenance_ok``), the flag's
+    time, a one-line subject and at most ``LESSON_MAX_CITATIONS`` distinct episode ids. The path is ``after_action_path``
+    of them, and the author is the callsign. The body is exactly the canonical report (``after_action_lesson``), the
+    recorded review admits it (``after_action_review_ok``), and the classification is ``ship`` or ``fleet`` (C1). The
+    entry is attributed to the timeline that wrote the report. Never raises for a document. The one rule for the reset,
+    the continuous step and the erasure's citation read.
+    """
+    if type(document) is not dict or type(document.get("frontmatter")) is not dict:
+        return None
+    frontmatter, content = document["frontmatter"], document.get("content")
+    envelope = frontmatter.get(AFTER_ACTION_KEY)
+    if type(envelope) is not dict:
+        return None
+    version = envelope.get("version")
+    if type(version) is not int or version != AFTER_ACTION_VERSION:  # True and 1.0 equal 1 and are not it (S4 A2)
+        return None
+    named = [envelope.get(field) for field in ("timeline_id", "callsign", "agent_type", "author_did")]
+    if not exit_note_provenance_ok(*named):
+        return None
+    report_timeline, callsign, agent_type, author_did = named
+    flagged_at, subject = envelope.get("flagged_at"), envelope.get("subject")
+    if not is_exit_note_text(subject, AFTER_ACTION_SUBJECT_MAX_CHARS):
+        return None
+    cited = envelope.get("source_episode_ids")
+    if type(cited) is not list or not all(is_exit_note_text(item, EXIT_NOTE_EPISODE_ID_MAX_CHARS) for item in cited):
+        return None
+    if len(cited) > LESSON_MAX_CITATIONS or len(set(cited)) != len(cited):
+        return None
+    try:
+        expected_path = after_action_path(report_timeline, agent_type, flagged_at)
+    except ValueError:
+        return None
+    if path != expected_path or frontmatter.get("author") != callsign:
+        return None
+    if after_action_lesson(callsign, agent_type, report_timeline, content) is None:
+        return None
+    if not after_action_review_ok(envelope.get("review"), agent_type):
+        return None  # AD-1341 S5 (D5): no endorsement by the chain of command, no canon
+    classification = frontmatter.get("classification")
+    if type(classification) is not str or classification not in PROMOTABLE_CLASSIFICATIONS:
+        return None  # C1: nothing narrower than ship reaches a later crew
+    endorsed_by = [entry["callsign"] for entry in envelope["review"] if entry.get("outcome") == REVIEW_ENDORSED]
+    return PromotionRecord(
+        timeline_id=report_timeline,  # the timeline that wrote the report, not the promoting run's
+        source_kind=SourceKind.AFTER_ACTION_REPORT,
+        source_ref=path,
+        title=f"After-action report of {callsign}",
+        content=content,
+        classification=classification,
+        author_callsign=callsign,
+        author_agent_type=agent_type,
+        author_did=author_did,
+        source_episode_ids=tuple(cited),  # the author's own offered episodes, by id; never their text
+        metadata={
+            "status": _stored_text(frontmatter.get("status")),
+            "record_created": _stored_text(frontmatter.get("created")),
+            "record_updated": _stored_text(frontmatter.get("updated")),
+            "flagged_at": flagged_at,
+            "subject": subject,
+            "endorsed_by": endorsed_by,
+        },
+    )
+
+
+def _lesson_record(path: str, document: Any) -> PromotionRecord | None:
+    """AD-1341 S5: the one rule of a lesson source, by its directory: an after-action report's, or an exit note's."""
+    if path.startswith(f"{AFTER_ACTION_DIR}/"):
+        return _after_action_record(path, document)
+    return _exit_note_record(path, document)
+
+
+#: AD-1341 S5: the Ship's Records directories whose documents cite episodes: exit notes and after-action reports.
+_LESSON_DIRS = (EXIT_NOTES_DIR, AFTER_ACTION_DIR)
+
+
+async def exit_note_citations(records: RecordsStore, archive: ArchiveStore | None) -> dict[str, tuple[str, ...]]:
+    """AD-1341 S4 (D14), S5: each episode id cited by a lesson the next promotion would archive, with those lessons.
+
+    The lessons are read as the promotion reads them (``_lesson_record``, the one rule). With an open archive a lesson
+    counts while ``source_state`` says CREATED; a vetoed, erased or already archived one does not (an archived one is
+    S3's own check). With no open archive every valid lesson counts (fail closed: the next reset opens the archive
     and would promote it). Reads Ship's Records and the archive; writes nothing; any failure propagates.
 
-    A2 (M1-F1, M3-F1): the listing is strict, so a note file that exists but cannot be read now (a sharing violation, a
-    permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
+    A2 (M1-F1, M3-F1): each listing is strict, so a lesson file that exists but cannot be read now (a sharing violation,
+    a permission, an I/O error) raises instead of being skipped as if it were not there. A file whose bytes are not
     UTF-8, or whose frontmatter does not parse, is never counted, because the promotion never archives it either: that
     is a property of the file, not of the moment.
 
-    A5 (7.3a's table, O6): each listed note is read again through ``read_entry``, whose ``Path.exists`` answers False
-    for errors ``pathlib`` reads as "not there". A ship-wide note the strict listing returned and the second read
+    A5 (7.3a's table, O6): each listed lesson is read again through ``read_entry``, whose ``Path.exists`` answers False
+    for errors ``pathlib`` reads as "not there". A ship-wide lesson the strict listing returned and the second read
     cannot find raises: it was there a moment ago, so whether the next promotion would archive it is unknown.
+
+    AD-1341 S5: after-action reports (``after-action/``) are read too, so ``/forget`` refuses while a report its chain
+    endorsed, awaiting promotion, cites a matched episode. The name and the route's 409 code
+    (``exit_notes_cite_erased_episodes``) are kept, so no caller or wire contract changes; the paths say which
+    documents they are (register R10).
     """
     citing: dict[str, list[str]] = {}
-    for listed in await records.list_entries(EXIT_NOTES_DIR, strict=True):
-        path = listed["path"]
-        if source_kind_for(path, listed["frontmatter"]) is not SourceKind.EXIT_NOTE:
-            continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
-        document = await records.read_entry(path, ARCHIVE_READER)
-        classification = listed["frontmatter"].get("classification")
-        listed_readable = type(classification) is str and classification in PROMOTABLE_CLASSIFICATIONS
-        if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now: never "no citations"
-            raise OSError(f"AD-1341 S4: the exit note {path} was listed but cannot be found now")
-        record = _exit_note_record(path, document)
-        if record is None or not record.source_episode_ids:
-            continue
-        if archive is not None and (await archive.source_state(record)).outcome is not PromotionOutcome.CREATED:
-            continue
-        for episode_id in record.source_episode_ids:
-            citing.setdefault(episode_id, []).append(path)
+    for directory in _LESSON_DIRS:
+        for listed in await records.list_entries(directory, strict=True):
+            path = listed["path"]
+            kind = source_kind_for(path, listed["frontmatter"])
+            if kind is not SourceKind.EXIT_NOTE and kind is not SourceKind.AFTER_ACTION_REPORT:
+                continue  # plan_promotion skips it unread (frontmatter not a mapping), so it can never be archived
+            document = await records.read_entry(path, ARCHIVE_READER)
+            classification = listed["frontmatter"].get("classification")
+            listed_readable = type(classification) is str and classification in PROMOTABLE_CLASSIFICATIONS
+            if document is None and listed_readable:  # A5 (O6): listed a moment ago, not found now
+                raise OSError(f"AD-1341 S4: the lesson {path} was listed but cannot be found now")
+            record = _lesson_record(path, document)
+            if record is None or not record.source_episode_ids:
+                continue
+            if archive is not None and (await archive.source_state(record)).outcome is not PromotionOutcome.CREATED:
+                continue
+            for episode_id in record.source_episode_ids:
+                citing.setdefault(episode_id, []).append(path)
     return {episode_id: tuple(paths) for episode_id, paths in citing.items()}
 
 
@@ -245,6 +356,9 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
     timeline in its own envelope, never to ``timeline_id``, and a valid note never raises for an empty
     ``timeline_id`` (the CLI refuses a run without an instance id before it plans). A note that breaks the rule is
     withheld. The listing is not strict: a file that cannot be read at this moment is skipped, as S1 left it.
+
+    AD-1341 S5: an after-action report (``after-action/``) is the same kind of exception, with its own rule
+    (``_after_action_record``): only a report its chain of command endorsed is selected.
     """
     selected: list[PromotionRecord] = []
     withheld: list[str] = []
@@ -255,6 +369,13 @@ async def plan_promotion(records: RecordsStore, *, timeline_id: str) -> Promotio
         document = await records.read_entry(path, ARCHIVE_READER)
         if document is None:
             withheld.append(path)
+            continue
+        if path.startswith(f"{AFTER_ACTION_DIR}/"):  # AD-1341 S5: a report carries its own provenance and its review
+            report = _after_action_record(path, document)
+            if report is None:
+                withheld.append(path)
+            else:
+                selected.append(report)
             continue
         if path.startswith(f"{EXIT_NOTES_DIR}/"):  # AD-1341 S4: an exit note carries its own provenance
             note = _exit_note_record(path, document)
