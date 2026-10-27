@@ -15,15 +15,18 @@ import pytest
 
 from probos.attachments.filesystem_store import FilesystemAttachmentStore
 from probos.routers import chat as chat_router
+from probos.routers import security as security_router
 from probos.types import EpisodeStoreOutcome
 from tests.test_ad1340_s1_eviction import _episode, _memory, _raw
 from tests.test_ad1340_s2a_lookup_route import _client, _post, _runtime
 from tests.test_bf939_shared_attachment_ownership import (
     _BODY as _SHARED_BODY,
     _FIRST,
-    _OVERLAP_BUDGET_S,
     _SECOND,
     _SHA as _SHARED_SHA,
+    _a_handshake_that_fails,
+    _end_stragglers,
+    _overlapping,
     _trace_overlapping_erasures,
     _two_owners,
 )
@@ -145,11 +148,10 @@ async def test_overlapping_forget_requests_leave_nothing_downloadable_once_every
                 assert before.status_code == 200, before.text  # premise: the file is served ...
                 assert before.content == _SHARED_BODY  # ... and both episodes name it
                 # A-5 (B2-1): one budget for both requests end to end. ``_post``'s 10 s bounds one independent request,
-                # and would count this request's wait behind the other erasure against it.
-                answers = await asyncio.wait_for(
-                    asyncio.gather(*(client.post(_FORGET, json=body) for body in _OVERLAPPING_REQUESTS[form])),
-                    _OVERLAP_BUDGET_S,
-                )
+                # and would count this request's wait behind the other erasure against it. A-6 (B3-1): if one request
+                # fails, ``_overlapping`` cancels and awaits the other here, before the client and the stores close.
+                requests = (client.post(_FORGET, json=body) for body in _OVERLAPPING_REQUESTS[form])
+                answers = await _overlapping(*requests)
                 after = await client.get(f"/api/chat/attachments/{_SHARED_SHA}")
 
             assert [answer.status_code for answer in answers] == [200, 200], [answer.text for answer in answers]
@@ -160,3 +162,23 @@ async def test_overlapping_forget_requests_leave_nothing_downloadable_once_every
         finally:
             chat_router._ATTACHMENT_STORE_CACHE.pop(id(runtime), None)
             attachments.close()
+
+
+async def test_a_failed_overlap_ends_the_other_request_before_its_stores_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3-1 (A-6), RT3's failure path: the second request is held at admission, before it can ask for the erasure
+    lock, so the first's handshake fails. RT3 must cancel and await the held request before its client and stores
+    close. Its one wait is the patched 0.05 s handshake."""
+    real = security_router._pending_exit_note_citations  # test-only private access: the route's admission step
+    held, events = _a_handshake_that_fails(monkeypatch, real)
+    monkeypatch.setattr(security_router, "_pending_exit_note_citations", held)
+    before = asyncio.all_tasks()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="neither asked for the erasure lock"):
+            await test_overlapping_forget_requests_leave_nothing_downloadable_once_every_owner_is_erased(
+                tmp_path, monkeypatch, "episode",
+            )
+        assert events[:2] == ["held call unwound", "attachment store closed"]
+    finally:
+        await _end_stragglers(before)

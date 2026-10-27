@@ -13,7 +13,7 @@ import dataclasses
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -362,6 +362,80 @@ async def test_each_entry_point_scans_for_owners_at_most_once_and_keeps_the_per_
 _FIRST, _SECOND = "/srv/bf939/first.log", "/srv/bf939/second.log"
 _HANDSHAKE_S = 60.0  # A-5: bounds one wait; exceeding it FAILS the test, and no assertion depends on it
 _OVERLAP_BUDGET_S = 150.0  # A-5: both erasures end to end, queueing included; under pytest-timeout's 180 s
+_UNWIND_S = 10.0  # A-6: a cancelled erasure must have ended within it; exceeding it FAILS the test
+
+
+async def _overlapping(*erasures: Awaitable[Any]) -> list[Any]:
+    """A-6 (B3-1): run ``erasures`` together within ``_OVERLAP_BUDGET_S``, and never return or raise while one runs.
+
+    ``asyncio.gather`` stops supervising once a child raises (the handshake's ``pytest.fail``, say): the others run
+    on past the caller's cleanup, against a client and stores that are closing. Here each erasure is a task this
+    helper holds; on every way out, each unfinished one is cancelled and awaited, so the caller's ``finally`` and
+    context exits run after the last erasure has ended. One still running ``_UNWIND_S`` after its cancellation fails
+    the test.
+    """
+    tasks = [asyncio.ensure_future(erasure) for erasure in erasures]
+    try:
+        return await asyncio.wait_for(asyncio.gather(*tasks), _OVERLAP_BUDGET_S)
+    finally:
+        unfinished = [task for task in tasks if not task.done()]
+        for task in unfinished:
+            task.cancel()
+        if unfinished:
+            done, stuck = await asyncio.wait(unfinished, timeout=_UNWIND_S)
+            for ended in done:
+                if not ended.cancelled():
+                    ended.exception()  # retrieved, so asyncio never reports it as "never retrieved"
+            assert not stuck, f"{len(stuck)} overlapping erasure(s) still ran {_UNWIND_S} s after cancellation"
+
+
+def _a_handshake_that_fails(
+    monkeypatch: pytest.MonkeyPatch, real: Callable[..., Awaitable[Any]],
+) -> tuple[Callable[..., Awaitable[Any]], list[str]]:
+    """A-6 (B3-1): T12's and RT3's failure path, whose one wait is a 0.05 s handshake.
+
+    Returns a stand-in for ``real`` and the ``events`` it records. Its first call waits until a second call has
+    started, then runs ``real``. The second is held until it is cancelled, so it never asks for the erasure lock, and
+    the first erasure's handshake fails 0.05 s after its archive scan ends (``_HANDSHAKE_S`` is patched). ``events``
+    records ``"held call unwound"`` when the held call's cancellation ends it, and ``"attachment store closed"`` at
+    each ``FilesystemAttachmentStore.close``, in order.
+    """
+    events: list[str] = []
+    second_started = asyncio.Event()
+    calls = 0
+
+    async def held(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await asyncio.wait_for(second_started.wait(), _UNWIND_S)  # both have started before either erases
+            return await real(*args, **kwargs)
+        second_started.set()
+        try:
+            await asyncio.Event().wait()  # never set: only a cancellation ends the held call
+        finally:
+            events.append("held call unwound")
+        return None  # not reached: the wait above ends only by cancellation
+
+    real_close = FilesystemAttachmentStore.close
+
+    def close(self: FilesystemAttachmentStore) -> None:
+        events.append("attachment store closed")
+        real_close(self)
+
+    monkeypatch.setattr(FilesystemAttachmentStore, "close", close)
+    monkeypatch.setitem(globals(), "_HANDSHAKE_S", 0.05)
+    return held, events
+
+
+async def _end_stragglers(before: set[asyncio.Task[Any]]) -> None:
+    """A-6: cancel and await what a failure test would leave running (on a tree without ``_overlapping``'s cleanup,
+    the held call), so nothing outlives the test."""
+    stragglers = [straggler for straggler in asyncio.all_tasks() - before if not straggler.done()]
+    for straggler in stragglers:
+        straggler.cancel()
+    if stragglers:
+        await asyncio.wait(stragglers, timeout=_UNWIND_S)
 
 
 def _two_owners() -> tuple[Episode, Episode]:
@@ -476,10 +550,7 @@ async def test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every
         trace = _trace_overlapping_erasures(monkeypatch, rig.em)
         erase_first, erase_second = _OVERLAPS[overlap]
 
-        results = await asyncio.wait_for(
-            asyncio.gather(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments))),
-            _OVERLAP_BUDGET_S,
-        )
+        results = await _overlapping(erase_first(_manager(rig, attachments)), erase_second(_manager(rig, attachments)))
 
         trace.assert_one_at_a_time()
         assert not await attachments.exists(_SHA)  # B1: no owner remains, so neither erasure may keep it
@@ -713,3 +784,71 @@ async def test_a_scans_own_error_is_raised_before_an_owner_recording_error(
         assert incomplete.value.enumeration_error is (live_error if scans == "live-archive" else archive_error)
         assert incomplete.value.failures == {}
         assert incomplete.value.result.deleted_episode_ids == [_A]
+
+
+# --- T18: of two owner recording failures, the first is raised (A-6, A3-1) -----------------------------------------
+
+
+@pytest.mark.parametrize("entry", ["episode", "agent"])
+async def test_of_two_owner_recording_failures_the_first_is_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str,
+) -> None:
+    """A3-1 (A-6): the owner recordings of ep-001 and then ep-002 raise two distinct errors. The scan reaches both,
+    and the error raised is ep-001's, by identity, on the single path and on a cascade."""
+    async with _vessel(tmp_path) as (rig, attachments):
+        await _stored(
+            rig.em,
+            [_naming(0), _naming(1, agent="agent-b", attachment=False), _naming(2, agent="agent-b", attachment=False)],
+        )
+        order = [episode.id async for episode in rig.em.iter_live_episodes()]
+        assert order.index(_B) < order.index(_C)  # premise: ep-001 is scanned before ep-002
+        manager = _manager(rig, attachments)
+        errors = {
+            _B: ValueError("injected: recording the owners of ep-001 failed"),
+            _C: TypeError("injected: recording the owners of ep-002 failed"),
+        }
+        reached: list[str] = []
+        inner = manager._extract_attachment_ids  # test-only private access, as _fail_recording_for
+
+        def failing(value: Any) -> Any:
+            episode_id = value.get("id") if isinstance(value, dict) else None
+            if episode_id in errors:
+                reached.append(episode_id)
+                raise errors[episode_id]
+            return inner(value)
+
+        monkeypatch.setattr(manager, "_extract_attachment_ids", failing)
+
+        with pytest.raises(ErasureCascadeIncomplete) as incomplete:
+            if entry == "episode":
+                await manager.forget_episode(_A)
+            else:
+                await manager.forget_agent_memory("agent-a")
+
+        assert reached == [_B, _C]  # premise: both recordings were reached, ep-001's first
+        assert incomplete.value.enumeration_error is errors[_B]  # the first, never the last
+        assert incomplete.value.failures == {}
+        assert incomplete.value.result.deleted_episode_ids == [_A]
+        assert sorted(_raw(rig.em, [_A, _B, _C])["ids"]) == [_B, _C]
+
+
+# --- T19: a failed overlap ends the other erasure before the stores close (A-6, B3-1) -------------------------------
+
+
+async def test_a_failed_overlap_ends_the_other_erasure_before_its_stores_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B3-1 (A-6), T12's failure path: the second ``forget_episode`` is held before it can ask for the erasure lock,
+    so the first's handshake fails. ``_overlapping`` must cancel and await the held erasure before T12's stores
+    close. Its one wait is the patched 0.05 s handshake."""
+    held, events = _a_handshake_that_fails(monkeypatch, ErasureManager.forget_episode)
+    monkeypatch.setattr(ErasureManager, "forget_episode", held)
+    before = asyncio.all_tasks()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="neither asked for the erasure lock"):
+            await test_overlapping_erasures_on_one_memory_leave_no_attachment_once_every_owner_is_erased(
+                tmp_path, monkeypatch, "two-episodes",
+            )
+        assert events[:2] == ["held call unwound", "attachment store closed"]
+    finally:
+        await _end_stragglers(before)
