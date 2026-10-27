@@ -15,10 +15,14 @@ snapshot can be checked by any BagIt validator.
 - Every other entry must be a regular file or a directory that can be read now. A link or junction (never followed),
   a special file, a file that cannot be read, or one whose size changes while it is copied refuses the snapshot, and
   with it the reset, before anything is deleted. So does a tree of more than ``SNAPSHOT_MAX_FILES`` files or
-  ``SNAPSHOT_MAX_BYTES`` bytes.
+  ``SNAPSHOT_MAX_BYTES`` bytes. AD-1341 S6 A2: so does a root that is a link or junction or cannot be inspected (only
+  a root that is not there is an empty plan), and a link or junction at the snapshots directory or the timeline's
+  directory the snapshot is written into.
 - The file is written under a temporary name beside its final one, flushed to disk, read back and checked against
-  what was written, and only then published (``PreparedSnapshot.publish``: one ``os.replace``). No snapshot is ever
-  written over. A file's modification time is not kept: every member carries the snapshot's time.
+  what was written (every member, the tag files too), and only then published (``PreparedSnapshot.publish``: one hard
+  link to the final name, which never replaces a name on Windows or POSIX, then the temporary name is removed). No
+  snapshot is ever written over; a file system without hard links refuses (fail closed). A file's modification time
+  is not kept: every member carries the snapshot's time.
 - Synchronous: the offline reset is its one caller.
 """
 
@@ -28,6 +32,7 @@ import hashlib
 import logging
 import os
 import re
+import stat
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -98,10 +103,23 @@ class PreparedSnapshot:
     final_path: Path
 
     def publish(self) -> None:
-        """One ``os.replace``. A file that appeared at the final name meanwhile is never written over."""
-        if os.path.lexists(self.final_path):  # a file that appeared meanwhile is never written over
-            raise SnapshotRefused(f"a snapshot named {self.result.relative_path} exists already")
-        os.replace(self.temp_path, self.final_path)
+        """A hard link from the temporary name to the final one, then the temporary name is removed (A2, A-F4).
+
+        ``os.link`` never replaces an existing name, on Windows and POSIX alike, so a file that appears at the final
+        name at any moment is never written over: it refuses. A file system without hard links refuses too (fail
+        closed: never a rename that may replace). Once the link exists the snapshot is in place; a temporary name that
+        cannot then be removed is logged, not raised.
+        """
+        try:
+            os.link(self.temp_path, self.final_path)  # A2: no-replace on Windows and POSIX; an existing name refuses
+        except FileExistsError:
+            raise SnapshotRefused(f"a snapshot named {self.result.relative_path} exists already") from None
+        except OSError as exc:
+            raise SnapshotRefused(
+                f"the snapshot cannot be published without a hard link on this file system ({exc}); keep the Ship's "
+                "Archive on a file system that has them, or pass --skip-promotion REASON"
+            ) from exc
+        _remove_quietly(self.temp_path)
 
     def discard(self) -> None:
         """Remove the temporary file, if it is still there."""
@@ -120,16 +138,43 @@ def snapshot_relative_path(timeline_id: str, started: datetime, ended: datetime)
     return f"{timeline_id}/{_stamp(started)}_{_stamp(ended)}.zip"
 
 
+def lstat_or_none(path: Path) -> os.stat_result | None:
+    """AD-1341 S6 A2: ``os.lstat(path)``, never following a link; None only when nothing is there.
+
+    Any other ``OSError`` propagates: a path that cannot be inspected is never taken for a missing one (A-F1).
+    """
+    try:
+        return os.lstat(path)
+    except FileNotFoundError:  # only absence is None (A2, A-F1)
+        return None
+
+
+def is_link_status(status: os.stat_result) -> bool:
+    """AD-1341 S6 A2: whether an ``lstat`` result is a symbolic link or a Windows junction (D5's rule, one place)."""
+    reparse_tag = getattr(status, "st_reparse_tag", 0)  # a Windows-only field; POSIX has none
+    return stat.S_ISLNK(status.st_mode) or reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
+
+
+def is_link_or_junction(path: Path) -> bool:
+    """AD-1341 S6 A2: whether ``path`` is a link or junction. False when nothing is there; other errors propagate."""
+    status = lstat_or_none(path)
+    return status is not None and is_link_status(status)
+
+
 def plan_snapshot(root: Path) -> SnapshotPlan:
     """Every regular file a snapshot of ``root`` would hold, in path order. Reads names and sizes; opens no file.
 
-    A missing root is an empty plan (a vessel with no Ship's Records). A link or junction, a special file or a tree
-    beyond the bounds refuses. Any ``OSError`` propagates: a directory that cannot be listed is never taken for an
-    empty one (an explicit walk, as S4 A5 chose over ``os.walk``, which swallows them).
+    Only a root that is not there is an empty plan (a vessel with no Ship's Records); a root that cannot be inspected
+    propagates its ``OSError``, and a root that is a link or junction refuses (A2, A-F1). A link or junction, a special
+    file or a tree beyond the bounds refuses. Any ``OSError`` propagates: a directory that cannot be listed is never
+    taken for an empty one (an explicit walk, as S4 A5 chose over ``os.walk``, which swallows them).
     """
-    if not os.path.lexists(root):
+    root_status = lstat_or_none(root)
+    if root_status is None:
         return SnapshotPlan(files=(), total_bytes=0)
-    if not root.is_dir():
+    if is_link_status(root_status):  # the root itself is never followed either (A2)
+        raise SnapshotRefused(f"Ship's Records at {root} is a link; a snapshot copies only what Ship's Records hold")
+    if not stat.S_ISDIR(root_status.st_mode):
         raise SnapshotRefused(f"Ship's Records at {root} is not a directory")
     files: list[SnapshotFile] = []
     total = 0
@@ -172,6 +217,9 @@ def prepare_snapshot(
     if not plan.files:
         return None
     final = snapshots_dir / relative
+    for directory in (snapshots_dir, final.parent):
+        if is_link_or_junction(directory):  # A2: written only into the snapshots directory itself
+            raise SnapshotRefused(f"{directory} is a link or junction; a snapshot is written only into its own directory")
     if os.path.lexists(final):  # a snapshot is never written over
         raise SnapshotRefused(f"a snapshot named {relative} exists already")
     info = _bag_info(plan, timeline_id=timeline_id, ship_did=ship_did, started=started, ended=ended)
@@ -251,6 +299,8 @@ def _verify_bag(temp: Path, bag: str, plan: SnapshotPlan, digests: dict[str, str
         for item in plan.files:
             if _digest(bag_zip.open(f"{bag}/data/{item.path}")) != digests[item.path]:  # zipfile also checks each CRC
                 raise SnapshotRefused(f"{item.path} does not read back as it was written")
+        for name in expected[len(plan.files):]:  # A2: the tag files too, read whole, so zipfile checks each CRC
+            _digest(bag_zip.open(name))
     return _digest(open(temp, "rb"))  # noqa: SIM115 -- closed by _digest
 
 

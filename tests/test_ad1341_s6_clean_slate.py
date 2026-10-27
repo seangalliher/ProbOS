@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import io
 import os
 import sqlite3
 import sys
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rich.console import Console
 
 import probos
 from probos import __main__ as cli
@@ -137,8 +139,8 @@ def _link_dir(link: Path, target: Path) -> None:
         pytest.skip(f"this host cannot create a directory link: {exc}")
 
 
-async def _an_earlier_entry(tmp_path: Path) -> None:
-    store = ArchiveStore(str(_archive_db(tmp_path)), connection_factory=default_factory)
+async def _an_earlier_entry(tmp_path: Path, archive: Path | None = None) -> None:
+    store = ArchiveStore(str(archive or _archive_db(tmp_path)), connection_factory=default_factory)
     await store.initialize()
     try:
         await promote_nature_description(store, describe_nature("ship-did-earlier-0000", _BOOT, (), developed=1, active=0))
@@ -240,10 +242,14 @@ def test_an_interrupted_clean_slate_is_finished_by_running_it_again(
     assert (data_dir / "trust.db").is_file() and (data_dir / "ontology" / "instance_id").is_file()  # no tier loop
     assert (data_dir / PROCEDURES_DB).is_file()
     assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances") == [(4,)]  # recorded first
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]  # A2 (C-F3): not closed yet
 
     assert _reset(monkeypatch, config, data_dir, clean_slate=True) == 0  # the same command finishes it
     assert not (data_dir / "procedures").exists() and not (data_dir / "trust.db").exists()
     assert _rows(_archive_db(tmp_path), "SELECT procedure_count FROM nature_clearances ORDER BY id") == [(4,), (4,)]
+    assert _rows(_archive_db(tmp_path), "SELECT timeline_id, reset_tier, outcome FROM generations") == [
+        (_SHIP, 2, "promoted"),
+    ]  # closed once, after the clearance finished
 
 
 def test_a_clean_slate_whose_marker_cannot_be_written_deletes_nothing(
@@ -286,20 +292,123 @@ def test_the_dry_run_and_the_confirmation_name_what_a_clean_slate_clears(
     assert (data_dir / PROCEDURES_DB).is_file() and not _archive_db(tmp_path).exists()
 
 
-def test_a_link_at_the_procedures_name_is_refused_and_never_followed(
+def _odd_procedures(shape: str, data_dir: Path, tmp_path: Path) -> Path:
+    """At ``{data_dir}/procedures``: a junction to a sibling's real procedure store, or a file. Returns what must
+    survive: the sibling, or the file."""
+    if shape == "junction":
+        sibling = tmp_path / "sibling"
+        _nature(sibling)
+        _link_dir(data_dir / "procedures", sibling / "procedures")
+        return sibling
+    (data_dir / "procedures").write_bytes(b"not the procedure store")
+    return data_dir / "procedures"
+
+
+def _kept(target: Path) -> Any:
+    return _tree(target) if target.is_dir() else target.read_bytes()
+
+
+def _archive_state(tmp_path: Path) -> list[list[tuple[Any, ...]]]:
+    """Every row count a reset could change in the archive's file."""
+    return [
+        _rows(_archive_db(tmp_path), f"SELECT COUNT(*) FROM {table}")
+        for table in ("archive", "generations", "archive_snapshots", "nature_clearances", "archive_vetoes")
+    ]
+
+
+@pytest.mark.parametrize("shape", ["junction", "file"])
+def test_a_link_or_a_file_at_the_procedures_name_is_refused_before_anything_is_written(
+    shape: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (B-F3, C-F2): refused by the preflight, before the promotion reads the store through it: nothing archived,
+    described, recorded or closed, and the link's target or the file unchanged."""
+    data_dir = _data_dir(tmp_path)
+    config = _config(tmp_path)
+    asyncio.run(_an_earlier_entry(tmp_path))
+    archive_before = _archive_state(tmp_path)
+    target = _odd_procedures(shape, data_dir, tmp_path)
+    before = _kept(target)
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True) == 1
+
+    assert _archive_state(tmp_path) == archive_before
+    assert _kept(target) == before
+    assert (data_dir / "trust.db").is_file() and (data_dir / "ontology" / "instance_id").is_file()
+    expected = "is a link" if shape == "junction" else "is not the procedure store's directory"
+    assert expected in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("shape", ["junction", "file"])
+def test_the_clearance_refuses_a_link_or_a_file_again_where_it_deletes(shape: str, tmp_path: Path) -> None:
+    """A2: ``_clear_nature`` asks again (the preflight asked first), so a change between the two is refused before
+    the marker, and nothing is followed or deleted."""
+    data_dir = _data_dir(tmp_path)
+    config = _config(tmp_path)
+    target = _odd_procedures(shape, data_dir, tmp_path)
+    before = _kept(target)
+
+    assert cli._clear_nature(config, 2, data_dir, Console(file=io.StringIO(), width=200)) is False
+
+    assert not _archive_db(tmp_path).exists()  # no marker
+    assert _kept(target) == before
+
+
+@pytest.mark.parametrize(
+    "flags", [{"clean_slate": True}, {"clean_slate": True, "full": True}, {}], ids=["tier2", "tier3", "flag-off"],
+)
+def test_an_archive_inside_the_procedure_store_refuses_a_clean_slate(
+    flags: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (C-F1): ``--clean-slate`` deletes ``procedures/``, so an archive there is inside what the reset deletes, at
+    either tier and in the dry run; without the flag ``procedures/`` is kept, and the archive in it."""
+    data_dir = _data_dir(tmp_path)
+    _nature(data_dir)
+    archive = data_dir / "procedures" / "archive" / "archive.db"
+    archive.parent.mkdir()
+    (tmp_path / "knowledge").mkdir()
+    config = SystemConfig(
+        knowledge=KnowledgeConfig(repo_path=str(tmp_path / "knowledge")),
+        archive=ArchiveConfig(enabled=True, db_path=str(archive)),
+    )
+    asyncio.run(_an_earlier_entry(tmp_path, archive))
+
+    if flags:
+        assert _reset(monkeypatch, config, data_dir, dry_run=True, **flags) == 1  # the dry run refuses too
+        before = _tree(data_dir / "procedures")
+        assert _reset(monkeypatch, config, data_dir, **flags) == 1
+        assert "the Ship's Archive is inside what this reset deletes" in capsys.readouterr().out
+        assert _tree(data_dir / "procedures") == before and (data_dir / "trust.db").is_file()
+    else:
+        assert _reset(monkeypatch, config, data_dir) == 0
+    assert ("ship-did-earlier-0000",) in _rows(archive, "SELECT timeline_id FROM archive")
+
+
+def test_a_skipped_promotion_is_closed_only_after_its_clean_slate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A2 (C-F3): with ``--skip-promotion`` too, a clearance that fails leaves no generation closed; the rerun
+    closes it once, as skipped."""
     data_dir = _data_dir(tmp_path)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (outside / "keep.txt").write_text("keep", encoding="utf-8")
-    _link_dir(data_dir / "procedures", outside)
+    _nature(data_dir)
+    config = _config(tmp_path)
+    real_rmtree = cli.shutil.rmtree
+    calls: list[Path] = []
 
-    assert _reset(monkeypatch, _config(tmp_path), data_dir, clean_slate=True) == 1
+    def _fails_once(path: Any, *args: Any, **kwargs: Any) -> None:
+        calls.append(Path(path))
+        if len(calls) == 1:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        real_rmtree(path, *args, **kwargs)
 
-    assert (outside / "keep.txt").read_text(encoding="utf-8") == "keep"
-    assert (data_dir / "trust.db").is_file()
-    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM nature_clearances") == [(0,)]  # refused before the marker
+    monkeypatch.setattr(cli.shutil, "rmtree", _fails_once)
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True, skip_promotion="drill") == 1
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]
+
+    assert _reset(monkeypatch, config, data_dir, clean_slate=True, skip_promotion="drill") == 0
+    assert _rows(_archive_db(tmp_path), "SELECT reset_tier, outcome, reason FROM generations") == [
+        (2, "skipped", "drill"),
+    ]
 
 
 def test_only_the_cli_records_a_clean_slate() -> None:

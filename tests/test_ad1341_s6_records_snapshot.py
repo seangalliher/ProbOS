@@ -15,9 +15,12 @@ import asyncio
 import dataclasses
 import hashlib
 import os
+import shutil
 import sqlite3
+import struct
 import sys
 import zipfile
+import zlib
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -266,8 +269,10 @@ def test_a_tier2_reset_keeps_ship_records_and_takes_no_snapshot(tmp_path: Path, 
 
 _FAULTS = (
     "link", "too-many-files", "too-many-bytes", "grew", "shrank", "unreadable", "reads-back-wrong",
-    "member-missing", "not-recorded",
+    "member-missing", "member-extra", "not-recorded",
 )
+#: A2: the faults the reset's preflight knows before anything is written: the archive is never even opened.
+_PREFLIGHT_FAULTS = ("link", "too-many-files", "too-many-bytes")
 
 
 def _inject(fault: str, records: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -309,6 +314,13 @@ def _inject(fault: str, records: Path, tmp_path: Path, monkeypatch: pytest.Monke
                 real_text(bag_zip, name, text, stamp)
 
         monkeypatch.setattr(records_snapshot, "_write_text", _no_bag_info)
+    elif fault == "member-extra":  # A3: a member the bag does not list; only the member-list check refuses it (P-8)
+        def _one_more(bag_zip: Any, name: str, text: str, stamp: Any) -> None:
+            real_text(bag_zip, name, text, stamp)
+            if name.endswith("/bagit.txt"):  # after the last member the bag lists
+                real_text(bag_zip, name.removesuffix("bagit.txt") + "unlisted.txt", "unlisted\n", stamp)
+
+        monkeypatch.setattr(records_snapshot, "_write_text", _one_more)
     else:  # "not-recorded": the file is written and checked, then the ledger refuses its row
         async def _ledger_refuses(self: ArchiveLedger, snapshot: SnapshotRecord) -> int:
             raise sqlite3.OperationalError("database is locked")
@@ -332,8 +344,11 @@ def test_a_snapshot_that_cannot_be_made_refuses_the_reset_and_deletes_nothing(
     assert set(after) == set(before) | ({changed} if changed else set())  # Ship's Records and every tier file
     assert {path: content for path, content in after.items() if path != changed} == before
     assert _snapshot_files(tmp_path) == []  # no snapshot, and no temporary file left behind
-    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive_snapshots") == [(0,)]
-    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]  # closed only with its snapshot
+    if fault in _PREFLIGHT_FAULTS:  # A2: refused before anything is written: no promotion, description or row
+        assert not _archive_db(tmp_path).exists()
+    else:
+        assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive_snapshots") == [(0,)]
+        assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]  # closed only with its snapshot
     assert not (data_dir / "probos.pid").exists()
 
 
@@ -440,7 +455,7 @@ def test_a_prepared_snapshot_reads_back_as_written_and_is_published_once(tmp_pat
         assert f"{line}\n" in info
 
 
-def test_a_snapshot_is_never_written_over(tmp_path: Path) -> None:
+def test_a_snapshot_is_never_written_over(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "records"
     _files(root, {"a.md": b"a"})
     first = _prepare(root, tmp_path / "snaps")
@@ -458,6 +473,15 @@ def test_a_snapshot_is_never_written_over(tmp_path: Path) -> None:
     assert later.final_path.read_bytes() == b"someone else's file"
     later.discard()
     assert not later.temp_path.exists()
+
+    racing = _prepare(root, tmp_path / "snaps", ended=_ENDED.replace(second=7))
+    with monkeypatch.context() as patch:  # A2 (A-F4): the name appears after any check publish could make
+        patch.setattr(records_snapshot.os.path, "lexists", lambda _path: False)
+        racing.final_path.write_bytes(b"a racing writer's file")
+        with pytest.raises(SnapshotRefused, match="exists already"):
+            racing.publish()
+    assert racing.final_path.read_bytes() == b"a racing writer's file"
+    racing.discard()
 
 
 @pytest.mark.parametrize("timeline", ["", " ", "../ship", "ship/one", "ship one", "a" * 65, ".hidden", "ship\n", None])
@@ -673,3 +697,196 @@ def test_a_dry_run_shows_the_snapshot_a_full_reset_would_keep_and_writes_nothing
     _link_dir(records / "linked", outside)
     assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True, dry_run=True) == 0
     assert "The Ship's Records snapshot would refuse this reset" in capsys.readouterr().out
+
+
+# --- A2: the round-1 repairs ---------------------------------------------------------------------------------------
+
+
+def test_a_publish_that_fails_leaves_its_row_shown_missing_and_deletes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (A-F7): the row is recorded before the file is published, so a publish that fails leaves the row, never
+    deleted, which ``probos archive snapshots`` shows as missing; the reset refuses with nothing deleted."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    before = _data_files(data_dir)
+    config = _config(tmp_path)
+
+    def _no_space(self: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(records_snapshot.PreparedSnapshot, "publish", _no_space)
+
+    assert _reset(monkeypatch, config, data_dir, full=True) == 1
+
+    assert _data_files(data_dir) == before and _snapshot_files(tmp_path) == []
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive_snapshots") == [(1,)]  # the row stays
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM generations") == [(0,)]
+    capsys.readouterr()
+    assert _archive(monkeypatch, config, "snapshots") == 0
+    assert "(missing);" in capsys.readouterr().out
+
+
+def test_a_ship_records_root_that_cannot_be_inspected_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F1): only a root that is not there is an empty plan; an error inspecting it propagates."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    real_lstat = os.lstat
+
+    def _denied(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if isinstance(path, (str, os.PathLike)) and Path(path) == root:
+            raise PermissionError(13, "Access is denied")
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(records_snapshot.os, "lstat", _denied)
+    with pytest.raises(PermissionError):
+        plan_snapshot(root)
+
+
+def test_a_ship_records_root_that_is_a_link_is_never_followed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F1): a root that is a link or junction refuses, in the plan and in the reset, before anything is written."""
+    outside = tmp_path / "outside"
+    _files(outside, {"notebooks/a.md": b"OUTSIDE"})
+    _link_dir(tmp_path / "records-link", outside)
+    with pytest.raises(SnapshotRefused, match="is a link"):
+        plan_snapshot(tmp_path / "records-link")
+
+    data_dir = _data_dir(tmp_path)
+    _link_dir(data_dir / "ship-records", outside)
+    before = _tree(outside)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True) == 1
+
+    assert _tree(outside) == before and (data_dir / "trust.db").is_file()
+    assert not _archive_db(tmp_path).exists()  # refused before anything was written
+
+
+def test_a_tag_file_that_reads_back_wrong_refuses_the_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F6): the read-back reads the tag files whole too, so zipfile checks their CRCs."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    real_verify = records_snapshot._verify_bag
+
+    def _manifest_damaged(temp: Path, bag: str, plan: SnapshotPlan, digests: dict[str, str]) -> str:
+        with zipfile.ZipFile(temp) as bag_zip:
+            member = bag_zip.getinfo(f"{bag}/manifest-sha256.txt")
+        with open(temp, "r+b") as raw:
+            raw.seek(member.header_offset + 26)
+            name_length, extra_length = struct.unpack("<HH", raw.read(4))
+            raw.seek(member.header_offset + 30 + name_length + extra_length + member.compress_size // 2)
+            (byte,) = raw.read(1)
+            raw.seek(-1, os.SEEK_CUR)
+            raw.write(bytes([byte ^ 0xFF]))
+        return real_verify(temp, bag, plan, digests)
+
+    monkeypatch.setattr(records_snapshot, "_verify_bag", _manifest_damaged)
+    with pytest.raises((zipfile.BadZipFile, zlib.error, EOFError)):
+        _prepare(root, tmp_path / "snaps")
+    assert [path for path in (tmp_path / "snaps").rglob("*") if path.is_file()] == []  # the temporary file is removed
+
+
+def test_a_file_system_without_hard_links_refuses_to_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F4): publication is a hard link, never a rename that may replace; where links fail, it refuses."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    prepared = _prepare(root, tmp_path / "snaps")
+
+    def _unsupported(*args: Any, **kwargs: Any) -> None:
+        raise OSError(95, "Operation not supported")
+
+    monkeypatch.setattr(records_snapshot.os, "link", _unsupported)
+    with pytest.raises(SnapshotRefused, match="hard link"):
+        prepared.publish()
+    assert not prepared.final_path.exists() and prepared.temp_path.is_file()  # kept for the caller's discard
+    prepared.discard()
+    assert not prepared.temp_path.exists()
+
+
+def test_an_erasure_deletes_only_a_regular_file_inside_the_snapshots_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (A-F3): before its marker, the erasure refuses a directory at the snapshot's name and a timeline directory
+    that is a link or junction; nothing is marked or deleted."""
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    assert _reset(monkeypatch, config, data_dir, full=True) == 0
+    (snapshot,) = _snapshot_files(tmp_path)
+    snapshot.unlink()
+    snapshot.mkdir()  # a directory where the snapshot's file was
+    (snapshot / "keep.txt").write_bytes(b"keep")
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="x", yes=True) == 1
+    assert (snapshot / "keep.txt").read_bytes() == b"keep" and _erasures(tmp_path) == [(None, "")]
+
+    shutil.rmtree(snapshot.parent)
+    outside = tmp_path / "outside"
+    _files(outside, {snapshot.name: b"OUTSIDE"})
+    _link_dir(snapshot.parent, outside)  # the timeline's directory leads out of the snapshots directory
+
+    assert _archive(monkeypatch, config, "erase-snapshot", snapshot_id=1, reason="x", yes=True) == 1
+    assert (outside / snapshot.name).read_bytes() == b"OUTSIDE" and _erasures(tmp_path) == [(None, "")]
+
+
+def test_a_dry_run_says_a_full_reset_without_an_instance_id_would_refuse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (A-F5): the dry run and the reset share one preflight; no snapshot is promised that the reset would refuse."""
+    data_dir = _data_dir(tmp_path, instance_id="")
+    _files(data_dir / "ship-records", {"manuals/m.md": b"---\nauthor: shipyard\n---\nA manual, never a source.\n"})
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True, dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    assert "This reset would refuse" in out
+    assert "No instance id: Ship's Records hold 1 file(s)" in out
+    assert "would be kept" not in out
+    assert not _archive_db(tmp_path).exists()
+
+
+def test_a_snapshot_is_written_only_into_the_snapshots_directory_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (A-F2): a link or junction at the snapshots directory or the timeline's refuses the snapshot, in
+    ``prepare_snapshot`` and in the reset's preflight; at every tier the snapshots directory, resolved, may not be
+    inside or around what the reset deletes."""
+    root = tmp_path / "records"
+    _files(root, {"a.md": b"a"})
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    _link_dir(tmp_path / "snaps", elsewhere)
+    with pytest.raises(SnapshotRefused, match="is a link"):
+        _prepare(root, tmp_path / "snaps")
+    assert list(elsewhere.rglob("*")) == []
+
+    data_dir = _data_dir(tmp_path)
+    asyncio.run(_write_records(data_dir))
+    config = _config(tmp_path)
+    before = _data_files(data_dir)
+    _snapshots_dir(tmp_path).mkdir()
+    _link_dir(_snapshots_dir(tmp_path) / _SHIP, data_dir / "ship-records" / "reports")  # into what --full deletes
+
+    assert _reset(monkeypatch, config, data_dir, full=True) == 1
+
+    assert _data_files(data_dir) == before
+    assert not _archive_db(tmp_path).exists()  # the preflight refused before anything was written
+
+    base = tmp_path / "tier2"
+    data2 = _data_dir(base)
+    config2 = _config(base)
+    _files(data2 / "semantic", {"older.zip": b"an older snapshot"})
+    _link_dir(_snapshots_dir(base), data2 / "semantic")  # the snapshots directory is what tier 2 deletes
+    capsys.readouterr()
+
+    assert _reset(monkeypatch, config2, data2) == 1
+
+    assert (data2 / "semantic" / "older.zip").read_bytes() == b"an older snapshot"
+    assert "the Ship's Archive is inside what this reset deletes" in capsys.readouterr().out

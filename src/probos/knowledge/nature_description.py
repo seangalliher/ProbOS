@@ -154,8 +154,10 @@ async def nature_description_record(
     """The description of the procedures created since ``started``, or None when there is nothing to describe.
 
     None with no procedure store, or when no procedure was created since ``started``. The store is opened through
-    ``open_read_only`` (the CLI passes SQLite's ``mode=ro``), so a missing file is never created and nothing is
-    written. Any database error propagates, and the reset refuses.
+    ``open_read_only`` (the CLI passes SQLite's ``mode=ro``), so a missing file is never created and the database's
+    own bytes never change. A2 (B-F4): the vessel's store is in WAL mode (``procedure_store.py:211``), and a reader may
+    create or touch its ``-wal`` and ``-shm`` files (``storage/sqlite_factory.py:28-31``). Any database error
+    propagates, and the reset refuses.
     """
     if not db_path.is_file():  # no procedure store: this generation developed nothing to describe
         return None

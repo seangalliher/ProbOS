@@ -463,7 +463,9 @@ async def promote_nature_description(archive: ArchiveStore, record: PromotionRec
     The Captain's amendment of 2026-10-16: procedures and skills persist as nature and are never promoted; the archive
     gets a description of what a crew developed and why. Only a ``NATURE_DESCRIPTION`` record with its
     ``nature-description/`` reference and no source episodes is accepted. ``promote_entry`` then applies the
-    idempotence key and the Captain's erasure markers and vetoes, as for every source.
+    idempotence key and the Captain's erasure markers and vetoes, as for every source. A2 (B-F2): one per generation:
+    once an entry is archived for the reference, with any content, a later description is PRESENT and nothing is
+    written (``_nature_state``); other kinds keep S1's revisions.
     """
     if (
         type(record) is not PromotionRecord
@@ -472,7 +474,10 @@ async def promote_nature_description(archive: ArchiveStore, record: PromotionRec
         or record.source_episode_ids
     ):
         raise ValueError("AD-1341 S6: only a nature description, citing no episode, is promoted here")
-    outcome = await archive.promote_entry(record)
+    if (await _nature_state(archive, record)).outcome is PromotionOutcome.PRESENT:
+        outcome = PromotionOutcome.PRESENT  # A2 (B-F2): this generation's description is archived already
+    else:
+        outcome = await archive.promote_entry(record)
     logger.info("AD-1341 S6: nature description %s: %s", record.source_ref, outcome.value)
     return outcome
 
@@ -484,7 +489,16 @@ async def review_nature_description(archive: ArchiveStore, record: PromotionReco
     ``probos archive pending`` shows the description as the reset would treat it, and ``source_state`` stays named in
     ``src`` by this module alone (``tests/test_ad1341_s3_veto_store.py``).
     """
-    return PendingSource(record, await archive.source_state(record))
+    return PendingSource(record, await _nature_state(archive, record))
+
+
+async def _nature_state(archive: ArchiveStore, record: PromotionRecord) -> SourceState:
+    """AD-1341 S6 A2 (B-F2): what promoting a nature description would do. One per generation: an entry archived for
+    its reference, with any content, makes a later one PRESENT, never a revision; the first is kept."""
+    state = await archive.source_state(record)
+    if state.outcome is PromotionOutcome.CREATED and state.entry_ids:  # A2 (B-F2): one per generation
+        return SourceState(PromotionOutcome.PRESENT, state.entry_ids)
+    return state
 
 
 @dataclass(frozen=True)

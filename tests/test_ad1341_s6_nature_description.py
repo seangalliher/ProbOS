@@ -20,11 +20,16 @@ from typing import Any
 import pytest
 
 from probos import __main__ as cli
-from probos.knowledge.archive_promotion import NATURE_DESCRIPTION_PREFIX, promote_nature_description
+from probos.knowledge import records_snapshot
+from probos.knowledge.archive_promotion import (
+    NATURE_DESCRIPTION_PREFIX,
+    promote_nature_description,
+    review_nature_description,
+)
 from probos.cognitive.oracle_service import OracleService
 from probos.cognitive.procedure_store import _SCHEMA as _PROCEDURE_SCHEMA
 from probos.config import ArchiveConfig, KnowledgeConfig, SystemConfig
-from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome, SourceKind
+from probos.knowledge.archive_store import ArchiveStore, PromotionOutcome, SourceKind, SourceState
 from probos.knowledge.nature_description import (
     NATURE_DESCRIPTION_MAX_CHARS,
     PROCEDURES_DB,
@@ -281,7 +286,11 @@ def test_the_captain_reviews_and_vetoes_a_description_before_the_reset(
     ref = f"{NATURE_DESCRIPTION_PREFIX}{_SHIP}"
 
     assert _archive(monkeypatch, config, "pending", data_dir=data_dir) == 0
-    assert f"  + would be promoted: {ref}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"  + would be promoted: {ref}" in out
+    assert f"    Procedures developed by the crew of timeline {_SHIP}" in out
+    for line in _EXPECTED.splitlines():  # A2 (B-F1): the Captain reviews the text itself, whole
+        assert f"    {line}" in out
 
     connection = sqlite3.connect(str(store))  # the store changes after the review: the reset's text differs
     connection.execute(
@@ -292,7 +301,7 @@ def test_the_captain_reviews_and_vetoes_a_description_before_the_reset(
     assert _archive(
         monkeypatch, config, "veto", data_dir=data_dir, source_ref=ref, reason="not this one", yes=True,
     ) == 0
-    capsys.readouterr()
+    assert "Late arrival" in capsys.readouterr().out  # A2 (B-F1): the veto shows the text it keeps out
 
     assert _reset(monkeypatch, config, data_dir) == 0
 
@@ -352,3 +361,108 @@ def test_the_dry_run_shows_the_description_the_reset_would_archive(
     for line in _EXPECTED.splitlines():
         assert f"      {line}" in out
     assert not _archive_db(tmp_path).exists()  # a dry run opens no archive
+
+
+def test_a_retried_reset_keeps_one_description_per_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (B-F2): a reset refused after its description was archived, retried after the store changed, archives no
+    second description of the same generation; the review says it is archived already."""
+    data_dir = _data_dir(tmp_path)
+    store = _procedure_store(data_dir, _ROWS)
+    config = _config(tmp_path)
+    ref = f"{NATURE_DESCRIPTION_PREFIX}{_SHIP}"
+    real_close = ArchiveStore.record_generation
+    attempts: list[Any] = []
+
+    async def _locked_once(self: ArchiveStore, closure: Any) -> Any:
+        attempts.append(closure)
+        if len(attempts) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return await real_close(self, closure)
+
+    monkeypatch.setattr(ArchiveStore, "record_generation", _locked_once)
+
+    assert _reset(monkeypatch, config, data_dir) == 1  # refused after the description was archived
+    archive = _archive_db(tmp_path)
+    descriptions = "SELECT content FROM archive WHERE source_kind = 'nature_description'"
+    assert _rows(archive, descriptions) == [(_EXPECTED,)]
+    assert (data_dir / "ontology" / "instance_id").is_file()
+
+    connection = sqlite3.connect(str(store))  # the vessel ran again before the retry: the store changed
+    connection.execute(
+        "INSERT INTO procedure_records (id, name, created_at) VALUES (?, ?, ?)", ("p-9", "Late arrival", _B + 999.0),
+    )
+    connection.commit()
+    connection.close()
+    capsys.readouterr()
+    assert _archive(monkeypatch, config, "pending", data_dir=data_dir) == 0
+    assert f"  = already archived (entry 1): {ref}" in capsys.readouterr().out
+
+    assert _reset(monkeypatch, config, data_dir) == 0
+
+    assert f"Nature description {ref}: present." in capsys.readouterr().out
+    assert _rows(archive, descriptions) == [(_EXPECTED,)]  # one per generation: the first is kept
+    assert _rows(archive, "SELECT COUNT(*) FROM generations") == [(1,)]
+
+
+async def test_one_description_per_generation_whatever_its_content(tmp_path: Path) -> None:
+    """A2 (B-F2): once a generation's description is archived, a later one for the same reference is ``present``,
+    never a revision, in the writer and in the review alike."""
+    first = describe_nature(_SHIP, _BOOT, (), developed=1, active=0)
+    later = describe_nature(_SHIP, _BOOT, (), developed=2, active=1)
+    assert first.source_ref == later.source_ref and first.content != later.content  # premise
+    archive = ArchiveStore(str(tmp_path / "archive.db"), connection_factory=default_factory)
+    await archive.initialize()
+    try:
+        assert await promote_nature_description(archive, first) is PromotionOutcome.CREATED
+        assert await promote_nature_description(archive, later) is PromotionOutcome.PRESENT
+        assert await archive.count() == 1
+        review = await review_nature_description(archive, later)
+        assert review.state == SourceState(PromotionOutcome.PRESENT, (1,))
+    finally:
+        await archive.close()
+
+
+def test_a_full_reset_whose_snapshot_fails_archives_no_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A2 (B-F2): the description is archived after the snapshot, so a snapshot that fails leaves none behind."""
+    data_dir = _data_dir(tmp_path)
+    _procedure_store(data_dir, _ROWS)
+    notebooks = data_dir / "ship-records" / "notebooks"
+    notebooks.mkdir(parents=True)
+    (notebooks / "a.md").write_bytes(b"a note")
+
+    def _sharing_violation(*args: Any, **kwargs: Any) -> str:
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+
+    monkeypatch.setattr(records_snapshot, "_copy_member", _sharing_violation)
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, full=True) == 1
+
+    assert _rows(_archive_db(tmp_path), "SELECT COUNT(*) FROM archive WHERE source_kind = 'nature_description'") == [
+        (0,),
+    ]
+    assert (notebooks / "a.md").read_bytes() == b"a note"
+
+
+def test_a_wal_mode_store_is_described_and_its_database_bytes_are_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A2 (B-F4): the vessel's store is in WAL mode (``procedure_store.py:211``). Read through ``mode=ro``, its
+    database bytes are unchanged; SQLite may create the ``-wal`` and ``-shm`` files beside it, as any reader may."""
+    data_dir = _data_dir(tmp_path)
+    store = _procedure_store(data_dir, _ROWS)
+    connection = sqlite3.connect(str(store))
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.close()
+    assert _rows(store, "PRAGMA journal_mode") == [("wal",)]  # premise
+    before = store.read_bytes()
+
+    assert _reset(monkeypatch, _config(tmp_path), data_dir, dry_run=True) == 0
+
+    out = capsys.readouterr().out
+    for line in _EXPECTED.splitlines():
+        assert f"      {line}" in out
+    assert store.read_bytes() == before
