@@ -6,6 +6,21 @@
 
 **Re-anchored by the orchestrator (2026-10-28).** (1) **Base:** `origin/main` `4aa1062fce6c492156ce2f425bf3085abce2fdbc`, the merge of AD-1270 slice 2 (PR #1692); its tree is `7daf4318df9fe9aa2471431cff738069d5c62b7f`. (2) **What slice 2 changed:** `scripts/check_dormant_classes.py`, `tests/test_ad1270_dormant_classes.py`, `docs/development/dormant-class-baseline.yaml` (171 rows at this base: wire 84, staged 25, retire 54, false-positive 8; the five rows this slice makes live leave it, so 166 are predicted), `DECISIONS.md`, `PROGRESS.md`, the AD ledger and its own contract. None of the files this contract pairs changed. (3) **Anchors:** every SEARCH of pairs P1 to P23, U1 and U2 occurs exactly once on this base; the oracle applies them by tool (a dry check against slice 2's head, whose `src/` and tests equal this base's, applied 23 pairs with 0 failures). (4) **Trackers:** U1 anchors on `# ProbOS Progress` and its blank line, which slice 2 left in place (its paragraph follows them); U2 anchors on the `### Explicit delegation models...` heading, which slice 2's entry sits directly before. (5) **File name:** committed as `prompts/ad-1270-working-memory-cognition.md`, the name §8's PROGRESS text already uses. (6) **Line endings:** LF, as the Architect wrote it. (7) **`config/system.yaml`:** the three comment hunks of §7.7 apply to the tracked file in this work tree, which holds none of the Captain's local edits (those live only in his main checkout and stay there).
 
+**Amendment A1 (2026-10-28, after review round 1; `claude-architect`).** Repairs five findings on M1 (`4fd31e6c`):
+- **A1**, the shutdown seam (P2): with the flag on, a shutdown awaited from a task the operator's Ctrl+C had already cancelled (BF-303) raised `CancelledError` at the cognition stop. It stopped before the AD-573 freeze and every later close.
+- **A2/B1**: a false sentence. A failed cycle is not "left as it is".
+- **A3**: §14's persisted-differences claim missed `background_stream_count`.
+- **B2**: §4's facade allowlist missed `canonical_dump_sha256`.
+- The architect's **O1**: nothing binds AD-671's pre-dream summary to live working memory.
+
+Decision: D4 as amended. `stop()` compares the caller's cancel count with its count at entry, and shutdown hands the stop to BF-881's `_stop_held_start_service`.
+
+How to read it: §7.1 to §7.11 as amended describe the code after the repair, except §7.9, whose new cases are only in §7.12. **§7.12 is the delta from M1 as committed at `4fd31e6c`. The Builder applies §7.12's pairs, not §7.4 or §7.6 again.**
+
+Recorded, not repaired: B3 to B7 and reviewer A's pin metaprobe (R17 to R22), the AD-671 binding (R8) and the reaper (R10). §8 is amended before M2 is built.
+
+Counts stay predicted: §7.12 adds 7 cases, 67 in the new file. No shared contract changes (`stop()`'s signature and return are unchanged; it raises in fewer cases), so round 2 reviews the delta. **Captain:** no condition met.
+
 **Milestones and tiers:**
 - **M1, the wiring** (config field and docstrings, `AgentWorkingMemory` hooks, the new driver module, the startup and shutdown seams, the tests, and the regenerated config, profile and dormant baselines). **HIGH**: agent memory behaviour, plus shared contracts (`AgentWorkingMemory`'s public API, the startup/shutdown order, the config surface, and a source-scan test of production source).
 - **M2, trackers** (`PROGRESS.md`, `DECISIONS.md`, the regenerated AD ledger). **docs**.
@@ -72,14 +87,24 @@ Wiring them naively breaks in three places:
   - A raising provider yields an empty cycle.
   - A raising tick is logged and the next tick runs on time.
   - Cancellation propagates out of the loop.
-  - `stop()` cancels and awaits the task, and absorbs only the cancellation it caused itself. If its caller is being cancelled, the `CancelledError` propagates (Async Discipline). The `TranscriptReaper` precedent swallows it; this does not.
+  - `stop()` cancels and awaits the task, and absorbs only the cancellation it caused itself. It compares the caller's cancel count with that count at entry, the rule of BF-881's `_stop_held_start_service`. Shutdown is typically awaited from a task the operator's Ctrl+C already cancelled (BF-303), and that task's count stays above zero for the whole teardown. A cancellation that arrives while it waits propagates (Async Discipline), and the cycle task has ended by then. The `TranscriptReaper` precedent swallows every cancellation; this does not (R10).
+  - Shutdown stops it through `_stop_held_start_service` (BF-881), behind an `isinstance` guard. The rule lives in one shutdown helper, and the attribute is cleared on every path.
+  - **A1.** M1 compared the count with zero. With the flag on, a shutdown after Ctrl+C therefore ended at this step, before the AD-573 freeze and every later close: reviewer A's executed harness raised `CancelledError` and froze 0 rows. Rejected for the repair:
+    - the class rule alone: a cancellation that propagates leaves the attribute set, and the helper keeps its own `try`;
+    - the helper alone: `stop()` would still raise its own child's cancellation for any caller cancelled earlier;
+    - shielding the stop, or holding a new cancellation until the end of shutdown as the pools do: it would keep the freeze on a second Ctrl+C, but it widens the slice into shutdown's flow and departs from the BF-881 siblings.
 
   Rejected: driving it from the proactive loop (couples metabolism to whether an agent thinks; touches `proactive.py`); from the dream cycle (idle-only, about every 600 s, so busy agents are never metabolised).
 - **D5. The background-stream consumer** is the cycle. It drains each stream and counts the entries (`CognitionTickReport.demoted`, plus one INFO line per agent when anything happened). Nothing durable or user-visible results except that log line. AD-670's audit flags are counted the same way and not shown to the agent. Re-promotion after review and showing flags to the agent are deferred (R5, R6).
 - **D6. Data integrity.**
   - FORGET and TRIAGE act on in-memory ring and named buffers only.
   - No episode, Ward Room post or store record is deleted, so the destructive-intent standard (`requires_consensus`, an intent that deletes durable state) does not apply.
-  - Indirect effects: the AD-573 freeze snapshot (`INSERT OR REPLACE`, a snapshot of transient state) and the AD-671 pre-dream counts hold only the surviving entries, and each kept ring entry carries `_decay_score`, an extra key in free-form metadata that `from_dict` restores as-is. That is not a persisted-schema change (R7, R8).
+  - Indirect effects on the AD-573 freeze snapshot (`INSERT OR REPLACE`, a snapshot of transient state):
+    - it holds the entries the cycle and the gate kept;
+    - each ring entry a cycle scored carries `_decay_score`, an extra key in free-form metadata that `from_dict` restores as-is;
+    - the existing `background_stream_count` counts demoted entries not yet drained at freeze time (0 with the flag off, as before).
+
+    That is not a persisted-schema change (R7). The AD-671 pre-dream summary is not affected, because nothing binds it to live working memory (R8).
   - This is consistent with AD-1339's carve-out and with the Captain's decision that agents never delete their own memory: FORGET is automatic decay of a transient view.
 - **D7. No observe-only stage.**
   - At the defaults the salience gate demotes nothing. With an empty context and no novelty gate, the lowest fresh score is 0.3·0.5 + 0.25·1 + 0.15·0.5 + 0.2·0.3 + 0.1·0.4 = 0.575, against a threshold of 0.3. `test_at_the_default_threshold_the_gate_demotes_nothing` pins this.
@@ -122,7 +147,7 @@ If any other test fails, stop and report. Never delete or loosen a test. Run foc
 3. Apply 7.7 and 7.8. Measure the census with the instrument (`default_false_flags()` and the armed counts the header names). The predicted header is 450, 226, 224, 85, 141. If any figure differs by anything other than this one flag, stop and report.
 4. Regenerate (7.11): `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_config_facade.py --update-baseline`; `d:/ProbOS/.venv/Scripts/python.exe scripts/gen_config_reference.py`; `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_dormant_classes.py --update-baseline` (it must print `baseline rewritten: docs/development/dormant-class-baseline.yaml`).
 5. Check the regenerated diffs:
-   - facade: `WorkingMemoryConfig`'s fields and `schema_sha256`; the `schema_sha256` of `MetabolismConfig`, `SalienceConfig` and `SystemConfig`; `surface_counts.field_definitions` 1879 → 1880 and `canonical_dump_leaves` +1. Nothing else.
+   - facade: `WorkingMemoryConfig`'s fields and `schema_sha256`; the `schema_sha256` of `MetabolismConfig`, `SalienceConfig` and `SystemConfig`; `surface_counts.field_definitions` 1879 → 1880, `canonical_dump_leaves` +1, and the top-level `canonical_dump_sha256` (the dump gains the field; `check_config_facade.py --check` rejects a stale one). Nothing else.
    - reference: the three docstrings and the new field only.
    - dormant: exactly the five rows `cognitive/memory_metabolism.py::AuditFlag`, `::MemoryMetabolism`, `::MetabolismReport`, `cognitive/salience_filter.py::SalienceFilter`, `::SalienceScore` removed, none added.
 
@@ -139,8 +164,8 @@ If any other test fails, stop and report. Never delete or loosen a test. Run foc
 | `AgentWorkingMemory.attach_cognition` | `WorkingMemoryCognition` | new public method |
 | `run_metabolism_cycle()` return value | `WorkingMemoryCognition.tick_once`; `tests/test_ad670_memory_metabolism.py:329-346` (ignores it) | `None` → `MetabolismReport \| None`; off still `None` |
 | `NamedBuffer.discard` | `run_metabolism_cycle` | new |
-| Named-buffer contents after FORGET | `render_buffers` (no production caller), `iter_salience_entries` (`cognitive_agent.py:10412`), `to_dict` (freeze, API, AD-671 flush) | the forgotten entry is gone from them too (on only) |
-| `runtime.working_memory_cognition` | `_stop_working_memory_cognition` (shutdown) | new attribute, `None` when off |
+| Named-buffer contents after FORGET | `render_buffers` (no production caller), `iter_salience_entries` (`cognitive_agent.py:10412`), `to_dict` (freeze, API; the AD-671 flush is not bound to any working memory, R8) | the forgotten entry is gone from them too (on only) |
+| `runtime.working_memory_cognition` | `_stop_working_memory_cognition` → `_stop_held_start_service` (shutdown; A1) | new attribute, `None` when off; shutdown clears it on every path |
 | Log lines `AD-1270: working memory of <id>: ...` | the vessel log; the default-on evidence (R1) | new, INFO, on only |
 
 ## 6. Tests
@@ -165,8 +190,13 @@ If any other test fails, stop and report. Never delete or loosen a test. Run foc
 | X5 | `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else` | shutdown seam |
 | X6 | `test_shutdown_stops_the_cycle_before_working_memory_is_frozen`; `test_startup_starts_the_cycle_after_the_stasis_restore` | **source scan of production source, a shared contract:** `ast.parse` of the file's bytes, host-independent; call order inside `shutdown` and `finalize_startup` |
 | X7 | `test_the_reader_check_reports_the_wired_fields_as_read` ×11 | the BF-926 sibling: `metabolism.*`, `working_memory.cognition_enabled`, `salience.threshold`, `salience.background_max_entries` are neither inert nor unread |
+| T12 | `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` | D4 (A1): a caller cancelled earlier (BF-303) does not make `stop()` raise, on the first call or the second |
+| X8 | `test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation` ×3 (`on-never-cancelled`, `off-cancelled-earlier`, `on-cancelled-earlier`) | **crossing (A1):** the real `shutdown()` on `BareRuntime`, the real startup helper and driver, and a real SQLite `WorkingMemoryStore`: no `CancelledError`; the crew agent's action is frozen (read back through a second store); the LLM client is closed; the driver is cleared; no cycle task is left |
+| X9 | `test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop` | D4 (A1): after an earlier cancellation, a new one during the stop propagates, and the attribute is still cleared |
+| X10 | `test_the_shutdown_helper_leaves_a_foreign_service_alone` | the helper stops only a `WorkingMemoryCognition` |
+| X11 | `test_the_shutdown_helper_logs_a_failed_stop_and_still_clears_the_attribute` | an `Exception` from `stop()` is logged with the helper's label, and the attribute is cleared |
 
-Predicted: 60 cases in the new file. On the base every case fails at collection (no negative case passes there). The orchestrator measures the count and the focused-list totals.
+Predicted: 60 cases in M1's file; Repair 1 (§7.12) adds 7, so 67. On the base every case fails at collection (no negative case passes there). The orchestrator measures the count and the focused-list totals.
 
 ## 7. The contract
 
@@ -390,15 +420,17 @@ and every ``metabolism.cycle_interval_seconds`` runs one metabolism cycle per ag
 its background stream. Each cycle attaches again, so a working memory the AD-573 stasis restore
 replaced, or an agent that joined later, is covered from its next cycle.
 
-What it touches: the in-memory ring and named buffers only. FORGET and TRIAGE delete no
-episode, Ward Room post or store record. The AD-573 freeze and the AD-671 pre-dream summary
-see the entries that remain, and each kept ring entry carries ``_decay_score`` in its metadata.
+What it touches: in-memory working memory only (the rings, the named buffers and the background
+stream). FORGET and TRIAGE delete no episode, Ward Room post or store record. The AD-573 freeze
+sees the entries that remain, each kept ring entry carries ``_decay_score`` in its metadata, and
+the frozen ``background_stream_count`` counts demoted entries the cycle has not drained yet.
 
 The background-stream consumer counts what the salience gate demoted and discards it; it
 promotes nothing back. Audit flags are counted and logged, not shown to the agent.
 
 Log-and-degrade: a cycle that raises for one agent is logged, and the other agents and the
-loop carry on; that agent's working memory is left as it is.
+loop carry on. Nothing is rolled back: that agent keeps what the cycle changed before it
+raised, so a named buffer can still hold an entry its ring has forgotten.
 """
 
 from __future__ import annotations
@@ -491,7 +523,7 @@ class WorkingMemoryCognition:
             except Exception:
                 failed += 1
                 logger.warning(
-                    "AD-1270: working-memory cycle failed for %s; its working memory is left as it is",
+                    "AD-1270: working-memory cycle failed for %s; the other agents still run",
                     agent_id,
                     exc_info=True,
                 )
@@ -527,18 +559,22 @@ class WorkingMemoryCognition:
     async def stop(self) -> None:
         """Cancel the cycle task and wait for it to end. Idempotent.
 
-        Only the cancellation it caused is absorbed: if the caller is itself being cancelled,
-        the ``CancelledError`` propagates (Async Discipline).
+        Only the cancellation it caused is absorbed. The caller's cancel count is compared with
+        its count at entry, as BF-881's shutdown helper does: shutdown is typically awaited from
+        a task that was already cancelled (BF-303: the operator's Ctrl+C), whose count stays
+        above zero for the whole teardown. A cancellation that arrives while this waits
+        propagates (Async Discipline); the cycle task has ended by then.
         """
         task = self._task
         if task is None:
             return
+        current = asyncio.current_task()
+        cancelling_at_entry = current.cancelling() if current is not None else 0
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
-            current = asyncio.current_task()
-            if current is not None and current.cancelling():
+            if current is not None and current.cancelling() > cancelling_at_entry:
                 raise
 
     def _members(self) -> list[tuple[str, AgentWorkingMemory]]:
@@ -742,20 +778,25 @@ REPLACE:
 async def _stop_working_memory_cognition(runtime: Any) -> None:
     """AD-1270 (#1324): stop the working-memory cognition cycle. Raises no ``Exception``.
 
-    Called before working memory is frozen, so no cycle runs during or after the freeze. A
-    runtime that never started it (the flag is off, or startup refused a value) has nothing
-    to stop.
+    Called before working memory is frozen. A runtime that never started it (the flag is off,
+    or startup refused a value) has nothing to stop, and an object this slice did not build is
+    left alone. The stop goes through BF-881's ``_stop_held_start_service``: shutdown is
+    typically awaited from a task the operator's Ctrl+C already cancelled (BF-303), and that
+    helper absorbs only the cycle's own cancellation, logs any other failure and clears the
+    attribute on every path. A cancellation that arrives during the stop propagates. Once the
+    stop has returned or raised, the cycle task has ended, so no cycle runs during the freeze.
     """
     from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
 
     cognition = getattr(runtime, "working_memory_cognition", None)
     if not isinstance(cognition, WorkingMemoryCognition):
         return
-    try:
-        await cognition.stop()
-    except Exception:
-        logger.warning("AD-1270: working-memory cognition stop failed", exc_info=True)
-    runtime.working_memory_cognition = None
+    await _stop_held_start_service(
+        runtime,
+        service_attr="working_memory_cognition",
+        start_task_attr=None,
+        label="AD-1270 WorkingMemoryCognition",
+    )
 
 
 def _close_voice_synthesis(runtime: Any) -> None:
@@ -1654,6 +1695,396 @@ REPLACE:
 - `docs/development/config-reference.md`: `gen_config_reference.py`.
 - `docs/development/dormant-class-baseline.yaml`: `check_dormant_classes.py --update-baseline` removes exactly the five rows (predicted: 166 rows remain from slice 2's 171).
 
+### 7.12 Repair 1 (A1)
+
+Written against M1 as committed at `4fd31e6c`; each SEARCH occurs exactly once in its file. Working copies are CRLF: match and write with the file's own endings.
+
+**Order:**
+1. Apply A1-6 to A1-9 (tests) and run the file with `-n 0`. Predicted failures, and no others:
+   - `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` (`raised == [True, True]`);
+   - `test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation[on-cancelled-earlier]` (the `outcome` assertion: `raised` True, `frozen` `{}`, `llm_closed` False, `started` True, driver still set);
+   - `test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop` (the attribute assertion);
+   - `test_the_shutdown_helper_logs_a_failed_stop_and_still_clears_the_attribute` (the log text).
+2. Apply A1-1 to A1-5. Run §4's M1 focused list plus `tests/test_issue1452_stop_leftovers.py` with `-n 0`, and `-P scripts/check_architecture_principles.py --check`.
+3. Run §10's A1 campaign.
+
+**Pair A1-1 (`src/probos/cognitive/working_memory_cognition.py`).** SEARCH:
+```
+What it touches: the in-memory ring and named buffers only. FORGET and TRIAGE delete no
+episode, Ward Room post or store record. The AD-573 freeze and the AD-671 pre-dream summary
+see the entries that remain, and each kept ring entry carries ``_decay_score`` in its metadata.
+```
+REPLACE:
+```
+What it touches: in-memory working memory only (the rings, the named buffers and the background
+stream). FORGET and TRIAGE delete no episode, Ward Room post or store record. The AD-573 freeze
+sees the entries that remain, each kept ring entry carries ``_decay_score`` in its metadata, and
+the frozen ``background_stream_count`` counts demoted entries the cycle has not drained yet.
+```
+
+**Pair A1-2 (`src/probos/cognitive/working_memory_cognition.py`).** SEARCH:
+```
+Log-and-degrade: a cycle that raises for one agent is logged, and the other agents and the
+loop carry on; that agent's working memory is left as it is.
+```
+REPLACE:
+```
+Log-and-degrade: a cycle that raises for one agent is logged, and the other agents and the
+loop carry on. Nothing is rolled back: that agent keeps what the cycle changed before it
+raised, so a named buffer can still hold an entry its ring has forgotten.
+```
+
+**Pair A1-3 (`src/probos/cognitive/working_memory_cognition.py`).** SEARCH:
+```
+                    "AD-1270: working-memory cycle failed for %s; its working memory is left as it is",
+```
+REPLACE:
+```
+                    "AD-1270: working-memory cycle failed for %s; the other agents still run",
+```
+
+**Pair A1-4 (`src/probos/cognitive/working_memory_cognition.py`).** SEARCH:
+```
+        Only the cancellation it caused is absorbed: if the caller is itself being cancelled,
+        the ``CancelledError`` propagates (Async Discipline).
+        """
+        task = self._task
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+```
+REPLACE:
+```
+        Only the cancellation it caused is absorbed. The caller's cancel count is compared with
+        its count at entry, as BF-881's shutdown helper does: shutdown is typically awaited from
+        a task that was already cancelled (BF-303: the operator's Ctrl+C), whose count stays
+        above zero for the whole teardown. A cancellation that arrives while this waits
+        propagates (Async Discipline); the cycle task has ended by then.
+        """
+        task = self._task
+        if task is None:
+            return
+        current = asyncio.current_task()
+        cancelling_at_entry = current.cancelling() if current is not None else 0
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            if current is not None and current.cancelling() > cancelling_at_entry:
+                raise
+```
+
+**Pair A1-5 (`src/probos/startup/shutdown.py`).** SEARCH:
+```
+    """AD-1270 (#1324): stop the working-memory cognition cycle. Raises no ``Exception``.
+
+    Called before working memory is frozen, so no cycle runs during or after the freeze. A
+    runtime that never started it (the flag is off, or startup refused a value) has nothing
+    to stop.
+    """
+    from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
+
+    cognition = getattr(runtime, "working_memory_cognition", None)
+    if not isinstance(cognition, WorkingMemoryCognition):
+        return
+    try:
+        await cognition.stop()
+    except Exception:
+        logger.warning("AD-1270: working-memory cognition stop failed", exc_info=True)
+    runtime.working_memory_cognition = None
+```
+REPLACE:
+```
+    """AD-1270 (#1324): stop the working-memory cognition cycle. Raises no ``Exception``.
+
+    Called before working memory is frozen. A runtime that never started it (the flag is off,
+    or startup refused a value) has nothing to stop, and an object this slice did not build is
+    left alone. The stop goes through BF-881's ``_stop_held_start_service``: shutdown is
+    typically awaited from a task the operator's Ctrl+C already cancelled (BF-303), and that
+    helper absorbs only the cycle's own cancellation, logs any other failure and clears the
+    attribute on every path. A cancellation that arrives during the stop propagates. Once the
+    stop has returned or raised, the cycle task has ended, so no cycle runs during the freeze.
+    """
+    from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
+
+    cognition = getattr(runtime, "working_memory_cognition", None)
+    if not isinstance(cognition, WorkingMemoryCognition):
+        return
+    await _stop_held_start_service(
+        runtime,
+        service_attr="working_memory_cognition",
+        start_task_attr=None,
+        label="AD-1270 WorkingMemoryCognition",
+    )
+```
+
+**Pair A1-6 (`tests/test_ad1270_working_memory_cognition.py`).** SEARCH:
+```
+from probos.cognitive.working_memory_cognition import (
+    CognitionTickReport,
+    WorkingMemoryCognition,
+    build_working_memory_cognition,
+)
+from probos.config import MetabolismConfig, SalienceConfig, SystemConfig, WorkingMemoryConfig
+from probos.startup import finalize as finalize_module
+from probos.startup import shutdown as shutdown_module
+```
+REPLACE:
+```
+from probos.cognitive.working_memory_cognition import (
+    CognitionTickReport,
+    WorkingMemoryCognition,
+    build_working_memory_cognition,
+)
+from probos.cognitive.working_memory_store import WorkingMemoryStore
+from probos.config import MetabolismConfig, SalienceConfig, SystemConfig, WorkingMemoryConfig
+from probos.startup import finalize as finalize_module
+from probos.startup import shutdown as shutdown_module
+from probos.storage.sqlite_factory import SQLiteConnectionFactory
+from tests.fixtures.runtime_lifecycle import BareRuntime
+```
+
+**Pair A1-7 (`tests/test_ad1270_working_memory_cognition.py`).** SEARCH:
+```
+    return checker.build_report(SystemConfig, checker.DEFAULT_SOURCE, document)
+
+
+# --- T1 to T5: the flag, the sections and the refusals ------------------------------------
+```
+REPLACE:
+```
+    return checker.build_report(SystemConfig, checker.DEFAULT_SOURCE, document)
+
+
+_NO_GRACE = {"shutdown_write_grace_s": 0.0, "shutdown_dispatch_grace_s": 0.0}
+_FROZEN_ACTION = "logged the shield harmonics before the shutdown"
+
+
+async def _cancelled_once() -> None:
+    """Cancel the running task once and handle it, as BF-303's Ctrl+C leaves shutdown's caller.
+
+    Call it first in a task of its own: the count it leaves must not reach the test's task.
+    """
+    current = asyncio.current_task()
+    assert current is not None and current.cancelling() == 0
+    current.cancel()
+    try:
+        await asyncio.sleep(0)
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("the earlier cancellation was not delivered")
+    assert current.cancelling() == 1
+
+
+# --- T1 to T5: the flag, the sections and the refusals ------------------------------------
+```
+
+**Pair A1-8 (`tests/test_ad1270_working_memory_cognition.py`).** SEARCH:
+```
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+    assert not cognition.running
+
+
+@pytest.mark.asyncio
+async def test_the_loop_runs_a_cycle_each_interval_and_survives_a_raising_cycle(
+```
+REPLACE:
+```
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+    assert not cognition.running
+
+
+@pytest.mark.asyncio
+async def test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation() -> None:
+    """A1: shutdown's caller keeps a cancel count above zero for the whole teardown (BF-303)."""
+    cognition = _build(_on(), [])
+    assert cognition is not None
+    await cognition.start()
+
+    async def stop_twice_after_an_earlier_cancellation() -> list[bool]:
+        await _cancelled_once()
+        raised: list[bool] = []
+        for _ in range(2):  # the second call: idempotent for the same caller
+            try:
+                await cognition.stop()
+            except asyncio.CancelledError:
+                raised.append(True)
+            else:
+                raised.append(False)
+        return raised
+
+    try:
+        raised = await asyncio.create_task(stop_twice_after_an_earlier_cancellation())
+    finally:
+        await asyncio.wait_for(cognition.stop(), timeout=2)
+
+    assert raised == [False, False]
+    assert not cognition.running
+
+
+@pytest.mark.asyncio
+async def test_the_loop_runs_a_cycle_each_interval_and_survives_a_raising_cycle(
+```
+
+**Pair A1-9 (`tests/test_ad1270_working_memory_cognition.py`).** SEARCH:
+```
+    await shutdown_module._stop_working_memory_cognition(SimpleNamespace())
+
+
+def test_shutdown_stops_the_cycle_before_working_memory_is_frozen() -> None:
+```
+REPLACE:
+```
+    await shutdown_module._stop_working_memory_cognition(SimpleNamespace())
+
+
+@pytest.mark.asyncio
+async def test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop() -> None:
+    """A1: cancelled once already (BF-303), then again while the stop waits; the second propagates."""
+    cognition = _build(_on(), [])
+    assert cognition is not None
+    await cognition.start()
+    runtime = SimpleNamespace(working_memory_cognition=cognition)
+    entered = asyncio.Event()
+
+    async def stop_after_an_earlier_cancellation() -> None:
+        await _cancelled_once()
+        entered.set()
+        await shutdown_module._stop_working_memory_cognition(runtime)
+
+    stopper = asyncio.create_task(stop_after_an_earlier_cancellation())
+    await entered.wait()  # the stopper has cancelled the cycle and is waiting for it
+    stopper.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+    assert not cognition.running
+    assert runtime.working_memory_cognition is None
+
+
+@pytest.mark.asyncio
+async def test_the_shutdown_helper_leaves_a_foreign_service_alone() -> None:
+    """Only the driver this slice builds is stopped; another object with an async stop() is not."""
+    stops: list[str] = []
+
+    class _Foreign:
+        async def stop(self) -> None:
+            stops.append("stop")
+
+    foreign = _Foreign()
+    runtime = SimpleNamespace(working_memory_cognition=foreign)
+
+    await shutdown_module._stop_working_memory_cognition(runtime)
+
+    assert stops == []
+    assert runtime.working_memory_cognition is foreign
+
+
+@pytest.mark.asyncio
+async def test_the_shutdown_helper_logs_a_failed_stop_and_still_clears_the_attribute(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailingStop(WorkingMemoryCognition):
+        async def stop(self) -> None:
+            raise RuntimeError("stop fault")
+
+    cognition = _FailingStop(
+        working_memories=lambda: [], salience_filter=SalienceFilter(), metabolism=None,
+        background_max_entries=50, interval_seconds=1.0,
+    )
+    runtime = SimpleNamespace(working_memory_cognition=cognition)
+
+    with caplog.at_level(logging.WARNING, logger=shutdown_module.__name__):
+        await shutdown_module._stop_working_memory_cognition(runtime)
+
+    assert "AD-1270 WorkingMemoryCognition.stop() failed during shutdown" in caplog.text
+    assert runtime.working_memory_cognition is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("enabled", "cancelled_earlier"),
+    [(True, False), (False, True), (True, True)],
+    ids=["on-never-cancelled", "off-cancelled-earlier", "on-cancelled-earlier"],
+)
+async def test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation(
+    tmp_path: Path, enabled: bool, cancelled_earlier: bool,
+) -> None:
+    """The A1 crossing: the real ``shutdown()`` on a bare runtime, the real startup helper and
+    driver, and a real SQLite working-memory store. BF-303: shutdown is awaited from a task the
+    operator's Ctrl+C already cancelled. The controls come first; the last case is the regression."""
+    config = SystemConfig.model_validate(
+        {"working_memory": {"cognition_enabled": enabled}, "memory": _NO_GRACE}
+    )
+    runtime = BareRuntime(tmp_path / "runtime", config=config, started=True)
+    db_path = str(tmp_path / "working_memory.db")
+    store = WorkingMemoryStore(connection_factory=SQLiteConnectionFactory(), db_path=db_path)
+    await store.start()
+    runtime.working_memory_store = store
+    memory = AgentWorkingMemory()
+    memory.record_action(_FROZEN_ACTION, source="proactive")
+    await runtime.registry.register(
+        SimpleNamespace(id="crew-1", agent_type="counselor", pool="crew", working_memory=memory)
+    )
+    await finalize_module._start_working_memory_cognition(runtime=runtime, config=config)
+    cognition = runtime.working_memory_cognition
+    assert isinstance(cognition, WorkingMemoryCognition) is enabled
+
+    async def shut_down() -> bool:
+        """Its own task, so the earlier cancellation never reaches this test's task."""
+        if cancelled_earlier:
+            await _cancelled_once()
+        try:
+            await shutdown_module.shutdown(runtime, reason="ad1270-a1")
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    try:
+        raised = await asyncio.create_task(shut_down())
+    finally:
+        await store.stop()  # shutdown stops it; one cut short does not
+        if isinstance(cognition, WorkingMemoryCognition):
+            await asyncio.wait_for(cognition.stop(), timeout=2)
+
+    reader = WorkingMemoryStore(connection_factory=SQLiteConnectionFactory(), db_path=db_path)
+    await reader.start()
+    try:
+        frozen = await reader.load_all()
+    finally:
+        await reader.stop()
+    outcome = {
+        "raised": raised,
+        "frozen": {
+            agent_id: [entry["content"] for entry in state["recent_actions"]]
+            for agent_id, state in frozen.items()
+        },
+        "llm_closed": "llm_client.close" in runtime.calls,
+        "started": runtime._started,
+        "driver_on_runtime": runtime.working_memory_cognition,
+    }
+    assert outcome == {
+        "raised": False,
+        "frozen": {"crew-1": [_FROZEN_ACTION]},
+        "llm_closed": True,
+        "started": False,
+        "driver_on_runtime": None,
+    }
+    assert not [task for task in asyncio.all_tasks() if task.get_name() == _TASK_NAME and not task.done()]
+
+
+def test_shutdown_stops_the_cycle_before_working_memory_is_frozen() -> None:
+```
+
 ## 8. Tracking (M2's commit)
 
 **Pair U1 (`PROGRESS.md`).** SEARCH:
@@ -1665,7 +2096,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1270 (2026-10-2X), #1324 slice 3 -- working-memory cognition, wired behind a default-off flag.** AD-668's salience filter and AD-670's metabolism (DECAY, AUDIT, FORGET, TRIAGE) were built in April and never constructed: nothing called `set_metabolism` or passed `salience_filter=`, so `metabolism.enabled: true` changed nothing. A new flag, `working_memory.cognition_enabled` (default false, read once at startup by `build_working_memory_cognition`), attaches one shared filter and one shared engine, built from the `salience` and `metabolism` sections, to every crew agent's working memory. `WorkingMemoryCognition`, started in finalize after the AD-573 stasis restore and stopped in shutdown before the freeze, runs one metabolism cycle per agent every `metabolism.cycle_interval_seconds`, drains each background stream, re-attaches on every cycle and logs per agent what it forgot, flagged and demoted. FORGET now also removes the entry from the named buffers, matched by value because the restore rebuilds them as copies; a salience scorer that raises admits the entry; values that would spin the cycle or refuse every entry leave it off with a warning. Off, nothing is constructed and working memory is byte-identical. Nothing durable is deleted. At the default threshold the salience gate demotes nothing (a fresh entry scores at least 0.575 against 0.3). Turning it on by default is the Captain's decision. The five dormant rows (`MemoryMetabolism`, `AuditFlag`, `MetabolismReport`, `SalienceFilter`, `SalienceScore`) leave the baseline. New: `src/probos/cognitive/working_memory_cognition.py`, `tests/test_ad1270_working_memory_cognition.py`. The contract is `prompts/ad-1270-working-memory-cognition.md`.
+**AD-1270 (2026-10-2X), #1324 slice 3 -- working-memory cognition, wired behind a default-off flag.** AD-668's salience filter and AD-670's metabolism (DECAY, AUDIT, FORGET, TRIAGE) were built in April and never constructed: nothing called `set_metabolism` or passed `salience_filter=`, so `metabolism.enabled: true` changed nothing. A new flag, `working_memory.cognition_enabled` (default false, read once at startup by `build_working_memory_cognition`), attaches one shared filter and one shared engine, built from the `salience` and `metabolism` sections, to every crew agent's working memory. `WorkingMemoryCognition`, started in finalize after the AD-573 stasis restore and stopped in shutdown before the freeze (through BF-881's `_stop_held_start_service`, so a shutdown awaited from a task the operator's Ctrl+C already cancelled still freezes), runs one metabolism cycle per agent every `metabolism.cycle_interval_seconds`, drains each background stream, re-attaches on every cycle and logs per agent what it forgot, flagged and demoted. FORGET now also removes the entry from the named buffers, matched by value because the restore rebuilds them as copies; a salience scorer that raises admits the entry; values that would spin the cycle or refuse every entry leave it off with a warning. Off, nothing is constructed and working memory is byte-identical. Nothing durable is deleted. At the default threshold the salience gate demotes nothing (a fresh entry scores at least 0.575 against 0.3). Turning it on by default is the Captain's decision. The five dormant rows (`MemoryMetabolism`, `AuditFlag`, `MetabolismReport`, `SalienceFilter`, `SalienceScore`) leave the baseline. New: `src/probos/cognitive/working_memory_cognition.py`, `tests/test_ad1270_working_memory_cognition.py`. The contract is `prompts/ad-1270-working-memory-cognition.md`.
 
 ```
 
@@ -1677,7 +2108,7 @@ REPLACE:
 ```
 ### AD-1270 (#1324) -- working-memory cognition (AD-668 salience, AD-670 metabolism) wired behind a default-off flag (2026-10-2X)
 
-**Decision.** `working_memory.cognition_enabled` (default false) is read once, in `build_working_memory_cognition`. Off, nothing is constructed. On, one shared `SalienceFilter` (no novelty gate) and one shared `MemoryMetabolism`, built from `salience` and `metabolism` (each section's `enabled` turns its own part off), are attached to every crew agent's working memory by `WorkingMemoryCognition`. It runs one metabolism cycle per agent and drains its background stream every `metabolism.cycle_interval_seconds`, re-attaching on every cycle so memories the AD-573 restore replaced, and agents that join later, are covered. FORGET also removes the forgotten entry from the named buffers, matched by `(timestamp, content, category, source_pathway)`. Values that would spin the cycle or make a gate refuse every entry are refused at startup and leave it off. **Why.** `metabolism.enabled` and `salience.enabled` are already true in the tracked config, so neither could be the switch; one flag keeps "off" byte-identical; injection at agent construction is lost on every stasis restore. **What it touches.** In-memory buffers only: no episode, Ward Room post or store record is deleted (AD-1339's carve-out); the freeze and the AD-671 summary see the survivors, and kept entries carry `_decay_score`. **Rejected.** An observe-only stage (at the defaults the gate demotes nothing and FORGET acts only on ring entries older than about 4.3 hours, so evidence comes cheaper from replaying frozen snapshots and the per-agent log lines); passing the runtime's NoveltyGate (it would record working-memory content in the novelty history the proactive loop and the Ward Room use); driving the cycle from the proactive loop or from dreams; Pydantic bounds on the sections (they would fail boot on a value that changes nothing while the flag is off). **Captain.** Turning it on by default changes what every crew agent keeps in working memory; that is his decision, with evidence.
+**Decision.** `working_memory.cognition_enabled` (default false) is read once, in `build_working_memory_cognition`. Off, nothing is constructed. On, one shared `SalienceFilter` (no novelty gate) and one shared `MemoryMetabolism`, built from `salience` and `metabolism` (each section's `enabled` turns its own part off), are attached to every crew agent's working memory by `WorkingMemoryCognition`. It runs one metabolism cycle per agent and drains its background stream every `metabolism.cycle_interval_seconds`, re-attaching on every cycle so memories the AD-573 restore replaced, and agents that join later, are covered. FORGET also removes the forgotten entry from the named buffers, matched by `(timestamp, content, category, source_pathway)`. Values that would spin the cycle or make a gate refuse every entry are refused at startup and leave it off. Shutdown stops the cycle before the freeze through BF-881's `_stop_held_start_service`. `stop()` compares its caller's cancel count with that count at entry, because shutdown runs in a task the operator's Ctrl+C has already cancelled (BF-303). The zero check first built ended shutdown before the freeze (A1, found in review). **Why.** `metabolism.enabled` and `salience.enabled` are already true in the tracked config, so neither could be the switch; one flag keeps "off" byte-identical; injection at agent construction is lost on every stasis restore. **What it touches.** In-memory buffers only: no episode, Ward Room post or store record is deleted (AD-1339's carve-out); the freeze holds the entries the cycle and the gate kept, scored entries carry `_decay_score`, and the frozen `background_stream_count` counts demoted entries not yet drained. Nothing binds the AD-671 pre-dream summary to live working memory, so it is unchanged. **Rejected.** An observe-only stage (at the defaults the gate demotes nothing and FORGET acts only on ring entries older than about 4.3 hours, so evidence comes cheaper from replaying frozen snapshots and the per-agent log lines); passing the runtime's NoveltyGate (it would record working-memory content in the novelty history the proactive loop and the Ward Room use); driving the cycle from the proactive loop or from dreams; Pydantic bounds on the sections (they would fail boot on a value that changes nothing while the flag is off). **Captain.** Turning it on by default changes what every crew agent keeps in working memory; that is his decision, with evidence.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -1694,6 +2125,14 @@ Parent checklist (the orchestrator, on #1324): tick the working-memory item with
 - `finalize.py:6321`'s private `agent._working_memory` assignment (R11).
 
 ## 10. Mutation rows (one campaign on the M1 tree, after an unmutated baseline of M1's focused list passes; run on the Captain's Windows host)
+
+**A1.** Repair 1 rewrites `stop()` and the shutdown helper.
+- **Retired:** G-45 (its line is rewritten; G-50 and G-51 mutate the new one), S-2 and S-3 (their lines are gone; S-5 turns the delegated stop into a no-op).
+- **Rewritten:** S-1. Its old killer passes the guard's mutant once the helper delegates, because `_stop_held_start_service` skips an object without an async `stop()`.
+- **New:** G-49 to G-52, S-5, S-6.
+- **Repair 1's campaign** runs on M1 + §7.12, after an unmutated baseline of the focused list passes: G-43 and G-44 (their lines sit in the rewritten `stop()`), G-49 to G-52, S-1, S-5 and S-6.
+- **Every other row:** the M1 campaign of record stands (79 rows, all killed). A1 changes neither their lines nor their killers.
+- **Equivalent, not listed:** `start_task_attr=None,`, and the guard's bare `return` (not unique in the file).
 
 | # | M | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -1741,7 +2180,10 @@ Parent checklist (the orchestrator, on #1324): tick the working-memory item with
 | G-42 | M1 | `cognitive/working_memory_cognition.py` | `self._task = asyncio.create_task(self._loop(), name="ad1270-working-memory-cognition")` | `self._task = None` | `test_start_attaches_now_and_stop_ends_the_cycle`, `test_flag_on_a_restored_memory_forgets_its_stale_entries_everywhere` |
 | G-43 | M1 | `cognitive/working_memory_cognition.py` | `if task is None:` | `if False:` | `test_start_attaches_now_and_stop_ends_the_cycle` |
 | G-44 | M1 | `cognitive/working_memory_cognition.py` | `task.cancel()` | `pass` | `test_start_attaches_now_and_stop_ends_the_cycle`, `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else` |
-| G-45 | M1 | `cognitive/working_memory_cognition.py` | `if current is not None and current.cancelling():` | `if False:` | `test_stop_passes_on_a_cancellation_aimed_at_its_caller` |
+| G-49 | M1 | `cognitive/working_memory_cognition.py` | `cancelling_at_entry = current.cancelling() if current is not None else 0` | `cancelling_at_entry = 0` | `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` |
+| G-50 | M1 | `cognitive/working_memory_cognition.py` | `if current is not None and current.cancelling() > cancelling_at_entry:` | `if False:` | `test_stop_passes_on_a_cancellation_aimed_at_its_caller`, `test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop` |
+| G-51 | M1 | `cognitive/working_memory_cognition.py` | `if current is not None and current.cancelling() > cancelling_at_entry:` | `if current is not None and current.cancelling() >= cancelling_at_entry:` | `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` |
+| G-52 | M1 | `cognitive/working_memory_cognition.py` | `current = asyncio.current_task()` | `current = None` | `test_stop_passes_on_a_cancellation_aimed_at_its_caller`, `test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop` |
 | G-46 | M1 | `cognitive/working_memory_cognition.py` | `await asyncio.sleep(self._interval)` | `await asyncio.sleep(3600)` | `test_the_loop_runs_a_cycle_each_interval_and_survives_a_raising_cycle` |
 | G-47 | M1 | `cognitive/working_memory_cognition.py` | `self.tick_once()` | `pass` | `test_the_loop_runs_a_cycle_each_interval_and_survives_a_raising_cycle` |
 | G-48 | M1 | `cognitive/working_memory_cognition.py` | `logger.warning("AD-1270: working-memory cycle raised; the next one runs on time", exc_info=True)` | `pass` | `test_the_loop_runs_a_cycle_each_interval_and_survives_a_raising_cycle` |
@@ -1770,9 +2212,9 @@ Parent checklist (the orchestrator, on #1324): tick the working-memory item with
 | F-6 | M1 | `startup/finalize.py` | `await cognition.start()` | `pass` | `test_flag_on_a_restored_memory_forgets_its_stale_entries_everywhere` |
 | F-7 | M1 | `startup/finalize.py` | `runtime.working_memory_cognition = cognition` | `pass` | `test_flag_on_a_restored_memory_forgets_its_stale_entries_everywhere`, `test_flag_on_a_demoted_entry_never_reaches_the_prompt_and_the_cycle_drains_it` |
 | F-8 | M1 | `startup/finalize.py` | `await _start_working_memory_cognition(runtime=runtime, config=config)` | `pass` | `test_startup_starts_the_cycle_after_the_stasis_restore` |
-| S-1 | M1 | `startup/shutdown.py` | `if not isinstance(cognition, WorkingMemoryCognition):` | `if False:` | `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else` |
-| S-2 | M1 | `startup/shutdown.py` | `await cognition.stop()` | `pass` | `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else` |
-| S-3 | M1 | `startup/shutdown.py` | `runtime.working_memory_cognition = None` | `pass` | `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else` |
+| S-1 | M1 | `startup/shutdown.py` | `if not isinstance(cognition, WorkingMemoryCognition):` | `if False:` | `test_the_shutdown_helper_leaves_a_foreign_service_alone` |
+| S-5 | M1 | `startup/shutdown.py` | `service_attr="working_memory_cognition",` | `service_attr="working_memory_cognition_absent",` | `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else`, `test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation[on-never-cancelled]`, `test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation[on-cancelled-earlier]` |
+| S-6 | M1 | `startup/shutdown.py` | `label="AD-1270 WorkingMemoryCognition",` | `label="service",` | `test_the_shutdown_helper_logs_a_failed_stop_and_still_clears_the_attribute` |
 | S-4 | M1 | `startup/shutdown.py` | `await _stop_working_memory_cognition(runtime)` | `pass` | `test_shutdown_stops_the_cycle_before_working_memory_is_frozen` |
 | C-1 | M1 | `config_models/cognition.py` | `cognition_enabled: bool = Field(default=False, description="AD-1270 (#1324): attach AD-668 salience filtering and AD-670 metabolism to every crew agent's working memory and run their cycle every metabolism.cycle_interval_seconds. Off: nothing is constructed. Read once at startup.")` | `cognition_enabled: bool = Field(default=True, description="AD-1270 (#1324): attach AD-668 salience filtering and AD-670 metabolism to every crew agent's working memory and run their cycle every metabolism.cycle_interval_seconds. Off: nothing is constructed. Read once at startup.")` | `test_the_flag_is_off_by_default`, `test_flag_off_startup_builds_nothing_and_working_memory_is_unchanged` |
 | C-2 | M1 | `config_models/cognition.py` | `"""AD-670: Working memory metabolism — active lifecycle management. Read only when working_memory.cognition_enabled is on (AD-1270, #1324): enabled then turns metabolism off on its own, cycle_interval_seconds sets the cycle's period, and the rest configure MemoryMetabolism."""` | `"""AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section to act on it (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324)."""` | `test_the_reader_check_reports_the_wired_fields_as_read[metabolism.enabled]`, `test_the_reader_check_reports_the_wired_fields_as_read[metabolism.cycle_interval_seconds]` |
@@ -1856,6 +2298,8 @@ gh issue view 1566 (body); gh issue list --state all --search "AD-670 OR AD-668 
   - A triage fullness of 1.0 divides by zero on the record path (D9).
   - Agents join late (D3).
   - Cancellation was swallowed in the precedent (D4).
+  - Shutdown runs in a task the operator's Ctrl+C already cancelled (BF-303), so checking `cancelling()` against zero ends shutdown before the freeze. M1 missed it; A1 repairs it (D4).
+  - Nothing binds AD-671's pre-dream summary to live working memory. M1's text claimed it saw the survivors (R8).
   - FORGET was incomplete against the named buffers (D8).
   - The freeze and API now show `_decay_score` (R7).
 - **Recorded, not fixed:** R2 to R16.
@@ -1870,17 +2314,23 @@ gh issue view 1566 (body); gh issue list --state all --search "AD-670 OR AD-668 
    - A provider that raises yields an empty cycle.
    - A raising tick does not end the loop.
    - `CancelledError` leaves the loop.
-   - `stop()` absorbs only the cancellation it caused itself.
+   - `stop()` absorbs only the cancellation it caused itself. It compares the caller's cancel count with that count at entry, so a caller cancelled earlier (BF-303) does not make it raise, and a cancellation arriving while it waits propagates.
+   - A failed cycle is not rolled back, and no shipped text says it is (A1).
 5. **Ordering:**
    - There is one named, stored task, and `start` and `stop` are idempotent.
-   - Shutdown calls the stop helper before `save_all`.
+   - Shutdown calls the stop helper before `save_all`. The helper stops only a `WorkingMemoryCognition`, through `_stop_held_start_service`, which clears `runtime.working_memory_cognition` on every path. The real `shutdown()` awaited from a task cancelled earlier still freezes (X8).
    - Finalize calls the start helper after the AD-573 `from_dict`.
 6. **Named buffers:** after a cycle, no named buffer holds an entry equal by `_entry_key` to one FORGET removed from a ring. Other entries and each buffer's maximum length are unchanged.
 7. **Refused values:**
    - the builder refuses every value in `_INVALID` with `ValueError`;
    - `MemoryMetabolism` still refuses its own;
    - finalize logs the refusal and leaves cognition off.
-8. **Durable writes:** no episodic, Ward Room, store or file write is added. The only persisted differences are the `_decay_score` key and fewer entries in the freeze snapshot.
+8. **Durable writes:** no episodic, Ward Room, store or file write is added. With the flag on, the AD-573 freeze snapshot differs from the flag-off one in these ways:
+   - (a) which ring and named-buffer entries it holds: FORGET and TRIAGE remove entries, and an entry the gate demotes is never appended, so an older entry can stay that a demoted one would have pushed out;
+   - (b) the `_decay_score` key in the metadata of entries a cycle scored, written at `memory_metabolism.py:77`;
+   - (c) the existing `background_stream_count`, which counts demoted entries not yet drained at freeze time (0 with the flag off, as before).
+
+   Its keys are otherwise those of `to_dict`. The AD-671 pre-dream summary is not bound to live working memory (R8).
 9. **Config and generated files:** the field defaults to `False`. No docstring says metabolism is inert. The regenerated files differ only as §4 step 5 lists. The dormant baseline loses exactly the five rows.
 10. **Updated pins:** each says why inline, and none is loosened beyond the new field. BF-926 drops `metabolism` from the inert table and X7 pins those fields as read; e2b gains one key; e1 gains one count; AD-1152 gains one pop.
 
@@ -1891,6 +2341,11 @@ gh issue view 1566 (body); gh issue list --state all --search "AD-670 OR AD-668 
 - [ ] M1's focused gate passes with `-n 0`. All five `--check` scripts pass, and the dormant check reports `0 new, 0 without a reviewed disposition, 0 baseline row(s) no longer dormant` (whole output in the report).
 - [ ] The regenerated diffs match §4 step 5 (hunk lists in the report).
 - [ ] M1 has a cross-family review (`gpt-6.1-sol`) against §14, with its findings repaired.
+- [ ] Repair 1 (§7.12) is done:
+  - its tests, applied first, fail on `4fd31e6c` as §7.12 predicts and pass after its code pairs;
+  - the focused list passes with `-n 0`;
+  - §10's A1 rows are killed;
+  - round 2 reviews the delta.
 - [ ] The §10 campaign runs once on the M1 tree. Every row is killed, or returned to the Architect.
 - [ ] `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` pass after M2.
 - [ ] The orchestrator's single broad gate passes with its receipt.
@@ -1907,13 +2362,19 @@ gh issue view 1566 (body); gh issue list --state all --search "AD-670 OR AD-668 
 - **R4.** TRIAGE refusals are logged at DEBUG only, not counted. A counter needs edits in five record methods.
 - **R5.** Audit flags are counted and logged, not shown to the agent.
 - **R6.** The drain discards what it reads. Re-promotion after idle review (research note §8.2, "pattern detected: promote") is not built.
-- **R7.** `_decay_score` persists in the AD-573 freeze and shows in `GET /agents/{id}/working-memory`. It is an extra key in free-form metadata, not a schema change, and stays inert if the flag is later turned off.
-- **R8.** When on, the AD-671 pre-dream summary's counts reflect the survivors.
+- **R7.** `_decay_score` persists in the AD-573 freeze and shows in `GET /agents/{id}/working-memory`. It is an extra key in free-form metadata, not a schema change, and stays inert if the flag is later turned off. With the flag on, the freeze's existing `background_stream_count` also counts demoted entries the cycle had not drained yet. Reviewer A measured 1 at threshold 0.99 before the next drain. It is 0 with the flag off, as before.
+- **R8. AD-671 is not bound to live working memory** (A1, O1). `DreamingEngine.set_agent_wm` (`cognitive/dreaming.py:179-181`) has no caller in `src`, so the pre-dream flush (`:451`) and the post-dream reader (`:1731`) get `None`. This slice changes nothing there. Owner: #1324 (the wave follow-up). Recommendation: **wire** it, through a crew working-memory provider like this slice's `WorkingMemories`, after deciding which working memory an engine with one `set_agent_wm` slot should see. Not in this slice.
 - **R9.** Value-keyed discard also removes an identical duplicate (same timestamp, content, category and pathway).
-- **R10.** The `TranscriptReaper` precedent swallows a cancellation aimed at its caller. This slice's `stop()` does not. A BF for the reaper is recommended.
+- **R10.** `TranscriptReaper.stop()` (`threads/transcript_reaper.py:67-83`) swallows every `CancelledError`, including a new one aimed at its caller during shutdown (reviewer A re-confirmed this in round 1). The fix is the count-at-entry rule (BF-881's `_stop_held_start_service`, and this slice's `stop()` after A1), not a zero check: A1 showed that a zero check ends shutdown before the freeze. The reaper stops just before this slice's helper, so a cancellation it swallows also raises the count this slice's `stop()` takes at entry, and that cancellation stays lost. Owner: #1324 (the wave follow-up). Recommendation: a BF.
 - **R11.** `finalize.py:6321` assigns the private `agent._working_memory` across modules (pre-existing).
 - **R12.** `_passes_salience_gate` reads `SalienceFilter._threshold` across modules (pre-existing, `agent_working_memory.py:393`).
 - **R13.** Two INFO lines per busy agent: AD-670's own, which has no agent id (`memory_metabolism.py:215-223`), and this slice's.
 - **R14.** Decay is by age only, with no reinforcement on use (MemoryBank). A rarely touched but important ring entry can be forgotten. Active engagements and pinned knowledge sit outside metabolism.
 - **R15.** Section values are validated at startup in the builder, not at parse time (D9).
 - **R16.** The flag is read at startup only. Turning it on or off is the Captain's action and needs a restart. Nothing in this slice restarts the vessel.
+- **R17 (B3).** The two ordering scans (`test_shutdown_stops_the_cycle_before_working_memory_is_frozen`, `test_startup_starts_the_cycle_after_the_stasis_restore`, through `_calls_in`) accept a call that is never awaited or never reached. A1's X8 now proves that the real `shutdown()` reaches and awaits the helper. The order before `save_all`, and the whole startup half, still rest on the scans. Owner: #1324 (the wave follow-up). Recommendation: **fix** them with an awaited, reachable integration check that has negative controls.
+- **R18 (B4).** `test_the_reader_check_reports_the_wired_fields_as_read` uses a name-presence report, so a second reader of `cognition_enabled` passes. Owner: #1324 (the wave follow-up). Recommendation: **fix** it with an AST assertion that the one production reader is `build_working_memory_cognition`.
+- **R19 (B5).** The discard cases use content that tells entries apart, so an `_entry_key` without `timestamp` (or category, or pathway) passes. This is not R9's identical duplicate. Owner: #1324 (the wave follow-up). Recommendation: **fix** it with cases that differ in one key field and assert that the non-matching record survives.
+- **R20 (B6).** The loop case uses a 0.01 s driver and real sleeps, so a hard-coded period passes. Owner: #1324 (the wave follow-up). Recommendation: **fix** it by capturing the sleep argument for a period the builder configured.
+- **R21 (B7).** `test_at_the_default_threshold_the_gate_demotes_nothing` passes when nothing is admitted. Owner: #1324 (the wave follow-up). Recommendation: **fix** it by also asserting that the five records reach their rings.
+- **R22 (reviewer A's pin metaprobe).** `test_a_tick_attaches_a_memory_that_joined_or_was_replaced` accepts a driver that caches working memory by agent id (`logs/ad1270/probes-r1a/test_runtime_pins.py`; `logs/ad1270/probes-r1b/evidence-ad1270wmr1a-pin-boundaries.txt`). Owner: #1324 (the wave follow-up). Recommendation: **fix** it by replacing one agent's memory between ticks and asserting that the new memory is attached.
