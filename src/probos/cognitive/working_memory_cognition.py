@@ -10,15 +10,17 @@ and every ``metabolism.cycle_interval_seconds`` runs one metabolism cycle per ag
 its background stream. Each cycle attaches again, so a working memory the AD-573 stasis restore
 replaced, or an agent that joined later, is covered from its next cycle.
 
-What it touches: the in-memory ring and named buffers only. FORGET and TRIAGE delete no
-episode, Ward Room post or store record. The AD-573 freeze and the AD-671 pre-dream summary
-see the entries that remain, and each kept ring entry carries ``_decay_score`` in its metadata.
+What it touches: in-memory working memory only (the rings, the named buffers and the background
+stream). FORGET and TRIAGE delete no episode, Ward Room post or store record. The AD-573 freeze
+sees the entries that remain, each kept ring entry carries ``_decay_score`` in its metadata, and
+the frozen ``background_stream_count`` counts demoted entries the cycle has not drained yet.
 
 The background-stream consumer counts what the salience gate demoted and discards it; it
 promotes nothing back. Audit flags are counted and logged, not shown to the agent.
 
 Log-and-degrade: a cycle that raises for one agent is logged, and the other agents and the
-loop carry on; that agent's working memory is left as it is.
+loop carry on. Nothing is rolled back: that agent keeps what the cycle changed before it
+raised, so a named buffer can still hold an entry its ring has forgotten.
 """
 
 from __future__ import annotations
@@ -111,7 +113,7 @@ class WorkingMemoryCognition:
             except Exception:
                 failed += 1
                 logger.warning(
-                    "AD-1270: working-memory cycle failed for %s; its working memory is left as it is",
+                    "AD-1270: working-memory cycle failed for %s; the other agents still run",
                     agent_id,
                     exc_info=True,
                 )
@@ -147,18 +149,22 @@ class WorkingMemoryCognition:
     async def stop(self) -> None:
         """Cancel the cycle task and wait for it to end. Idempotent.
 
-        Only the cancellation it caused is absorbed: if the caller is itself being cancelled,
-        the ``CancelledError`` propagates (Async Discipline).
+        Only the cancellation it caused is absorbed. The caller's cancel count is compared with
+        its count at entry, as BF-881's shutdown helper does: shutdown is typically awaited from
+        a task that was already cancelled (BF-303: the operator's Ctrl+C), whose count stays
+        above zero for the whole teardown. A cancellation that arrives while this waits
+        propagates (Async Discipline); the cycle task has ended by then.
         """
         task = self._task
         if task is None:
             return
+        current = asyncio.current_task()
+        cancelling_at_entry = current.cancelling() if current is not None else 0
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
-            current = asyncio.current_task()
-            if current is not None and current.cancelling():
+            if current is not None and current.cancelling() > cancelling_at_entry:
                 raise
 
     def _members(self) -> list[tuple[str, AgentWorkingMemory]]:

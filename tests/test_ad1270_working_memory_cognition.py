@@ -39,9 +39,12 @@ from probos.cognitive.working_memory_cognition import (
     WorkingMemoryCognition,
     build_working_memory_cognition,
 )
+from probos.cognitive.working_memory_store import WorkingMemoryStore
 from probos.config import MetabolismConfig, SalienceConfig, SystemConfig, WorkingMemoryConfig
 from probos.startup import finalize as finalize_module
 from probos.startup import shutdown as shutdown_module
+from probos.storage.sqlite_factory import SQLiteConnectionFactory
+from tests.fixtures.runtime_lifecycle import BareRuntime
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _REPO_ROOT / "src" / "probos"
@@ -158,6 +161,27 @@ def _reader_report() -> Any:
     checker = _load_reader_check()
     document = yaml.safe_load(checker.DEFAULT_YAML.read_text(encoding="utf-8"))
     return checker.build_report(SystemConfig, checker.DEFAULT_SOURCE, document)
+
+
+_NO_GRACE = {"shutdown_write_grace_s": 0.0, "shutdown_dispatch_grace_s": 0.0}
+_FROZEN_ACTION = "logged the shield harmonics before the shutdown"
+
+
+async def _cancelled_once() -> None:
+    """Cancel the running task once and handle it, as BF-303's Ctrl+C leaves shutdown's caller.
+
+    Call it first in a task of its own: the count it leaves must not reach the test's task.
+    """
+    current = asyncio.current_task()
+    assert current is not None and current.cancelling() == 0
+    current.cancel()
+    try:
+        await asyncio.sleep(0)
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("the earlier cancellation was not delivered")
+    assert current.cancelling() == 1
 
 
 # --- T1 to T5: the flag, the sections and the refusals ------------------------------------
@@ -461,6 +485,34 @@ async def test_stop_passes_on_a_cancellation_aimed_at_its_caller() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation() -> None:
+    """A1: shutdown's caller keeps a cancel count above zero for the whole teardown (BF-303)."""
+    cognition = _build(_on(), [])
+    assert cognition is not None
+    await cognition.start()
+
+    async def stop_twice_after_an_earlier_cancellation() -> list[bool]:
+        await _cancelled_once()
+        raised: list[bool] = []
+        for _ in range(2):  # the second call: idempotent for the same caller
+            try:
+                await cognition.stop()
+            except asyncio.CancelledError:
+                raised.append(True)
+            else:
+                raised.append(False)
+        return raised
+
+    try:
+        raised = await asyncio.create_task(stop_twice_after_an_earlier_cancellation())
+    finally:
+        await asyncio.wait_for(cognition.stop(), timeout=2)
+
+    assert raised == [False, False]
+    assert not cognition.running
+
+
+@pytest.mark.asyncio
 async def test_the_loop_runs_a_cycle_each_interval_and_survives_a_raising_cycle(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -657,6 +709,141 @@ async def test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else() -
     await shutdown_module._stop_working_memory_cognition(other)
     assert other.working_memory_cognition is foreign
     await shutdown_module._stop_working_memory_cognition(SimpleNamespace())
+
+
+@pytest.mark.asyncio
+async def test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop() -> None:
+    """A1: cancelled once already (BF-303), then again while the stop waits; the second propagates."""
+    cognition = _build(_on(), [])
+    assert cognition is not None
+    await cognition.start()
+    runtime = SimpleNamespace(working_memory_cognition=cognition)
+    entered = asyncio.Event()
+
+    async def stop_after_an_earlier_cancellation() -> None:
+        await _cancelled_once()
+        entered.set()
+        await shutdown_module._stop_working_memory_cognition(runtime)
+
+    stopper = asyncio.create_task(stop_after_an_earlier_cancellation())
+    await entered.wait()  # the stopper has cancelled the cycle and is waiting for it
+    stopper.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+    assert not cognition.running
+    assert runtime.working_memory_cognition is None
+
+
+@pytest.mark.asyncio
+async def test_the_shutdown_helper_leaves_a_foreign_service_alone() -> None:
+    """Only the driver this slice builds is stopped; another object with an async stop() is not."""
+    stops: list[str] = []
+
+    class _Foreign:
+        async def stop(self) -> None:
+            stops.append("stop")
+
+    foreign = _Foreign()
+    runtime = SimpleNamespace(working_memory_cognition=foreign)
+
+    await shutdown_module._stop_working_memory_cognition(runtime)
+
+    assert stops == []
+    assert runtime.working_memory_cognition is foreign
+
+
+@pytest.mark.asyncio
+async def test_the_shutdown_helper_logs_a_failed_stop_and_still_clears_the_attribute(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailingStop(WorkingMemoryCognition):
+        async def stop(self) -> None:
+            raise RuntimeError("stop fault")
+
+    cognition = _FailingStop(
+        working_memories=lambda: [], salience_filter=SalienceFilter(), metabolism=None,
+        background_max_entries=50, interval_seconds=1.0,
+    )
+    runtime = SimpleNamespace(working_memory_cognition=cognition)
+
+    with caplog.at_level(logging.WARNING, logger=shutdown_module.__name__):
+        await shutdown_module._stop_working_memory_cognition(runtime)
+
+    assert "AD-1270 WorkingMemoryCognition.stop() failed during shutdown" in caplog.text
+    assert runtime.working_memory_cognition is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("enabled", "cancelled_earlier"),
+    [(True, False), (False, True), (True, True)],
+    ids=["on-never-cancelled", "off-cancelled-earlier", "on-cancelled-earlier"],
+)
+async def test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation(
+    tmp_path: Path, enabled: bool, cancelled_earlier: bool,
+) -> None:
+    """The A1 crossing: the real ``shutdown()`` on a bare runtime, the real startup helper and
+    driver, and a real SQLite working-memory store. BF-303: shutdown is awaited from a task the
+    operator's Ctrl+C already cancelled. The controls come first; the last case is the regression."""
+    config = SystemConfig.model_validate(
+        {"working_memory": {"cognition_enabled": enabled}, "memory": _NO_GRACE}
+    )
+    runtime = BareRuntime(tmp_path / "runtime", config=config, started=True)
+    db_path = str(tmp_path / "working_memory.db")
+    store = WorkingMemoryStore(connection_factory=SQLiteConnectionFactory(), db_path=db_path)
+    await store.start()
+    runtime.working_memory_store = store
+    memory = AgentWorkingMemory()
+    memory.record_action(_FROZEN_ACTION, source="proactive")
+    await runtime.registry.register(
+        SimpleNamespace(id="crew-1", agent_type="counselor", pool="crew", working_memory=memory)
+    )
+    await finalize_module._start_working_memory_cognition(runtime=runtime, config=config)
+    cognition = runtime.working_memory_cognition
+    assert isinstance(cognition, WorkingMemoryCognition) is enabled
+
+    async def shut_down() -> bool:
+        """Its own task, so the earlier cancellation never reaches this test's task."""
+        if cancelled_earlier:
+            await _cancelled_once()
+        try:
+            await shutdown_module.shutdown(runtime, reason="ad1270-a1")
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    try:
+        raised = await asyncio.create_task(shut_down())
+    finally:
+        await store.stop()  # shutdown stops it; one cut short does not
+        if isinstance(cognition, WorkingMemoryCognition):
+            await asyncio.wait_for(cognition.stop(), timeout=2)
+
+    reader = WorkingMemoryStore(connection_factory=SQLiteConnectionFactory(), db_path=db_path)
+    await reader.start()
+    try:
+        frozen = await reader.load_all()
+    finally:
+        await reader.stop()
+    outcome = {
+        "raised": raised,
+        "frozen": {
+            agent_id: [entry["content"] for entry in state["recent_actions"]]
+            for agent_id, state in frozen.items()
+        },
+        "llm_closed": "llm_client.close" in runtime.calls,
+        "started": runtime._started,
+        "driver_on_runtime": runtime.working_memory_cognition,
+    }
+    assert outcome == {
+        "raised": False,
+        "frozen": {"crew-1": [_FROZEN_ACTION]},
+        "llm_closed": True,
+        "started": False,
+        "driver_on_runtime": None,
+    }
+    assert not [task for task in asyncio.all_tasks() if task.get_name() == _TASK_NAME and not task.done()]
 
 
 def test_shutdown_stops_the_cycle_before_working_memory_is_frozen() -> None:
