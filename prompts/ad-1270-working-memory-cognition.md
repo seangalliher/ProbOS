@@ -21,6 +21,12 @@ Recorded, not repaired: B3 to B7 and reviewer A's pin metaprobe (R17 to R22), th
 
 Counts stay predicted: §7.12 adds 7 cases, 67 in the new file. No shared contract changes (`stop()`'s signature and return are unchanged; it raises in fewer cases), so round 2 reviews the delta. **Captain:** no condition met.
 
+**Amendment A2 (2026-10-28, after review round 2; `claude-architect`).** Repairs two P3 findings on repair 1 (`1a76236d`). Both are injected-only.
+- **F1** (both reviewers): the shutdown helper's docstring said that once the stop has returned or raised, no cycle runs during the freeze. A stop that raises an `Exception` before it cancels the task is only logged, and a cycle ran during the freeze (`logs/ad1270/probes-r2a/evidence-ad1270wmr2a-variants.json`, `failed_stop_with_live_cycle`). The sentence is qualified, and no machinery is added. That docstring and X10's also said that an object this slice did not build is left alone, but X11's subclass is stopped, so both now say "not a `WorkingMemoryCognition`".
+- **F2** (the delta census): under G-44, T12 and X8 hung until the 180 s pytest timeout instead of failing. Their awaits, and X9's, are now bounded as M1's are.
+
+How to read it: §7.12 stays as written, because it reproduces `1a76236d`. **§7.13 is the delta from `1a76236d`.** No shared contract changes (docstrings, test bounds and contract text only), so round 3 reviews the delta. Counts are unchanged: 67 cases. **Captain:** no condition met.
+
 **Milestones and tiers:**
 - **M1, the wiring** (config field and docstrings, `AgentWorkingMemory` hooks, the new driver module, the startup and shutdown seams, the tests, and the regenerated config, profile and dormant baselines). **HIGH**: agent memory behaviour, plus shared contracts (`AgentWorkingMemory`'s public API, the startup/shutdown order, the config surface, and a source-scan test of production source).
 - **M2, trackers** (`PROGRESS.md`, `DECISIONS.md`, the regenerated AD ledger). **docs**.
@@ -779,12 +785,15 @@ async def _stop_working_memory_cognition(runtime: Any) -> None:
     """AD-1270 (#1324): stop the working-memory cognition cycle. Raises no ``Exception``.
 
     Called before working memory is frozen. A runtime that never started it (the flag is off,
-    or startup refused a value) has nothing to stop, and an object this slice did not build is
-    left alone. The stop goes through BF-881's ``_stop_held_start_service``: shutdown is
-    typically awaited from a task the operator's Ctrl+C already cancelled (BF-303), and that
-    helper absorbs only the cycle's own cancellation, logs any other failure and clears the
-    attribute on every path. A cancellation that arrives during the stop propagates. Once the
-    stop has returned or raised, the cycle task has ended, so no cycle runs during the freeze.
+    or startup refused a value) has nothing to stop, and an object that is not a
+    ``WorkingMemoryCognition`` is left alone. The stop goes through BF-881's
+    ``_stop_held_start_service``: shutdown is typically awaited from a task the operator's
+    Ctrl+C already cancelled (BF-303), and that helper absorbs only the cycle's own
+    cancellation, logs any other failure and clears the attribute on every path. A
+    cancellation that arrives during the stop propagates. Once
+    ``WorkingMemoryCognition.stop()`` has returned, or that cancellation has propagated, the
+    cycle task has ended. A stop that raises an ``Exception`` is only logged: its loop may
+    still be running, and a cycle can run during the freeze.
     """
     from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
 
@@ -1699,6 +1708,8 @@ REPLACE:
 
 Written against M1 as committed at `4fd31e6c`; each SEARCH occurs exactly once in its file. Working copies are CRLF: match and write with the file's own endings.
 
+**History (A2).** These pairs reproduce `1a76236d` and are not edited. §7.13 supersedes the last part of A1-5's docstring and X10's docstring in A1-9, and it bounds awaits that A1-8 (T12) and A1-9 (X8, X9) left unbounded. The files are this section's text with §7.13 applied.
+
 **Order:**
 1. Apply A1-6 to A1-9 (tests) and run the file with `-n 0`. Predicted failures, and no others:
    - `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` (`raised == [True, True]`);
@@ -2085,6 +2096,127 @@ async def test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancell
 def test_shutdown_stops_the_cycle_before_working_memory_is_frozen() -> None:
 ```
 
+### 7.13 Repair 2 (A2)
+
+Written against repair 1 as committed at `1a76236d`. Each SEARCH occurs exactly once in its file. Working copies are CRLF: match and write with the file's own endings.
+
+**Order:**
+1. Apply A2-1 to A2-4 (tests) and run the file with `-n 0`. Predicted: 67 passed, 0 failed. The bounds never expire while the code is correct.
+2. Apply A2-5 (a docstring). Run §4's M1 focused list plus `tests/test_issue1452_stop_leftovers.py` with `-n 0`.
+3. Run §10's A2 census.
+
+**Why the bounds hold (CPython 3.12 and later):** `wait_for` awaits a coroutine inline in the caller's task, inside `asyncio.timeout`.
+- **A normal run:** no bound expires, and the cancel counts `stop()` and `_stop_held_start_service` compare are unchanged. `create_task` stays wherever `_cancelled_once` runs.
+- **An expired bound:** it cancels the caller, which reaches the cycle task through its waiter. It raises `TimeoutError`, unless the awaited task swallows the cancellation and returns. X8's `shut_down()` does swallow it, so there `wait_for` returns True and the `outcome` assertion fails.
+- **A cancellation that arrives during the stop** (X9) still surfaces as `CancelledError`: the test task's timeout never expired.
+
+**Predicted under G-44 (`task.cancel()` changed to `pass`):**
+- T12 fails with `TimeoutError` from its inner bounded stop, in about 2 s.
+- `[on-never-cancelled]` and `[on-cancelled-earlier]` fail the `outcome` assertion (at least `raised` True and `frozen` `{}`) after about 10 s each. `[off-cancelled-earlier]` passes.
+- X9 passes, as before.
+- M1's bounded cases fail with `TimeoutError` in about 2 s each.
+
+**Not testable by any case:** A2-4 and A2-5 change docstrings that no test reads. A search of `tests` for the two phrases found only X10's own docstring.
+
+**Pair A2-1 (`tests/test_ad1270_working_memory_cognition.py`, T12).** SEARCH:
+```
+        for _ in range(2):  # the second call: idempotent for the same caller
+            try:
+                await cognition.stop()
+            except asyncio.CancelledError:
+                raised.append(True)
+            else:
+                raised.append(False)
+        return raised
+
+    try:
+        raised = await asyncio.create_task(stop_twice_after_an_earlier_cancellation())
+    finally:
+```
+REPLACE:
+```
+        for _ in range(2):  # the second call: idempotent for the same caller
+            try:
+                await asyncio.wait_for(cognition.stop(), timeout=2)
+            except asyncio.CancelledError:
+                raised.append(True)
+            else:
+                raised.append(False)
+        return raised
+
+    try:  # its own task, as _cancelled_once needs; bounded above the two inner stops
+        raised = await asyncio.wait_for(
+            asyncio.create_task(stop_twice_after_an_earlier_cancellation()), timeout=5
+        )
+    finally:
+```
+
+**Pair A2-2 (`tests/test_ad1270_working_memory_cognition.py`, X9).** SEARCH:
+```
+    stopper = asyncio.create_task(stop_after_an_earlier_cancellation())
+    await entered.wait()  # the stopper has cancelled the cycle and is waiting for it
+    stopper.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stopper
+```
+REPLACE:
+```
+    stopper = asyncio.create_task(stop_after_an_earlier_cancellation())
+    # the stopper has cancelled the cycle and is waiting for it
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    stopper.cancel()
+
+    with pytest.raises(asyncio.CancelledError):  # an expired bound raises TimeoutError instead
+        await asyncio.wait_for(stopper, timeout=2)
+```
+
+**Pair A2-3 (`tests/test_ad1270_working_memory_cognition.py`, X8).** SEARCH:
+```
+    try:
+        raised = await asyncio.create_task(shut_down())
+    finally:
+```
+REPLACE:
+```
+    try:  # bounded: the real shutdown takes well under a second here; 10 s leaves CI room
+        raised = await asyncio.wait_for(asyncio.create_task(shut_down()), timeout=10)
+    finally:
+```
+
+**Pair A2-4 (`tests/test_ad1270_working_memory_cognition.py`, X10).** SEARCH:
+```
+    """Only the driver this slice builds is stopped; another object with an async stop() is not."""
+```
+REPLACE:
+```
+    """Only a ``WorkingMemoryCognition`` is stopped; another object with an async stop() is not."""
+```
+
+**Pair A2-5 (`src/probos/startup/shutdown.py`).** SEARCH:
+```
+    Called before working memory is frozen. A runtime that never started it (the flag is off,
+    or startup refused a value) has nothing to stop, and an object this slice did not build is
+    left alone. The stop goes through BF-881's ``_stop_held_start_service``: shutdown is
+    typically awaited from a task the operator's Ctrl+C already cancelled (BF-303), and that
+    helper absorbs only the cycle's own cancellation, logs any other failure and clears the
+    attribute on every path. A cancellation that arrives during the stop propagates. Once the
+    stop has returned or raised, the cycle task has ended, so no cycle runs during the freeze.
+```
+REPLACE:
+```
+    Called before working memory is frozen. A runtime that never started it (the flag is off,
+    or startup refused a value) has nothing to stop, and an object that is not a
+    ``WorkingMemoryCognition`` is left alone. The stop goes through BF-881's
+    ``_stop_held_start_service``: shutdown is typically awaited from a task the operator's
+    Ctrl+C already cancelled (BF-303), and that helper absorbs only the cycle's own
+    cancellation, logs any other failure and clears the attribute on every path. A
+    cancellation that arrives during the stop propagates. Once
+    ``WorkingMemoryCognition.stop()`` has returned, or that cancellation has propagated, the
+    cycle task has ended. A stop that raises an ``Exception`` is only logged: its loop may
+    still be running, and a cycle can run during the freeze.
+```
+
 ## 8. Tracking (M2's commit)
 
 **Pair U1 (`PROGRESS.md`).** SEARCH:
@@ -2134,6 +2266,13 @@ Parent checklist (the orchestrator, on #1324): tick the working-memory item with
 - **Every other row:** the M1 campaign of record stands (79 rows, all killed). A1 changes neither their lines nor their killers.
 - **Equivalent, not listed:** `start_task_attr=None,`, and the guard's bare `return` (not unique in the file).
 
+**A2.** Repair 2 bounds the new cases' waits and changes no mutated line.
+- **Rewritten:** G-44's Killed-by cell. Under that mutant, T12 now fails with `TimeoutError` in about 2 s, and X8's two flag-on cases fail their `outcome` assertion in about 10 s each, where before they hung until the 180 s pytest timeout.
+- **Repair 2's census** runs on `1a76236d` + §7.13, after an unmutated baseline of the focused list passes. It reruns the nine A1 rows (G-43, G-44, G-49 to G-52, S-1, S-5 and S-6), because the test file changed under each of them.
+  - Every row must be killed, and every run must end in a pytest summary.
+  - G-44's whole-file run is predicted at about 35 s.
+- **Every other row:** unchanged.
+
 | # | M | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|---|
 | G-1 | M1 | `cognitive/working_memory_cognition.py` | `if not working_memory.cognition_enabled:` | `if False:` | `test_flag_off_the_builder_constructs_nothing`, `test_flag_off_startup_builds_nothing_and_working_memory_is_unchanged` |
@@ -2179,7 +2318,7 @@ Parent checklist (the orchestrator, on #1324): tick the working-memory item with
 | G-41 | M1 | `cognitive/working_memory_cognition.py` | `self.attach_all()` | `pass` | `test_start_attaches_now_and_stop_ends_the_cycle` |
 | G-42 | M1 | `cognitive/working_memory_cognition.py` | `self._task = asyncio.create_task(self._loop(), name="ad1270-working-memory-cognition")` | `self._task = None` | `test_start_attaches_now_and_stop_ends_the_cycle`, `test_flag_on_a_restored_memory_forgets_its_stale_entries_everywhere` |
 | G-43 | M1 | `cognitive/working_memory_cognition.py` | `if task is None:` | `if False:` | `test_start_attaches_now_and_stop_ends_the_cycle` |
-| G-44 | M1 | `cognitive/working_memory_cognition.py` | `task.cancel()` | `pass` | `test_start_attaches_now_and_stop_ends_the_cycle`, `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else` |
+| G-44 | M1 | `cognitive/working_memory_cognition.py` | `task.cancel()` | `pass` | `test_start_attaches_now_and_stop_ends_the_cycle`, `test_the_shutdown_helper_stops_the_cycle_and_ignores_anything_else`, `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation`, `test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation[on-never-cancelled]`, `test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancellation[on-cancelled-earlier]` |
 | G-49 | M1 | `cognitive/working_memory_cognition.py` | `cancelling_at_entry = current.cancelling() if current is not None else 0` | `cancelling_at_entry = 0` | `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` |
 | G-50 | M1 | `cognitive/working_memory_cognition.py` | `if current is not None and current.cancelling() > cancelling_at_entry:` | `if False:` | `test_stop_passes_on_a_cancellation_aimed_at_its_caller`, `test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_the_stop` |
 | G-51 | M1 | `cognitive/working_memory_cognition.py` | `if current is not None and current.cancelling() > cancelling_at_entry:` | `if current is not None and current.cancelling() >= cancelling_at_entry:` | `test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellation` |
@@ -2346,6 +2485,11 @@ gh issue view 1566 (body); gh issue list --state all --search "AD-670 OR AD-668 
   - the focused list passes with `-n 0`;
   - §10's A1 rows are killed;
   - round 2 reviews the delta.
+- [ ] Repair 2 (§7.13) is done:
+  - its test pairs, applied first, pass on `1a76236d`;
+  - the focused list passes with `-n 0`;
+  - §10's A2 census kills the nine A1 rows, and every run ends in a pytest summary (no case hangs);
+  - round 3 reviews the delta.
 - [ ] The §10 campaign runs once on the M1 tree. Every row is killed, or returned to the Architect.
 - [ ] `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` pass after M2.
 - [ ] The orchestrator's single broad gate passes with its receipt.
