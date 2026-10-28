@@ -10474,27 +10474,20 @@ class CognitiveAgent(BaseAgent):
                     zone_floor=idx if zone_floor is None else zone_floor,
                 ))
 
-            # AD-683: Cold-start ship state snapshot (boot-camp DM path only).
-            if observation.get("_boot_camp_active") and self._runtime is not None:
-                _bc = getattr(self._runtime, "boot_camp", None)
-                _snap = getattr(_bc, "ship_state_snapshot", None) if _bc else None
-                if _snap is not None:
-                    try:
-                        _snapshot_text = _snap.render_text()
-                    except Exception:
-                        logger.debug(
-                            "AD-683: ship_state_snapshot.render_text failed; "
-                            "skipping injection",
-                            exc_info=True,
-                        )
-                        _snapshot_text = ""
-                    if _snapshot_text:
-                        _emit("boot_snapshot", [
-                            "--- Ship State Snapshot ---",
-                            _snapshot_text,
-                            "---",
-                            "",
-                        ])
+            # AD-683: Cold-start ship state snapshot (DM path). AD-1270 (#1324): keyed on AD-638
+            # enrolment, read through the coordinator, not on the observation's _boot_camp_active:
+            # only a chain phase sets that (_refresh_boot_camp_relaxation, while relax_quality_gates
+            # is on), and a chain's fall-through to this call carried its last answer here.
+            _bc = getattr(self._runtime, "boot_camp", None) if self._runtime is not None else None
+            _snapshot_text = _bc.orientation_snapshot_text(self.id) if _bc is not None else ""
+            # A non-str answer (a test double's runtime) would break the join below: add nothing.
+            if isinstance(_snapshot_text, str) and _snapshot_text:
+                _emit("boot_snapshot", [
+                    "--- Ship State Snapshot (captured when boot camp began) ---",
+                    _snapshot_text,
+                    "---",
+                    "",
+                ])
 
             # AD-502: Temporal awareness header
             temporal_ctx = self._build_temporal_context()

@@ -1562,7 +1562,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1270 (#1324) slice 3 adds working_memory.cognition_enabled (1879 -> 1880).
     # AD-1270 (#1324) slice 4b adds boot_camp.relax_quality_gates (1880 -> 1881).
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig.enabled and SystemConfig.boot_camp_phase (1881 -> 1879).
-    assert counts["field_definitions"] == 1879  # AD-1206 intentionally adds github_repository.
+    # AD-1270 (#1324) slice 4c removes boot_camp.nudge_cooldown_seconds with AD-638's phases 2 and 3 (1879 -> 1878).
+    assert counts["field_definitions"] == 1878  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
     assert len(baseline["names"]) == 309  # AD-1341 S5 (#1569): ArchivePromotionConfig

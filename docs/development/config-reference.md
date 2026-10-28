@@ -2668,15 +2668,14 @@ AD-638: Cold-start boot camp configuration.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `True` | — |  |
-| `min_episodes` | `int` | `5` | — |  |
-| `min_ward_room_posts` | `int` | `3` | — |  |
-| `min_dm_conversations` | `int` | `1` | — |  |
-| `min_trust_score` | `float` | `0.55` | — |  |
-| `min_time_minutes` | `int` | `60` | — |  |
-| `timeout_minutes` | `int` | `120` | — |  |
-| `nudge_cooldown_seconds` | `int` | `600` | — |  |
-| `relax_quality_gates` | `bool` | `False` | — |  |
+| `enabled` | `bool` | `True` | — | AD-638: build the boot-camp coordinator (it also needs the Ward Room, trust and episodic memory) and enrol a new crew at finalization. False: no coordinator and no enrolment. |
+| `min_episodes` | `int` | `5` | — | Graduation: the agent's episode count must reach this. |
+| `min_ward_room_posts` | `int` | `3` | — | Graduation: Ward Room posts counted while the agent is enrolled. |
+| `min_dm_conversations` | `int` | `1` | — | Graduation: DMs sent to crew while enrolled. A DM to the Captain or an unsent DM does not count. |
+| `min_trust_score` | `float` | `0.55` | — | Activation skips an agent whose trust is at or above this; graduation needs at least this. |
+| `min_time_minutes` | `int` | `60` | — | Graduation: minutes enrolled, on the coordinator's clock. |
+| `timeout_minutes` | `int` | `120` | — | Minutes after activation at which enrolment ends: every agent still enrolled is marked graduated and one BOOT_CAMP_TIMEOUT is emitted. Nothing is deleted. Enforced by the coordinator's reads, with no task. |
+| `relax_quality_gates` | `bool` | `False` | — | AD-1270 (#1324): while on, AD-638 auto-approves Evaluate and Reflect for enrolled crew until they graduate or time out. On weakens the anti-confabulation gate: the Captain's switch. Off (the default), enrolment relaxes nothing. |
 
 ## `ship_state_snapshot`
 

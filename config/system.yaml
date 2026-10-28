@@ -2114,7 +2114,6 @@ boot_camp:
   min_trust_score: 0.55
   min_time_minutes: 60
   timeout_minutes: 120
-  nudge_cooldown_seconds: 600
 ship_state_snapshot:
   enabled: true
 tiered_trust:

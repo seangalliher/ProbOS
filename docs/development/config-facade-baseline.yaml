@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1890
-  field_definitions: 1879
+  canonical_dump_leaves: 1889
+  field_definitions: 1878
   incidental: 13
   own_models: 228
   owned: 296
   public_names: 309
-canonical_dump_sha256: 3a92fd5f0a6fcde7d4c6207dc2094c1afcb79f35aee433f1c0c0d89239d182f7
+canonical_dump_sha256: 8517e238c10cbc4f8bfe1b64d351c843c4c9f3f419d3b5d1c59bc6801337a776
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -817,7 +817,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1c403b63431a9be53da759dcbc7c2b9ac1516adf6cf47a5d74ee5d2258383ad8
+    schema_sha256: 96f19f488fb7b6d04aef78cdb7093a379c975b79d344ba91da9b2a522f721138
     fields:
     - {default: 'True', name: enabled}
     - {default: '5', name: min_episodes}
@@ -826,7 +826,6 @@ models:
     - {default: '0.55', name: min_trust_score}
     - {default: '60', name: min_time_minutes}
     - {default: '120', name: timeout_minutes}
-    - {default: '600', name: nudge_cooldown_seconds}
     - {default: 'False', name: relax_quality_gates}
   BridgeAlertConfig:
     qualname: BridgeAlertConfig
@@ -3413,7 +3412,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 7aab15214504ac2983b24102fe318cc4bf3472786a88335702d744b8da54107a
+    schema_sha256: 9dfca3549dfa117bf6d3f28761291fbb272ef9b59d7acaba5cbfd327b3958259
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

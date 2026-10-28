@@ -57,14 +57,13 @@ def _coordinator(
     clock: _Clock,
     *,
     events: list | None = None,
-    ward_room: object | None = None,
     **config: object,
 ) -> BootCampCoordinator:
-    settings = {"min_time_minutes": 0, "nudge_cooldown_seconds": 0, "timeout_minutes": 120, **config}
+    # AD-1270 (#1324) slice 4c: the coordinator has no nudge cooldown and no ward-room dependency.
+    settings = {"min_time_minutes": 0, "timeout_minutes": 120, **config}
     sink = events if events is not None else []
     return BootCampCoordinator(
         config=BootCampConfig(**settings),
-        ward_room=ward_room if ward_room is not None else SimpleNamespace(),
         trust_service=trust,
         episodic_memory=_Episodes(10),
         emit_event_fn=lambda event_type, data: sink.append((event_type, data)),
@@ -281,7 +280,7 @@ async def dm_rig(tmp_path):
     config = SystemConfig()
     config.communications.dm_min_rank = "ensign"
     trust, clock, events = TrustNetwork(), _Clock(), []
-    coord = _coordinator(trust, clock, events=events, ward_room=ws, min_time_minutes=60)
+    coord = _coordinator(trust, clock, events=events, min_time_minutes=60)
     rt = SimpleNamespace(
         ward_room=ws, registry=registry, callsign_registry=callsigns,
         ontology=SimpleNamespace(get_agent_department=lambda t: departments.get(t)),

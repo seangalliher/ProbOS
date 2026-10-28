@@ -54,10 +54,8 @@ class _Episodes:
 
 def _coordinator(clock: _Clock, *, trust: TrustNetwork | None = None, memory: Any = None) -> BootCampCoordinator:
     return BootCampCoordinator(
-        config=BootCampConfig(
-            relax_quality_gates=True, min_time_minutes=0, nudge_cooldown_seconds=0, timeout_minutes=120,
-        ),
-        ward_room=SimpleNamespace(),
+        # AD-1270 (#1324) slice 4c: the coordinator has no nudge cooldown and no ward-room dependency.
+        config=BootCampConfig(relax_quality_gates=True, min_time_minutes=0, timeout_minutes=120),
         trust_service=trust if trust is not None else TrustNetwork(),
         episodic_memory=memory if memory is not None else _Episodes(),
         emit_event_fn=lambda event_type, data: None,

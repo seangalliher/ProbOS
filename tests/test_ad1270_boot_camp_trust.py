@@ -45,11 +45,10 @@ class _Episodes:
 
 
 def _coordinator(trust: TrustNetwork, *, events: list | None = None, **config: object) -> BootCampCoordinator:
-    settings = {"min_time_minutes": 0, "nudge_cooldown_seconds": 0, **config}
+    settings = {"min_time_minutes": 0, **config}  # AD-1270 slice 4c: no nudge cooldown, no ward room
     sink = events if events is not None else []
     return BootCampCoordinator(
         config=BootCampConfig(**settings),
-        ward_room=SimpleNamespace(),
         trust_service=trust,
         episodic_memory=_Episodes(10),
         emit_event_fn=lambda event_type, data: sink.append((event_type, data)),
@@ -248,6 +247,48 @@ _GATING_PHASES = {"_execute_sub_task_chain", "_execute_chain_with_intent_routing
 _LOOKUP_PHASES = {"_maybe_dispatch_oracle_lookup", "_maybe_dispatch_ward_room_lookup"}
 
 
+def _own_nodes(node: ast.AST) -> list[ast.AST]:
+    """4b-R14 (AD-1270 slice 4c): the nodes a definition runs itself. A nested function or class is
+    not walked into: ``_definitions`` lists it as its own entry, so it is classified on its own."""
+    found: list[ast.AST] = []
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        child = stack.pop()
+        found.append(child)
+        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            stack.extend(ast.iter_child_nodes(child))
+    return found
+
+
+def _definitions(node: ast.AST, prefix: str = "") -> list[tuple[str, ast.AST]]:
+    """4b-R14: every function in the file under its qualified name (``CognitiveAgent.method``,
+    ``outer.inner``), in source order; a repeated name stays repeated."""
+    found: list[tuple[str, ast.AST]] = []
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            name = f"{prefix}{child.name}"
+            if not isinstance(child, ast.ClassDef):
+                found.append((name, child))
+            found.extend(_definitions(child, f"{name}."))
+        else:
+            found.extend(_definitions(child, prefix))
+    return found
+
+
+def _one(definitions: list[tuple[str, ast.AST]], qualname: str) -> ast.AST:
+    matches = [node for name, node in definitions if name == qualname]
+    assert len(matches) == 1, (qualname, len(matches))
+    return matches[0]
+
+
+def _own_attribute_calls(node: ast.AST) -> list[str]:
+    return [
+        call.func.attr
+        for call in _own_nodes(node)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+    ]
+
+
 def _executes_a_chain(node: ast.AST) -> bool:
     return any(
         isinstance(call, ast.Call)
@@ -255,14 +296,14 @@ def _executes_a_chain(node: ast.AST) -> bool:
         and call.func.attr == "execute"
         and isinstance(call.func.value, ast.Attribute)
         and call.func.value.attr == "_sub_task_executor"
-        for call in ast.walk(node)
+        for call in _own_nodes(node)
     )
 
 
 def _step_kinds(node: ast.AST) -> set[str]:
     return {
         keyword.value.attr
-        for call in ast.walk(node)
+        for call in _own_nodes(node)
         if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "SubTaskSpec"
         for keyword in call.keywords
         if keyword.arg == "sub_task_type" and isinstance(keyword.value, ast.Attribute)
@@ -270,14 +311,19 @@ def _step_kinds(node: ast.AST) -> set[str]:
 
 
 def test_every_gating_chain_phase_asks_for_the_relaxation_not_enrolment() -> None:
+    """A2's census, hardened by slice 4c (4b-R14): methods are keyed by qualified name, so a
+    same-named method in another class is classified on its own, and a nested definition's calls
+    are not credited to the method around it."""
     tree = ast.parse((_SRC / "cognitive" / "cognitive_agent.py").read_bytes())
-    functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
-    methods = {node.name: node for node in functions}
+    definitions = _definitions(tree)
+    gating = sorted(f"CognitiveAgent.{name}" for name in _GATING_PHASES)
+    lookups = sorted(f"CognitiveAgent.{name}" for name in _LOOKUP_PHASES)
 
-    assert {node.name for node in functions if _executes_a_chain(node)} == _GATING_PHASES | _LOOKUP_PHASES
-    for name in _GATING_PHASES:
-        assert "_refresh_boot_camp_relaxation" in _attribute_calls(methods[name]), name
-    for name in _LOOKUP_PHASES:
-        assert _step_kinds(methods[name]) == {"QUERY"}, name
-    assert "relaxes_quality_gates" in _attribute_calls(methods["_refresh_boot_camp_relaxation"])
+    assert sorted(name for name, node in definitions if _executes_a_chain(node)) == sorted(gating + lookups)
+    for name in gating:
+        assert "_refresh_boot_camp_relaxation" in _own_attribute_calls(_one(definitions, name)), name
+    for name in lookups:
+        assert _step_kinds(_one(definitions, name)) == {"QUERY"}, name
+    producer = _one(definitions, "CognitiveAgent._refresh_boot_camp_relaxation")
+    assert "relaxes_quality_gates" in _own_attribute_calls(producer)
     assert "is_enrolled" not in _attribute_calls(tree)
