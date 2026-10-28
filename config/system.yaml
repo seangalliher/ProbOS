@@ -2104,6 +2104,8 @@ sub_task:
   max_concurrent_chains: 4
   nats_publish_enabled: false
   nats_payload_max_bytes: 16384
+# AD-1270 (#1324): relax_quality_gates (default false, absent here) auto-approves Evaluate and Reflect for
+# enrolled cold-start crew until they graduate or time out. A weakened control: only the Captain sets it.
 boot_camp:
   enabled: true
   min_episodes: 5

@@ -23,6 +23,9 @@ class BootCampConfig(BaseModel):
     min_time_minutes: int = 60
     timeout_minutes: int = 120
     nudge_cooldown_seconds: int = 600
+    # AD-1270 (#1324): AD-638's Evaluate/Reflect auto-approval for enrolled crew. Off,
+    # enrolment relaxes nothing. On weakens the anti-confabulation gate: the Captain's switch.
+    relax_quality_gates: bool = False
 
 
 class ShipStateSnapshotConfig(BaseModel):

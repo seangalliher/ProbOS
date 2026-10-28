@@ -4963,6 +4963,15 @@ class ProactiveCognitiveLoop:
                 })
                 logger.info("AD-453: %s sent DM to @%s", sender_callsign or agent.agent_type, target_callsign)
 
+                # AD-1270 (#1324): a crew DM counts toward AD-638 graduation. Bookkeeping only:
+                # a failure is logged and the DM stands (the boot-camp timeout bounds the miss).
+                _boot_camp = getattr(rt, "boot_camp", None)
+                if _boot_camp is not None:
+                    try:
+                        await _boot_camp.on_agent_dm(agent.id)
+                    except Exception:
+                        logger.debug("AD-1270: boot-camp DM tracking failed for %s", sender_label, exc_info=True)
+
                 # Record Hebbian social connection
                 if hasattr(rt, 'hebbian_router') and rt.hebbian_router:
                     from probos.mesh.routing import REL_SOCIAL

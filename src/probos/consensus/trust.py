@@ -1021,6 +1021,15 @@ class TrustNetwork:
             return self.prior_alpha / (self.prior_alpha + self.prior_beta)
         return record.score
 
+    def get_trust_score(self, agent_id: AgentID) -> float:
+        """The ``TrustNetworkProtocol`` name for :meth:`get_score` (AD-1270, #1324).
+
+        ``protocols.TrustNetworkProtocol`` and the AD-638 coordinator declare this
+        name; the boot camp and ``/conn`` call it. It calls ``get_score`` rather than
+        aliasing it, so a patched ``get_score`` governs both reads.
+        """
+        return self.get_score(agent_id)
+
     def get_record(self, agent_id: AgentID) -> TrustRecord | None:
         """Get the full trust record for an agent (BF-907: a sovereign identity reads its slot)."""
         return self._records.get(self._canonical_key(agent_id))
