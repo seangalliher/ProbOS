@@ -19,6 +19,7 @@ from probos.maturity.model import (
     ReceiptSource,
     TriState,
 )
+from probos.maturity.receipts import ActivationReceipt, ActivationReceipts
 from probos.maturity.registry import (
     DECLARATION_MODULES,
     MaturityRegistry,
@@ -29,6 +30,8 @@ from probos.maturity.report import build_rows, render_json, render_markdown
 __all__ = [
     "ALWAYS_CONFIGURED",
     "DECLARATION_MODULES",
+    "ActivationReceipt",
+    "ActivationReceipts",
     "CapabilityDeclaration",
     "CapabilityRow",
     "ExerciseRecord",
