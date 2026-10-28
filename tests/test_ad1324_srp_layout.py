@@ -1,7 +1,9 @@
 """AD-1324 amendment 1 (finding 7): the repair adds no architecture-baseline debt.
 
 Method/line limits come from the repository's own checker constants, and the baseline file is
-byte-identical to the base commit's, so no SRP trigger was grandfathered to pass.
+byte-identical to the last reviewed one (ARCHITECTURE_BASELINE_SHA256), so no SRP trigger was
+grandfathered to pass. AD-1324 set the pin; a later reviewed baseline edit moves it in the same
+commit and records why beside it.
 """
 
 from __future__ import annotations
@@ -16,7 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "probos" / "cognitive"
 MAX_METHODS = 15
 MAX_LINES = 500
-ARCHITECTURE_BASELINE_SHA256 = "62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1"
+# The LF-normalised sha256 of the reviewed baseline. AD-1270 (#1324) slice 4b lowered one row
+# (unowned-task, probos.startup.dreaming::init_dreaming, count 2 -> 1): the dead activation
+# block's loop.create_task left dreaming.py, and the architecture checker requires the row to
+# follow in the same commit. The pin before slice 4b (set by AD-1324, b513580b) was
+# 62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1.
+ARCHITECTURE_BASELINE_SHA256 = "c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f"
 
 TARGETS = [
     ("swe_harness/agentic_loop.py", "AgenticLoop", 13),
