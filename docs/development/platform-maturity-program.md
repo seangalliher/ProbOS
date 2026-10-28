@@ -747,15 +747,21 @@ rules, or the hard escalation boundaries in `.github/agents/orchestrator.agent.m
 ### Wave 1 — Truth and Guardrails
 
 - AD-1270f Slice 0 canonical preflight/gate wrapper and timing manifest.
-- **AD-1270a capability truth shadow report — migration step 1 DELIVERED (inventory only).**
-    `src/probos/maturity/` resolves eight declarations against three distinct
+- **AD-1270a capability truth shadow report — migration step 1 DELIVERED (inventory only); step 2 delivered for three owners (#1324 slice 5).**
+    `src/probos/maturity/` resolves the declarations against three distinct
     authorities (import system / `SystemConfig` / `list_capability_catalog`) and
     renders `docs/development/capability-truth-inventory.md` via a `--check`-able
-    generator. Observation only: zero production call sites changed, and nothing
-    reads a row to make a decision. **Migration steps 2-5 remain open** — activation
-    receipts (step 2), exercise receipts (step 3), Doctor reuse and a live-runtime
-    projection (step 5) have no producer yet, so `advertised`, `activated`,
-    `exercise` and `health` are honestly `unknown` and no row can evaluate `live`.
+    generator; step 1 shipped eight. Observation only: nothing reads a row to make
+    a decision. **Step 2:** finalization records an activation receipt (the owner,
+    whether startup wired it, and the evidence in order; not a health claim) for
+    `core.boot-camp`, `cognitive.working-memory-cognition` and
+    `core.night-orders-escalation`, keeps them on `runtime.activation_receipts` and
+    logs one line each; production writes receipts and reads none. The other
+    declarations have no receipt point yet. **Steps 3-5 remain open** — exercise
+    receipts (step 3), Doctor reuse and a live-runtime projection (step 5) have no
+    producer yet, so `advertised`, `exercise` and `health` are honestly `unknown`,
+    the offline inventory shows `activated` as `unknown` too, and no row can
+    evaluate `live`.
 - AD-1270b seam-manifest slice.
 - AD-1270b architecture-fitness slice.
 - AD-1270b crossing tests, one P0 family per bounded build.
