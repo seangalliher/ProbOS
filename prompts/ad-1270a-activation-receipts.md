@@ -133,8 +133,7 @@ Never delete or loosen a test beyond P-T1. Run the M1 and M3 focused gates with 
 A receipt records, for one declared capability, the production owner a startup ownership point
 is meant to wire, whether it wired it, and the facts it saw, in the order it saw them. It is
 **not** a health claim and not exercise evidence: :class:`ActivationReceipts` answers
-``exercise_for`` and ``health_for`` with empty records, so a receipted capability's ``live``
-stays ``unknown`` until migration step 3 records production exercise.
+``exercise_for`` and ``health_for`` with empty records.
 
 One :class:`ActivationReceipts` per finalization, held by the runtime; there is no module-level
 instance. Production writes receipts and reads none. This module imports nothing from
@@ -291,7 +290,7 @@ REPLACE:
 """AD-1270a migration step 2 (#1324 slice 5): the activation receipt model.
 
 A receipt is evidence that a startup ownership point wired an owner. It is not a health claim
-and not exercise evidence, so a receipted capability's ``live`` stays ``unknown``.
+and not exercise evidence.
 
 Hermetic: no runtime boot, no network, no clock, no writes.
 """
@@ -1022,8 +1021,8 @@ REPLACE:
 
 Finalization records a receipt after the boot camp's late-bind and enrolment, after
 working-memory cognition starts, and for the Night Orders escalation from what it hands the
-runtime. A receipt names the owner and the evidence; it is not a health claim, so ``live``
-stays ``unknown``. Production writes receipts and reads none: the two source censuses at the
+runtime. A receipt names the owner and the evidence; it is not a health claim. Production
+writes receipts and reads none: the two source censuses at the
 end pin it.
 """
 
@@ -1668,7 +1667,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1270 (2026-10-2X), #1324 slice 5 -- AD-1270a migration step 2: finalization records activation receipts for the boot camp, working-memory cognition and the Night Orders escalation.** A receipt (`probos.maturity.receipts.ActivationReceipt`) names the owner a startup ownership point is meant to wire, whether it did, and the evidence it saw, in order; it is not a health claim. `ActivationReceipts` is step 1's `ReceiptSource`, and it answers exercise and health with empty records, so a receipted capability's `live` stays `unknown` until step 3. `finalize_startup` records the receipts through `probos.startup.activation_receipts` on `runtime.activation_receipts`, one log line each. The boot camp's receipt lists the AD-638 coordinator, then the AD-683 late-bind, then the cold-start enrolment, in slice 4b's order, which is unchanged; a warm boot's skipped enrolment is still an activation, a failed one is not. Working-memory cognition's receipt follows its start (off by default, so not activated). The Night Orders escalation's receipt lists its three links: the manager, the bridge alerts and the Ward Room router. Owners are matched by class path, so a test double is recorded as not activated, and each receipt site is log-and-degrade. Three declarations join the inventory: `core.boot-camp` and `core.night-orders-escalation` in a new `probos.maturity_declarations`, and `cognitive.working-memory-cognition`. The offline inventory still shows `activated` as `unknown`, and its header now says why. Production writes receipts and reads none; two source censuses in `tests/test_ad1270a_startup_receipts.py` pin the importers and the absence of a reader. The eight step-1 declarations have no receipt point yet (#1324 register 5-R1). The contract is `prompts/ad-1270a-activation-receipts.md`.
+**AD-1270 (2026-10-2X), #1324 slice 5 -- AD-1270a migration step 2: finalization records activation receipts for the boot camp, working-memory cognition and the Night Orders escalation.** A receipt (`probos.maturity.receipts.ActivationReceipt`) names the owner a startup ownership point is meant to wire, whether it did, and the evidence it saw, in order; it is not a health claim. `ActivationReceipts` is step 1's `ReceiptSource`, and it answers exercise and health with empty records. `finalize_startup` records the receipts through `probos.startup.activation_receipts` on `runtime.activation_receipts`, one log line each. The boot camp's receipt lists the AD-638 coordinator, then the AD-683 late-bind, then the cold-start enrolment, in slice 4b's order, which is unchanged; a warm boot's skipped enrolment is still an activation, a failed one is not. Working-memory cognition's receipt follows its start (off by default, so not activated). The Night Orders escalation's receipt lists its three links: the manager, the bridge alerts and the Ward Room router. Owners are matched by class path, so a test double is recorded as not activated, and each receipt site is log-and-degrade. Three declarations join the inventory: `core.boot-camp` and `core.night-orders-escalation` in a new `probos.maturity_declarations`, and `cognitive.working-memory-cognition`. The offline inventory still shows `activated` as `unknown`, and its header now says why. Production writes receipts and reads none; two source censuses in `tests/test_ad1270a_startup_receipts.py` pin the importers and the absence of a reader. The eight step-1 declarations have no receipt point yet (#1324 register 5-R1). The contract is `prompts/ad-1270a-activation-receipts.md`.
 
 ```
 
@@ -1713,7 +1712,7 @@ REPLACE:
     receipts (step 3), Doctor reuse and a live-runtime projection (step 5) have no
     producer yet, so `advertised`, `exercise` and `health` are honestly `unknown`,
     the offline inventory shows `activated` as `unknown` too, and no row can
-    evaluate `live`.
+    be `live`.
 ```
 
 Parent checklist (the orchestrator, on #1324): add and tick a slice-5 item with the commits and the receipt.
@@ -1990,6 +1989,13 @@ Not adopted:
 
 - **§4's predicted rows.** M2 step 5 said every axis other than `configured` reads `unknown`, with live `unknown`. Two independent builds regenerated the same inventory and measured `present` `yes` on all three rows and `live` `inert` on `cognitive.working-memory-cognition`, whose `configured` is `no` (`maturity/model.py:182-183`). Step 5 now states the measured rows.
 - **What 16.2 and A2 missed.** Their checks covered sentences describing the head, not predictions of build output, and A1's dry run did not regenerate the inventory. A Grep of this contract for `unknown`, `inert`, `inventory`, `rows` and `predicted` finds no other claim about these rows' axis values. §2 and §5 say `activated` reads `unknown` offline (true). P-H2's and U3's "no row can read (or evaluate) `live`" mean that no row reaches `live`, which holds with an `inert` row; their bodies are unchanged.
+
+## 19. Amendment A4 (2026-10-28, on slice 4c's final head `698ec7e1`)
+
+- **Round 1's finding (P3, ordinary reach).** Four shipped texts said a receipted capability's `live` stays `unknown`: U1 (`PROGRESS.md`), 7.1.M (`receipts.py` module docstring) and the 7.1.N and 7.4.N test-module docstrings. `CapabilityRow.live` returns `inert` when `present`, `configured` or `advertised` is `false` (`maturity/model.py:182-183`), which the reviewer measured on `cognitive.working-memory-cognition` through the real receipt source and `build_rows`. Each clause is deleted, and the rest of each sentence stands. No receipt makes a row reach `live` (`model.py:193-194`; §2, §14 item 3).
+- **U3.** "No row can evaluate `live`" is weakened to "no row can be `live`". Every row evaluates the property, and one evaluates to `inert`. This supersedes A3's reading of U3 (§18). P-H2's header sentence states a condition on reaching `live`, holds, and is unchanged.
+- **What A3's sweep missed.** It covered the contract's own prose, not the prose inside pair and new-file bodies (docstrings in 7.1.M, 7.1.N and 7.4.N, and the tracker texts U1 and U3), which ship. A4's Grep for `stays`, `stay`, `remains`, `unknown`, `live`, `inert` and `LiveState` over the whole contract found no other false claim. The test assertions that compare `live` (7.1.N `:456`, `:479`; 7.4.N `:1361`, `:1570`) are about specific rows and hold.
+- **Scope.** Wording only. No code, assertion, test count, decision or milestone changes. M3's existing `gen_ad_ledger.py` regenerate and `--check` covers the U1 body edit. A delta review round follows.
 
 ## For the register (#1324)
 
