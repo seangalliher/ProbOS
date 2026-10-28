@@ -162,7 +162,7 @@ REMAINING_TRUE_LEAVES: tuple[str, ...] = (
     "AgentWorkConfig",
     # AD-1341 S5 (#1569): a new leaf after AgentWorkConfig; in batch 10 it joins ArchiveConfig's module.
     "ArchivePromotionConfig",
-    "BootCampPhaseConfig",
+    # AD-1270 (#1324) slice 4c deleted BootCampPhaseConfig (AD-509): it left config.py, not moved.
     "ConsultationDeliveryConfig",
     "ConsultationDispatchConfig",
     "ConsultationWorkspaceConfig",

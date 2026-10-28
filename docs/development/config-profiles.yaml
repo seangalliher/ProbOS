@@ -12,15 +12,15 @@ baseline_id: ad-1185-config-profiles-v1
 tracking_issue: 1121
 smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
 census:
-  measured_at_commit: AD-1270 (issue 1324) slice 4b M1 on the slice-4 merge, every count re-measured with
-    this instrument (slice 4b adds boot_camp.relax_quality_gates, a default-False boolean no tracked
-    config arms; slice 3 measured 450, 226, 224, 85 and 141)
+  measured_at_commit: AD-1270 (issue 1324) slice 4c M1 on the slice-4b merge, every count re-measured with
+    this instrument (slice 4c removes boot_camp_phase.enabled, a default-True boolean; slice 4b
+    measured 451, 227, 224, 85 and 142)
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 451
+  boolean_fields_reachable: 450
   default_false: 227
-  default_true: 224
+  default_true: 223
   default_false_armed_by_system_yaml: 85
   default_false_never_armed: 142
   unattributable_deltas:

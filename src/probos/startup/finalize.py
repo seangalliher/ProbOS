@@ -880,6 +880,20 @@ def _wire_curriculum_registry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+def _late_bind_boot_camp_snapshot(*, runtime: Any) -> bool:
+    """BF-261 / AD-1270 (#1324): hand the AD-683 builder to the boot-camp coordinator.
+
+    Phase 7 builds the coordinator before ``runtime.ship_state_snapshot`` exists, so
+    finalization binds the builder here, before ``_activate_boot_camp_on_cold_start``
+    captures the snapshot. Through the public setter: a builder injected at construction
+    is kept. True when the builder was bound.
+    """
+    coordinator = getattr(runtime, "boot_camp", None)
+    if coordinator is None:
+        return False
+    return coordinator.bind_ship_state_builder(getattr(runtime, "ship_state_snapshot", None))
+
+
 async def _is_new_crew_start(runtime: Any) -> bool:
     """AD-1270 (#1324): True when this boot starts a new crew, for the AD-638 boot camp.
 
@@ -927,24 +941,6 @@ async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
     if not crew_agents:
         return False
     await coordinator.activate(crew_agents)
-    return True
-
-
-def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-509 v1: Wire BootCampPhaseTracker (in-memory observational)."""
-    cfg = getattr(config, "boot_camp_phase", None)
-    if not cfg or not cfg.enabled:
-        return False
-
-    from probos.crew_development.boot_camp import BootCampPhaseTracker
-
-    emit_fn = getattr(runtime, "emit_event", None)
-    tracker = BootCampPhaseTracker()
-    tracker.emit_event = emit_fn
-    runtime.boot_camp_tracker = tracker  # public attribute (Wave 5 convention #1)
-    logger.info(
-        "AD-509: Boot Camp Phase Tracker v1 initialized (5 phases + COMPLETED; observational)"
-    )
     return True
 
 
@@ -4198,9 +4194,6 @@ async def finalize_startup(
     if _wire_curriculum_registry(runtime=runtime, config=config):
         logger.info("AD-507: Crew Development Framework v1 wired during finalization")
 
-    if _wire_boot_camp_tracker(runtime=runtime, config=config):
-        logger.info("AD-509: Boot Camp Phase Tracker v1 wired during finalization")
-
     if _wire_birth_chamber(runtime=runtime, config=config):
         logger.info("AD-486: Holodeck Birth Chamber v1 wired during finalization")
 
@@ -4218,10 +4211,9 @@ async def finalize_startup(
 
     if _wire_ship_state_snapshot(runtime=runtime, config=config):
         logger.info("AD-683: Ship State Snapshot v1 wired during finalization")
-        # BF-261: Late-bind into BootCampCoordinator (created at Phase 7, before finalize)
-        _bc = getattr(runtime, "boot_camp", None)
-        if _bc is not None and getattr(_bc, "_ship_state_builder", None) is None:
-            _bc._ship_state_builder = runtime.ship_state_snapshot
+        # BF-261 / AD-1270 (#1324): late-bind into BootCampCoordinator (created at Phase 7, before
+        # finalize) through its public setter, before the activation below captures the snapshot.
+        _late_bind_boot_camp_snapshot(runtime=runtime)
 
     # AD-1270 (#1324): AD-638 activation for a new crew, after the coordinator (Phase 7) and the
     # AD-683 snapshot late-bind above. Log-and-degrade: startup continues. ``activate`` enrols

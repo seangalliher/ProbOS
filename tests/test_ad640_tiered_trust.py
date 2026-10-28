@@ -211,7 +211,6 @@ class TestBootCampIntegration:
 
         coordinator = BootCampCoordinator(
             config=BootCampConfig(),
-            ward_room=MagicMock(),
             trust_service=mock_trust,
             episodic_memory=AsyncMock(),
             emit_event_fn=MagicMock(),
@@ -234,14 +233,8 @@ class TestBootCampIntegration:
         # Crew agent: trust 0.50 (below min_trust_score 0.55)
         mock_trust.get_trust_score = MagicMock(return_value=0.50)
 
-        mock_ward_room = AsyncMock()
-        mock_ward_room.get_or_create_dm_channel = AsyncMock(return_value=MagicMock(id="dm-1"))
-        mock_ward_room.create_thread = AsyncMock(return_value=MagicMock(id="t-1"))
-        mock_ward_room.create_post = AsyncMock(return_value=MagicMock(id="p-1"))
-
         coordinator = BootCampCoordinator(
             config=BootCampConfig(),
-            ward_room=mock_ward_room,
             trust_service=mock_trust,
             episodic_memory=AsyncMock(),
             emit_event_fn=MagicMock(),

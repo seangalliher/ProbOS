@@ -15,17 +15,49 @@ from pydantic import BaseModel, Field, field_validator
 class BootCampConfig(BaseModel):
     """AD-638: Cold-start boot camp configuration."""
 
-    enabled: bool = True
-    min_episodes: int = 5
-    min_ward_room_posts: int = 3
-    min_dm_conversations: int = 1
-    min_trust_score: float = 0.55
-    min_time_minutes: int = 60
-    timeout_minutes: int = 120
-    nudge_cooldown_seconds: int = 600
-    # AD-1270 (#1324): AD-638's Evaluate/Reflect auto-approval for enrolled crew. Off,
-    # enrolment relaxes nothing. On weakens the anti-confabulation gate: the Captain's switch.
-    relax_quality_gates: bool = False
+    # AD-1270 (#1324) slice 4c (4b register R12): each description is the field's generated reference row.
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "AD-638: build the boot-camp coordinator (it also needs the Ward Room, trust and episodic "
+            "memory) and enrol a new crew at finalization. False: no coordinator and no enrolment."
+        ),
+    )
+    min_episodes: int = Field(default=5, description="Graduation: the agent's episode count must reach this.")
+    min_ward_room_posts: int = Field(
+        default=3, description="Graduation: Ward Room posts counted while the agent is enrolled.",
+    )
+    min_dm_conversations: int = Field(
+        default=1,
+        description=(
+            "Graduation: DMs sent to crew while enrolled. A DM to the Captain or an unsent DM "
+            "does not count."
+        ),
+    )
+    min_trust_score: float = Field(
+        default=0.55,
+        description="Activation skips an agent whose trust is at or above this; graduation needs at least this.",
+    )
+    min_time_minutes: int = Field(
+        default=60, description="Graduation: minutes enrolled, on the coordinator's clock.",
+    )
+    timeout_minutes: int = Field(
+        default=120,
+        description=(
+            "Minutes after activation at which enrolment ends: every agent still enrolled is marked "
+            "graduated and one BOOT_CAMP_TIMEOUT is emitted. Nothing is deleted. Enforced by the "
+            "coordinator's reads, with no task."
+        ),
+    )
+    # AD-1270 (#1324): nudge_cooldown_seconds was removed with phases 2 and 3; a config that sets it loads.
+    relax_quality_gates: bool = Field(
+        default=False,
+        description=(
+            "AD-1270 (#1324): while on, AD-638 auto-approves Evaluate and Reflect for enrolled crew "
+            "until they graduate or time out. On weakens the anti-confabulation gate: the Captain's "
+            "switch. Off (the default), enrolment relaxes nothing."
+        ),
+    )
 
 
 class ShipStateSnapshotConfig(BaseModel):

@@ -343,8 +343,9 @@ class TestBirthChamber:
     async def test_admit_calls_curriculum_list_by_phase_orientation(self) -> None:
         chamber, _ = make_chamber()
         curriculum = MagicMock()
+        # AD-1270 (#1324): fakes of AD-507's CurriculumModule, which keys on module_id.
         curriculum.list_by_phase.return_value = (
-            SimpleNamespace(id="m1"), SimpleNamespace(id="m2"),
+            SimpleNamespace(module_id="m1"), SimpleNamespace(module_id="m2"),
         )
         chamber.set_curriculum_registry(curriculum)
         await chamber.admit(_FakeAgent("a1"))

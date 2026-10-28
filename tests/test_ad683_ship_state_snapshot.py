@@ -235,14 +235,12 @@ async def test_capture_in_boot_camp_activate() -> None:
     runtime = _make_runtime_full()
     builder = ShipStateSnapshotBuilder(runtime)
 
-    ward_room = AsyncMock()
     trust_service = MagicMock()
     trust_service.get_trust_score = MagicMock(return_value=0.0)
     episodic = AsyncMock()
 
     coord = BootCampCoordinator(
         config=BootCampConfig(),
-        ward_room=ward_room,
         trust_service=trust_service,
         episodic_memory=episodic,
         ship_state_builder=builder,
@@ -264,7 +262,6 @@ def test_boot_camp_coordinator_backward_compat_and_wirer() -> None:
     # Backward-compat: BootCampCoordinator constructs without ship_state_builder kwarg.
     coord = BootCampCoordinator(
         config=BootCampConfig(),
-        ward_room=AsyncMock(),
         trust_service=MagicMock(),
         episodic_memory=AsyncMock(),
     )

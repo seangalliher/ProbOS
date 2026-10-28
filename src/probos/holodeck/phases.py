@@ -8,9 +8,8 @@ from enum import Enum
 class HolodeckPhase(str, Enum):
     """Five birth-chamber phases plus GRADUATED sentinel.
 
-    Distinct from AD-509 ``BootCampPhase`` (orientation/core_knowledge/
-    a_school/calibration/integration). AD-486 phases mirror the spec at
-    docs/development/roadmap.md:4130: orientation -> calibration ->
+    AD-509's separate five-phase ``BootCampPhase`` (orientation/core_knowledge/
+    a_school/calibration/integration) was deleted by AD-1270 (#1324). AD-486 phases: orientation -> calibration ->
     self_discovery -> ship_records -> ward_room_integration -> graduated.
     """
 

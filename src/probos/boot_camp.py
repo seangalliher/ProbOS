@@ -24,27 +24,6 @@ class TrustServiceProtocol(Protocol):
     def get_trust_score(self, agent_id: str) -> float: ...
 
 
-class WardRoomProtocol(Protocol):
-    """Narrow interface for Ward Room operations."""
-
-    async def get_or_create_dm_channel(
-        self, agent_a_id: str, agent_b_id: str,
-        callsign_a: str, callsign_b: str,
-    ) -> Any: ...
-
-    async def create_thread(
-        self, channel_id: str, author_id: str, title: str, body: str,
-        author_callsign: str, thread_mode: str, max_responders: int,
-    ) -> Any: ...
-
-    async def create_post(
-        self, thread_id: str, author_id: str, body: str,
-        parent_id: str | None, author_callsign: str,
-    ) -> Any: ...
-
-    async def list_channels(self) -> list: ...
-
-
 class EpisodicMemoryProtocol(Protocol):
     """Narrow interface for episode count."""
 
@@ -59,46 +38,32 @@ class AgentBootCampState:
     callsign: str
     department: str
     enrolled_at: float = field(default_factory=time.time)
-    phase: int = 1  # 1=orientation, 2=introductions, 3=observation, 4=graduated
-    introduced_to_chief: bool = False
-    cross_dept_contact: bool = False
-    shared_observation: bool = False
-    notebook_started: bool = False
+    # 1=enrolled, 4=graduated. AD-1270 (#1324) deleted phases 2 and 3, which had no caller.
+    phase: int = 1
     ward_room_posts: int = 0
     dm_conversations: int = 0
     graduated: bool = False
     graduated_at: float | None = None
 
 
-# Department chief mapping — same callsigns used in standing_orders.py
-_DEPARTMENT_CHIEFS: dict[str, str] = {
-    "medical": "Bones",
-    "engineering": "LaForge",
-    "science": "Number One",
-    "security": "Worf",
-    "operations": "O'Brien",
-    "communications": "Uhura",
-}
-
-
 class BootCampCoordinator:
     """Manages cold-start boot camp lifecycle.
 
     Responsibilities:
-    - Detect cold-start and enroll crew agents
-    - Drive structured introduction exercises via Counselor
-    - Relax quality gates during boot camp (context flag)
+    - Enroll cold-start crew agents
+    - Relax quality gates while enrolled, only when ``relax_quality_gates`` is on
+    - Offer enrolled agents the AD-683 cold-start snapshot
     - Track graduation criteria per agent
     - Transition agents to active duty
 
     Does NOT own: trust scoring, onboarding wiring, quality gate logic,
-    Ward Room infrastructure, or Counselor agent behavior.
+    Ward Room infrastructure, or Counselor agent behavior. AD-1270 (#1324)
+    deleted the uncalled Counselor-voiced introduction and observation phases.
     """
 
     def __init__(
         self,
         config: BootCampConfig,
-        ward_room: WardRoomProtocol,
         trust_service: TrustServiceProtocol,
         episodic_memory: EpisodicMemoryProtocol,
         emit_event_fn: Callable[..., Any] | None = None,
@@ -109,15 +74,12 @@ class BootCampCoordinator:
         self._config = config
         # AD-1270 (#1324): every time read goes through the clock, so tests need no wall time.
         self._clock = clock
-        self._ward_room = ward_room
         self._trust = trust_service
         self._episodic = episodic_memory
         self._emit_event_fn = emit_event_fn
         self._agents: dict[str, AgentBootCampState] = {}
         self._active = False
         self._started_at: float | None = None
-        self._nudge_cooldowns: dict[str, float] = {}
-        self._observation_thread_id: str | None = None
         # AD-683: Cold-start ship state snapshot — populated at activate() end.
         self._ship_state_builder = ship_state_builder
         self.ship_state_snapshot: Any | None = None  # ShipStateSnapshot | None
@@ -145,6 +107,33 @@ class BootCampCoordinator:
     def get_state(self, agent_id: str) -> AgentBootCampState | None:
         """Get boot camp state for an agent."""
         return self._agents.get(agent_id)
+
+    def bind_ship_state_builder(self, builder: Any) -> bool:
+        """BF-261 / AD-1270 (#1324): late-bind the AD-683 builder unless one was injected.
+
+        Finalization builds the builder after this coordinator (Phase 7) and binds it before
+        ``activate``, which captures the snapshot once; a bind after activation captures
+        nothing. True when bound.
+        """
+        if builder is None or self._ship_state_builder is not None:
+            return False
+        self._ship_state_builder = builder
+        return True
+
+    def orientation_snapshot_text(self, agent_id: str) -> str:
+        """AD-683 / AD-1270 (#1324): the cold-start snapshot for an enrolled agent, else "".
+
+        Keyed on enrolment, not on ``relax_quality_gates``: it is context, not a gate. It asks
+        ``is_enrolled`` first, so it enforces the timeout like the other reads, with or without
+        a snapshot. The text is the snapshot captured at ``activate``.
+        """
+        if not self.is_enrolled(agent_id) or self.ship_state_snapshot is None:
+            return ""
+        try:
+            return self.ship_state_snapshot.render_text()
+        except Exception:
+            logger.debug("AD-683: ship_state_snapshot.render_text failed; no snapshot this turn", exc_info=True)
+            return ""
 
     # --- Public API ---
 
@@ -247,180 +236,6 @@ class BootCampCoordinator:
         await self._graduate_agent(state, episode_count, trust)
         return True
 
-    async def run_phase_2_introductions(
-        self, counselor_id: str, counselor_callsign: str,
-    ) -> None:
-        """Counselor-driven introduction exercises."""
-        # Group agents by department for cross-department pairing
-        by_dept: dict[str, list[AgentBootCampState]] = {}
-        for state in self._agents.values():
-            if state.graduated:
-                continue
-            by_dept.setdefault(state.department, []).append(state)
-
-        dept_names = list(by_dept.keys())
-
-        for state in self._agents.values():
-            if state.graduated or state.phase >= 2:
-                continue
-
-            # Cooldown check
-            if not self._can_nudge(state.agent_id):
-                continue
-
-            # Exercise 1: Introduce to department chief
-            chief_callsign = _DEPARTMENT_CHIEFS.get(state.department, "")
-            if chief_callsign and not state.introduced_to_chief:
-                try:
-                    dm_channel = await self._ward_room.get_or_create_dm_channel(
-                        counselor_id, state.agent_id,
-                        counselor_callsign, state.callsign,
-                    )
-                    thread = await self._ward_room.create_thread(
-                        channel_id=dm_channel.id,
-                        author_id=counselor_id,
-                        title=f"Welcome aboard, {state.callsign}",
-                        body=(
-                            f"You should introduce yourself to {chief_callsign}, "
-                            f"your department chief. Send them a DM about your role "
-                            f"and what you bring to the department."
-                        ),
-                        author_callsign=counselor_callsign,
-                        thread_mode="discuss",
-                        max_responders=0,
-                    )
-                    self._record_nudge(state.agent_id)
-                    logger.debug(
-                        "AD-638: Phase 2 chief intro nudge sent to %s",
-                        state.callsign,
-                    )
-                except Exception:
-                    logger.debug(
-                        "AD-638: Failed to send chief intro nudge to %s",
-                        state.callsign, exc_info=True,
-                    )
-
-            # Exercise 2: Cross-department contact
-            if not state.cross_dept_contact and len(dept_names) > 1:
-                # Pick a peer from a different department
-                other_depts = [d for d in dept_names if d != state.department]
-                if other_depts:
-                    target_dept = other_depts[0]
-                    peers = by_dept.get(target_dept, [])
-                    if peers:
-                        peer = peers[0]
-                        if self._can_nudge(state.agent_id):
-                            try:
-                                dm_channel = await self._ward_room.get_or_create_dm_channel(
-                                    counselor_id, state.agent_id,
-                                    counselor_callsign, state.callsign,
-                                )
-                                await self._ward_room.create_thread(
-                                    channel_id=dm_channel.id,
-                                    author_id=counselor_id,
-                                    title="Cross-department introduction",
-                                    body=(
-                                        f"Reach out to {peer.callsign} in {target_dept}. "
-                                        f"Building cross-department relationships "
-                                        f"strengthens the whole crew."
-                                    ),
-                                    author_callsign=counselor_callsign,
-                                    thread_mode="discuss",
-                                    max_responders=0,
-                                )
-                                self._record_nudge(state.agent_id)
-                            except Exception:
-                                logger.debug(
-                                    "AD-638: Failed to send cross-dept nudge to %s",
-                                    state.callsign, exc_info=True,
-                                )
-
-            # Advance to phase 2
-            if state.phase < 2:
-                old_phase = state.phase
-                state.phase = 2
-                self._emit(EventType.BOOT_CAMP_PHASE_ADVANCE, {
-                    "agent_id": state.agent_id,
-                    "callsign": state.callsign,
-                    "from_phase": old_phase,
-                    "to_phase": 2,
-                })
-
-    async def run_phase_3_observation(
-        self, counselor_id: str, counselor_callsign: str,
-    ) -> None:
-        """Shared observation thread + notebook prompts."""
-        # Create observation thread on All Hands if not already created
-        if not self._observation_thread_id:
-            try:
-                channels = await self._ward_room.list_channels()
-                all_hands = next(
-                    (c for c in channels if getattr(c, 'channel_type', '') == "ship"),
-                    None,
-                )
-                if all_hands:
-                    thread = await self._ward_room.create_thread(
-                        channel_id=all_hands.id,
-                        author_id=counselor_id,
-                        title="Boot Camp — Initial Observations",
-                        body=(
-                            "What have you noticed about the ship's current state? "
-                            "Share your professional observations."
-                        ),
-                        author_callsign=counselor_callsign,
-                        thread_mode="discuss",
-                        max_responders=0,
-                    )
-                    self._observation_thread_id = thread.id
-            except Exception:
-                logger.debug(
-                    "AD-638: Failed to create observation thread",
-                    exc_info=True,
-                )
-
-        # Send notebook prompts to each agent
-        for state in self._agents.values():
-            if state.graduated or state.phase >= 3:
-                continue
-
-            if not self._can_nudge(state.agent_id):
-                continue
-
-            try:
-                dm_channel = await self._ward_room.get_or_create_dm_channel(
-                    counselor_id, state.agent_id,
-                    counselor_callsign, state.callsign,
-                )
-                await self._ward_room.create_thread(
-                    channel_id=dm_channel.id,
-                    author_id=counselor_id,
-                    title="Initial assessment",
-                    body=(
-                        "Start a notebook entry about your initial assessment "
-                        "of your department's baseline."
-                    ),
-                    author_callsign=counselor_callsign,
-                    thread_mode="discuss",
-                    max_responders=0,
-                )
-                self._record_nudge(state.agent_id)
-            except Exception:
-                logger.debug(
-                    "AD-638: Failed to send notebook nudge to %s",
-                    state.callsign, exc_info=True,
-                )
-
-            # Advance to phase 3
-            if state.phase < 3:
-                old_phase = state.phase
-                state.phase = 3
-                self._emit(EventType.BOOT_CAMP_PHASE_ADVANCE, {
-                    "agent_id": state.agent_id,
-                    "callsign": state.callsign,
-                    "from_phase": old_phase,
-                    "to_phase": 3,
-                })
-
     async def force_graduate_all(self) -> None:
         """Force-graduate all remaining agents (timeout)."""
         self._graduate_remaining_on_timeout()
@@ -465,9 +280,6 @@ class BootCampCoordinator:
             return
         state.ward_room_posts += 1
 
-        if channel_type == "ship" and self._observation_thread_id:
-            state.shared_observation = True
-
         # Check graduation after each tracked activity
         await self.check_graduation(agent_id)
 
@@ -489,7 +301,8 @@ class BootCampCoordinator:
 
         ``is_active``, ``is_enrolled``, ``check_graduation``, ``on_agent_post``,
         ``on_agent_dm`` and ``check_timeout`` call this first; ``relaxes_quality_gates``
-        reaches it through ``is_enrolled`` when ``relax_quality_gates`` is on. ``get_state``
+        reaches it through ``is_enrolled`` when ``relax_quality_gates`` is on, and
+        ``orientation_snapshot_text`` (the AD-683 DM read) always does. ``get_state``
         returns the raw state and does not call it.
         """
         if not self._active or self._started_at is None:
@@ -527,15 +340,6 @@ class BootCampCoordinator:
         if all(s.graduated for s in self._agents.values()):
             self._active = False
             logger.info("AD-638: All agents graduated — boot camp complete")
-
-    def _can_nudge(self, agent_id: str) -> bool:
-        """Check nudge cooldown for an agent."""
-        last = self._nudge_cooldowns.get(agent_id, 0.0)
-        return (self._clock() - last) >= self._config.nudge_cooldown_seconds
-
-    def _record_nudge(self, agent_id: str) -> None:
-        """Record nudge timestamp."""
-        self._nudge_cooldowns[agent_id] = self._clock()
 
     def _emit(self, event_type: EventType, data: dict) -> None:
         """Emit event via the injectable event function."""

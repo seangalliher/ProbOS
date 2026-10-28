@@ -403,7 +403,6 @@ class EventType(str, Enum):
     # Boot camp (AD-638)
     BOOT_CAMP_ACTIVATED = "boot_camp_activated"
     SHIP_STATE_SNAPSHOT_CAPTURED = "ship_state_snapshot_captured"  # AD-683
-    BOOT_CAMP_PHASE_ADVANCE = "boot_camp_phase_advance"
     BOOT_CAMP_GRADUATION = "boot_camp_graduation"
     BOOT_CAMP_TIMEOUT = "boot_camp_timeout"
 
@@ -487,9 +486,6 @@ class EventType(str, Enum):
 
     # ── Crew Development (AD-507) ──────────────────────────────────
     CURRICULUM_MODULE_QUERIED = "curriculum_module_queried"  # AD-507
-
-    # ── Boot Camp Phase Tracker (AD-509) ───────────────────────────
-    BOOT_CAMP_PHASE_ADVANCED = "boot_camp_phase_advanced"  # AD-509
 
     # AD-486: Holodeck Birth Chamber phase events
     HOLODECK_AGENT_ADMITTED = "holodeck_agent_admitted"

@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1891
-  field_definitions: 1881
+  canonical_dump_leaves: 1889
+  field_definitions: 1878
   incidental: 13
-  own_models: 229
-  owned: 297
-  public_names: 310
-canonical_dump_sha256: 79ec646a9142b8c5cda7c1607d0e7aea22ca0edcfd023c8a4554ed1ea39aac21
+  own_models: 228
+  owned: 296
+  public_names: 309
+canonical_dump_sha256: 8517e238c10cbc4f8bfe1b64d351c843c4c9f3f419d3b5d1c59bc6801337a776
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -164,7 +164,6 @@ names:
   BehavioralMetricsConfig: {kind: model, tier: owned}
   BillConfig: {kind: model, tier: owned}
   BootCampConfig: {kind: model, tier: owned}
-  BootCampPhaseConfig: {kind: model, tier: owned}
   BridgeAlertConfig: {kind: model, tier: owned}
   BridgeConfig: {kind: model, tier: owned}
   BrowserToolConfig: {kind: model, tier: owned}
@@ -818,7 +817,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1c403b63431a9be53da759dcbc7c2b9ac1516adf6cf47a5d74ee5d2258383ad8
+    schema_sha256: 96f19f488fb7b6d04aef78cdb7093a379c975b79d344ba91da9b2a522f721138
     fields:
     - {default: 'True', name: enabled}
     - {default: '5', name: min_episodes}
@@ -827,16 +826,7 @@ models:
     - {default: '0.55', name: min_trust_score}
     - {default: '60', name: min_time_minutes}
     - {default: '120', name: timeout_minutes}
-    - {default: '600', name: nudge_cooldown_seconds}
     - {default: 'False', name: relax_quality_gates}
-  BootCampPhaseConfig:
-    qualname: BootCampPhaseConfig
-    bases:
-    - BaseModel
-    - object
-    schema_sha256: abf70b4dec26cac51eca8568ed2a469bb1e5c5e575321a6c21348310fa4b2c3c
-    fields:
-    - {default: 'True', name: enabled}
   BridgeAlertConfig:
     qualname: BridgeAlertConfig
     bases:
@@ -3422,7 +3412,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 2415dc63239c063dd1403cdefe018c8b5cbe836b9f131a44a9e6ad243d179db9
+    schema_sha256: 9dfca3549dfa117bf6d3f28761291fbb272ef9b59d7acaba5cbfd327b3958259
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3604,7 +3594,6 @@ models:
     - {default: <required>, has_default_factory: true, name: classification_gate}
     - {default: <required>, has_default_factory: true, name: autonomy_boundaries}
     - {default: <required>, has_default_factory: true, name: crew_development}
-    - {default: <required>, has_default_factory: true, name: boot_camp_phase}
     - {default: <required>, has_default_factory: true, name: discovery_learning}
     - {default: <required>, has_default_factory: true, name: scoped_cognition}
     - {default: <required>, has_default_factory: true, name: workspace_ontology}

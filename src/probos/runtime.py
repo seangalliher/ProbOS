@@ -3319,7 +3319,8 @@ class ProbOSRuntime:
         if self.sif and self.ward_room:
             self.sif.set_ward_room(self.ward_room)
 
-        # AD-638: Boot camp coordinator (late-bound, needs ward_room + trust + episodic)
+        # AD-638: Boot camp coordinator (late-bound; needs trust, episodic memory and the Ward Room,
+        # whose posts and DMs it counts toward graduation. AD-1270: it no longer takes the Ward Room.)
         if (
             self.config.boot_camp.enabled
             and self.ward_room
@@ -3329,7 +3330,6 @@ class ProbOSRuntime:
             try:
                 self.boot_camp = BootCampCoordinator(
                     config=self.config.boot_camp,
-                    ward_room=self.ward_room,
                     trust_service=self.trust_network,
                     episodic_memory=self.episodic_memory,
                     emit_event_fn=self._emit_event,

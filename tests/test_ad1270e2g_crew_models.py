@@ -141,7 +141,7 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AssignmentConfig': {'enabled
                           'min_trust_score': 0.55,
                           'min_time_minutes': 60,
                           'timeout_minutes': 120,
-                          'nudge_cooldown_seconds': 600,
+                          # AD-1270 (#1324) slice 4c removed nudge_cooldown_seconds (600) with AD-638's phases 2 and 3.
                           # AD-1270 (#1324) slice 4b added this default-off flag after the
                           # move; every other key is still the pre-move dump.
                           'relax_quality_gates': False},
