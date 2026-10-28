@@ -1557,7 +1557,8 @@ def test_committed_baseline_records_the_measured_surface(
     # alert_on_red and alert_on_yellow (1880 -> 1876).
     # BF-926 (#1656) removes security.memory.enforce_leak_guard, which nothing read (1876 -> 1875).
     # AD-1341 S5 (#1569) adds ArchivePromotionConfig's three fields and SystemConfig.archive_promotion (1875 -> 1879).
-    assert counts["field_definitions"] == 1879  # AD-1206 intentionally adds github_repository.
+    # AD-1270 (#1324) slice 3 adds working_memory.cognition_enabled (1879 -> 1880).
+    assert counts["field_definitions"] == 1880  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     assert len(baseline["names"]) == 310  # AD-1341 S5 (#1569): ArchivePromotionConfig
     assert len(baseline["models"]) == 230  # AD-1341 S5 (#1569): ArchivePromotionConfig

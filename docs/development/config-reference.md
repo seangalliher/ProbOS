@@ -2458,7 +2458,7 @@ Anomaly window detection configuration (AD-673).
 
 ## `working_memory`
 
-AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours is read; AgentWorkingMemory uses its own defaults for everything else.
+AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours and cognition_enabled (AD-1270, #1324) are read; AgentWorkingMemory uses its own defaults for everything else.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2475,6 +2475,7 @@ AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_t
 | `social_budget` | `int` | `800` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
 | `ship_budget` | `int` | `800` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
 | `engagement_budget` | `int` | `800` | — | Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default. |
+| `cognition_enabled` | `bool` | `False` | — | AD-1270 (#1324): attach AD-668 salience filtering and AD-670 metabolism to every crew agent's working memory and run their cycle every metabolism.cycle_interval_seconds. Off: nothing is constructed. Read once at startup. |
 
 ## `predictive_branching`
 
@@ -2522,7 +2523,7 @@ AD-573: Memory budget accounting across recall tiers. Inert: no production code 
 
 ## `metabolism`
 
-AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section to act on it (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324).
+AD-670: Working memory metabolism — active lifecycle management. Read only when working_memory.cognition_enabled is on (AD-1270, #1324): enabled then turns metabolism off on its own, cycle_interval_seconds sets the cycle's period, and the rest configure MemoryMetabolism.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
@@ -2588,7 +2589,7 @@ AD-610: Utility-based storage gating - write-time validation.
 
 ## `salience`
 
-AD-668: Salience filter for working memory promotion.
+AD-668: Salience filter for working memory promotion. Read only when working_memory.cognition_enabled is on (AD-1270, #1324): enabled then turns the filter off on its own; no novelty gate is passed.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|

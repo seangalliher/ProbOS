@@ -67,15 +67,6 @@ classes:
   cognitive/insights.py::TopicCount:
     disposition: retire
     owner: '#1324'
-  cognitive/memory_metabolism.py::AuditFlag:
-    disposition: wire
-    owner: '#1324'
-  cognitive/memory_metabolism.py::MemoryMetabolism:
-    disposition: wire
-    owner: '#1324'
-  cognitive/memory_metabolism.py::MetabolismReport:
-    disposition: wire
-    owner: '#1324'
   cognitive/memory_security.py::MemorySecurityGate:
     disposition: wire
     owner: '#1324'
@@ -170,12 +161,6 @@ classes:
     disposition: staged
     owner: AD-1299 (#1352)
   cognitive/retrieval_practice.py::RetrievalPracticeResult:
-    disposition: wire
-    owner: '#1324'
-  cognitive/salience_filter.py::SalienceFilter:
-    disposition: wire
-    owner: '#1324'
-  cognitive/salience_filter.py::SalienceScore:
     disposition: wire
     owner: '#1324'
   cognitive/self_improvement/stage_contract.py::StageContract:

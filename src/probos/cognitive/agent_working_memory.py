@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from probos.cognitive.salience_filter import BackgroundStream, SalienceFilter
 
 if TYPE_CHECKING:
-    from probos.cognitive.memory_metabolism import MemoryMetabolism
+    from probos.cognitive.memory_metabolism import MemoryMetabolism, MetabolismReport
     from probos.config import PinnedKnowledgeConfig
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,11 @@ class WorkingMemoryEntry:
 
     def token_estimate(self) -> int:
         return len(self.content) // CHARS_PER_TOKEN
+
+
+def _entry_key(entry: WorkingMemoryEntry) -> tuple[float, str, str, str]:
+    """AD-1270 (#1324): what makes two entries the same record (FORGET's named-buffer match)."""
+    return (entry.timestamp, entry.content, entry.category, entry.source_pathway)
 
 
 @dataclass(frozen=True)
@@ -260,6 +265,21 @@ class NamedBuffer:
         """Read-only snapshot of current entries."""
         return list(self._entries)
 
+    def discard(self, entries: list[WorkingMemoryEntry]) -> int:
+        """AD-1270 (#1324): remove the entries equal to these by ``_entry_key``; return how many.
+
+        Matched by value, not identity: the AD-573 restore rebuilds the named buffers from
+        their own copies, so a restored ring entry and its named-buffer copy are different
+        objects. The buffer keeps its maximum length.
+        """
+        keys = {_entry_key(entry) for entry in entries}
+        kept = [entry for entry in self._entries if _entry_key(entry) not in keys]
+        removed = len(self._entries) - len(kept)
+        if removed:
+            self._entries.clear()
+            self._entries.extend(kept)
+        return removed
+
     def __len__(self) -> int:
         return len(self._entries)
 
@@ -382,7 +402,15 @@ class AgentWorkingMemory:
         """AD-668: Return True when an entry should enter main working memory."""
         if self._salience_filter is None:
             return True
-        scored = self._salience_filter.score(entry, self._agent_context)
+        try:
+            scored = self._salience_filter.score(entry, self._agent_context)
+        except Exception:
+            logger.warning(
+                "AD-1270: salience scoring failed; entry admitted (category=%s)",
+                entry.category,
+                exc_info=True,
+            )
+            return True  # AD-1270 (#1324): fail open; a scorer fault must not cost the agent the entry
         if not scored.promoted:
             if self._background_stream is not None:
                 self._background_stream.add(scored)
@@ -569,6 +597,25 @@ class AgentWorkingMemory:
         """AD-670: Attach a metabolism engine for active lifecycle management."""
         self._metabolism = metabolism
 
+    def attach_cognition(
+        self,
+        *,
+        salience_filter: SalienceFilter | None,
+        metabolism: MemoryMetabolism | None,
+        background_max_entries: int = 50,
+    ) -> None:
+        """AD-1270 (#1324): attach the AD-668 salience filter and the AD-670 metabolism engine.
+
+        Idempotent: attaching again changes nothing, and an existing background stream
+        keeps its entries. ``None`` leaves that part as it is.
+        """
+        if salience_filter is not None:
+            self._salience_filter = salience_filter  # AD-1270: the gate now runs on every record_*
+            if self._background_stream is None:
+                self._background_stream = BackgroundStream(max_entries=background_max_entries)
+        if metabolism is not None:
+            self.set_metabolism(metabolism)
+
     def get_buffers(self) -> dict[str, deque[WorkingMemoryEntry]]:
         """AD-670: Expose internal buffers for metabolism operations."""
         return {
@@ -579,11 +626,24 @@ class AgentWorkingMemory:
             "reasoning": self._recent_reasoning,
         }
 
-    def run_metabolism_cycle(self) -> None:
-        """AD-670: Run one metabolism cycle if metabolism is attached."""
+    def run_metabolism_cycle(self) -> MetabolismReport | None:
+        """AD-670: Run one metabolism cycle if metabolism is attached.
+
+        AD-1270 (#1324): returns the cycle's report (``None`` when detached), and an entry
+        FORGET removes from a ring buffer leaves the named buffers too, so neither
+        ``render_context``, ``render_buffers`` nor the AD-573 freeze keeps it.
+        """
         if self._metabolism is None:
-            return
-        self._metabolism.run_cycle(self.get_buffers())
+            return None
+        buffers = self.get_buffers()
+        before = [entry for buffer in buffers.values() for entry in buffer]
+        report = self._metabolism.run_cycle(buffers)
+        if report.forgotten_count:
+            kept = {id(entry) for buffer in buffers.values() for entry in buffer}
+            forgotten = [entry for entry in before if id(entry) not in kept]
+            for named in self._named_buffers.values():
+                named.discard(forgotten)
+        return report
 
     def record_conclusion(
         self,

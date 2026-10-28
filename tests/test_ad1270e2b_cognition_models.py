@@ -211,7 +211,10 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AttentionConfig': {   'enabl
                                    'duty_budget': 600,
                                    'social_budget': 800,
                                    'ship_budget': 800,
-                                   'engagement_budget': 800},
+                                   'engagement_budget': 800,
+                                   # AD-1270 (#1324) slice 3 added this default-off flag after the
+                                   # move; every other key is still the pre-move dump.
+                                   'cognition_enabled': False},
         'MemoryBudgetConfig': {   'enabled': True,
                                   'total_budget_tokens': 4650,
                                   'l0_budget': 150,

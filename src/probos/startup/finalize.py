@@ -816,6 +816,51 @@ async def _start_transcript_reaper(*, runtime: Any, config: "SystemConfig") -> N
         )
 
 
+async def _start_working_memory_cognition(*, runtime: Any, config: "SystemConfig") -> None:
+    """AD-1270 (#1324): attach AD-668/AD-670 to crew working memory and start their cycle.
+
+    Default off: with ``working_memory.cognition_enabled`` false the builder returns ``None``,
+    nothing is constructed and working memory behaves as before. Called after the AD-573
+    restore, which replaces each restored agent's working memory. Log-and-degrade: an invalid
+    value leaves cognition off and every working memory as it is.
+    """
+    runtime.working_memory_cognition = None
+    from probos.cognitive.working_memory_cognition import build_working_memory_cognition
+
+    def _crew_working_memories() -> list[tuple[str, Any]]:
+        ontology = getattr(runtime, "ontology", None)
+        members: list[tuple[str, Any]] = []
+        for agent in runtime.registry.all():
+            if not is_crew_agent(agent, ontology):
+                continue
+            memory = getattr(agent, "working_memory", None)
+            if memory is not None:
+                members.append((agent.id, memory))
+        return members
+
+    try:
+        cognition = build_working_memory_cognition(
+            working_memory=config.working_memory,
+            salience=config.salience,
+            metabolism=config.metabolism,
+            working_memories=_crew_working_memories,
+        )
+    except ValueError:  # AD-1270: an invalid metabolism or salience value
+        logger.warning(
+            "AD-1270: working-memory cognition config is invalid; it stays off this run",
+            exc_info=True,
+        )
+        return
+    if cognition is None:
+        return
+    await cognition.start()
+    runtime.working_memory_cognition = cognition
+    logger.info(
+        "AD-1270: working-memory cognition started for crew working memory (cycle every %.0fs)",
+        config.metabolism.cycle_interval_seconds,
+    )
+
+
 def _wire_curriculum_registry(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-507 v1: Wire CoreKnowledgeCurriculumRegistry (read-only catalog)."""
     cfg = getattr(config, "crew_development", None)
@@ -6324,6 +6369,13 @@ async def finalize_startup(
                 logger.info("AD-573: Restored working memory for %d agents", restored)
         except Exception:
             logger.debug("AD-573: Working memory restore failed", exc_info=True)
+
+    # AD-1270 (#1324): AD-668/AD-670 for crew working memory, default off. After the
+    # AD-573 restore above, which replaces each restored agent's working memory.
+    try:
+        await _start_working_memory_cognition(runtime=runtime, config=config)
+    except Exception:
+        logger.warning("AD-1270: _start_working_memory_cognition failed", exc_info=True)
 
     # BF-235: Always clear identity caches on stasis resume, regardless of
     # whether warm-boot orientation rendering is enabled. The caches are stale

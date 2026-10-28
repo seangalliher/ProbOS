@@ -79,6 +79,25 @@ async def _close_crew_session_delivery(runtime: Any) -> None:
         runtime.crew_session_delivery_service = None
 
 
+async def _stop_working_memory_cognition(runtime: Any) -> None:
+    """AD-1270 (#1324): stop the working-memory cognition cycle. Raises no ``Exception``.
+
+    Called before working memory is frozen, so no cycle runs during or after the freeze. A
+    runtime that never started it (the flag is off, or startup refused a value) has nothing
+    to stop.
+    """
+    from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
+
+    cognition = getattr(runtime, "working_memory_cognition", None)
+    if not isinstance(cognition, WorkingMemoryCognition):
+        return
+    try:
+        await cognition.stop()
+    except Exception:
+        logger.warning("AD-1270: working-memory cognition stop failed", exc_info=True)
+    runtime.working_memory_cognition = None
+
+
 def _close_voice_synthesis(runtime: Any) -> None:
     """BF-918: stop the resident Piper processes and the voice executor.
 
@@ -1645,6 +1664,9 @@ async def shutdown(
         except Exception:
             logger.warning("AD-986d: transcript_reaper.stop() failed", exc_info=True)
         runtime.transcript_reaper = None
+
+    # AD-1270 (#1324): stop the working-memory cognition cycle before working memory is frozen below.
+    await _stop_working_memory_cognition(runtime)
 
     # AD-876: Stop the board-reconciler cadence ticker (Quartermaster).
     if getattr(runtime, "board_reconciler_ticker", None) is not None:

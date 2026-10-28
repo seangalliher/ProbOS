@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1889
-  field_definitions: 1879
+  canonical_dump_leaves: 1890
+  field_definitions: 1880
   incidental: 13
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: c18b99268f01f55bd02b949e094d2a3e291b2c7fb876e3fdc7580f5045f0a011
+canonical_dump_sha256: 0dc88a6386951812bd96d7bdd1abb6e00542bc619c7a026dfd0a7845150be21c
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2475,7 +2475,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 7f3bf1730fb76576a3c6a84a7c067dd64475adc0c157c9158be23542228fda9d
+    schema_sha256: 5058934e4b4c2e1baecd163206a0bd2bbfdabc7bb8aabb9e8fb5061eff83e0a5
     fields:
     - {default: 'True', name: enabled}
     - {default: '3600.0', name: decay_half_life_seconds}
@@ -3109,7 +3109,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: d214bd82e994c553867421baecefb32188f903d2b22adb46e8bdfc20d0147328
+    schema_sha256: 99e1dd3069da1cd7812a5ca4d535bfba09e44a586aa3cef23bc1de5eeacd236f
     fields:
     - {default: 'True', name: enabled}
     - {default: '{''relevance'': 0.3, ''recency'': 0.25, ''novelty'': 0.15, ''urgency'': 0.2, ''social'': 0.1}', name: weights}
@@ -3421,7 +3421,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: af634e7ef49b4388d3e8437bc332fcc49ecc2a1f89fb932e37f98ee28b2978be
+    schema_sha256: 27a834863e8b8c03d7ae935c24cfa2eb8fe58a84eb3e2f944e088edd91886e9a
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3899,7 +3899,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 3a0f88791c671c7d4c4027c25a6f4417069e7ffbb48f179b14bb7b283531f0e5
+    schema_sha256: ff7b4fdac981ee4e54e70fdf210f932a78173d7968750c596806d39c244212a8
     fields:
     - {default: '3000', name: token_budget}
     - {default: '10', name: max_recent_actions}
@@ -3914,6 +3914,7 @@ models:
     - {default: '800', name: social_budget}
     - {default: '800', name: ship_budget}
     - {default: '800', name: engagement_budget}
+    - {default: 'False', name: cognition_enabled}
   WorkspaceOntologyConfig:
     qualname: WorkspaceOntologyConfig
     bases:

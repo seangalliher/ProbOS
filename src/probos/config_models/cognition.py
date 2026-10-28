@@ -276,7 +276,7 @@ class SelfModConfig(BaseModel):
 
 
 class WorkingMemoryConfig(BaseModel):
-    """AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours is read; AgentWorkingMemory uses its own defaults for everything else."""
+    """AD-573: Unified agent working memory configuration. BF-926 (#1656): only stale_threshold_hours and cognition_enabled (AD-1270, #1324) are read; AgentWorkingMemory uses its own defaults for everything else."""
 
     token_budget: int = Field(default=3000, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
     max_recent_actions: int = Field(default=10, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
@@ -291,6 +291,7 @@ class WorkingMemoryConfig(BaseModel):
     social_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
     ship_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
     engagement_budget: int = Field(default=800, description="Inert: no production code reads this field to act on it (BF-926, #1656); AgentWorkingMemory uses its own default.")
+    cognition_enabled: bool = Field(default=False, description="AD-1270 (#1324): attach AD-668 salience filtering and AD-670 metabolism to every crew agent's working memory and run their cycle every metabolism.cycle_interval_seconds. Off: nothing is constructed. Read once at startup.")
 
 
 class MemoryBudgetConfig(BaseModel):
@@ -331,7 +332,7 @@ class DistillationConfig(BaseModel):
 
 
 class MetabolismConfig(BaseModel):
-    """AD-670: Working memory metabolism — active lifecycle management. Inert: no production code reads this section to act on it (BF-926, #1656): nothing constructs MemoryMetabolism, so enabled and every threshold change nothing (#1324)."""
+    """AD-670: Working memory metabolism — active lifecycle management. Read only when working_memory.cognition_enabled is on (AD-1270, #1324): enabled then turns metabolism off on its own, cycle_interval_seconds sets the cycle's period, and the rest configure MemoryMetabolism."""
 
     enabled: bool = True
     decay_half_life_seconds: float = 3600.0

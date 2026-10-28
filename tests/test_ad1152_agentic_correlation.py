@@ -315,6 +315,9 @@ async def _off_observation(
     # AD-1341 S5's continuous-promotion section was added after this capture too. It is default off, and while off
     # no dream step writes the Ship's Archive; this agentic-loop observation runs no dream cycle.
     assert config.pop("archive_promotion") == {"enabled": False, "settle_hours": 24.0, "max_per_cycle": 8}
+    # AD-1270 (#1324) slice 3's working-memory cognition flag was added after this capture too. It is default
+    # off, and while off nothing attaches to working memory; this agentic-loop observation records none.
+    assert config["working_memory"].pop("cognition_enabled") is False
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
