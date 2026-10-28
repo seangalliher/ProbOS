@@ -4,6 +4,14 @@
 
 **Status:** build-ready. Drafted on `4fd31e6c` (`origin/main` `4aa1062f` + the slice-3 contract `8da8da16` + slice 3's M1). It builds after slice 3 and slice 4 merge. No new AD or BF number: this is slice 4b of #1324 (D7). **Captain:** only `boot_camp.relax_quality_gates` being switched on (a weakened control); it ships off and nothing is parked (D9). Overrulable: D2 (no enrolment flag), D5 (crew DMs only), the 4c dispositions in the register.
 
+**Amendment A1 (2026-10-28, after review round 1 of M1+M2 at `31066065`; `claude-architect`).** Repairs the two `gpt-6.1-sol` reviews' findings (`logs/ad1270/review-ad1270b-r1-a.md`, `review-ad1270b-r1-b.md`) in one commit, **R1**, on top of M2 and before M3, by the pairs in §7.16 and the new file §7.17. §7.1 to §7.15 keep their text; where §7.16 differs, §7.16 wins.
+- **B1 (P1):** the draft gated activation on BF-034's `runtime.is_cold_start`, which reads the memory object's truthiness (`dreaming.py:262`) and so is false whenever a memory object exists, and Phase 7 builds the coordinator only when one does: M2's activation could not run. D6 now gates it on `_is_new_crew_start` (no previous session record and an empty episode store). BF-034's detector and its readers are unchanged (D11, register R10).
+- **A1 (P2):** a `_boot_camp_active` marker set in triage survived into the routed chain's phase 2 after the timeout. Both producers now clear it before asking (D10).
+- **A2/B2, A3/B3 (P3):** the expiry docstrings and the activation comment and warning claimed more than the code does; reworded. U2, the `/conn` Absence entry, §13 (3) and R8 said only the Captain reaches `/conn` and that its scope is prompt text; corrected (R8, R11).
+- The test-strength gap is folded in: §7.17 drives the real routed entry with AD-639 on, and the ordering test checks the await.
+
+**Captain:** unchanged (D9). Told, overrulable: at the next reset that removes the session record and the episodes, crew below `min_trust_score` are enrolled (bookkeeping and events while the relaxation is off; `boot_camp.enabled: false` turns it off). R1 changes no shared contract (§4, Repair 1).
+
 **Re-anchoring after slices 3 and 4 merge:**
 - Anchored on slice-3 text: P-T2 (`test_ad1270e1_config_facade.py`, the `1880` line) and P-C2 (the `config-profiles.yaml` census header). Re-anchor both if slice 3's review repair changes those lines.
 - Not touched by slices 3 or 4: every other pair (`trust.py`, `crew.py`, `boot_camp.py`, `cognitive_agent.py`, `proactive.py`, `dreaming.py`, the `finalize.py` anchors at `def _wire_boot_camp_tracker` and the BF-261 block, `architecture-baseline.yaml`, `system.yaml` lines 2106-2108, the e2g and AD-1152 tests).
@@ -42,7 +50,9 @@ Each milestone is one Builder delegation and one local commit, staged by explici
 | `/conn` raises today | `commands_autonomous.py:91` → `runtime.py:2116` |
 | Pinned contracts a new field moves | `test_ad1270e1_config_facade.py:1560-1561`; `test_ad1270e2g_crew_models.py:137-144`; `test_ad1152_agentic_correlation.py:317-324`; `config-profiles.yaml:14-25,624-637` |
 | Architecture baseline pins | `architecture-baseline.yaml:1165-1168` (`init_dreaming` `loop.create_task` count 2); `:323-329` (`BootCampCoordinator` srp-size `methods`; body must stay ≤ 500 lines, `check_architecture_principles.py:187`) |
-| A real-boot test is a cold start | `tests/test_bf927_boot_claims.py:545-547` |
+| BF-034's `is_cold_start` cannot be true while a coordinator exists (A1) | `dreaming.py:262` `episodes_empty = not episodic_memory`; `EpisodicMemory` (`episodic.py:1358`, no base class) defines no `__len__` or `__bool__`; Phase 7 builds the coordinator only with a memory object (`runtime.py:3323-3328`). A second veto: `dreaming.py:257-261` compares every record with the generic prior, and AD-640 gives bridge and chief agents other priors before Phase 5 (`agent_onboarding.py:255-265`) |
+| A real-boot test with no episodic memory builds no coordinator | `tests/test_bf927_boot_claims.py:545` passes no memory; `runtime.py:3327` |
+| AD-502 records whether a crew has served | `startup/cognitive_services.py:583-591`: `session_last.json` present gives `stasis_recovery`, else `first_boot`; written at shutdown (`__main__.py:713`), never created by a failed start (`startup/shutdown.py:880-883`); deleted by reset tier 2 and above, kept by tier 1 (`__main__.py:2654-2662`) |
 
 ## 1. Problem
 
@@ -74,13 +84,15 @@ AD-638's boot camp has never enrolled an agent:
   - `_active` becomes False even when nobody remains.
   - The event fires at the first read after the deadline.
 - **D5.** Crew DMs count; DMs to the Captain and unsent DMs do not. A counting failure is logged at debug (as at `proactive.py:4115`): the DM stands and the timeout bounds the miss.
-- **D6.**
-  - Activation runs once, awaited, in `finalize_startup` after the BF-261 snapshot late-bind, gated on `runtime.is_cold_start` (a property, `runtime.py:2238-2241`).
-  - It uses `is_crew_agent` (`crew_utils.py:69`). No live behaviour changes, because the old block never ran.
-  - Log-and-degrade: a failure leaves the crew unenrolled and startup continues.
+- **D6 (as amended by A1).**
+  - Activation runs once, awaited, in `finalize_startup` after the BF-261 snapshot late-bind, gated on `_is_new_crew_start(runtime)`: `runtime._lifecycle_state` is `first_boot` or `reset` (no previous session record; `finalize.py` already reads `_lifecycle_state` at `:6334`) and `await runtime.episodic_memory.get_stats()` reports `total == 0`. An unreadable count is not a new crew. It does not read BF-034's `runtime.is_cold_start` (§0; register R10), and no reader of that flag changes. The helper keeps its name, `_activate_boot_camp_on_cold_start`.
+  - It uses `is_crew_agent` (`crew_utils.py:69`). A stasis recovery and a restart after a recorded session activate nothing. At the next reset that removes the session record and the episodes, crew below `min_trust_score` are enrolled; with the relaxation off that is bookkeeping and events (D2).
+  - Log-and-degrade: a failure logs a warning and startup continues. `activate` enrols agent by agent and nothing is rolled back, so a failure part-way can leave some crew enrolled.
 - **D7.** No BF: one root cause, one change, already on the #1324 register.
 - **D8.** The rest is slice 4c (register R4 to R7).
 - **D9.** Captain: only switching `relax_quality_gates` on.
+- **D10 (A1).** The producer owns `_boot_camp_active`: at both chain entry points it removes the key, then sets it only on a current true answer from `relaxes_quality_gates`. The routed hand-off needs no clear of its own: phase 2 (`cognitive_agent.py:6457`) and the fallback (`:6391`) re-enter `_execute_sub_task_chain`, whose producer asks again. Once the relaxation has ended, AD-639's `if not observation.get("_boot_camp_active")` branch runs in that phase, and the journal's `boot_camp_active` (`sub_task.py:722`) records each step's current answer. Off, the key stays absent, not `False`.
+- **D11 (A1).** BF-034's detector is not repaired in this slice. Repairing it switches on the dormant readers listed in R10 at the next reset, with no flag, and one of them is a fresh-start prompt note that nothing clears for the session. The boot camp gets its own predicate; R10 repairs BF-034 and converges it on the same test.
 
 ## 4. Milestones
 
@@ -122,6 +134,14 @@ If any other test fails, stop and report. Never delete or loosen a test. Run foc
 3. Run the focused gate. `check_architecture_principles.py --check` must pass: the `init_dreaming` row reads `count: 1`, and `BootCampCoordinator` keeps triggers `[methods]` only. If a `lines` trigger appears, stop and report; do not trim docstrings to fit.
 4. Commit by explicit path.
 
+**Repair 1 (A1) build order** (one Builder delegation and one local commit, **R1**, on top of M2 and before M3; **HIGH**; §7.16's pairs and §7.17, written against the files as committed at `31066065`):
+1. Write §7.17 and apply P-R6 to P-R9 (the lifecycle test file). Run both files over `31066065`. Predicted: §7.17 has 11 cases, 9 failed and 2 passed (`test_a_relaxation_that_expires_during_triage_does_not_reach_phase_two[held]` and `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[stasis-recovery]` are controls). The five `test_a_new_crew_needs_no_session_record_and_no_episodes` cases fail with `ImportError: cannot import name '_is_new_crew_start'` inside each test, not at collection. `[expired-in-triage]` fails with `analysis.markers == [True, True]`, and both reused-observation cases fail on their marker lists. The lifecycle file fails only `test_cold_start_finalization_enrols_crew[cold]`. Any other result, or any case that raises before its assertions, is a stop.
+2. Apply P-R1 to P-R5.
+3. Focused gate (`-n 0`): `tests/test_ad1270_boot_camp_repair_a1.py tests/test_ad1270_boot_camp_lifecycle.py tests/test_ad1270_boot_camp_trust.py tests/test_ad638_boot_camp.py tests/test_ad639_chain_tuning.py tests/test_ad632g_cognitive_jit_integration.py tests/test_ad632a_sub_task_foundation.py tests/test_ad1347_s4_chain_lookup.py tests/test_ad666_sensorium.py tests/test_bf206_confab_feedback.py tests/test_bf189_chain_memory_context.py tests/test_ad683_ship_state_snapshot.py tests/test_finalize.py tests/test_bf927_boot_claims.py tests/test_ad1185_config_profiles.py tests/test_ad1270b_architecture_fitness.py tests/test_layer_boundaries.py`; then `-P scripts/check_architecture_principles.py --check` (unchanged: `srp-size=92, layer-import=0, db-connect=30, unowned-task=14`; no method is added to any class) and `-P scripts/check_dormant_classes.py --check` (paste its whole output).
+4. Commit by explicit path: `src/probos/cognitive/cognitive_agent.py`, `src/probos/boot_camp.py`, `src/probos/startup/finalize.py`, `tests/test_ad1270_boot_camp_lifecycle.py`, `tests/test_ad1270_boot_camp_repair_a1.py`.
+
+R1 changes no shared contract: no public signature or return shape, persisted schema, config field, event type or payload, wire shape, or gate or tooling script. `_is_new_crew_start` is module-private, `_boot_camp_active` keeps its shape and meaning, and the journal column is unchanged. Round 2 reviews the R1 delta.
+
 ## 5. Consumers of every value this adds or changes
 
 | Value | Consumers | Effect |
@@ -129,12 +149,13 @@ If any other test fails, stop and report. Never delete or loosen a test. Run foc
 | `TrustNetwork.get_trust_score` | `boot_camp.py:160,224`, `runtime.py:2116` | from AttributeError to the `get_score` value |
 | `boot_camp.relax_quality_gates` | `BootCampCoordinator.relaxes_quality_gates` only; `config-reference.md`; `config-profiles.yaml` row | new, default off |
 | `BootCampCoordinator.relaxes_quality_gates` | `cognitive_agent.py` `_execute_sub_task_chain`, `_execute_chain_with_intent_routing` | new public method |
-| `_boot_camp_active` (observation key) | evaluate, reflect, AD-639 skip, AD-683 injection, journal | set only when the flag is on (was: on enrolment) |
+| `_boot_camp_active` (observation key) | evaluate, reflect, AD-639 skip, AD-683 injection, journal | set only when the flag is on (was: on enrolment); A1: removed before each producer asks, so phase 2 and the fallback ask again |
 | `BootCampCoordinator(clock=...)` | tests; `runtime.py:3330` (default) | new keyword-only argument |
-| Reads after the timeout | `is_active`, `is_enrolled`, `relaxes_quality_gates`, `check_graduation`, `on_agent_post`, `on_agent_dm`, `check_timeout` | enrolment ends; one `BOOT_CAMP_TIMEOUT` |
+| Reads after the timeout | `is_active`, `is_enrolled`, `check_graduation`, `on_agent_post`, `on_agent_dm`, `check_timeout`; `relaxes_quality_gates` only when the flag is on (off, it returns before `is_enrolled`); not `get_state` | enrolment ends; one `BOOT_CAMP_TIMEOUT` |
 | `force_graduate_all` with nobody remaining | `test_ad638` timeout tests | now also sets `_active=False` |
 | Crew DM count | `on_agent_dm` from `proactive.py` | new caller |
-| `_activate_boot_camp_on_cold_start` | `finalize_startup` | new; every cold-start boot, including test boots on a fresh `tmp_path` |
+| `_activate_boot_camp_on_cold_start` | `finalize_startup` | new; activates when `_is_new_crew_start` is true (A1). A test boot activates only when it passes an episodic memory, enables the Ward Room (`runtime.py:3323-3328`) and boots a fresh data directory |
+| `_is_new_crew_start` (A1) | `_activate_boot_camp_on_cold_start` only | new, module-private; reads `runtime._lifecycle_state` and `episodic_memory.get_stats()`. BF-034's `is_cold_start` and its readers are unchanged |
 | `init_dreaming` | `architecture-baseline.yaml` row | one fewer bare task |
 
 ## 6. Tests
@@ -178,6 +199,14 @@ If any other test fails, stop and report. Never delete or loosen a test. Run foc
   - `test_no_coordinator_or_no_crew_means_no_activation`
   - `test_finalization_activates_the_boot_camp_after_the_snapshot_late_bind` (AST)
   - `test_phase_5_no_longer_tries_to_activate_the_boot_camp` (AST)
+
+**Amendment A1, `tests/test_ad1270_boot_camp_repair_a1.py`** (11 cases; real `CognitiveAgent`, `SubTaskExecutor`, `EvaluateHandler` and `ReflectHandler` with AD-639 on; injected clock; real `TrustNetwork`; a real `EpisodicMemory` on `tmp_path`):
+- `test_a_relaxation_that_expires_during_triage_does_not_reach_phase_two[held]`, `[expired-in-triage]`: crosses the routed entry, triage, the timeout, phase 2 and the real Evaluate and Reflect handlers
+- `test_each_chain_entry_asks_again_on_a_reused_observation[direct]`, `[routed]`
+- `test_a_new_crew_needs_no_session_record_and_no_episodes[first-boot]`, `[reset]`, `[stasis-recovery]`, `[episodes]`, `[count-raises]`
+- `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[first-boot]`, `[stasis-recovery]`: crosses a real, started, empty `EpisodicMemory` (truthy, so BF-034 calls it warm), `_is_new_crew_start`, `_activate_boot_camp_on_cold_start` and enrolment, with `is_cold_start=False` as production reports it
+
+**Updated by A1 in `tests/test_ad1270_boot_camp_lifecycle.py`** (still 23 cases): the module docstring; `_startup_runtime` (a new crew, not `is_cold_start`) and its three call sites; `test_finalization_activates_the_boot_camp_after_the_snapshot_late_bind` also checks the await.
 
 ## 7. The contract
 
@@ -1506,6 +1535,497 @@ def test_phase_5_no_longer_tries_to_activate_the_boot_camp() -> None:
     assert [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "boot_camp"] == []
 ```
 
+### 7.16 Repair 1 (A1)
+
+Written against the files as committed at `31066065`. Every SEARCH occurs once in its file; match with the file's own (CRLF) endings.
+
+**Pair P-R1 (`src/probos/cognitive/cognitive_agent.py`).** `_execute_sub_task_chain`'s producer. M1's tests keep passing: `[off]` still sees the key absent, `[on]` still sees `True`, and the AST case still finds `relaxes_quality_gates` and no `is_enrolled`. SEARCH:
+```
+        observation["_is_dm"] = _params.get("is_dm_channel", False)
+
+        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
+        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
+        _rt = getattr(self, '_runtime', None)
+```
+REPLACE:
+```
+        observation["_is_dm"] = _params.get("is_dm_channel", False)
+
+        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
+        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
+        _rt = getattr(self, '_runtime', None)
+        observation.pop("_boot_camp_active", None)  # AD-1270: ask again; phase 2 and the fallback reuse triage's dict
+```
+
+**Pair P-R2 (`src/probos/cognitive/cognitive_agent.py`).** `_execute_chain_with_intent_routing`'s producer. SEARCH:
+```
+        observation["_channel_name"] = _channel_name
+
+        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
+        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
+        _rt = getattr(self, '_runtime', None)
+```
+REPLACE:
+```
+        observation["_channel_name"] = _channel_name
+
+        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
+        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
+        _rt = getattr(self, '_runtime', None)
+        observation.pop("_boot_camp_active", None)  # AD-1270: ask again; a reused observation carries an old answer
+```
+
+**Pair P-R3 (`src/probos/boot_camp.py`).** Docstring only; no test changes. `test_check_timeout_still_ends_boot_camp` keeps relying on `get_state` not expiring. SEARCH:
+```
+        """AD-1270 (#1324): enforce ``timeout_minutes`` by construction, with no task.
+
+        Every public reader and tracker calls this first, so nothing can observe an
+        enrolment, or a relaxation, past the timeout.
+        """
+```
+REPLACE:
+```
+        """AD-1270 (#1324): enforce ``timeout_minutes`` by construction, with no task.
+
+        ``is_active``, ``is_enrolled``, ``check_graduation``, ``on_agent_post``,
+        ``on_agent_dm`` and ``check_timeout`` call this first; ``relaxes_quality_gates``
+        reaches it through ``is_enrolled`` when ``relax_quality_gates`` is on. ``get_state``
+        returns the raw state and does not call it.
+        """
+```
+
+**Pair P-R4 (`src/probos/startup/finalize.py`).** The new-crew gate. It updates the expectations of M2's activation tests (P-R6 to P-R9). SEARCH:
+```
+async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
+    """AD-1270 (#1324): enrol cold-start crew in the AD-638 boot camp.
+
+    Moved from ``startup/dreaming.py``, which runs at Phase 5, before the coordinator
+    exists (Phase 7), so it never ran. Called after the AD-683 snapshot late-bind.
+    Returns True when ``activate`` ran; a warm boot or no coordinator does nothing.
+    """
+    coordinator = getattr(runtime, "boot_camp", None)
+    if coordinator is None or not runtime.is_cold_start:
+        return False
+```
+REPLACE:
+```
+async def _is_new_crew_start(runtime: Any) -> bool:
+    """AD-1270 (#1324): True when this boot starts a new crew, for the AD-638 boot camp.
+
+    A new crew has no previous session record (AD-502's ``_lifecycle_state`` is
+    ``first_boot``, or ``reset``) and an empty episode store; a stasis recovery is not one.
+    This is not BF-034's ``runtime.is_cold_start``: that flag reads the memory object's
+    truthiness, so it is false whenever an ``EpisodicMemory`` exists, and Phase 7 builds
+    the coordinator only when a memory object is present (#1324 register R10). Fails warm:
+    an unreadable count is not a new crew.
+    """
+    if runtime._lifecycle_state not in ("first_boot", "reset"):
+        return False  # AD-1270: a session record means this crew has served before
+    try:
+        stats = await runtime.episodic_memory.get_stats()
+    except Exception:
+        logger.debug("AD-1270: episode count unavailable; not treated as a new crew", exc_info=True)
+        return False  # AD-1270: an unreadable count is not a new crew
+    return stats.get("total") == 0
+
+
+async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
+    """AD-1270 (#1324): enrol a new crew in the AD-638 boot camp.
+
+    Moved from ``startup/dreaming.py``, which runs at Phase 5, before the coordinator
+    exists (Phase 7), so it never ran. Called after the AD-683 snapshot late-bind and
+    gated on ``_is_new_crew_start``. Returns True when ``activate`` ran; a boot after a
+    recorded session, a non-empty episode store or no coordinator does nothing.
+    """
+    coordinator = getattr(runtime, "boot_camp", None)
+    if coordinator is None or not await _is_new_crew_start(runtime):
+        return False
+```
+
+**Pair P-R5 (`src/probos/startup/finalize.py`).** The comment and the warning; no test pins the text. SEARCH:
+```
+    # AD-1270 (#1324): AD-638 activation on a cold start, after the coordinator (Phase 7) and the
+    # AD-683 snapshot late-bind above. Log-and-degrade: a failure leaves the crew unenrolled.
+    try:
+        await _activate_boot_camp_on_cold_start(runtime=runtime)
+    except Exception:
+        logger.warning("AD-1270: boot-camp activation failed; no crew is enrolled this run", exc_info=True)
+```
+REPLACE:
+```
+    # AD-1270 (#1324): AD-638 activation for a new crew, after the coordinator (Phase 7) and the
+    # AD-683 snapshot late-bind above. Log-and-degrade: startup continues. ``activate`` enrols
+    # agent by agent and nothing is rolled back, so a failure part-way can leave some crew enrolled.
+    try:
+        await _activate_boot_camp_on_cold_start(runtime=runtime)
+    except Exception:
+        logger.warning("AD-1270: boot-camp activation failed; startup continues", exc_info=True)
+```
+
+**Pair P-R6 (`tests/test_ad1270_boot_camp_lifecycle.py`).** The module docstring (M2's file). SEARCH:
+```
+Activation moved from startup/dreaming.py (Phase 5, before the coordinator exists) into
+finalization; every coordinator read enforces the timeout, with no task; a crew DM sent through
+the proactive path counts. Time comes from an injected clock, trust from a real TrustNetwork.
+```
+REPLACE:
+```
+Activation moved from startup/dreaming.py (Phase 5, before the coordinator exists) into
+finalization, for a new crew (Amendment A1: no session record and no episodes). ``is_active``,
+``is_enrolled``, ``check_graduation``, ``on_agent_post``, ``on_agent_dm`` and ``check_timeout``
+enforce the timeout, with no task, and ``relaxes_quality_gates`` does when its flag is on;
+``get_state`` returns raw state. A crew DM sent through the proactive path counts. Time comes
+from an injected clock, trust from a real TrustNetwork.
+```
+
+**Pair P-R7 (`tests/test_ad1270_boot_camp_lifecycle.py`).** `_startup_runtime` now models a new crew, not `is_cold_start`. M2's `test_cold_start_finalization_enrols_crew` and `test_no_coordinator_or_no_crew_means_no_activation` keep their names and assertions. SEARCH:
+```
+def _startup_runtime(coord: BootCampCoordinator | None, *, cold: bool, agents: list) -> SimpleNamespace:
+    return SimpleNamespace(
+        boot_camp=coord, is_cold_start=cold, ontology=None,
+        registry=SimpleNamespace(all=lambda: list(agents)),
+    )
+```
+REPLACE:
+```
+class _Stats:
+    """The one episodic-memory read ``_is_new_crew_start`` makes."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+
+    async def get_stats(self) -> dict:
+        return {"total": self.total}
+
+
+def _startup_runtime(coord: BootCampCoordinator | None, *, new_crew: bool, agents: list) -> SimpleNamespace:
+    # AD-1270 A1: is_cold_start is False, as production reports it whenever a coordinator exists
+    # (register R10); a new crew is no session record (first_boot) and an empty episode store.
+    return SimpleNamespace(
+        boot_camp=coord, is_cold_start=False, ontology=None,
+        _lifecycle_state="first_boot" if new_crew else "stasis_recovery", episodic_memory=_Stats(0),
+        registry=SimpleNamespace(all=lambda: list(agents)),
+    )
+```
+
+**Pair P-R8 (`tests/test_ad1270_boot_camp_lifecycle.py`).** The three call sites. SEARCH:
+```
+    ran = await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(coord, cold=cold, agents=_FLEET))
+```
+REPLACE:
+```
+    ran = await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(coord, new_crew=cold, agents=_FLEET))
+```
+Then SEARCH:
+```
+    assert await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(None, cold=True, agents=_FLEET)) is False
+```
+REPLACE:
+```
+    assert await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(None, new_crew=True, agents=_FLEET)) is False
+```
+Then SEARCH:
+```
+    no_crew = _startup_runtime(coord, cold=True, agents=_FLEET[1:])
+```
+REPLACE:
+```
+    no_crew = _startup_runtime(coord, new_crew=True, agents=_FLEET[1:])
+```
+
+**Pair P-R9 (`tests/test_ad1270_boot_camp_lifecycle.py`).** The ordering test also checks the await (reviewer B, property 5). SEARCH:
+```
+    assert len(activations) == 1 and len(snapshots) == 1
+    assert activations[0] > snapshots[0]
+```
+REPLACE:
+```
+    assert len(activations) == 1 and len(snapshots) == 1
+    assert activations[0] > snapshots[0]
+    awaited = sorted(
+        node.value.lineno
+        for node in ast.walk(body)
+        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name) and node.value.func.id == "_activate_boot_camp_on_cold_start"
+    )
+    assert awaited == activations  # A1: awaited, not a coroutine left unawaited
+```
+
+### 7.17 New file: `tests/test_ad1270_boot_camp_repair_a1.py` (R1)
+
+```python
+"""AD-1270 (#1324) slice 4b, Amendment A1: each chain phase asks for the relaxation again, and
+the boot camp finds a new crew without BF-034's cold-start flag.
+
+The chain cases use the AD-1347 S4 harness: a real ``CognitiveAgent`` and ``SubTaskExecutor``,
+with ANALYZE and COMPOSE as stand-ins that make no model call, and the real ``EvaluateHandler``
+and ``ReflectHandler`` with AD-639 on. The coordinator is real, with an injected clock, and
+trust is a real ``TrustNetwork``. The new-crew cases use a real ``EpisodicMemory`` on
+``tmp_path``. Nothing here reads the vessel's data directory or starts a vessel.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from probos.boot_camp import BootCampCoordinator
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.sub_task import SubTaskChain, SubTaskExecutor, SubTaskResult, SubTaskSpec, SubTaskType
+from probos.cognitive.sub_tasks.evaluate import EvaluateHandler
+from probos.cognitive.sub_tasks.reflect import ReflectHandler
+from probos.config import BootCampConfig, SystemConfig
+from probos.consensus.trust import TrustNetwork
+from probos.startup.finalize import _activate_boot_camp_on_cold_start
+
+_START = 1_000_000.0
+_TIMEOUT_S = 120 * 60
+CREW = {"agent_id": "crew-1", "callsign": "Wesley", "department": "science"}
+_FLEET = [
+    SimpleNamespace(id="security_officer-0", agent_type="security_officer", callsign="Worf", department="security"),
+    SimpleNamespace(id="file_reader-0", agent_type="file_reader", callsign="", department=""),
+]
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = _START
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _Episodes:
+    """The coordinator's episode-count collaborator (not under repair)."""
+
+    async def count_for_agent(self, agent_id: str) -> int:
+        return 0
+
+
+def _coordinator(clock: _Clock, *, trust: TrustNetwork | None = None, memory: Any = None) -> BootCampCoordinator:
+    return BootCampCoordinator(
+        config=BootCampConfig(
+            relax_quality_gates=True, min_time_minutes=0, nudge_cooldown_seconds=0, timeout_minutes=120,
+        ),
+        ward_room=SimpleNamespace(),
+        trust_service=trust if trust is not None else TrustNetwork(),
+        episodic_memory=memory if memory is not None else _Episodes(),
+        emit_event_fn=lambda event_type, data: None,
+        clock=clock,
+    )
+
+
+# --- each chain phase asks again ------------------------------------------------------------
+
+
+class _Runtime:
+    """The runtime attributes the chain entry points read directly, plus a no-op emit_event."""
+
+    def __init__(self, coord: BootCampCoordinator, trust: TrustNetwork) -> None:
+        self.boot_camp = coord
+        self.trust_network = trust  # no record for the crew agent: the 0.5 prior, AD-639's low band
+        self.config = SystemConfig()  # chain_tuning on, low_trust_ceiling 0.60
+
+    def emit_event(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+class _Analysis:
+    """ANALYZE's JSON contract, with no model call. Records the marker each call is given."""
+
+    def __init__(self, during_triage: Callable[[], None]) -> None:
+        self.markers: list[Any] = []
+        self._during_triage = during_triage
+
+    async def __call__(self, spec: Any, context: dict, prior_results: list) -> SubTaskResult:
+        self.markers.append(context.get("_boot_camp_active"))
+        if len(self.markers) == 1:
+            self._during_triage()
+        return SubTaskResult(
+            sub_task_type=SubTaskType.ANALYZE, name=spec.name, success=True,
+            result={"intended_actions": ["ward_room_reply"], "contribution_assessment": "RESPOND"},
+        )
+
+
+class _Compose:
+    """COMPOSE with no model call."""
+
+    async def __call__(self, spec: Any, context: dict, prior_results: list) -> SubTaskResult:
+        return SubTaskResult(
+            sub_task_type=SubTaskType.COMPOSE, name=spec.name, success=True, result={"output": "The sweep is clean."},
+        )
+
+
+class _Seen:
+    """A real handler, with each result it returned recorded."""
+
+    def __init__(self, handler: Any) -> None:
+        self._handler = handler
+        self.results: list[dict] = []
+
+    async def __call__(self, spec: Any, context: dict, prior_results: list) -> SubTaskResult:
+        result = await self._handler(spec, context, prior_results)
+        self.results.append(result.result)
+        return result
+
+
+def _chain() -> SubTaskChain:
+    return SubTaskChain(steps=[
+        SubTaskSpec(sub_task_type=SubTaskType.ANALYZE, name="analyze"),
+        SubTaskSpec(sub_task_type=SubTaskType.COMPOSE, name="compose"),
+        SubTaskSpec(sub_task_type=SubTaskType.EVALUATE, name="evaluate"),
+        SubTaskSpec(sub_task_type=SubTaskType.REFLECT, name="reflect"),
+    ])
+
+
+def _agent(coord: BootCampCoordinator, trust: TrustNetwork, analysis: _Analysis) -> tuple[Any, _Seen, _Seen]:
+    # Every path here returns before a model call; a client with no methods makes one fail loudly.
+    evaluate = _Seen(EvaluateHandler(llm_client=SimpleNamespace(), runtime=None))
+    reflect = _Seen(ReflectHandler(llm_client=SimpleNamespace(), runtime=None))
+    executor = SubTaskExecutor(config=None)
+    executor.register_handler(SubTaskType.ANALYZE, analysis)
+    executor.register_handler(SubTaskType.COMPOSE, _Compose())
+    executor.register_handler(SubTaskType.EVALUATE, evaluate)
+    executor.register_handler(SubTaskType.REFLECT, reflect)
+    agent: Any = CognitiveAgent(agent_id=CREW["agent_id"], instructions="Test instructions.", runtime=None)
+    agent.agent_type = "science_officer"
+    agent.callsign = CREW["callsign"]
+    agent.set_sub_task_executor(executor)
+    agent._runtime = _Runtime(coord, trust)
+    agent._build_chain_for_intent = lambda observation: _chain()  # chain construction is not under test
+    return agent, evaluate, reflect
+
+
+def _observation() -> dict:
+    return {
+        "intent": "ward_room_notification",
+        "intent_id": "ad1270-a1",
+        "context": "LaForge: Wesley, what did the sensor sweep show?",
+        "params": {
+            "channel_name": "Science", "is_dm_channel": False,
+            "author_id": "laforge-1", "author_callsign": "LaForge",
+            "title": "Sensor sweep", "text": "Wesley, what did the sensor sweep show?",
+        },
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expires", [False, True], ids=["held", "expired-in-triage"])
+async def test_a_relaxation_that_expires_during_triage_does_not_reach_phase_two(expires: bool) -> None:
+    clock, trust = _Clock(), TrustNetwork()
+    coord = _coordinator(clock, trust=trust)
+    await coord.activate([CREW])
+
+    def during_triage() -> None:
+        if expires:
+            clock.now = _START + _TIMEOUT_S  # ordinary elapsed time: the deadline passes during triage
+
+    analysis = _Analysis(during_triage)
+    agent, evaluate, reflect = _agent(coord, trust, analysis)
+    observation = _observation()
+
+    await agent._execute_chain_with_intent_routing(observation)
+
+    assert len(analysis.markers) == 2, "premise: triage and phase 2 both ran"
+    assert evaluate.results and reflect.results, "premise: phase 2 reached the real gates"
+    assert coord.is_enrolled(CREW["agent_id"]) is not expires
+    if expires:
+        assert analysis.markers == [True, None]
+        assert "_boot_camp_active" not in observation
+        assert evaluate.results[-1].get("bypass_reason") == "low_trust_band"  # AD-639 ran in phase 2
+        assert reflect.results[-1].get("reflection") == "low_trust_band_bypass"
+    else:
+        assert analysis.markers == [True, True]
+        assert evaluate.results[-1].get("bypass_reason") == "boot_camp"
+        assert reflect.results[-1].get("bypass_reason") == "boot_camp"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["direct", "routed"])
+async def test_each_chain_entry_asks_again_on_a_reused_observation(entry: str) -> None:
+    clock, trust = _Clock(), TrustNetwork()
+    coord = _coordinator(clock, trust=trust)
+    await coord.activate([CREW])
+    clock.now = _START + _TIMEOUT_S  # the relaxation ended before this chain started
+    analysis = _Analysis(lambda: None)
+    agent, evaluate, _ = _agent(coord, trust, analysis)
+    observation = _observation()
+    observation["_boot_camp_active"] = True  # an earlier phase's answer on the same dict (the phase-2 hand-off)
+
+    if entry == "direct":
+        await agent._execute_sub_task_chain(_chain(), observation)
+    else:
+        await agent._execute_chain_with_intent_routing(observation)
+
+    assert analysis.markers == ([None] if entry == "direct" else [None, None])
+    assert "_boot_camp_active" not in observation
+    assert evaluate.results[-1].get("bypass_reason") == "low_trust_band"
+
+
+# --- a new crew, without BF-034's flag ------------------------------------------------------
+
+
+class _Stats:
+    """The one read ``_is_new_crew_start`` makes of the episodic memory."""
+
+    def __init__(self, total: int = 0, error: Exception | None = None) -> None:
+        self.total = total
+        self.error = error
+
+    async def get_stats(self) -> dict:
+        if self.error is not None:
+            raise self.error
+        return {"total": self.total}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lifecycle", "memory", "expected"),
+    [
+        ("first_boot", _Stats(0), True),
+        ("reset", _Stats(0), True),
+        ("stasis_recovery", _Stats(0), False),
+        ("first_boot", _Stats(3), False),
+        ("first_boot", _Stats(error=OSError("collection unavailable")), False),
+    ],
+    ids=["first-boot", "reset", "stasis-recovery", "episodes", "count-raises"],
+)
+async def test_a_new_crew_needs_no_session_record_and_no_episodes(lifecycle: str, memory: _Stats, expected: bool) -> None:
+    from probos.startup.finalize import _is_new_crew_start  # imported here so each case fails by name on M2
+
+    runtime = SimpleNamespace(_lifecycle_state=lifecycle, episodic_memory=memory, is_cold_start=False)
+
+    assert await _is_new_crew_start(runtime) is expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lifecycle", ["first_boot", "stasis_recovery"], ids=["first-boot", "stasis-recovery"])
+async def test_finalization_enrols_a_new_crew_with_a_real_empty_memory(tmp_path: Path, lifecycle: str) -> None:
+    from probos.cognitive.episodic import EpisodicMemory
+
+    memory = EpisodicMemory(db_path=str(tmp_path / "episodic" / "episodes.db"))
+    await memory.start()
+    try:
+        assert memory, "premise: a live memory object is truthy, so BF-034's `not episodic_memory` reads it as warm"
+        coord = _coordinator(_Clock(), memory=memory)
+        runtime = SimpleNamespace(
+            boot_camp=coord, is_cold_start=False, ontology=None, _lifecycle_state=lifecycle,
+            episodic_memory=memory, registry=SimpleNamespace(all=lambda: list(_FLEET)),
+        )
+        ran = await _activate_boot_camp_on_cold_start(runtime=runtime)
+    finally:
+        await memory.stop()
+
+    new_crew = lifecycle == "first_boot"
+    assert ran is new_crew
+    assert coord.is_enrolled("security_officer-0") is new_crew
+    assert not coord.is_enrolled("file_reader-0")  # not crew (crew_utils.is_crew_agent)
+```
+
 ## 8. Tracking (M3's commit)
 
 **Pair U1 (`PROGRESS.md`).** SEARCH:
@@ -1517,7 +2037,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1270 (2026-10-2X), #1324 slice 4b -- the AD-638 boot camp is repaired, and `/conn` works.** Two independent defects kept the boot camp inert: `TrustNetwork` had no `get_trust_score` (declared by `protocols.TrustNetworkProtocol` and the coordinator, called three times, mocked by every test), and cold-start activation ran in `startup/dreaming.py` at Phase 5, before the coordinator is built at Phase 7, so its guard was always false. `TrustNetwork.get_trust_score` now calls `get_score`, which also lets `/conn <callsign>` grant the conn to a COMMANDER+ bridge officer or chief (it raised before). Activation moved into finalization, after the AD-683 snapshot late-bind; `timeout_minutes` is enforced by every coordinator read, with no task; a crew DM sent through the proactive path counts toward graduation; the coordinator reads time through an injected clock. AD-638's Evaluate/Reflect auto-approval is behind `boot_camp.relax_quality_gates` (default false): off, enrolment changes no agent's prompt, chain, trust or authority, and switching it on is the Captain's call. The AD-509 phase tracker, phases 2 and 3, AD-683's snapshot injection and `holodeck/chamber.py:289` are slice 4c. The contract is `prompts/ad-1270-boot-camp-repair.md`.
+**AD-1270 (2026-10-2X), #1324 slice 4b -- the AD-638 boot camp is repaired, and `/conn` works.** Two independent defects kept the boot camp inert: `TrustNetwork` had no `get_trust_score` (declared by `protocols.TrustNetworkProtocol` and the coordinator, called three times, mocked by every test), and cold-start activation ran in `startup/dreaming.py` at Phase 5, before the coordinator is built at Phase 7, so its guard was always false. `TrustNetwork.get_trust_score` now calls `get_score`, which also lets `/conn <callsign>` grant the conn to a COMMANDER+ bridge officer or chief (it raised before). Activation moved into finalization, after the AD-683 snapshot late-bind, and runs for a new crew: no previous session record and an empty episode store. It does not use BF-034's `is_cold_start`, which reads the memory object's truthiness and so is false whenever a coordinator exists; that detector's repair is #1324 register R10. `timeout_minutes` is enforced by the coordinator's enrolment and activity reads, with no task; a crew DM sent through the proactive path counts toward graduation; the coordinator reads time through an injected clock. AD-638's Evaluate/Reflect auto-approval is behind `boot_camp.relax_quality_gates` (default false), and each chain phase asks the coordinator again, so a relaxation that times out mid-chain ends there. Off, enrolment changes no agent's prompt, chain, trust or authority, and switching it on is the Captain's call. The AD-509 phase tracker, phases 2 and 3, AD-683's snapshot injection and `holodeck/chamber.py:289` are slice 4c. The contract is `prompts/ad-1270-boot-camp-repair.md`.
 
 ```
 
@@ -1529,7 +2049,7 @@ REPLACE:
 ```
 ### AD-1270 (#1324) -- the AD-638 boot camp is repaired: a protocol method, activation at finalization, a timeout by construction, DM counting, and the relaxation behind a default-off flag (2026-10-2X)
 
-**Decision.** Add `TrustNetwork.get_trust_score`, delegating by call to `get_score`, rather than renaming three callers, two protocols and about thirteen mocks; a call (not a class alias) keeps instance patches of `get_score` governing both reads. Move AD-638 activation from `startup/dreaming.py` (Phase 5, where `runtime.boot_camp` is always `None`) into `finalize_startup`, after the AD-683 snapshot late-bind. Enforce `timeout_minutes` in every coordinator read rather than with a task; a timeout graduates the remaining agents, emits one `BOOT_CAMP_TIMEOUT`, and deletes or demotes nothing. Count crew DMs at the proactive DM path; DMs to the Captain do not count. Gate the Evaluate/Reflect auto-approval at its producer through `BootCampCoordinator.relaxes_quality_gates` and `boot_camp.relax_quality_gates: false`, so that off, an enrolled agent's Evaluate, Reflect and AD-639 tuning run as for any other agent. **Why.** The boot camp had a caller but no reachable path: the guard ran before its object existed, and the method it called existed only on mocks. With the relaxation off, enrolment is bookkeeping and events of existing types, so it needs no flag of its own; `boot_camp.enabled` remains the off switch. **Captain.** Switching `relax_quality_gates` on weakens the anti-confabulation gate; it is his call. AD-639's low-trust band (`chain_tuning.low_trust_ceiling` 0.6) already skips Evaluate and Reflect for every agent the boot camp enrols (trust below 0.55), so the recommendation is to retire the relaxation after the first live cold start rather than enable it. `/conn` was restored as AD-471 specified it; only the Captain's command reaches it, and no permission check reads the conn. **Rejected.** Renaming to `get_score` everywhere (wider blast radius, a shared-protocol change); a separate enrolment flag (duplicates `boot_camp.enabled`, protects no agent-visible effect); gating Evaluate and Reflect at the consumers (leaves AD-639 suppressed for enrolled agents); a timeout task (one more lifecycle to own).
+**Decision.** Add `TrustNetwork.get_trust_score`, delegating by call to `get_score`, rather than renaming three callers, two protocols and about thirteen mocks; a call (not a class alias) keeps instance patches of `get_score` governing both reads. Move AD-638 activation from `startup/dreaming.py` (Phase 5, where `runtime.boot_camp` is always `None`) into `finalize_startup`, after the AD-683 snapshot late-bind, and run it for a new crew: no previous session record and an empty episode store. It does not read BF-034's `is_cold_start`, which reads the memory object's truthiness and so is false whenever a coordinator exists. Enforce `timeout_minutes` in the coordinator's enrolment and activity reads (`is_active`, `is_enrolled`, `check_graduation`, `on_agent_post`, `on_agent_dm`, `check_timeout`) rather than with a task; a timeout graduates the remaining agents, emits one `BOOT_CAMP_TIMEOUT`, and deletes or demotes nothing. Count crew DMs at the proactive DM path; DMs to the Captain do not count. Gate the Evaluate/Reflect auto-approval at its producer through `BootCampCoordinator.relaxes_quality_gates` and `boot_camp.relax_quality_gates: false`, so that off, an enrolled agent's Evaluate, Reflect and AD-639 tuning run as for any other agent; the producer clears its marker before it asks, at both chain entry points, so the routed chain's phase 2 asks again rather than inheriting triage's answer. **Why.** The boot camp had a caller but no reachable path: the guard ran before its object existed, the method it called existed only on mocks, and BF-034's cold-start flag cannot be true while a coordinator exists. With the relaxation off, enrolment is bookkeeping and events of existing types, so it needs no flag of its own; `boot_camp.enabled` remains the off switch. **Captain.** Switching `relax_quality_gates` on weakens the anti-confabulation gate; it is his call. AD-639's low-trust band (`chain_tuning.low_trust_ceiling` 0.6) already skips Evaluate and Reflect for every agent the boot camp enrols (trust below 0.55), so the recommendation is to retire the relaxation after the first live new-crew start rather than enable it. `/conn` was restored as AD-471 specified it. It is a slash command, so any sender that can run one reaches it: the shell, the API chat route and channel adapters, the webhook adapter included. Nothing calls `ConnManager.is_authorized`, and the holder's proactive prompt does not show the conn's scope (#1324 register R8 and R11). **Rejected.** Renaming to `get_score` everywhere (wider blast radius, a shared-protocol change); a separate enrolment flag (duplicates `boot_camp.enabled`, protects no agent-visible effect); gating Evaluate and Reflect at the consumers (leaves AD-639 suppressed for enrolled agents); a timeout task (one more lifecycle to own); repairing BF-034's detector in this slice (it switches on its dormant readers at the next reset, one of them a fresh-start prompt note that nothing clears for the session; register R10).
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -1544,10 +2064,13 @@ Parent checklist (the orchestrator, on #1324): add and tick a slice-4b item with
 - Any event type, `event_persistence.py`, persisted schema.
 - `proactive.py:4104-4115` (post counting).
 - `dormant-class-baseline.yaml` (checked, not regenerated).
+- (A1) BF-034's detector in `startup/dreaming.py`, `runtime.is_cold_start` and every reader of it (register R10).
 
 ## 10. Mutation rows (one campaign of record on the M2 tree, after an unmutated baseline of M1's and M2's focused lists passes; run on the Captain's Windows host)
 
 A Line cell whose text occurs twice says so: mutate every occurrence.
+
+**Amendment A1.** Rows marked **R1** (A-1 to A-3, N-1 to N-7, S-7, S-8 and the rewritten S-1 and S-2) run on the R1 tree, after an unmutated baseline of R1's focused list passes. Rerun T-5, S-3, S-4, S-5 and S-6 there, because their file or killing test changed. Every other row stands from the M2 campaign of record on `31066065`, because its file is unchanged on R1 or differs only in a docstring (`boot_camp.py`, P-R3). The original S-1 and S-2 mutated a line that P-R4 rewrites; they are retired and replaced below.
 
 | # | M | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -1575,12 +2098,24 @@ A Line cell whose text occurs twice says so: mutate every occurrence.
 | L-17 | M2 | `boot_camp.py` | `self._graduate_remaining_on_timeout()` (occurs twice: `force_graduate_all` and `_expire_if_timed_out`) | `pass` | `test_force_graduate_all`, `test_nobody_is_enrolled_past_the_timeout[at]` |
 | D-1 | M2 | `proactive.py` | `await _boot_camp.on_agent_dm(agent.id)` | `pass` | `test_a_crew_dm_through_the_proactive_path_is_counted`, `test_a_crew_agent_graduates_through_the_real_dm_path_and_real_trust` |
 | D-2 | M2 | `proactive.py` | `if _boot_camp is not None:` | `if True:` | none: equivalent mutant -- with no coordinator, `None.on_agent_dm` raises AttributeError inside the `try`, which logs at debug; the DM, its actions and its return value are unchanged |
-| S-1 | M2 | `startup/finalize.py` | `if coordinator is None or not runtime.is_cold_start:` | `if coordinator is None:` | `test_cold_start_finalization_enrols_crew[warm]` |
-| S-2 | M2 | `startup/finalize.py` | `if coordinator is None or not runtime.is_cold_start:` | `if not runtime.is_cold_start:` | `test_no_coordinator_or_no_crew_means_no_activation` |
+| S-1 | R1 | `startup/finalize.py` | `if coordinator is None or not await _is_new_crew_start(runtime):` | `if coordinator is None:` | `test_cold_start_finalization_enrols_crew[warm]`, `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[stasis-recovery]` |
+| S-2 | R1 | `startup/finalize.py` | `if coordinator is None or not await _is_new_crew_start(runtime):` | `if not await _is_new_crew_start(runtime):` | `test_no_coordinator_or_no_crew_means_no_activation` |
 | S-3 | M2 | `startup/finalize.py` | `if is_crew_agent(agent, ontology)` | `if True` | `test_cold_start_finalization_enrols_crew[cold]` |
 | S-4 | M2 | `startup/finalize.py` | `if not crew_agents:` | `if False:` | `test_no_coordinator_or_no_crew_means_no_activation` |
 | S-5 | M2 | `startup/finalize.py` | `await coordinator.activate(crew_agents)` | `pass` | `test_cold_start_finalization_enrols_crew[cold]` |
 | S-6 | M2 | `startup/finalize.py` | `await _activate_boot_camp_on_cold_start(runtime=runtime)` | `pass` | `test_finalization_activates_the_boot_camp_after_the_snapshot_late_bind` |
+| S-7 | R1 | `startup/finalize.py` | `if coordinator is None or not await _is_new_crew_start(runtime):` | `if coordinator is None or not runtime.is_cold_start:` | `test_cold_start_finalization_enrols_crew[cold]`, `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[first-boot]` |
+| S-8 | R1 | `startup/finalize.py` | `await _activate_boot_camp_on_cold_start(runtime=runtime)` | `_activate_boot_camp_on_cold_start(runtime=runtime)` | `test_finalization_activates_the_boot_camp_after_the_snapshot_late_bind` |
+| N-1 | R1 | `startup/finalize.py` | `if runtime._lifecycle_state not in ("first_boot", "reset"):` | `if False:` | `test_a_new_crew_needs_no_session_record_and_no_episodes[stasis-recovery]`, `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[stasis-recovery]` |
+| N-2 | R1 | `startup/finalize.py` | `if runtime._lifecycle_state not in ("first_boot", "reset"):` | `if runtime._lifecycle_state != "first_boot":` | `test_a_new_crew_needs_no_session_record_and_no_episodes[reset]` |
+| N-3 | R1 | `startup/finalize.py` | `return False  # AD-1270: a session record means this crew has served before` | `pass` | `test_a_new_crew_needs_no_session_record_and_no_episodes[stasis-recovery]`, `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[stasis-recovery]` |
+| N-4 | R1 | `startup/finalize.py` | `stats = await runtime.episodic_memory.get_stats()` | `stats = {"total": 0}` | `test_a_new_crew_needs_no_session_record_and_no_episodes[episodes]`, `test_a_new_crew_needs_no_session_record_and_no_episodes[count-raises]` |
+| N-5 | R1 | `startup/finalize.py` | `return False  # AD-1270: an unreadable count is not a new crew` | `return True` | `test_a_new_crew_needs_no_session_record_and_no_episodes[count-raises]` |
+| N-6 | R1 | `startup/finalize.py` | `return stats.get("total") == 0` | `return True` | `test_a_new_crew_needs_no_session_record_and_no_episodes[episodes]` |
+| N-7 | R1 | `startup/finalize.py` | `return stats.get("total") == 0` | `return False` | `test_a_new_crew_needs_no_session_record_and_no_episodes[first-boot]`, `test_a_new_crew_needs_no_session_record_and_no_episodes[reset]`, `test_finalization_enrols_a_new_crew_with_a_real_empty_memory[first-boot]` |
+| A-1 | R1 | `cognitive/cognitive_agent.py` | `observation.pop("_boot_camp_active", None)  # AD-1270: ask again; phase 2 and the fallback reuse triage's dict` | `pass` | `test_a_relaxation_that_expires_during_triage_does_not_reach_phase_two[expired-in-triage]`, `test_each_chain_entry_asks_again_on_a_reused_observation[direct]` |
+| A-2 | R1 | `cognitive/cognitive_agent.py` | `observation.pop("_boot_camp_active", None)  # AD-1270: ask again; a reused observation carries an old answer` | `pass` | `test_each_chain_entry_asks_again_on_a_reused_observation[routed]` |
+| A-3 | R1 | `cognitive/cognitive_agent.py` | `if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):` (occurs twice) | `if False:` | `test_a_relaxation_that_expires_during_triage_does_not_reach_phase_two[held]`, `test_the_chain_marks_boot_camp_only_when_the_relaxation_is_on[on]` |
 
 `test_force_graduate_all` is the existing `tests/test_ad638_boot_camp.py::TestTimeout::test_force_graduate_all`.
 
@@ -1615,6 +2150,29 @@ Grep "ChainTuningConfig" tests/test_ad639_chain_tuning.py:14   from probos.confi
 Grep "^\s*# Phase \d+" runtime.py                             Phase 2 2853, 5 3159, 7 3255, 8 3595
 ```
 
+## Verified Against Codebase (Amendment A1, 2026-10-28, on `31066065`)
+
+```
+Read startup/dreaming.py:225-307                     BF-034 detector: :256-261 generic prior, :262 `not episodic_memory`, :265 suppression, :276-301 announcement; :305-306 M2's note
+Grep '^class EpisodicMemory' cognitive/episodic.py   :1358, no base class
+Grep 'def __len__|def __bool__|_collection\.count\(\)|def is_empty' cognitive/episodic.py   no __len__/__bool__; count() call sites only
+Read cognitive/episodic.py:1644-1683, 4261-4293      start(); count_for_agent; get_stats() returns {"total": 0} for an empty or unstarted store
+Grep 'get_stats\(\)' src/probos                      introspect.py:678, commands_status.py:25, cognitive/dreaming.py:241 await episodic_memory.get_stats()
+Read startup/cognitive_services.py:577-596           AD-502: session_last.json gives stasis_recovery, else first_boot
+Read __main__.py:696-717, 2642-2679; startup/shutdown.py:876-889   BF-141 writes the record at shutdown; reset tier 2 deletes it, tier 1 keeps it; a failed start never creates one
+Read runtime.py:3318-3339; Grep 'is_cold_start|_cold_start\b' src   coordinator needs a memory object; readers in R10
+Read agent_onboarding.py:240-271; tiered_trust.py:55-86; consensus/trust.py:340-371   AD-640 role priors via create_with_prior
+Read boot_camp.py:90-200, 380-540                    activate enrols per agent; _expire_if_timed_out docstring; get_state raw
+Read startup/finalize.py:860-910, 4190-4211, 6326-6355   activation helper; BF-261 block; AD-435 lifecycle titles
+Read cognitive/cognitive_agent.py:6009-6264, 6343-6509   both producers; triage; fallback :6391; phase 2 :6457
+Read cognitive/cognitive_agent.py:1708-1713, 3032-3075, 9674-9758   journal property; DM roster hasattr guards; sensorium guards
+Read sub_tasks/evaluate.py:386-575; sub_tasks/reflect.py:368-490   guards before the boot-camp and low-band branches
+Read tests/test_ad1347_s4_chain_lookup.py:1-245      the routed harness §7.17 copies
+Grep 'low_trust_ceiling|enabled: bool' config_models/knowledge.py   ChainTuningConfig enabled True, low_trust_ceiling 0.60
+Read logs/ad1270/evidence-ad1270bbr1a-expiry-contract.txt, -expiry-memory-fix-final.txt, -boundary-artifacts.txt:1-12   reviewer A's runs; line 10 real low-band verdicts
+git log -S "episodes_empty = not" -- src/probos      36a7ffee (2026-03-25, BF-034); 0e4f91d6 (AD-517 move)
+```
+
 ## Absence Verified (2026-10-28)
 
 ```
@@ -1628,7 +2186,7 @@ RUN:   Grep '\.(on_agent_dm|check_timeout|force_graduate_all|run_phase_2_introdu
 FOUND: boot_camp.py:449,457,465; dreaming.py:319; capability_requests.py:308, bills.py:176, sop/instance.py:71 (other classes)
 HOLDS: yes
 
-CLAIM: only the Captain's /conn command reaches is_conn_qualified and grant_conn; no permission check reads the conn
+CLAIM: is_conn_qualified and grant_conn are reached only through the /conn slash command, and nothing calls ConnManager.is_authorized (A1: corrected. Any sender that can run a slash command reaches /conn: the entries below, the webhook adapter included, which reviewer A executed after its shared-secret check; R11)
 RUN:   Grep 'is_conn_qualified|conn_manager\.grant|def grant\(|check_escalation|def grant_conn|\.grant_conn\(' src/; Grep '\.is_authorized\(' src/; Grep 'cmd_conn|_handle_slash_command' src/
 FOUND: commands_autonomous.py:91,96; conn.py:78,165; runtime.py:2102,2158,2164; watch_rotation.py:420. is_authorized: mcp_workbench.py:397,475,723 (MCP access, another class). Entry: shell.py:302,528; api.py:77; channels/base.py:368; routers/chat.py:101
 HOLDS: yes
@@ -1648,6 +2206,26 @@ RUN:   Grep 'is_enrolled|relaxes_quality_gates' src/; Grep 'self\.get_score\(|re
 FOUND: cognitive_agent.py:6054,6242 (plus unrelated perception is_enrolled); second grep: none
 HOLDS: yes
 
+CLAIM (A1): runtime._cold_start is set at Phase 5 and nothing clears it for the session
+RUN:   Grep 'is_cold_start|_cold_start\b' src/
+FOUND: assignments runtime.py:1241 (init), :3207 (Phase 5); dream_adapter.py:116, :144 set and clear only the adapter's own copy, copied from runtime at finalize.py:6193
+HOLDS: yes
+
+CLAIM (A1): EpisodicMemory defines neither __len__ nor __bool__ and has no base class
+RUN:   Grep 'def __len__|def __bool__|_collection\.count\(\)|def is_empty' cognitive/episodic.py; Grep '^class EpisodicMemory' cognitive/episodic.py
+FOUND: _collection.count() call sites only; class EpisodicMemory: at :1358
+HOLDS: yes -- an instance is truthy, so dreaming.py:262 reads every live memory as non-empty
+
+CLAIM (A1): nothing in src reads the proactive conn_authority context value
+RUN:   Grep 'conn_authority' src/probos
+FOUND: proactive.py:2555 (the write) only
+HOLDS: yes by name; reviewer A's run (evidence-ad1270bbr1a-boundary-artifacts.txt:6-7) found neither its role text nor conn_scope in the holder's prompt
+
+CLAIM (A1): no test seeds _boot_camp_active and then calls a chain entry point expecting it honoured
+RUN:   Grep '_boot_camp_active' tests/; Grep '_execute_sub_task_chain\(|_execute_chain_with_intent_routing\(' tests/ (files)
+FOUND: seeders test_ad638_boot_camp.py:338,363, test_ad639_chain_tuning.py:137,200,319, test_ad658_chain_harness_metrics.py:192 are not among the 11 entry-point files; test_ad1270_boot_camp_trust.py:233 asserts absence
+HOLDS: yes
+
 CLAIM: no test pins the dreaming.py block or TrustNetwork's member list
 RUN:   Grep '_activate_boot_camp|Boot camp activation failed|Boot camp activated for' tests/; Grep '(getmembers|vars|dir)\(TrustNetwork|TrustNetwork\.__dict__' tests/
 FOUND: none; none
@@ -1658,7 +2236,9 @@ HOLDS: yes
 
 - Every predicted count: test cases, the census figures, the facade diff and the failing-case lists on each base.
 - That the AD-632g harness reaches `cognitive_agent.py:6054` in the [off] case without raising later in `_execute_sub_task_chain`. If it raises, keep the assertion on `observation` and wrap the call in `contextlib.suppress(Exception)` with a reason comment.
-- That real-boot tests on a fresh `tmp_path` (now cold starts that activate the boot camp) still pass. `test_bf927_boot_claims.py::test_the_booted_vessel_prints_the_reworded_lines` and the AD-1185 smoke boot are in M2's focused list; the broad gate covers the rest.
+- That real-boot tests that pass an episodic memory, enable the Ward Room and boot a fresh data directory still pass (A1: these now activate the boot camp; before A1 none did). `test_bf927_boot_claims.py:545` passes no memory, so it builds no coordinator; the broad gate covers the rest.
+- (A1) That §7.17's harness reaches the real Evaluate and Reflect handlers with its minimal runtime. If any case raises before its assertions on `31066065`, stop and report; do not wrap the call.
+- (A1) That a real `EpisodicMemory.start()` on `tmp_path` completes in the focused gate (26 test files construct one on `tmp_path`; `tests/benchmarks/test_locomo_episodic.py:58-59` starts one).
 - That `BootCampCoordinator`'s body stays ≤ 500 lines (predicted about 465).
 
 ## 12. Deterministic gate checks, resolved up front
@@ -1680,25 +2260,29 @@ HOLDS: yes
 - **Blind spots found:**
   - (1) Activation was dead by startup order (P5), not only by the missing method.
   - (2) AD-639 already covers the relaxation's population (P8).
-  - (3) `ConnManager.is_authorized` has no caller, so the conn's scope is prompt text only.
+  - (3) `ConnManager.is_authorized` has no production caller, and `conn_authority` (`proactive.py:2555`) has no reader, so the conn's scope is neither enforced nor shown to the holder (R8; A1 corrects "prompt text only").
   - (4) Channel adapters without pairing can send any slash command, `/conn` included.
   - (5) DMs an agent only *replies* to inside a DM thread may not pass through `[DM @x]` extraction. Such an agent graduates only by timeout, which bounds it.
   - (6) Activation is awaited inline at startup. A slow AD-683 snapshot build would delay startup; it reads empty stores on a cold start.
+  - (7) A1: BF-034's flag is false whenever a memory object exists (R10), so the draft's gate could not open; a boot-camp-local new-crew test replaces it. `get_stats()` reads every episode's metadata on a non-empty store, but the lifecycle check comes first, so that read happens only on a boot with no session record.
+  - (8) A1: the routed chain's phase 2 and its fallback reuse triage's observation, so any per-chain answer stored on it must be asked again; the producer now clears the marker before it asks.
 
 ## 14. Diff Reviewer: properties to verify
 
 1. `TrustNetwork.get_trust_score` calls `self.get_score`; it is not an alias, and `get_score` is unchanged.
 2. With `relax_quality_gates` false, nothing in the diff sets `_boot_camp_active`, and `evaluate.py` and `reflect.py` are unchanged.
-3. No line in `BootCampCoordinator` reads `time.time()` or `time.monotonic()`. Every public reader and tracker calls `_expire_if_timed_out()` first. The timeout deletes no state and calls nothing on the trust network.
+3. No line in `BootCampCoordinator` reads `time.time()` or `time.monotonic()`. `is_active`, `is_enrolled`, `check_graduation`, `on_agent_post`, `on_agent_dm` and `check_timeout` call `_expire_if_timed_out()` first; `relaxes_quality_gates` reaches it through `is_enrolled` when the flag is on; `get_state` does not, and no docstring says it does. The timeout deletes no state and calls nothing on the trust network.
 4. `BOOT_CAMP_TIMEOUT` is emitted at most once per activation.
-5. Activation runs only when `runtime.is_cold_start` is true, once, awaited, after the BF-261 late-bind, inside `try/except` with a warning. Nothing in `dreaming.py` references `boot_camp`.
+5. Activation runs only when `_is_new_crew_start(runtime)` is true (`_lifecycle_state` is `first_boot` or `reset`, and `episodic_memory.get_stats()["total"] == 0`; a failed read is not a new crew), once, awaited, after the BF-261 late-bind, inside `try/except` with a warning that says only that startup continues. It does not read `runtime.is_cold_start`, and no reader of that flag changes. A stasis recovery activates nothing. Nothing in `dreaming.py` references `boot_camp`.
 6. The DM count sits after a successful crew DM only (not the Captain branch, not a skipped DM), and its failure cannot change the DM's actions or return.
 7. Each generated file was produced by its tool. `config/system.yaml` is staged as one comment hunk.
 8. The tracker claims match §0 and §11.
+9. (A1) At both chain entry points `_boot_camp_active` is removed before `relaxes_quality_gates` is asked, and set only on a true answer; nothing else in the diff writes it. A chain whose relaxation ends during triage runs phase 2 with AD-639's band and no boot-camp bypass.
+10. (A1) Each changed sentence in code, tests and §8 is true: the expiry docstrings name the readers that expire; the activation comment and warning claim no rollback; U2 does not say only the Captain reaches `/conn`.
 
 ## 15. Acceptance criteria
 
-- Both new files pass. Every listed mutant is killed except D-2 (equivalent).
+- The three new files pass (`tests/test_ad1270_boot_camp_trust.py`, `tests/test_ad1270_boot_camp_lifecycle.py`, `tests/test_ad1270_boot_camp_repair_a1.py`). Every listed mutant is killed except D-2 (equivalent); S-1 and S-2 are A1's rewrites.
 - `isinstance(TrustNetwork(), TrustNetworkProtocol)` is true.
 - `check_architecture_principles.py --check` and `check_dormant_classes.py --check` pass; for the dormant check, paste its whole output.
 - The focused gates pass, and the broad gate's receipt is green.
@@ -1716,5 +2300,9 @@ HOLDS: yes
 - **R5 (slice 4c): retire phases 2 and 3.** That covers `run_phase_2_introductions`, `run_phase_3_observation`, `_DEPARTMENT_CHIEFS`, the nudge cooldown and `nudge_cooldown_seconds`, the observation-thread state and `shared_observation`. Reason: no caller, and the posts are written in the Counselor's name without the Counselor composing them. The Captain can overrule.
 - **R6 (slice 4c): wire the AD-683 snapshot injection** (`cognitive_agent.py:10481`) on enrolment instead of `_boot_camp_active`, with a `_build_user_message` test. Replace BF-261's private write `_bc._ship_state_builder` (`finalize.py:4174`) with a public setter.
 - **R7 (slice 4c, STANDARD): fix `holodeck/chamber.py:289`**, `m.id` → `m.module_id`, with a test on `HOLODECK_PHASE_ENTERED.modules`.
-- **R8 (staged, owner #1324, unscheduled):** `ConnManager.is_authorized` has no caller, so the conn's scope limits are prompt text only. Channel adapters without pairing can send any slash command (`channels/base.py:367-369`). Wiring `is_authorized` would add enforcement (in the envelope). Restricting which channel senders may run slash commands is a security-surface decision to bring to the Captain.
+- **R8 (staged, owner #1324, unscheduled):** `ConnManager.is_authorized` has no production caller, so nothing enforces the conn's scope. `_gather_context` writes `conn_authority` (`proactive.py:2555`), but nothing in `src` reads it, and reviewer A's run found neither the role text nor `conn_scope` in the holder's proactive prompt (A1 corrects "prompt text only"). Recommendation: wire `is_authorized` at the actions the scope names, and render the scope in the holder's prompt, with a `_build_user_message` test (in the envelope). Who may run `/conn` is R11.
 - **R9 (after the first live cold start):** compare AD-639 skip lines with enrolled agents. If AD-639 covered them, retire `relax_quality_gates` and its producer path.
+- **R10 (A1; owner #1324; its own BF, before or with slice 4c; BF number unresolved, enumerate it when filed per `.github/copilot-instructions.md:92`): BF-034's cold-start detector.** It has never fired with a memory object present since it landed (`36a7ffee`, 2026-03-25): `dreaming.py:262` reads the memory object's truthiness, and `:257-261` compares every record with the generic prior, which AD-640's bridge and chief priors differ from. Its readers stay dormant: the 5-minute trust-anomaly suppression (`dreaming.py:265`), the "Fresh Start" All Hands thread (`:276-301`), `_lifecycle_state = "reset"` (`runtime.py:3208-3209`; it also changes AD-435's startup title, `finalize.py:6348-6355`), the fresh-start prompt notes (`cognitive_agent.py:9276`, `:10917`; `proactive.py:1751`), `dream_adapter._cold_start` (`finalize.py:6193`) and the skipped auto-welcome (`finalize.py:6441`). `runtime._cold_start` is never cleared, because the AD-517 extraction left the post-dream clear on the adapter's own copy (`dream_adapter.py:143-145`), so a repaired detector would keep "you have no prior episodic memories" in every prompt for the whole session. Recommendation: wire. Use one predicate shared with `_is_new_crew_start`, clear or bound the session flag in the same BF, and add a detector-to-reader test with stasis-recovery and restart controls. It is agent-facing at the next reset and restores designed behaviour: in the envelope, and the Captain is told.
+- **R11 (A1; staged, owner #1324; a security-surface decision for the Captain): who can send `/conn`.** It is a slash command, so the shell, the API chat route (`api.py:77`, `routers/chat.py:101`) and channel adapters (`channels/base.py:367-369`) reach the grant, and so does the webhook adapter after its shared-secret check (reviewer A executed it). Recommendation: limit `/conn`, or slash commands generally, to the Captain's console and paired senders. Who may hold that power is the Captain's decision.
+- **R12 (A1; slice 4c, owner #1324):** `relax_quality_gates` (`config_models/crew.py:28`) has no `Field(description=...)`, so its generated reference row is blank (reviewer A, property 4); the safety note lives only in `system.yaml` and `config-profiles.yaml`. Recommendation: wire. Add `BootCampConfig` field descriptions in 4c, and regenerate the facade baseline and the reference by tool.
+- **R13 (A1; slice 4c, with R6):** the ordering test does not detect removal of the BF-261 late-bind (reviewer B, property 5); A1 covers only the await. Recommendation: land R6's public setter with a behavioural test that activation's snapshot capture uses the late-bound builder.
