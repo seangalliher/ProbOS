@@ -286,7 +286,8 @@ class BirthChamber:
         if self._curriculum_registry is not None:
             try:
                 modules = self._curriculum_registry.list_by_phase("orientation")
-                module_ids = [getattr(m, "id", "") for m in modules]
+                # AD-1270 (#1324): AD-507's CurriculumModule keys on module_id; ``id`` was always "".
+                module_ids = [m.module_id for m in modules]
                 rec.gates_passed["curriculum_orientation_delivered"] = True
                 self._emit(EventType.HOLODECK_PHASE_ENTERED, {
                     "agent_id": rec.agent_id,
