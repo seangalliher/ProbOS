@@ -7,7 +7,18 @@
 
 ## Purpose
 
-This note records what ProbOS takes from Agensh, what it rejects, and where each idea lives. The Captain set the scope on 2026-10-28: the ideas go to the work board and the typed mission blackboard, AD-1289 (#1336), as an amendment. They do not go to the Ward Room, which is a social board. The amendment text is in `docs/research/agensh-amendment-1336-draft.md`.
+This note records what ProbOS takes from Agensh, what it rejects, and why. Its main job is to stop the rejected mechanisms being proposed again.
+
+**Outcome (Captain, 2026-10-28):** ProbOS takes only one idea. A disproved approach is recorded on the CrewSession's blackboard, as `evidence` with a `disproved` marker, so that teammates see it before they repeat it. This is a short amendment to AD-1289 (#1336); the draft is in `docs/research/agensh-amendment-1336-draft.md`. Nothing goes to the Ward Room, which is a social board.
+
+**Why so little.** Persistent crew already collaborate on one task through CrewSession (AD-1124 to AD-1133):
+
+- the plan is decomposed (`crew_orchestrator.py:23`: resolve, delegate, fan-out, verify, synthesize);
+- sub-tasks are assigned by capability × trust × department (AD-864, `crew_assignment.py:1`);
+- ingress is deduplicated (AD-1128, `DECISIONS.md:2525`);
+- results are finalized only once verified (AD-1126, `crew_finalizer.py:1`).
+
+Agensh's claiming, overlap and self-assignment machinery makes up for having no planner. ProbOS has one, and #1336 already gives each CrewSession its own board.
 
 ## What Agensh is
 
@@ -52,45 +63,46 @@ The Captain's reading was checked against the PDF.
 | *Added:* diminishing returns | Going from 128 to 1,024 agents on pandoc (8× the agents) adds 4.12 points (50.94 to 55.06). The 5-task mean at 128 agents is 28.78%. | §3.1 |
 | *Added:* autonomy is a precondition of the setup | The prompt's iron rule 1 reads: "Fully autonomous ... do not wait for instructions, do not ask on mattermost 'what to do next'". | App. A |
 
-**What the paper does and does not show.** It shows that, on these tasks, more workers on this harness reached higher scores within a fixed wall clock. It shows nothing about which mechanism contributed. In particular, there is no evidence that `FAIL` entries, claims or mid-turn delivery help on their own. ProbOS therefore takes the mechanisms as **design hypotheses** and gives them their own measured acceptance. It does not borrow the paper's numbers.
+**What the paper does and does not show.** It shows that, on these tasks, more workers on this harness reached higher scores within a fixed wall clock. It shows nothing about which mechanism contributed. In particular, there is no evidence that `FAIL` entries, claims or mid-turn delivery help on their own. ProbOS therefore borrows none of the paper's numbers. It adopts only the one mechanism that is cheap and fits the CrewSession board: recording disproved approaches.
 
 ## Per-mechanism decisions
 
 | # | Agensh mechanism | Decision | ProbOS anchor (verified 2026-10-28) | Owner |
 |---|---|---|---|---|
-| 1 | `FAIL`: a falsified approach, "the highest-value entry" | **Absorb as a new kind, `failed_attempt`.** #1336's `challenge` and `dissent` target another entry, and nothing records an author's own disproved approach. A distinct kind is needed because reads filter by kind (#1336 Decision), and the surfacing rule in row 3 keys on it. It must link evidence (MASS contract checks). It can be challenged and superseded, never deleted. | #1336 Decision (kinds list); `elastic_team.py:151` (`TerminalStatus` includes `failed`); #1337 CORAL ledger (service-written `evidence` per evaluated attempt) | #1336 amendment |
-| 2 | "Do not retry anything recorded as `FAIL`" | **Adapt.** An absolute ban turns one wrong `FAIL` into a pruned search branch for everyone. Instead, the entry is surfaced before the claim and the claim records which entries it was shown. To retry, the agent challenges the entry first (`challenge` targeting the `failed_attempt`). The agent decides; the service records (AD-1231). | #1336 Decision (`challenge` with target reference) | #1336 amendment |
-| 3 | Mid-turn delivery of a new `FAIL` or `CLAIM` | **Adapt.** A `failed_attempt` or an overlap notice that matches the reader's declared scope is added as a block to the reader's next model request, between tool rounds. This uses the per-request injection seam the loop already has: the budget note, the AD-1322 economic block and the AD-1324 tier block are all appended to the outbound system prompt, "never to `messages`". Delivery is tracked by a per-reader cursor, so it is at-least-once and idempotent over immutable entry ids. Delivered text is labelled as peer-authored data, not instructions. | `agentic_loop.py:1749-1776`; `agentic_dispatch.py:4057` (crew loop construction) | #1336 amendment |
-| 4 | `CLAIM` = "I am taking this area" | **Keep it on the work board, not the blackboard.** In #1336, `claim` means an assertion of truth, so the board's `claim` kind is not overloaded. An area claim *is* a work item: a self-task, a pull claim, or a plan step owned by a CrewSession. The amendment adds only an optional declared **scope** on the work item and an advisory **overlap notice**. Exclusive occupancy stays with AD-1159 work permits, which are mutual-exclusion grants issued by a second authority. This keeps clear of AD-1348's planned use of permits. | `agent_work.py:299` (`create_self_task`), `:347-348` (exact-title dedup of requests), `:445` (`claim_allowed`); `routers/workforce.py:388-402`; `tools/work_item_pull_tool.py:1`; `work_item_steps.py:1`; `tools/work_permits.py:38-47` | #1336 amendment |
-| 5 | Claim overlap settled by direct message | **Adapt.** Both holders receive the overlap notice, and they resolve it themselves. If neither yields, the notice escalates to the owner of the parent work item through the chain of command, not to a peer vote. | the same as row 4 | #1336 amendment |
+| 1 | `FAIL`: a falsified approach, "the highest-value entry" | **Absorb, minimally.** It becomes `evidence` with the marker `disproved: true` and a link to at least one supporting entry, written only by an agent. No new kind is added, following the precedent of #1337's CORAL amendment ("no new kind is added"); a marker can be filtered on without every consumer learning a kind. Teammates in the same CrewSession receive the session's current `disproved` entries in the bounded read at the start of an attempt. Independence-declared, review, verification and adjudication slots do not receive them until they submit. | #1336 Decision (kinds list); `elastic_team.py:255`; #1337 CORAL amendment | #1336 amendment |
+| 2 | "Do not retry anything recorded as `FAIL`" | **Adapt: no ban.** A ban would turn one wrong `FAIL` into a dead branch for everyone. To retry deliberately, an agent first files a `challenge` that targets the entry. | #1336 Decision (`challenge` with target reference) | #1336 amendment |
+| 3 | Mid-turn delivery of a new `FAIL` or `CLAIM` | **Rejected (Captain, 2026-10-28).** Teammates in one CrewSession work on sub-tasks that the planner assigned, so a disproved approach seen at the start of an attempt is enough. Delivery mid-turn would need a delivery table, a new prompt block and a new prompt-injection surface, and nothing in the paper shows it pays for that. *Do not re-propose without a measured duplicate-work problem inside a CrewSession.* | `agentic_loop.py:1749-1776` (the per-request blocks it would have joined) | none |
+| 4 | `CLAIM` = "I am taking this area", made before the work | **Rejected (Captain, 2026-10-28). CrewSession already decomposes and assigns, so claims and overlap checks are not needed.** Agensh workers claim because there is no planner. In ProbOS, the CrewSession plan decomposes the task (`crew_orchestrator.py:23`) and AD-864 assigns each sub-task by capability × trust × department (`crew_assignment.py:1`). Exclusive occupancy, where it matters, is AD-1159 work permits (`tools/work_permits.py:38-47`). Note also that #1336's `claim` means an assertion of truth, not "I am taking this". *Do not re-propose area claims, declared scope or overlap notices.* | `crew_orchestrator.py:23`; `crew_assignment.py:1`; `tools/work_permits.py:38-47` | none |
+| 5 | Claim overlap settled by direct message | **Rejected with row 4.** No overlap arises when sub-tasks are assigned by the planner. | as row 4 | none |
+| 5a | Re-keying the board to any work item, so that ordinary crew work can have one | **Rejected (Captain, 2026-10-28).** The board stays CrewSession-owned, as #1336 is written. Each CrewSession already has its board, and crew who work together on one task do so through a CrewSession. | #1336 Decision | none |
 | 6 | Turn-start delivery of channel posts | **Already present; not adopted for the board.** The Ward Room remains the social channel, by the Captain's direction. | `agent_work_runner.py:393-414`, `:595-615` (terminal notices are Ward Room posts) | none |
-| 7 | Short capped entries plus `detail` / `board_unfold` | **Absorb.** A bounded `headline` is added beside the bounded body, and deliveries and listings carry only the headline. A reader fetches the body by entry id. #1336 already bounds bodies; this only makes delivery cheap. | #1336 Decision ("bodies are strictly bounded") | #1336 amendment |
+| 7 | Short capped entries plus `detail` / `board_unfold` | **Already covered.** #1336 already bounds every body. The separate headline was only needed for mid-turn delivery, which was rejected. | #1336 Decision ("bodies are strictly bounded") | none |
 | 8 | `PATCH_SUMMARY` (files, idea, evidence) | **Reject as a kind; already covered.** It maps to `evidence` plus `artifact_ref`, and MASS's output contract already requires a `claim` to link `evidence` before an attempt can complete. | #1336 MASS amendment | none |
 | 9 | `OBSERVED` / `FACT`; "do not re-derive a peer's `FACT`" | **Map to the existing kinds; reject the rule.** `OBSERVED` and `FACT` map to `evidence` and `claim`. In ProbOS a claim never becomes true by repetition; only an accepted `decision` does. "Do not re-derive" conflicts with slots declared `independence`. | #1336 Decision; `elastic_team.py:255`; #1337 CORAL amendment | none |
 | 10 | Verify against the acceptance criteria before merge | **Already present.** | `workforce.py:1414` (`verification` column); `crew_session.py:1832` (`success_criteria`); MASS output contract on #1336 | none |
 | 11 | Reminder when a turn publishes no entry | **Reject as a separate mechanism.** The MASS output contract already refuses completion and names the unmet clause, and CORAL reflection checkpoints (#1337) cover long-running attempts. A third nudge would duplicate them. | #1336 MASS amendment; #1337 CORAL amendment | none |
-| 12 | `board_grep` over the full history | **Considered, deferred.** ProbOS reads are already cursor-paged over the full history and filtered by kind, slot/task and (with this amendment) scope. Keyword search waits until a trial shows that scope filtering misses related entries. | #1336 Decision (bounded filtered reads) | none |
-| 13 | Idle nudge; T-45 and T-5 wrap-up reminders | **Considered, deferred.** Deadline-aware wrap-up could use `due_at` (`workforce.py:1406`), but it is outside this amendment. | — | none |
+| 12 | `board_grep` over the full history | **Considered, deferred.** ProbOS reads are already cursor-paged over the full history and filtered by kind and slot/task. One CrewSession's board is small enough for that. | #1336 Decision (bounded filtered reads) | none |
+| 13 | Idle nudge; T-45 and T-5 wrap-up reminders | **Rejected.** The CrewSession lifecycle and its verified finalization (AD-1126, `crew_finalizer.py:1`) own pacing and completion. Deadline-aware wrap-up through `due_at` (`workforce.py:1406`) is a separate question. | — | none |
 | 14 | No central orchestrator; iron rule "fully autonomous" | **Reject.** Chain of command, escalation to the Captain, and governed decisions stay. | — | Do Not Build |
 | 15 | Agent count as a scaling dimension (1,024 workers) | **Reject as a claim.** It is unablated and the compute is not normalized (see the assessment). | — | Do Not Build |
 
 ## Blind spots the paper does not discuss
 
-1. **A wrong `FAIL` poisons the search.** The entry Agensh values most is also the riskiest one. That is why row 2 replaces the ban with surfacing and a challenge path, and why a `failed_attempt` must carry evidence and a specific scope.
-2. **Board text injected mid-turn is a prompt-injection channel.** It is peer-written content landing in another agent's prompt. It is delivered as labelled data, filtered by classification, and can never carry an approval. This follows the same rule Claude Code agent teams apply to messages between agents. `security/contagion.py` (`CommunicationContagionFirewall`) is listed for wiring under #1324; this is one more consumer that firewall should cover.
-3. **Independence.** A review, verification or adjudication slot, or a slot declared `independence`, must not receive peers' `failed_attempt` reasoning before it submits. This extends the CORAL rule that "workers read outcomes, not reasoning" on #1337.
-4. **Cost.** Every row that adds delivery adds tokens. The amendment's trials report tokens per arm, which is the comparison the paper never makes.
-5. **HXI consumer.** AD-1310 (#1361) renders the board's kinds on the spatial canvas (comment on #1336, 2026-09-07), so `failed_attempt` has to be added to its object list.
+1. **A wrong `FAIL` poisons the search.** The entry Agensh values most is also the riskiest one. That is why row 2 replaces the ban with a challenge path, and why a `disproved` entry must link evidence.
+2. **Peer text in another agent's prompt is an injection channel.** This was one reason to reject mid-turn delivery (row 3). Entries that are read at the start of an attempt are still peer-written data, not instructions.
+3. **Independence.** A review, verification or adjudication slot, or a slot declared `independence`, must not receive peers' `disproved` reasoning before it submits. This extends #1337's CORAL rule that "workers read outcomes, not reasoning".
+4. **Cost.** Every delivery mechanism adds tokens. The paper reports none, and this was another reason to keep only the read at attempt start.
+5. **HXI consumer.** No change for AD-1310 (#1361). No kind is added, so the canvas's object list is unchanged.
 
 ## Prior art considered (bounded, 2026-10-28)
 
 - **DeLM** (arXiv 2606.10662), the origin of Agensh's shared context: arxiv.org is not reachable from this session, so the paper was not read. It is recorded here as a lead, not as evidence.
 - **Claude Code agent teams** ([docs](https://code.claude.com/docs/en/agent-teams)), checked 2026-10-28:
-  - Claiming is exclusive and uses file locking. ProbOS keeps exclusivity in work permits and makes area overlap advisory. Adapted.
+  - Claiming is exclusive and uses file locking. Not needed here: in ProbOS the CrewSession planner assigns the sub-tasks, and exclusive occupancy is AD-1159 work permits.
   - A `TaskCompleted` hook can block completion, which is the same shape as the MASS output contract. Nothing new.
   - Messages between agents are treated as untrusted and cannot relay an approval. Absorbed as blind spot 2.
 - **Reference projects** (`reference-projects.md`, judged on 2026-10-28): the Claude Code row is up to date (2026-10-16), so this check is recorded beside it. AutoGen and CrewAI are *passing* rows and therefore count as never reviewed. They were considered and deferred: the paper does not cite them for these mechanisms.
 
-## Open question for the Captain
+## Ownership question (resolved)
 
-**May an ordinary work item, one that is not a CrewSession, own a blackboard?** The amendment keys the board to a work item id. For a CrewSession this changes nothing, because a CrewSession *is* a parent work item (`work_type == "crew_session"`, `crew_session.py:2542-2544`) and its session id is that item's id (`crew_session.py:6130`). For any other work item, this extends #1336's objective beyond elastic teams. The amendment draft records the recommendation and the exact decision.
+**Resolved by the Captain, 2026-10-28:** the board stays CrewSession-owned, as #1336 is written. A first draft proposed keying the board to any root work item, so that ordinary crew work could have one. It was declined: crew who work together on one task do so through a CrewSession, and each CrewSession already has its board. Nothing was widened, so no ratification was needed.
