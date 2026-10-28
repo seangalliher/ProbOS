@@ -248,8 +248,7 @@ _LOOKUP_PHASES = {"_maybe_dispatch_oracle_lookup", "_maybe_dispatch_ward_room_lo
 
 
 def _own_nodes(node: ast.AST) -> list[ast.AST]:
-    """4b-R14 (AD-1270 slice 4c): the nodes a definition runs itself. A nested function or class is
-    not walked into: ``_definitions`` lists it as its own entry, so it is classified on its own."""
+    """4b-R14 (AD-1270 slice 4c): A nested function or class is not walked into."""
     found: list[ast.AST] = []
     stack = list(ast.iter_child_nodes(node))
     while stack:
