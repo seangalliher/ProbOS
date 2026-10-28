@@ -2,7 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28. Revised the same day to the Captain's scaled-back decision.
 
-This file is a staging draft and has not been posted. Part A is the text to append to the body of #1336. Part B is the decision record and the grep evidence, and stays here.
+This file was the staging draft. Part A was appended to the body of #1336 on 2026-10-28. Part A is the text to append to the body of #1336. Part B is the decision record and the grep evidence, and stays here.
 
 ---
 
