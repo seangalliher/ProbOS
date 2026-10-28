@@ -6229,6 +6229,7 @@ async def finalize_startup(
         llm_client=getattr(runtime, 'llm_client', None),  # BF-069
         identity_registry=runtime.identity_registry,  # BF-103
         working_memory=getattr(runtime, "working_memory", None),  # AD-573d
+        end_cold_start_fn=runtime.end_cold_start,  # BF-941: the first dream cycle ends the fresh-start window
     )
     dream_adapter._cold_start = runtime._cold_start
 

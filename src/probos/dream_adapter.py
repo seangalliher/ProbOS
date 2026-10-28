@@ -91,6 +91,7 @@ class DreamAdapter:
         llm_client: Any = None,  # BF-069: LLM client for health monitoring
         identity_registry: Any = None,  # BF-103: for sovereign ID resolution
         working_memory: Any = None,  # AD-573d: dream-to-WM pipeline
+        end_cold_start_fn: Callable[[str], Any] | None = None,  # BF-941: runtime.end_cold_start
     ) -> None:
         self._dream_scheduler = dream_scheduler
         self._emergent_detector = emergent_detector
@@ -111,6 +112,7 @@ class DreamAdapter:
         self._llm_client = llm_client
         self._identity_registry = identity_registry
         self._working_memory = working_memory  # AD-573d
+        self._end_cold_start_fn = end_cold_start_fn  # BF-941
 
         # Runtime state references (set by runtime after creation)
         self._cold_start: bool = False
@@ -143,6 +145,9 @@ class DreamAdapter:
         if self._cold_start:
             self._cold_start = False
             logger.info("BF-034: Cold start period ended — normal detection resumed")
+            # BF-941: end the runtime's flag too, so the fresh-start notes stop with this cycle
+            if self._end_cold_start_fn is not None:
+                self._end_cold_start_fn("first dream cycle")
 
         # Emit system_mode event for HXI (AD-254) — dream cycle ended
         self._event_emitter(EventType.SYSTEM_MODE, {"mode": "idle", "previous": "dreaming"})
