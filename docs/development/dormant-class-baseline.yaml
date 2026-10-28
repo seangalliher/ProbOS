@@ -187,24 +187,6 @@ classes:
   consultation/refs.py::WorkspaceRef:
     disposition: wire
     owner: '#1324'
-  crew_development/boot_camp_extensions.py::ASchoolCurriculum:
-    disposition: wire
-    owner: '#1324'
-  crew_development/boot_camp_extensions.py::CompletionCriteriaGate:
-    disposition: wire
-    owner: '#1324'
-  crew_development/boot_camp_extensions.py::CurriculumProgressionTracker:
-    disposition: wire
-    owner: '#1324'
-  crew_development/boot_camp_extensions.py::GateDecision:
-    disposition: wire
-    owner: '#1324'
-  crew_development/boot_camp_extensions.py::GraduatedStimuliMonitor:
-    disposition: wire
-    owner: '#1324'
-  crew_development/boot_camp_extensions.py::StimuliRecommendation:
-    disposition: wire
-    owner: '#1324'
   crew_development/discovery/cross_functional.py::CrossFunctionalSuggestion:
     disposition: wire
     owner: '#1324'
