@@ -6052,6 +6052,7 @@ class CognitiveAgent(BaseAgent):
         # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
         # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
         _rt = getattr(self, '_runtime', None)
+        observation.pop("_boot_camp_active", None)  # AD-1270: ask again; phase 2 and the fallback reuse triage's dict
         if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
             observation["_boot_camp_active"] = True
 
@@ -6241,6 +6242,7 @@ class CognitiveAgent(BaseAgent):
         # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
         # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
         _rt = getattr(self, '_runtime', None)
+        observation.pop("_boot_camp_active", None)  # AD-1270: ask again; a reused observation carries an old answer
         if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
             observation["_boot_camp_active"] = True
 

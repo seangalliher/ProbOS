@@ -1,8 +1,11 @@
 """AD-1270 (#1324) slice 4b, M2: the AD-638 boot camp activates, counts DMs and times out.
 
 Activation moved from startup/dreaming.py (Phase 5, before the coordinator exists) into
-finalization; every coordinator read enforces the timeout, with no task; a crew DM sent through
-the proactive path counts. Time comes from an injected clock, trust from a real TrustNetwork.
+finalization, for a new crew (Amendment A1: no session record and no episodes). ``is_active``,
+``is_enrolled``, ``check_graduation``, ``on_agent_post``, ``on_agent_dm`` and ``check_timeout``
+enforce the timeout, with no task, and ``relaxes_quality_gates`` does when its flag is on;
+``get_state`` returns raw state. A crew DM sent through the proactive path counts. Time comes
+from an injected clock, trust from a real TrustNetwork.
 """
 
 from __future__ import annotations
@@ -346,9 +349,22 @@ _FLEET = [
 ]
 
 
-def _startup_runtime(coord: BootCampCoordinator | None, *, cold: bool, agents: list) -> SimpleNamespace:
+class _Stats:
+    """The one episodic-memory read ``_is_new_crew_start`` makes."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+
+    async def get_stats(self) -> dict:
+        return {"total": self.total}
+
+
+def _startup_runtime(coord: BootCampCoordinator | None, *, new_crew: bool, agents: list) -> SimpleNamespace:
+    # AD-1270 A1: is_cold_start is False, as production reports it whenever a coordinator exists
+    # (register R10); a new crew is no session record (first_boot) and an empty episode store.
     return SimpleNamespace(
-        boot_camp=coord, is_cold_start=cold, ontology=None,
+        boot_camp=coord, is_cold_start=False, ontology=None,
+        _lifecycle_state="first_boot" if new_crew else "stasis_recovery", episodic_memory=_Stats(0),
         registry=SimpleNamespace(all=lambda: list(agents)),
     )
 
@@ -358,7 +374,7 @@ def _startup_runtime(coord: BootCampCoordinator | None, *, cold: bool, agents: l
 async def test_cold_start_finalization_enrols_crew(cold: bool) -> None:
     coord = _coordinator(TrustNetwork(), _Clock())
 
-    ran = await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(coord, cold=cold, agents=_FLEET))
+    ran = await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(coord, new_crew=cold, agents=_FLEET))
 
     assert ran is cold
     assert coord.is_enrolled("security_officer-0") is cold
@@ -368,10 +384,10 @@ async def test_cold_start_finalization_enrols_crew(cold: bool) -> None:
 
 @pytest.mark.asyncio
 async def test_no_coordinator_or_no_crew_means_no_activation() -> None:
-    assert await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(None, cold=True, agents=_FLEET)) is False
+    assert await _activate_boot_camp_on_cold_start(runtime=_startup_runtime(None, new_crew=True, agents=_FLEET)) is False
 
     coord = _coordinator(TrustNetwork(), _Clock())
-    no_crew = _startup_runtime(coord, cold=True, agents=_FLEET[1:])
+    no_crew = _startup_runtime(coord, new_crew=True, agents=_FLEET[1:])
     assert await _activate_boot_camp_on_cold_start(runtime=no_crew) is False
     assert coord.is_active is False
 
@@ -392,6 +408,13 @@ def test_finalization_activates_the_boot_camp_after_the_snapshot_late_bind() -> 
 
     assert len(activations) == 1 and len(snapshots) == 1
     assert activations[0] > snapshots[0]
+    awaited = sorted(
+        node.value.lineno
+        for node in ast.walk(body)
+        if isinstance(node, ast.Await) and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name) and node.value.func.id == "_activate_boot_camp_on_cold_start"
+    )
+    assert awaited == activations  # A1: awaited, not a coroutine left unawaited
 
 
 def test_phase_5_no_longer_tries_to_activate_the_boot_camp() -> None:

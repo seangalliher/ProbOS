@@ -487,8 +487,10 @@ class BootCampCoordinator:
     def _expire_if_timed_out(self) -> None:
         """AD-1270 (#1324): enforce ``timeout_minutes`` by construction, with no task.
 
-        Every public reader and tracker calls this first, so nothing can observe an
-        enrolment, or a relaxation, past the timeout.
+        ``is_active``, ``is_enrolled``, ``check_graduation``, ``on_agent_post``,
+        ``on_agent_dm`` and ``check_timeout`` call this first; ``relaxes_quality_gates``
+        reaches it through ``is_enrolled`` when ``relax_quality_gates`` is on. ``get_state``
+        returns the raw state and does not call it.
         """
         if not self._active or self._started_at is None:
             return
