@@ -215,9 +215,10 @@ class CapabilityRow:
 class ReceiptSource(Protocol):
     """Where activation, exercise and health facts come from.
 
-    Nothing implements this in production in this slice — migration steps 2 and
-    3 do. It is defined now so those slices attach receipts by *supplying an
-    argument* to the existing resolver, not by changing this model.
+    Migration step 2's ``probos.maturity.receipts.ActivationReceipts`` implements
+    it for activation and answers exercise and health with empty records; step 3
+    supplies exercise. Receipts attach by *supplying an argument* to the existing
+    resolver, not by changing this model.
     """
 
     def activation_for(self, capability_id: str) -> TriState:

@@ -3,9 +3,9 @@
 **Generated file — do not edit by hand.**
 Regenerate with `python scripts/gen_capability_truth.py`.
 
-This is an **observation-only** inventory (AD-1270a, migration step 1). Nothing
-reads a row to make a decision: it changes no routing, permission, trust or
-startup behaviour. It exists so that *shipped* and *working* stop looking alike.
+This is an **observation-only** inventory (AD-1270a, migration steps 1 and 2).
+Nothing reads a row to make a decision: it changes no routing, permission, trust
+or startup decision. It exists so that *shipped* and *working* stop looking alike.
 
 Each capability is resolved against three **different** authorities, so the
 facts cannot collapse into one another:
@@ -21,13 +21,15 @@ facts cannot collapse into one another:
 broken declaration is not a disabled capability.
 
 **Why so much of this page says `unknown`, and why that is the finding.**
-`activated`, `exercise` and `health` have no producer yet — emitting activation
-receipts is migration step 2 and recording exercise receipts is migration step 3.
-The generator also runs offline and constructs no runtime, which keeps `--check`
-hermetic and is why `advertised` is `unknown` here even though the axis is
-genuinely wired and covered by tests. `live` is **derived, never stored**, and no
-row can read `live` without both an activation fact and at least one exercise
-attempt — so in this slice no capability is provably live, and the page says so
+`exercise` and `health` have no producer yet: recording exercise receipts is
+migration step 3. `activated` has one since migration step 2: at finalization a
+running ProbOS records an activation receipt for each capability whose notes name
+a receipt point, keeps them on `runtime.activation_receipts` and logs one line per
+receipt. The generator runs offline and constructs no runtime, which keeps
+`--check` hermetic and is why `activated` and `advertised` are `unknown` here even
+though both are wired and covered by tests. `live` is **derived, never stored**,
+and no row can read `live` without both an activation fact and at least one
+exercise attempt — so no capability is provably live yet, and the page says so
 rather than defaulting to optimism.
 
 ## Inventory
@@ -39,6 +41,9 @@ rather than defaulting to optimism.
 | `cognitive.episodic-memory` | yes | yes | unknown | unknown | 0 | unknown | unknown |
 | `cognitive.intent-decomposition` | yes | yes | unknown | unknown | 0 | unknown | unknown |
 | `cognitive.self-modification` | yes | yes | unknown | unknown | 0 | unknown | unknown |
+| `cognitive.working-memory-cognition` | yes | no | unknown | unknown | 0 | unknown | inert |
+| `core.boot-camp` | yes | yes | unknown | unknown | 0 | unknown | unknown |
+| `core.night-orders-escalation` | yes | yes | unknown | unknown | 0 | unknown | unknown |
 | `infrastructure.snapshot-manifest` | yes | yes | unknown | unknown | 0 | unknown | unknown |
 | `tools.code-execution` | yes | yes | unknown | unknown | 0 | unknown | unknown |
 | `tools.governed-invocation` | yes | yes | unknown | unknown | 0 | unknown | unknown |
@@ -89,6 +94,33 @@ rather than defaulting to optimism.
 - **Configured when:** `self_mod.enabled`
 - **Catalog binding:** none declared
 - **Notes:** Capability-gap driven agent and skill design. Ships default-OFF, so a shipped-but-disabled row here is correct rather than a defect.
+- **Resolution notes:**
+  - advertised: no runtime attached (offline projection)
+
+### `cognitive.working-memory-cognition` — Working-memory cognition (AD-668 salience, AD-670 metabolism)
+
+- **Owner:** `probos.cognitive.working_memory_cognition.WorkingMemoryCognition`
+- **Configured when:** `working_memory.cognition_enabled`
+- **Catalog binding:** none declared
+- **Notes:** Default off. Activation receipt at finalization, after the AD-573 working-memory restore: activated when startup started the cycle and published it as runtime.working_memory_cognition.
+- **Resolution notes:**
+  - advertised: no runtime attached (offline projection)
+
+### `core.boot-camp` — Cold-start boot camp
+
+- **Owner:** `probos.boot_camp.BootCampCoordinator`
+- **Configured when:** `boot_camp.enabled`
+- **Catalog binding:** none declared
+- **Notes:** AD-638. Activation receipt at finalization: the coordinator Phase 7 built, then the AD-683 snapshot late-bind, then the cold-start enrolment, in that order. A boot that is not a new crew skips the enrolment and is still activated; a failed enrolment is not. Phase 7 builds the coordinator only with the Ward Room, trust and episodic memory present.
+- **Resolution notes:**
+  - advertised: no runtime attached (offline projection)
+
+### `core.night-orders-escalation` — Night Orders escalation to the Captain
+
+- **Owner:** `probos.bridge_alerts.BridgeAlertService`
+- **Configured when:** `proactive_cognitive.enabled`
+- **Catalog binding:** none declared
+- **Notes:** AD-471. Activation receipt at finalization: activated only when the Night Orders manager, the bridge-alert service and the Ward Room router are all wired, because the escalation pages the Captain only through the three. Whether Night Orders are in force is runtime state, not activation.
 - **Resolution notes:**
   - advertised: no runtime attached (offline projection)
 

@@ -19,6 +19,13 @@ from probos.tools.browser.lifecycle import BrowserActor, BrowserAuthorityBasis, 
 from probos.utils import format_duration
 from probos.crew_utils import is_crew_agent
 from probos.credential_store import crew_scope_token
+from probos.startup.activation_receipts import (
+    begin_activation_receipts,
+    boot_camp_receipt,
+    night_orders_escalation_receipt,
+    record_activation,
+    working_memory_cognition_receipt,
+)
 
 if TYPE_CHECKING:
     from probos.capability_request import CapabilityRequestStore
@@ -4170,6 +4177,10 @@ async def finalize_startup(
     from probos.cognitive.standing_orders import clear_cache as clear_standing_orders_cache
     clear_standing_orders_cache()
 
+    # AD-1270a step 2 (#1324): this finalization's activation receipts, published as
+    # runtime.activation_receipts. Startup writes them below and reads none.
+    activation_receipts = begin_activation_receipts(runtime)
+
     if _wire_anomaly_window(runtime=runtime, config=config):
         logger.info("AD-673: AnomalyWindowManager wired during finalization")
 
@@ -4209,19 +4220,33 @@ async def finalize_startup(
     if _wire_discovery_learning(runtime=runtime, config=config):
         logger.info("AD-512: Discovery Learning v1 wired during finalization")
 
+    _boot_camp_late_bind: bool | None = None  # AD-1270a step 2: None when the late-bind did not run
     if _wire_ship_state_snapshot(runtime=runtime, config=config):
         logger.info("AD-683: Ship State Snapshot v1 wired during finalization")
         # BF-261 / AD-1270 (#1324): late-bind into BootCampCoordinator (created at Phase 7, before
         # finalize) through its public setter, before the activation below captures the snapshot.
-        _late_bind_boot_camp_snapshot(runtime=runtime)
+        _boot_camp_late_bind = _late_bind_boot_camp_snapshot(runtime=runtime) is True
 
     # AD-1270 (#1324): AD-638 activation for a new crew, after the coordinator (Phase 7) and the
     # AD-683 snapshot late-bind above. Log-and-degrade: startup continues. ``activate`` enrols
     # agent by agent and nothing is rolled back, so a failure part-way can leave some crew enrolled.
+    _boot_camp_enrolled = False
+    _boot_camp_enrolment_error: str | None = None
     try:
-        await _activate_boot_camp_on_cold_start(runtime=runtime)
-    except Exception:
+        _boot_camp_enrolled = await _activate_boot_camp_on_cold_start(runtime=runtime) is True
+    except Exception as _boot_camp_exc:
+        _boot_camp_enrolment_error = type(_boot_camp_exc).__name__
         logger.warning("AD-1270: boot-camp activation failed; startup continues", exc_info=True)
+    # AD-1270a step 2 (#1324): the boot-camp receipt: the coordinator, then the late-bind, then the enrolment.
+    record_activation(
+        activation_receipts,
+        lambda: boot_camp_receipt(
+            runtime,
+            late_bind=_boot_camp_late_bind,
+            enrolled=_boot_camp_enrolled,
+            enrolment_error=_boot_camp_enrolment_error,
+        ),
+    )
 
     if _wire_duty_scope_provider(runtime=runtime, config=config):
         logger.info("AD-508: DutyScopeProvider v1 wired during finalization")
@@ -6422,10 +6447,17 @@ async def finalize_startup(
 
     # AD-1270 (#1324): AD-668/AD-670 for crew working memory, default off. After the
     # AD-573 restore above, which replaces each restored agent's working memory.
+    _cognition_start_error: str | None = None
     try:
         await _start_working_memory_cognition(runtime=runtime, config=config)
-    except Exception:
+    except Exception as _cognition_exc:
+        _cognition_start_error = type(_cognition_exc).__name__
         logger.warning("AD-1270: _start_working_memory_cognition failed", exc_info=True)
+    # AD-1270a step 2 (#1324): the working-memory cognition receipt (off by default: not activated).
+    record_activation(
+        activation_receipts,
+        lambda: working_memory_cognition_receipt(runtime, start_error=_cognition_start_error),
+    )
 
     # BF-235: Always clear identity caches on stasis resume, regardless of
     # whether warm-boot orientation rendering is enabled. The caches are stale
@@ -6816,6 +6848,14 @@ async def finalize_startup(
         )
     except Exception:
         logger.warning("BF-907: the crew trust identity check failed to run; startup continues", exc_info=True)
+
+    # AD-1270a step 2 (#1324): the Night Orders escalation receipt, from what finalization hands the runtime.
+    record_activation(
+        activation_receipts,
+        lambda: night_orders_escalation_receipt(
+            runtime, night_orders_mgr=night_orders_mgr, ward_room_router=ward_room_router
+        ),
+    )
 
     logger.info("Startup [finalize]: complete")
     return FinalizationResult(

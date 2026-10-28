@@ -299,6 +299,9 @@ def test_load_default_registry_ships_exactly_the_declared_inventory() -> None:
         "cognitive.episodic-memory",
         "cognitive.intent-decomposition",
         "cognitive.self-modification",
+        "cognitive.working-memory-cognition",  # AD-1270a step 2 (#1324 slice 5): has a receipt point
+        "core.boot-camp",  # AD-1270a step 2: has a receipt point
+        "core.night-orders-escalation",  # AD-1270a step 2: has a receipt point
         "infrastructure.snapshot-manifest",
         "tools.code-execution",
         "tools.governed-invocation",
