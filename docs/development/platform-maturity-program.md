@@ -761,7 +761,7 @@ rules, or the hard escalation boundaries in `.github/agents/orchestrator.agent.m
     receipts (step 3), Doctor reuse and a live-runtime projection (step 5) have no
     producer yet, so `advertised`, `exercise` and `health` are honestly `unknown`,
     the offline inventory shows `activated` as `unknown` too, and no row can
-    evaluate `live`.
+    be `live`.
 - AD-1270b seam-manifest slice.
 - AD-1270b architecture-fitness slice.
 - AD-1270b crossing tests, one P0 family per bounded build.

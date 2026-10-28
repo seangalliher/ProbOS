@@ -1,7 +1,7 @@
 """AD-1270a migration step 2 (#1324 slice 5): the activation receipt model.
 
 A receipt is evidence that a startup ownership point wired an owner. It is not a health claim
-and not exercise evidence, so a receipted capability's ``live`` stays ``unknown``.
+and not exercise evidence.
 
 Hermetic: no runtime boot, no network, no clock, no writes.
 """

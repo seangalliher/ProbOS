@@ -2,8 +2,8 @@
 
 Finalization records a receipt after the boot camp's late-bind and enrolment, after
 working-memory cognition starts, and for the Night Orders escalation from what it hands the
-runtime. A receipt names the owner and the evidence; it is not a health claim, so ``live``
-stays ``unknown``. Production writes receipts and reads none: the two source censuses at the
+runtime. A receipt names the owner and the evidence; it is not a health claim. Production
+writes receipts and reads none: the two source censuses at the
 end pin it.
 """
 

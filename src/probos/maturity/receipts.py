@@ -3,8 +3,7 @@
 A receipt records, for one declared capability, the production owner a startup ownership point
 is meant to wire, whether it wired it, and the facts it saw, in the order it saw them. It is
 **not** a health claim and not exercise evidence: :class:`ActivationReceipts` answers
-``exercise_for`` and ``health_for`` with empty records, so a receipted capability's ``live``
-stays ``unknown`` until migration step 3 records production exercise.
+``exercise_for`` and ``health_for`` with empty records.
 
 One :class:`ActivationReceipts` per finalization, held by the runtime; there is no module-level
 instance. Production writes receipts and reads none. This module imports nothing from
