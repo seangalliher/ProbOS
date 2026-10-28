@@ -4,6 +4,7 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28 (Amendment A1: re-anchored on the final slice-4b head `8f0454b5`)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28 (Amendment A2: P-T17 pins the e1 surface counts the oracle measured; section 10 restated in the census grammar)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28 (Amendment A3: head-text hygiene; which text describes the head)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28 (Amendment A4, on `8cb4bad5`: round 1's three false statements deleted: §6's AD-1195 case cell, P-C27's `_own_nodes` docstring, P-T11's roadmap citation)
 
 **Status:** build-ready. Drafted on `77f8fd67` (`origin/main` `7c85ebaf` + the 4b contract `d147c536` + 4b's candidate applied by tool). **Amendment A1** re-anchors every pair on `8f0454b5` (slice 4b's M3 commit, after its R1 and R2), turns the draft's prose edits into pairs, and folds in 4b-R12, 4b-R13, 4b-R6's A2 note and 4b-R14. It builds after 4b merges. **A3:** 4b's commits after `8f0454b5` change only its own contract and `tests/test_ad1324_srp_layout.py` (R3), and no pair here touches either (`git diff --stat 8f0454b5 d8e6eb7f`; `git diff --stat d8e6eb7f 804345c3`). A2's dry run applied all 70 pairs, with no failure, to `d8e6eb7f`, whose source and tests equal 4b's final head `804345c3` (tree `3f9bf0e2`). 4b's merge tree equals `3f9bf0e2` only if `origin/main` has not moved; the orchestrator confirms it after the merge. No new AD or BF number: this is slice 4c of #1324. **Captain:** nothing parked. Overrulable: D2 (event types), D3 (phases 2 and 3), D4 (the snapshot in enrolled agents' DMs and its label), D5 (setter precedence).
 
@@ -132,7 +133,7 @@ New files are in §7.1.N, §7.5.N and §7.7.N (34 cases: 11, 21 and 2, as runnin
 | `tests/test_ad1270_chamber_module_ids.py` (M3) | 2 | 2 fail | unchanged |
 | `tests/test_ad1270_boot_camp_trust.py` | unchanged count | passes before and after | P-C21 (helper), P-C27 (census by qualified name, 4b-R14) |
 | `tests/test_ad1270_boot_camp_repair_a1.py` | unchanged count | its coordinator cases fail by `TypeError` without P-C31 | P-C31 (helper) |
-| `tests/test_ad1195_event_persistence_contract.py`, `tests/test_ad1195_durable_event_seam.py` | unchanged | | P-T12 to P-T14 (M1: 396), P-C28 to P-C30 (M2: 395) |
+| `tests/test_ad1195_event_persistence_contract.py`, `tests/test_ad1195_durable_event_seam.py` | | | P-T12 to P-T14 (M1: 396), P-C28 to P-C30 (M2: 395) |
 | `tests/test_ad638_boot_camp.py` | −6 | | P-C16 to P-C20 |
 
 ## 7. The contract
@@ -296,11 +297,12 @@ discovery_learning:
 ```
     Distinct from AD-509 ``BootCampPhase`` (orientation/core_knowledge/
     a_school/calibration/integration). AD-486 phases mirror the spec at
+    docs/development/roadmap.md:4130: orientation -> calibration ->
 ```
 REPLACE:
 ```
     AD-509's separate five-phase ``BootCampPhase`` (orientation/core_knowledge/
-    a_school/calibration/integration) was deleted by AD-1270 (#1324). AD-486 phases mirror the spec at
+    a_school/calibration/integration) was deleted by AD-1270 (#1324). AD-486 phases: orientation -> calibration ->
 ```
 
 **P-T12 (`tests/test_ad1195_event_persistence_contract.py`).** SEARCH:
@@ -1661,8 +1663,7 @@ def test_every_gating_chain_phase_asks_for_the_relaxation_not_enrolment() -> Non
 REPLACE:
 ```
 def _own_nodes(node: ast.AST) -> list[ast.AST]:
-    """4b-R14 (AD-1270 slice 4c): the nodes a definition runs itself. A nested function or class is
-    not walked into: ``_definitions`` lists it as its own entry, so it is classified on its own."""
+    """4b-R14 (AD-1270 slice 4c): A nested function or class is not walked into."""
     found: list[ast.AST] = []
     stack = list(ast.iter_child_nodes(node))
     while stack:
