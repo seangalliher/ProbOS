@@ -485,11 +485,11 @@ classes:
     disposition: wire
     owner: '#1324'
   tools/work_permits.py::WorkPermit:
-    disposition: wire
-    owner: '#1324'
+    disposition: staged
+    owner: AD-1348 (#1630)
   tools/work_permits.py::WorkPermitStore:
-    disposition: wire
-    owner: '#1324'
+    disposition: staged
+    owner: AD-1348 (#1630)
   types.py::ConnectionWeight:
     disposition: retire
     owner: '#1324'
