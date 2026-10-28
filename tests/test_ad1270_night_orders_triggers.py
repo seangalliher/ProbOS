@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import math
-import re
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -43,7 +42,7 @@ def _source(*parts: str) -> str:
     return _SRC.joinpath(*parts).read_text(encoding="utf-8")
 
 
-# --- T1, T2: the map names producers, and only producers ---------------------
+# --- T1: the map names producers (T2 is in test_ad1270_night_orders_recall.py) --------
 
 
 def test_every_mapped_event_has_a_production_producer() -> None:
@@ -54,14 +53,6 @@ def test_every_mapped_event_has_a_production_producer() -> None:
     trust = _source("consensus", "trust.py")
     assert 'emissions.append(("trust_update", {' in trust
     assert '"new_score": new_score,' in trust
-
-
-def test_the_inert_triggers_still_have_no_producer() -> None:
-    values = {m.value for m in EventType}
-    assert values.isdisjoint({"trust_change", "alert_condition_change", "security_alert", "red_alert"})
-    texts = {p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8") for p in _SRC.rglob("*.py")}
-    assert [p for p, t in texts.items() if re.search(r"\.set_alert_condition\(", t)] == []
-    assert [p for p, t in texts.items() if re.search(r"""emit_event\w*\(\s*["']security_alert""", t)] == []
 
 
 def test_every_template_trigger_is_wired_or_known_inert() -> None:
