@@ -94,7 +94,9 @@ Never delete or loosen a test beyond P-T1. Run the M1 and M3 focused gates with 
    - the two header paragraphs P-H1 and P-H2 change;
    - three inventory rows and three Detail sections are added (`cognitive.working-memory-cognition`, `core.boot-camp`, `core.night-orders-escalation`).
 
-   Nothing else. Predicted rows against `config/system.yaml`: configured `no`, `yes` and `yes` respectively. Every other axis reads `unknown`, with 0 attempts and live `unknown`.
+   Nothing else. Measured rows against `config/system.yaml` (A3), in the column order Present, Configured, Advertised, Activated, Exercise attempts, Health, Live:
+   - `cognitive.working-memory-cognition`: `yes`, `no`, `unknown`, `unknown`, 0, `unknown`, `inert` (`CapabilityRow.live` returns `inert` when `present`, `configured` or `advertised` is `false`, `maturity/model.py:182-183`);
+   - `core.boot-camp` and `core.night-orders-escalation`: `yes`, `yes`, `unknown`, `unknown`, 0, `unknown`, `unknown`.
 6. Run the gate. The dormant check must no longer list the two M1 candidates, and must list no other new one. The architecture check must pass with no row change. The seam check must pass (the new module declares no `seam_ids`).
 7. Commit.
 
@@ -1983,6 +1985,11 @@ Not adopted:
 
 - **§4's base lines.** The draft predicted `ModuleNotFoundError` on both bases. A1's dry run measured `ImportError` at the new files' first import of the new code (`evidence-ad1270s5-a1-tf1.txt` and `-tf2.txt`: one collection error each, pytest exit 2). §4 now states those measurements. No other line names the error.
 - **Head-text check.** From `8cb4bad5` to `698ec7e1`, `git diff --stat` lists three files: `prompts/ad-1270-boot-camp-tail.md`, `src/probos/holodeck/phases.py` and `tests/test_ad1270_boot_camp_trust.py` (4c's A4 and R1). This contract cites none of them, so A1's head-text check (16.2) still holds. Spot-checked on `698ec7e1` and holding: the citations to `test_bf927_boot_claims.py:545-549`, `runtime.py:3598`, `check_config_readers.py:80-102` and `test_new_crew_auto_welcome.py:186-222`; the M2 and M3 gate file lists; and U1 to U3's SEARCH anchors.
+
+## 18. Amendment A3 (2026-10-28, on slice 4c's final head `698ec7e1`)
+
+- **§4's predicted rows.** M2 step 5 said every axis other than `configured` reads `unknown`, with live `unknown`. Two independent builds regenerated the same inventory and measured `present` `yes` on all three rows and `live` `inert` on `cognitive.working-memory-cognition`, whose `configured` is `no` (`maturity/model.py:182-183`). Step 5 now states the measured rows.
+- **What 16.2 and A2 missed.** Their checks covered sentences describing the head, not predictions of build output, and A1's dry run did not regenerate the inventory. A Grep of this contract for `unknown`, `inert`, `inventory`, `rows` and `predicted` finds no other claim about these rows' axis values. §2 and §5 say `activated` reads `unknown` offline (true). P-H2's and U3's "no row can read (or evaluate) `live`" mean that no row reaches `live`, which holds with an `inert` row; their bodies are unchanged.
 
 ## For the register (#1324)
 
