@@ -29,6 +29,8 @@
 
 **Which text describes the head (A5).** Line numbers, counts and absences in the front matter's measurement paragraph, §0, §5, §10, §11 and every Verified and Absence block, the Not verified list, §7's pairs and each milestone's or repair's build order are records of the tree they were written on: unlabelled text on `4fd31e6c` (the draft), (A1) on `31066065`, (A2) on `8855783b`, (A3) on `8f0454b5`, (A4) on `dd9def73`. They are not restated for the head; for example `boot_camp.py:160,224` (§0, §5) read `:173,:239` at R5. Where an earlier statement and a later amendment differ, the later amendment wins. The front-matter Tests list, §2, §12 and §15 describe the candidate's head.
 
+**Amendment A6 (2026-10-28, after round 6 on the R5 delta at `d8e6eb7f`; `claude-architect`).** Round 6 (`logs/ad1270/review-ad1270b-r6.md`) found one false sentence, in the front-matter Tests list: the trust file's coordinators do not take an injected clock (F1, draft text). A sentence-by-sentence check of the four head-describing parts weakened that bullet's other sentence and three more: §2's DM line number, §12's dormant-check clause and §15's named head. One contract-only commit, **R6**; no test or production line changes, and no shared contract changes (A5). Round 7 reviews the R6 delta.
+
 **Re-anchoring after slices 3 and 4 merge:**
 - Anchored on slice-3 text: P-T2 (`test_ad1270e1_config_facade.py`, the `1880` line) and P-C2 (the `config-profiles.yaml` census header). Re-anchor both if slice 3's review repair changes those lines.
 - Not touched by slices 3 or 4: every other pair (`trust.py`, `crew.py`, `boot_camp.py`, `cognitive_agent.py`, `proactive.py`, `dreaming.py`, the `finalize.py` anchors at `def _wire_boot_camp_tracker` and the BF-261 block, `architecture-baseline.yaml`, `system.yaml` lines 2106-2108, the e2g and AD-1152 tests).
@@ -45,7 +47,7 @@ Each milestone is one Builder delegation and one local commit, staged by explici
 **Tests:**
 - New: `tests/test_ad1270_boot_camp_trust.py` (M1, 16 cases) and `tests/test_ad1270_boot_camp_lifecycle.py` (M2, 23 cases: the draft predicted 24, the orchestrator measured 23 on its oracle). A1 adds a third, `tests/test_ad1270_boot_camp_repair_a1.py` (11 cases at R1, 17 after A2).
 - Updated, each with an inline reason: `tests/test_ad1270e2g_crew_models.py`, `tests/test_ad1270e1_config_facade.py`, `tests/test_ad1152_agentic_correlation.py`, `tests/test_ad702_diplomatic_relations.py` (docstring only); A3 adds `tests/test_ad1324_srp_layout.py` (the moved pin, R3).
-- No test reads or writes `%LOCALAPPDATA%\ProbOS\data` or starts a vessel. Every time read in the new tests comes from an injected clock.
+- The three new files contain neither `LOCALAPPDATA` nor `ProbOSRuntime(`. The lifecycle and repair-A1 files pass an injected clock to every coordinator they build; the trust file's coordinators use the default, `time.time`.
 
 **Line endings:** working copies are CRLF (`core.autocrlf=true`). SEARCH blocks are LF: match and write with the file's own endings. New files are written LF.
 
@@ -85,7 +87,7 @@ AD-638's boot camp has never enrolled an agent:
 - **M2.**
   - Inject a clock into the coordinator.
   - Enforce the timeout in the enrolment and activity reads (D4 names them; `get_state` does not expire it, nor does `relaxes_quality_gates` while the flag is off).
-  - Count crew DMs at `proactive.py:4964`.
+  - Count crew DMs in `proactive.py`, after the AD-453 `sent DM` log line.
   - Move activation into finalization, after the AD-683 late-bind.
   - Delete the dead Phase-5 block and lower its architecture-baseline count.
 - **M3.** Trackers.
@@ -2809,7 +2811,7 @@ HOLDS: yes, statically; round 4 ran the seven files with -rs: 0 skipped
 
 - `check_architecture_principles.py --check`: P-Z1 lowers `init_dreaming` to `count: 1`. `finalize.py` gains no bare task. `BootCampCoordinator` keeps `[methods]`. (A2) `CognitiveAgent` gains one method, `_refresh_boot_camp_relaxation`, and keeps `[lines, methods]`: an `srp-size` row records triggers only (`check_architecture_principles.py:937-944`), so no row changes.
 - `check_config_facade.py`, `gen_config_reference.py`, `check_config_profiles.py`: regenerated or paired in M1.
-- `check_dormant_classes.py --check`: unchanged (no class becomes live or dormant).
+- `check_dormant_classes.py --check`: the candidate adds no class under `src/`; §15 requires the check's whole output.
 - Test collection: three new files (`tests/test_ad1270_boot_camp_trust.py`, `tests/test_ad1270_boot_camp_lifecycle.py` and A1's `tests/test_ad1270_boot_camp_repair_a1.py`), found by pytest's default discovery; no test list or gate script names them. `config-profiles.yaml:639` cites one trust case as `evidence_to_promote`, and `tests/test_ad702_diplomatic_relations.py:236` names the trust file in a docstring; neither selects tests.
 - (A3, corrected by A4) **Omitted up front, caught by the broad gate.** `tests/test_ad1324_srp_layout.py` pins the LF-normalised sha256 of `architecture-baseline.yaml` (`:26` and `:61-64` at R3), and P-Z1 changes that file, so the pin moves in the same commit (P-P2). AD-1240, AD-1326, AD-1327 and BF-906 rely on the pin (Verified, A3). Its name, assertion and failure condition stay; its reference value moves, so R3 changes a shared contract (§4).
 - (A4) Other tests that pin or check a file this slice changes include `test_ad1270e1_config_facade.py:1562` (`field_definitions == 1881`, P-T2), the default-config goldens in `test_ad1270e2g_crew_models.py` (`EXPECTED_DUMPS`) and `test_ad1152_agentic_correlation.py:323`, and the checks over `config-reference.md` (`test_config_reference_current.py:41`), `open-ads-report.md` with `ad-ledger-snapshot.json` (`test_ad1184_ad_ledger.py`), `architecture-baseline.yaml` (`test_ad1270b_architecture_fitness.py`) and `config-facade-baseline.yaml` (`test_ad1270e1_config_facade.py`, `test_ad1270e2g_crew_models.py:59`). The list is not exhaustive: many tests read these files, for example `test_ad1185_config_profiles.py`, which reads the committed `config-profiles.yaml` through `DEFAULT_MANIFEST_PATH` (`src/probos/config_profiles.py:83`). The evidence that none fails is the broad gate, which on `8f0454b5` failed only the pin (Absence, A4).
@@ -2853,6 +2855,7 @@ HOLDS: yes, statically; round 4 ran the seven files with -rs: 0 skipped
 14. (A3) The R3 delta is `tests/test_ad1324_srp_layout.py` and this contract only; no production line. `ARCHITECTURE_BASELINE_SHA256` equals the sha256 of the LF-normalised `docs/development/architecture-baseline.yaml` at R3, and that file differs from `7c85ebaf` only by P-Z1's line. The test file fails 1 of 8 over `8f0454b5` and passes 8 of 8 at R3. In a scratch copy, the pin test fails with the `7c85ebaf` baseline restored and with any one byte changed, and passes with CRLF endings. Test names, the assertion, the normalisation, `TARGETS` and the limits are unchanged. The comment and the docstring are true, and the comment records the previous value. `check_architecture_principles.py --check` passes.
 15. (A4) The R4 delta is this contract only. Each statement A4 changes is true of the R4 tree: the four contracts named as relying on the pin say so at the lines cited, AD-1341's cited line is the method ceiling, `test_ad1185_config_profiles.py` reads the committed `config-profiles.yaml` through `DEFAULT_MANIFEST_PATH`, and the skip pattern in Absence (A4) has no hit over the seven files. The whole candidate meets items 1 to 14 at R4.
 16. (A5) The R5 delta is this contract only. Each statement A5 changes or adds is true of the R5 tree, and A5's precedence paragraph names the commit each labelled record was written on (`git log --oneline 7c85ebaf..<R5>`).
+17. (A6) The R6 delta is this contract only, and each sentence A6 changes or adds is true of the R6 tree: in the three new test files `BootCampCoordinator(` occurs only in each file's `_coordinator` helper, passed `clock=` in the lifecycle and repair-A1 files and not in the trust file, where the constructor's default is `time.time`; none of the three contains `LOCALAPPDATA` or `ProbOSRuntime(`; the DM count in `proactive.py` follows the AD-453 `sent DM` log line; `git diff 7c85ebaf <R6> -- src` adds no `class` line; §15 names no commit as the final head.
 
 ## 15. Acceptance criteria
 
@@ -2860,7 +2863,7 @@ HOLDS: yes, statically; round 4 ran the seven files with -rs: 0 skipped
 - `isinstance(TrustNetwork(), TrustNetworkProtocol)` is true.
 - `check_architecture_principles.py --check` and `check_dormant_classes.py --check` pass; for the dormant check, paste its whole output.
 - The focused gates pass, and the broad gate's receipt is green.
-- (A3) `tests/test_ad1324_srp_layout.py` passes 8 of 8 with the moved pin, and the rerun broad gate's receipt is green on the candidate's final head (R5, after A5).
+- (A3) `tests/test_ad1324_srp_layout.py` passes 8 of 8 with the moved pin, and the rerun broad gate's receipt is green on the candidate's final head.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1324)
