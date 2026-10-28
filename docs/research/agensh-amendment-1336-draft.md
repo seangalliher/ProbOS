@@ -10,7 +10,7 @@ This file is a staging draft and has not been posted. Part A is the text to appe
 
 ## Amendment (2026-10-28): disproved approaches, from Agensh
 
-**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28. Applied on the Captain's approval, YYYY-MM-DD.
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-28. Applied on the Captain's approval, 2026-10-28.
 
 **Prior art:** Agensh (Zhan et al., Microsoft Research, arXiv 2609.26781). Absorption note: `docs/research/agensh-organization-harness-absorption.md`. Agensh workers record each falsified approach as a `FAIL` entry on a shared board, so that peers do not spend budget repeating it. The paper ablates no mechanism and does not normalize compute: every configuration gets the same wall clock, with one model session per worker. Nothing shows that `FAIL` entries help on their own.
 
