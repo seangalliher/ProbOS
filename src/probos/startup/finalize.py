@@ -888,16 +888,17 @@ async def _is_new_crew_start(runtime: Any) -> bool:
     This is not BF-034's ``runtime.is_cold_start``: that flag reads the memory object's
     truthiness, so it is false whenever an ``EpisodicMemory`` exists, and Phase 7 builds
     the coordinator only when a memory object is present (#1324 register R10). Fails warm:
-    an unreadable count is not a new crew.
+    an unreadable count, or an answer whose ``get("total")`` is not ``== 0`` (``None``, a
+    list, an int, a mapping without ``total``), is not a new crew.
     """
     if runtime._lifecycle_state not in ("first_boot", "reset"):
         return False  # AD-1270: a session record means this crew has served before
     try:
         stats = await runtime.episodic_memory.get_stats()
-    except Exception:
-        logger.debug("AD-1270: episode count unavailable; not treated as a new crew", exc_info=True)
+        return stats.get("total") == 0
+    except Exception:  # AD-1270: an unreadable or malformed answer is not a new crew
+        logger.debug("AD-1270: episode count unavailable or malformed; not treated as a new crew", exc_info=True)
         return False  # AD-1270: an unreadable count is not a new crew
-    return stats.get("total") == 0
 
 
 async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:

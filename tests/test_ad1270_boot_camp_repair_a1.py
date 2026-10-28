@@ -1,11 +1,13 @@
-"""AD-1270 (#1324) slice 4b, Amendment A1: each chain phase asks for the relaxation again, and
-the boot camp finds a new crew without BF-034's cold-start flag.
+"""AD-1270 (#1324) slice 4b, Amendments A1 and A2: each chain phase that can run Evaluate or
+Reflect asks for the relaxation again, and the boot camp finds a new crew without BF-034's
+cold-start flag.
 
 The chain cases use the AD-1347 S4 harness: a real ``CognitiveAgent`` and ``SubTaskExecutor``,
 with ANALYZE and COMPOSE as stand-ins that make no model call, and the real ``EvaluateHandler``
 and ``ReflectHandler`` with AD-639 on. The coordinator is real, with an injected clock, and
-trust is a real ``TrustNetwork``. The new-crew cases use a real ``EpisodicMemory`` on
-``tmp_path``. Nothing here reads the vessel's data directory or starts a vessel.
+trust is a real ``TrustNetwork``. The two finalization cases use a real ``EpisodicMemory`` on
+``tmp_path``; the predicate cases use stand-ins for ``get_stats``. Nothing here reads the
+vessel's data directory or starts a vessel.
 """
 
 from __future__ import annotations
@@ -96,11 +98,16 @@ class _Analysis:
 
 
 class _Compose:
-    """COMPOSE with no model call."""
+    """COMPOSE with no model call. ``during_compose`` runs inside each call (A2: a deadline in phase 2a)."""
+
+    def __init__(self, text: str = "The sweep is clean.", during_compose: Callable[[], None] = lambda: None) -> None:
+        self._text = text
+        self._during_compose = during_compose
 
     async def __call__(self, spec: Any, context: dict, prior_results: list) -> SubTaskResult:
+        self._during_compose()
         return SubTaskResult(
-            sub_task_type=SubTaskType.COMPOSE, name=spec.name, success=True, result={"output": "The sweep is clean."},
+            sub_task_type=SubTaskType.COMPOSE, name=spec.name, success=True, result={"output": self._text},
         )
 
 
@@ -126,13 +133,15 @@ def _chain() -> SubTaskChain:
     ])
 
 
-def _agent(coord: BootCampCoordinator, trust: TrustNetwork, analysis: _Analysis) -> tuple[Any, _Seen, _Seen]:
+def _agent(
+    coord: BootCampCoordinator, trust: TrustNetwork, analysis: _Analysis, compose: _Compose | None = None,
+) -> tuple[Any, _Seen, _Seen]:
     # Every path here returns before a model call; a client with no methods makes one fail loudly.
     evaluate = _Seen(EvaluateHandler(llm_client=SimpleNamespace(), runtime=None))
     reflect = _Seen(ReflectHandler(llm_client=SimpleNamespace(), runtime=None))
     executor = SubTaskExecutor(config=None)
     executor.register_handler(SubTaskType.ANALYZE, analysis)
-    executor.register_handler(SubTaskType.COMPOSE, _Compose())
+    executor.register_handler(SubTaskType.COMPOSE, compose if compose is not None else _Compose())
     executor.register_handler(SubTaskType.EVALUATE, evaluate)
     executor.register_handler(SubTaskType.REFLECT, reflect)
     agent: Any = CognitiveAgent(agent_id=CREW["agent_id"], instructions="Test instructions.", runtime=None)
@@ -210,6 +219,40 @@ async def test_each_chain_entry_asks_again_on_a_reused_observation(entry: str) -
     assert evaluate.results[-1].get("bypass_reason") == "low_trust_band"
 
 
+_UNDECLARED_DM = "[DM @LaForge]\nThe sweep is clean.\n[/DM]"  # a DM triage did not declare (AD-643b)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expires", [False, True], ids=["held", "expired-before-feedback"])
+async def test_the_feedback_reflection_asks_again_after_phase_two(expires: bool) -> None:
+    clock, trust = _Clock(), TrustNetwork()
+    coord = _coordinator(clock, trust=trust)
+    await coord.activate([CREW])
+
+    def during_compose() -> None:
+        if expires:
+            clock.now = _START + _TIMEOUT_S  # the deadline passes in phase 2a, after its producer asked
+
+    analysis = _Analysis(lambda: None)
+    agent, evaluate, reflect = _agent(coord, trust, analysis, _Compose(_UNDECLARED_DM, during_compose))
+    observation = _observation()
+
+    await agent._execute_chain_with_intent_routing(observation)
+
+    assert analysis.markers == [True, True], "premise: triage and phase 2a both ran relaxed"
+    assert observation.get("_undeclared_action_feedback"), "premise: phase 2b found the undeclared DM"
+    assert len(reflect.results) == 2, "premise: phase 2a's Reflect and the feedback Reflect both ran"
+    assert evaluate.results[-1].get("bypass_reason") == "boot_camp"  # phase 2a keeps the answer it asked for
+    assert reflect.results[0].get("bypass_reason") == "boot_camp"
+    assert coord.is_enrolled(CREW["agent_id"]) is not expires
+    if expires:
+        assert "_boot_camp_active" not in observation
+        assert reflect.results[-1].get("reflection") == "low_trust_band_bypass"  # AD-639 ran for the feedback Reflect
+    else:
+        assert observation.get("_boot_camp_active") is True
+        assert reflect.results[-1].get("bypass_reason") == "boot_camp"
+
+
 # --- a new crew, without BF-034's flag ------------------------------------------------------
 
 
@@ -244,6 +287,26 @@ async def test_a_new_crew_needs_no_session_record_and_no_episodes(lifecycle: str
     runtime = SimpleNamespace(_lifecycle_state=lifecycle, episodic_memory=memory, is_cold_start=False)
 
     assert await _is_new_crew_start(runtime) is expected
+
+
+class _Answer:
+    """A memory whose ``get_stats`` returns exactly what it is given (A2: a malformed answer)."""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+
+    async def get_stats(self) -> Any:
+        return self.answer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [None, [], 0, {"episodes": 0}], ids=["none", "list", "int", "no-total"])
+async def test_a_malformed_stats_answer_is_not_a_new_crew(answer: Any) -> None:
+    from probos.startup.finalize import _is_new_crew_start
+
+    runtime = SimpleNamespace(_lifecycle_state="first_boot", episodic_memory=_Answer(answer), is_cold_start=False)
+
+    assert await _is_new_crew_start(runtime) is False  # fails warm, and raises nothing
 
 
 @pytest.mark.asyncio

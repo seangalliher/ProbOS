@@ -241,16 +241,43 @@ def _attribute_calls(node: ast.AST) -> list[str]:
     ]
 
 
-def test_both_chain_entry_points_ask_for_the_relaxation_not_enrolment() -> None:
-    tree = ast.parse((_SRC / "cognitive" / "cognitive_agent.py").read_bytes())
-    wanted = {"_execute_sub_task_chain", "_execute_chain_with_intent_routing"}
-    entry_points = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef) and node.name in wanted
+# A2 (AD-1270, #1324): every method that executes a sub-task chain is classified here. A gating
+# phase can run Evaluate or Reflect and must ask again through the one producer; a lookup runs
+# QUERY steps only. A new chain-executing method fails this test until it is classified.
+_GATING_PHASES = {"_execute_sub_task_chain", "_execute_chain_with_intent_routing", "_re_reflect_with_feedback"}
+_LOOKUP_PHASES = {"_maybe_dispatch_oracle_lookup", "_maybe_dispatch_ward_room_lookup"}
+
+
+def _executes_a_chain(node: ast.AST) -> bool:
+    return any(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and isinstance(call.func.value, ast.Attribute)
+        and call.func.value.attr == "_sub_task_executor"
+        for call in ast.walk(node)
+    )
+
+
+def _step_kinds(node: ast.AST) -> set[str]:
+    return {
+        keyword.value.attr
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "SubTaskSpec"
+        for keyword in call.keywords
+        if keyword.arg == "sub_task_type" and isinstance(keyword.value, ast.Attribute)
     }
 
-    assert set(entry_points) == wanted
-    for name, node in entry_points.items():
-        assert "relaxes_quality_gates" in _attribute_calls(node), name
+
+def test_every_gating_chain_phase_asks_for_the_relaxation_not_enrolment() -> None:
+    tree = ast.parse((_SRC / "cognitive" / "cognitive_agent.py").read_bytes())
+    functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    methods = {node.name: node for node in functions}
+
+    assert {node.name for node in functions if _executes_a_chain(node)} == _GATING_PHASES | _LOOKUP_PHASES
+    for name in _GATING_PHASES:
+        assert "_refresh_boot_camp_relaxation" in _attribute_calls(methods[name]), name
+    for name in _LOOKUP_PHASES:
+        assert _step_kinds(methods[name]) == {"QUERY"}, name
+    assert "relaxes_quality_gates" in _attribute_calls(methods["_refresh_boot_camp_relaxation"])
     assert "is_enrolled" not in _attribute_calls(tree)

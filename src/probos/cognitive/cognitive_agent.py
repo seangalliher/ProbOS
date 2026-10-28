@@ -6006,6 +6006,44 @@ class CognitiveAgent(BaseAgent):
                 self.agent_type, callsign, self.id, exc_info=True,
             )
 
+    def _refresh_boot_camp_relaxation(self, observation: dict) -> None:
+        """AD-638/AD-639 (AD-1270, #1324): set this chain phase's boot-camp answer and trust band.
+
+        The one writer of ``_boot_camp_active``. It removes the key, then sets it only on a
+        current true answer from ``relaxes_quality_gates`` (only while
+        ``boot_camp.relax_quality_gates`` is on; enrolment alone relaxes nothing). Otherwise,
+        when ``chain_tuning`` is enabled, it computes AD-639's ``_chain_trust_band``.
+        ``_execute_sub_task_chain``, ``_execute_chain_with_intent_routing`` and
+        ``_re_reflect_with_feedback`` call it before they execute, because a routed chain
+        reuses one observation across its phases.
+        """
+        _rt = getattr(self, '_runtime', None)
+        observation.pop("_boot_camp_active", None)  # AD-1270: the producer owns the marker; ask again
+        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
+            observation["_boot_camp_active"] = True
+
+        # AD-639: Trust-adaptive chain personality tuning
+        if not observation.get("_boot_camp_active"):
+            _chain_cfg = getattr(getattr(_rt, 'config', None), 'chain_tuning', None) if _rt else None
+            if _chain_cfg and _chain_cfg.enabled:
+                _agent_type = getattr(self, "agent_type", "")
+                _trust = 0.5
+                if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
+                    # BF-263: Use self.id (deterministic agent_id), not agent_type.
+                    # TrustNetwork._records is keyed by agent_id, not agent_type.
+                    _trust = _rt.trust_network.get_score(self.id)
+                observation["_trust_score"] = _trust
+                if _trust < _chain_cfg.low_trust_ceiling:
+                    observation["_chain_trust_band"] = "low"
+                elif _trust >= _chain_cfg.high_trust_floor:
+                    observation["_chain_trust_band"] = "high"
+                else:
+                    observation["_chain_trust_band"] = "mid"
+                logger.debug(
+                    "AD-639: %s trust=%.2f band=%s",
+                    _agent_type, _trust, observation["_chain_trust_band"],
+                )
+
     async def _execute_sub_task_chain(
         self,
         chain,
@@ -6049,34 +6087,9 @@ class CognitiveAgent(BaseAgent):
         # BF-187: DM social obligation — DM recipients must always respond
         observation["_is_dm"] = _params.get("is_dm_channel", False)
 
-        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
-        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
+        # AD-638: Boot camp quality gate relaxation and AD-639's trust band (AD-1270, #1324)
         _rt = getattr(self, '_runtime', None)
-        observation.pop("_boot_camp_active", None)  # AD-1270: ask again; phase 2 and the fallback reuse triage's dict
-        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
-            observation["_boot_camp_active"] = True
-
-        # AD-639: Trust-adaptive chain personality tuning
-        if not observation.get("_boot_camp_active"):
-            _chain_cfg = getattr(getattr(_rt, 'config', None), 'chain_tuning', None) if _rt else None
-            if _chain_cfg and _chain_cfg.enabled:
-                _agent_type = getattr(self, "agent_type", "")
-                _trust = 0.5
-                if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
-                                        # BF-263: Use self.id (deterministic agent_id), not agent_type.
-                    # TrustNetwork._records is keyed by agent_id, not agent_type.
-                    _trust = _rt.trust_network.get_score(self.id)
-                observation["_trust_score"] = _trust
-                if _trust < _chain_cfg.low_trust_ceiling:
-                    observation["_chain_trust_band"] = "low"
-                elif _trust >= _chain_cfg.high_trust_floor:
-                    observation["_chain_trust_band"] = "high"
-                else:
-                    observation["_chain_trust_band"] = "mid"
-                logger.debug(
-                    "AD-639: %s trust=%.2f band=%s",
-                    _agent_type, _trust, observation["_chain_trust_band"],
-                )
+        self._refresh_boot_camp_relaxation(observation)  # AD-1270: phase 2 and the fallback reuse triage's dict
 
         # AD-653: Wire event emission + agent identity for compose trust gates
         observation["_emit_event_fn"] = getattr(_rt, '_emit_event', None) if _rt else None
@@ -6239,30 +6252,9 @@ class CognitiveAgent(BaseAgent):
         )
         observation["_channel_name"] = _channel_name
 
-        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
-        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
+        # AD-638: Boot camp quality gate relaxation and AD-639's trust band (AD-1270, #1324)
         _rt = getattr(self, '_runtime', None)
-        observation.pop("_boot_camp_active", None)  # AD-1270: ask again; a reused observation carries an old answer
-        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
-            observation["_boot_camp_active"] = True
-
-        # AD-639: Trust-adaptive chain personality tuning
-        if not observation.get("_boot_camp_active"):
-            _chain_cfg = getattr(getattr(_rt, 'config', None), 'chain_tuning', None) if _rt else None
-            if _chain_cfg and _chain_cfg.enabled:
-                _agent_type = getattr(self, "agent_type", "")
-                _trust = 0.5
-                if _rt and hasattr(_rt, "trust_network") and _rt.trust_network:
-                                        # BF-263: Use self.id (deterministic agent_id), not agent_type.
-                    # TrustNetwork._records is keyed by agent_id, not agent_type.
-                    _trust = _rt.trust_network.get_score(self.id)
-                observation["_trust_score"] = _trust
-                if _trust < _chain_cfg.low_trust_ceiling:
-                    observation["_chain_trust_band"] = "low"
-                elif _trust >= _chain_cfg.high_trust_floor:
-                    observation["_chain_trust_band"] = "high"
-                else:
-                    observation["_chain_trust_band"] = "mid"
+        self._refresh_boot_camp_relaxation(observation)  # AD-1270: a reused observation carries an old answer
 
         # AD-653: Wire event emission + agent identity for compose trust gates
         observation["_emit_event_fn"] = getattr(_rt, '_emit_event', None) if _rt else None
@@ -6556,6 +6548,7 @@ class CognitiveAgent(BaseAgent):
         )
 
         try:
+            self._refresh_boot_camp_relaxation(observation)  # AD-1270: phase 2a's answer may have expired
             reflect_results = await self._sub_task_executor.execute(
                 reflect_chain,
                 observation,
