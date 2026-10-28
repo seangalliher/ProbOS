@@ -79,6 +79,33 @@ async def _close_crew_session_delivery(runtime: Any) -> None:
         runtime.crew_session_delivery_service = None
 
 
+async def _stop_working_memory_cognition(runtime: Any) -> None:
+    """AD-1270 (#1324): stop the working-memory cognition cycle. Raises no ``Exception``.
+
+    Called before working memory is frozen. A runtime that never started it (the flag is off,
+    or startup refused a value) has nothing to stop, and an object that is not a
+    ``WorkingMemoryCognition`` is left alone. The stop goes through BF-881's
+    ``_stop_held_start_service``: shutdown is typically awaited from a task the operator's
+    Ctrl+C already cancelled (BF-303), and that helper absorbs only the cycle's own
+    cancellation, logs any other failure and clears the attribute on every path. A
+    cancellation that arrives during the stop propagates. Once
+    ``WorkingMemoryCognition.stop()`` has returned, or that cancellation has propagated, the
+    cycle task has ended. A stop that raises an ``Exception`` is only logged: its loop may
+    still be running, and a cycle can run during the freeze.
+    """
+    from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
+
+    cognition = getattr(runtime, "working_memory_cognition", None)
+    if not isinstance(cognition, WorkingMemoryCognition):
+        return
+    await _stop_held_start_service(
+        runtime,
+        service_attr="working_memory_cognition",
+        start_task_attr=None,
+        label="AD-1270 WorkingMemoryCognition",
+    )
+
+
 def _close_voice_synthesis(runtime: Any) -> None:
     """BF-918: stop the resident Piper processes and the voice executor.
 
@@ -1645,6 +1672,9 @@ async def shutdown(
         except Exception:
             logger.warning("AD-986d: transcript_reaper.stop() failed", exc_info=True)
         runtime.transcript_reaper = None
+
+    # AD-1270 (#1324): stop the working-memory cognition cycle before working memory is frozen below.
+    await _stop_working_memory_cognition(runtime)
 
     # AD-876: Stop the board-reconciler cadence ticker (Quartermaster).
     if getattr(runtime, "board_reconciler_ticker", None) is not None:

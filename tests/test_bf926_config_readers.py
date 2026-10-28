@@ -113,12 +113,11 @@ _WORKING_MEMORY_INERT = (
     "proactive_budget", "conclusion_ttl_seconds", "max_conclusions", "duty_budget", "social_budget", "ship_budget",
     "engagement_budget",
 )
+# AD-1270 (#1324) slice 3: "metabolism" left this table. working_memory.cognition_enabled now builds
+# MemoryMetabolism from that section, so its fields are read and no longer marked inert;
+# tests/test_ad1270_working_memory_cognition.py pins that they are neither inert nor unread.
 _SECTIONS_INERT = {
     "memory_budget": ("enabled", "total_budget_tokens", "l0_budget", "l1_budget", "l2_budget", "l3_budget"),
-    "metabolism": (
-        "enabled", "decay_half_life_seconds", "forget_threshold", "min_entries_per_buffer", "audit_enabled",
-        "cycle_interval_seconds", "triage_fullness_threshold", "triage_base_score",
-    ),
     "pinned_knowledge": ("enabled", "max_tokens", "max_pins", "default_ttl_seconds"),
     "temporal_validity": ("enabled", "default_validity_hours"),
 }

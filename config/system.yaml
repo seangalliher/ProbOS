@@ -1962,7 +1962,8 @@ anomaly_window:
   enabled: true
   max_window_duration_seconds: 1800.0
   lookback_seconds: 60.0
-# BF-926 (#1656): only stale_threshold_hours is read; the other keys change nothing.
+# BF-926 (#1656): only stale_threshold_hours and cognition_enabled are read; the other keys change nothing.
+# AD-1270 (#1324): cognition_enabled (default false, absent here) turns on AD-668 salience and AD-670 metabolism.
 working_memory:
   token_budget: 3000
   max_recent_actions: 10
@@ -2004,7 +2005,8 @@ memory_budget:
   l1_budget: 3000
   l2_budget: 1000
   l3_budget: 500
-# BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
+# AD-1270 (#1324): read only when working_memory.cognition_enabled is on (default off); enabled then keeps
+# metabolism on within it, and cycle_interval_seconds sets the cycle's period.
 metabolism:
   enabled: true
   decay_half_life_seconds: 3600.0
@@ -2037,6 +2039,7 @@ storage_gate:
   utility_floor: 0.2
   recent_window: 50
   contradiction_check_enabled: true
+# AD-1270 (#1324): read only when working_memory.cognition_enabled is on (default off).
 salience:
   enabled: true
   weights:

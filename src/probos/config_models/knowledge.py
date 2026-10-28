@@ -487,7 +487,7 @@ class TaskContextConfig(BaseModel):
 
 
 class SalienceConfig(BaseModel):
-    """AD-668: Salience filter for working memory promotion."""
+    """AD-668: Salience filter for working memory promotion. Read only when working_memory.cognition_enabled is on (AD-1270, #1324): enabled then turns the filter off on its own; no novelty gate is passed."""
 
     enabled: bool = True
     weights: dict[str, float] = {
