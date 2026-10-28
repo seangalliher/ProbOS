@@ -1,7 +1,7 @@
 """BF-941 (#1324 slice 4d) M1: BF-034's fresh-start window is bounded before its detector is wired.
 
 ``runtime.is_cold_start`` drives the fresh-start notes in agents' prompts. BF-034 meant it to end
-after the first dream cycle, but the AD-517 extraction left that clear on the dream adapter's own
+after the first dream cycle, but the AD-515 extraction left that clear on the dream adapter's own
 copy, so nothing ended the runtime's flag. It now opens once at Phase 5 (``adopt_new_crew_start``)
 and closes at the first full dream cycle, through the adapter, or after
 ``orientation.orientation_window_seconds``, whichever comes first. The proactive note and the

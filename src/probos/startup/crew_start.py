@@ -19,7 +19,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # AD-502 lifecycle states with no previous session record. Phase 4 writes ``first_boot`` or
-# ``stasis_recovery``; Phase 5 writes ``reset`` for a new crew (BF-034).
+# ``stasis_recovery``; Phase 5 writes ``reset`` for a new crew.
 NEW_CREW_LIFECYCLE_STATES: frozenset[str] = frozenset({"first_boot", "reset"})
 
 FRESH_START_TITLE = "Fresh Start — New Crew"
