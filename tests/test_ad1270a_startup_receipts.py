@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
+from probos.agents.http_fetch import HttpFetchAgent
 from probos.boot_camp import BootCampCoordinator
 from probos.bridge_alerts import BridgeAlertService
 from probos.cognitive.working_memory_cognition import WorkingMemoryCognition
@@ -31,6 +32,7 @@ from probos.config import (
     DiscoveryLearningConfig,
     MCPConfig,
     ModelRoutingConfig,
+    SecurityInfraConfig,
     SystemConfig,
     WorkingMemoryConfig,
     WorkstationsConfig,
@@ -453,6 +455,9 @@ def _finalize_rig() -> tuple[MagicMock, MagicMock]:
     config.model_routing = ModelRoutingConfig(enabled=False)
     config.workstations = WorkstationsConfig(enabled=False)
     config.working_memory = WorkingMemoryConfig()  # cognition off: the builder returns None
+    # S5-F1: a real security config. A MagicMock one reads egress_active_enforcement as true, so
+    # finalization installs an egress policy on the HttpFetchAgent class that outlives the test.
+    config.security_infra = SecurityInfraConfig()
     return runtime, config
 
 
@@ -521,11 +526,14 @@ async def test_a_finalization_publishes_its_receipts_on_the_runtime(
         monkeypatch.setattr(finalize, "_activate_boot_camp_on_cold_start", _raise)
         monkeypatch.setattr(finalize, "_start_working_memory_cognition", _raise)
 
+    egress_policy_before = HttpFetchAgent._egress_policy
     try:
         await finalize.finalize_startup(runtime=runtime, config=config)
     finally:
         await _close_what_finalization_opened(runtime, opened)
 
+    # S5-F1: finalization must leave the class-level egress policy as it found it.
+    assert HttpFetchAgent._egress_policy is egress_policy_before, "finalize_startup installed an egress policy"
     receipts = runtime.activation_receipts
     assert isinstance(receipts, ActivationReceipts)
     by_id = {receipt.capability_id: receipt for receipt in receipts.receipts()}

@@ -222,6 +222,13 @@ def _ad682_clear_module_caches():
     chat_router = sys.modules.get("probos.routers.chat")
     if chat_router is not None:
         chat_router._ATTACHMENT_STORE_CACHE.clear()
+    # AD-456b's egress policy is a class attribute that finalize_startup installs when
+    # egress_active_enforcement is on, and a test rig with a MagicMock config turns it on.
+    # Left set, it refuses every later HttpFetchAgent fetch on the worker (AD-1270 S5-F1,
+    # #1324). Reset only if the module is already loaded, as above.
+    http_fetch = sys.modules.get("probos.agents.http_fetch")
+    if http_fetch is not None:
+        http_fetch.HttpFetchAgent.set_egress_policy(None)
     yield
 
 
