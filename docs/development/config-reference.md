@@ -3058,14 +3058,6 @@ AD-507 v1: Crew Development Framework (Core Knowledge Curriculum Registry).
 |---|---|---|---|---|
 | `enabled` | `bool` | `True` | — |  |
 
-## `boot_camp_phase`
-
-AD-509 v1: Boot Camp Phase Tracker (in-memory observational).
-
-| Field | Type | Default | Bounds | Description |
-|---|---|---|---|---|
-| `enabled` | `bool` | `True` | — |  |
-
 ## `discovery_learning`
 
 AD-512 v1: Discovery-Based Capability Building substrate (observational).

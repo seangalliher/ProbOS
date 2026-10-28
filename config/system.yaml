@@ -2345,8 +2345,6 @@ autonomy_boundaries:
   enabled: true
 crew_development:
   enabled: true
-boot_camp_phase:
-  enabled: true
 discovery_learning:
   enabled: true
   confidence_prior_alpha: 1.0

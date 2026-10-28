@@ -930,24 +930,6 @@ async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
     return True
 
 
-def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
-    """AD-509 v1: Wire BootCampPhaseTracker (in-memory observational)."""
-    cfg = getattr(config, "boot_camp_phase", None)
-    if not cfg or not cfg.enabled:
-        return False
-
-    from probos.crew_development.boot_camp import BootCampPhaseTracker
-
-    emit_fn = getattr(runtime, "emit_event", None)
-    tracker = BootCampPhaseTracker()
-    tracker.emit_event = emit_fn
-    runtime.boot_camp_tracker = tracker  # public attribute (Wave 5 convention #1)
-    logger.info(
-        "AD-509: Boot Camp Phase Tracker v1 initialized (5 phases + COMPLETED; observational)"
-    )
-    return True
-
-
 def _wire_emergence_collector(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-454/BF-663: wire one collector for classification and/or recording.
 
@@ -4197,9 +4179,6 @@ async def finalize_startup(
 
     if _wire_curriculum_registry(runtime=runtime, config=config):
         logger.info("AD-507: Crew Development Framework v1 wired during finalization")
-
-    if _wire_boot_camp_tracker(runtime=runtime, config=config):
-        logger.info("AD-509: Boot Camp Phase Tracker v1 wired during finalization")
 
     if _wire_birth_chamber(runtime=runtime, config=config):
         logger.info("AD-486: Holodeck Birth Chamber v1 wired during finalization")

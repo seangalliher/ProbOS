@@ -14,11 +14,6 @@ from probos.crew_development.curriculum import (
     CoreKnowledgeCurriculumRegistry,
     CurriculumModule,
 )
-from probos.crew_development.boot_camp import (
-    AgentBootCampRecord,
-    BootCampPhase,
-    BootCampPhaseTracker,
-)
 from probos.crew_development.discovery import (
     CapabilityConfidence,
     CapabilityConfidenceScorer,
@@ -37,9 +32,6 @@ from probos.crew_development.discovery import (
 __all__ = [
     "CoreKnowledgeCurriculumRegistry",
     "CurriculumModule",
-    "AgentBootCampRecord",
-    "BootCampPhase",
-    "BootCampPhaseTracker",
     "CapabilityConfidence",
     "CapabilityConfidenceScorer",
     "CrossFunctionalSuggestion",

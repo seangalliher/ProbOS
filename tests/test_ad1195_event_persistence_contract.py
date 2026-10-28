@@ -444,12 +444,16 @@ def _problem_lines(text: str, kind: str) -> list[str]:
 
 
 def test_every_member_is_declared_or_grandfathered_never_both() -> None:
-    """DECL-1: 397 members = 41 declared + 356 grandfathered, disjoint."""
+    """DECL-1: 396 members = 41 declared + 355 grandfathered, disjoint.
+
+    AD-1270 (#1324) slice 4c deleted BOOT_CAMP_PHASE_ADVANCED with its one producer (AD-509's
+    tracker): 397 -> 396, 356 -> 355. The DECL-3 golden snapshot keeps its 356 names.
+    """
     names = set(EventType.__members__)
     declared = set(ep.DECLARATIONS)
     assert not declared & ep.GRANDFATHERED
     assert declared | ep.GRANDFATHERED == names
-    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (397, 41, 356)
+    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (396, 41, 355)
     assert isinstance(ep.GRANDFATHERED, frozenset)
     assert ep.assert_complete(EventType.__members__) is None
 
@@ -584,4 +588,4 @@ def test_every_member_keeps_str_equality_and_pickle_identity() -> None:
         )
     ]
     assert broken == []
-    assert len(EventType) == 397
+    assert len(EventType) == 396  # AD-1270 (#1324) slice 4c: BOOT_CAMP_PHASE_ADVANCED deleted

@@ -488,9 +488,6 @@ class EventType(str, Enum):
     # ── Crew Development (AD-507) ──────────────────────────────────
     CURRICULUM_MODULE_QUERIED = "curriculum_module_queried"  # AD-507
 
-    # ── Boot Camp Phase Tracker (AD-509) ───────────────────────────
-    BOOT_CAMP_PHASE_ADVANCED = "boot_camp_phase_advanced"  # AD-509
-
     # AD-486: Holodeck Birth Chamber phase events
     HOLODECK_AGENT_ADMITTED = "holodeck_agent_admitted"
     HOLODECK_PHASE_ENTERED = "holodeck_phase_entered"
