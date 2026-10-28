@@ -1,9 +1,12 @@
 """AD-1270a: the capability truth ledger — observation only.
 
-A leaf package. Nothing in ``src/probos/`` imports it: it is consumed by
-``scripts/gen_capability_truth.py`` and by tests. Importing it from a production
-path would make an observation surface capable of influencing the thing it
-observes, which this AD forbids.
+A leaf package. Production imports it at two kinds of site: declaration modules import
+``probos.maturity.model`` (data about an owner), and ``probos.startup.activation_receipts``
+imports ``probos.maturity.receipts`` to record activation receipts at finalization (migration
+step 2). Production writes receipts and reads none, and no production path reads a row: the
+inventory is consumed by ``scripts/gen_capability_truth.py`` and by tests. An observation
+surface that production read could influence the thing it observes, which this AD forbids.
+``tests/test_ad1270a_startup_receipts.py`` pins the importers and the absence of a reader.
 """
 
 from __future__ import annotations

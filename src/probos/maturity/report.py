@@ -307,9 +307,9 @@ _HEADER = """# Capability Truth Inventory
 **Generated file — do not edit by hand.**
 Regenerate with `python scripts/gen_capability_truth.py`.
 
-This is an **observation-only** inventory (AD-1270a, migration step 1). Nothing
-reads a row to make a decision: it changes no routing, permission, trust or
-startup behaviour. It exists so that *shipped* and *working* stop looking alike.
+This is an **observation-only** inventory (AD-1270a, migration steps 1 and 2).
+Nothing reads a row to make a decision: it changes no routing, permission, trust
+or startup decision. It exists so that *shipped* and *working* stop looking alike.
 
 Each capability is resolved against three **different** authorities, so the
 facts cannot collapse into one another:
@@ -325,13 +325,15 @@ facts cannot collapse into one another:
 broken declaration is not a disabled capability.
 
 **Why so much of this page says `unknown`, and why that is the finding.**
-`activated`, `exercise` and `health` have no producer yet — emitting activation
-receipts is migration step 2 and recording exercise receipts is migration step 3.
-The generator also runs offline and constructs no runtime, which keeps `--check`
-hermetic and is why `advertised` is `unknown` here even though the axis is
-genuinely wired and covered by tests. `live` is **derived, never stored**, and no
-row can read `live` without both an activation fact and at least one exercise
-attempt — so in this slice no capability is provably live, and the page says so
+`exercise` and `health` have no producer yet: recording exercise receipts is
+migration step 3. `activated` has one since migration step 2: at finalization a
+running ProbOS records an activation receipt for each capability whose notes name
+a receipt point, keeps them on `runtime.activation_receipts` and logs one line per
+receipt. The generator runs offline and constructs no runtime, which keeps
+`--check` hermetic and is why `activated` and `advertised` are `unknown` here even
+though both are wired and covered by tests. `live` is **derived, never stored**,
+and no row can read `live` without both an activation fact and at least one
+exercise attempt — so no capability is provably live yet, and the page says so
 rather than defaulting to optimism.
 """
 

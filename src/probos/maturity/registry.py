@@ -28,6 +28,7 @@ DECLARATION_MODULES: tuple[str, ...] = (
     "probos.tools.maturity_declarations",
     "probos.agents.maturity_declarations",
     "probos.infrastructure.maturity_declarations",
+    "probos.maturity_declarations",  # AD-1270a step 2 (#1324 slice 5): top-level (core) owners
 )
 
 

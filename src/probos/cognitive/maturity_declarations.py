@@ -57,4 +57,16 @@ MATURITY_DECLARATIONS: tuple[CapabilityDeclaration, ...] = (
             "compare-and-set transitions, crash recovery, cancellation."
         ),
     ),
+    CapabilityDeclaration(
+        id="cognitive.working-memory-cognition",
+        title="Working-memory cognition (AD-668 salience, AD-670 metabolism)",
+        owner_module="probos.cognitive.working_memory_cognition",
+        owner_symbol="WorkingMemoryCognition",
+        configured_when="working_memory.cognition_enabled",
+        notes=(
+            "Default off. Activation receipt at finalization, after the AD-573 working-memory "
+            "restore: activated when startup started the cycle and published it as "
+            "runtime.working_memory_cognition."
+        ),
+    ),
 )
