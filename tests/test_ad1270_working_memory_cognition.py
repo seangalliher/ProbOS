@@ -496,15 +496,17 @@ async def test_stop_from_a_task_cancelled_earlier_absorbs_only_its_own_cancellat
         raised: list[bool] = []
         for _ in range(2):  # the second call: idempotent for the same caller
             try:
-                await cognition.stop()
+                await asyncio.wait_for(cognition.stop(), timeout=2)
             except asyncio.CancelledError:
                 raised.append(True)
             else:
                 raised.append(False)
         return raised
 
-    try:
-        raised = await asyncio.create_task(stop_twice_after_an_earlier_cancellation())
+    try:  # its own task, as _cancelled_once needs; bounded above the two inner stops
+        raised = await asyncio.wait_for(
+            asyncio.create_task(stop_twice_after_an_earlier_cancellation()), timeout=5
+        )
     finally:
         await asyncio.wait_for(cognition.stop(), timeout=2)
 
@@ -726,18 +728,19 @@ async def test_the_shutdown_helper_passes_on_a_cancellation_that_arrives_during_
         await shutdown_module._stop_working_memory_cognition(runtime)
 
     stopper = asyncio.create_task(stop_after_an_earlier_cancellation())
-    await entered.wait()  # the stopper has cancelled the cycle and is waiting for it
+    # the stopper has cancelled the cycle and is waiting for it
+    await asyncio.wait_for(entered.wait(), timeout=2)
     stopper.cancel()
 
-    with pytest.raises(asyncio.CancelledError):
-        await stopper
+    with pytest.raises(asyncio.CancelledError):  # an expired bound raises TimeoutError instead
+        await asyncio.wait_for(stopper, timeout=2)
     assert not cognition.running
     assert runtime.working_memory_cognition is None
 
 
 @pytest.mark.asyncio
 async def test_the_shutdown_helper_leaves_a_foreign_service_alone() -> None:
-    """Only the driver this slice builds is stopped; another object with an async stop() is not."""
+    """Only a ``WorkingMemoryCognition`` is stopped; another object with an async stop() is not."""
     stops: list[str] = []
 
     class _Foreign:
@@ -813,8 +816,8 @@ async def test_the_real_shutdown_freezes_working_memory_after_an_earlier_cancell
             return True
         return False
 
-    try:
-        raised = await asyncio.create_task(shut_down())
+    try:  # bounded: the real shutdown takes well under a second here; 10 s leaves CI room
+        raised = await asyncio.wait_for(asyncio.create_task(shut_down()), timeout=10)
     finally:
         await store.stop()  # shutdown stops it; one cut short does not
         if isinstance(cognition, WorkingMemoryCognition):
