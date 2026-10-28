@@ -3194,7 +3194,6 @@ class ProbOSRuntime:
             episodic_memory=self.episodic_memory,
             pool_scaler=self.pool_scaler,
             knowledge_store=self._knowledge_store,
-            ward_room=self.ward_room,
             registry=self.registry,
             on_gap_predictions_fn=lambda p: self.dream_adapter.on_gap_predictions(p) if self.dream_adapter else None,
             on_contradictions_fn=lambda c: self.dream_adapter.on_contradictions(c) if self.dream_adapter else None,
@@ -3211,6 +3210,7 @@ class ProbOSRuntime:
             activation_tracker=self._activation_tracker,  # AD-567d
             records_store=self._records_store,  # BF-106: available from Phase 4
             expertise_directory=self._expertise_directory,  # AD-600
+            lifecycle_state=self._lifecycle_state,  # BF-941: set at Phase 4 from the session record
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector

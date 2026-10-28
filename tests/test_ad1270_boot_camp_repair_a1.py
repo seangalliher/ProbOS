@@ -315,7 +315,7 @@ async def test_finalization_enrols_a_new_crew_with_a_real_empty_memory(tmp_path:
     memory = EpisodicMemory(db_path=str(tmp_path / "episodic" / "episodes.db"))
     await memory.start()
     try:
-        assert memory, "premise: a live memory object is truthy, so BF-034's `not episodic_memory` reads it as warm"
+        assert memory, "premise: a live memory object is truthy, which BF-034's old `not episodic_memory` read as warm (BF-941)"
         coord = _coordinator(_Clock(), memory=memory)
         runtime = SimpleNamespace(
             boot_camp=coord, is_cold_start=False, ontology=None, _lifecycle_state=lifecycle,

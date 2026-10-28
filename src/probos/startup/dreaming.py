@@ -22,6 +22,7 @@ from probos.cognitive.retrieval_practice import RetrievalPracticeEngine
 from probos.cognitive.task_scheduler import TaskScheduler
 from probos.events import EventType
 from probos.knowledge.notebook_quality import NotebookQualityEngine
+from probos.startup.crew_start import is_new_crew_start
 from probos.startup.results import DreamingResult
 
 if TYPE_CHECKING:
@@ -41,7 +42,6 @@ async def init_dreaming(
     episodic_memory: Any,
     pool_scaler: "PoolScaler | None",
     knowledge_store: Any,
-    ward_room: Any,
     registry: Any,
     # Callback functions from runtime
     on_gap_predictions_fn: Callable[..., Any],
@@ -59,6 +59,7 @@ async def init_dreaming(
     activation_tracker: Any = None,  # AD-567d: activation-based lifecycle
     records_store: Any = None,  # BF-106: Ship's Records for notebook consolidation
     expertise_directory: Any = None,  # AD-600: transactive memory
+    lifecycle_state: str = "",  # BF-941: AD-502's state, the new-crew predicate's first half
 ) -> tuple[DreamingResult, bool]:
     """Start dreaming/detection subsystems and detect cold start.
 
@@ -251,20 +252,17 @@ async def init_dreaming(
     # BF-034: Detect cold start (post-reset boot with empty state)
     # BF-069: Don't gate on _knowledge_store — cold start detection must work
     # even if knowledge store is disabled or fails to initialize.
+    # BF-941: a new crew is the one predicate the AD-638 boot camp also asks: no previous
+    # session record and an empty episode store. It replaces the memory object's truthiness
+    # (true whenever a memory exists) and the every-record-at-the-generic-prior test (false
+    # whenever AD-640 gives a bridge or chief role its own prior), either of which kept this branch dead.
     cold_start = False
     if emergent_detector:
-        trust_records = trust_network.raw_scores()
-        all_at_prior = all(
-            abs(r["alpha"] - config.consensus.trust_prior_alpha) < 0.01
-            and abs(r["beta"] - config.consensus.trust_prior_beta) < 0.01
-            for r in trust_records.values()
-        ) if trust_records else True
-        episodes_empty = not episodic_memory
-        if all_at_prior and episodes_empty:
+        if await is_new_crew_start(lifecycle_state, episodic_memory):
             cold_start = True
             emergent_detector.set_cold_start_suppression(300)  # 5 minutes
             logger.info("BF-034: Cold start detected — suppressing trust anomalies for 5 minutes")
-        elif runtime and getattr(runtime, '_lifecycle_state', None) == 'stasis_recovery':
+        elif lifecycle_state == "stasis_recovery":
             # BF-178: Stasis recovery is not a cold start (trust/memory preserved),
             # but dream history is stale. Clear it so dream_min_history gate re-applies
             # and apply a short suppression window for the first dream cycle.
@@ -272,35 +270,8 @@ async def init_dreaming(
             emergent_detector.set_cold_start_suppression(60)  # 1 minute
             logger.info("BF-178: Stasis recovery — cleared stale dream history, suppressing anomalies for 60s")
 
-    # BF-034: Announce fresh start to crew
-    if cold_start and ward_room:
-        async def _announce_cold_start():
-            try:
-                channels = await ward_room.list_channels()
-                all_hands = next((c for c in channels if c.channel_type == "ship"), None)
-                if all_hands:
-                    await ward_room.create_thread(
-                        channel_id=all_hands.id,
-                        author_id="system",
-                        title="Fresh Start — System Reset",
-                        body=(
-                            "This instance has been reset. All crew are being created fresh "
-                            "through the Construct. All trust scores are at baseline (0.5) — "
-                            "this is normal initialization, not a demotion. Trust will be rebuilt "
-                            "through demonstrated competence. Episodic memory has been cleared. "
-                            "Previous experiences are not available."
-                        ),
-                        author_callsign="Ship's Computer",
-                        thread_mode="announce",
-                        max_responders=0,
-                    )
-            except Exception:
-                logger.debug("Cold-start announcement failed", exc_info=True)
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_announce_cold_start())
-        except RuntimeError:
-            pass
+    # BF-034's "Fresh Start" thread is posted at finalization (BF-941,
+    # probos.startup.crew_start.announce_fresh_start): the Ward Room is built at Phase 7.
 
     # AD-638 boot-camp activation moved to finalization (AD-1270, #1324): at this phase the
     # coordinator does not exist yet (it is built at Phase 7), so the block here never ran.

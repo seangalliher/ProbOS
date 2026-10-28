@@ -359,8 +359,8 @@ class _Stats:
 
 
 def _startup_runtime(coord: BootCampCoordinator | None, *, new_crew: bool, agents: list) -> SimpleNamespace:
-    # AD-1270 A1: is_cold_start is False, as production reports it whenever a coordinator exists
-    # (register R10); a new crew is no session record (first_boot) and an empty episode store.
+    # AD-1270 A1 / BF-941: the boot camp asks the shared new-crew predicate itself and never reads
+    # is_cold_start; a new crew is no session record (first_boot) and an empty episode store.
     return SimpleNamespace(
         boot_camp=coord, is_cold_start=False, ontology=None,
         _lifecycle_state="first_boot" if new_crew else "stasis_recovery", episodic_memory=_Stats(0),

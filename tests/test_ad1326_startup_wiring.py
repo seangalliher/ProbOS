@@ -22,7 +22,7 @@ from probos.startup.results import DreamingResult
 
 
 class _Trust:
-    """The one ``TrustNetwork`` method ``init_dreaming`` reads: a boot with no trust records."""
+    """A boot with no trust records. Since BF-941, ``init_dreaming``'s cold-start detector reads none."""
 
     def raw_scores(self) -> dict[str, dict[str, float]]:
         return {}
@@ -50,7 +50,6 @@ async def _booted(tmp_path: Path, config: SystemConfig) -> AsyncIterator[Dreamin
             episodic_memory=MagicMock(),
             pool_scaler=None,
             knowledge_store=None,
-            ward_room=None,
             registry=None,
             on_gap_predictions_fn=lambda _predictions: None,
             on_contradictions_fn=lambda _contradictions: None,

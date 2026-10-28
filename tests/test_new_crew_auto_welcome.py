@@ -236,6 +236,8 @@ class TestAutoWelcome:
         assert len(welcome_calls) == 1
         call_kwargs = welcome_calls[0].kwargs
         assert "Kira" in call_kwargs["body"]
+        # BF-941: not a new crew, so no Fresh Start thread
+        assert not any(c.kwargs.get("title") == "Fresh Start — New Crew" for c in calls)
         assert "Lynx" in call_kwargs["body"]
         assert call_kwargs["thread_mode"] == "discuss"
         assert call_kwargs["author_callsign"] == "Ship's Computer"
@@ -262,7 +264,7 @@ class TestAutoWelcome:
         runtime._cold_start = True  # Cold start!
         runtime.registry = registry
         runtime._started = False
-        runtime._lifecycle_state = "first_boot"
+        runtime._lifecycle_state = "reset"  # BF-941: Phase 5 marks a new crew "reset"
         runtime._stasis_duration = 0
         runtime._previous_session = None
         runtime.event_log = AsyncMock()
@@ -298,10 +300,12 @@ class TestAutoWelcome:
         from probos.startup.finalize import finalize_startup
         await finalize_startup(runtime=runtime, config=config)
 
-        # The only create_thread call should be the startup announcement, not auto-welcome
-        for call in ward_room.create_thread.call_args_list:
-            if hasattr(call, 'kwargs'):
-                assert call.kwargs.get("title") != "New Crew Aboard"
+        # BF-941: a new crew gets the AD-435 first-activation title and the Fresh Start thread,
+        # not the auto-welcome
+        titles = [call.kwargs.get("title") for call in ward_room.create_thread.call_args_list]
+        assert "New Crew Aboard" not in titles
+        assert titles.count("System Online — First Activation") == 1
+        assert titles.count("Fresh Start — New Crew") == 1
 
     @pytest.mark.asyncio
     async def test_auto_welcome_skipped_when_no_new_crew(self):

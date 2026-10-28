@@ -23,7 +23,10 @@ MAX_LINES = 500
 # block's loop.create_task left dreaming.py, and the architecture checker requires the row to
 # follow in the same commit. The pin before slice 4b (set by AD-1324, b513580b) was
 # 62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1.
-ARCHITECTURE_BASELINE_SHA256 = "c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f"
+# BF-941 (#1324 slice 4d) deleted that row (count 1 -> 0): the Fresh Start announcement's
+# loop.create_task left dreaming.py for an awaited call at finalization. The pin before BF-941
+# was c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f.
+ARCHITECTURE_BASELINE_SHA256 = "59f090fd6c03496c17944ce05cbbd63ca5fc9bcfda0d8b6ac957c89ea7879098"
 
 TARGETS = [
     ("swe_harness/agentic_loop.py", "AgenticLoop", 13),
