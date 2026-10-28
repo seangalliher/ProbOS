@@ -880,6 +880,34 @@ def _wire_curriculum_registry(*, runtime: Any, config: "SystemConfig") -> bool:
     return True
 
 
+async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
+    """AD-1270 (#1324): enrol cold-start crew in the AD-638 boot camp.
+
+    Moved from ``startup/dreaming.py``, which runs at Phase 5, before the coordinator
+    exists (Phase 7), so it never ran. Called after the AD-683 snapshot late-bind.
+    Returns True when ``activate`` ran; a warm boot or no coordinator does nothing.
+    """
+    coordinator = getattr(runtime, "boot_camp", None)
+    if coordinator is None or not runtime.is_cold_start:
+        return False
+    from probos.cognitive.standing_orders import get_department
+
+    ontology = getattr(runtime, "ontology", None)
+    crew_agents = [
+        {
+            "agent_id": agent.id,
+            "callsign": getattr(agent, "callsign", "") or agent.agent_type,
+            "department": getattr(agent, "department", "") or get_department(agent.agent_type) or "unassigned",
+        }
+        for agent in runtime.registry.all()
+        if is_crew_agent(agent, ontology)
+    ]
+    if not crew_agents:
+        return False
+    await coordinator.activate(crew_agents)
+    return True
+
+
 def _wire_boot_camp_tracker(*, runtime: Any, config: "SystemConfig") -> bool:
     """AD-509 v1: Wire BootCampPhaseTracker (in-memory observational)."""
     cfg = getattr(config, "boot_camp_phase", None)
@@ -4172,6 +4200,13 @@ async def finalize_startup(
         _bc = getattr(runtime, "boot_camp", None)
         if _bc is not None and getattr(_bc, "_ship_state_builder", None) is None:
             _bc._ship_state_builder = runtime.ship_state_snapshot
+
+    # AD-1270 (#1324): AD-638 activation on a cold start, after the coordinator (Phase 7) and the
+    # AD-683 snapshot late-bind above. Log-and-degrade: a failure leaves the crew unenrolled.
+    try:
+        await _activate_boot_camp_on_cold_start(runtime=runtime)
+    except Exception:
+        logger.warning("AD-1270: boot-camp activation failed; no crew is enrolled this run", exc_info=True)
 
     if _wire_duty_scope_provider(runtime=runtime, config=config):
         logger.info("AD-508: DutyScopeProvider v1 wired during finalization")

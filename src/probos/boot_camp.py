@@ -104,8 +104,11 @@ class BootCampCoordinator:
         emit_event_fn: Callable[..., Any] | None = None,
         *,
         ship_state_builder: Any | None = None,  # AD-683: ShipStateSnapshotBuilder | None
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self._config = config
+        # AD-1270 (#1324): every time read goes through the clock, so tests need no wall time.
+        self._clock = clock
         self._ward_room = ward_room
         self._trust = trust_service
         self._episodic = episodic_memory
@@ -122,10 +125,12 @@ class BootCampCoordinator:
     @property
     def is_active(self) -> bool:
         """True while boot camp is in progress."""
+        self._expire_if_timed_out()  # AD-1270: is_active is False once the timeout passes
         return self._active
 
     def is_enrolled(self, agent_id: str) -> bool:
         """Check if agent is in boot camp (not yet graduated)."""
+        self._expire_if_timed_out()  # AD-1270: nobody is enrolled past the timeout
         state = self._agents.get(agent_id)
         return state is not None and not state.graduated
 
@@ -157,7 +162,7 @@ class BootCampCoordinator:
             return
 
         self._active = True
-        self._started_at = time.time()
+        self._started_at = self._clock()
 
         for agent_info in crew_agents:
             agent_id = agent_info["agent_id"]
@@ -177,6 +182,7 @@ class BootCampCoordinator:
                 agent_id=agent_id,
                 callsign=callsign,
                 department=agent_info.get("department", ""),
+                enrolled_at=self._started_at,
             )
 
         logger.info(
@@ -201,12 +207,13 @@ class BootCampCoordinator:
 
     async def check_graduation(self, agent_id: str) -> bool:
         """Check if agent meets graduation criteria."""
+        self._expire_if_timed_out()  # AD-1270: a timed-out agent is already graduated
         state = self._agents.get(agent_id)
         if state is None or state.graduated:
             return True
 
         # Time gate
-        elapsed_min = (time.time() - state.enrolled_at) / 60
+        elapsed_min = (self._clock() - state.enrolled_at) / 60
         if elapsed_min < self._config.min_time_minutes:
             return False
 
@@ -416,24 +423,31 @@ class BootCampCoordinator:
 
     async def force_graduate_all(self) -> None:
         """Force-graduate all remaining agents (timeout)."""
+        self._graduate_remaining_on_timeout()
+
+    def _graduate_remaining_on_timeout(self) -> None:
+        """AD-1270 (#1324): end boot camp; mark each remaining agent graduated, once.
+
+        Deletes nothing and touches no trust record, rank or memory.
+        """
+        self._active = False  # AD-1270: ends even when nobody is left to graduate
         remaining = [
             s for s in self._agents.values() if not s.graduated
         ]
         if not remaining:
             return
 
+        now = self._clock()
         agent_ids = []
         for state in remaining:
             state.graduated = True
-            state.graduated_at = time.time()
+            state.graduated_at = now
             state.phase = 4
             agent_ids.append(state.agent_id)
 
         elapsed_min = 0.0
         if self._started_at:
-            elapsed_min = (time.time() - self._started_at) / 60
-
-        self._active = False
+            elapsed_min = (now - self._started_at) / 60
         logger.info(
             "AD-638: Boot camp timed out — force-graduated %d agents after %.0f minutes",
             len(agent_ids), elapsed_min,
@@ -445,6 +459,7 @@ class BootCampCoordinator:
 
     async def on_agent_post(self, agent_id: str, channel_type: str) -> None:
         """Track agent activity for graduation criteria."""
+        self._expire_if_timed_out()  # AD-1270: no post is counted past the timeout
         state = self._agents.get(agent_id)
         if state is None or state.graduated:
             return
@@ -458,6 +473,7 @@ class BootCampCoordinator:
 
     async def on_agent_dm(self, agent_id: str) -> None:
         """Track DM activity for graduation criteria."""
+        self._expire_if_timed_out()  # AD-1270: no DM is counted past the timeout
         state = self._agents.get(agent_id)
         if state is None or state.graduated:
             return
@@ -466,11 +482,18 @@ class BootCampCoordinator:
 
     async def check_timeout(self) -> None:
         """Check if boot camp has exceeded its timeout."""
-        if not self._active or not self._started_at:
+        self._expire_if_timed_out()
+
+    def _expire_if_timed_out(self) -> None:
+        """AD-1270 (#1324): enforce ``timeout_minutes`` by construction, with no task.
+
+        Every public reader and tracker calls this first, so nothing can observe an
+        enrolment, or a relaxation, past the timeout.
+        """
+        if not self._active or self._started_at is None:
             return
-        elapsed_seconds = time.time() - self._started_at
-        if elapsed_seconds >= self._config.timeout_minutes * 60:
-            await self.force_graduate_all()
+        if self._clock() - self._started_at >= self._config.timeout_minutes * 60:
+            self._graduate_remaining_on_timeout()
 
     # --- Private helpers ---
 
@@ -480,7 +503,7 @@ class BootCampCoordinator:
     ) -> None:
         """Mark agent as graduated and emit event."""
         state.graduated = True
-        state.graduated_at = time.time()
+        state.graduated_at = self._clock()
         state.phase = 4
 
         elapsed_min = (state.graduated_at - state.enrolled_at) / 60
@@ -506,11 +529,11 @@ class BootCampCoordinator:
     def _can_nudge(self, agent_id: str) -> bool:
         """Check nudge cooldown for an agent."""
         last = self._nudge_cooldowns.get(agent_id, 0.0)
-        return (time.time() - last) >= self._config.nudge_cooldown_seconds
+        return (self._clock() - last) >= self._config.nudge_cooldown_seconds
 
     def _record_nudge(self, agent_id: str) -> None:
         """Record nudge timestamp."""
-        self._nudge_cooldowns[agent_id] = time.time()
+        self._nudge_cooldowns[agent_id] = self._clock()
 
     def _emit(self, event_type: EventType, data: dict) -> None:
         """Emit event via the injectable event function."""

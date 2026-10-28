@@ -1165,7 +1165,7 @@ violations:
 - category: unowned-task
   key: probos.startup.dreaming::init_dreaming
   callee: loop.create_task
-  count: 2
+  count: 1
   disposition: debt
   owner: AD-1270h
   rationale: 'Bare-statement task creation: the reference is discarded at the statement, so nothing awaits, cancels, or drains it.'
