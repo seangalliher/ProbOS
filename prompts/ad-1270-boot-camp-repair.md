@@ -19,6 +19,10 @@
 
 **Captain:** unchanged (D9). R2 changes no shared contract (§4, Repair 2).
 
+**Amendment A3 (2026-10-28, after the broad gate failed on the M3 candidate `8f0454b5`; `claude-architect`).** The canonical gate (`1 failed, 51,458 passed, 152 skipped`, 26:57; `logs/ad1270/gate-failure-excerpt.txt`) failed only `tests/test_ad1324_srp_layout.py::test_architecture_baseline_is_byte_identical_to_the_reviewed_base`. That test pins the LF-normalised sha256 of `docs/development/architecture-baseline.yaml` (`:19`, `:54-57`). P-Z1, which `check_architecture_principles.py --check` requires (with the base's row kept it reports COUNT DRIFT for `init_dreaming`), changes that file, and §12 omitted the pin. One commit, **R3**, on top of M3, moves the pin to the reviewed baseline and records the reason and the previous value beside it (§7.19). No production line changes, and §8's U1 and U2 stay as committed. §7.1 to §7.18 keep their text; where section 7.19 differs, it wins. Round 3's recorded F1 is register R14; the pin's cost on every reviewed baseline edit is R15.
+
+**Captain:** unchanged (D9). R3 changes no shared contract (§4, Repair 3).
+
 **Re-anchoring after slices 3 and 4 merge:**
 - Anchored on slice-3 text: P-T2 (`test_ad1270e1_config_facade.py`, the `1880` line) and P-C2 (the `config-profiles.yaml` census header). Re-anchor both if slice 3's review repair changes those lines.
 - Not touched by slices 3 or 4: every other pair (`trust.py`, `crew.py`, `boot_camp.py`, `cognitive_agent.py`, `proactive.py`, `dreaming.py`, the `finalize.py` anchors at `def _wire_boot_camp_tracker` and the BF-261 block, `architecture-baseline.yaml`, `system.yaml` lines 2106-2108, the e2g and AD-1152 tests).
@@ -156,6 +160,14 @@ R1 changes no shared contract: no public signature or return shape, persisted sc
 4. Commit by explicit path: `src/probos/cognitive/cognitive_agent.py`, `src/probos/startup/finalize.py`, `tests/test_ad1270_boot_camp_repair_a1.py`, `tests/test_ad1270_boot_camp_trust.py`.
 
 R2 changes no shared contract: `_refresh_boot_camp_relaxation` is private to `CognitiveAgent` and `_is_new_crew_start` to `finalize.py`, with the same bool return; `_boot_camp_active`, `_chain_trust_band` and the journal columns keep their shape and meaning; the AST test it renames is this slice's own, referenced only by this contract and its census. Round 3 reviews the R2 delta.
+
+**Repair 3 (A3) build order** (one Builder delegation and one local commit, **R3**, on top of M3 `8f0454b5`; **STANDARD**; §7.19's pairs, written against the file as committed at `8f0454b5`):
+1. Run `tests/test_ad1324_srp_layout.py` (`-n 0`) over `8f0454b5`. Predicted: 8 cases, 1 failed (`test_architecture_baseline_is_byte_identical_to_the_reviewed_base`, `assert 'c2ee53af26ff...' == '62ceb51a9ebe...'`), 7 passed. Any other result is a stop.
+2. Apply P-P1 and P-P2.
+3. Focused gate (`-n 0`): `tests/test_ad1324_srp_layout.py tests/test_ad1270b_architecture_fitness.py tests/test_ad1270e1_config_facade.py tests/test_ad1270e2g_crew_models.py tests/test_config_reference_current.py tests/test_ad1184_ad_ledger.py tests/test_ad1185_config_profiles.py` (every pin and currency check §12 names), with `-rs`: 0 skipped. Then `-P scripts/check_architecture_principles.py --check` (unchanged from R2's step 3).
+4. Commit by explicit path: `tests/test_ad1324_srp_layout.py`. The message records the gate failure.
+
+R3 changes no shared contract. The pin is a test that other contracts rely on (AD-1240 N2, AD-1327, BF-906, AD-1341). R3 keeps its name, its test IDs, its assertion and its failure condition: any byte change of the LF-normalised baseline. It moves only the reference value to the baseline that P-Z1 left, which rounds 1 to 3 reviewed, so each citing contract still holds on a tree with this slice. Round 4 reviews the R3 delta.
 
 ## 5. Consumers of every value this adds or changes
 
@@ -2442,6 +2454,37 @@ def test_every_gating_chain_phase_asks_for_the_relaxation_not_enrolment() -> Non
     assert "is_enrolled" not in _attribute_calls(tree)
 ```
 
+### 7.19 Repair 3 (A3)
+
+Written against the file as committed at `8f0454b5`. Every SEARCH occurs once in its file; match with the file's own (CRLF) endings. No other file changes: `docs/development/architecture-baseline.yaml` stays as P-Z1 left it.
+
+**Pair P-P1 (`tests/test_ad1324_srp_layout.py`).** The module docstring, made true of a pin that moves with a reviewed baseline edit. SEARCH:
+```
+Method/line limits come from the repository's own checker constants, and the baseline file is
+byte-identical to the base commit's, so no SRP trigger was grandfathered to pass.
+```
+REPLACE:
+```
+Method/line limits come from the repository's own checker constants, and the baseline file is
+byte-identical to the last reviewed one (ARCHITECTURE_BASELINE_SHA256), so no SRP trigger was
+grandfathered to pass. AD-1324 set the pin; a later reviewed baseline edit moves it in the same
+commit and records why beside it.
+```
+
+**Pair P-P2 (`tests/test_ad1324_srp_layout.py`).** The pin and its history. SEARCH:
+```
+ARCHITECTURE_BASELINE_SHA256 = "62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1"
+```
+REPLACE:
+```
+# The LF-normalised sha256 of the reviewed baseline. AD-1270 (#1324) slice 4b lowered one row
+# (unowned-task, probos.startup.dreaming::init_dreaming, count 2 -> 1): the dead activation
+# block's loop.create_task left dreaming.py, and the architecture checker requires the row to
+# follow in the same commit. The pin before slice 4b (set by AD-1324, b513580b) was
+# 62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1.
+ARCHITECTURE_BASELINE_SHA256 = "c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f"
+```
+
 ## 8. Tracking (M3's commit)
 
 **Pair U1 (`PROGRESS.md`).** SEARCH:
@@ -2482,6 +2525,7 @@ Parent checklist (the orchestrator, on #1324): add and tick a slice-4b item with
 - `dormant-class-baseline.yaml` (checked, not regenerated).
 - (A1) BF-034's detector in `startup/dreaming.py`, `runtime.is_cold_start` and every reader of it (register R10).
 - (A2) `_maybe_dispatch_oracle_lookup` and `_maybe_dispatch_ward_room_lookup` (QUERY only; they do not ask), the AD-683 read in `_build_user_message` (R6), the AD-272 decision cache, and `tests/test_trigger_learning.py`.
+- (A3) Every production line; `docs/development/architecture-baseline.yaml` (P-Z1 stands); `scripts/check_architecture_principles.py`. In `tests/test_ad1324_srp_layout.py`, the test names, the assertion, the LF normalisation, `TARGETS` and the limits stay; only the pinned value, its comment and the module docstring move. §8's U1 and U2 stay as committed (they describe production behaviour, which R3 does not change), so the AD ledger is not regenerated.
 
 ## 10. Mutation rows (one campaign of record on the M2 tree, after an unmutated baseline of M1's and M2's focused lists passes; run on the Captain's Windows host)
 
@@ -2706,6 +2750,44 @@ FOUND: none; none
 HOLDS: yes
 ```
 
+## Verified Against Codebase (Amendment A3, 2026-10-28, on `8f0454b5`)
+
+```
+git show b513580b -- tests/test_ad1324_srp_layout.py
+  + ARCHITECTURE_BASELINE_SHA256 = "62ceb51a..."  (replaced `git diff --exit-code d811d8a3 -- <baseline>`)
+tests/test_ad1324_srp_layout.py
+  3-4:   "... and the baseline file is / byte-identical to the base commit's, ..."
+  19:    ARCHITECTURE_BASELINE_SHA256 = "62ceb51a9ebe031ad272a4396924d265fa48e9d20c6934371427322d750c87d1"
+  54-57: def test_architecture_baseline_is_byte_identical_to_the_reviewed_base ... == ARCHITECTURE_BASELINE_SHA256
+git diff 7c85ebaf 8f0454b5 -- docs/development/architecture-baseline.yaml
+  one hunk at 1165: probos.startup.dreaming::init_dreaming, loop.create_task, count: 2 -> count: 1
+logs/ad1270/gate-failure-excerpt.txt:13,46-47
+  + c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f ; 1 failed, 51458 passed, 152 skipped
+git log -8 7c85ebaf -- docs/development/architecture-baseline.yaml
+  last change 67323faf (2026-10-02), before the pin (b513580b, 2026-10-09)
+contracts citing the pin: ad-1240-generation-tool-results.md:175; ad-1327-crew-verifier-tier-and-independence.md:1903,2338;
+  bf-906-crew-enrollment-boot-order.md:1402,1997; ad-1341-s2-inherited-label.md:1718
+```
+
+## Absence Verified (Amendment A3, 2026-10-28)
+
+```
+CLAIM: nothing on the baseline-edit path names the pin
+RUN:   Grep 'test_ad1324|ARCHITECTURE_BASELINE_SHA256' over scripts/** and docs/development/architecture-baseline.yaml
+FOUND: scripts/run_test_gate.py:103 only (tests/ablation/test_ad1324_tier_choice_ablation.py, another test)
+HOLDS: yes
+
+CLAIM: the only frozen test pins over a non-source file this slice changes are test_ad1324_srp_layout.py:19 and test_ad1270e1_config_facade.py:1562
+RUN:   Grep tests/ for each changed file's name; Grep tests/ 'hexdigest|sha256\(|_SHA256\s*=|blake2|md5\('; intersect; read each hit
+FOUND: §12 (A3)
+HOLDS: yes
+
+CLAIM: no skip can hide a pin or currency check §12 names
+RUN:   Grep 'skip|xfail|importorskip' over those nine test files
+FOUND: no marker or call (the words appear only in names and docstrings of test_ad1184 and test_ad1185)
+HOLDS: yes, statically; the gate log prints no skip reasons, so step 3 of Repair 3 runs them with -rs
+```
+
 ## Not verified (the orchestrator verifies by running)
 
 - Every predicted count: test cases, the census figures, the facade diff and the failing-case lists on each base.
@@ -2721,6 +2803,17 @@ HOLDS: yes
 - `check_config_facade.py`, `gen_config_reference.py`, `check_config_profiles.py`: regenerated or paired in M1.
 - `check_dormant_classes.py --check`: unchanged (no class becomes live or dormant).
 - Test collection: two new files; no manifest lists them.
+- (A3) **Omitted up front, caught by the broad gate.** `tests/test_ad1324_srp_layout.py:19,54-57` pins the LF-normalised sha256 of `architecture-baseline.yaml`, and P-Z1 changes that file, so the pin moves in the same commit (P-P2). AD-1240, AD-1327, BF-906 and AD-1341 cite this pin as their guard; its name, assertion and failure condition stay.
+- (A3) Enumerated, the same kind (a test that pins, hashes or byte-compares a non-source file this slice changes):
+  - **Frozen pins:** the AD-1324 pin above, and `test_ad1270e1_config_facade.py:1562` (`field_definitions == 1881`, paired by P-T2). No other.
+  - **Currency checks** (they compare the committed file with its tool's output, so they follow a regeneration by tool): `test_config_reference_current.py:41` (`config-reference.md`); `test_ad1184_ad_ledger.py` (`open-ads-report.md` against `ad-ledger-snapshot.json`); `test_ad1270b_architecture_fitness.py` (the baseline through the checker); `test_ad1270e1_config_facade.py` and `test_ad1270e2g_crew_models.py:59` (`config-facade-baseline.yaml`, paired in M1).
+  - **Readers that pin no bytes:**
+    - `config/system.yaml` is loaded, or copied to `tmp_path` and compared with that copy (`test_ad1135_setup_cli.py:993,1220`, `test_ad1135_provider_setup.py:713`, `test_ad1185_config_profiles.py:512,796`, `test_ad1189_deferred_tool_schemas.py:2113`, `test_ad1190_delegation_tree_budget.py:1478`, `test_ad1258_self_knowledge.py:507`, `test_ad1320_agentic_budget_awareness.py:160`, `test_ad1125_room_bound_execution.py:3747`).
+    - `config-profiles.yaml` appears only as `tmp_path` copies (`test_ad1185_config_profiles.py:169,672`).
+    - `config-reference.md` rows are read by `test_ad1155_loop_until_done.py:1634` and `test_ad1154_approval_inbox.py:2278`.
+    - `prompts/` is read by name only, never this contract (`test_ad758_program_gate.py:7`, `test_captain_invariant_exposure.py:25`, `test_delegation_policy.py:14`, `test_for_free_documentation.py:25`, `test_ad685c_phantom_type_shape.py:17`, `test_ad685d_phantom_field_name.py:188`, `test_phantom_api_precheck_method_calls.py:297`).
+    - `PROGRESS.md` and `DECISIONS.md` reach tests only through the ledger check.
+  - **Source files:** no test pins a blob or hash of a source file this slice changes. The one blob pin, `test_ad1320_agentic_budget_awareness.py:620`, is on `native_builder.py`.
 
 ## 13. Prior Art and Blind Spots
 
@@ -2758,6 +2851,7 @@ HOLDS: yes
 11. (A2) Every method in `cognitive_agent.py` that calls `self._sub_task_executor.execute(` is a gating phase that calls the helper or a lookup whose chain is QUERY only, and the AST test fails when one is added unclassified. `TestReReflect`'s four cases pass unchanged.
 12. (A2) `_is_new_crew_start` returns False, and raises nothing, for a `get_stats()` answer of `None`, a list, an int or a mapping without `total`; it still returns True for `{"total": 0}` on `first_boot` and `reset`; its docstring says exactly that. The new malformed cases build no coordinator; the new feedback cases build theirs through `_coordinator`.
 13. (A2) D4's event sentence, D10, §5, §6, U1, U2 and the R1 test docstring are true of the R2 tree; U1's head line and U2's heading are unchanged.
+14. (A3) The R3 delta is `tests/test_ad1324_srp_layout.py` and this contract only; no production line. `ARCHITECTURE_BASELINE_SHA256` equals the sha256 of the LF-normalised `docs/development/architecture-baseline.yaml` at R3, and that file differs from `7c85ebaf` only by P-Z1's line. The test file fails 1 of 8 over `8f0454b5` and passes 8 of 8 at R3. In a scratch copy, the pin test fails with the `7c85ebaf` baseline restored and with any one byte changed, and passes with CRLF endings. Test names, the assertion, the normalisation, `TARGETS` and the limits are unchanged. The comment and the docstring are true, and the comment records the previous value. `check_architecture_principles.py --check` passes.
 
 ## 15. Acceptance criteria
 
@@ -2765,6 +2859,7 @@ HOLDS: yes
 - `isinstance(TrustNetwork(), TrustNetworkProtocol)` is true.
 - `check_architecture_principles.py --check` and `check_dormant_classes.py --check` pass; for the dormant check, paste its whole output.
 - The focused gates pass, and the broad gate's receipt is green.
+- (A3) `tests/test_ad1324_srp_layout.py` passes 8 of 8 with the moved pin, and the rerun broad gate's receipt is green on the R3 head.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## For the register (#1324)
@@ -2785,3 +2880,5 @@ HOLDS: yes
 - **R11 (A1; staged, owner #1324; a security-surface decision for the Captain): who can send `/conn`.** It is a slash command, so the shell, the API chat route (`api.py:77`, `routers/chat.py:101`) and channel adapters (`channels/base.py:367-369`) reach the grant, and so does the webhook adapter after its shared-secret check (reviewer A executed it). Recommendation: limit `/conn`, or slash commands generally, to the Captain's console and paired senders. Who may hold that power is the Captain's decision.
 - **R12 (A1; slice 4c, owner #1324):** `relax_quality_gates` (`config_models/crew.py:28`) has no `Field(description=...)`, so its generated reference row is blank (reviewer A, property 4); the safety note lives only in `system.yaml` and `config-profiles.yaml`. Recommendation: wire. Add `BootCampConfig` field descriptions in 4c, and regenerate the facade baseline and the reference by tool.
 - **R13 (A1; slice 4c, with R6):** the ordering test does not detect removal of the BF-261 late-bind (reviewer B, property 5); A1 covers only the await. Recommendation: land R6's public setter with a behavioural test that activation's snapshot capture uses the late-bound builder.
+- **R14 (A3, recording round 3's F1; slice 4c, owner #1324; P3, injected-only, not a regression):** `test_every_gating_chain_phase_asks_for_the_relaxation_not_enrolment` keys `cognitive_agent.py`'s methods by bare name and walks into nested definitions. A second class that reuses a classified name could therefore hide an unrefreshed chain consumer (`logs/ad1270/review-ad1270b-r3-a.md`, F1). Recommendation: wire, in 4c. Classify by class-qualified lexical identity, and stop body walks at nested definitions.
+- **R15 (A3; owner #1324, which owns the checker and the baseline (AD-1270b); unscheduled; tooling, in the envelope):** `tests/test_ad1324_srp_layout.py:19` pins the whole baseline's bytes. Every reviewed baseline edit, each of which the checker already forces into the same commit, therefore fails the broad gate unless the pin moves with it. Nothing on the edit path names the pin: neither the checker's COUNT DRIFT message nor the baseline does, and this contract's §12 missed it. The pin dates from `b513580b`, which turned AD-1324's base-relative `git diff --exit-code` into a permanent constant so that shallow CI clones could run it. Recommendation: keep the byte pin (four contracts cite it as their guard, and moving it is a two-line edit) and make it findable. Name the pin in the checker's drift and new-row messages and in the baseline's header comment, in one #1324 slice that moves the pin once. Considered and deferred: scoping the assertion to the AD-1324 classes' rows, which drops the guard those contracts rely on.
