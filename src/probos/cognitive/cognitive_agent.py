@@ -6049,9 +6049,10 @@ class CognitiveAgent(BaseAgent):
         # BF-187: DM social obligation — DM recipients must always respond
         observation["_is_dm"] = _params.get("is_dm_channel", False)
 
-        # AD-638: Boot camp quality gate relaxation
+        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
+        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
         _rt = getattr(self, '_runtime', None)
-        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.is_enrolled(self.id):
+        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
             observation["_boot_camp_active"] = True
 
         # AD-639: Trust-adaptive chain personality tuning
@@ -6237,9 +6238,10 @@ class CognitiveAgent(BaseAgent):
         )
         observation["_channel_name"] = _channel_name
 
-        # AD-638: Boot camp quality gate relaxation
+        # AD-638: Boot camp quality gate relaxation (AD-1270, #1324: only while
+        # boot_camp.relax_quality_gates is on; enrolment alone relaxes nothing)
         _rt = getattr(self, '_runtime', None)
-        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.is_enrolled(self.id):
+        if _rt and hasattr(_rt, 'boot_camp') and _rt.boot_camp and _rt.boot_camp.relaxes_quality_gates(self.id):
             observation["_boot_camp_active"] = True
 
         # AD-639: Trust-adaptive chain personality tuning

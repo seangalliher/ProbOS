@@ -231,10 +231,9 @@ def test_sybil_discount_makes_long_chain_capped() -> None:
 def test_new_transitive_methods_exist_on_trust_network() -> None:
     """AD-702 D3: confirm transitive_score / chain_path are now present.
 
-    The widened ``TrustNetworkProtocol`` requires these methods. We do not
-    use ``isinstance(net, TrustNetworkProtocol)`` here because the existing
-    Protocol also declares ``get_trust_score`` which TrustNetwork does not
-    implement (pre-existing gap predating AD-702; tracked separately).
+    The widened ``TrustNetworkProtocol`` requires these methods. AD-1270 (#1324)
+    slice 4b closed the ``get_trust_score`` gap this docstring used to record;
+    tests/test_ad1270_boot_camp_trust.py pins the protocol isinstance.
     """
     net = TrustNetwork()
     assert callable(getattr(net, "transitive_score", None))

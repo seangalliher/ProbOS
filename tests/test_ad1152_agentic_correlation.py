@@ -318,6 +318,9 @@ async def _off_observation(
     # AD-1270 (#1324) slice 3's working-memory cognition flag was added after this capture too. It is default
     # off, and while off nothing attaches to working memory; this agentic-loop observation records none.
     assert config["working_memory"].pop("cognition_enabled") is False
+    # AD-1270 (#1324) slice 4b's boot-camp relaxation flag was added after this capture too. It is
+    # default off, and while off no agent's Evaluate or Reflect is relaxed; this observation runs no chain.
+    assert config["boot_camp"].pop("relax_quality_gates") is False
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

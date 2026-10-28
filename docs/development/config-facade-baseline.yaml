@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1890
-  field_definitions: 1880
+  canonical_dump_leaves: 1891
+  field_definitions: 1881
   incidental: 13
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: 0dc88a6386951812bd96d7bdd1abb6e00542bc619c7a026dfd0a7845150be21c
+canonical_dump_sha256: 79ec646a9142b8c5cda7c1607d0e7aea22ca0edcfd023c8a4554ed1ea39aac21
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -818,7 +818,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1609dc6ca6d6156be32ba3234909705290b38773a782106cf4253ac2e593ed49
+    schema_sha256: 1c403b63431a9be53da759dcbc7c2b9ac1516adf6cf47a5d74ee5d2258383ad8
     fields:
     - {default: 'True', name: enabled}
     - {default: '5', name: min_episodes}
@@ -828,6 +828,7 @@ models:
     - {default: '60', name: min_time_minutes}
     - {default: '120', name: timeout_minutes}
     - {default: '600', name: nudge_cooldown_seconds}
+    - {default: 'False', name: relax_quality_gates}
   BootCampPhaseConfig:
     qualname: BootCampPhaseConfig
     bases:
@@ -3421,7 +3422,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 27a834863e8b8c03d7ae935c24cfa2eb8fe58a84eb3e2f944e088edd91886e9a
+    schema_sha256: 2415dc63239c063dd1403cdefe018c8b5cbe836b9f131a44a9e6ad243d179db9
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

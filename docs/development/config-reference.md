@@ -2676,6 +2676,7 @@ AD-638: Cold-start boot camp configuration.
 | `min_time_minutes` | `int` | `60` | — |  |
 | `timeout_minutes` | `int` | `120` | — |  |
 | `nudge_cooldown_seconds` | `int` | `600` | — |  |
+| `relax_quality_gates` | `bool` | `False` | — |  |
 
 ## `ship_state_snapshot`
 

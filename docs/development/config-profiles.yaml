@@ -12,17 +12,17 @@ baseline_id: ad-1185-config-profiles-v1
 tracking_issue: 1121
 smoke_test_node_id: tests/test_ad1185_config_profiles.py::test_supported_profile_boots_and_reads_a_file
 census:
-  measured_at_commit: AD-1270 (issue 1324) slice 3 M1 on the slice-2 merge, every count re-measured with
-    this instrument (slice 3 adds working_memory.cognition_enabled, a default-False boolean no tracked
-    config arms; AD-1341 S5 on the BF-939 base measured 449, 225, 224, 85 and 140)
+  measured_at_commit: AD-1270 (issue 1324) slice 4b M1 on the slice-4 merge, every count re-measured with
+    this instrument (slice 4b adds boot_camp.relax_quality_gates, a default-False boolean no tracked
+    config arms; slice 3 measured 450, 226, 224, 85 and 141)
   instrument: scripts/check_config_profiles.py default_false_flags() -- walks the nested Pydantic
     model tree from SystemConfig, each model type visited once per path, cycle-guarded. Armed
     counts compare against config/system.yaml loaded through load_config.
-  boolean_fields_reachable: 450
-  default_false: 226
+  boolean_fields_reachable: 451
+  default_false: 227
   default_true: 224
   default_false_armed_by_system_yaml: 85
-  default_false_never_armed: 141
+  default_false_never_armed: 142
   unattributable_deltas:
   - measure: default-OFF boolean count
     this_manifest: 202
@@ -630,6 +630,17 @@ flags:
     tests/test_ad1270_working_memory_cognition.py::test_flag_off_startup_builds_nothing_and_working_memory_is_unchanged
     -- OFF constructs nothing and leaves working memory byte-identical. Arming it changes what every
     crew agent keeps in working memory, so no profile arms it until the Captain enables it (AD-1270 slice 3).
+  external_dependency: null
+  requires: []
+  conflicts_with: []
+- path: boot_camp.relax_quality_gates
+  kind: research-treatment
+  profiles: []
+  evidence_to_promote: tests/test_ad1270_boot_camp_trust.py::test_the_chain_marks_boot_camp_only_when_the_relaxation_is_on
+    -- OFF, an enrolled cold-start agent's Evaluate, Reflect and AD-639 tuning run as for any other agent.
+    Arming it auto-approves the anti-confabulation gate for enrolled crew until they graduate or the boot
+    camp times out, a weakened control, so no profile arms it; supported cannot (research-treatment). The
+    Captain decides, after a live cold start shows graduation and timeout events (AD-1270 slice 4b).
   external_dependency: null
   requires: []
   conflicts_with: []

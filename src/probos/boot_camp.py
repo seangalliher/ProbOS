@@ -129,6 +129,14 @@ class BootCampCoordinator:
         state = self._agents.get(agent_id)
         return state is not None and not state.graduated
 
+    def relaxes_quality_gates(self, agent_id: str) -> bool:
+        """AD-1270 (#1324): True only while enrolled AND ``relax_quality_gates`` is on.
+
+        The chain reads this, not ``is_enrolled``. Off (the default), an enrolled
+        agent's Evaluate, Reflect and AD-639 tuning run as for any other agent.
+        """
+        return self._config.relax_quality_gates and self.is_enrolled(agent_id)
+
     def get_state(self, agent_id: str) -> AgentBootCampState | None:
         """Get boot camp state for an agent."""
         return self._agents.get(agent_id)
