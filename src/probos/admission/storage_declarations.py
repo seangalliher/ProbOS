@@ -22,10 +22,13 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         lifecycle_owner="probos.runtime.ProbOSRuntime.start",
         retention=StoreRetention.BOUNDED,
         retention_note=(
-            "Bounded by the constants of probos.admission.store: prune keeps AGGREGATE_RETENTION_DAYS UTC "
-            "days of aggregates and at most AGGREGATE_ROW_LIMIT rows (whole older days first, never the "
-            "current day), and MARKER_RETENTION_DAYS days of markers and at most MARKER_ROW_LIMIT rows "
-            "(oldest hours first); each write_batch that adds samples keeps the newest SAMPLE_RING_SIZE."
+            "Bounded by the constants of probos.admission.store: prune deletes the aggregates of days "
+            "before the last AGGREGATE_RETENTION_DAYS UTC days, then, while more than AGGREGATE_ROW_LIMIT "
+            "rows remain, the oldest whole day before the current one. It never deletes a row of the "
+            "current day or of a later one (a later day exists after the wall clock steps back), so more "
+            "than AGGREGATE_ROW_LIMIT rows remain only when every one is of such a day. It deletes the "
+            "markers of days before the last MARKER_RETENTION_DAYS, then the oldest hours while more than "
+            "MARKER_ROW_LIMIT rows remain; each write_batch that adds samples keeps the newest SAMPLE_RING_SIZE."
         ),
         backup="included",
         restore="unknown",

@@ -4,8 +4,7 @@
 renamed or removed, so the queries the M4 ruling runs keep the names this slice gives them (#1604).
 ``run_query`` runs one on a connection its caller opened; ``open_read_only`` opens the file with
 SQLite's ``mode=ro`` (BF-906), on which every write raises. ``p99_bucket`` reads a latency
-histogram built from ``latency_by_work_kind``. No module in ``src`` imports this one (T14 and T16
-pin the importers).
+histogram built from ``latency_by_work_kind``. No module in ``src`` imports this one.
 """
 
 from __future__ import annotations

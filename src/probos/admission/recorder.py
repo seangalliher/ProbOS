@@ -2,10 +2,10 @@
 
 ``AdmissionService.shadow``, in a service built with a recorder, hands it each verdict it counted
 and the ``decide`` time it measured. ``offer`` adds them to in-memory counts and returns: it awaits
-nothing and does no I/O. The flusher, an asyncio task this object holds from ``start`` until
-``stop`` has awaited it, hands those counts to ``AdmissionShadowStore.write_batch`` every
-``FLUSH_INTERVAL_SECONDS``. It calls ``prune`` at the first flush of each UTC day of the injected
-wall clock, and at each later flush that day until a prune succeeds. ``start`` marks the hour it
+nothing and does no I/O. The flusher, an asyncio task this object holds from ``start``, hands
+those counts to ``AdmissionShadowStore.write_batch`` every ``FLUSH_INTERVAL_SECONDS``. It calls
+``prune`` at each flush whose UTC day of the injected wall clock differs from the day of the last
+prune that succeeded. ``start`` marks the hour it
 ran, so the first write of a boot that succeeds adds that boot's marker row even when nothing was
 offered.
 
