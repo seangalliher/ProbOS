@@ -90,6 +90,7 @@ nav:
     - Composable Cognition: development/composable-cognition.md
     - Project Structure: development/structure.md
     - Design Principles: development/design-principles.md
+    - "Probabilistic Crew, Deterministic Ship": development/deterministic-ship.md
     - Configuration Reference: development/config-reference.md
     - Contributing: development/contributing.md
   - Research:
