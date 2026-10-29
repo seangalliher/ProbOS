@@ -95,7 +95,7 @@ Never delete or loosen a test beyond the listed pairs. Run focused gates with `d
 
 ## 5. Consumers of every value this changes
 
-- **`init_dreaming(...)`:** callers are `runtime.py`'s Phase 5 call and `tests/test_ad1326_startup_wiring.py` (P-R5, P-R6, P-T3). `ward_room` is removed, and `lifecycle_state` defaults to `""`, which is not a new crew.
+- **`init_dreaming(...)`:** its callers in `src` and `tests` are `runtime.py`'s Phase 5 call (P-R5, P-R6), `tests/test_ad1326_startup_wiring.py` (P-T3) and `_phase_five` in the new `tests/test_bf941_cold_start_detector.py`, whose `test_the_fresh_start_thread_left_phase_five` also reads the signature. `ward_room` is removed, and `lifecycle_state` defaults to `""`, which is not a new crew.
 - **`runtime.is_cold_start`:** readers are `CognitiveAgent._sensorium_cold_start_note` (its `_cold_start_note` feeds `sub_tasks/analyze.py` and `sub_tasks/compose.py`), the BF-102 Ward Room note in `cognitive_agent.py`, and `ProactiveCognitiveLoop._gather_context`'s `system_note` (which feeds the proactive-think prompt and `_sensorium_situation_system_note`; AD-1077 coaching waits while it is present). After the window closes, each renders as for a warm boot.
 - **`runtime._cold_start` (raw):** outside the runtime's own `is_cold_start` and `end_cold_start`, read only during finalization: the adapter copy, the new Fresh Start gate and the auto-welcome guard.
 - **`_lifecycle_state == "reset"`:** readers are `runtime.py`'s HXI state (`fresh_boot`, and `temporal.lifecycle_state` relayed as is); `cognitive_agent.py`'s sparse-memory note (`lifecycle != "reset"`, two sites); the proactive loop's `memory_state.lifecycle`, `context["lifecycle_state"]` and its orientation supplement's `build_orientation(lifecycle_state=...)`, which the orientation context stores and nothing branches on; `emergent_detector`'s phase tag; `introspective_telemetry`; finalize's `_is_new_crew_start` (accepts it); and AD-435 (first-activation title, P-F4). Every other read compares with `stasis_recovery` or `restart` and answers as for `first_boot`.
@@ -1525,6 +1525,10 @@ Written after M1 and M2 were built and committed and before the cross-family rev
 - **S4 (Anchors, which text describes the head).** "Six paired test files" counted `architecture-baseline.yaml`; it is now "six paired files". §1 describes the base the slice repairs ("nothing in `src` clears it"), so it moves to the records of `ed253049`.
 - **S5 (register).** Row 4d-R5 is added.
 - **Scope.** Wording only. No code, test, case count, mutation row, decision or milestone changes. The two shipped repairs change a docstring and a comment, and the 7.1.N and 7.2.N bodies carry the same text. The tracker heads keep their first 120 characters.
+
+## 18. Amendment A3 (2026-10-28, after review round 1, on the candidate's head `0ad86c36`)
+
+Written after the cross-family review round 1 of M1 to M3, which found no production defect and one P3 in the contract. **F1 (§5, `init_dreaming`).** The caller list named `runtime.py`'s Phase 5 call and `tests/test_ad1326_startup_wiring.py` and omitted the third, `_phase_five` in the new `tests/test_bf941_cold_start_detector.py`. It now names all three, from an enumeration of `src` and `tests`, and notes that the same file also reads the signature. **Sweep.** The Architect then swept every enumerating or universally quantified sentence in the text that describes the head, in the slice's shipped comments and docstrings, and in the two trackers, and found no other false one. **Scope.** Wording only, in this contract. No shipped file, code, test, case count, mutation row, decision or milestone changes. §8's pairs and the tracker heads are unchanged, so M3 stands. Nothing is deferred, so the register gets no row.
 
 ## For the register (#1324)
 
