@@ -20,7 +20,8 @@ a real ``CallsignRegistry`` and a real ``AgentStopService``, all under ``tmp_pat
 - T10 the constructor and ``decide`` refuse the wrong types.
 - T11 ``shadow`` returns None and counts each verdict and its latency bucket.
 - T12 ``shadow`` counts and logs a malformed request and a raising facade and returns None; ``decide`` propagates.
-- T13 the service's inputs: no configuration field and no dependency beyond the facade and the stop record.
+- T13 the service's inputs: no configuration field and no dependency beyond the facade, the stop record and an
+      optional recorder (AD-1346 M3b).
 - T14 the decision files await nothing and, among them, only ``shadow`` logs; every file of the package imports
       only its allowlist (AD-1346 M3b's persistence files have allowlists of their own and may await).
 - T15 the seam census: the package calls none of the stop's guard functions and starts no agent work.
@@ -75,11 +76,16 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
     },
     "service.py": {
         "__future__", "collections.abc", "logging", "time", "typing", "probos.admission.checks",
-        "probos.admission.record", "probos.admission.taxonomy", "probos.agent_stop", "probos.identity_service",
+        "probos.admission.record", "probos.admission.recorder", "probos.admission.taxonomy", "probos.agent_stop",
+        "probos.identity_service",
     },
 }
 #: AD-1346 M3b: the persistence files. T14 holds each to its imports; they may await, open the store and log.
 _PERSISTENCE_IMPORTS: dict[str, set[str]] = {
+    "recorder.py": {
+        "__future__", "asyncio", "collections.abc", "logging", "time", "typing", "uuid", "probos.admission.record",
+        "probos.admission.store", "probos.admission.taxonomy",
+    },
     "storage_declarations.py": {"__future__", "probos.storage.declarations"},
     "store.py": {
         "__future__", "dataclasses", "datetime", "json", "logging", "pathlib", "typing", "probos.admission.record",
@@ -443,16 +449,21 @@ async def test_shadow_counts_and_logs_an_exception_and_returns_none(
     assert all(r.exc_info for r in records)
 
 
-async def test_the_service_reads_no_configuration_and_holds_only_its_two_dependencies(gate: AdmissionService) -> None:
-    """T13: no configuration field; the facade, the stop record, a clock and its counters are all it holds."""
+async def test_the_service_reads_no_configuration_and_holds_only_its_two_dependencies_and_an_optional_recorder(
+    gate: AdmissionService,
+) -> None:
+    """T13: no configuration field; the facade, the stop record, a clock, an optional recorder and its counters are all
+    it holds. AD-1346 M3b renamed this test when it added the keyword-only ``recorder`` (None in this fixture)."""
     assert "admission" not in SystemConfig.model_fields
     init = inspect.signature(AdmissionService.__init__).parameters
-    assert list(init) == ["self", "identity_service", "stop_service", "clock"]
+    assert list(init) == ["self", "identity_service", "stop_service", "clock", "recorder"]
     assert init["clock"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert init["recorder"].kind is inspect.Parameter.KEYWORD_ONLY and init["recorder"].default is None
     shadow = inspect.signature(AdmissionService.shadow).parameters
     assert list(shadow) == ["self", "presented_id", "work_kind", "seam", "origin", "origin_id"]
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for name, p in shadow.items() if name != "self")
-    assert set(vars(gate)) == {"_identities", "_stops", "_clock", "_tally", "_latency", "_failures"}
+    assert set(vars(gate)) == {"_identities", "_stops", "_clock", "_recorder", "_tally", "_latency", "_failures"}
+    assert vars(gate)["_recorder"] is None
 
 
 # ---------------------------------------------------------------------------
