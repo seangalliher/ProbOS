@@ -16,7 +16,7 @@ events). It holds one ``schema_version`` row and five tables, each bounded by a 
   last ``MARKER_RETENTION_DAYS``, then the oldest hours while more than ``MARKER_ROW_LIMIT`` rows
   remain.
 - ``shadow_parity`` (M3c): decisions per (UTC day, work kind, seam, today's outcome, outcome,
-  reason code), for verdicts offered with the site's own outcome. ``prune`` deletes the days before
+  reason code), for verdicts aggregated with the site's own outcome. ``prune`` deletes the days before
   the last ``AGGREGATE_RETENTION_DAYS``. It has no row limit of its own: for the verdicts ``decide``
   builds one day holds at most len(WORK_KINDS) * len(SEAMS) * len(TODAY_OUTCOMES) *
   len(REASON_CODES) rows, a test pins that 35 such days stay below ``AGGREGATE_ROW_LIMIT``, and a

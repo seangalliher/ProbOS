@@ -22,8 +22,8 @@ with one is also counted for parity, and kept as a disagreement sample when ``is
 holds; beyond ``DISAGREEMENT_BUFFER_LIMIT`` pending ones it is counted in memory as
 ``disagreement_samples_dropped``. A pending parity key always has a pending aggregate key with the
 same hour, work kind, seam, outcome and reason code: both are counted by the same call and are
-detached, written and put back together. So, for the two values of ``TODAY_OUTCOMES`` (the only ones
-``AdmissionService.shadow`` passes), the parity keys pending are at most twice the aggregate keys
+detached, written and put back together. So, for the two values of ``TODAY_OUTCOMES``, the parity
+keys pending are at most twice the aggregate keys
 pending (register R10 says when those exceed ``PENDING_KEY_LIMIT``). A flush that raises an
 ``Exception`` leaves the flusher running and is counted in memory as ``flush_errors`` (R1); a
 ``BaseException`` that is not an ``Exception`` ends it.
