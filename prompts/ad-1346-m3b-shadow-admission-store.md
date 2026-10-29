@@ -71,7 +71,7 @@ Each milestone is one Builder delegation and one local commit, staged by explici
   - All four reach the store in the same transaction as the counts they describe. After a clean stop whose last write succeeded, each row holds `offered == written + dropped`.
   - `boot_id` is a fresh `uuid4().hex` per recorder. `start` marks its hour, so each boot's first successful write adds a row even when nothing was offered.
   - **In M3b alone**, nothing in `src` calls `shadow` (Absence Verified), so on the vessel each boot whose recorder started and wrote to the store adds one marker row with zero counts, and the aggregates and samples stay empty.
-- **D44 `offer`.** `offer(self, verdict: AdmissionVerdict, elapsed_ns: int) -> None`. It is synchronous, awaits nothing and makes no I/O, store, task or wait call (R2 pins it by AST). Once `stop` has begun it counts `late` (memory only) and returns. A verdict needing a new pending key when `PENDING_KEY_LIMIT = 50_000` keys are pending is counted as `dropped` and neither aggregated nor sampled. A would-refuse sample beyond `SAMPLE_BUFFER_LIMIT` (= `SAMPLE_RING_SIZE`) pending samples is counted as `samples_dropped`; the verdict itself is still counted. Reason: pending counts are bounded by the key space, not by call volume, and nothing blocks.
+- **D44 `offer`.** `offer(self, verdict: AdmissionVerdict, elapsed_ns: int) -> None`. It is synchronous, awaits nothing and makes no I/O, store, task or wait call (R2 pins it by AST). Once `stop` has begun it counts `late` (memory only) and returns. A verdict needing a new pending key when `PENDING_KEY_LIMIT = 50_000` keys are pending is counted as `dropped` and neither aggregated nor sampled. A would-refuse sample beyond `SAMPLE_BUFFER_LIMIT` (= `SAMPLE_RING_SIZE`) pending samples is counted as `samples_dropped`; the verdict itself is still counted. Reason: pending counts grow with the distinct keys pending (at most 21,120 per UTC hour for the verdicts `decide` builds, D41), not with call volume, and nothing blocks. Only `offer` checks `PENDING_KEY_LIMIT`: a failed write's aggregate counts are added back with no limit, so the pending keys can exceed it after a failed write (register R10).
 - **D45 The flusher: cadence, ownership, stop path.**
   - `FLUSH_INTERVAL_SECONDS = 5.0`, the same delay as OpenTelemetry's batch processor default (§13).
   - One task, `self._task = asyncio.create_task(self._run(), name=FLUSHER_TASK_NAME)` (`"ad1346-shadow-flusher"`), started by `start()`, which raises `RuntimeError` on a second call or after `stop` began.
@@ -418,8 +418,9 @@ class AdmissionShadowStore:
 
         Raises ``RuntimeError`` when the store is already open or the file holds other
         ``schema_version`` rows, and propagates what the factory or SQLite raises. When it raises
-        after the connection opened, it closes that connection first (a close that raises is logged
-        at DEBUG), and ``is_open`` stays False.
+        after the connection opened, it closes that connection first (a close that raises an
+        ``Exception`` is logged at DEBUG; any other ``BaseException`` from the close propagates in
+        place of the start's), and ``is_open`` stays False.
         """
         if self._db is not None:
             raise RuntimeError("AD-1346 M3b: the shadow admission store is already open")
@@ -1191,7 +1192,9 @@ logger = logging.getLogger(__name__)
 FLUSH_INTERVAL_SECONDS: Final = 5.0
 #: D44: pending would-refuse samples kept between two writes that succeed (the store's ring size).
 SAMPLE_BUFFER_LIMIT: Final = SAMPLE_RING_SIZE
-#: D44: distinct pending aggregate keys kept between two writes that succeed.
+#: D44: ``offer`` adds no new pending aggregate key while this many are pending. A failed write's
+#: aggregate counts are added back with no limit, so the pending keys can exceed this after a failed
+#: write (register R10, #1604).
 PENDING_KEY_LIMIT: Final = 50_000
 #: D45: after the flusher ends, ``stop`` flushes while anything is pending, at most this many times.
 STOP_FLUSH_ATTEMPTS: Final = 2
@@ -1823,9 +1826,10 @@ REPLACE:
         # service so that the service is built with the recorder. The imports, the store's start and
         # the recorder's construction and start are inside the try, and each attribute is assigned
         # after its object started; a store whose start raised has closed its connection, or logged at
-        # DEBUG why the close raised. The except branch logs an Exception, and the service below is
-        # then built with no recorder, so the boot continues (D47). Its log call has no guard of its
-        # own (D36).
+        # DEBUG the Exception its close raised (a BaseException from that close propagates in place of
+        # the start's). The except branch catches an Exception only: the service below is then built
+        # with no recorder and the boot continues (D47), while any other BaseException propagates. Its
+        # log call has no guard of its own (D36).
         shadow_recorder: ShadowRecorder | None = None
         try:
             from probos.admission.recorder import ShadowRecorder
@@ -1913,8 +1917,8 @@ SEARCH:
 REPLACE:
 ```
             "Started in ProbOSRuntime.start before the shadow AdmissionService, inside a try: a store or "
-            "recorder that does not start is logged, the service is built without a recorder and the boot "
-            "continues. Stopped in startup/shutdown.py after the recorder's last flush, before the identity "
+            "recorder whose start raises an Exception is logged, the service is built without a recorder "
+            "and the boot continues. Stopped in startup/shutdown.py after the recorder's last flush, before the identity "
             "registry. Opened through the ConnectionFactory. Tables: schema_version, shadow_aggregates, "
             "shadow_samples and shadow_markers. start opens a file whose schema_version holds exactly "
             "one row of SCHEMA_VERSION, writes that row to a file with no row, and refuses a file with "
@@ -1993,8 +1997,9 @@ REPLACE:
 ``REPORT_QUERIES`` maps each frozen name to one SELECT. A later slice may add a name; none is
 renamed or removed, so the queries the M4 ruling runs keep the names this slice gives them (#1604).
 ``run_query`` runs one on a connection its caller opened; ``open_read_only`` opens the file with
-SQLite's ``mode=ro`` (BF-906), on which every write raises. ``p99_bucket`` reads a latency
-histogram built from ``latency_by_work_kind``. No module in ``src`` imports this one.
+SQLite's ``mode=ro`` (BF-906), on which a write to the file raises (a ``TEMP`` table can still be
+created and written on it). ``p99_bucket`` reads a latency histogram built from
+``latency_by_work_kind``. No module in ``src`` imports this one.
 """
 
 from __future__ import annotations
@@ -2075,7 +2080,7 @@ def p99_bucket(counts: Sequence[int]) -> int | None:
 """AD-1346 M3b (#1604): the frozen, read-only report queries over a written ``admission_shadow.db``.
 
 - Q1 the query names are frozen, in order, each one SELECT, and the mapping is read-only.
-- Q2 each query answers on a ``mode=ro`` connection to a written store, and a write on it raises.
+- Q2 each query answers on a ``mode=ro`` connection to a written store, and a ``DELETE`` from one of the store's tables on it raises.
 - Q3 a query name that is not an exact ``str`` the mapping holds is a ``ValueError``, before the connection is used.
 - Q4 ``p99_bucket`` is the first bucket whose running count reaches 99% of the total.
 - Q5 the module holds no write or schema statement.
@@ -2191,7 +2196,7 @@ def test_the_report_module_holds_no_write_or_schema_statement() -> None:
 ### 7.18.N New file: `tests/test_ad1346_admission_shadow_boot.py` (M3)
 
 ```python
-"""AD-1346 M3b (#1604) - real-boot tests: the shadow store and recorder are wired, persist across a restart, and fail open.
+"""AD-1346 M3b (#1604) - real-boot tests: the shadow store and recorder are wired, persist across a restart, and fail open on an ``Exception``.
 
 These boot a real ``ProbOSRuntime`` with the mock LLM, as ``tests/test_ad1346_admission_service_boot.py`` does
 (``SystemConfig()`` with the naming ceremony, the proactive loop and QA off, or ``lifecycle_config`` for the
@@ -2421,7 +2426,7 @@ AD-1346 M3b gives M3a's shadow decision the durable record #1601's evidence 2, 7
 - *D51, D52 (tests and declaration).* The real-boot test boots twice on one temporary data directory with the mock LLM. The AD-1256 declaration `admission.shadow-decisions` is optional and bounded, with backup included, restore unknown and lifecycle owner `ProbOSRuntime.start`. No `probos reset` tier deletes the file, as for `agent_stops.db`.
 - *Left to M3c.* Every caller of `shadow`, the parity `today_outcome` parameter and disagreement samples, `admission.shadow_enabled` (memo D15), F-212's log guard, and where in shutdown the recorder stops relative to the seams.
 - *Tests.* Four new files, `tests/test_ad1346_admission_shadow_store.py`, `_recorder.py`, `_report.py` and `_boot.py` (S1 to S12, R1 to R13, Q1 to Q5, B1 to B4), over real SQLite in `tmp_path`, with the helper `tests/fixtures/ad1346_shadow.py`. M3a's T13 and T14 are renamed and extended for the recorder and the persistence files. The rollback census gains the two steps and one last-resort-close case.
-- *Residual, accepted.* R1 to R9 of the contract (a flusher that dies stops writing until `stop` logs it; wall-clock jumps move the day and the pruning cutoff; `probos reset` keeps the file; a cancellation delivered during a commit that completed can count that batch twice; a would-refuse verdict whose `to_dict` raised would fail every later write; no test pins `prune`'s rollback or the retry after a failed prune).
+- *Residual, accepted.* R1 to R10 of the contract (a flusher that dies stops writing until `stop` logs it; wall-clock jumps move the day and the pruning cutoff; `probos reset` keeps the file; a cancellation delivered during a commit that completed can count that batch twice; a would-refuse verdict whose `to_dict` raised would fail every later write; no test pins `prune`'s rollback or the retry after a failed prune; only `offer` checks the 50,000 pending-key limit, so a failed write's aggregate counts, added back with no limit, can leave more keys pending).
 - *Reversal.* Revert the M3b commits. `admission_shadow.db` is then read by nothing; deleting it loses only shadow evidence.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -2641,15 +2646,15 @@ Not confirmed by reading (predictions, for the orchestrator's stage run):
 
   Rejected: AD-1195 durable events (memo D9), and `_stop_runtime_sqlite_sidecars` (D48).
 - **External (2026-10-28, two searches):**
-  - OpenTelemetry's batch span processor ([spec PR diff](https://github.hscsec.cn/open-telemetry/opentelemetry-specification/pull/3024/files/f7aa94def4d24a604f3891a045f6c391dcb3a6a6); [C++ SDK options](https://opentelemetry-cpp.readthedocs.io/en/latest/otel_docs/structopentelemetry_1_1sdk_1_1trace_1_1BatchSpanProcessorOptions.html)) has a bounded queue, a default 5,000 ms schedule, and drops new records at the bound rather than blocking the producer. **Adapted:** the 5 s cadence and drop-and-count. Pending counts are pre-aggregated by key, so memory is bounded by the key space rather than by call volume; drops are persisted per hour instead of logged.
-  - OpenTelemetry exponential histograms at scale 0 ([ClickHouse explainer](https://clickhouse.com/resources/engineering/opentelemetry-histograms); [.NET aggregator](https://source.dot.net/System.Diagnostics.DiagnosticSource/System/Diagnostics/Metrics/Base2ExponentialHistogramAggregator.cs.html)) use base-2 buckets. **Adopted as a check:** M3a's `bit_length` buckets are the same scale-0 idea, so a later export is a re-indexing, not a re-measurement.
+  - OpenTelemetry's batch span processor ([spec PR diff](https://github.hscsec.cn/open-telemetry/opentelemetry-specification/pull/3024/files/f7aa94def4d24a604f3891a045f6c391dcb3a6a6); [C++ SDK options](https://opentelemetry-cpp.readthedocs.io/en/latest/otel_docs/structopentelemetry_1_1sdk_1_1trace_1_1BatchSpanProcessorOptions.html)) has a bounded queue and a default of 5,000 ms for the maximum delay between two consecutive exports. The [trace SDK specification](https://opentelemetry.io/docs/specs/otel/trace/sdk/) states both: `maxQueueSize` ("After the size is reached, spans are dropped", default 2048) and `scheduledDelayMillis` ("the maximum delay interval in milliseconds between two consecutive exports", default 5000); it was read for A4, and no SDK was run. **Adapted:** the 5 s cadence and drop-and-count. Pending counts are pre-aggregated by key, so their memory grows with the distinct keys pending (at most 21,120 per UTC hour for the verdicts `decide` builds, D41) rather than with call volume; only `offer` checks `PENDING_KEY_LIMIT`, so a failed write's aggregate counts, added back with no limit, can exceed it [R10]; drops are persisted per hour instead of logged.
+  - OpenTelemetry exponential histograms at scale 0 ([ClickHouse explainer](https://clickhouse.com/resources/engineering/opentelemetry-histograms); [.NET aggregator](https://source.dot.net/System.Diagnostics.DiagnosticSource/System/Diagnostics/Metrics/Base2ExponentialHistogramAggregator.cs.html)) use base-2 buckets. **Checked, not adopted:** M3a's `bit_length` buckets are base 2, as scale 0 is, but for 1 <= b <= 38 M3a's bucket b holds the times [2^(b-1), 2^b) ns while scale-0 index b-1 holds (2^(b-1), 2^b]; M3a's bucket 0 holds 0 ns only, and bucket 39, the last of `LATENCY_BUCKETS = 40`, holds every time from 2^38 ns up (the `p99_bucket` docstring). The [metrics data model](https://opentelemetry.io/docs/specs/otel/metrics/data-model/) says that a bucket of positive values holds values "greater than `base**index` and less than or equal to `base**(index+1)`" (read for A4). The boundaries differ at each power of two from 2 ns up (the orchestrator ran the installed SDK's `ExponentMapping(0)`: 2 and 3 map to indexes 0 and 1, and M3a puts both in bucket 2), so one persisted bucket can hold observations of two scale-0 buckets, and an exact export needs the raw times, not a re-indexing of these counts.
 - **`docs/research/reference-projects.md` (date used 2026-10-28):**
   - the oldest rows (SWE-agent 2026-03-20, MCP Apps 2026-04-08, AG-UI never) are harness and UI projects with no bearing on a bounded telemetry store: considered, deferred;
   - no row was examined, so there are no row updates.
 - **Blind spots** (register items in brackets):
   - (1) A flusher that dies, for example through a logging handler that raises (F-212's class), stops writing, and producer counts then reach the store only through `stop`'s flushes. The signal is `stop`'s warning and missing hour rows [R1].
   - (2) A wall-clock jump moves the day and hour keys, and a forward jump of more than 34 days lets the next daily prune delete older rows [R2].
-  - (3) Two processes on one data directory both write; WAL and `busy_timeout` serialise them, and markers are keyed by boot.
+  - (3) Two processes on one data directory both write. WAL admits one writer at a time, and `busy_timeout=5000` lets a second writer wait for the lock: measured with SQLite 3.50.4 through the standard-library `sqlite3`, in WAL with `busy_timeout=5000` and the first writer holding its transaction open, a second connection's `BEGIN IMMEDIATE` raised `OperationalError: database is locked` after 5.47 s, while a read on that connection returned in 0.007 s without waiting. A write that still finds the file busy raises, and its batch stays pending for the next flush (D45): its aggregate counts are added back, and at most `SAMPLE_BUFFER_LIMIT` samples are kept. Markers are keyed by boot.
   - (4) `probos reset` keeps the file, so evidence spans crews; samples carry slot ids [R3].
   - (5) A file SQLite cannot read, or whose `schema_version` holds other rows, makes `start` fail and the boot continues without a recorder; the runtime warning is the signal. A SQLite file with no `schema_version` row is taken as new (D39).
   - (6) Late offers during shutdown are counted in memory only [M3c].
@@ -2691,6 +2696,10 @@ A2 repairs the orchestrator's findings F1 to F6 on the built candidate, which sh
 
 A3 repairs the orchestrator's finding F7 and the hits of its sweep, in the M4 tracker text only. The DECISIONS entry's D50 bullet now names the three `shadow` calls and the one stop that B1 measures, as D50 states them. The marker bound in both entries is scoped to after a prune, as D41 states it. The PROGRESS entry's fail-open sentence is scoped to an `Exception`, as D47 states it. The blobs that change are `PROGRESS.md` and `DECISIONS.md` at M4. No decision's content, test, mutation row, row anchor, case count or source text changes, and §7 and §8 still hold 27 pairs.
 
+## 19. Amendment A4 (2026-10-29, after review round 1, on the candidate head f68583de)
+
+A4 repairs the four findings of the cross-family review of round 1 and changes no code. F1: the comment on `PENDING_KEY_LIMIT`, D44's reason and §13's memory sentence now say that only `offer` checks the limit and that a failed write's aggregate counts, added back with no limit, can exceed it; register R10 records the behaviour, its reach and its follow-up, and the DECISIONS entry's residual bullet names R1 to R10. F2: the report's module docstring and Q2's docstring say that a write to the file raises on a `mode=ro` connection, not every write. F3: the declaration's notes at M3, the runtime's comment and the boot tests' module docstring scope the fail-open to an `Exception`, and the store's `start` docstring scopes its logged close the same way. F4: §13 no longer claims that M3a's buckets re-index exactly to OpenTelemetry's scale 0, and it names what buckets 0 and 39 hold. A sweep of the same classes also quoted the batch processor's defaults from the specification and replaced §13's blind spot (3) on two writers with a measurement. The blobs that change are `store.py` at M1, `recorder.py` at M2, `runtime.py`, `storage_declarations.py`, `report.py`, `tests/test_ad1346_admission_shadow_report.py` and `tests/test_ad1346_admission_shadow_boot.py` at M3, and `DECISIONS.md` at M4. Outside this contract, each change is a comment, a docstring, the declaration's notes text or tracker prose. No decision's content, test's code, mutation row, row anchor or case count changes, and §7 and §8 still hold 27 pairs.
+
 ## For the register (#1604)
 
 - **R1 (M3c):** a flusher task that ends with an exception (for example, a logging handler that raises, F-212's class) stops writing until `stop` logs it. M3c decides F-212's guard for `shadow` and the flusher's log calls together.
@@ -2702,3 +2711,4 @@ A3 repairs the orchestrator's finding F7 and the hits of its sweep, in the M4 tr
 - **R7 (M3c):** the parity `today_outcome` parameter and disagreement samples; `admission.shadow_enabled` (memo D15).
 - **R8 (M8; no owner yet for the view):** AD-1195 admission events (M8); any route or HXI view of the report.
 - **R9:** no test or mutation row pins two of `prune`'s paths. Its rollback on failure (`_rollback_quietly`, as in `write_batch`, whose rollback S4 pins): without it, the next commit would land part of a failed prune, a subset of the rows that prune was deleting under the same `now`; the orchestrator's probe of `e50fcdc5` measured the rollback holding. Its retry: the recorder records the pruned day only after `prune` returned, so a failed prune runs again at the next flush; this is read from `_flush`, not measured.
+- **R10 (a follow-up on #1604):** only `offer` checks `PENDING_KEY_LIMIT`. `_flush` detaches the pending maps before the write, so offers made during the write fill fresh ones. When the write fails, `_restore` adds the batch's aggregate, offered, dropped and samples-dropped counts back with no limit and trims only the samples, to `SAMPLE_BUFFER_LIMIT`, so the pending aggregate keys can exceed the limit: the orchestrator measured 6 at a limit of 3, and the review measured 50,002 at 50,000. Each later failed write during which new keys are offered can add up to the limit again. Reach: a store write that fails while offers arrive. The review's probe (real SQLite, the real 50,000 limit) reported that its final per-hour marker equalities `offered == written + dropped` held, with consumer totals offered 50,003, written 50,002 and dropped 1. For the verdicts `decide` builds, the pending map stays finite: each key is a UTC hour and one of D41's 21,120 combinations, so it holds at most 21,120 keys for each UTC hour in which its pending verdicts were offered. Enforcing the limit when a failed write's counts are added back is a follow-up; M3b changes no code for it.
