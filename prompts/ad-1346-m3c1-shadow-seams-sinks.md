@@ -54,7 +54,7 @@
   - `tests/test_ad1346_admission_service.py`: T14's allowlist and T13 (M1); T16's name, assertions and module-docstring line (M3). Its count of `def test_` is unchanged.
   - `tests/test_ad1346_admission_shadow_store.py`: S1's name and table list (M1).
   - `tests/test_ad1346_admission_shadow_report.py`: Q1's names (M1).
-  - `tests/test_ad1270e1_config_facade.py`: four count assertions (M2).
+  - `tests/test_ad1270e1_config_facade.py`: its count assertions (M2).
   - `tests/test_ad1270e2i_agentic_models.py`: `REMAINING_TRUE_LEAVES` (M2).
   - `tests/test_ad1343_stop_seam_inventory.py`: three new tests (M3).
   - `tests/fixtures/ad1343_seam_registry.py` and `tests/fixtures/ad1343_seam_census.py` (M3).
@@ -85,7 +85,7 @@
   - passes it to `ShadowRecorder.offer`;
   - guards its log call (F-212);
   - returns None at once after `close()`.
-- **`ShadowRecorder.offer(verdict, elapsed_ns, today_outcome=None)`** counts each verdict it aggregates with a today's outcome by (hour, work kind, seam, today's outcome, outcome, reason code). It keeps each disagreement in a bounded buffer. The flusher counts an `Exception` from a flush as `flush_errors` and keeps running.
+- **`ShadowRecorder.offer(verdict, elapsed_ns, today_outcome=None)`** counts each verdict it aggregates with a today's outcome by (hour, work kind, seam, today's outcome, outcome, reason code). It keeps disagreements in a bounded buffer. The flusher counts an `Exception` from a flush as `flush_errors` and keeps running.
 - **`admission_shadow.db`** gains two tables under schema version 1:
   - `shadow_parity`: by UTC day, pruned with the aggregates;
   - `shadow_disagreements`: the newest 1,000 rows.
@@ -98,7 +98,7 @@
 ## 3. Decisions (numbered after M3b's D38 to D53)
 
 - **D54 Split by seam family.** This slice covers the machinery and the four sinks. M3c2 covers the six routing seams (proactive, Ward Room, DM route, group fan-out, the Captain's browser ACK, the inline browser action). M3c3 covers delegation, the four crew sites and agent work.
-  - Reason: the 16 functions sit in 13 files and reach the stop in four ways (the runtime attribute, a late-bound setter, constructor injection, an injected gate). Every agent path ends in a sink, and the sinks carry the most traffic, so cost and parity evidence arrive first.
+  - Reason: the 16 functions reach the stop in four ways (the runtime attribute, a late-bound setter, constructor injection, an injected gate).
   - Rejected: one slice (too large for one review round); machinery alone (a library with no caller, and the golden test needs seams).
 - **D55 Statements, place and reach.**
   - **Count.** 16 entries in 16 functions. M3c1 adds 5 calls at 4 entries: one each in `CognitiveAgent.handle_intent`, `CognitiveAgent.handle_consultation_request` and `ToolRegistry.check_and_invoke`, and two in `WorkItemAgenticExecutor.run`. `refuse_new_run` raises `AgentStopped`, so the statement for the refused path sits in an `except AgentStopped:` before a bare `raise`, and the statement for the admitted path follows the call.
@@ -144,7 +144,7 @@
   - Its own work is that check and one call whose keywords are `shadow`'s (T13 pins the signature). It raises no `Exception`; a `BaseException` that is not an `Exception` propagates.
   - The argument expressions at the sites are local names, constants, `x is not None`, and `getattr` with a default on objects the site already holds.
   - It sits in the `_ALLOWED_IMPORTS` group of T14 (no await, lock, file or connection call).
-  - Rejected: an inline `if x is not None: x.shadow(...)` at each site. It would call a test double that holds the attribute, and it would be repeated 16 times.
+  - Rejected: an inline `if x is not None: x.shadow(...)` at each site. It would call a test double that holds the attribute.
 - **D61 `close()` and the shutdown order (R6).**
   - `AdmissionService.close()` sets `_closed`. A later `shadow` returns None before its `try`, deciding, counting and offering nothing. `decide` is unaffected.
   - Shutdown calls it immediately before the recorder's stop step, as a plain statement read with `getattr` (it is synchronous and only sets a flag). Then the recorder's last flush, then the store.
@@ -163,11 +163,11 @@
   - On each boot it drives the four sinks: once with no order (an unhandled targeted intent, an unknown tool, an incomplete owned-steps binding at the run entry) and once under a Captain's stop (all four).
   - It asserts that the canonical JSON of the answers is byte-identical, once the order's id, its start time and the agent's id are replaced, and that the refusals counted under the order are one per seam on both boots.
   - "With the shadow service idle" is read as "built or not built". Rejected: comparing with the pre-M3c tree, which one test cannot run.
-- **D64 Cost of one call on the hottest site (the tool sink).**
+- **D64 Cost of one call.**
   - It awaits nothing, takes no lock and does no I/O: T14's AST check over `service.py` and `seam.py`, and the recorder test R2's over `offer`.
-  - On a slot-id key it does a constant number of dictionary operations: `IdentityService.resolve` takes the `_slot_cache` path (`identity.py:787-794`), `stop_for` reads one dict, `offer` updates at most five dicts, and four frozen dataclasses are built.
-  - A DID or certificate UUID key makes `resolve_slot_id` scan the slot cache (`identity.py:821`). None of the four M3c1 sites passes one.
-  - **Measured before the build** (2026-10-29, the orchestrator's stage run on `0ea829e5`): the cost of one `shadow_at` call on CPython 3.12.13, Windows (the Captain's host class), on real objects (an `IdentityService` over a started identity registry, an `AgentStopService`, and a `ShadowRecorder` over a real store with no flusher running). 5 rounds of 20,000 calls after a warm-up; median µs per call: `shadow_at(None, ...)` 0.22; a service with no recorder 3.82; the common admit path with a recorder (a system principal) 4.53; the dearest path (an unresolved id: a would-refuse verdict, a sample and a disagreement kept) 5.18, worst round 5.28. It excludes the site's own work and any flush. The measurement of record is #1601 acceptance 7: the persisted `decide` latency per work kind (`latency_by_work_kind`, `p99_bucket`) at the ruling. The whole-call measurement is register R14.
+  - On a slot-id key it does a constant number of dictionary operations: `IdentityService.resolve` takes the `_slot_cache` path (`identity.py:787-794`), `stop_for` reads one dict, `offer` updates at most five dicts.
+  - A DID or certificate UUID key makes `resolve_slot_id` scan the slot cache (`identity.py:821`).
+  - **Measured before the build** (2026-10-29, the orchestrator's stage run on `0ea829e5`): the cost of one `shadow_at` call on CPython 3.12.13, Windows (the Captain's host class), on real objects (an `IdentityService` over a started identity registry, an `AgentStopService`, and a `ShadowRecorder` over a real store with no flusher running). 5 rounds of 20,000 calls after a warm-up; median µs per call: `shadow_at(None, ...)` 0.22; a service with no recorder 3.82; the admit path with a recorder (a system principal) 4.53; an unresolved id (a would-refuse verdict) 5.18, worst round 5.28. It excludes the site's own work and any flush. The measurement of record is #1601 acceptance 7: the persisted `decide` latency per work kind (`latency_by_work_kind`, `p99_bucket`) at the ruling. The whole-call measurement is register R14.
   - It never blocks and never charges (D65).
 - **D65 Shadow mutates no trust, budget or stop.** T14's allowlists name every import of the package (no trust or budget module). `decide` reads the stop only with `stop_for` (T15). G1 and G2 assert one refusal per seam under the order, so the shadow statements counted none.
 - **D66 Left out, and why.** Each item belongs to a later slice or has its own owner:
@@ -189,11 +189,10 @@
 ## 5. Consumers of every value this changes
 
 - **`AdmissionService.shadow`:**
-  - M1: no caller in `src` (Absence Verified).
   - M3: `probos.admission.seam.shadow_at` only, called by the five statements. Census test 9c pins that nothing else calls `shadow_at`.
-  - The tests call `shadow` without `today_outcome`; it defaults to None.
+  - `today_outcome` defaults to None.
 - **`ShadowRecorder.offer`:** the only caller in `src` is `AdmissionService.shadow` (Absence Verified). The M3b tests call it positionally with two arguments; the new parameter defaults to None. `_RaisingRecorder.offer` in the recorder test takes two parameters, so the keyword raises `TypeError` there: still a counted failure, which is what the recorder test R12 asserts (`test_a_raising_recorder_is_a_counted_shadow_failure`, `test_ad1346_admission_shadow_recorder.py:354`).
-- **`ShadowBatch`:** built positionally by the recorder and by tests with five fields; the two new fields default to empty.
+- **`ShadowBatch`:** the two new fields default to empty.
 - **`COUNTER_NAMES`:** appended. The one test that compares `counters()` builds the expected value from `COUNTER_NAMES` (`test_ad1346_admission_shadow_recorder.py:171`).
 - **`REPORT_QUERIES`:** appended. Q1 pins the tuple (§7.10).
 - **`SystemConfig.admission`:** read by `ProbOSRuntime.start` (M2) and by the new tests. No router reads it.
@@ -291,7 +290,7 @@ REPLACE:
   last ``MARKER_RETENTION_DAYS``, then the oldest hours while more than ``MARKER_ROW_LIMIT`` rows
   remain.
 - ``shadow_parity`` (M3c): decisions per (UTC day, work kind, seam, today's outcome, outcome,
-  reason code), for verdicts offered with the site's own outcome. ``prune`` deletes the days before
+  reason code), for verdicts aggregated with the site's own outcome. ``prune`` deletes the days before
   the last ``AGGREGATE_RETENTION_DAYS``. It has no row limit of its own: for the verdicts ``decide``
   builds one day holds at most len(WORK_KINDS) * len(SEAMS) * len(TODAY_OUTCOMES) *
   len(REASON_CODES) rows, a test pins that 35 such days stay below ``AGGREGATE_ROW_LIMIT``, and a
@@ -597,8 +596,8 @@ with one is also counted for parity, and kept as a disagreement sample when ``is
 holds; beyond ``DISAGREEMENT_BUFFER_LIMIT`` pending ones it is counted in memory as
 ``disagreement_samples_dropped``. A pending parity key always has a pending aggregate key with the
 same hour, work kind, seam, outcome and reason code: both are counted by the same call and are
-detached, written and put back together. So, for the two values of ``TODAY_OUTCOMES`` (the only ones
-``AdmissionService.shadow`` passes), the parity keys pending are at most twice the aggregate keys
+detached, written and put back together. So, for the two values of ``TODAY_OUTCOMES``, the parity
+keys pending are at most twice the aggregate keys
 pending (register R10 says when those exceed ``PENDING_KEY_LIMIT``). A flush that raises an
 ``Exception`` leaves the flusher running and is counted in memory as ``flush_errors`` (R1); a
 ``BaseException`` that is not an ``Exception`` ends it.
@@ -2604,7 +2603,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1346 (2026-10-29), #1604 M3c1 -- the shadow admission decision beside four stop checks, with each check's own outcome for parity, and its switch.** `probos.admission.seam.shadow_at` is the statement a stop-check site adds after its own check. It hands the work, and whether the check refused it, to `AdmissionService.shadow`, which decides in shadow and returns None. M3c1 adds it at four of the sixteen entries of the AD-1343 stop-check inventory: the intent and consultation sinks (`CognitiveAgent.handle_intent`, `handle_consultation_request`), the tool sink (`ToolRegistry.check_and_invoke`, given the service by the runtime through `set_admission`) and the agentic-run entry (`WorkItemAgenticExecutor.run`, one call on each path of its check). The other twelve are listed in `SHADOW_PENDING` (`tests/fixtures/ad1343_seam_registry.py`) for the next two slices, and the census test fails on an entry in neither table. `shadow` takes `today_outcome` (`admit` or `refuse`; any other value is a counted failure). The recorder counts each verdict it aggregates with one in `shadow_parity`, per UTC day, work kind, seam, today's outcome, outcome and reason code, pruned to the current UTC day and the 34 before it. It keeps each disagreement (a would-refuse where the check admitted, or an admit where it refused) in `shadow_disagreements`, the newest 1,000. Both tables are added to `admission_shadow.db` under its schema version 1: a file the M3b build wrote opens with its rows unchanged. A logging handler that raises an `Exception` no longer escapes `shadow` (F-212). A flush that raises an `Exception` no longer ends the recorder's flusher; it is counted as `flush_errors`. Shutdown closes the service before the recorder's last flush, so a later `shadow` call decides nothing. `admission.shadow_enabled` (default true) is read once at start; false builds no shadow store, recorder or service. A golden test on two real boots shows that the four sinks answer the same with the switch on and off, once the order's id, its start time and the agent's id are replaced, and count one refusal per seam under the Captain's stop. New: `src/probos/admission/seam.py`, `tests/test_ad1346_admission_shadow_parity.py`, `_switch.py` and `_seams.py`. The contract is `prompts/ad-1346-m3c1-shadow-seams-sinks.md`.
+**AD-1346 (2026-10-29), #1604 M3c1 -- the shadow admission decision beside four stop checks, with each check's own outcome for parity, and its switch.** `probos.admission.seam.shadow_at` is the statement a stop-check site adds after its own check. It hands the work, and whether the check refused it, to `AdmissionService.shadow`, which decides in shadow and returns None. M3c1 adds it at four of the sixteen entries of the AD-1343 stop-check inventory: the intent and consultation sinks (`CognitiveAgent.handle_intent`, `handle_consultation_request`), the tool sink (`ToolRegistry.check_and_invoke`, given the service by the runtime through `set_admission`) and the agentic-run entry (`WorkItemAgenticExecutor.run`, one call on each path of its check). The other twelve are listed in `SHADOW_PENDING` (`tests/fixtures/ad1343_seam_registry.py`) for the next two slices, and the census test fails on an entry in neither table. `shadow` takes `today_outcome` (`admit`, `refuse` or None; any other value is a counted failure). The recorder counts each verdict it aggregates with one in `shadow_parity`, per UTC day, work kind, seam, today's outcome, outcome and reason code. It keeps disagreements (a would-refuse where the check admitted, or an admit where it refused) in `shadow_disagreements`, the newest 1,000. Both tables are added to `admission_shadow.db` under its schema version 1: a file the M3b build wrote opens with its rows unchanged. A logging handler that raises an `Exception` no longer escapes `shadow` (F-212). A flush that raises an `Exception` no longer ends the recorder's flusher; it is counted as `flush_errors`. Shutdown closes the service before the recorder's last flush, so a later `shadow` call decides nothing. `admission.shadow_enabled` (default true) is read once at start; false builds no shadow store, recorder or service. A golden test on two real boots shows that the four sinks answer the same with the switch on and off, once the order's id, its start time and the agent's id are replaced, and count one refusal per seam under the Captain's stop. New: `src/probos/admission/seam.py`, `tests/test_ad1346_admission_shadow_parity.py`, `_switch.py` and `_seams.py`. The contract is `prompts/ad-1346-m3c1-shadow-seams-sinks.md`.
 ```
 
 **M4-02** (`DECISIONS.md`)
@@ -2619,10 +2618,10 @@ REPLACE:
 
 AD-1346 M3c1 puts M3a's shadow decision beside the stop check of four sinks and records, with each verdict, what that check did (#1601 evidence 1, 3, 4 and 12; memo D15). The contract is `prompts/ad-1346-m3c1-shadow-seams-sinks.md`.
 
-- *D54 (the split).* M3c is cut by seam family: the shared machinery and the four sinks here; the six routing seams in M3c2; delegation, the four crew sites and agent work in M3c3. Rejected: one slice for all sixteen sites (13 files and four ways of reaching the stop gate, plus the machinery, in one review).
+- *D54 (the split).* M3c is cut by seam family: the shared machinery and the four sinks here; the six routing seams in M3c2; delegation, the four crew sites and agent work in M3c3. Rejected: one slice for all sixteen sites (four ways of reaching the stop gate, plus the machinery, in one review).
 - *D55 (statements).* One `shadow_at` statement after each check's result and before the site acts on it, with no await between: one each in `handle_intent`, `handle_consultation_request` and `check_and_invoke`, and two in `WorkItemAgenticExecutor.run`, because `refuse_new_run` raises. A site reaches the service the way it reaches its stop gate: from the runtime, or, at the tool sink, through `set_admission` beside `set_stop_gate`. Rejected: a hook inside `AgentStopService.refusal` (M4 replaces each seam's call, not the gate) and a service locator.
 - *D56 (requests).* Work kinds `intent`, `consultation`, `tool_call` and `agentic_run`. Origins: `system` with the intent's name at the intent sink (an `IntentMessage` carries no sender), `agent` with the requester at the consultation sink and with the caller at the tool sink, and `system` at the run entry.
-- *D57, D58 (parity).* `today_outcome` is `admit` or `refuse`. A disagreement is a would-refuse where the check admitted, or an admit where it refused; a shadow failure is counted, not compared. Two tables are added to `admission_shadow.db` under schema version 1, counts by UTC day and the newest 1,000 disagreements, and a test opens a file with only M3b's tables. Rejected: version 2 (a reverted build would refuse the file) and a column on an M3b table (not additive).
+- *D57, D58 (parity).* `today_outcome` is `admit`, `refuse` or None. A disagreement is a would-refuse where the check admitted, or an admit where it refused; a shadow failure is counted, not compared. Two tables are added to `admission_shadow.db` under schema version 1, counts by UTC day and the newest 1,000 disagreements, and a test opens a file with only M3b's tables. Rejected: version 2 (a reverted build would refuse the file) and a column on an M3b table (not additive).
 - *D59 (F-212, R1).* `shadow` swallows an `Exception` from its own log call. The flusher counts an `Exception` from a flush as `flush_errors` and goes on. `stop`'s and the runtime's log calls stay unguarded.
 - *D60 (`shadow_at`).* It calls only an exact `AdmissionService` and maps `refused is True` to `refuse`.
 - *D61 (shutdown).* `AdmissionService.close()` runs just before the recorder's last flush; a later `shadow` returns None at once. Shadow coverage ends there, and each seam's own check is unaffected. Rejected: stopping the recorder after the pools, because the identity registry the decision reads stops first.
@@ -2630,8 +2629,8 @@ AD-1346 M3c1 puts M3a's shadow decision beside the stop check of four sinks and 
 - *D63 (golden).* Two real boots, switch on and off, give byte-identical answers at the four sinks after three ids and times are replaced, and the same refusal counts.
 - *D64, D65 (cost and charge).* `shadow` awaits nothing and does no I/O. On a slot id it does a fixed number of dictionary operations; one `shadow_at` call was measured before the build at a median of 0.22 µs with no service and 3.82 to 5.18 µs with one (CPython 3.12.13, Windows; the site's own work and any flush excluded), and acceptance 7 is read from the persisted `decide` latency at the ruling. It mutates no trust, budget or stop count.
 - *Tests.* Three new files (`tests/test_ad1346_admission_shadow_parity.py`, `_switch.py`, `_seams.py`), three census tests in `tests/test_ad1343_stop_seam_inventory.py`, and T13, T14 and T16 updated.
-- *Residual, accepted.* R11 to R18 of the contract: the remaining twelve sites; the projected correction registry; failures and late calls counted in memory only; whole-call cost not measured; `stop`'s log calls unguarded; the intent sink's origin; the end of a shutdown is not shadowed; the profile manifest's census block is not re-measured.
-- *Reversal.* Set `admission.shadow_enabled: false`, or revert the M3c1 commits. The two added tables are then read by nothing, and the M3b build accepts the file.
+- *Residual, accepted.* R11 to R18 of the contract: the remaining twelve sites; the projected correction registry; failures and late offers counted in memory only; whole-call cost not measured; `stop`'s log calls unguarded; the intent sink's origin; the end of a shutdown is not shadowed; the profile manifest's census block is not re-measured.
+- *Reversal.* Set `admission.shadow_enabled: false`, or revert the M3c1 commits. After a revert the two added tables are read by nothing, and the M3b build accepts the file.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -2693,7 +2692,7 @@ Rows that mutate the same line run separately: CS-1 and GT-1; CS-2 and GT-2; CS-
 | GT-5 | M3 | `src/probos/tools/registry.py` | `self._admission = service` | `pass` | `test_each_shadowed_sink_records_todays_outcome_beside_the_shadow_verdict` |
 | GT-6 | M3 | `src/probos/runtime.py` | `self.tool_registry.set_admission(self.admission_service)  # AD-1346 M3c: its shadow statement; None shadows nothing` | `pass` | `test_each_shadowed_sink_records_todays_outcome_beside_the_shadow_verdict` |
 
-GT-4 mutates a line CS-5 also names in its Mutate cell, but GT-4's Line is the `refused=True` statement. The mutant then holds two identical lines, which is a valid tree for that one run.
+GT-4's Line is the `refused=True` statement and its Mutate cell is CS-5's Line, the `refused=False` statement. The mutant then holds two identical lines, which is a valid tree for that one run.
 
 ## 11. Verified Against Codebase (2026-10-29, read on `78b4c4a9` tree `04d0eb50`; `origin/main` `0ea829e5` has the same tree)
 
@@ -2859,9 +2858,9 @@ Still not confirmed on its own: that a crew agent with a DID resolves to a certi
 
 **Blind spots** (register items in brackets):
 1. Utility `CognitiveAgent`s with neither a certificate nor an asset tag will record `identity_unresolved` disagreements at the intent sink. This is a prediction, and it is evidence for #1601 acceptance 3, not a defect of this slice [R16].
-2. A tool call whose `agent_id` is not an agent's slot id (the Captain's or the system's) records a would-refuse disagreement. M3e's system-principal census decides it [R16].
+2. A tool call whose `agent_id` resolves to no principal records a would-refuse disagreement. M3e's system-principal census decides it [R16].
 3. A projected correction registry inherits `_admission = None`, so tool calls in correction runs go unshadowed [R12].
-4. Failures, calls after `close` and disagreement-sample drops are counted in memory only [R13].
+4. Failures and disagreement-sample drops are counted in memory only [R13].
 5. Shadow coverage ends at Phase 2's close [R17].
 
 ## 14. Diff Reviewer: properties to verify
@@ -2901,6 +2900,10 @@ A1 repairs what the orchestrator's pre-build run of this contract found. In that
 
 A1 changes no code, no test, no decision's content, no mutation row, no row anchor and no case count. No SEARCH text in §7 or §8 changes. The only REPLACE text that changes is one sentence of M4's DECISIONS entry. §7 and §8 still hold 70 pairs (M1 39, M2 10, M3 19, M4 2).
 
+## 17. Amendment A2 (2026-10-29, after review round 1, on the base 0ea829e5)
+
+A2 repairs the nine false head-describing sentences that review round 1 found, each deleted, weakened or corrected wherever it or its twin appears: F1, the values of `today_outcome` now include None (PROGRESS, DECISIONS, the `recorder.py` docstring); F2, calls after `close` are no longer said to be counted (blind spot 4, R13, DECISIONS); F3, the added tables are read by nothing only after a revert (DECISIONS); F4, D64's premise about the sites' keys, its dataclass count and its path labels; F5, the file count (D54, DECISIONS); F6, §5's M1-caller and tests bullets; F7, the facade file's assertion count; F8, §10's note on GT-4 and CS-5; F9, PROGRESS's parity window. A sweep for the same classes also weakens D54's traffic sentence, D64's title, D60's repetition count, §5's `ShadowBatch` bullet, blind spot 2 and R16 on tool-sink principals, the `store.py` docstring's parity sentence, and "each disagreement" in §2 and PROGRESS. A2 changes no code, no test, no decision's ruling (only sentences of reasons and evidence), no mutation row, no row anchor and no case count. No SEARCH text in §7 or §8 changes. REPLACE text changes for four files: the `recorder.py` and `store.py` docstrings, `PROGRESS.md` and `DECISIONS.md`. §7 and §8 still hold 70 pairs (M1 39, M2 10, M3 19, M4 2).
+
 ## For the register (#1604)
 
 - **Closed by this slice:** M3b's R1 (D59), R6 (D61) and R7 (D57, D58, D62).
@@ -2909,10 +2912,10 @@ A1 changes no code, no test, no decision's content, no mutation row, no row anch
   - appends a work kind for agent-created work;
   - injects the service into `WardRoomRouter`, `CrewSessionFinalizer` and `AgentWorkService` beside their gates (`finalize.py:2411`, `:5586`; `runtime.py:3518`);
   - decides how the projected correction registry and runtime (`crew_verifier.py:473`) reach the service.
-- **R13 (M3e):** these are counted in memory only: shadow failures (`failures`), calls after `close`, late offers, disagreement-sample drops and `flush_errors`. Decide at the evidence report whether to persist them or read them from the log.
+- **R13 (M3e):** these are counted in memory only: shadow failures (`failures`), late offers, disagreement-sample drops and `flush_errors`. Decide at the evidence report whether to persist them or read them from the log.
 - **R14 (M3e, #1601 acceptance 7):** measure the whole cost of a `shadow` call at the tool sink. Method: a timeit of `shadow` on the slot path on the Captain's host, read beside the persisted `decide` histogram.
 - **R15:** `ShadowRecorder.stop`'s warnings and the runtime's two start warnings stay unguarded (F-212 is decided for `shadow` and the flusher only). A raising handler during the final flush propagates from `stop` to its shutdown step.
-- **R16 (M3e):** the intent sink records `origin="system"` and the intent's name, because an `IntentMessage` carries no sender. Two outcomes are expected disagreements for M3e's principal census and coverage evidence (#1604 blind spot 1): unresolved agents at the intent sink, and non-agent callers of the tool sink.
+- **R16 (M3e):** the intent sink records `origin="system"` and the intent's name, because an `IntentMessage` carries no sender. Two outcomes are expected disagreements for M3e's principal census and coverage evidence (#1604 blind spot 1): unresolved agents at the intent sink, and tool-sink callers whose id resolves to no principal.
 - **R17:** shadow coverage ends at Phase 2's close (D61). The evidence leaves out the remainder of a shutdown.
 - **R18:** the census block of `docs/development/config-profiles.yaml` (`boolean_fields_reachable 450`, `default_true 223`) is a dated measurement that no script or test checks. M3c1 adds a default-true boolean and does not re-measure it.
 - **R10 (inherited):** pending parity keys can exceed `PENDING_KEY_LIMIT`, as the aggregate keys can, after a failed write.
