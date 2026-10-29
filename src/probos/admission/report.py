@@ -1,4 +1,4 @@
-"""AD-1346 M3b (#1604): the read-only queries over ``admission_shadow.db`` (#1601, evidence 2, 7 and 8).
+"""AD-1346 M3b (#1604): the read-only queries over ``admission_shadow.db`` (#1601, evidence 2, 4, 7 and 8).
 
 ``REPORT_QUERIES`` maps each frozen name to one SELECT. A later slice may add a name; none is
 renamed or removed, so the queries the M4 ruling runs keep the names this slice gives them (#1604).
@@ -41,6 +41,16 @@ REPORT_QUERIES: Final[Mapping[str, str]] = MappingProxyType({
     ),
     "days_recorded": "SELECT DISTINCT day FROM shadow_aggregates ORDER BY day",
     "schema_version": "SELECT version FROM schema_version",
+    # AD-1346 M3c (D58): parity with each site's own check (since day), and the newest disagreements (limit).
+    "parity_by_work_kind": (
+        "SELECT work_kind, seam, today_outcome, outcome, reason_code, SUM(decisions) FROM shadow_parity "
+        "WHERE day >= ? GROUP BY work_kind, seam, today_outcome, outcome, reason_code "
+        "ORDER BY work_kind, seam, today_outcome, outcome, reason_code"
+    ),
+    "disagreement_samples": (
+        "SELECT seq, boot_id, hour, work_kind, seam, today_outcome, outcome, reason_code, latency_ns, verdict_json "
+        "FROM shadow_disagreements ORDER BY seq DESC LIMIT ?"
+    ),
 })
 
 

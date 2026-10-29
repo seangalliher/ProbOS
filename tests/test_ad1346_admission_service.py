@@ -79,6 +79,8 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
         "probos.admission.record", "probos.admission.recorder", "probos.admission.taxonomy", "probos.agent_stop",
         "probos.identity_service",
     },
+    # AD-1346 M3c: the helper a stop-check site calls; held to the decision files' rules (no await, lock, file or connection).
+    "seam.py": {"__future__", "probos.admission.service", "probos.admission.taxonomy"},
 }
 #: AD-1346 M3b: the persistence files. T14 holds each to its imports; they may await, open the store and log.
 _PERSISTENCE_IMPORTS: dict[str, set[str]] = {
@@ -457,17 +459,23 @@ async def test_the_service_reads_no_configuration_and_holds_only_its_two_depende
     gate: AdmissionService,
 ) -> None:
     """T13: no configuration field; the facade, the stop record, a clock, an optional recorder and its counters are all
-    it holds. AD-1346 M3b renamed this test when it added the keyword-only ``recorder`` (None in this fixture)."""
-    assert "admission" not in SystemConfig.model_fields
+    it holds. AD-1346 M3b renamed this test when it added the keyword-only ``recorder`` (None in this fixture).
+    AD-1346 M3c added ``today_outcome`` (default None) and the ``_closed`` flag; the service's source still names no
+    configuration (``SystemConfig``, ``shadow_enabled``)."""
+    source = (_PACKAGE / "service.py").read_text(encoding="utf-8")
+    assert "SystemConfig" not in source and "shadow_enabled" not in source
     init = inspect.signature(AdmissionService.__init__).parameters
     assert list(init) == ["self", "identity_service", "stop_service", "clock", "recorder"]
     assert init["clock"].kind is inspect.Parameter.KEYWORD_ONLY
     assert init["recorder"].kind is inspect.Parameter.KEYWORD_ONLY and init["recorder"].default is None
     shadow = inspect.signature(AdmissionService.shadow).parameters
-    assert list(shadow) == ["self", "presented_id", "work_kind", "seam", "origin", "origin_id"]
+    assert list(shadow) == ["self", "presented_id", "work_kind", "seam", "origin", "origin_id", "today_outcome"]
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for name, p in shadow.items() if name != "self")
-    assert set(vars(gate)) == {"_identities", "_stops", "_clock", "_recorder", "_tally", "_latency", "_failures"}
-    assert vars(gate)["_recorder"] is None
+    assert shadow["today_outcome"].default is None
+    assert set(vars(gate)) == {
+        "_identities", "_stops", "_clock", "_recorder", "_closed", "_tally", "_latency", "_failures",
+    }
+    assert vars(gate)["_recorder"] is None and vars(gate)["_closed"] is False
 
 
 # ---------------------------------------------------------------------------
