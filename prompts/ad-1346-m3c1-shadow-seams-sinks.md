@@ -56,6 +56,7 @@
   - `tests/test_ad1346_admission_shadow_report.py`: Q1's names (M1).
   - `tests/test_ad1270e1_config_facade.py`: its count assertions (M2).
   - `tests/test_ad1270e2i_agentic_models.py`: `REMAINING_TRUE_LEAVES` (M2).
+  - `tests/test_ad1152_agentic_correlation.py`: the `admission` section popped before the default config is hashed (A4, after M4).
   - `tests/test_ad1343_stop_seam_inventory.py`: three new tests (M3).
   - `tests/fixtures/ad1343_seam_registry.py` and `tests/fixtures/ad1343_seam_census.py` (M3).
 - `grep -nE "LOCALAPPDATA|AppData|environ|getenv|(import|from) (subprocess|socket)|(subprocess|socket)\.|create_subprocess|Popen" tests/test_ad1346_admission_shadow_parity.py tests/test_ad1346_admission_shadow_switch.py tests/test_ad1346_admission_shadow_seams.py src/probos/admission/seam.py` finds nothing. The pattern matches `subprocess` and `socket` only as an import or a call. The parity file's `seam="subprocess"` (a `SEAMS` value, in the F-212 test and the `close` test) names a seam and spawns nothing.
@@ -157,7 +158,6 @@
   - **Profile qualification:** `check_config_profiles.py` classifies only booleans that default to false (`:149-170`), so it needs no manifest row.
   - **When it is read:** once, in `ProbOSRuntime.start`, as `self.config.agent_work.enabled` is (`runtime.py:3503`). When false, neither the store-and-recorder block nor the service block runs, one INFO line says so, and the three attributes keep their `__init__` None.
   - **A running recorder:** turning the switch off after start changes nothing until the next start.
-  - **What moves:** the config facade baseline (`check_config_facade.py --update-baseline`) and the config reference (`gen_config_reference.py`), both regenerated in M2.
 - **D63 The golden test (#1604 property 12).**
   - G2 boots twice on `tmp_path`, with `admission.shadow_enabled` true and then false. Each boot uses `SystemConfig()` with the naming ceremony, the proactive loop and QA off, and `MockLLMClient`, as the M3a boot tests do (D33). There is no vessel, the network is untouched (NATS is off under `tests/conftest.py`'s default), and the data directory is under `tmp_path`.
   - On each boot it drives the four sinks: once with no order (an unhandled targeted intent, an unknown tool, an incomplete owned-steps binding at the run entry) and once under a Captain's stop (all four).
@@ -194,7 +194,7 @@
 - **`ShadowBatch`:** the two new fields default to empty.
 - **`COUNTER_NAMES`:** appended. The one test that compares `counters()` builds the expected value from `COUNTER_NAMES` (`test_ad1346_admission_shadow_recorder.py:171`).
 - **`REPORT_QUERIES`:** appended. Q1 pins the tuple (§7.10).
-- **`SystemConfig.admission`:** read by `ProbOSRuntime.start` (M2) and by the new tests. No router reads it.
+- **`SystemConfig.admission`:** read by `ProbOSRuntime.start` (M2) and by the new tests, and popped from the default config that `tests/test_ad1152_agentic_correlation.py` hashes (A4). No router reads it.
 - **`ToolRegistry.set_admission`:** called by `ProbOSRuntime.start` (M3). A projected registry (`crew_verifier.py:473`) inherits the class default None, so it shadows nothing (register R12).
 
 ## 6. Tests
@@ -208,6 +208,7 @@
 | `tests/test_ad1346_admission_service.py` | M1, M3 | unchanged count | T13, T14, T16 |
 | `tests/test_ad1346_admission_shadow_store.py`, `_report.py` | M1 | unchanged count | S1's tables, Q1's names |
 | `tests/test_ad1270e1_config_facade.py`, `tests/test_ad1270e2i_agentic_models.py` | M2 | unchanged count | the counts and the true-leaf set move by one model |
+| `tests/test_ad1152_agentic_correlation.py` | A4 | unchanged count | the default-config hash pops the `admission` section |
 
 ## 7. The contract
 
@@ -2871,7 +2872,7 @@ Still not confirmed on its own: that a crew agent with a DID resolves to a certi
 5. **Bounds.** Disagreement samples are capped on `offer` and on `_restore` (P3, P4). Pending parity keys are at most twice the pending aggregate keys. Parity days are pruned with the aggregates (P5). The step-back case is stated (M3b register R2; D58).
 6. **Flusher.** It outlives a flush that raised an `Exception` and counts it (P11). A `BaseException` ends it.
 7. **Shutdown order.** `close()` runs before the recorder's last flush (W3). After it, `shadow` decides, counts and offers nothing (P9).
-8. **Switch.** It defaults to true (W1), is read once in `start`, and builds nothing when false (W2). Only the facade baseline and the config reference move for the new model and field.
+8. **Switch.** It defaults to true (W1), is read once in `start`, and builds nothing when false (W2).
 9. **Census.** Every stop check is in exactly one of the two tables (9a). `shadow_at` is called only at the registered sites (9c). T16's consumer census holds, and no router appears in it.
 10. **Baselines.** `ToolRegistry`'s span is ≤ 500 and the architecture baseline is byte-identical.
 11. **Head text.** Each comment, docstring and tracker sentence the slice adds is true at its own milestone. At M1, nothing calls `shadow_at`, and no M1 text claims a caller. Neither tracker head carries a lifecycle keyword in its first 120 characters.
@@ -2906,6 +2907,30 @@ A2 repairs the nine false head-describing sentences that review round 1 found, e
 ## 18. Amendment A3 (2026-10-29, after review round 2, on the base 0ea829e5)
 
 A3 repairs the four false sentences that review round 2 found, each deleted, cut back or restated: finding 1, the readers of the added tables after a revert (DECISIONS, and §17's account of F3); finding 2, D57's failure bullet, now the condition of mutation row SV-3's Line; finding 3, blind spot 2 (its number kept, so §17's references still name the same items) and R16's expected disagreements; finding 4, the lock and I/O claims for the whole call (D64, DECISIONS, the `seam.py` docstring). A sweep for the same classes also cuts M1's "no caller", D56's list of the run entry's callers, D58's "produces no verdict" and "each disagreement", D62's "nothing else reads the field", D64's last bullet, the heading of §14 item 2 and the outcome in blind spot 1, and says parity is counted for `shadow_parity` (D58, PROGRESS). A3 changes no code, no test, no decision's ruling, no mutation row, no row anchor and no case count. No SEARCH text in §7 or §8 changes. Text changes in three files: the `seam.py` docstring, `PROGRESS.md` and `DECISIONS.md`. §7 and §8 still hold 70 pairs (M1 39, M2 10, M3 19, M4 2).
+
+## 19. Amendment A4 (2026-10-29, after the broad gate, on the head 77cbaa42)
+
+The broad gate on `77cbaa42` failed three cases of one file, `tests/test_ad1152_agentic_correlation.py`: `test_default_off_matches_pinned_base` and `test_default_off_golden_pins_only_descriptor_owner_platform[linux]` and `[win32]`. Its `_off_observation` pops each field added to `SystemConfig()` after its capture and hashes the rest into `default_config_sha256`; M2's `admission` section moved that hash. No text of this contract named the file before A4. The repair is its own commit after M4, outside §7's pairs, so the oracle (§7 and §8) does not apply it and the comparison expects this one file to differ. A4 also deletes D62's "What moves" bullet and the last sentence of §14 item 8, and names the file in Tests, §5 and §6. It changes no `src` file, no decision's ruling, no mutation row and no case count. §7 and §8 still hold 70 pairs (M1 39, M2 10, M3 19, M4 2). The broad gate runs again on the repaired head.
+
+### 19.1 After M4: `tests/test_ad1152_agentic_correlation.py`
+
+SEARCH:
+```
+    # AD-1270 (#1324) slice 4b's boot-camp relaxation flag was added after this capture too. It is
+    # default off, and while off no agent's Evaluate or Reflect is relaxed; this observation runs no chain.
+    assert config["boot_camp"].pop("relax_quality_gates") is False
+    runtime = _local_runtime()
+```
+REPLACE:
+```
+    # AD-1270 (#1324) slice 4b's boot-camp relaxation flag was added after this capture too. It is
+    # default off, and while off no agent's Evaluate or Reflect is relaxed; this observation runs no chain.
+    assert config["boot_camp"].pop("relax_quality_gates") is False
+    # AD-1346 M3c's shadow-admission section was added after this capture too. Its switch defaults on, and it is
+    # read in ProbOSRuntime.start, which this observation never calls.
+    assert config.pop("admission") == {"shadow_enabled": True}
+    runtime = _local_runtime()
+```
 
 ## For the register (#1604)
 
