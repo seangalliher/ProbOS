@@ -16,6 +16,17 @@ in the transaction of the counts they describe. Bounds (D10): a would-refuse sam
 that needs a new pending key beyond ``PENDING_KEY_LIMIT`` is neither counted in the aggregates nor
 sampled, and is counted as ``dropped``; a verdict offered once ``stop`` began is counted in memory
 as ``late`` and is not written.
+
+AD-1346 M3c: ``offer`` takes the site's own outcome (``today_outcome``). A verdict it aggregates
+with one is also counted for parity, and kept as a disagreement sample when ``is_disagreement``
+holds; beyond ``DISAGREEMENT_BUFFER_LIMIT`` pending ones it is counted in memory as
+``disagreement_samples_dropped``. A pending parity key always has a pending aggregate key with the
+same hour, work kind, seam, outcome and reason code: both are counted by the same call and are
+detached, written and put back together. So, for the two values of ``TODAY_OUTCOMES``, the parity
+keys pending are at most twice the aggregate keys
+pending (register R10 says when those exceed ``PENDING_KEY_LIMIT``). A flush that raises an
+``Exception`` leaves the flusher running and is counted in memory as ``flush_errors`` (R1); a
+``BaseException`` that is not an ``Exception`` ends it.
 """
 
 from __future__ import annotations
@@ -28,13 +39,15 @@ from typing import TYPE_CHECKING, Any, Final
 
 from probos.admission.store import (
     DAY_SECONDS,
+    DISAGREEMENT_RING_SIZE,
     SAMPLE_RING_SIZE,
     AdmissionShadowStore,
     ShadowBatch,
+    ShadowDisagreement,
     ShadowSample,
     utc_hour,
 )
-from probos.admission.taxonomy import LATENCY_BUCKETS, OUTCOME_ADMIT
+from probos.admission.taxonomy import LATENCY_BUCKETS, OUTCOME_ADMIT, OUTCOME_WOULD_REFUSE, TODAY_REFUSE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,14 +67,24 @@ PENDING_KEY_LIMIT: Final = 50_000
 #: D45: after the flusher ends, ``stop`` flushes while anything is pending, at most this many times.
 STOP_FLUSH_ATTEMPTS: Final = 2
 FLUSHER_TASK_NAME: Final = "ad1346-shadow-flusher"
-#: The totals ``counters`` returns, in order.
-COUNTER_NAMES: Final[tuple[str, ...]] = ("offered", "written", "dropped", "samples_dropped", "late", "flush_failures")
+#: AD-1346 M3c (D58): pending disagreement samples kept between two writes that succeed (the store's ring size).
+DISAGREEMENT_BUFFER_LIMIT: Final = DISAGREEMENT_RING_SIZE
+#: The totals ``counters`` returns, in order. Append-only; AD-1346 M3c appended the last two.
+COUNTER_NAMES: Final[tuple[str, ...]] = (
+    "offered", "written", "dropped", "samples_dropped", "late", "flush_failures", "disagreement_samples_dropped",
+    "flush_errors",
+)
 _HOUR_SECONDS: Final = 3_600
 
 
 def _add(target: dict[Any, int], source: dict[Any, int]) -> None:
     for key, count in source.items():
         target[key] = target.get(key, 0) + count
+
+
+def is_disagreement(outcome: str, today_outcome: str) -> bool:
+    """AD-1346 M3c (D58): the shadow outcome and the site's own differ: a would-refuse where the site admitted, or an admit where it refused."""
+    return (outcome == OUTCOME_WOULD_REFUSE) != (today_outcome == TODAY_REFUSE)
 
 
 class ShadowRecorder:
@@ -77,6 +100,8 @@ class ShadowRecorder:
         self._hour = ""
         self._aggregates: dict[tuple[str, str, str, str, str, int], int] = {}
         self._samples: list[ShadowSample] = []
+        self._parity: dict[tuple[str, str, str, str, str, str], int] = {}
+        self._disagreements: list[ShadowDisagreement] = []
         self._offered: dict[str, int] = {}
         self._dropped: dict[str, int] = {}
         self._samples_dropped: dict[str, int] = {}
@@ -91,13 +116,16 @@ class ShadowRecorder:
         """This recorder's boot id in the marker rows: a fresh ``uuid4`` hex per recorder."""
         return self._boot_id
 
-    def offer(self, verdict: AdmissionVerdict, elapsed_ns: int) -> None:
+    def offer(self, verdict: AdmissionVerdict, elapsed_ns: int, today_outcome: str | None = None) -> None:
         """Count one verdict in memory and, within the bounds below, aggregate it with its ``decide`` time and sample it when it is not an admit.
 
         A verdict that needs a new pending key beyond ``PENDING_KEY_LIMIT`` is counted as dropped and
         is neither aggregated nor sampled; a sample beyond ``SAMPLE_BUFFER_LIMIT`` pending samples is
-        not kept and is counted as samples_dropped. Once ``stop`` began, it counts the verdict as late
-        and keeps nothing. It awaits nothing and does no I/O.
+        not kept and is counted as samples_dropped. AD-1346 M3c: a verdict it aggregates with a
+        ``today_outcome`` is also counted for parity, and kept as a disagreement sample when
+        ``is_disagreement`` holds, within ``DISAGREEMENT_BUFFER_LIMIT`` (beyond it, counted as
+        disagreement_samples_dropped). Once ``stop`` began, it counts the verdict as late and keeps
+        nothing. It awaits nothing and does no I/O.
         """
         if self._stopping:
             self._totals["late"] += 1
@@ -116,6 +144,14 @@ class ShadowRecorder:
             self._totals["dropped"] += 1
             self._dropped[hour] = self._dropped.get(hour, 0) + 1
             return
+        if today_outcome is not None:
+            parity = (hour, verdict.work_kind, verdict.seam, today_outcome, verdict.outcome, verdict.reason_code)
+            self._parity[parity] = self._parity.get(parity, 0) + 1
+            if is_disagreement(verdict.outcome, today_outcome):
+                if len(self._disagreements) < DISAGREEMENT_BUFFER_LIMIT:
+                    self._disagreements.append(ShadowDisagreement(hour, now, verdict, elapsed_ns, today_outcome))
+                else:
+                    self._totals["disagreement_samples_dropped"] += 1
         if verdict.outcome == OUTCOME_ADMIT:
             return
         if len(self._samples) < SAMPLE_BUFFER_LIMIT:
@@ -148,7 +184,13 @@ class ShadowRecorder:
                 await asyncio.wait_for(self._stop_requested.wait(), FLUSH_INTERVAL_SECONDS)
             except TimeoutError:
                 pass
-            await self._flush()
+            try:
+                await self._flush()
+            except Exception:  # noqa: BLE001 -- R1 (#1604, D59): the flusher outlives a flush that raised
+                # A log call in _flush that raised (F-212's class) runs after any batch it detached was put
+                # back (_restore precedes _failed); the next tick flushes again. Counted, not logged,
+                # because the log call may be what raised.
+                self._totals["flush_errors"] += 1
 
     async def stop(self) -> None:
         """Refuse later offers, let the flusher end after its last flush, then flush what is still pending.
@@ -189,8 +231,12 @@ class ShadowRecorder:
                     logger.info("AD-1346 M3b: the shadow store pruned %d aggregate and %d marker rows", *pruned)
         if not self._pending():
             return
-        batch = ShadowBatch(self._aggregates, self._samples, self._offered, self._dropped, self._samples_dropped)
+        batch = ShadowBatch(
+            self._aggregates, self._samples, self._offered, self._dropped, self._samples_dropped,
+            parity=self._parity, disagreements=self._disagreements,
+        )
         self._aggregates, self._samples, self._offered, self._dropped, self._samples_dropped = {}, [], {}, {}, {}
+        self._parity, self._disagreements = {}, []
         try:
             written = await self._store.write_batch(self._boot_id, batch)
         except BaseException as exc:
@@ -202,7 +248,7 @@ class ShadowRecorder:
         self._totals["written"] += written
 
     def _restore(self, batch: ShadowBatch) -> None:
-        """Add a batch that was not written back to what is pending, keeping at most ``SAMPLE_BUFFER_LIMIT`` samples."""
+        """Add a batch that was not written back to what is pending, keeping at most ``SAMPLE_BUFFER_LIMIT`` samples and ``DISAGREEMENT_BUFFER_LIMIT`` disagreements."""
         _add(self._aggregates, batch.aggregates)
         _add(self._offered, batch.offered)
         _add(self._dropped, batch.dropped)
@@ -212,9 +258,16 @@ class ShadowRecorder:
             self._totals["samples_dropped"] += 1
             self._samples_dropped[sample.hour] = self._samples_dropped.get(sample.hour, 0) + 1
         self._samples = kept[:SAMPLE_BUFFER_LIMIT]
+        _add(self._parity, batch.parity)
+        disagreements = batch.disagreements + self._disagreements
+        self._totals["disagreement_samples_dropped"] += max(0, len(disagreements) - DISAGREEMENT_BUFFER_LIMIT)
+        self._disagreements = disagreements[:DISAGREEMENT_BUFFER_LIMIT]
 
     def _pending(self) -> bool:
-        return bool(self._aggregates or self._samples or self._offered or self._dropped or self._samples_dropped)
+        return bool(
+            self._aggregates or self._samples or self._offered or self._dropped or self._samples_dropped
+            or self._parity or self._disagreements
+        )
 
     def _failed(self, step: str) -> None:
         self._totals["flush_failures"] += 1

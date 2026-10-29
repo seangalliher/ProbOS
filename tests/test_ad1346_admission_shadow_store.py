@@ -1,6 +1,6 @@
 """AD-1346 M3b (#1604): ``admission_shadow.db`` over real SQLite in ``tmp_path``.
 
-- S1  a new file gets the four tables and one ``schema_version`` row, and a restart adds no second row.
+- S1  a new file gets the six tables (AD-1346 M3c added two) and one ``schema_version`` row, and a restart adds no second row.
 - S2  a file with other ``schema_version`` rows is refused, its bytes unchanged and the connection closed.
 - S3  ``write_batch`` adds counts by UTC day, writes samples as ``to_dict`` JSON, and its markers count what it wrote.
 - S4  a batch that fails is rolled back, and the next commit does not land it.
@@ -102,8 +102,8 @@ async def store(tmp_path: Path) -> AsyncIterator[AdmissionShadowStore]:
         await shadow.stop()
 
 
-async def test_a_new_file_gets_four_tables_and_one_schema_version_row(tmp_path: Path) -> None:
-    """S1 (kills ST-2)."""
+async def test_a_new_file_gets_six_tables_and_one_schema_version_row(tmp_path: Path) -> None:
+    """S1 (kills ST-2 of the M3b campaign)."""
     shadow = AdmissionShadowStore(data_dir=tmp_path / "data")
     assert shadow.path == tmp_path / "data" / STORE_FILENAME and STORE_FILENAME == "admission_shadow.db"
     assert shadow.is_open is False
@@ -112,7 +112,8 @@ async def test_a_new_file_gets_four_tables_and_one_schema_version_row(tmp_path: 
     await shadow.stop()
     assert shadow.is_open is False
     assert await rows(shadow.path, TABLES) == [
-        ("schema_version",), ("shadow_aggregates",), ("shadow_markers",), ("shadow_samples",),
+        ("schema_version",), ("shadow_aggregates",), ("shadow_disagreements",), ("shadow_markers",),
+        ("shadow_parity",), ("shadow_samples",),
     ]
     assert await rows(shadow.path, "SELECT version FROM schema_version") == [(SCHEMA_VERSION,)]
     again = AdmissionShadowStore(data_dir=tmp_path / "data")

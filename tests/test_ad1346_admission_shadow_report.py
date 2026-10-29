@@ -31,7 +31,7 @@ def test_the_query_names_are_frozen_and_each_is_one_select() -> None:
     """Q1."""
     assert tuple(REPORT_QUERIES) == (
         "decisions_by_work_kind", "latency_by_work_kind", "would_refuse_samples", "markers_by_boot",
-        "days_recorded", "schema_version",
+        "days_recorded", "schema_version", "parity_by_work_kind", "disagreement_samples",
     )
     for name, sql in REPORT_QUERIES.items():
         assert sql.startswith("SELECT ") and ";" not in sql, name

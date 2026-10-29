@@ -1487,10 +1487,13 @@ async def shutdown(
             await wfc.stop()
         runtime.workflow_cron = None
 
-    # AD-1346 M3b: the shadow admission recorder's last flush, then the store it writes. Each is read
-    # with getattr, as agent_stops is above, so a runtime without them runs neither step. The service
-    # keeps the stopped recorder until the identity block below releases it; a verdict offered in
-    # between is counted in memory as late and not written.
+    # AD-1346 M3c (R6, D61): the shadow service is closed first, so from here on a shadow call returns None
+    # without deciding, counting or offering; each seam's own stop check is unaffected. Then the recorder's
+    # last flush, then the store it writes (AD-1346 M3b). Each is read with getattr, as agent_stops is above,
+    # so a runtime without them closes and stops nothing here.
+    shadow_service = getattr(runtime, "admission_service", None)
+    if shadow_service is not None:
+        shadow_service.close()
     shadow_recorder = getattr(runtime, "admission_shadow_recorder", None)
     if shadow_recorder is not None:
         with steps("admission shadow recorder stop", shadow_recorder):

@@ -1520,10 +1520,12 @@ def test_committed_baseline_records_the_measured_surface(
 
     # AD-1270 (#1324) slice 4c removes the owned model BootCampPhaseConfig: public_names 310 -> 309,
     # owned 297 -> 296, own_models 229 -> 228, and the check prints names=309.
-    assert counts["public_names"] == 309  # AD-1341 S5 (#1569) adds ArchivePromotionConfig (309 -> 310)
-    assert counts["owned"] == 296  # AD-1341 S5 (#1569): ArchivePromotionConfig is owned (296 -> 297)
+    # AD-1346 M3c (#1604) adds the owned model AdmissionConfig: public_names 309 -> 310, owned 296 -> 297,
+    # own_models 228 -> 229, and the check prints names=310.
+    assert counts["public_names"] == 310  # AD-1346 M3c (#1604): AdmissionConfig
+    assert counts["owned"] == 297  # AD-1346 M3c (#1604): AdmissionConfig is owned
     assert counts["incidental"] == 13
-    assert counts["own_models"] == 228  # AD-1341 S5 (#1569): ArchivePromotionConfig (228 -> 229)
+    assert counts["own_models"] == 229  # AD-1346 M3c (#1604): AdmissionConfig
     # AD-1152 adds only the default-False event_correlation_enabled leaf.
     # AD-1190 adds the four default-None delegation_tree_max_* ceilings (1787 -> 1791).
     # AD-1189 adds the default-0 deferred_tool_schema_threshold_bytes (1791 -> 1792).
@@ -1563,11 +1565,12 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1270 (#1324) slice 4b adds boot_camp.relax_quality_gates (1880 -> 1881).
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig.enabled and SystemConfig.boot_camp_phase (1881 -> 1879).
     # AD-1270 (#1324) slice 4c removes boot_camp.nudge_cooldown_seconds with AD-638's phases 2 and 3 (1879 -> 1878).
-    assert counts["field_definitions"] == 1878  # AD-1206 intentionally adds github_repository.
+    # AD-1346 M3c (#1604) adds AdmissionConfig.shadow_enabled and SystemConfig.admission (1878 -> 1880).
+    assert counts["field_definitions"] == 1880  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
-    assert len(baseline["names"]) == 309  # AD-1341 S5 (#1569): ArchivePromotionConfig
-    assert len(baseline["models"]) == 229  # AD-1341 S5 (#1569): ArchivePromotionConfig
+    assert len(baseline["names"]) == 310  # AD-1346 M3c (#1604): AdmissionConfig (309 -> 310)
+    assert len(baseline["models"]) == 230  # AD-1346 M3c (#1604): AdmissionConfig (229 -> 230)
 
 
 def test_committed_baseline_records_the_awkward_models(
@@ -1803,7 +1806,7 @@ def test_check_is_green_on_the_committed_baseline() -> None:
     assert proc.returncode == 0, proc.stderr
     assert "config facade check passed" in proc.stdout
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig (names=310 -> names=309).
-    assert "names=309" in proc.stdout  # AD-1341 S5 (#1569): ArchivePromotionConfig
+    assert "names=310" in proc.stdout  # AD-1346 M3c (#1604): AdmissionConfig (names=309 -> names=310)
 
 
 def test_config_facade_runs_between_the_other_two_config_phases() -> None:

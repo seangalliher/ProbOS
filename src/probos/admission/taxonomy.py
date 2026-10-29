@@ -1,7 +1,8 @@
 """AD-1346 M3a (#1604): the closed vocabularies of the shadow admission decision.
 
-Each tuple here is a set of values a verdict carries and AD-1346 M3b will persist, so each
-is append-only: a value is added by the slice that needs it and is not renamed or removed.
+Each vocabulary here is a set of values a verdict carries or, for ``TODAY_OUTCOMES`` (AD-1346
+M3c), a value recorded beside one; ``admission_shadow.db`` persists them, so each is append-only:
+a value is added by the slice that needs it and is not renamed or removed.
 The seams extend the stop's ``SEAMS``, imported from ``probos.agent_stop``, because seam
 names key the stop's persisted refusal counts (AD-1343 S1). The reason codes use the
 AD-1316 stable-code syntax (``execution/authority.py``, ``_REASON_CODE_RE``), shared by
@@ -49,6 +50,11 @@ PRINCIPAL_KINDS: Final[tuple[str, ...]] = (
 OUTCOME_ADMIT: Final = "admit"
 OUTCOME_WOULD_REFUSE: Final = "would_refuse"
 OUTCOMES: Final[tuple[str, ...]] = (OUTCOME_ADMIT, OUTCOME_WOULD_REFUSE)
+
+#: AD-1346 M3c (D57): what the site's own stop check did with the same work, for parity (#1601 evidence 4).
+TODAY_ADMIT: Final = "admit"
+TODAY_REFUSE: Final = "refuse"
+TODAY_OUTCOMES: Final[tuple[str, ...]] = (TODAY_ADMIT, TODAY_REFUSE)
 
 REASON_ADMITTED: Final = "admitted"
 REASON_AGENT_STOPPED: Final = STOP_REASON_CODE

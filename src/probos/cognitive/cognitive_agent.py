@@ -21,6 +21,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos import work_item_steps as owned_steps
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -7977,6 +7978,8 @@ class CognitiveAgent(BaseAgent):
         _stops = getattr(getattr(self, "_runtime", None), "agent_stops", None)
         if isinstance(_stops, AgentStopService):
             _stopped = _stops.refusal(self.id, SEAM_INTENT)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(getattr(getattr(self, "_runtime", None), "admission_service", None), presented_id=self.id, work_kind="intent", seam=SEAM_INTENT, origin="system", origin_id=getattr(intent, "intent", ""), refused=_stopped is not None)
             if _stopped is not None:
                 return _stopped.refuse_intent(intent, self.id)
 
@@ -8678,6 +8681,8 @@ class CognitiveAgent(BaseAgent):
         _stops = getattr(getattr(self, "_runtime", None), "agent_stops", None)
         if isinstance(_stops, AgentStopService):
             _stopped = _stops.refusal(self.id, SEAM_CONSULTATION)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(getattr(getattr(self, "_runtime", None), "admission_service", None), presented_id=self.id, work_kind="consultation", seam=SEAM_CONSULTATION, origin="agent", origin_id=getattr(request, "requester_id", ""), refused=_stopped is not None)
             if _stopped is not None:
                 return ConsultationResponse(
                     request_id=request.request_id,

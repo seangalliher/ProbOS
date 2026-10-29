@@ -321,6 +321,9 @@ async def _off_observation(
     # AD-1270 (#1324) slice 4b's boot-camp relaxation flag was added after this capture too. It is
     # default off, and while off no agent's Evaluate or Reflect is relaxed; this observation runs no chain.
     assert config["boot_camp"].pop("relax_quality_gates") is False
+    # AD-1346 M3c's shadow-admission section was added after this capture too. Its switch defaults on, and it is
+    # read in ProbOSRuntime.start, which this observation never calls.
+    assert config.pop("admission") == {"shadow_enabled": True}
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
