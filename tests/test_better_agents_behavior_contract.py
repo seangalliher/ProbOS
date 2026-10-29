@@ -161,9 +161,10 @@ async def test_evaluate_contract_invoker_exception_records_error_does_not_raise(
     assert result["details"]["passed_cases"] == 1
 
 
-def test_cli_run_contracts_returns_zero_on_pass(tmp_path: Path) -> None:
-    """A contract whose stub-empty response satisfies must_not-only rules
-    (no must rules) trivially passes."""
+def test_cli_run_contracts_reports_a_stub_run_as_not_measured(tmp_path: Path) -> None:
+    """AD-1186 (#1123): a must_not-only contract used to pass (rc 0) on the
+    stub's empty reply, which no agent gave. Nothing was measured, so the
+    contract is inconclusive (BF-711) and the command exits 3."""
     contract_file = tmp_path / "trivial.yaml"
     contract_file.write_text(
         "name: trivial\n"
@@ -179,11 +180,13 @@ def test_cli_run_contracts_returns_zero_on_pass(tmp_path: Path) -> None:
 
     args = argparse.Namespace(path=str(contract_file))
     rc = _cmd_qa_run_contracts(args)
-    assert rc == 0
+    assert rc == 3
 
 
-def test_cli_run_contracts_returns_one_on_fail(tmp_path: Path) -> None:
-    """The sample contract requires substantive response → stub fails."""
+def test_cli_run_contracts_does_not_fail_an_unmeasured_must_case(tmp_path: Path) -> None:
+    """AD-1186 (#1123): the stub used to fail (rc 1) a contract with a must
+    rule, scoring an unwired runtime as the agent's failure. It is not
+    measured, so the command exits 3 (BF-711)."""
     contract_file = tmp_path / "must.yaml"
     contract_file.write_text(
         "name: needs_must\n"
@@ -199,7 +202,7 @@ def test_cli_run_contracts_returns_one_on_fail(tmp_path: Path) -> None:
 
     args = argparse.Namespace(path=str(contract_file))
     rc = _cmd_qa_run_contracts(args)
-    assert rc == 1
+    assert rc == 3
 
 
 def test_cli_run_contracts_returns_two_on_missing_path(tmp_path: Path) -> None:
@@ -210,9 +213,11 @@ def test_cli_run_contracts_returns_two_on_missing_path(tmp_path: Path) -> None:
     assert rc == 2
 
 
-def test_cli_run_contracts_returns_zero_on_empty_directory(tmp_path: Path) -> None:
+def test_cli_run_contracts_reports_an_empty_directory_as_not_measured(tmp_path: Path) -> None:
+    """AD-1186 (#1123): an empty directory used to exit 0, a pass with
+    nothing measured. It exits 3."""
     from probos.__main__ import _cmd_qa_run_contracts
 
     args = argparse.Namespace(path=str(tmp_path))
     rc = _cmd_qa_run_contracts(args)
-    assert rc == 0
+    assert rc == 3

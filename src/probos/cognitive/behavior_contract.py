@@ -115,12 +115,14 @@ async def evaluate_contract(
     contract: BehaviorContract,
     invoke_agent: InvokeAgentFn,
 ) -> dict[str, Any]:
-    """Run every case, return a TestResult-shaped dict.
+    """Run every case, return a dict with exactly AD-566a ``TestResult``'s fields.
 
-    Returned shape mirrors AD-566a ``TestResult`` fields so callers can
-    persist to ``QualificationStore`` directly. Never raises on an
-    invoker exception — instead records the failure on the case and
-    surfaces ``last_error`` on the result.
+    Callers can build a ``TestResult`` from it and persist it to
+    ``QualificationStore`` directly. Never raises on an invoker exception:
+    it records the failure on the case and surfaces ``last_error`` on the
+    result. AD-1186 (#1123), BF-711's semantics: a case whose invoker raised
+    measured nothing, so the result is ``inconclusive`` and not ``passed``,
+    whatever the other cases scored.
     """
     started = time.perf_counter()
     passed_cases = 0
@@ -157,7 +159,7 @@ async def evaluate_contract(
         "test_name": contract.name,
         "tier": contract.tier,
         "score": score,
-        "passed": score >= contract.threshold,
+        "passed": (not any_case_errored) and score >= contract.threshold,
         "timestamp": time.time(),
         "duration_ms": (time.perf_counter() - started) * 1000.0,
         "is_baseline": False,
@@ -167,4 +169,6 @@ async def evaluate_contract(
             "total": total,
         },
         "error": last_error if any_case_errored else None,
+        # AD-1186 (#1123): BF-711 -- an invoker exception measured nothing.
+        "inconclusive": any_case_errored,
     }

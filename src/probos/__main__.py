@@ -1819,11 +1819,14 @@ def _cmd_qa_run_contracts(args: argparse.Namespace) -> int:
     """Handle ``probos qa run-contracts <path>`` (AD-713 / better-agents).
 
     Loads YAML behavior contracts from a file or directory and evaluates
-    each against a stub invoker. Returns 0 if all contracts pass; 1 if any
-    contract fails or fails to load; 2 if the path does not exist.
+    each against a stub invoker. Returns 0 only if every contract was
+    measured and passed; 1 if any measured contract failed or any file
+    failed to load; 2 if the path does not exist; 3 if nothing failed but
+    something was not measured, an empty directory included.
 
-    The stub invoker returns empty strings, which forces every ``must``-
-    bearing case to fail — an honest signal that the runtime is not wired.
+    AD-1186 (#1123): the stub invoker raises, so no case is measured and
+    each contract is inconclusive (BF-711). An empty reply is not the
+    agent's answer, and an unwired runtime is not the agent's failure.
     AD-713-1 will swap the stub for a hot-runtime invoker.
     """
     import asyncio
@@ -1844,31 +1847,39 @@ def _cmd_qa_run_contracts(args: argparse.Namespace) -> int:
     files = sorted(root.glob("*.yaml")) if root.is_dir() else [root]
     if not files:
         console.print(f"[yellow]No contracts found at {root}[/yellow]")
-        return 0
+        return 3  # AD-1186: an empty directory measured nothing
 
     async def _stub_invoker(agent_id: str, prompt: str) -> str:
-        # AD-713-1 wires a real runtime invoker.
-        return ""
+        # AD-713-1 wires a real runtime invoker. Until then nothing is
+        # measured (AD-1186, BF-711): raising records the case as unmeasured.
+        raise RuntimeError("AD-713-1: no runtime invoker is wired")
 
-    table = Table("Contract", "Score", "Passed")
-    rc = 0
+    table = Table("Contract", "Score", "Result")
+    failed = False
+    unmeasured = False
     for f in files:
         try:
             contract = load_contract(f)
         except Exception as exc:
             console.print(f"[red]Failed to load {f.name}: {exc}[/red]")
-            rc = 1
+            failed = True  # AD-1186: a contract that does not load is a failure
             continue
         result = asyncio.run(evaluate_contract(contract, _stub_invoker))
-        table.add_row(
-            contract.name,
-            f"{result['score']:.2f}",
-            "[green]yes[/green]" if result["passed"] else "[red]no[/red]",
-        )
-        if not result["passed"]:
-            rc = 1
+        score = "-" if result["inconclusive"] else f"{result['score']:.2f}"
+        if result["inconclusive"]:
+            # BF-711: an unmeasured contract neither passes nor fails.
+            unmeasured = True
+            verdict = "[yellow]not measured[/yellow]"
+        elif result["passed"]:
+            verdict = "[green]yes[/green]"
+        else:
+            failed = True
+            verdict = "[red]no[/red]"
+        table.add_row(contract.name, score, verdict)
     console.print(table)
-    return rc
+    if failed:
+        return 1
+    return 3 if unmeasured else 0
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
