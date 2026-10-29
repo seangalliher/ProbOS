@@ -2,8 +2,8 @@
 
 ``shadow_at`` hands the site's work to ``AdmissionService.shadow`` with what the site's own check
 did (``refused``) and returns None, so the site has no result to act on. It calls only an exact
-``AdmissionService``: None, a test double or any other object is passed over. It awaits nothing,
-opens nothing and takes no lock. It raises no ``Exception``: its own work is one type check and
+``AdmissionService``: None, a test double or any other object is passed over. It awaits nothing.
+It raises no ``Exception``: its own work is one type check and
 one call with the keywords ``shadow`` takes, and ``shadow`` lets no ``Exception`` out (D59); a
 ``BaseException`` that is not an ``Exception`` propagates.
 """
