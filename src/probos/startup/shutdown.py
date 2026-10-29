@@ -1487,6 +1487,21 @@ async def shutdown(
             await wfc.stop()
         runtime.workflow_cron = None
 
+    # AD-1346 M3b: the shadow admission recorder's last flush, then the store it writes. Each is read
+    # with getattr, as agent_stops is above, so a runtime without them runs neither step. The service
+    # keeps the stopped recorder until the identity block below releases it; a verdict offered in
+    # between is counted in memory as late and not written.
+    shadow_recorder = getattr(runtime, "admission_shadow_recorder", None)
+    if shadow_recorder is not None:
+        with steps("admission shadow recorder stop", shadow_recorder):
+            await shadow_recorder.stop()
+        runtime.admission_shadow_recorder = None
+    shadow_store = getattr(runtime, "admission_shadow_store", None)
+    if shadow_store is not None:
+        with steps("admission shadow store stop", shadow_store):
+            await shadow_store.stop()
+        runtime.admission_shadow_store = None
+
     # Stop Identity Registry (AD-441)
     if runtime.identity_registry:
         with steps("identity registry stop", runtime.identity_registry):
