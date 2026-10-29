@@ -49,6 +49,12 @@ Every agent-mediated capability must have a corresponding direct manual control 
 
 Agents are probabilistic entities (Bayesian confidence, Hebbian routing, non-deterministic LLM decisions), not deterministic automata. Consensus constrains *outcomes* without constraining the *process*. Agent behavior stays probabilistic. Governance stays collective. No hardcoded "always do X" — prefer probabilistic priors that converge through experience.
 
+## Probabilistic Crew, Deterministic Ship
+
+*The Captain's founding thesis (2026-10-29): autonomous agents need a deterministic core system of record that enforces governance, and that core is what gives them the freedom to act, as writing and record-keeping did for humans.*
+
+The other half of the principle above. Agents are free in what they think and propose; deterministic logic decides what becomes true. Governance sits at **commit points** (a write, a booking, a trust change, an archive entry, a lifecycle step), where one owner checks authority and evidence, records who acted and keeps the history. Not every part of the core is deterministic (trust scores, consensus and dreaming are estimates), but its invariants are: persistence, one shared state, causal order, a fixed past, rules no one can bypass, honest self-report, and attributed authority with the Captain at the top. Unlike physics, a ship's invariants can be broken by code, so a ship that reports something false is worse than one that says "unknown". Full text, the invariant table with today's owners and gaps, and the check every AD and BF answers: [Probabilistic Crew, Deterministic Ship](deterministic-ship.md).
+
 ## Sovereign Agent Identity
 
 *Intellectual lineage: Plato's tripartite soul (Logistikon, Thumos, Epithumetikon), Damasio's somatic markers, Self-Determination Theory (Deci & Ryan), Narrative Identity (McAdams), Predictive Processing (Friston). ProbOS draws from all of these but maps literally to none. We are charting new ground.*
