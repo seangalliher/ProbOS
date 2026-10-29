@@ -16,6 +16,9 @@ An AST census of ``src/probos`` in this checkout, in the manner of the AD-1195 p
 8. CREW MODEL WORK (A3): every model call in the crew modules is classified; each one under a crew agent's name is preceded by
    a stop question with no await between them; the verifier asks at every pick; the session finalizer is given the stop; the
    crew run asks eligibility right before its run entry, so it needs no ``AgentStopped`` catch.
+9. SHADOW (AD-1346 M3c): each stop check is in ``SHADOW_SITES`` or ``SHADOW_PENDING``; each shadowed function calls
+   ``shadow_at`` the registered number of times, after its check with no await between, with the check's seam and its work
+   kind; and nothing else calls it.
 
 Not seen (stated bounds): an entry reached through an alias or ``getattr``; a tool held
 under a name not ending in ``tool``; a synchronous method that starts work
@@ -47,6 +50,8 @@ from tests.fixtures.ad1343_seam_registry import (
     COGNITIVE_AGENT_COROUTINES as _COGNITIVE_AGENT_COROUTINES,
     CREW_MODEL_CALLS as _CREW_MODEL_CALLS,
     DIRECT_TOOL_INVOKES as _DIRECT_TOOL_INVOKES,
+    SHADOW_PENDING as _SHADOW_PENDING,
+    SHADOW_SITES as _SHADOW_SITES,
     SOURCE_ORDER as _SOURCE_ORDER,
     STANDING_STOP_SITES as _STANDING_STOP_SITES,
     STOP_CHECK_SITES as _STOP_CHECK_SITES,
@@ -223,3 +228,34 @@ def test_the_crew_run_asks_eligibility_right_before_its_run_entry() -> None:
     assert isinstance(after, ast.Assign) and isinstance(after.value, ast.Await), ast.dump(after)
     assert ast.unparse(after.value.value.func) == "self._executor.run"
     assert isinstance(_function(rel, "CrewTaskExecutor._require_eligible"), ast.FunctionDef)  # synchronous
+
+
+def test_every_stop_check_is_shadowed_or_pending() -> None:
+    """9a (AD-1346 M3c): each S1 stop check is in exactly one of SHADOW_SITES and SHADOW_PENDING."""
+    assert not set(_SHADOW_SITES) & set(_SHADOW_PENDING)
+    both = set(_SHADOW_SITES) | set(_SHADOW_PENDING)
+    assert both == set(_STOP_CHECK_SITES), sorted(both ^ set(_STOP_CHECK_SITES))
+
+
+def test_each_shadowed_site_calls_shadow_at_beside_its_check() -> None:
+    """9b (AD-1346 M3c): the number, keywords and place of each site's shadow statements; removing one fails here."""
+    keywords = {"presented_id", "work_kind", "seam", "origin", "origin_id", "refused"}
+    for (rel, qualname, callee), (work_kind, count) in _SHADOW_SITES.items():
+        fn = _function(rel, qualname)
+        shadows = [n for n in ast.walk(fn) if _calls("shadow_at")(n)]
+        assert len(shadows) == count, (qualname, len(shadows))
+        check = _first_line(fn, _calls(callee))
+        for call in shadows:
+            given = {k.arg: k.value for k in call.keywords}
+            assert set(given) == keywords and len(call.args) == 1, (qualname, sorted(given))
+            assert ast.unparse(given["seam"]) == _STOP_CHECK_SITES[(rel, qualname, callee)], qualname
+            assert isinstance(given["work_kind"], ast.Constant) and given["work_kind"].value == work_kind, qualname
+            assert call.lineno > check, (qualname, call.lineno, check)
+            between = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Await) and check < n.lineno < call.lineno]
+            assert between == [], (qualname, between)
+
+
+def test_shadow_at_is_called_only_at_the_shadowed_sites() -> None:
+    """9c (AD-1346 M3c): a shadow statement outside SHADOW_SITES fails here."""
+    found = {(c.file, c.function) for c in _census() if c.callee == "shadow_at"}
+    assert found == {(rel, qualname) for rel, qualname, _ in _SHADOW_SITES}, sorted(found)

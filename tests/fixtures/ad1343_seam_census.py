@@ -36,6 +36,7 @@ RECORDED = STOP_CALLEES | AGENT_WORK_METHODS | {
     "invoke", "issue_stop", "lift_stop", "standing_stop", "WorkItemAgenticExecutor", "CrewAssignmentResolver",
     "CrewSessionFinalizer", "_stopped", "complete",  # A3
     "CrewRecoveryTransientError", "finalize", "run_crew_task",  # N1
+    "shadow_at",  # AD-1346 M3c: the shadow statement beside a stop check
 }
 PINNED_KEYWORDS = frozenset({"admitted_turn", "agent_stops", "admitted_synthesis"})  # recorded as "name=value" on any call passing one
 CREW_PREFIX = "src/probos/cognitive/crew_"

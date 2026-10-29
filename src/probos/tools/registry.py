@@ -13,7 +13,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
-from probos.agent_stop import STOP_REASON_CODE, tool_refusal
+from probos.admission.seam import shadow_at
+from probos.agent_stop import SEAM_TOOL, STOP_REASON_CODE, tool_refusal
 from probos.events import EventType
 from probos.tools.protocol import (
     Tool,
@@ -28,6 +29,7 @@ from probos.tools.protocol import (
 )
 
 if TYPE_CHECKING:
+    from probos.admission import AdmissionService
     from probos.agent_stop import AgentStopService
     from probos.execution.effect_types import (
         EffectPermit,
@@ -104,6 +106,7 @@ class ToolRegistry:
 
     # AD-1343: the Captain's stop (set_stop_gate); None routes exactly as before.
     _stop_gate: "AgentStopService | None" = None
+    _admission: "AdmissionService | None" = None  # AD-1346 M3c (set_admission): None shadows nothing
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolRegistration] = {}
@@ -136,6 +139,10 @@ class ToolRegistry:
     def stop_gate(self) -> "AgentStopService | None":
         """AD-1343: the stop this registry enforces (a projected registry inherits it)."""
         return self._stop_gate
+
+    def set_admission(self, service: "AdmissionService | None") -> None:
+        """AD-1346 M3c: late-bind the shadow admission decision check_and_invoke reports to; it blocks nothing."""
+        self._admission = service
 
     def arm_effect_broker(
         self, broker: "GovernedEffectBrokerProtocol"
@@ -387,6 +394,8 @@ class ToolRegistry:
 
         # AD-1343: a stopped agent invokes nothing, whichever path called; refused before any lookup.
         stopped = tool_refusal(self._stop_gate, agent_id, tool_id)
+        # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+        shadow_at(self._admission, presented_id=agent_id, work_kind="tool_call", seam=SEAM_TOOL, origin="agent", origin_id=agent_id, refused=stopped is not None)
         if stopped is not None:
             if effect_permit is not None:
                 from probos.execution.effect_broker import EffectDenied

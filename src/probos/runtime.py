@@ -3417,6 +3417,7 @@ class ProbOSRuntime:
         self.tool_registry = comm.tool_registry
         if self.tool_registry is not None:  # AD-1343: every tool path ends in check_and_invoke
             self.tool_registry.set_stop_gate(self.agent_stops)
+            self.tool_registry.set_admission(self.admission_service)  # AD-1346 M3c: its shadow statement; None shadows nothing
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687

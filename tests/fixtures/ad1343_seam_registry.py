@@ -1,8 +1,8 @@
 """AD-1343 M0 (#1595): the registry of every place agent work can start, each with the guard that refuses a stopped agent.
 
 Data only, and it imports nothing (``tests/test_ad1343_seam_registry.py`` checks), so a later column cannot create an
-import cycle: #1601 M3 adds the shadow ``decide()`` each seam calls by widening the guard tuples of ``AGENT_WORK_CALLS``
-and ``SEAM_INDEX``. The census these rows are checked against is ``tests/fixtures/ad1343_seam_census.py``.
+import cycle. #1601 M3c records the shadow statement each stop-check site holds in ``SHADOW_SITES`` and the sites still
+without one in ``SHADOW_PENDING``. The census these rows are checked against is ``tests/fixtures/ad1343_seam_census.py``.
 
 Keys never carry a line number: (repo-relative file, enclosing qualified name, callee), as in the S1 census.
 
@@ -36,6 +36,30 @@ STOP_CHECK_SITES: dict[tuple[str, str, str], str] = {
     ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): "SEAM_TOOL",
     # AD-1347 S1 (#1627): the requester's stop, asked before any agent-created work is written.
     ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop"): "SEAM_AGENT_WORK",
+}
+
+# AD-1346 M3c (#1604): each STOP_CHECK_SITES entry whose function holds the shadow statement, with the work kind it
+# reports and the number of ``shadow_at`` calls in that function (one on each path of its check), and each entry whose
+# statement a later slice adds. Every entry is in exactly one of the two (tests/test_ad1343_stop_seam_inventory.py, 9a).
+SHADOW_SITES: dict[tuple[str, str, str], tuple[str, int]] = {
+    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.handle_intent", "refusal"): ("intent", 1),
+    ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.handle_consultation_request", "refusal"): ("consultation", 1),
+    ("src/probos/tools/registry.py", "ToolRegistry.check_and_invoke", "tool_refusal"): ("tool_call", 1),
+    ("src/probos/cognitive/agentic_dispatch.py", "WorkItemAgenticExecutor.run", "refuse_new_run"): ("agentic_run", 2),
+}
+SHADOW_PENDING: dict[tuple[str, str, str], str] = {
+    ("src/probos/proactive.py", "ProactiveCognitiveLoop._run_cycle", "active_stop"): "AD-1346 M3c2",
+    ("src/probos/ward_room_router.py", "WardRoomRouter._route_to_agents", "active_stop"): "AD-1346 M3c2",
+    ("src/probos/routers/agents.py", "_agent_chat_impl", "active_stop"): "AD-1346 M3c2",
+    ("src/probos/routers/thread_fanout.py", "_fan_one_round._send_one_impl", "active_stop"): "AD-1346 M3c2",
+    ("src/probos/routers/agent_actions.py", "ack_action", "active_stop"): "AD-1346 M3c2",
+    ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): "AD-1346 M3c2",
+    ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke", "active_stop"): "AD-1346 M3c3",
+    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge", "active_stop"): "AD-1346 M3c3",
+    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge_for_session", "active_stop"): "AD-1346 M3c3",
+    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session", "active_stop"): "AD-1346 M3c3",
+    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "active_stop"): "AD-1346 M3c3",
+    ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop"): "AD-1346 M3c3",
 }
 
 # Every public coroutine on CognitiveAgent. sink: consults the stop itself; within_turn: runs

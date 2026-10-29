@@ -28,7 +28,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar, Protocol
 
 from probos import work_item_steps as owned_steps
-from probos.agent_stop import refuse_new_run  # AD-1343 A2
+from probos.admission.seam import shadow_at  # AD-1346 M3c
+from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, refuse_new_run  # AD-1343 A2
 from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.swe_harness.agentic_loop import (
@@ -2699,7 +2700,13 @@ class WorkItemAgenticExecutor:
         intent sink admitted or S2 resumes (pinned by tests/test_ad1343_stop_seam_inventory.py).
         """
         if not admitted_turn:
-            refuse_new_run(runtime, agent_id)
+            # AD-1346 M3c: the shadow decision beside the check, one call on each of its paths; it blocks nothing.
+            try:
+                refuse_new_run(runtime, agent_id)
+            except AgentStopped:
+                shadow_at(getattr(runtime, "admission_service", None), presented_id=agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id="agentic_run", refused=True)
+                raise
+            shadow_at(getattr(runtime, "admission_service", None), presented_id=agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id="agentic_run", refused=False)
         if any(value is not None for value in (
             owned_steps_execution_port, owned_steps_execution_lease, owned_steps_execution_permit,
         )):
