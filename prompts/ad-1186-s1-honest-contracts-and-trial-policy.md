@@ -15,7 +15,7 @@
 Each milestone is one Builder delegation and one local commit, staged by explicit path (never `git add -A`). Commit subjects: `AD-1186 slice 1, M<n>: ... (#1123)`. One cross-family review (`gpt-6.1-sol`) of M1 and M2 against §14. One mutation campaign of record on the M2 tree (§10). Broad gate once, after M3: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label ad1186-s1 --receipt logs/gates/ad1186-s1.receipt.json`.
 
 **Tests:**
-- New: `tests/test_ad1186_contract_inconclusive.py` (M1, 6 cases predicted), `tests/test_ad1186_trial_catalog.py` (M2, 44 cases predicted), as `pytest <file> -n 0` reports.
+- New: `tests/test_ad1186_contract_inconclusive.py` (M1, 6 cases predicted), `tests/test_ad1186_trial_catalog.py` (M2, 49 cases predicted), as `pytest <file> -n 0` reports.
 - Updated: `tests/test_better_agents_behavior_contract.py`: three CLI tests renamed and re-pinned to exit 3, each with an `AD-1186 (#1123)` docstring giving the reason. Its `def test_` count is unchanged (`grep -c "def test_"`: 14 before and after).
 - A Grep of the new files for `LOCALAPPDATA|AppData|environ|getenv|subprocess|ProbOSRuntime|Runtime\(|\.start\(` finds only `await store.start()` in `tests/test_ad1186_contract_inconclusive.py` (a `QualificationStore` on `tmp_path`).
 
@@ -30,7 +30,7 @@ Each milestone is one Builder delegation and one local commit, staged by explici
 
 - `evaluate_contract`'s result gains `inconclusive` (true when any invoker call raised). `passed` is false whenever `inconclusive` is true. The dict's keys then equal `TestResult`'s fields, so the existing result model holds it and `QualificationStore` persists it.
 - `_cmd_qa_run_contracts`'s stub raises `RuntimeError`, so no case is measured. Exit codes: 2 for a missing path (unchanged); otherwise 1 if a file fails to load or a measured contract fails; otherwise 3 if a contract was not measured or no file was found; otherwise 0. The table's last column is `Result` (`yes`, `no`, `not measured`), and an unmeasured contract shows `-` for its score.
-- `tests/trials/catalog.py` loads and validates `tests/trials/data/catalog_v1.yaml`. It hashes the bytes it parses (AD-1143's convention), refuses unknown or missing keys at every level, refuses any policy mode except `report_only`, and requires the issue's non-passing statuses and fingerprint fields. It requires the Captain's rules verbatim in `crew_rules`. A task whose subject is `crew` must carry a disclosure (`what`, `ends`), `episodes: trial_labelled`, and `trust: separate` or `not_applied`. The catalog ships with no task. Production code imports none of it.
+- `tests/trials/catalog.py` loads and validates `tests/trials/data/catalog_v1.yaml`. It hashes the bytes it parses (AD-1143's convention), refuses unknown or missing keys in the document, the policy and each entry, refuses any policy mode except `report_only`, and requires the issue's non-passing statuses and fingerprint fields. It requires the Captain's rules verbatim in `crew_rules`. A task whose subject is `crew` must carry a disclosure (`what`, `ends`), `episodes: trial_labelled`, and `trust: separate` or `not_applied`. The catalog ships with no task. Production code imports none of it.
 
 ## 3. Decisions
 
@@ -61,7 +61,7 @@ Each milestone is one Builder delegation and one local commit, staged by explici
 |---|---|---|---|
 | `tests/test_ad1186_contract_inconclusive.py` | M1 | 6 | Exception makes the contract inconclusive and not passed; a measured pass and fail are not inconclusive; field set equals `TestResult` and round-trips `QualificationStore` on `tmp_path`; a load failure beside an unmeasured contract exits 1; measured pass exits 0 and fail exits 1 (evaluator replaced) |
 | `tests/test_better_agents_behavior_contract.py` | M1 | unchanged count | three CLI tests re-pinned to 3 |
-| `tests/test_ad1186_trial_catalog.py` | M2 | 44 | shipped catalog is report-only and hashed; blocking mode, unknown key, non-zero human effort, bad alpha (5), dropped status (6), dropped fingerprint field (8) and changed crew rules are refused; crew-task positive control; disclosure (3), episodes (3) and trust (2) refusals; scripted task needs no disclosure; unknown category, instrument or subject (3); a list or mapping where one name belongs is a `ValueError` naming the task (4); unknown keys of mixed types are a `ValueError` (1); duplicate ids; the policy's parameters drive `sigma_stats.bootstrap_ci` reproducibly |
+| `tests/test_ad1186_trial_catalog.py` | M2 | 49 | shipped catalog is report-only and hashed; blocking mode, an unknown policy key, missing human effort set to `zero` instead of `unknown`, bad alpha (5), dropped status (6), dropped fingerprint field (8) and changed crew rules are refused; crew-task positive control; disclosure (3), episodes (3) and trust (2) refusals; a scripted task needs no disclosure, episodes or trust; unknown category, instrument or subject (3); a list or mapping where one name belongs is a `ValueError` naming the task (4); unknown policy keys of mixed types are a `ValueError` (1); an id that is not wholly a lower-case slug is refused (5); duplicate ids are refused; the policy's parameters drive `sigma_stats.bootstrap_ci` reproducibly |
 
 ## 7. The contract
 
@@ -716,12 +716,12 @@ def validate_entry(value: Any, *, source: str) -> TrialEntry:
     """Raise ``ValueError`` on any breach; a crew task must carry rule 1's and rule 3's terms.
 
     A shape breach (not a mapping, an unknown or a missing key) is reported without the task's
-    id, and an id that is not a lower-case slug is quoted as given; every later message begins
-    ``<source>: entry <id>:``.
+    id, and an id that is not wholly a lower-case slug is reported by its ``repr``; every later
+    message begins ``<source>: entry <id>:``.
     """
     entry = _mapping(value, _ENTRY_KEYS, _ENTRY_REQUIRED, f"{source}: entry")
     entry_id = entry["id"]
-    if not isinstance(entry_id, str) or not _ENTRY_ID.match(entry_id):
+    if not isinstance(entry_id, str) or not _ENTRY_ID.fullmatch(entry_id):
         raise ValueError(f"{source}: entry id {entry_id!r} is not a lower-case slug")
     where = f"{source}: entry {entry_id}"
     if not _one_of(entry["category"], CATEGORIES):
@@ -1058,6 +1058,17 @@ def test_a_list_or_mapping_where_one_name_belongs_is_refused_naming_the_task(
         _load_mutated(tmp_path, _with_task(**{key: value}))
 
 
+@pytest.mark.parametrize(
+    "entry_id",
+    ["trial-1\n", "Bad Id", "UPPER", "", "-lead"],
+    ids=["trailing-newline", "space-and-capitals", "upper-case", "empty", "leading-hyphen"],
+)
+def test_an_id_that_is_not_a_lower_case_slug_is_refused(entry_id: str) -> None:
+    """The whole id must be a slug: ``re.match`` would let ``$`` match before a final newline."""
+    with pytest.raises(ValueError, match="lower-case slug"):
+        trials.validate_entry(dict(_CREW_TASK, id=entry_id), source="fixture.yaml")
+
+
 def test_duplicate_task_ids_are_refused(tmp_path: Path) -> None:
     def mutate(document: dict[str, Any]) -> None:
         document["entries"] = [copy.deepcopy(_CREW_TASK), copy.deepcopy(_CREW_TASK)]
@@ -1078,7 +1089,7 @@ def test_the_policy_drives_the_ablation_bootstrap() -> None:
 
 ## 8. Tracking (M3's commit)
 
-If M3 lands on a date other than 2026-10-28, the Builder substitutes the commit date in both entries; no other deviation is permitted. The commit date is the committing machine's local date when M3 is committed (this repository's commits carry the Captain's zone, `-06:00`), not the UTC date. Then regenerate the ledger with `python -P scripts/gen_ad_ledger.py` (write mode), and commit `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` as the tool writes them.
+If M3 lands on a date other than 2026-10-28, the Builder substitutes the commit date in both entries; no other deviation is permitted. The commit date is the committing machine's local date when M3 is committed, not the UTC date. Then regenerate the ledger with `python -P scripts/gen_ad_ledger.py` (write mode), and commit `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` as the tool writes them.
 
 **P-D1** (`PROGRESS.md`)
 
@@ -1147,6 +1158,7 @@ REPLACE:
 | C-13 | M2 | `tests/trials/catalog.py` | `if not all(isinstance(text, str) and text.strip() for text in (what, ends)):` | `if False:` | `test_a_crew_task_without_a_full_disclosure_is_refused[blank-what]` |
 | C-14 | M2 | `tests/trials/catalog.py` | `return isinstance(value, str) and value in allowed` | `return value in allowed` | `test_a_list_or_mapping_where_one_name_belongs_is_refused_naming_the_task` |
 | C-15 | M2 | `tests/trials/catalog.py` | `unknown = sorted(set(value) - allowed, key=repr)` | `unknown = sorted(set(value) - allowed)` | `test_unknown_keys_of_mixed_types_are_refused` |
+| C-16 | M2 | `tests/trials/catalog.py` | `if not isinstance(entry_id, str) or not _ENTRY_ID.fullmatch(entry_id):` | `if not isinstance(entry_id, str) or not _ENTRY_ID.match(entry_id):` | `test_an_id_that_is_not_a_lower_case_slug_is_refused[trailing-newline]` |
 
 ## 11. Verified Against Codebase (2026-10-28, re-run on `origin/main` `461a7bdf`, tree `0b19fb03`)
 
@@ -1266,7 +1278,7 @@ Still a prediction: §12's ledger outcome, which M3 measures.
 2. Exit mapping: 2 for a missing path, checked first; then 1 if a file failed to load or a measured contract failed; else 3 if a contract was inconclusive or no file was found; else 0. A load failure is never masked by an unmeasured contract.
 3. `_stub_invoker` raises; no path in `_cmd_qa_run_contracts` treats a stub reply as an agent's answer.
 4. The three re-pinned tests each carry an `AD-1186 (#1123)` docstring giving the reason for the new value.
-5. `tests/trials/catalog.py` imports nothing from `probos`. It refuses unknown and missing keys at each level and any policy mode but `report_only`. A list or mapping where one name belongs (`category`, `instrument`, `subject`, a crew task's `trust`) and unknown keys of mixed types raise `ValueError`, not `TypeError`; an entry's shape breaches (not a mapping, an unknown or a missing key) are reported without the task's id and a bad id is quoted as given; every later entry message begins `<source>: entry <id>:`. A crew task needs `what` and `ends` (non-blank), `episodes: trial_labelled` and `trust` of `separate` or `not_applied`; a non-crew task needs none.
+5. `tests/trials/catalog.py` imports nothing from `probos`. It refuses unknown and missing keys in the document, the policy and each entry, requires `crew_rules` to equal `CREW_RULES` and a crew task's `disclosure` to hold exactly `what` and `ends`, and refuses any policy mode but `report_only`. A list or mapping where one name belongs (`category`, `instrument`, `subject`, a crew task's `trust`) and unknown keys of mixed types raise `ValueError`, not `TypeError`; an entry's shape breaches (not a mapping, an unknown or a missing key) are reported without the task's id, and an id that is not wholly a lower-case slug (`fullmatch`) is reported by its `repr`; every later entry message begins `<source>: entry <id>:`. A crew task needs `what` and `ends` (non-blank), `episodes: trial_labelled` and `trust` of `separate` or `not_applied`; a non-crew task needs none, and its `disclosure`, `episodes` and `trust` are not read.
 6. `TrialCatalog.sha256` is computed over the same bytes that are parsed.
 7. The new files start no runtime, read no environment variable and spawn no process (§15 grep).
 8. Each comment and docstring the slice adds is true of the tree after it. Both tracker heads carry no lifecycle keyword in their first 120 characters.
@@ -1282,6 +1294,10 @@ Still a prediction: §12's ledger outcome, which M3 measures.
 ## 16. Amendment A1 (2026-10-28, before the build, on origin/main 461a7bdf)
 
 A1 repairs what the orchestrator found by executing the M1 and M2 stages. F1: `validate_entry` hashed a YAML list or mapping in `category`, `instrument`, `subject` or a crew task's `trust` and raised `TypeError`; `_one_of` makes it a `ValueError` that names the task. F2: its docstring promised to name the task on every breach; it now says which messages carry the task's id: every one after the shape and id checks. F3: `_mapping` sorted unknown keys of mixed types and raised `TypeError`; it now orders them by `repr`. F4 to F6: three comments claimed more than the code does (`judge_failed` as `inconclusive`, a consequence for consumers that do not exist, I/O at import). A sweep of the same class corrected five more sentences (the package's reuse claim, a per-task result type, the crew-rules YAML comment, the fingerprint comments, an M1 test docstring's prediction) and one PROGRESS sentence that repeated F5. A1 also moves the metadata onto `461a7bdf`, replaces the Not verified list with the orchestrator's measurements, corrects the collection check, pins the date rule to the local date, and adds five catalog test cases and mutation rows C-14 and C-15. A follow-up limits §11's unchanged-path line to files and replaces "reuse" in D4 and the DECISIONS entry with what the catalog shares with AD-1143. No decision and no M1 code changes; in §8 only the date rule, that PROGRESS sentence and that DECISIONS clause change.
+
+## 17. Amendment A2 (2026-10-28, after review round 1, on the candidate's head 2060fc6f)
+
+A2 repairs review round 1's four findings. F1: `validate_entry` tested the id with `re.match`, whose `$` also matches before a final newline, so an id such as `trial-1\n` loaded; it now uses `fullmatch` with the pattern and messages unchanged, a new parametrized test refuses five non-slug ids, and mutation row C-16 puts `match` back. F2: sections 2 and 14 said unknown and missing keys are refused at every level; they now name the levels the loader checks, and section 14 states that a non-crew task's `disclosure`, `episodes` and `trust` are not read. F3: section 6's catalog row said "non-zero human effort" where the test supplies `zero`; the row now matches the shipped test file, with five more cases (49). F4: the date rule no longer claims a zone for the repository's commits. A sweep also changed "quoted as given" to "reported by its `repr`", because a non-string id has no quotes. Of the shipped files only `tests/trials/catalog.py` and `tests/test_ad1186_trial_catalog.py` change; M1, M3 and the tracker pairs do not, and in §8 A2 changes only the date rule, so §16's closing sentence still holds.
 
 ## For the register (#1123)
 
