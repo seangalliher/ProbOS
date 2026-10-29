@@ -1,0 +1,50 @@
+# AD-1186 (#1123) Ship Trials catalog, version 1. Content-hashed: a run records
+# this file's sha256, so a catalog that has been run is never edited in place;
+# a change is a new file with a new catalog_version.
+# Loaded and validated by tests/trials/catalog.py. The policy is predeclared
+# before any task or score exists. It blocks nothing: the loader admits only
+# the report-only mode until the Captain decides a blocking policy on #1123.
+catalog_version: 1
+policy:
+  mode: report_only
+  # Each task runs under both arms (the candidate and its baseline); the task
+  # is the unit of resampling, never a single run (AD-1143 DD-4).
+  design: paired_by_task
+  effect_size: cohens_dz
+  interval: percentile_bootstrap
+  iterations: 10000
+  alpha: 0.05
+  seed: 1186
+  # Direction and magnitude only; no p-value is computed or reported.
+  significance_tests: none
+  # Statuses that never count as a pass.
+  non_passing:
+    - skipped
+    - absent_data
+    - judge_unavailable
+    - infrastructure_failure
+    - contaminated
+    - incomparable
+  missing_human_effort: unknown
+  # The fields a run's fingerprint must record.
+  fingerprint:
+    - code_commit
+    - config_sha256
+    - model_identity
+    - fallback_model_identity
+    - knowledge_snapshot
+    - catalog_sha256
+    - rubric_sha256
+    - total_budget
+  evidence: retain_raw
+# The Captain's trial rules (#1123, 2026-10-20). The loader requires them
+# exactly, and a crew task loads only with the terms rules 1 and 3 set:
+# a disclosure, trial-labelled episodes, and separate or withheld trust.
+crew_rules:
+  disclosure_at_entry: required
+  awareness: never_penalised
+  trial_episodes: labelled_not_discarded
+  trial_trust: separate_or_not_applied
+  naive_measurement: disclose_and_record_priming
+# Tasks join as their instruments become runnable (#1123 slices S3 to S5).
+entries: []
