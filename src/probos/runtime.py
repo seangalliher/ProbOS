@@ -2913,43 +2913,48 @@ class ProbOSRuntime:
 
         self.identity_service = IdentityService(infra.identity_registry, self.callsign_registry)
 
-        # AD-1346 M3b: the shadow admission store and its write-behind recorder, started before the
-        # service so that the service is built with the recorder. The imports, the store's start and
-        # the recorder's construction and start are inside the try, and each attribute is assigned
-        # after its object started; a store whose start raised has closed its connection, or logged at
-        # DEBUG the Exception its close raised (a BaseException from that close propagates in place of
-        # the start's). The except branch catches an Exception only: the service below is then built
-        # with no recorder and the boot continues (D47), while any other BaseException propagates. Its
-        # log call has no guard of its own (D36).
-        shadow_recorder: ShadowRecorder | None = None
-        try:
-            from probos.admission.recorder import ShadowRecorder
-            from probos.admission.store import AdmissionShadowStore
+        # AD-1346 M3c (D62): admission.shadow_enabled is read here, once per start. When it is false,
+        # neither block below runs: no shadow store, recorder or service is built, the three attributes
+        # keep their __init__ None, one INFO line says so, and the boot continues.
+        if self.config.admission.shadow_enabled:
+            # AD-1346 M3b: the shadow admission store and its write-behind recorder, started before the
+            # service so that the service is built with the recorder. The imports, the store's start and
+            # the recorder's construction and start are inside the try, and each attribute is assigned
+            # after its object started; a store whose start raised has closed its connection, or logged at
+            # DEBUG the Exception its close raised (a BaseException from that close propagates in place of
+            # the start's). The except branch catches an Exception only: the service below is then built
+            # with no recorder and the boot continues (D47), while any other BaseException propagates. Its
+            # log call has no guard of its own (D36).
+            shadow_recorder: ShadowRecorder | None = None
+            try:
+                from probos.admission.recorder import ShadowRecorder
+                from probos.admission.store import AdmissionShadowStore
 
-            shadow_store = AdmissionShadowStore(data_dir=self._data_dir)
-            await shadow_store.start()
-            self.admission_shadow_store = shadow_store
-            recorder = ShadowRecorder(shadow_store)
-            recorder.start()
-            self.admission_shadow_recorder = recorder
-            shadow_recorder = recorder
-        except Exception:  # AD-1346 M3b (D47)
-            logger.warning(
-                "AD-1346 M3b: the shadow admission store or its recorder did not start; the service is built without a recorder",
-                exc_info=True,
-            )
+                shadow_store = AdmissionShadowStore(data_dir=self._data_dir)
+                await shadow_store.start()
+                self.admission_shadow_store = shadow_store
+                recorder = ShadowRecorder(shadow_store)
+                recorder.start()
+                self.admission_shadow_recorder = recorder
+                shadow_recorder = recorder
+            except Exception:  # AD-1346 M3b (D47)
+                logger.warning(
+                    "AD-1346 M3b: the shadow admission store or its recorder did not start; the service is built without a recorder",
+                    exc_info=True,
+                )
 
-        # AD-1346 M3a: the shadow admission decision, over the facade above and the stop record
-        # Phase 1a started. Nothing calls it yet (AD-1346 M3c adds the seams). The import and the
-        # constructor are inside the try; the except branch logs an Exception and assigns nothing, so
-        # the attribute keeps its __init__ None (#1604, property 11; D31, D34). Its log call has no
-        # guard of its own (D36). AD-1346 M3b passes the recorder above, or None.
-        try:
-            from probos.admission import AdmissionService
+            # AD-1346 M3a: the shadow admission decision, over the facade above and the stop record
+            # Phase 1a started. The import and the constructor are inside the try; the except branch logs
+            # an Exception and assigns nothing, so the attribute keeps its __init__ None (#1604, property 11;
+            # D31, D34). Its log call has no guard of its own (D36). AD-1346 M3b passes the recorder above, or None.
+            try:
+                from probos.admission import AdmissionService
 
-            self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder)
-        except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
-            logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
+                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder)
+            except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
+                logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
+        else:
+            logger.info("AD-1346 M3c: admission.shadow_enabled is false; no shadow admission store, recorder or service was built")
 
         fleet = await create_agent_fleet(
             config=self.config,

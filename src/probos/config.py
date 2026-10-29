@@ -3569,6 +3569,18 @@ class WorkforceConfig(BaseModel):
     template_config_path: str = "config/work_templates.yaml"
 
 
+class AdmissionConfig(BaseModel):
+    """AD-1346 M3c (#1604): the switch of the shadow admission decision (epic #1601).
+
+    While ``shadow_enabled`` is true (the default), ``ProbOSRuntime.start`` builds the shadow admission
+    store, its recorder and the service; while it is false the runtime builds none of them. Shadow mode
+    never blocks and never charges (#1604 property 6). Read once, by ``ProbOSRuntime.start``; a change
+    takes effect at the next start.
+    """
+
+    shadow_enabled: bool = True
+
+
 class AgentWorkConfig(BaseModel):
     """AD-1347 S1 (#1627): work crew agents create for themselves and request from colleagues.
 
@@ -4033,6 +4045,7 @@ class SystemConfig(BaseModel):
     edge_backfill: EdgeBackfillConfig = Field(default_factory=EdgeBackfillConfig)  # AD-689
     communications: CommunicationsConfig = CommunicationsConfig()
     workforce: WorkforceConfig = WorkforceConfig()
+    admission: AdmissionConfig = Field(default_factory=AdmissionConfig)  # AD-1346 M3c (#1604): the shadow admission switch
     agent_work: AgentWorkConfig = Field(default_factory=AgentWorkConfig)  # AD-1347 S1 (#1627)
     archive_promotion: ArchivePromotionConfig = Field(default_factory=ArchivePromotionConfig)  # AD-1341 S5 (default OFF)
     temporal: TemporalConfig = TemporalConfig()

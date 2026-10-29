@@ -2342,6 +2342,14 @@ Workforce Scheduling Engine configuration (AD-496).
 | `custom_templates` | `list[dict]` | `[]` | — |  |
 | `template_config_path` | `str` | `'config/work_templates.yaml'` | — |  |
 
+## `admission`
+
+AD-1346 M3c (#1604): the switch of the shadow admission decision (epic #1601).
+
+| Field | Type | Default | Bounds | Description |
+|---|---|---|---|---|
+| `shadow_enabled` | `bool` | `True` | — |  |
+
 ## `agent_work`
 
 AD-1347 S1 (#1627): work crew agents create for themselves and request from colleagues.

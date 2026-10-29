@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1889
-  field_definitions: 1878
+  canonical_dump_leaves: 1890
+  field_definitions: 1880
   incidental: 13
-  own_models: 228
-  owned: 296
-  public_names: 309
-canonical_dump_sha256: 8517e238c10cbc4f8bfe1b64d351c843c4c9f3f419d3b5d1c59bc6801337a776
+  own_models: 229
+  owned: 297
+  public_names: 310
+canonical_dump_sha256: eaaefa0fc4e1f5fc1e077a706dfa4e5b1e79c58bedfa4bf834417919a044c596
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -141,6 +141,7 @@ constants:
   TRUST_SENIOR: '0.85'
 names:
   A2APeerConfig: {kind: model, tier: owned}
+  AdmissionConfig: {kind: model, tier: owned}
   AgentTierConfig: {kind: model, tier: owned}
   AgentWorkConfig: {kind: model, tier: owned}
   AgenticDispatchConfig: {kind: model, tier: owned}
@@ -460,6 +461,14 @@ models:
     - {default: <required>, name: peer_url}
     - {default: '''''', name: auth_token}
     - {default: '''''', name: node_id}
+  AdmissionConfig:
+    qualname: AdmissionConfig
+    bases:
+    - BaseModel
+    - object
+    schema_sha256: e61848f4450dff84a14ade3cf34af2e9a0fd5b1c55561e92957e3113233d3ad7
+    fields:
+    - {default: 'True', name: shadow_enabled}
   AgentTierConfig:
     qualname: AgentTierConfig
     bases:
@@ -3412,7 +3421,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 9dfca3549dfa117bf6d3f28761291fbb272ef9b59d7acaba5cbfd327b3958259
+    schema_sha256: 6c998c8d6f09bb89ba42256fdbec3350205a7312e45c450ed548d1d606a5eea1
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3539,6 +3548,7 @@ models:
     - {default: <required>, has_default_factory: true, name: edge_backfill}
     - {default: CommunicationsConfig(...), name: communications}
     - {default: WorkforceConfig(...), name: workforce}
+    - {default: <required>, has_default_factory: true, name: admission}
     - {default: <required>, has_default_factory: true, name: agent_work}
     - {default: <required>, has_default_factory: true, name: archive_promotion}
     - {default: TemporalConfig(...), name: temporal}
