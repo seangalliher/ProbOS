@@ -216,12 +216,12 @@ def validate_entry(value: Any, *, source: str) -> TrialEntry:
     """Raise ``ValueError`` on any breach; a crew task must carry rule 1's and rule 3's terms.
 
     A shape breach (not a mapping, an unknown or a missing key) is reported without the task's
-    id, and an id that is not a lower-case slug is quoted as given; every later message begins
-    ``<source>: entry <id>:``.
+    id, and an id that is not wholly a lower-case slug is reported by its ``repr``; every later
+    message begins ``<source>: entry <id>:``.
     """
     entry = _mapping(value, _ENTRY_KEYS, _ENTRY_REQUIRED, f"{source}: entry")
     entry_id = entry["id"]
-    if not isinstance(entry_id, str) or not _ENTRY_ID.match(entry_id):
+    if not isinstance(entry_id, str) or not _ENTRY_ID.fullmatch(entry_id):
         raise ValueError(f"{source}: entry id {entry_id!r} is not a lower-case slug")
     where = f"{source}: entry {entry_id}"
     if not _one_of(entry["category"], CATEGORIES):

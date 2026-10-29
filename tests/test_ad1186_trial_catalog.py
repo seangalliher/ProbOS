@@ -210,6 +210,17 @@ def test_a_list_or_mapping_where_one_name_belongs_is_refused_naming_the_task(
         _load_mutated(tmp_path, _with_task(**{key: value}))
 
 
+@pytest.mark.parametrize(
+    "entry_id",
+    ["trial-1\n", "Bad Id", "UPPER", "", "-lead"],
+    ids=["trailing-newline", "space-and-capitals", "upper-case", "empty", "leading-hyphen"],
+)
+def test_an_id_that_is_not_a_lower_case_slug_is_refused(entry_id: str) -> None:
+    """The whole id must be a slug: ``re.match`` would let ``$`` match before a final newline."""
+    with pytest.raises(ValueError, match="lower-case slug"):
+        trials.validate_entry(dict(_CREW_TASK, id=entry_id), source="fixture.yaml")
+
+
 def test_duplicate_task_ids_are_refused(tmp_path: Path) -> None:
     def mutate(document: dict[str, Any]) -> None:
         document["entries"] = [copy.deepcopy(_CREW_TASK), copy.deepcopy(_CREW_TASK)]
