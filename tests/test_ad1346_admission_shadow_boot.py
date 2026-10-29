@@ -1,4 +1,4 @@
-"""AD-1346 M3b (#1604) - real-boot tests: the shadow store and recorder are wired, persist across a restart, and fail open.
+"""AD-1346 M3b (#1604) - real-boot tests: the shadow store and recorder are wired, persist across a restart, and fail open on an ``Exception``.
 
 These boot a real ``ProbOSRuntime`` with the mock LLM, as ``tests/test_ad1346_admission_service_boot.py`` does
 (``SystemConfig()`` with the naming ceremony, the proactive loop and QA off, or ``lifecycle_config`` for the

@@ -3,8 +3,9 @@
 ``REPORT_QUERIES`` maps each frozen name to one SELECT. A later slice may add a name; none is
 renamed or removed, so the queries the M4 ruling runs keep the names this slice gives them (#1604).
 ``run_query`` runs one on a connection its caller opened; ``open_read_only`` opens the file with
-SQLite's ``mode=ro`` (BF-906), on which every write raises. ``p99_bucket`` reads a latency
-histogram built from ``latency_by_work_kind``. No module in ``src`` imports this one.
+SQLite's ``mode=ro`` (BF-906), on which a write to the file raises (a ``TEMP`` table can still be
+created and written on it). ``p99_bucket`` reads a latency histogram built from
+``latency_by_work_kind``. No module in ``src`` imports this one.
 """
 
 from __future__ import annotations

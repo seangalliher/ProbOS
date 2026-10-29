@@ -185,8 +185,9 @@ class AdmissionShadowStore:
 
         Raises ``RuntimeError`` when the store is already open or the file holds other
         ``schema_version`` rows, and propagates what the factory or SQLite raises. When it raises
-        after the connection opened, it closes that connection first (a close that raises is logged
-        at DEBUG), and ``is_open`` stays False.
+        after the connection opened, it closes that connection first (a close that raises an
+        ``Exception`` is logged at DEBUG; any other ``BaseException`` from the close propagates in
+        place of the start's), and ``is_open`` stays False.
         """
         if self._db is not None:
             raise RuntimeError("AD-1346 M3b: the shadow admission store is already open")

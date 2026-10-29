@@ -2917,9 +2917,10 @@ class ProbOSRuntime:
         # service so that the service is built with the recorder. The imports, the store's start and
         # the recorder's construction and start are inside the try, and each attribute is assigned
         # after its object started; a store whose start raised has closed its connection, or logged at
-        # DEBUG why the close raised. The except branch logs an Exception, and the service below is
-        # then built with no recorder, so the boot continues (D47). Its log call has no guard of its
-        # own (D36).
+        # DEBUG the Exception its close raised (a BaseException from that close propagates in place of
+        # the start's). The except branch catches an Exception only: the service below is then built
+        # with no recorder and the boot continues (D47), while any other BaseException propagates. Its
+        # log call has no guard of its own (D36).
         shadow_recorder: ShadowRecorder | None = None
         try:
             from probos.admission.recorder import ShadowRecorder

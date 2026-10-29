@@ -34,8 +34,8 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         restore="unknown",
         notes=(
             "Started in ProbOSRuntime.start before the shadow AdmissionService, inside a try: a store or "
-            "recorder that does not start is logged, the service is built without a recorder and the boot "
-            "continues. Stopped in startup/shutdown.py after the recorder's last flush, before the identity "
+            "recorder whose start raises an Exception is logged, the service is built without a recorder "
+            "and the boot continues. Stopped in startup/shutdown.py after the recorder's last flush, before the identity "
             "registry. Opened through the ConnectionFactory. Tables: schema_version, shadow_aggregates, "
             "shadow_samples and shadow_markers. start opens a file whose schema_version holds exactly "
             "one row of SCHEMA_VERSION, writes that row to a file with no row, and refuses a file with "

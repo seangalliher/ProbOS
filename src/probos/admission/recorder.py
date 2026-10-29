@@ -47,7 +47,9 @@ logger = logging.getLogger(__name__)
 FLUSH_INTERVAL_SECONDS: Final = 5.0
 #: D44: pending would-refuse samples kept between two writes that succeed (the store's ring size).
 SAMPLE_BUFFER_LIMIT: Final = SAMPLE_RING_SIZE
-#: D44: distinct pending aggregate keys kept between two writes that succeed.
+#: D44: ``offer`` adds no new pending aggregate key while this many are pending. A failed write's
+#: aggregate counts are added back with no limit, so the pending keys can exceed this after a failed
+#: write (register R10, #1604).
 PENDING_KEY_LIMIT: Final = 50_000
 #: D45: after the flusher ends, ``stop`` flushes while anything is pending, at most this many times.
 STOP_FLUSH_ATTEMPTS: Final = 2

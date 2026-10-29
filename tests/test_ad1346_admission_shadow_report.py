@@ -1,7 +1,7 @@
 """AD-1346 M3b (#1604): the frozen, read-only report queries over a written ``admission_shadow.db``.
 
 - Q1 the query names are frozen, in order, each one SELECT, and the mapping is read-only.
-- Q2 each query answers on a ``mode=ro`` connection to a written store, and a write on it raises.
+- Q2 each query answers on a ``mode=ro`` connection to a written store, and a ``DELETE`` from one of the store's tables on it raises.
 - Q3 a query name that is not an exact ``str`` the mapping holds is a ``ValueError``, before the connection is used.
 - Q4 ``p99_bucket`` is the first bucket whose running count reaches 99% of the total.
 - Q5 the module holds no write or schema statement.
