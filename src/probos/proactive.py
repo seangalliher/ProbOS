@@ -1747,12 +1747,14 @@ class ProactiveCognitiveLoop:
 
         # BF-034: Cold-start context note for agents
         # AD-567g: Orientation subsumes this note when available
+        # BF-941: no trust number (AD-640 starts bridge and chief roles above the generic
+        # prior) and no "reset" (a first install is a new crew too)
         _has_orientation = bool(getattr(agent, '_orientation_rendered', None))
         if not _has_orientation and hasattr(rt, 'is_cold_start') and rt.is_cold_start:
             context["system_note"] = (
-                "SYSTEM NOTE: This is a fresh start after a system reset. "
-                "All trust scores are at baseline (0.5). This is normal initialization, "
-                "not a demotion. Build trust through demonstrated competence. "
+                "SYSTEM NOTE: This is a fresh start: this crew has no previous session record "
+                "and no stored episodes. Trust starts at each role's initial level; this is "
+                "normal initialization, not a demotion. Build trust through demonstrated competence. "
                 "You have no prior episodic memories — do not reference or invent past experiences."
             )
 

@@ -589,6 +589,7 @@ class ProbOSRuntime:
     _checkpoint_dir: Path
     red_team_agents: list[RedTeamAgent]
     _cold_start: bool
+    _cold_start_until: float
     _start_time: float
     _recent_errors: list[str]
     _last_capability_gap: str
@@ -1237,8 +1238,10 @@ class ProbOSRuntime:
         self.identity_service: IdentityService | None = None  # AD-1346 M1a: set at Phase 2 entry in start()
         self.admission_service: AdmissionService | None = None  # AD-1346 M3a: set after identity_service in start()
 
-        # BF-034: Cold-start flag — True when booting with empty state (post-reset)
+        # BF-034: Cold-start flag — True when this boot starts a new crew (BF-941: set once at Phase 5)
         self._cold_start: bool = False
+        # BF-941: when the fresh-start window closes (time.monotonic()); see is_cold_start
+        self._cold_start_until: float = 0.0
 
         # AD-638: Boot camp coordinator
         self.boot_camp: BootCampCoordinator | None = None
@@ -2237,8 +2240,33 @@ class ProbOSRuntime:
 
     @property
     def is_cold_start(self) -> bool:
-        """True during first cycle after a clean reset (no prior state)."""
-        return self._cold_start
+        """BF-034 / BF-941: True while a new crew's fresh-start notes apply.
+
+        Opened once at Phase 5 by ``adopt_new_crew_start`` from the new-crew predicate
+        (``probos.startup.crew_start.is_new_crew_start``). Closed by the first full dream cycle
+        (``end_cold_start``, called by the dream adapter) or once
+        ``orientation.orientation_window_seconds`` have passed, whichever comes first.
+        """
+        return self._cold_start and time.monotonic() < self._cold_start_until
+
+    def adopt_new_crew_start(self, cold_start: bool) -> None:
+        """BF-941: adopt Phase 5's new-crew answer; ``start()`` calls this once.
+
+        A new crew opens the fresh-start window for ``orientation.orientation_window_seconds``
+        and takes AD-502's lifecycle state ``reset``; any other boot changes nothing.
+        """
+        self._cold_start = cold_start
+        if cold_start:
+            self._cold_start_until = time.monotonic() + self.config.orientation.orientation_window_seconds
+            self._lifecycle_state = "reset"
+
+    def end_cold_start(self, reason: str) -> bool:
+        """BF-941: clear the fresh-start flag (the first dream cycle calls this); True when it was set."""
+        if not self._cold_start:
+            return False
+        self._cold_start = False
+        logger.info("BF-941: fresh-start window ended (%s)", reason)
+        return True
 
     @property
     def llm_is_mock(self) -> bool:
@@ -3166,7 +3194,6 @@ class ProbOSRuntime:
             episodic_memory=self.episodic_memory,
             pool_scaler=self.pool_scaler,
             knowledge_store=self._knowledge_store,
-            ward_room=self.ward_room,
             registry=self.registry,
             on_gap_predictions_fn=lambda p: self.dream_adapter.on_gap_predictions(p) if self.dream_adapter else None,
             on_contradictions_fn=lambda c: self.dream_adapter.on_contradictions(c) if self.dream_adapter else None,
@@ -3183,6 +3210,7 @@ class ProbOSRuntime:
             activation_tracker=self._activation_tracker,  # AD-567d
             records_store=self._records_store,  # BF-106: available from Phase 4
             expertise_directory=self._expertise_directory,  # AD-600
+            lifecycle_state=self._lifecycle_state,  # BF-941: set at Phase 4 from the session record
         )
         self.dream_scheduler = dream_result.dream_scheduler
         self._emergent_detector = dream_result.emergent_detector
@@ -3204,9 +3232,7 @@ class ProbOSRuntime:
             llm_client=self.llm_client,  # fast tier honest-degrades if not configured
         )
 
-        self._cold_start = cold_start
-        if self._cold_start:
-            self._lifecycle_state = "reset"
+        self.adopt_new_crew_start(cold_start)  # BF-941: opens the fresh-start window for a new crew
 
         # Phase 6: Structural Services (AD-517)
         from probos.startup.structural_services import init_structural_services

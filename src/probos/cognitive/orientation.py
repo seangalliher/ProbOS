@@ -405,8 +405,9 @@ class OrientationService:
             "- Ground every claim in evidence you can trace. Use anchor language: "
             "\"In the [channel], I observed...\" not \"It appears that...\"",
             "- Use hedging for uncertain observations: \"This may indicate...\" not \"This confirms...\"",
-            "- Build relationships through the Ward Room. Your trust starts at baseline (0.5) "
-            "— earn it through demonstrated competence.",
+            # BF-941: AD-640 sets the initial trust by role, so the text names no number
+            "- Build relationships through the Ward Room. Your trust starts at your role's initial "
+            "level — earn more through demonstrated competence.",
             "- Do not reference or invent past experiences. You have none yet.",
         ]
         parts.append("\n".join(duty_lines))

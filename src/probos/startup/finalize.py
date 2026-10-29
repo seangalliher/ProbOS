@@ -18,6 +18,7 @@ from probos.startup.results import FinalizationResult
 from probos.tools.browser.lifecycle import BrowserActor, BrowserAuthorityBasis, BrowserOwnerRegistry
 from probos.utils import format_duration
 from probos.crew_utils import is_crew_agent
+from probos.startup.crew_start import announce_fresh_start, is_new_crew_start
 from probos.credential_store import crew_scope_token
 from probos.startup.activation_receipts import (
     begin_activation_receipts,
@@ -904,22 +905,14 @@ def _late_bind_boot_camp_snapshot(*, runtime: Any) -> bool:
 async def _is_new_crew_start(runtime: Any) -> bool:
     """AD-1270 (#1324): True when this boot starts a new crew, for the AD-638 boot camp.
 
-    A new crew has no previous session record (AD-502's ``_lifecycle_state`` is
+    BF-941: asks ``probos.startup.crew_start.is_new_crew_start``, the predicate BF-034's
+    Phase 5 detector also asks: no previous session record (AD-502's ``_lifecycle_state`` is
     ``first_boot``, or ``reset``) and an empty episode store; a stasis recovery is not one.
-    This is not BF-034's ``runtime.is_cold_start``: that flag reads the memory object's
-    truthiness, so it is false whenever an ``EpisodicMemory`` exists, and Phase 7 builds
-    the coordinator only when a memory object is present (#1324 register R10). Fails warm:
-    an unreadable count, or an answer whose ``get("total")`` is not ``== 0`` (``None``, a
-    list, an int, a mapping without ``total``), is not a new crew.
+    It asks again rather than reading ``runtime.is_cold_start``, a prompt-note window that
+    closes at the first dream cycle. The two answers can differ: an episode stored between
+    Phase 5 and here skips the boot camp. Fails warm.
     """
-    if runtime._lifecycle_state not in ("first_boot", "reset"):
-        return False  # AD-1270: a session record means this crew has served before
-    try:
-        stats = await runtime.episodic_memory.get_stats()
-        return stats.get("total") == 0
-    except Exception:  # AD-1270: an unreadable or malformed answer is not a new crew
-        logger.debug("AD-1270: episode count unavailable or malformed; not treated as a new crew", exc_info=True)
-        return False  # AD-1270: an unreadable count is not a new crew
+    return await is_new_crew_start(runtime._lifecycle_state, getattr(runtime, "episodic_memory", None))
 
 
 async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
@@ -6229,6 +6222,7 @@ async def finalize_startup(
         llm_client=getattr(runtime, 'llm_client', None),  # BF-069
         identity_registry=runtime.identity_registry,  # BF-103
         working_memory=getattr(runtime, "working_memory", None),  # AD-573d
+        end_cold_start_fn=runtime.end_cold_start,  # BF-941: the first dream cycle ends the fresh-start window
     )
     dream_adapter._cold_start = runtime._cold_start
 
@@ -6385,7 +6379,7 @@ async def finalize_startup(
                             f"All crew identities and memories are intact. "
                             f"Resume normal operations."
                         )
-                    elif runtime._lifecycle_state == "first_boot":
+                    elif runtime._lifecycle_state in ("first_boot", "reset"):  # BF-941: Phase 5 marks a new crew "reset"
                         title = "System Online — First Activation"
                         body = "This is the maiden voyage. All systems operational."
                     elif runtime._lifecycle_state == "restart":
@@ -6405,6 +6399,12 @@ async def finalize_startup(
                     )
         except Exception:
             logger.debug("Startup announcement failed", exc_info=True)
+
+    # BF-034 / BF-941: the "Fresh Start" thread for a new crew, after the AD-435 announcement.
+    # Moved from Phase 5 (startup/dreaming.py), where the Ward Room did not exist yet. Its gate
+    # is the BF-102 auto-welcome's below with runtime._cold_start negated.
+    if runtime.ward_room and runtime._cold_start:
+        await announce_fresh_start(runtime.ward_room)
 
     # AD-573: Restore working memory from stasis
     if (runtime._lifecycle_state == "stasis_recovery"
