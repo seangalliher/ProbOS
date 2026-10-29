@@ -21,7 +21,8 @@ a real ``CallsignRegistry`` and a real ``AgentStopService``, all under ``tmp_pat
 - T11 ``shadow`` returns None and counts each verdict and its latency bucket.
 - T12 ``shadow`` counts and logs a malformed request and a raising facade and returns None; ``decide`` propagates.
 - T13 the service's inputs: no configuration field and no dependency beyond the facade and the stop record.
-- T14 the package awaits nothing, imports only its allowlist and logs only in ``shadow``.
+- T14 the decision files await nothing and, among them, only ``shadow`` logs; every file of the package imports
+      only its allowlist (AD-1346 M3b's persistence files have allowlists of their own and may await).
 - T15 the seam census: the package calls none of the stop's guard functions and starts no agent work.
 - T16 outside the package only ``runtime.py`` and ``startup/shutdown.py`` name the service, only ``runtime.py``
       imports the package, and no router does either.
@@ -75,6 +76,14 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
     "service.py": {
         "__future__", "collections.abc", "logging", "time", "typing", "probos.admission.checks",
         "probos.admission.record", "probos.admission.taxonomy", "probos.agent_stop", "probos.identity_service",
+    },
+}
+#: AD-1346 M3b: the persistence files. T14 holds each to its imports; they may await, open the store and log.
+_PERSISTENCE_IMPORTS: dict[str, set[str]] = {
+    "storage_declarations.py": {"__future__", "probos.storage.declarations"},
+    "store.py": {
+        "__future__", "dataclasses", "datetime", "json", "logging", "pathlib", "typing", "probos.admission.record",
+        "probos.protocols", "probos.storage.sqlite_factory",
     },
 }
 _FORBIDDEN_CALLS = frozenset({
@@ -451,10 +460,24 @@ async def test_the_service_reads_no_configuration_and_holds_only_its_two_depende
 # ---------------------------------------------------------------------------
 
 
-def test_the_package_awaits_nothing_imports_only_its_allowlist_and_logs_only_in_shadow() -> None:
-    """T14: no await, lock, file or connection call; the import allowlist per file; logging and the clock only in shadow."""
+def test_the_decision_files_await_nothing_and_every_file_imports_only_its_allowlist() -> None:
+    """T14: in the decision files no await, lock, file or connection call, and logging and the clock only in shadow;
+    the import allowlist per file of the package. AD-1346 M3b renamed this test and added the persistence files'
+    allowlists when the package gained files that await and open a store."""
     assert admission_package.__all__ == ["VERDICT_KEYS", "AdmissionService", "AdmissionVerdict", "WorkRequest"]
-    assert sorted(p.name for p in _PACKAGE.glob("*.py")) == sorted(_ALLOWED_IMPORTS), "premise: the package's files"
+    assert sorted(p.name for p in _PACKAGE.glob("*.py")) == sorted(_ALLOWED_IMPORTS | _PERSISTENCE_IMPORTS), (
+        "premise: the package's files"
+    )
+    for name, allowed in _PERSISTENCE_IMPORTS.items():
+        tree = ast.parse((_PACKAGE / name).read_text(encoding="utf-8"), filename=name)
+        top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+        guarded = [
+            s for n in tree.body
+            if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "TYPE_CHECKING" for s in n.body
+        ]
+        every = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+        assert len(every) == len(top) + len(guarded), f"{name}: an import outside the module body or its TYPE_CHECKING block"
+        assert _module_names(every) == allowed, name
     for name, allowed in _ALLOWED_IMPORTS.items():
         tree = ast.parse((_PACKAGE / name).read_text(encoding="utf-8"), filename=name)
         top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]

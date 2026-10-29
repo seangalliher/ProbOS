@@ -56,6 +56,7 @@ __all__ = [
 #: therefore has no directory of its own to declare into.
 DECLARATION_MODULES: tuple[str, ...] = (
     "probos.storage_declarations",
+    "probos.admission.storage_declarations",
     "probos.cognitive.storage_declarations",
     "probos.execution.storage_declarations",
     "probos.security.storage_declarations",
