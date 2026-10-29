@@ -1132,6 +1132,8 @@ _STOPPED_COMPONENTS: tuple[tuple[str, str], ...] = (
     ("agent_stops", "agent stop record stop"),  # AD-1343: the runtime keeps the service after it closes
     ("visiting_officers", "visiting officer registry stop"),
     ("workflow_cron", "workflow cron stop"),
+    ("admission_shadow_recorder", "admission shadow recorder stop"),  # AD-1346 M3b: its last flush, before its store
+    ("admission_shadow_store", "admission shadow store stop"),  # AD-1346 M3b
     ("identity_registry", "identity registry stop"),
     ("sif", "SIF stop"),
     ("initiative", "initiative engine stop"),
@@ -2452,6 +2454,7 @@ _BREAKABLE_BEFORE_CLEANUP = (
     ("identity_registry", "identity.db", "AgentIdentityRegistry", "identity registry stop"),
     ("_counselor_profile_store", "counselor.db", "CounselorProfileStore", "counselor profile store stop"),
     ("ward_room", "ward_room.db", "WardRoomService", "ward room stop"),
+    ("admission_shadow_store", "admission_shadow.db", "AdmissionShadowStore", "admission shadow store stop"),  # AD-1346 M3b
 )
 
 
@@ -2474,7 +2477,7 @@ async def test_a_real_boot_whose_stop_raises_before_it_cleans_up_still_has_its_c
     Residual, stated: a component whose stop() fails is not retried, and a component that also holds its
     connection deeper than one attribute level (or holds a resource that is not an aiosqlite connection)
     can still keep the process alive; the rollback names it in a warning (pinned by the residual case
-    above). The four components here hold their connection directly, as ``_db``."""
+    above). The five components here hold their connection directly, as ``_db``."""
     broken: list[BrokenStop] = []
 
     with caplog.at_level(logging.WARNING, logger=_SHUTDOWN_LOGGER):

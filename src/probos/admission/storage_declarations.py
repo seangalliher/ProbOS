@@ -19,7 +19,7 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         owner_symbol="AdmissionShadowStore",
         canonical_path="admission_shadow.db",
         criticality=StoreCriticality.OPTIONAL,
-        lifecycle_owner="unowned",
+        lifecycle_owner="probos.runtime.ProbOSRuntime.start",
         retention=StoreRetention.BOUNDED,
         retention_note=(
             "Bounded by the constants of probos.admission.store: prune keeps AGGREGATE_RETENTION_DAYS UTC "
@@ -30,10 +30,15 @@ STORE_DECLARATIONS: tuple[StoreDeclaration, ...] = (
         backup="included",
         restore="unknown",
         notes=(
-            "Opened through the ConnectionFactory. Tables: schema_version, shadow_aggregates, "
+            "Started in ProbOSRuntime.start before the shadow AdmissionService, inside a try: a store or "
+            "recorder that does not start is logged, the service is built without a recorder and the boot "
+            "continues. Stopped in startup/shutdown.py after the recorder's last flush, before the identity "
+            "registry. Opened through the ConnectionFactory. Tables: schema_version, shadow_aggregates, "
             "shadow_samples and shadow_markers. start opens a file whose schema_version holds exactly "
             "one row of SCHEMA_VERSION, writes that row to a file with no row, and refuses a file with "
-            "any other rows without writing to it; there is no migration."
+            "any other rows without writing to it; there is no migration. Written by "
+            "probos.admission.recorder.ShadowRecorder and read by probos.admission.report. No probos reset "
+            "tier deletes it."
         ),
     ),
 )

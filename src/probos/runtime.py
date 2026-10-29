@@ -163,6 +163,8 @@ if TYPE_CHECKING:
     )
     from probos.acm import AgentCapitalService
     from probos.admission import AdmissionService  # AD-1346 M3a
+    from probos.admission.recorder import ShadowRecorder  # AD-1346 M3b
+    from probos.admission.store import AdmissionShadowStore  # AD-1346 M3b
     from probos.agent_stop import AgentStopService  # AD-1343
     from probos.agent_work import AgentWorkService  # AD-1347 S1
     from probos.agent_work_runner import AgentWorkRunner  # AD-1347 S3
@@ -545,6 +547,8 @@ class ProbOSRuntime:
     identity_key_binding: IdentityKeyBinding | None  # AD-1196
     identity_service: IdentityService | None  # AD-1346 M1a: built at Phase 2 entry, released with the identity registry
     admission_service: AdmissionService | None  # AD-1346 M3a: set in start() after identity_service; set to None in shutdown
+    admission_shadow_store: AdmissionShadowStore | None  # AD-1346 M3b: opened in start() before admission_service; stopped in shutdown
+    admission_shadow_recorder: ShadowRecorder | None  # AD-1346 M3b: started in start() after its store; stopped in shutdown before it
     pool_scaler: PoolScaler | None
     federation_bridge: FederationBridge | None
     federation_telemetry_relay: "FederationTelemetryRelay | None"
@@ -1237,6 +1241,8 @@ class ProbOSRuntime:
         self.identity_key_binding: IdentityKeyBinding | None = None  # AD-1196
         self.identity_service: IdentityService | None = None  # AD-1346 M1a: set at Phase 2 entry in start()
         self.admission_service: AdmissionService | None = None  # AD-1346 M3a: set after identity_service in start()
+        self.admission_shadow_store: AdmissionShadowStore | None = None  # AD-1346 M3b: set in start() once it opened
+        self.admission_shadow_recorder: ShadowRecorder | None = None  # AD-1346 M3b: set in start() once it started
 
         # BF-034: Cold-start flag — True when this boot starts a new crew (BF-941: set once at Phase 5)
         self._cold_start: bool = False
@@ -2907,15 +2913,40 @@ class ProbOSRuntime:
 
         self.identity_service = IdentityService(infra.identity_registry, self.callsign_registry)
 
+        # AD-1346 M3b: the shadow admission store and its write-behind recorder, started before the
+        # service so that the service is built with the recorder. The imports, the store's start and
+        # the recorder's construction and start are inside the try, and each attribute is assigned
+        # after its object started; a store whose start raised has closed its connection, or logged at
+        # DEBUG why the close raised. The except branch logs an Exception, and the service below is
+        # then built with no recorder, so the boot continues (D47). Its log call has no guard of its
+        # own (D36).
+        shadow_recorder: ShadowRecorder | None = None
+        try:
+            from probos.admission.recorder import ShadowRecorder
+            from probos.admission.store import AdmissionShadowStore
+
+            shadow_store = AdmissionShadowStore(data_dir=self._data_dir)
+            await shadow_store.start()
+            self.admission_shadow_store = shadow_store
+            recorder = ShadowRecorder(shadow_store)
+            recorder.start()
+            self.admission_shadow_recorder = recorder
+            shadow_recorder = recorder
+        except Exception:  # AD-1346 M3b (D47)
+            logger.warning(
+                "AD-1346 M3b: the shadow admission store or its recorder did not start; the service is built without a recorder",
+                exc_info=True,
+            )
+
         # AD-1346 M3a: the shadow admission decision, over the facade above and the stop record
         # Phase 1a started. Nothing calls it yet (AD-1346 M3c adds the seams). The import and the
         # constructor are inside the try; the except branch logs an Exception and assigns nothing, so
         # the attribute keeps its __init__ None (#1604, property 11; D31, D34). Its log call has no
-        # guard of its own (D36).
+        # guard of its own (D36). AD-1346 M3b passes the recorder above, or None.
         try:
             from probos.admission import AdmissionService
 
-            self.admission_service = AdmissionService(self.identity_service, self.agent_stops)
+            self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder)
         except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
             logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
 

@@ -86,6 +86,10 @@ _PERSISTENCE_IMPORTS: dict[str, set[str]] = {
         "__future__", "asyncio", "collections.abc", "logging", "time", "typing", "uuid", "probos.admission.record",
         "probos.admission.store", "probos.admission.taxonomy",
     },
+    "report.py": {
+        "__future__", "collections.abc", "pathlib", "types", "typing", "probos.protocols",
+        "probos.storage.sqlite_factory",
+    },
     "storage_declarations.py": {"__future__", "probos.storage.declarations"},
     "store.py": {
         "__future__", "dataclasses", "datetime", "json", "logging", "pathlib", "typing", "probos.admission.record",
