@@ -78,19 +78,18 @@
   - `AdmissionService.hold` issues the unit's ticket and sets `probos.admission.carrier.CURRENT_TICKET` to it.
   - It returns a frozen `TicketHold`.
   - The entry's work then runs in a `try` whose `finally` is `<hold>.end()` alone.
-  - `end` puts back what the carrier held and releases the ticket.
 - **Roots and children.** A delegated run under a carried ticket asks for a child of it; every other hold asks for a root (D111). A refused issue leaves the unit no ticket (D114).
-- **No blocking.** A refusal or a raise changes nothing at the site, and nothing checks a ticket yet (M3d3).
+- **No blocking.** Nothing checks a ticket yet (M3d3), and a refused issue changes nothing at the site.
 
 ## 3. Decisions (numbered after M3d1's D90 to D106)
 
 - **D107 One slice.** It holds the service side, the wiring, the three entries and the tests.
-  - Reason: the sites are the only consumers of `hold`, and the golden test needs them. 28 pairs (M1 15, M2 11, M4 2) and two new files are in the range of M3c2 (24 pairs) and M3c3 (35).
+  - Reason: the golden test needs the sites. 28 pairs (M1 15, M2 11, M4 2) and two new files are in the range of M3c2 (24 pairs) and M3c3 (35).
   - Rejected: a package-and-wiring slice before a sites slice (it ships a method nobody calls again, and the golden test lands a slice late); one slice per entry (three reviews of one rule).
 - **D108 The registry is a constructor argument of `AdmissionService`, and only that.**
   - `runtime.py` builds it after the stop record (Phase 1a) in the service's existing `try`, with `max_depth=self.config.agentic_tools.delegation_max_depth`. That is the field `DelegateTaskTool` is built with in `agentic_dispatch.py` (`config_models/agentic.py:1025`, default 1, bounds 0 to 3).
   - A constructor that raises leaves the service unbuilt, as M3a's does.
-  - The service checks `isinstance(tickets, TicketRegistry)` as it checks its recorder. Every wiring test asserts `is None` / `is not None`, never truthiness: an empty registry is falsy (`tickets.py:208-210`).
+  - The service checks `isinstance(tickets, TicketRegistry)` as it checks its recorder. Every wiring test asserts `is None` / `is not None`, never truthiness: an empty registry is falsy (`TicketRegistry.__len__`).
   - Rejected: a runtime attribute read through `getattr` (a second path to the registry, a new `ProbOSRuntime` attribute, and a `getattr` at each issue site); both.
 - **D109 The issue statement.** One statement per entry.
   - `_<entry>_hold = hold_at(<the expression the entry's shadow statement passes as its service>, presented_id=<the id its stop check asked about>, work_kind=<its shadow statement's work kind>, seam=<its seam constant>, child=<D111>)`.
@@ -102,11 +101,11 @@
   - `CURRENT_TICKET: ContextVar[WorkTicket | None]`, named `"probos_admission_ticket"`, default None, created at module level as the Python 3.12 `contextvars` documentation asks ("Context Variables should be created at the top module level and never in closures").
   - In `src`, `AdmissionService.hold` is the only call that sets it (and reads it), and `TicketHold.end` the only call that resets it (I11).
   - `TicketHold(registry, ticket, token)` is frozen with slots. `NO_HOLD = TicketHold()`.
-  - `end` resets with the token `set` returned, then calls `registry.release(ticket)`. It passes over the `RuntimeError` and `ValueError` that PEP 567 says `reset` raises "if the token object has already been used once to reset the variable" (a RuntimeError) and "if the current Context object does not match the one where the token object was created" (a ValueError). It also passes over an `Exception` from the release. A `BaseException` that is not an `Exception` propagates.
+  - `end` resets with the token `set` returned, then, when the hold has a ticket, calls `registry.release(ticket)`. It passes over the `RuntimeError` and `ValueError` that PEP 567 says `reset` raises "if the token object has already been used once to reset the variable" (a RuntimeError) and "if the current Context object does not match the one where the token object was created" (a ValueError). It also passes over an `Exception` from the release. A `BaseException` that is not an `Exception` propagates.
   - The carrier is an observation device; AD-1346 M4 decides on explicit threading (M3d1's D101).
   - Rejected: a context manager or decorator at each entry (the decorator is an async function, which T14 forbids in the decision files, and it is harder to pin by census); a mutable hold (`NO_HOLD` is shared).
 - **D111 Roots and children** (refines D102; settles register R36).
-  - `hold` issues a child of the carried ticket only when `child is True` and the carrier holds a ticket; otherwise it issues a root.
+  - `hold` asks for a child of the carried ticket only when `child is True` and the carrier holds a ticket; otherwise for a root.
   - The intent and consultation entries pass `child=False`.
   - The run entry passes `child=type(extra_context) is dict and "_delegation_depth" in extra_context`. `DelegateTaskTool` sets that key on the run it awaits inline (`delegate_task_tool.py:468`, `:494`). So a delegated run's ticket sits one level below the ticket of the unit that delegated it, when that unit holds one, and the ticket's depth follows the delegation depth that `DelegateTaskTool` bounds (`:323`).
   - Crew subtasks, agent-created work and any other run take roots and never count toward `max_depth` (R36: neither "children counted" nor "a parent link with no depth").
@@ -119,20 +118,20 @@
   - At the three entries the presented id is the id their stop check asked about: `self.id` at the two `CognitiveAgent` entries and `agent_id` at the run entry.
   - This settles registers R23 and R28 for these three entries only.
   - Rejected: the raw presented id (a DID would never meet `stop_for`); the DID.
-- **D113 Scope and budget.** Every ticket `hold` issues has `TicketScope(frozenset(TICKET_EFFECTS))` (both effect points) and `TicketBudget()` (no ceilings). A child's subset check therefore always passes on scope and budget; only depth and liveness can refuse it.
+- **D113 Scope and budget.** On every issue `hold` asks the registry for `TicketScope(frozenset(TICKET_EFFECTS))` (both effect points) and `TicketBudget()` (no ceilings).
   - Rejected: the run's own `max_iterations` / `token_budget` (parameters of `run`). A delegated run's iteration limit comes from `DelegateTaskTool`'s own `max_iterations` or its tree grant (`delegate_task_tool.py:486-493`), independent of the parent's ceilings, so the subset rule would refuse children that today's tree budget admits.
   - M5 owns accounts.
 - **D114 A refusal and a raise.**
-  - A refused issue (`ticket_too_deep`, `ticket_registry_full`, or a carried parent that is `ticket_expired`, `ticket_revoked` or `ticket_unknown`) returns a `TicketIssue` with no ticket. The registry has already counted its finding in `tally` under `("issue", <code>)`.
+  - A refused issue returns a `TicketIssue` with no ticket. The registry has already counted its finding in `tally` under `("issue", <code>)`.
   - `hold` then sets the carrier to None for that unit, so the unit holds no ticket until its `end`, and returns a hold whose `ticket` is None.
-  - An `Exception` raised in `hold`'s `try` is counted in `failures` and logged at WARNING for the service's first failure, DEBUG after. The log call has its own guard (F-212, M3c's D59). The carrier is left as it was and `hold` returns `NO_HOLD`.
-  - The site's behaviour is unchanged in every case.
+  - An `Exception` raised in `hold`'s `try` is counted in `failures` and logged at WARNING for the service's first failure, DEBUG after. The log call has its own guard (F-212, M3c's D59). `hold` returns `NO_HOLD`; a raise after the carrier's `set` leaves the new ticket in the carrier, live (register R45).
+  - The run entry evaluates its `child` argument before `hold_at` is entered, so an exception from it reaches the run's caller (register R44).
   - The tally is in memory only (register R39).
 - **D115 The unit's end** (settles register R35).
   - Each entry's `finally` runs its hold's `end()` when the work returns, raises an `Exception`, is cancelled (`CancelledError`) or raises another `BaseException`. `end` raises no `Exception` of its own, so the work's own outcome propagates.
-  - On every path the carrier is put back to what it held before the hold, when `end` runs in the context that set it (any coroutine awaited in a task runs in that task's context: PEP 567, "Every advance of the wrapped coroutine is done in the task's context"), and the ticket is released.
+  - When `end` runs in the context that set it (any coroutine awaited in a task runs in that task's context: PEP 567, "Every advance of the wrapped coroutine is done in the task's context"), it puts the carrier back to what it held before the hold.
   - The children this slice issues are delegated runs, and `DelegateTaskTool` awaits each inline (`delegate_task_tool.py:494`). So the delegated run's hold ends before the tool call returns to the delegating unit, whose hold ends later. Releasing only after the children end therefore holds by construction for those children.
-  - A descendant whose task outlives its parent keeps its own expiry. The dropped-parent case of R35 is accepted and recorded (register R35, R43).
+  - A descendant whose task outlives its parent keeps its own expiry. The dropped-parent case of R35 is accepted and recorded (register R35).
 - **D116 The entries' shape.**
   - `handle_intent` keeps its import and stop block (body indexes 0 to 3) and gains the hold and a `try` that returns `await self._handle_admitted_intent(intent)`.
   - `handle_consultation_request` keeps indexes 0 to 4 and returns `await self._answer_consultation(request)`.
@@ -149,7 +148,7 @@
   - 9a to 9c, `SHADOW_SITES` and T16 are unchanged: no `shadow_at` call changes, and no `src` file outside the package starts naming the service or importing the package (§12). T16 scans `src/probos` only; the slice's new test file imports the package.
 - **D118 The golden test** (#1604 property 12 at the issue points). I9 boots twice, `admission.shadow_enabled` true and then false, with M3c1's settings. It drives:
   - an admitted intent (an unhandled probe, self-deselected);
-  - an admitted consultation (its real body, `MockLLMClient`);
+  - an admitted consultation (its real body);
   - an admitted run;
   - a delegated run under a carried ticket the registry never issued.
   Both runs answer with the owned-steps binding error raised inside the run's `try`. I9 compares the JSON of the answers and the carrier's state, byte for byte, once the agent's id is replaced.
@@ -162,12 +161,12 @@
   - `runtime.py`'s new lines build an in-memory object.
   - No older build reads anything this slice writes.
 - **D120 Cost and capacity.**
-  - **Cost.** Each admitted entry adds one `hold`: one `IdentityService.resolve`, one `TicketRegistry.issue` or `issue_child` (a purge step, a 16-byte `secrets.token_hex`, dict and deque inserts, two records), one `ContextVar.set`. `end` adds one `reset` and one `release`.
+  - **Cost.**
     - Measured before the build by the orchestrator (2026-10-30; setup in the next bullet): one `hold` plus its `end` costs 8.42 µs per pair, median (worst round 8.53 µs; 7.96 µs for a presented id that does not resolve), and `hold_at(None, ...)` 0.06 µs. `shadow_at` with no recorder, run beside it on the same machine, cost 4.08 µs; M3c1's D64 measured it at a 3.82 to 5.18 µs median.
     - The setup is D64's, on the oracle's M1 stage, CPython 3.12.13, an idle machine: an `IdentityService` over a started identity registry, an `AgentStopService` and a fresh `TicketRegistry` per round; 5 rounds of 20,000 `hold` and `end` pairs after a warm-up, a slot-id key, `child=False`; the registry holds 20,000 entries after each round. A fresh registry per round matters: a released entry stays 600 seconds and the bound is 50,000. The drafting session predicted about one `shadow_at` call; the measurement is about twice that.
     - At the sites: one `hold` and one `end` for each unit an entry admits past its own stop check, beside that entry's `shadow_at` call (a run on an admitted turn takes `NO_HOLD` and calls neither `hold` nor `hold_at`, D116). The intent entry runs for every agent a broadcast reaches, so each agent that passes its stop check adds one pair. With the switch off, each hold statement calls `hold_at(None, ...)` and its `finally` calls `NO_HOLD.end()`; only the first is measured.
     - This slice records nothing new about cost; #1604 property 7's measurement is M3d3's.
-  - **Capacity.** Every intent that passes a `CognitiveAgent`'s stop check takes a ticket, including one the agent then self-deselects. Each entry stays at least `TICKET_RETAIN_SECONDS` after its end, and longer behind an older live ticket (M3d1's D97). The rate on the live vessel is not measured here.
+  - **Capacity.** Every intent that passes a `CognitiveAgent`'s stop check asks the registry for a ticket, including one the agent then self-deselects. Each entry stays at least `TICKET_RETAIN_SECONDS` after its end, and longer behind an older live ticket (M3d1's D97). The rate on the live vessel is not measured here.
     - A full registry refuses with `ticket_registry_full`, and the unit runs with no ticket and is otherwise unchanged (register R40).
 - **D121 The clock-reset rule** (extends M3d1's D106).
   - This slice changes neither `decide()` nor its checks, so nothing restarts. All of M3d precedes the M3e deploy that starts the shadow period.
@@ -192,10 +191,10 @@
 
 - **`AdmissionService.__init__`'s new keyword `tickets` (default None).**
   - Read by `hold`.
-  - Every existing construction passes no `tickets`, so it is unchanged, the `gate` fixture's in `tests/test_ad1346_admission_service.py` among them. The T19 double takes `*args, **kwargs` (`tests/test_ad1346_admission_service_boot.py:130-134`).
+  - The T19 double takes `*args, **kwargs` (`tests/test_ad1346_admission_service_boot.py:130-134`).
   - `runtime.py` passes it.
-- **`AdmissionService.hold` and `seam.hold_at`.** Called at the three entries (I10).
-- **`CURRENT_TICKET`.** Read and set by `hold`, reset by `TicketHold.end` (I11). M3d3's sinks will read it.
+- **`AdmissionService.hold` and `seam.hold_at`.** In `src`, the three entries call `hold_at` (I10), and `hold_at` calls `hold`.
+- **`CURRENT_TICKET`.** In `src`, read and set by `hold`, reset by `TicketHold.end` (I11). M3d3's sinks will read it.
 - **`NO_HOLD`.** Returned by `hold` and `hold_at`; assigned by the run entry's `else`.
 - **`_handle_admitted_intent`, `_answer_consultation`.** Private coroutines, called only by their entries. `test_cognitive_agent_entry_points_are_classified` classifies public coroutines only (`tests/test_ad1343_stop_seam_inventory.py:93`).
 - **`RECORDED` in the census fixture.** Read only by its `Visitor` (`tests/fixtures/ad1343_seam_census.py`; Absence). Each census consumer filters by callee, and `hold_at` matches none of their filters but I10's.
@@ -275,7 +274,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: AD-1346 M3d2 (D113): every ticket ``hold`` issues may reach both effect points and has no ceiling (M5 owns accounts).
+#: AD-1346 M3d2 (D113): the scope and budget ``hold`` asks for: both effect points, no ceiling (M5 owns accounts).
 _WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
 _NO_CEILINGS: Final = TicketBudget()
 ```
@@ -340,10 +339,10 @@ REPLACE:
 
         ``probos.admission.seam.hold_at`` calls it. With no registry, or after ``close``, it returns ``NO_HOLD`` and
         issues nothing. Otherwise the ticket's principal is the key ``decide`` gives the presented id (the slot when it
-        resolves, D112), its scope both effect points and its budget no ceiling (D113). It is a child of the carried
+        resolves, D112); ``hold`` asks for both effect points and no ceiling (D113). The ticket is a child of the carried
         ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
-        ticket, or None when the registry refused the issue and counted its finding (D114), until the hold's ``end``.
-        An ``Exception`` raised here is counted in ``failures`` and logged, and the carrier is left as it was; a
+        ticket, or None when the registry refused the issue and counted its finding (D114).
+        An ``Exception`` raised here is counted in ``failures`` and logged; a
         ``BaseException`` that is not an ``Exception`` propagates.
         """
         if self._closed or self._tickets is None:
@@ -361,12 +360,12 @@ REPLACE:
                 )
             token = CURRENT_TICKET.set(issued.ticket)
             return TicketHold(self._tickets, issued.ticket, token)
-        except Exception:  # D114: counted and logged; the carrier is left as it was
+        except Exception:  # D114: counted and logged
             self._failures += 1
             try:
                 logger.log(
                     logging.WARNING if self._failures == 1 else logging.DEBUG,
-                    "AD-1346 M3d2: a work ticket's issue raised (%d failures so far); hold() returned NO_HOLD and the carrier is unchanged",
+                    "AD-1346 M3d2: a work ticket's issue raised (%d failures so far); hold() returned NO_HOLD",
                     self._failures,
                     exc_info=True,
                 )
@@ -462,7 +461,7 @@ def hold_at(service: object, *, presented_id: str, work_kind: str, seam: str, ch
 ```python
 """AD-1346 M3d2 (#1604): the work-ticket carrier, an observation device in shadow (D101, D110).
 
-``CURRENT_TICKET`` holds the ticket of the unit of work running in the current context, or None. In ``src``,
+``CURRENT_TICKET`` holds a work ticket or None. In ``src``,
 ``AdmissionService.hold`` is the one call that sets it and ``TicketHold.end`` the one that resets it
 (``tests/test_ad1346_admission_ticket_issue.py``, I11). Each entry that takes a hold ends it in the ``finally`` of the
 ``try`` that holds the entry's work (I10), so ``end`` runs when that work returns, raises or is cancelled.
@@ -482,15 +481,14 @@ from typing import TYPE_CHECKING, Final
 if TYPE_CHECKING:
     from probos.admission.tickets import TicketRegistry, WorkTicket
 
-#: The ticket of the unit of work running in this context; None outside any held unit. Created at module level, as the
-#: ``contextvars`` documentation asks.
+#: Created at module level, as the ``contextvars`` documentation asks.
 CURRENT_TICKET: Final[ContextVar[WorkTicket | None]] = ContextVar("probos_admission_ticket", default=None)
 
 
 @dataclass(frozen=True, slots=True)
 class TicketHold:
     """One admitted unit's place in the carrier: the registry, the ticket it issued (None when it refused), and the
-    token of the carrier's ``set``. ``NO_HOLD``, with none of them, is what an entry gets when nothing was issued."""
+    token of the carrier's ``set``."""
 
     registry: TicketRegistry | None = None
     ticket: WorkTicket | None = None
@@ -515,7 +513,7 @@ class TicketHold:
                 pass
 
 
-#: The hold of a unit for which nothing was issued: its ``end`` does nothing.
+#: A hold with no registry, ticket or token: its ``end`` does nothing.
 NO_HOLD: Final = TicketHold()
 ```
 
@@ -971,7 +969,7 @@ clock the test moves, and pin the registry's half of #1604 property 9 and the in
 ```
 REPLACE:
 ```
-``probos.admission.tickets`` is the ticket library of epic #1601's design note; outside the package only
+``probos.admission.tickets`` is the ticket library of epic #1601's design note; outside the package
 ``probos/runtime.py`` names it, to build the registry (K15, from AD-1346 M3d2). These tests drive ``TicketRegistry`` over
 a real ``AgentStopService`` under ``tmp_path`` with a clock the test moves, and pin the registry's half of #1604
 property 9 and the in-process half of property 5:
@@ -986,7 +984,7 @@ SEARCH:
 ```
 REPLACE:
 ```
-- K15 outside the package only ``probos/runtime.py`` names the registry, the ticket or the module (AD-1346 M3d2), and
+- K15 outside the package ``probos/runtime.py`` names the registry, the ticket or the module (AD-1346 M3d2), and
       the registry's class stays within the SRP trigger's method count.
 ```
 
@@ -1031,8 +1029,8 @@ REPLACE:
 """AD-1346 M3d2 (#1604): the work ticket each admitted entry holds, its carrier, and the switch's golden test.
 
 ``AdmissionService.hold``, reached through ``probos.admission.seam.hold_at``, issues the ticket of one unit of work an
-entry's own stop check admitted and puts it in ``probos.admission.carrier.CURRENT_TICKET`` until the returned hold's
-``end``. These tests drive it over a real ``IdentityService`` and a real ``AgentStopService`` under ``tmp_path`` and a
+entry's own stop check admitted and puts it in ``probos.admission.carrier.CURRENT_TICKET``. These tests drive it over
+a real ``IdentityService`` and a real ``AgentStopService`` under ``tmp_path`` and a
 ``TicketRegistry`` on a clock the test moves, and the three entries on real boots:
 
 - I1  the service takes a ``TicketRegistry`` or None; without one, or once closed, ``hold`` returns ``NO_HOLD``; an
@@ -1653,7 +1651,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1346 (2026-10-30), #1604 M3d2 -- work tickets held at the intent, consultation and run entries, in shadow.** The runtime builds a `TicketRegistry` over the Captain's stop record, at the delegation depth the configuration sets, and hands it to `AdmissionService`. Past their own stop check, `CognitiveAgent.handle_intent`, `CognitiveAgent.handle_consultation_request` and `WorkItemAgenticExecutor.run` (when the run is not the agent's own admitted turn) each take a hold through `probos.admission.seam.hold_at`: the service issues the unit's ticket, keyed on the principal key the shadow decision uses, and puts it in a context variable, `probos.admission.carrier.CURRENT_TICKET`, until the entry's `finally` ends the hold, which puts back what the carrier held and ends the ticket. A delegated run under a carried ticket asks the registry for a child of it, one level below the ticket of the unit that delegated it; every other hold, crew subtasks included, asks for a root. An issue the registry refuses leaves that unit with no ticket and is counted in the registry's tally; an issue that raises is counted in the service's failures and logged. Nothing blocks, charges or is persisted, and with `admission.shadow_enabled` false no registry is built and nothing is issued; a golden test drives the three entries' admitted paths with the switch on and off and compares their answers byte for byte. Nothing checks a ticket yet: the sink checks are M3d3. The contract is `prompts/ad-1346-m3d2-ticket-issue-points.md`.
+**AD-1346 (2026-10-30), #1604 M3d2 -- work tickets held at the intent, consultation and run entries, in shadow.** The runtime builds a `TicketRegistry` over the Captain's stop record, at the delegation depth the configuration sets, and hands it to `AdmissionService`. Past their own stop check, `CognitiveAgent.handle_intent`, `CognitiveAgent.handle_consultation_request` and `WorkItemAgenticExecutor.run` (when the run is not the agent's own admitted turn) each take a hold through `probos.admission.seam.hold_at`: the service issues the unit's ticket, keyed on the principal key the shadow decision uses, and puts it in a context variable, `probos.admission.carrier.CURRENT_TICKET`, until the entry's `finally` ends the hold. A delegated run under a carried ticket asks the registry for a child of it, one level below the ticket of the unit that delegated it; every other hold, crew subtasks included, asks for a root. An issue the registry refuses leaves that unit with no ticket and is counted in the registry's tally; an issue that raises is counted in the service's failures and logged. Nothing blocks, charges or is persisted, and with `admission.shadow_enabled` false no registry is built and nothing is issued; a golden test drives the three entries' admitted paths with the switch on and off and compares their answers byte for byte. Nothing checks a ticket yet: the sink checks are M3d3. The contract is `prompts/ad-1346-m3d2-ticket-issue-points.md`.
 
 **AD-1346 (2026-10-30), #1604 M3d1 -- 
 ```
@@ -1671,13 +1669,13 @@ REPLACE:
 AD-1346 M3d2 issues the work ticket of epic #1601's design note at three entries and carries it in a context variable, the second of three M3d slices. It advances #1604 property 12 (the golden test at the issue points) and puts M3d1's registry on the admitted paths; nothing checks a ticket yet. The contract is `prompts/ad-1346-m3d2-ticket-issue-points.md`.
 
 - *D108 (where the registry is held).* The runtime builds the `TicketRegistry` in the same `try` as `AdmissionService`, over the same stop record, with `max_depth` from `agentic_tools.delegation_max_depth`, and passes it to the service's constructor. Rejected: a runtime attribute, a second way to reach the registry that each issue site would read with `getattr`.
-- *D109, D116 (the issue statement).* `AdmissionService.hold`, through `probos.admission.seam.hold_at`, is one statement after each entry's shadow statement; the entry's work then runs in a `try` whose `finally` is that hold's `end()` alone. `handle_intent` and `handle_consultation_request` keep their stop check and move the rest of their bodies, unchanged, to `_handle_admitted_intent` and `_answer_consultation`; the run entry's remaining body is indented into the `try`. Rejected: issuing inside `shadow`, which returns None by design and whose keywords test 9b pins at sixteen sites.
+- *D109, D116 (the issue statement).* `AdmissionService.hold`, through `probos.admission.seam.hold_at`, is one statement after each entry's shadow statement; the entry's work then runs in a `try` whose `finally` is that hold's `end()` alone. `handle_intent` and `handle_consultation_request` keep their stop check and move the rest of their bodies to `_handle_admitted_intent` and `_answer_consultation`; the run entry's remaining body is indented into the `try`. Rejected: issuing inside `shadow`, which returns None by design and whose keywords test 9b pins at sixteen sites.
 - *D110 (the carrier).* `probos.admission.carrier.CURRENT_TICKET`, a module `ContextVar` with the default None; in `src` only `hold` sets it and only `TicketHold.end` resets it, with the token `set` returned. `end` passes over a token already used or one set in another context (PEP 567) and an `Exception` from the release.
 - *D111 (roots and children).* A delegated run (its context carries `_delegation_depth`) under a carried ticket asks for a child of it; every other hold asks for a root, crew subtasks included, so a crew subtask never counts toward the depth. Rejected: a child wherever a ticket is carried (a crew session's owner task copies the context of whatever scheduled it and outlives it).
-- *D112, D113 (principal, scope, budget).* The principal is the key `decide` gives the presented id; the scope is both effect points and the budget has no ceiling (AD-1346 M5 owns accounts).
+- *D112, D113 (principal, scope, budget).* The principal is the key `decide` gives the presented id; `hold` asks for both effect points and no budget ceiling (AD-1346 M5 owns accounts).
 - *D114, D115 (refusals and the end).* A refused issue leaves the unit with no ticket in the carrier and is counted in the registry's tally; an issue that raises is counted in the service's `failures` and logged. Each hold ends in its entry's `finally` on the return, exception and cancellation paths; `DelegateTaskTool` awaits the delegated run inline, so the run's hold ends before the tool call returns.
 - *Tests.* One new file (`tests/test_ad1346_admission_ticket_issue.py`, I1 to I11, with the golden test of property 12); T13, T14 and K15 updated; the seam census records `hold_at`.
-- *Residual, accepted.* Register R37 to R43 of the contract.
+- *Residual, accepted.* Register R37 to R45 of the contract.
 - *Reversal.* Revert the M3d2 commits; nothing is persisted.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -1863,14 +1861,14 @@ HOLDS: for that file; the base classes it inherits were not searched (§17)
   - `service.py` also gains `probos.admission.tickets`.
   - The logging rule admits `hold`.
   - `__all__` is unchanged.
-- **9a to 9c, `SHADOW_SITES`, T15, T16:** unchanged. No `shadow_at` call changes. The slice adds no `src` file outside the package, and the three it edits there (`runtime.py`, `cognitive_agent.py`, `agentic_dispatch.py`) are already in both of T16's sets: the files that name `admission_service` and the files that import the package. T16 scans `src/probos` only; the slice's new test file imports the package. T15 sees no guard callee or agent-work call in `hold` (it calls `resolve_principal`, `get`, `issue`, `issue_child`, `set`).
+- **9a to 9c, `SHADOW_SITES`, T15, T16:** unchanged. No `shadow_at` call changes. The slice adds no `src` file outside the package, and the three it edits there (`runtime.py`, `cognitive_agent.py`, `agentic_dispatch.py`) are already in both of T16's sets: the files that name `admission_service` and the files that import the package. T16 scans `src/probos` only; the slice's new test file imports the package. T15 sees no guard callee or agent-work call in `hold`.
 - **The stop census's index tests:** unchanged (§1, D116).
 - **Every sentence and test that quotes a set this slice changes:**
   - T13 (M1-12, M1-13), T14 (M1-11, M1-14, M1-15), the service test module docstring (M1-10).
   - K15 and the ticket test module docstring (M2-08 to M2-11).
   - `tickets.py`'s two docstrings (M1-08, M1-09).
   - `seam.py`'s and `service.py`'s module docstrings (M1-01, M1-06).
-  - Still true and unchanged: `AdmissionConfig`'s docstring (`config.py:3575-3578`) and the runtime comment at `runtime.py:2916-2918`. They say what the switch builds and keeps None, and neither gives its list as the set.
+  - Still true and unchanged: `AdmissionConfig`'s docstring (`config.py:3575-3578`) and the AD-1346 M3c (D62) comment in `runtime.py` above the switch's branch. They say what the switch builds and keeps None, and neither gives its list as the set.
   - M3d1's dated `PROGRESS.md` and `DECISIONS.md` entries ("nothing calls it yet") are records of their date and stay as written.
 - **`gen_ad_ledger.py --check`:** passes after M4 regenerates both files (prediction). Neither new head carries a status keyword in its first 120 characters.
 - **`check_dormant_classes.py`:** report-only, and its test warns and never fails (`tests/test_ad1270_dormant_classes.py:191`).
@@ -1900,31 +1898,33 @@ HOLDS: for that file; the base classes it inherits were not searched (§17)
 5. `end` passes over its failures without a count [R41].
 6. A requester's stop does not reach its crew subtasks [R42].
 7. An override of `handle_intent` that skips the base [R43].
+8. A run entry's `child` expression that raises before `hold_at` is entered [R44].
+9. A raise after the carrier's `set` in `hold` [R45].
 
 ## 14. Diff Reviewer: properties to verify
 
-1. **No behaviour change at any site.**
-   - Each entry returns, raises and awaits exactly what it did before.
+1. **No behaviour change at any site, but for register R44.**
+   - Each entry returns, raises and awaits exactly what it did before, unless the run entry's `extra_context` is a `dict` holding a key whose hash equals `hash("_delegation_depth")` and whose comparison with it raises (register R44).
    - The moved bodies are byte-identical to the removed lines, but for the consultation body's added import. Check with `git diff -w` for the run entry, and by comparing the moved block for the two `CognitiveAgent` entries.
    - `hold` and `hold_at` raise no `Exception`.
    - `end` raises no `Exception`.
    - `shadow` and `shadow_at` are untouched.
 2. **Token discipline.**
    - In `src`, `CURRENT_TICKET.set` is called only in `hold`, and only as the statement before the `return` of the hold that carries its token.
-   - `reset` is called only in `TicketHold.end`.
+   - In `src`, `reset` is called only in `TicketHold.end`.
    - Each hold is assigned to a name read only by the `finally` of the `try` that ends its function (I10, I11).
    - No await lies between an entry's last shadow statement and its hold.
 3. **Roots and children.**
    - `child` is `False` at the intent and consultation entries.
-   - At the run entry it is exactly `type(extra_context) is dict and "_delegation_depth" in extra_context`, and that expression cannot raise for any `extra_context`.
+   - At the run entry it is exactly `type(extra_context) is dict and "_delegation_depth" in extra_context` (register R44).
    - An admitted turn takes `NO_HOLD`.
-4. **Key, scope, budget.** The principal is `resolve_principal(...).key`; the scope is `TICKET_EFFECTS`; the budget is `TicketBudget()`.
+4. **Key, scope, budget.** `hold` passes the principal key `resolve_principal(...).key`, the scope `TicketScope(frozenset(TICKET_EFFECTS))` and the budget `TicketBudget()`.
 5. **Wiring.**
    - The registry is built only inside the switch's branch, in the service's `try`, over `self.agent_stops`, with `max_depth` from `agentic_tools.delegation_max_depth`.
    - Every test of the wiring compares with None, never by truth.
    - No runtime attribute is added.
 6. **Fail-open.**
-   - `hold`'s `except Exception` increments `failures`, logs through its own guard and returns `NO_HOLD` with the carrier unchanged.
+   - `hold`'s `except Exception` increments `failures`, logs through its own guard and returns `NO_HOLD`; a raise after the carrier's `set` leaves the new ticket in the carrier (register R45).
    - A refused issue sets the carrier to None for the unit, and the registry counted it.
 7. **Nothing persisted, nothing charged.** No file, connection, event, trust, budget or stop write is added. `tickets.py`'s code lines are untouched.
 8. **Head text.** Each docstring and comment in the two new files, in the moved methods' docstrings, in the site comments and in the tracker sentences is true at its own milestone. No site comment contains the text `CURRENT_TICKET`, `TicketRegistry` or `WorkTicket` (I11 and K15 would fail).
@@ -1942,7 +1942,7 @@ HOLDS: for that file; the base classes it inherits were not searched (§17)
 - The `--check` scripts of §12 pass. The broad gate's receipt is green.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
-## 16. Corrections to this contract (2026-10-30, before the build)
+## 16. Corrections to this contract (2026-10-30)
 
 §7.5 holds six pairs (M1-10 to M1-15) and §7.10 holds four (M2-08 to M2-11). M1 therefore has 15 pairs, M2 11 and M4 2, and the slice has 28 pairs. The Anchors paragraph and D107 said 26 pairs, the Anchors with M1 14 and M2 10; A1 (A1-5a, A1-5b) corrected both. No pair's text depends on the count.
 
@@ -1960,11 +1960,20 @@ A1 (2026-10-30, after the orchestrator's pre-build run on `146974c2`, the M3d1 h
 
 Landing text changes in §7.7 (M2-03 and M2-04 comments: A1-8a, A1-8b), §7.8 (M2-06 comment: A1-8c), §7.10 (M2-11's SEARCH: A1-1a, A1-1b; its result is unchanged) and §8 (M4-01's REPLACE: A1-8e; M4-02's SEARCH and REPLACE: A1-2a, A1-2c, A1-8f). A1-2c's SEARCH occurs three times in blob `960ff473` and once after A1-2a and A1-2b, so the A1 pairs apply in label order. No decision's content, test, case count, mutation row or row's Line text changes, and the slice still has 28 pairs.
 
+A2 (2026-10-30, after review round 1 of the candidate head `93af6ae4`) repairs what the cross-family review (`gpt-6.1-sol`, round 1) found, and the siblings the Architect's sweep found:
+- F1 (P2, injected only, a regression against `1ffbdc61`): the run entry's `child` expression is evaluated before `hold_at` is entered and outside the run's `try`. Recorded as register R44 (A2-25b). The sentences that said no site's behaviour changes, that a raise changes nothing, and that the expression cannot raise are narrowed to R44 or deleted (A2-1b, A2-7, A2-22a, A2-22c).
+- F2 (P2, injected only, a regression against `1ffbdc61`): an `Exception` after the carrier's `set` in `hold` returns `NO_HOLD` and leaves the new ticket in the carrier, live. Recorded as register R45 (A2-25b). The docstring, comment and log text that said the carrier is unchanged, D114, D115's "on every path" and §14 item 6 are narrowed or deleted (A2-7, A2-8, A2-14a, A2-14b, A2-22e).
+- F3: the unconditional "no ceiling" and "always a subset" claims now say what `hold` asks for (A2-6, A2-13, A2-14a, A2-19b, A2-22d). F4: D113's "only depth and liveness can refuse it" is deleted (A2-6). F5: D120's per-operation counts are deleted; the measurement stays (A2-10a). F6: `carrier.py`'s "None outside any held unit" and the `NO_HOLD` sentence are deleted (A2-15b, A2-15c). F7: "only" is deleted from the two K15 statements, and D107's exclusive-consumer clause and §5's first sentence are deleted (A2-2, A2-11, A2-16a, A2-16b). F8: D115's "the ticket is released" is deleted (A2-8; R41 stands). F9: D115 cites R35 alone (A2-8).
+- Siblings: D114's list of refusal codes, given as the set (it omitted `ticket_widened` among others), is deleted (A2-7). Also narrowed or deleted: D110's unconditional release (A2-4); D111's "issues" (A2-5); §2's "`end` ... releases the ticket" (A2-1a); `carrier.py`'s module sentence and `NO_HOLD` comment (A2-15a, A2-15d); the "until the hold's `end`" clauses in `hold`'s docstring and the new test module's docstring (A2-14a, A2-17); the PROGRESS paragraph's "puts back ... and ends the ticket" (A2-18); the DECISIONS "unchanged" for bodies one of which gains an import (A2-19a); D120's and R40's "takes a ticket" (A2-10b, A2-25a); §5's and §14 item 2's exclusivity claims, now scoped to `src` (A2-12, A2-22b); §12's list of `hold`'s calls (A2-20a); and D118's and §17's `MockLLMClient` for a consultation whose body never calls the model, on the base too (A2-9, A2-24). Line numbers of files the slice edits are replaced by names in D108 and §12 (A2-3, A2-20b). This section's heading no longer says "before the build" (A2-23a).
+- The ruling (Architect, 2026-10-30): record F1 and F2, change no code. Both are reachable only by an injected fault. F2's rollback would run after the same kind of failure, and F1's guard would move I10's pinned `child` source and IX-17's Line. The reviewer found no code defect other than F1 and F2.
+
+Landing text changes in §7.1 (M1-02: A2-13; M1-04: A2-14a, A2-14b), §7.3.N (A2-15a to A2-15d), §7.10 (M2-08: A2-16a; M2-09: A2-16b), §7.11.N (A2-17) and §8 (M4-01: A2-18; M4-02: A2-19a to A2-19c). Each changes docstring, comment, log-message or tracker text only. No statement, test, `def`, case count, mutation row or row's Line text changes, and the slice still has 28 pairs. Register R44 and R45 are new; no decision is added.
+
 ## 17. Claims not confirmed in this session (measure before the build)
 
 1. Every focused gate outcome (no Python run here beyond `ad_ceiling.py`).
 2. That a `ValueError` from `reset` in another context leaves the token unused, so a later `end` in the right context resets (I6 asserts it).
-3. That `MockLLMClient`'s consultation answer is the same across two boots (I9).
+3. That the consultation answer is the same across two boots (I9).
 4. That nothing else calls `agentic_dispatch.fault_observer_for` while I8 has it patched.
 5. That the agent classes `CognitiveAgent` inherits define no `__slots__` (I8 sets instance attributes).
 6. The cost of `hold` plus `end` (D120 setup) and the intent sink's live rate (R40).
@@ -1979,8 +1988,10 @@ Landing text changes in §7.7 (M2-03 and M2-04 comments: A1-8a, A1-8b), §7.8 (M
   - the Captain's browser-action ACK (`routers/agent_actions.py`, `ack_action` invokes the browser tool after its check; `tests/fixtures/ad1343_seam_registry.py:96`).
   The other shadowed sites' paths were not traced. M3d3's sink record counts `ticket_missing` by effect; M3e decides on further issue points.
 - **R39:** the issue findings (`ticket_issued` and the refusal codes under the `issue` operation) are in the registry's in-memory tally only. M3d3's persisted record or M3e's persisted counts (register R13) carry them.
-- **R40:** every intent that passes a `CognitiveAgent`'s stop check takes a ticket, including one the agent then self-deselects. Entries stay at least 600 seconds after their end, longer behind an older live ticket. `ticket_registry_full` is the safe outcome. Calibrate with R33 before M4, from M3d3's persisted counts.
+- **R40:** every intent that passes a `CognitiveAgent`'s stop check asks the registry for a ticket, including one the agent then self-deselects. Entries stay at least 600 seconds after their end, longer behind an older live ticket. `ticket_registry_full` is the safe outcome. Calibrate with R33 before M4, from M3d3's persisted counts.
 - **R41:** `TicketHold.end` passes over a reset or release failure without a count. M3d3 or M3e may count them.
 - **R42:** a requester's or facilitator's stop does not reach its crew subtasks' tickets, which are roots (D111), as today's crew eligibility does not refuse them for it. If M4 wants that reach, it needs a parent link that adds no depth, a `tickets.py` change.
 - **R43:** an override of `handle_intent` that does not call the base method takes no hold, as it reaches no base stop check.
+- **R44 (review round 1, F1; P2, injected only; a regression against `1ffbdc61`):** the run entry evaluates its `child` argument, `type(extra_context) is dict and "_delegation_depth" in extra_context`, before `hold_at` is entered and outside the run's `try`, so an exception from it reaches the run's caller, with the switch on or off. An `extra_context` holding a key whose hash equals `hash("_delegation_depth")` and whose comparison with it raises makes the head raise that exception where the base raised from its own checks (measured: `OwnedStepsError('owned_steps_execution_binding_invalid')` on the base, the key's `RuntimeError` on the head). Reach: comparing an exact `str` with a `str` does not raise, so it needs a key of another type, and the run's context validation refuses a key that is not an exact `str` (`agentic_context_invalid`). Repair shape for the follow-up: evaluate the expression where an `Exception` from it is passed over as `child=False`; that changes I10's pinned `child` source and IX-17's Line and adds one case and one mutation row.
+- **R45 (review round 1, F2; P2, injected only; a regression against `1ffbdc61`):** in `AdmissionService.hold`, an `Exception` raised after `CURRENT_TICKET.set`, where only the `TicketHold` construction follows (a frozen slotted dataclass with no validation, so in practice an allocation failure), is caught by the same `except Exception`, counted and logged, and `hold` returns `NO_HOLD`. The carrier keeps the new ticket, the ticket stays `ticket_live`, neither reset nor release runs, and later work in that context reads it. Reach: injected only (the reviewer injected the failure). Repair shape for the follow-up: put the carrier back and release the ticket when the raise follows the `set`; that changes I11's pin that only `TicketHold.end` resets the carrier, adds one case and one mutation row, and the rollback itself runs after the same kind of failure.
 - **Inherited and still open:** registers R10, R13 to R18, R19 to R23 (R23 settled for the three entries by D112), R24 to R28 (R28 likewise), R31 to R34.
