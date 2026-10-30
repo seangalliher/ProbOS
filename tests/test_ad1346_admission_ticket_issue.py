@@ -1,8 +1,8 @@
 """AD-1346 M3d2 (#1604): the work ticket each admitted entry holds, its carrier, and the switch's golden test.
 
 ``AdmissionService.hold``, reached through ``probos.admission.seam.hold_at``, issues the ticket of one unit of work an
-entry's own stop check admitted and puts it in ``probos.admission.carrier.CURRENT_TICKET`` until the returned hold's
-``end``. These tests drive it over a real ``IdentityService`` and a real ``AgentStopService`` under ``tmp_path`` and a
+entry's own stop check admitted and puts it in ``probos.admission.carrier.CURRENT_TICKET``. These tests drive it over
+a real ``IdentityService`` and a real ``AgentStopService`` under ``tmp_path`` and a
 ``TicketRegistry`` on a clock the test moves, and the three entries on real boots:
 
 - I1  the service takes a ``TicketRegistry`` or None; without one, or once closed, ``hold`` returns ``NO_HOLD``; an

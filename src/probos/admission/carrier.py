@@ -1,6 +1,6 @@
 """AD-1346 M3d2 (#1604): the work-ticket carrier, an observation device in shadow (D101, D110).
 
-``CURRENT_TICKET`` holds the ticket of the unit of work running in the current context, or None. In ``src``,
+``CURRENT_TICKET`` holds a work ticket or None. In ``src``,
 ``AdmissionService.hold`` is the one call that sets it and ``TicketHold.end`` the one that resets it
 (``tests/test_ad1346_admission_ticket_issue.py``, I11). Each entry that takes a hold ends it in the ``finally`` of the
 ``try`` that holds the entry's work (I10), so ``end`` runs when that work returns, raises or is cancelled.
@@ -20,15 +20,14 @@ from typing import TYPE_CHECKING, Final
 if TYPE_CHECKING:
     from probos.admission.tickets import TicketRegistry, WorkTicket
 
-#: The ticket of the unit of work running in this context; None outside any held unit. Created at module level, as the
-#: ``contextvars`` documentation asks.
+#: Created at module level, as the ``contextvars`` documentation asks.
 CURRENT_TICKET: Final[ContextVar[WorkTicket | None]] = ContextVar("probos_admission_ticket", default=None)
 
 
 @dataclass(frozen=True, slots=True)
 class TicketHold:
     """One admitted unit's place in the carrier: the registry, the ticket it issued (None when it refused), and the
-    token of the carrier's ``set``. ``NO_HOLD``, with none of them, is what an entry gets when nothing was issued."""
+    token of the carrier's ``set``."""
 
     registry: TicketRegistry | None = None
     ticket: WorkTicket | None = None
@@ -53,5 +52,5 @@ class TicketHold:
                 pass
 
 
-#: The hold of a unit for which nothing was issued: its ``end`` does nothing.
+#: A hold with no registry, ticket or token: its ``end`` does nothing.
 NO_HOLD: Final = TicketHold()

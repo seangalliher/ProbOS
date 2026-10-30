@@ -1,6 +1,6 @@
 """AD-1346 M3d1 (#1604): work tickets and the ticket registry, over a real Captain's stop record.
 
-``probos.admission.tickets`` is the ticket library of epic #1601's design note; outside the package only
+``probos.admission.tickets`` is the ticket library of epic #1601's design note; outside the package
 ``probos/runtime.py`` names it, to build the registry (K15, from AD-1346 M3d2). These tests drive ``TicketRegistry`` over
 a real ``AgentStopService`` under ``tmp_path`` with a clock the test moves, and pin the registry's half of #1604
 property 9 and the in-process half of property 5:
@@ -31,7 +31,7 @@ property 9 and the in-process half of property 5:
 - K13 a ticket presented for another principal is ``ticket_principal_mismatch``.
 - K14 a full registry refuses with ``ticket_registry_full`` and adds no entry; an issue first drops entries from the
       oldest while the oldest ended more than ``retain_seconds`` ago.
-- K15 outside the package only ``probos/runtime.py`` names the registry, the ticket or the module (AD-1346 M3d2), and
+- K15 outside the package ``probos/runtime.py`` names the registry, the ticket or the module (AD-1346 M3d2), and
       the registry's class stays within the SRP trigger's method count.
 """
 

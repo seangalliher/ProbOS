@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: AD-1346 M3d2 (D113): every ticket ``hold`` issues may reach both effect points and has no ceiling (M5 owns accounts).
+#: AD-1346 M3d2 (D113): the scope and budget ``hold`` asks for: both effect points, no ceiling (M5 owns accounts).
 _WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
 _NO_CEILINGS: Final = TicketBudget()
 
@@ -150,10 +150,10 @@ class AdmissionService:
 
         ``probos.admission.seam.hold_at`` calls it. With no registry, or after ``close``, it returns ``NO_HOLD`` and
         issues nothing. Otherwise the ticket's principal is the key ``decide`` gives the presented id (the slot when it
-        resolves, D112), its scope both effect points and its budget no ceiling (D113). It is a child of the carried
+        resolves, D112); ``hold`` asks for both effect points and no ceiling (D113). The ticket is a child of the carried
         ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
-        ticket, or None when the registry refused the issue and counted its finding (D114), until the hold's ``end``.
-        An ``Exception`` raised here is counted in ``failures`` and logged, and the carrier is left as it was; a
+        ticket, or None when the registry refused the issue and counted its finding (D114).
+        An ``Exception`` raised here is counted in ``failures`` and logged; a
         ``BaseException`` that is not an ``Exception`` propagates.
         """
         if self._closed or self._tickets is None:
@@ -171,12 +171,12 @@ class AdmissionService:
                 )
             token = CURRENT_TICKET.set(issued.ticket)
             return TicketHold(self._tickets, issued.ticket, token)
-        except Exception:  # D114: counted and logged; the carrier is left as it was
+        except Exception:  # D114: counted and logged
             self._failures += 1
             try:
                 logger.log(
                     logging.WARNING if self._failures == 1 else logging.DEBUG,
-                    "AD-1346 M3d2: a work ticket's issue raised (%d failures so far); hold() returned NO_HOLD and the carrier is unchanged",
+                    "AD-1346 M3d2: a work ticket's issue raised (%d failures so far); hold() returned NO_HOLD",
                     self._failures,
                     exc_info=True,
                 )
