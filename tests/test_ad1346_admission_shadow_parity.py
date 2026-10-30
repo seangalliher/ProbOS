@@ -6,7 +6,8 @@
 - P4  a failed write puts its parity counts and disagreements back, within the buffer, and they are written once.
 - P5  the store adds parity counts by UTC day, keeps the newest ``DISAGREEMENT_RING_SIZE`` disagreements, and
       ``prune`` deletes parity days before the retention window.
-- P6  a version-1 file with only M3b's three tables opens, keeps its rows and gains the two M3c tables.
+- P6  a version-1 file with only M3b's three tables opens, keeps its rows and gains the two M3c tables and AD-1346
+      M3d3b's four.
 - P7  ``shadow`` hands today's outcome to the recorder and counts an unknown one as a failure.
 - P8  a logging handler that raises does not escape ``shadow`` (F-212).
 - P9  after ``close``, ``shadow`` decides, counts and offers nothing; ``decide`` still answers.
@@ -283,8 +284,10 @@ async def test_the_store_adds_parity_by_day_keeps_the_newest_disagreements_and_p
     assert await rows(store.path, PARITY) == [(DAY, *KEY, 3)]
 
 
-async def test_a_version_1_file_with_m3bs_three_tables_opens_keeps_its_rows_and_gains_two(tmp_path: Path) -> None:
-    """P6: D58's compatibility path (kills ST-5)."""
+async def test_a_version_1_file_with_m3bs_three_tables_opens_keeps_its_rows_and_gains_the_later_tables(
+    tmp_path: Path,
+) -> None:
+    """P6: D58's compatibility path (kills ST-5); AD-1346 M3d3b renamed it when the file gained four more tables."""
     path = tmp_path / "data" / STORE_FILENAME
     path.parent.mkdir(parents=True)
     db = await default_factory.connect(str(path))
@@ -299,7 +302,8 @@ async def test_a_version_1_file_with_m3bs_three_tables_opens_keeps_its_rows_and_
     await shadow.stop()
     assert await rows(path, TABLES) == [
         ("schema_version",), ("shadow_aggregates",), ("shadow_disagreements",), ("shadow_markers",),
-        ("shadow_parity",), ("shadow_samples",),
+        ("shadow_parity",), ("shadow_samples",), ("ticket_findings",), ("ticket_markers",),
+        ("ticket_missing_samples",), ("ticket_samples",),
     ]
     assert await rows(path, "SELECT version FROM schema_version") == [(1,)]
     assert await rows(path, "SELECT * FROM shadow_aggregates") == [("2026-10-27", "intent", "intent", "admit", "admitted", 3, 9)]
