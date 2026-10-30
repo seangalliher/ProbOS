@@ -115,4 +115,5 @@ This principle names the ground the others stand on. It does not replace any of 
 - [Real Property Act 1858](https://en.wikipedia.org/wiki/Real_Property_Act_1858) (South Australia, Torrens title).
 - H. de Soto, *The Mystery of Capital*, 2000.
 - J. C. Scott, *Seeing Like a State*, Yale University Press, 1998; *Against the Grain*, Yale University Press, 2017.
+- In agent tooling, GitHub Agentic Workflows ([github/gh-aw](https://github.com/github/gh-aw)) applies the same split: the agent job holds read-only credentials and emits typed requests, and separate "safe output" jobs hold the scoped write permission, validate each request and act ([absorption note](../research/gh-aw-absorption.md)).
 - In software, the same split is known as "functional core, imperative shell" (G. Bernhardt, "Boundaries", 2012) and as event sourcing, where state is derived from an append-only log of changes.
