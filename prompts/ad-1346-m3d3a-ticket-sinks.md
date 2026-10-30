@@ -13,7 +13,7 @@
 - Decisions D123 to D136 are numbered after M3d2's D107 to D122 (M3d1's are D90 to D106). #1604's properties are numbered 1 to 13.
 
 **Which text describes the head.**
-- **Records of the read tree `21172897` (commit `93af6ae4`):** the Status and Anchors paragraphs, §1, §11 (Verified Against Codebase, Absence Verified), the internal citations in §13, and every SEARCH text in §7 and §8. Each SEARCH text occurs once in its file on that tree (whole-line Grep, `\r?$`-anchored: the working tree is CRLF), and no earlier pair of this contract edits those lines.
+- **Records of the read tree `21172897` (commit `93af6ae4`):** the Status and Anchors paragraphs, §1, §11 (Verified Against Codebase, Absence Verified), the internal citations in §13, and every SEARCH text in §7 and §8. Each SEARCH text occurs once in its file on that tree, and no earlier pair of this contract edits those lines.
 - **M3d2's head is `302e6bf9`** (tree `75aecaf1d45f5c4a9489d0d65d73486cff8337be`), after three cross-family review rounds; its repair after `93af6ae4` changed text and one log message. The build base is `origin/main` at the M3d2 merge, whose tree is that tree. On it, before the build, re-run each SEARCH text's uniqueness check in these M3d2 files, which this contract **edits**:
   - `src/probos/admission/service.py` (M1-01 to M1-08);
   - `src/probos/admission/seam.py` (M1-09, M1-10);
@@ -246,15 +246,15 @@
 
 - **`AdmissionService.__init__`'s new keyword `loop` (default None).**
   - Read by `check_ticket`.
-  - Every construction other than the runtime's passes none and is unchanged. The T19 double takes `*args, **kwargs` (`tests/test_ad1346_admission_service_boot.py:130-134`).
-  - `runtime.py` passes it.
+  - The T19 double takes `*args, **kwargs` (`tests/test_ad1346_admission_service_boot.py:130-134`).
+  - `runtime.py` passes it, and so do SK1 (an object that is not a loop, for the `TypeError`), SK4 (its running loop, and a closed loop), SK5, SK6 and SK10 (the running loop).
 - **`check_ticket`, `_check_ticket`, `off_loop_checks`.**
-  - `check_at` calls `check_ticket`.
+  - `check_at` calls `check_ticket`; SK1 and SK3 call it directly.
   - `check_ticket` calls `_check_ticket`, or schedules it on the loop.
-  - `off_loop_checks` is read by SK4.
-- **`seam.check_at`.** Called at the two sinks (SK7).
+  - `off_loop_checks` is read by SK1 and SK4.
+- **`seam.check_at`.** Called in `src` at the two sinks only (SK7), and by SK2 and SK4.
 - **`OpenAICompatibleClient._admission` and `set_admission`.** Read by `complete`; set by `runtime.py` (SK9) and by tests. No other `src` file calls it (Absence: the `set_admission` callers are the tool registry's).
-- **`RECORDED`.** Read only by the census `Visitor` (M3d2's Absence). Each consumer filters by callee, and `check_at` matches none of their filters but SK7's.
+- **`RECORDED`.** Read only by the census `Visitor` (M3d2's Absence). Of the census's consumers, only SK7 selects a `check_at` row: the others select by callee (T15 first by file), or by a pinned keyword, which the `check_at` rows do not carry.
 - **The `.complete(` report text** (`model_call_report`'s printed line). Read by no test (Absence).
 
 ## 6. Tests
@@ -948,10 +948,11 @@ first statement. These tests drive it over a real ``IdentityService`` and a real
 a ``TicketRegistry`` on a clock the test moves, a real ``ToolRegistry``, the real gateway with the request it would send
 replaced by a canned answer, and the real run entry with a scripted body in place of the agentic loop; SK9 boots twice.
 
-- SK1  the service takes an event loop or None; with no registry, or once closed, a sink check counts nothing; with
-       one it counts the registry's finding for what the carrier holds: ``ticket_missing`` with nothing carried,
-       ``ticket_live`` for a live ticket (with no principal compared when the presented id is None),
-       ``ticket_principal_mismatch`` for another agent's id and ``ticket_expired`` once the hold ended; it returns None.
+- SK1  the service refuses a ``loop`` that is not an event loop; with no registry, or once closed, a sink check
+       counts nothing; with one it counts the registry's finding for what the carrier holds: ``ticket_missing``
+       with nothing carried, ``ticket_live`` for a live ticket (with no principal compared when the presented id is
+       None), ``ticket_principal_mismatch`` for another agent's id and ``ticket_expired`` once the hold ended; it
+       returns None.
 - SK2  ``check_at`` passes over None, a plain object and a look-alike, and forwards the effect and the presented id to
        an exact ``AdmissionService``.
 - SK3  a sink check whose registry raises is counted in ``failures`` and logged at WARNING and then DEBUG, a logging
@@ -959,7 +960,7 @@ replaced by a canned answer, and the real run entry with a scripted body in plac
 - SK4  the thread rule (D128): a sink on another thread, or in a worker running a loop of its own as
        ``consultation/llm_decomposer.py`` does, reads the carrier there and hands the check to the service's loop, which
        counts it in ``off_loop_checks``; the registry's checks run on that loop's thread; a check handed over and then
-       closed is not run; a hand-off to a closed loop counts nothing and raises nothing.
+       closed is not run; a hand-off to a closed loop raises nothing, runs no check and counts no failure.
 - SK5  #1604 property 5, the run, in memory: inside the real run entry's hold, the next model call and tool call after
        a Captain's stop on the run's agent count ``ticket_revoked``, with the stop's id on the entry; before the stop
        both count ``ticket_live`` and today's tool check admits the call.
@@ -1162,7 +1163,8 @@ def _gateway(service: AdmissionService | None) -> _OfflineGateway:
 
 
 def _runtime(tools: ToolRegistry, service: AdmissionService) -> SimpleNamespace:
-    """What the run entry reads from a runtime: the tool registry (its stop gate) and the admission service."""
+    """A runtime holding the tool registry (its stop gate) and the admission service; the run entry's other reads of a
+    runtime (``getattr`` with a default) find nothing."""
     return SimpleNamespace(tool_registry=tools, admission_service=service)
 
 
@@ -1257,7 +1259,7 @@ async def test_a_sink_check_counts_the_registrys_finding_for_what_the_carrier_ho
 async def test_check_at_calls_only_an_exact_service_and_forwards_the_effect_and_the_presented_id(
     gate: AdmissionService, tickets: TicketRegistry,
 ) -> None:
-    """SK2 (kills SKX-11)."""
+    """SK2 (kills SKX-11, SKX-17)."""
 
     class _LookAlike:
         calls = 0
@@ -1270,6 +1272,15 @@ async def test_check_at_calls_only_an_exact_service_and_forwards_the_effect_and_
     assert _LookAlike.calls == 0 and tickets.tally() == {}
     assert check_at(gate, effect=SEAM_MODEL_CALL, presented_id=AGENT_A) is None
     assert tickets.tally() == {("model_call", "ticket_missing"): 1}
+    held = gate.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+    assert held.ticket is not None, "premise: the registry issued the ticket"
+    try:
+        assert check_at(gate, effect=SEAM_TOOL, presented_id=AGENT_B) is None
+    finally:
+        held.end()
+    assert tickets.tally() == {
+        ("model_call", "ticket_missing"): 1, ("issue", "ticket_issued"): 1, ("tool", "ticket_principal_mismatch"): 1,
+    }, "check_at forwards the presented id: another agent's id is compared with the ticket's principal"
 
 
 async def test_a_sink_check_that_raises_is_counted_and_logged_and_the_sink_gets_none(
@@ -1611,6 +1622,7 @@ Group and its `--tests`: every SKX row runs against `tests/test_ad1346_admission
 | SKX-14 | M2 | `src/probos/cognitive/llm_client.py` | `self._admission = service` | `pass` | `test_the_runtime_gives_the_service_its_loop_and_hands_it_to_the_model_gateway` |
 | SKX-15 | M2 | `src/probos/runtime.py` | `self.llm_client.set_admission(self.admission_service)` | `pass` | `test_the_runtime_gives_the_service_its_loop_and_hands_it_to_the_model_gateway` |
 | SKX-16 | M2 | `src/probos/runtime.py` | `self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder, tickets=tickets, loop=asyncio.get_running_loop())` | `self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder, tickets=tickets)` | `test_the_runtime_gives_the_service_its_loop_and_hands_it_to_the_model_gateway` |
+| SKX-17 | M1 | `src/probos/admission/seam.py` | `service.check_ticket(effect=effect, presented_id=presented_id)` | `service.check_ticket(effect=effect, presented_id=None)` | `test_check_at_calls_only_an_exact_service_and_forwards_the_effect_and_the_presented_id` |
 
 How the rows are killed (each SK<n> here is the case whose test function the row's Killed-by cell names):
 - **SKX-1:** the live-ticket checks count `ticket_missing`.
@@ -1627,6 +1639,7 @@ How the rows are killed (each SK<n> here is the case whose test function the row
 - **SKX-14:** `vars(on.llm_client)` has no `_admission`.
 - **SKX-15:** `vars(on.llm_client)` has no `_admission`.
 - **SKX-16:** `_loop` is None.
+- **SKX-17:** the other agent's id that SK2 presents through `check_at` counts `ticket_live`, not `ticket_principal_mismatch`.
 
 M3d2's IX-13 names the runtime line SKX-16 replaces. M3d2's campaign runs on M3d2's own M3 tree, so it is unaffected.
 
@@ -1852,11 +1865,21 @@ A1 (2026-10-30, after the orchestrator's pre-build run on `93af6ae4` and its dry
 
 Landing text changes in §7.1 (M1-01: A1-7b; M1-07: A1-7c to A1-7e; M1-08: A1-7f), §7.2 (M1-09: A1-7g), §7.6 (M2-05: A1-6c, A1's one executable change), §7.12.N (A1-6d, A1-7h) and §8 (M4-01: A1-7i; M4-02: A1-3f, A1-7j). No SEARCH text of §7 or §8, `def`, case count or mutation row number changes. SKX-13's Line follows M2-05, the class line counts in §12 are unchanged, and the slice still has 33 pairs. No decision or register row is added; D127 gains two sub-bullets.
 
+A2 (2026-10-30, after cross-family review round 1 on the candidate `41324376`) repairs:
+- F1: §5 said every construction other than the runtime's passes no `loop`, but the new file passes one at six places. The sentence, which A1-5b wrote, is deleted, and the list now names the tests that pass `loop` (A2-1).
+- F2: §5 said each census consumer filters by callee, but two tests in `tests/test_ad1343_stop_seam_inventory.py` filter by keyword. The sentence now says how the consumers select rows, and why only SK7's filter selects a `check_at` row (A2-2).
+- F3: the front matter called each SEARCH text's uniqueness a whole-line match, but M4-01's last SEARCH line is a prefix of its line. The parenthetical is deleted (A2-3).
+- F4, the ruling (Architect, 2026-10-30): option S. SK2's name and its module bullet said it pins the forwarding of the presented id. A `check_at` that passed `presented_id=None` passed SK2, the new file, and the service and ticket-issue tests (the orchestrator's mutation run). SK2 now holds a ticket for one agent and presents another agent's id through `check_at`, which must count `ticket_principal_mismatch` (A2-4a). §10 gains SKX-17 for the forwarding line, killed by SK2's function (A2-4b, A2-4c). SK2's name and bullet are unchanged.
+- The sweep: §5's call and read lists, which left out the new file's direct calls of `check_ticket` and `check_at` and SK1's read of `off_loop_checks` (A2-5); the SK1 bullet, whose "takes an event loop" SK1 does not exercise (A2-6a); the SK4 bullet, whose "counts nothing" covered `off_loop_checks`, which SK4 does not read for the closed loop's service (A2-6b); the `_runtime` helper's docstring, which named two attributes as all the run entry reads from a runtime, although the entry also reads others with `getattr` defaults (A2-6c); and §17, whose items 1 and 3 the build confirmed and which now lists A2's text (A2-7).
+
+Landing text changes only in §7.12.N: A2-4a (SK2's body and docstring, A2's one executable change), A2-6a and A2-6b (the module docstring) and A2-6c (a helper's docstring). §7.1 to §7.11 and §8 are unchanged. No SEARCH text of §7 or §8, no `def`, the case count and no existing mutation row's number changes. The slice still has 33 pairs and 10 cases. §10 now has 17 rows. A2 changes no other test function's statements, so the campaign of record reruns the unmutated baseline, SKX-11 and SKX-17. No decision or register row is added; D137 and R52 stay free.
+
 ## 17. Claims not yet confirmed
 
-1. D132's figures, measured on the M1 stage after the build.
-2. `gen_ad_ledger.py --check` after M4's regeneration (§12).
-3. The A1 text, which no gate has run: M2-05's `getattr` argument, SK7's pinned source for it and SKX-13's Line (A1-6c, A1-6d, A1-1a); and A1-7's docstring and tracker text, which changes no statement.
+1. `gen_ad_ledger.py --check` after M4's regeneration (§12).
+2. The A2 text, which no gate has run: SK2's new assertions and SKX-17's kill (A2-4a to A2-4c). The rest of A2 is docstring and contract text and changes no statement.
+
+The build (2026-10-30, M1 `eda4ac1b` to M4 `41324376`) confirmed what items 1 and 3 listed before A2. D132's figures were measured on the M1 stage ((c) 5.0 to 5.1 us median, (a) 9.0 to 9.2 us, as the orchestrator reported them). The A1 text was built, and the campaign of record killed 16 of 16 rows by their named functions.
 
 The orchestrator's pre-build run (2026-10-30, scratch trees of `93af6ae4`) confirmed the rest of what this section listed before A1. It ran the focused gates of M1 (84 passed), M2 (222 passed) and M3 (32 passed; the new file collects 10), and SK1 to SK10 passed. That confirms the `_OfflineGateway` boot, no import cycle from `llm_client.py`, no `CURRENT_TICKET` in a worker's `asyncio.run`, the unclosed client and `issue_stop` with no event log. It also measured the spans in §12. The build's gates run each again on the build base.
 
