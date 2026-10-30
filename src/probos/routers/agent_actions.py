@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_BROWSER_ACTION, active_stop
 from probos.cognitive.dm.action_dispatcher import ActionStatus
 from probos.routers.auth import require_crew_scope
@@ -66,6 +67,8 @@ async def ack_action(
     # AD-1343: the ACK runs the action as its agent, past the tool registry, so the stop is
     # checked here. The action stays pending; once the stop is lifted it can be ACKed.
     stopped = active_stop(getattr(runtime, "agent_stops", None), action.agent_id, SEAM_BROWSER_ACTION)
+    # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+    shadow_at(getattr(runtime, "admission_service", None), presented_id=action.agent_id, work_kind="browser_action", seam=SEAM_BROWSER_ACTION, origin="captain", origin_id=action_id, refused=stopped is not None)
     if stopped is not None:
         return JSONResponse(status_code=409, content=stopped.sender_detail())
 

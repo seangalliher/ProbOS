@@ -46,14 +46,15 @@ SHADOW_SITES: dict[tuple[str, str, str], tuple[str, int]] = {
     ("src/probos/cognitive/cognitive_agent.py", "CognitiveAgent.handle_consultation_request", "refusal"): ("consultation", 1),
     ("src/probos/tools/registry.py", "ToolRegistry.check_and_invoke", "tool_refusal"): ("tool_call", 1),
     ("src/probos/cognitive/agentic_dispatch.py", "WorkItemAgenticExecutor.run", "refuse_new_run"): ("agentic_run", 2),
+    # AD-1346 M3c2: the six routing seams.
+    ("src/probos/proactive.py", "ProactiveCognitiveLoop._run_cycle", "active_stop"): ("proactive_cycle", 1),
+    ("src/probos/ward_room_router.py", "WardRoomRouter._route_to_agents", "active_stop"): ("ward_room_notice", 1),
+    ("src/probos/routers/agents.py", "_agent_chat_impl", "active_stop"): ("direct_message", 1),
+    ("src/probos/routers/thread_fanout.py", "_fan_one_round._send_one_impl", "active_stop"): ("group_turn", 1),
+    ("src/probos/routers/agent_actions.py", "ack_action", "active_stop"): ("browser_action", 1),
+    ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): ("browser_action", 1),
 }
 SHADOW_PENDING: dict[tuple[str, str, str], str] = {
-    ("src/probos/proactive.py", "ProactiveCognitiveLoop._run_cycle", "active_stop"): "AD-1346 M3c2",
-    ("src/probos/ward_room_router.py", "WardRoomRouter._route_to_agents", "active_stop"): "AD-1346 M3c2",
-    ("src/probos/routers/agents.py", "_agent_chat_impl", "active_stop"): "AD-1346 M3c2",
-    ("src/probos/routers/thread_fanout.py", "_fan_one_round._send_one_impl", "active_stop"): "AD-1346 M3c2",
-    ("src/probos/routers/agent_actions.py", "ack_action", "active_stop"): "AD-1346 M3c2",
-    ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): "AD-1346 M3c2",
     ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke", "active_stop"): "AD-1346 M3c3",
     ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge", "active_stop"): "AD-1346 M3c3",
     ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge_for_session", "active_stop"): "AD-1346 M3c3",

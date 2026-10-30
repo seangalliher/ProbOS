@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from probos import work_item_steps as owned_steps
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     WRITE_CHANNEL_ARTIFACT,
     WRITE_CHANNEL_FINDING,
@@ -1051,7 +1052,10 @@ class DmReplyPipeline:
         # markers are stripped as for an unwired dispatcher, and the refusal counts as a tool call.
         from probos.agent_stop import SEAM_TOOL, active_stop
 
-        if active_stop(getattr(self.ctx.runtime, "agent_stops", None), self.ctx.agent_id, SEAM_TOOL) is not None:
+        _stopped = active_stop(getattr(self.ctx.runtime, "agent_stops", None), self.ctx.agent_id, SEAM_TOOL)
+        # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+        shadow_at(getattr(self.ctx.runtime, "admission_service", None), presented_id=self.ctx.agent_id, work_kind="browser_action", seam=SEAM_TOOL, origin="agent", origin_id=self.ctx.agent_id, refused=_stopped is not None)
+        if _stopped is not None:
             self.ctx.response_text = strip_action_markers(self.ctx.response_text)
             return
 
