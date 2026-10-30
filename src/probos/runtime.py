@@ -2950,12 +2950,13 @@ class ProbOSRuntime:
             # AD-1346 M3d2 (D108): the work-ticket registry, built in the same try over the same stop record with the
             # configured delegation depth, and handed to the service; a constructor that raises leaves the service
             # unbuilt, as above. It is in memory, and nothing persists it.
+            # AD-1346 M3d3a (D128): the service is given the loop running here; a sink check elsewhere hands its check to it.
             try:
                 from probos.admission import AdmissionService
                 from probos.admission.tickets import TicketRegistry
 
                 tickets = TicketRegistry(self.agent_stops, max_depth=self.config.agentic_tools.delegation_max_depth)
-                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder, tickets=tickets)
+                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder, tickets=tickets, loop=asyncio.get_running_loop())
             except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
                 logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
         else:
@@ -3423,6 +3424,8 @@ class ProbOSRuntime:
         if self.tool_registry is not None:  # AD-1343: every tool path ends in check_and_invoke
             self.tool_registry.set_stop_gate(self.agent_stops)
             self.tool_registry.set_admission(self.admission_service)  # AD-1346 M3c: its shadow statement; None shadows nothing
+        if isinstance(self.llm_client, OpenAICompatibleClient):  # AD-1346 M3d3a (D127): the model gateway's sink check; None checks nothing
+            self.llm_client.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687

@@ -30,8 +30,9 @@ a real ``IdentityService`` and a real ``AgentStopService`` under ``tmp_path`` an
 - I10 the census: ``hold_at`` is called in exactly the three entries, once each, after their last shadow statement with
       no await between, with the shadow statement's work kind, the entry's seam constant and its ``child`` source, and
       each entry's last statement is a ``try`` whose ``finally`` is that hold's ``end()`` alone.
-- I11 in ``src`` only ``AdmissionService.hold`` reads and sets the carrier and only ``TicketHold.end`` resets it, and
-      only ``carrier.py`` and ``service.py`` name it.
+- I11 in ``src`` only ``AdmissionService.hold`` sets the carrier, only it and, from AD-1346 M3d3a, the sink check
+      ``AdmissionService.check_ticket`` read it, only ``TicketHold.end`` resets it, and only ``carrier.py`` and
+      ``service.py`` name it.
 
 Each boot uses ``SystemConfig()`` with the naming ceremony, the proactive loop and QA turned off, as
 ``tests/test_ad1346_admission_shadow_seams.py`` does, and ``MockLLMClient``.
@@ -592,5 +593,6 @@ def test_only_hold_sets_the_carrier_and_only_end_resets_it() -> None:
     assert found == {
         ("probos/admission/service.py", "AdmissionService.hold", "get"),
         ("probos/admission/service.py", "AdmissionService.hold", "set"),
+        ("probos/admission/service.py", "AdmissionService.check_ticket", "get"),  # AD-1346 M3d3a: the sink check
         ("probos/admission/carrier.py", "TicketHold.end", "reset"),
     }, sorted(found)

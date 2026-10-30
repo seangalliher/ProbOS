@@ -21,15 +21,18 @@ a real ``CallsignRegistry`` and a real ``AgentStopService``, all under ``tmp_pat
 - T11 ``shadow`` returns None and counts each verdict and its latency bucket.
 - T12 ``shadow`` counts and logs a malformed request and a raising facade and returns None; ``decide`` propagates.
 - T13 the service's inputs: no configuration field and no dependency beyond the facade, the stop record, an
-      optional recorder (AD-1346 M3b) and an optional ticket registry (AD-1346 M3d2).
-- T14 the decision files await nothing and, among them, only ``shadow`` and ``hold`` log; every file of the package
-      imports only its allowlist (AD-1346 M3b's persistence files have allowlists of their own and may await).
+      optional recorder (AD-1346 M3b), an optional ticket registry (AD-1346 M3d2) and an optional event loop (AD-1346
+      M3d3a).
+- T14 the decision files await nothing and, among them, only ``shadow``, ``hold`` and ``_check_ticket`` log; every file
+      of the package imports only its allowlist (AD-1346 M3b's persistence files have allowlists of their own and may
+      await).
 - T15 the seam census: the package calls none of the stop's guard functions and starts no agent work.
 - T16 outside the package the service is named only by ``runtime.py``, ``startup/shutdown.py``, ``startup/finalize.py``
       (which hands it to the Ward Room router and the crew session finalizer) and twelve shadowed-site files, which read
-      it from a runtime or take it in a constructor; the package is imported only by ``runtime.py`` and the fourteen
-      shadowed-site files; the only routers that do either are the three whose routes AD-1346 M3c2 shadows, and none of
-      them serves a route #1604 property 11 keeps ungated.
+      it from a runtime or take it in a constructor; the package is imported only by ``runtime.py``, the fourteen
+      shadowed-site files and, from AD-1346 M3d3a, the model gateway's module ``cognitive/llm_client.py``; the only
+      routers that do either are the three whose routes AD-1346 M3c2 shadows, and none of them serves a route #1604
+      property 11 keeps ungated.
 """
 
 from __future__ import annotations
@@ -78,7 +81,7 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
         "__future__", "dataclasses", "typing", "probos.admission.taxonomy", "probos.agent_stop", "probos.identity_service",
     },
     "service.py": {
-        "__future__", "collections.abc", "logging", "time", "typing", "probos.admission.carrier", "probos.admission.checks",
+        "__future__", "asyncio", "collections.abc", "logging", "time", "typing", "probos.admission.carrier", "probos.admission.checks",
         "probos.admission.record", "probos.admission.recorder", "probos.admission.taxonomy", "probos.admission.tickets",
         "probos.agent_stop", "probos.identity_service",
     },
@@ -466,29 +469,33 @@ async def test_shadow_counts_and_logs_an_exception_and_returns_none(
     assert all(r.exc_info for r in records)
 
 
-async def test_the_service_reads_no_configuration_and_holds_only_its_two_dependencies_and_two_optional_parts(
+async def test_the_service_reads_no_configuration_and_holds_only_its_two_dependencies_and_three_optional_parts(
     gate: AdmissionService,
 ) -> None:
     """T13: no configuration field; the facade, the stop record, a clock, an optional recorder, an optional ticket
-    registry and its counters are all it holds. AD-1346 M3b renamed this test when it added the keyword-only
-    ``recorder`` (None in this fixture). AD-1346 M3c added ``today_outcome`` (default None) and the ``_closed`` flag.
-    AD-1346 M3d2 added the keyword-only ``tickets`` (None in this fixture) and renamed this test again. The service's
-    source still names no configuration (``SystemConfig``, ``shadow_enabled``)."""
+    registry, an optional event loop and its counters are all it holds. AD-1346 M3b renamed this test when it added the
+    keyword-only ``recorder`` (None in this fixture). AD-1346 M3c added ``today_outcome`` (default None) and the
+    ``_closed`` flag. AD-1346 M3d2 added the keyword-only ``tickets`` (None in this fixture) and renamed this test again.
+    AD-1346 M3d3a added the keyword-only ``loop`` (None in this fixture) and the ``_off_loop`` counts, and renamed it a
+    third time. The service's source still names no configuration (``SystemConfig``, ``shadow_enabled``)."""
     source = (_PACKAGE / "service.py").read_text(encoding="utf-8")
     assert "SystemConfig" not in source and "shadow_enabled" not in source
     init = inspect.signature(AdmissionService.__init__).parameters
-    assert list(init) == ["self", "identity_service", "stop_service", "clock", "recorder", "tickets"]
+    assert list(init) == ["self", "identity_service", "stop_service", "clock", "recorder", "tickets", "loop"]
     assert init["clock"].kind is inspect.Parameter.KEYWORD_ONLY
     assert init["recorder"].kind is inspect.Parameter.KEYWORD_ONLY and init["recorder"].default is None
     assert init["tickets"].kind is inspect.Parameter.KEYWORD_ONLY and init["tickets"].default is None
+    assert init["loop"].kind is inspect.Parameter.KEYWORD_ONLY and init["loop"].default is None
     shadow = inspect.signature(AdmissionService.shadow).parameters
     assert list(shadow) == ["self", "presented_id", "work_kind", "seam", "origin", "origin_id", "today_outcome"]
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for name, p in shadow.items() if name != "self")
     assert shadow["today_outcome"].default is None
     assert set(vars(gate)) == {
-        "_identities", "_stops", "_clock", "_recorder", "_tickets", "_closed", "_tally", "_latency", "_failures",
+        "_identities", "_stops", "_clock", "_recorder", "_tickets", "_loop", "_off_loop", "_closed", "_tally", "_latency",
+        "_failures",
     }
     assert vars(gate)["_recorder"] is None and vars(gate)["_tickets"] is None and vars(gate)["_closed"] is False
+    assert vars(gate)["_loop"] is None and vars(gate)["_off_loop"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -497,10 +504,12 @@ async def test_the_service_reads_no_configuration_and_holds_only_its_two_depende
 
 
 def test_the_decision_files_await_nothing_and_every_file_imports_only_its_allowlist() -> None:
-    """T14: in the decision files no await, lock, file or connection call; logging only in ``shadow`` and, from AD-1346
-    M3d2, ``hold``, and in ``service.py`` the clock only in ``shadow`` (``tickets.py``, added by AD-1346 M3d1, reads its
-    registry's injected clock); the import allowlist per file of the package. AD-1346 M3b renamed this test and added the
-    persistence files' allowlists when the package gained files that await and open a store."""
+    """T14: in the decision files no await, lock, file or connection call; logging only in ``shadow``, from AD-1346
+    M3d2 ``hold`` and from AD-1346 M3d3a ``_check_ticket``, and in ``service.py`` the clock only in ``shadow``
+    (``tickets.py``, added by AD-1346 M3d1, reads its registry's injected clock); the import allowlist per file of the
+    package. AD-1346 M3b renamed this test and added the persistence files' allowlists when the package gained files that
+    await and open a store. AD-1346 M3d3a added ``asyncio`` to ``service.py``'s allowlist, for ``get_running_loop`` and
+    ``call_soon_threadsafe``, neither of which awaits."""
     assert admission_package.__all__ == ["VERDICT_KEYS", "AdmissionService", "AdmissionVerdict", "WorkRequest"]
     assert sorted(p.name for p in _PACKAGE.glob("*.py")) == sorted(_ALLOWED_IMPORTS | _PERSISTENCE_IMPORTS), (
         "premise: the package's files"
@@ -537,9 +546,13 @@ def test_the_decision_files_await_nothing_and_every_file_imports_only_its_allowl
     shadow = function("src/probos/admission/service.py", "AdmissionService.shadow")
     init = function("src/probos/admission/service.py", "AdmissionService.__init__")
     hold = function("src/probos/admission/service.py", "AdmissionService.hold")
+    sink = function("src/probos/admission/service.py", "AdmissionService._check_ticket")
     loggers = [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == "logger" and isinstance(n.ctx, ast.Load)]
-    assert loggers and all(_within(n, shadow) or _within(n, hold) for n in loggers), "only shadow() and hold() log"
+    assert loggers and all(_within(n, shadow) or _within(n, hold) or _within(n, sink) for n in loggers), (
+        "only shadow(), hold() and _check_ticket() log"
+    )
     assert any(_within(n, hold) for n in loggers), "premise: hold() logs its failure"
+    assert any(_within(n, sink) for n in loggers), "premise: _check_ticket() logs its failure"
     clocks = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == "_clock"]
     assert all(_within(n, shadow) or (_within(n, init) and isinstance(n.ctx, ast.Store)) for n in clocks), (
         "only shadow() reads the clock"
@@ -559,7 +572,7 @@ def test_the_package_calls_no_stop_guard_and_starts_no_agent_work() -> None:
     assert first_line(function("src/probos/admission/checks.py", "check_agent_stop"), calls("stop_for")) > 0
 
 
-def test_only_the_wiring_and_the_shadowed_seams_name_the_service_or_import_the_package() -> None:
+def test_only_the_wiring_the_shadowed_seams_and_the_model_gateway_name_the_service_or_import_the_package() -> None:
     """T16: the consumer census (#1604, property 11). Outside the package the runtime builds the service and shutdown
     closes and releases it. Each site AD-1346 M3c1 to M3c3 shadow reaches it the way it reaches its stop gate: ten files
     read ``admission_service`` from a runtime (``cognitive_agent.py``, ``agentic_dispatch.py``, ``proactive.py``,
@@ -567,8 +580,10 @@ def test_only_the_wiring_and_the_shadowed_seams_name_the_service_or_import_the_p
     also hands it to a correction's projected registry, and three routers); ``tools/registry.py`` is handed it by
     ``set_admission``; ``ward_room_router.py`` and ``crew_finalizer.py`` take it in their constructors from
     ``startup/finalize.py``; and ``agent_work.py`` takes it in its constructor from ``runtime.py``. Each of those fourteen
-    imports ``probos.admission``. The only routers that name the service or import the package are the three whose routes
-    M3c2 shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
+    imports ``probos.admission``. From AD-1346 M3d3a the model gateway's module, ``cognitive/llm_client.py``, imports it
+    too, and ``runtime.py`` hands ``OpenAICompatibleClient`` the service through its own ``set_admission``. AD-1346 M3d3a
+    renamed this test. The only routers that name the service or import the package are the three whose routes M3c2
+    shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
     # #1604 property 11: the Captain's stop and lift (``routers/agent_stop.py``, ``/api/stops``), and health and status
     # (``routers/system.py``: ``/api/health``, ``/api/status``; ``routers/voice.py``: ``/api/voice/health``;
     # ``routers/desktop.py``: ``/api/desktop/status``); ``api.py`` builds the app.
@@ -604,7 +619,7 @@ def test_only_the_wiring_and_the_shadowed_seams_name_the_service_or_import_the_p
         "probos/cognitive/crew_finalizer.py", "probos/cognitive/crew_synth.py", "probos/cognitive/crew_verifier.py",
         "probos/cognitive/dm/reply_pipeline.py", "probos/proactive.py", "probos/routers/agent_actions.py",
         "probos/routers/agents.py", "probos/routers/thread_fanout.py", "probos/runtime.py", "probos/tools/delegate_task_tool.py",
-        "probos/tools/registry.py", "probos/ward_room_router.py",
+        "probos/tools/registry.py", "probos/ward_room_router.py", "probos/cognitive/llm_client.py",
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {"probos/routers/agent_actions.py", "probos/routers/agents.py", "probos/routers/thread_fanout.py"}, sorted(routes)
