@@ -16,11 +16,16 @@ AD-1346 M3d2 added an optional ``TicketRegistry`` and ``hold``: ``probos.admissi
 at three entries, past their own stop check, and ``hold`` issues that unit's work ticket into the carrier
 (``probos.admission.carrier``); with no registry, or after ``close``, it issues nothing. ``hold`` has an
 ``except Exception`` of its own, which counts in ``failures`` and logs as ``shadow``'s does.
+AD-1346 M3d3a added ``check_ticket``: ``probos.admission.seam.check_at`` calls it at the tool sink and the model
+gateway, and nothing is refused or persisted. A service built with an event loop checks on that loop: a sink on
+another thread, or on another thread's loop, hands its check there with ``call_soon_threadsafe`` (D128). A sink check
+that raises an ``Exception`` in ``_check_ticket`` is counted in ``failures`` and logged, as ``hold``'s is.
 The service reads no configuration.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Final
@@ -44,6 +49,14 @@ _WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
 _NO_CEILINGS: Final = TicketBudget()
 
 
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    """The loop running on this thread, or None (``asyncio.get_running_loop`` raises ``RuntimeError`` when none runs)."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 class AdmissionService:
     """Ship's Computer service: one admission decision per unit of work, in shadow (AD-1346 M3)."""
 
@@ -55,6 +68,7 @@ class AdmissionService:
         clock: Callable[[], int] = time.perf_counter_ns,
         recorder: ShadowRecorder | None = None,
         tickets: TicketRegistry | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         if not isinstance(identity_service, IdentityService):
             raise TypeError("AdmissionService needs the IdentityService facade")
@@ -64,11 +78,15 @@ class AdmissionService:
             raise TypeError("AdmissionService takes a ShadowRecorder or None")
         if tickets is not None and not isinstance(tickets, TicketRegistry):
             raise TypeError("AdmissionService takes a TicketRegistry or None")
+        if loop is not None and not isinstance(loop, asyncio.AbstractEventLoop):
+            raise TypeError("AdmissionService takes an event loop or None")
         self._identities = identity_service
         self._stops = stop_service
         self._clock = clock
         self._recorder = recorder
         self._tickets = tickets  # AD-1346 M3d2: compared with None, never by truth (an empty registry is falsy)
+        self._loop = loop  # AD-1346 M3d3a (D128): the loop its sink checks run on; None checks in place (tests)
+        self._off_loop: dict[str, int] = {}  # AD-1346 M3d3a: checks handed to that loop from elsewhere, by effect
         self._closed = False
         self._tally: dict[tuple[str, str, str], int] = {}
         self._latency: list[int] = [0] * LATENCY_BUCKETS
@@ -142,7 +160,7 @@ class AdmissionService:
         return None
 
     def close(self) -> None:
-        """Decide and issue nothing from now on: a later ``shadow`` returns None at once and a later ``hold`` returns ``NO_HOLD``; ``decide`` is unaffected (AD-1346 M3c, D61; M3d2)."""
+        """Decide, issue and check nothing from now on: a later ``shadow`` returns None at once, a later ``hold`` returns ``NO_HOLD`` and a later sink check, or one handed to the loop before this call, checks nothing; ``decide`` is unaffected (AD-1346 M3c, D61; M3d2; M3d3a)."""
         self._closed = True
 
     def hold(self, *, presented_id: str, work_kind: str, seam: str, child: bool) -> TicketHold:
@@ -184,6 +202,59 @@ class AdmissionService:
                 pass  # the failure is already counted in ``failures``
             return NO_HOLD
 
+    def check_ticket(self, *, effect: str, presented_id: object) -> None:
+        """The sink check of one effect point, in shadow: the registry's finding for the ticket the carrier holds (AD-1346 M3d3a).
+
+        ``probos.admission.seam.check_at`` calls it at the tool sink and the model gateway. It reads the carrier in the
+        caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
+        at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the
+        ticket it read, to that loop with ``call_soon_threadsafe``, so a service built with a loop makes its sink
+        checks on that loop's thread (D128). A hand-off that raises an ``Exception`` (a
+        closed loop raises ``RuntimeError``) checks and counts nothing. It returns None, so a sink has nothing to act
+        on; no ``Exception`` leaves it, and a ``BaseException`` that is not an ``Exception`` propagates.
+        """
+        ticket = CURRENT_TICKET.get()
+        if self._loop is None or _running_loop() is self._loop:
+            self._check_ticket(ticket, effect, presented_id, False)
+            return None
+        try:
+            self._loop.call_soon_threadsafe(self._check_ticket, ticket, effect, presented_id, True)
+        except Exception:  # noqa: BLE001 -- D128: a hand-off that raises (a closed loop) checks and counts nothing
+            pass  # off the loop nothing may be counted: the counts are the loop's (D99)
+        return None
+
+    def _check_ticket(self, ticket: object, effect: str, presented_id: object, off_loop: bool) -> None:
+        """One sink check on the service's loop, or in place: the registry counts its finding for ``ticket`` at ``effect``.
+
+        With no registry, or after ``close`` (a check handed over before it included), it checks nothing. The principal
+        compared is the key ``decide`` gives ``presented_id`` when that is a non-empty ``str``, else none. A check handed
+        over from elsewhere is counted in ``off_loop_checks`` once answered. An ``Exception`` is counted in ``failures``
+        and logged, as ``hold``'s is; a ``BaseException`` that is not an ``Exception`` propagates.
+        """
+        if self._closed or self._tickets is None:  # no registry, or closed (a check handed over before close included): nothing is checked
+            return None
+        try:
+            key = resolve_principal(presented_id, self._identities).key if type(presented_id) is str and presented_id else ""
+            self._tickets.check(ticket, effect=effect, presented_key=key)
+            if off_loop:
+                self._off_loop[effect] = self._off_loop.get(effect, 0) + 1
+        except Exception:  # D129: counted and logged; the sink gets None
+            self._failures += 1
+            try:
+                logger.log(
+                    logging.WARNING if self._failures == 1 else logging.DEBUG,
+                    "AD-1346 M3d3a: a work ticket's sink check raised (%d failures so far); check_ticket() returned None to the sink",
+                    self._failures,
+                    exc_info=True,
+                )
+            except Exception:  # noqa: BLE001 -- F-212 (D59): a logging handler that raised must not reach the sink
+                pass  # the failure is already counted in ``failures``
+        return None
+
+    def off_loop_checks(self) -> dict[str, int]:
+        """Sink checks handed to the service's loop from another thread or loop and answered there by the registry, by effect, since this service was built; a copy."""
+        return dict(self._off_loop)
+
     def _count(self, verdict: AdmissionVerdict, elapsed_ns: int) -> None:
         key = (verdict.seam, verdict.work_kind, verdict.reason_code)
         self._tally[key] = self._tally.get(key, 0) + 1
@@ -199,5 +270,5 @@ class AdmissionService:
 
     @property
     def failures(self) -> int:
-        """Exceptions that the ``except Exception`` of ``shadow`` or of ``hold`` counted since this service was built."""
+        """Exceptions that the ``except Exception`` of ``shadow``, of ``hold`` or of a sink check (``_check_ticket``) counted since this service was built."""
         return self._failures
