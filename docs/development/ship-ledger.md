@@ -1,6 +1,6 @@
 # How Literally Should ProbOS Take "Ledger"?
 
-**Status:** Design note. Not an AD; it allocates no number and creates no work by itself.
+**Status:** Design note; the Captain's decisions of 2026-10-30 are in section 7. Not an AD; it allocates no number and creates no work by itself.
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-30. Verified against `main` at `1ffbdc61`.
 **Placement:** a companion to [Probabilistic Crew, Deterministic Ship](deterministic-ship.md), invariant 4 ("a fixed past").
 
@@ -210,19 +210,15 @@ prove to itself.
 5. **Version 2 coverage** of the Archive and other append-only tables, after the erasure decision below.
 6. **A federation transparency log**, as a new issue when federation resumes, built on AD-1196 to AD-1198.
 
-## 7. Decisions for the Captain
+## 7. Decisions (Captain, 2026-10-30)
 
-1. **Adopt the head log as a future AD?** Recommended: yes, after steps 1 and 2. It is small and makes invariant 4
-   checkable.
-2. **Witness.** Recommended: start with the Captain's own copy of the digest plus an optional RFC 3161 or
-   OpenTimestamps anchor; add peer witnesses only with federation.
-3. **Erasure versus coverage.** Keep the Archive's "no hash of erased content" rule and leave the Archive out of
-   the head log (recommended for now), or allow salted commitments (option b in section 4). This is the Captain's
-   call because it changes an erasure guarantee.
-4. **Signing.** Sign only when the ship's key is configured, and say "unsigned" otherwise (recommended), or make the
-   key a prerequisite for the head log.
-5. **Blockchain.** Record the position that ProbOS uses hash chains and transparency logs, not a blockchain, unless
-   a future need appears for agreement among parties with no common authority.
+The Captain took the recommended option on all five:
+
+1. **The head log is adopted as a future AD,** to be filed after steps 1 and 2 (BF-942, then verification with an alert). It is small and makes invariant 4 checkable.
+2. **Witness:** start with the Captain's own copy of the digest, plus an optional RFC 3161 or OpenTimestamps anchor. Peer witnesses come only with federation.
+3. **Erasure versus coverage:** the Archive keeps its "no hash of erased content" rule and stays out of the head log for now. Salted commitments (option b in section 4) are not adopted.
+4. **Signing:** the head log is signed only when the ship's key is configured, and records say "unsigned" otherwise. The key is not a prerequisite.
+5. **Blockchain:** ProbOS uses hash chains and transparency logs, not a blockchain, unless a future need appears for agreement among parties with no common authority.
 
 ## 8. Prior art
 
