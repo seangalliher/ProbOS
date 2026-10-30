@@ -34,6 +34,7 @@ WORK_KINDS: Final[tuple[str, ...]] = (
     "delegated_task",
     "tool_call",
     "model_call",
+    "agent_work",  # AD-1346 M3c3: work an agent creates for itself or requests from a colleague (AD-1347)
 )
 
 #: Who asked for the work (recorded; no M3a check reads it, D23).

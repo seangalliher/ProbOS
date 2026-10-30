@@ -17,8 +17,8 @@ An AST census of ``src/probos`` in this checkout, in the manner of the AD-1195 p
    a stop question with no await between them; the verifier asks at every pick; the session finalizer is given the stop; the
    crew run asks eligibility right before its run entry, so it needs no ``AgentStopped`` catch.
 9. SHADOW (AD-1346 M3c): each stop check is in ``SHADOW_SITES`` or ``SHADOW_PENDING``; each shadowed function calls
-   ``shadow_at`` the registered number of times, after its check with no await between, with the check's seam and its work
-   kind; and nothing else calls it.
+   ``shadow_at`` the registered number of times, after its check with no await between, with the check's seam, its work
+   kind and the check's result as today's outcome; and nothing else calls it.
 
 Not seen (stated bounds): an entry reached through an alias or ``getattr``; a tool held
 under a name not ending in ``tool``; a synchronous method that starts work
@@ -242,13 +242,24 @@ def test_every_stop_check_is_shadowed_or_pending() -> None:
 
 
 def test_each_shadowed_site_calls_shadow_at_beside_its_check() -> None:
-    """9b (AD-1346 M3c): the number, keywords and place of each site's shadow statements; removing one fails here."""
+    """9b (AD-1346 M3c): the number, keywords and place of each site's shadow statements, and today's outcome each passes:
+    ``<the name the check's first call is assigned to> is not None`` at a site with one statement, ``True`` and ``False``
+    on the two paths of the run entry (AD-1346 M3c3). Removing a statement, or passing a constant for the check's result,
+    fails here."""
     keywords = {"presented_id", "work_kind", "seam", "origin", "origin_id", "refused"}
     for (rel, qualname, callee), (work_kind, count) in _SHADOW_SITES.items():
         fn = _function(rel, qualname)
         shadows = [n for n in ast.walk(fn) if _calls("shadow_at")(n)]
         assert len(shadows) == count, (qualname, len(shadows))
         check = _first_line(fn, _calls(callee))
+        bound = [
+            n.targets[0].id for n in ast.walk(fn)
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+            and _calls(callee)(n.value) and n.value.lineno == check
+        ]
+        refused = sorted(ast.unparse(k.value) for call in shadows for k in call.keywords if k.arg == "refused")
+        expected = [f"{bound[0]} is not None"] if count == 1 and len(bound) == 1 else ["False", "True"]
+        assert refused == expected, (qualname, refused, bound)
         for call in shadows:
             given = {k.arg: k.value for k in call.keywords}
             assert set(given) == keywords and len(call.args) == 1, (qualname, sorted(given))

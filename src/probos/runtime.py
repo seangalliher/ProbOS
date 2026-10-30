@@ -3522,6 +3522,7 @@ class ProbOSRuntime:
                 identities=self.identity_service,
                 directory=directory,
                 stop_gate=self.agent_stops,
+                admission_service=self.admission_service,  # AD-1346 M3c: the requester's shadow statement; None shadows nothing
             )
 
         # AD-637: Update NATS subject prefix after ship commissioning assigns DID

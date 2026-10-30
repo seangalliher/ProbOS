@@ -53,15 +53,16 @@ SHADOW_SITES: dict[tuple[str, str, str], tuple[str, int]] = {
     ("src/probos/routers/thread_fanout.py", "_fan_one_round._send_one_impl", "active_stop"): ("group_turn", 1),
     ("src/probos/routers/agent_actions.py", "ack_action", "active_stop"): ("browser_action", 1),
     ("src/probos/cognitive/dm/reply_pipeline.py", "DmReplyPipeline.step_4e_action_dispatch", "active_stop"): ("browser_action", 1),
+    # AD-1346 M3c3: delegation, the four crew sites and agent-created work.
+    ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke", "active_stop"): ("delegated_task", 1),
+    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge", "active_stop"): ("agentic_run", 1),
+    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge_for_session", "active_stop"): ("agentic_run", 1),
+    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session", "active_stop"): ("agentic_run", 1),
+    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "active_stop"): ("agentic_run", 1),
+    ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop"): ("agent_work", 1),
 }
-SHADOW_PENDING: dict[tuple[str, str, str], str] = {
-    ("src/probos/tools/delegate_task_tool.py", "DelegateTaskTool.invoke", "active_stop"): "AD-1346 M3c3",
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge", "active_stop"): "AD-1346 M3c3",
-    ("src/probos/cognitive/crew_verifier.py", "SubtaskVerifier.converge_for_session", "active_stop"): "AD-1346 M3c3",
-    ("src/probos/cognitive/crew_synth.py", "CrewSynthesizer.synthesize_for_session", "active_stop"): "AD-1346 M3c3",
-    ("src/probos/cognitive/crew_finalizer.py", "CrewSessionFinalizer._resume_synthesis", "active_stop"): "AD-1346 M3c3",
-    ("src/probos/agent_work.py", "AgentWorkService._requester_stop", "active_stop"): "AD-1346 M3c3",
-}
+# AD-1346 M3c3: none pending; a stop check added later enters SHADOW_SITES or this table (9a).
+SHADOW_PENDING: dict[tuple[str, str, str], str] = {}
 
 # Every public coroutine on CognitiveAgent. sink: consults the stop itself; within_turn: runs
 # only inside a turn a sink admitted; dm_route: reached only after the DM route's check;

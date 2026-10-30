@@ -61,8 +61,8 @@ AGGREGATE_RETENTION_DAYS: Final = 35
 #: D10: after ``prune``, at most this many rows remain, unless every remaining row is of the current
 #: day or a later one, which ``prune`` never deletes (a later day's rows exist after the wall clock
 #: steps back). Keyed by a verdict's closed fields, one day holds at
-#: most len(WORK_KINDS) * len(SEAMS) * len(REASON_CODES) * LATENCY_BUCKETS rows: 21,120 with M3a's
-#: vocabularies, and a test pins that the product stays below this bound.
+#: most len(WORK_KINDS) * len(SEAMS) * len(REASON_CODES) * LATENCY_BUCKETS rows: 23,040 with the
+#: vocabularies of AD-1346 M3c3 (12 work kinds, 12 seams), and a test pins that the product stays below this bound.
 AGGREGATE_ROW_LIMIT: Final = 100_000
 #: D10: the would-refuse samples kept, the newest.
 SAMPLE_RING_SIZE: Final = 5_000
