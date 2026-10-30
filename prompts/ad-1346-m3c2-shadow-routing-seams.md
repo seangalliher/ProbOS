@@ -3,7 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-29
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601), the second slice of M3c in Option A (#1601, the Architect's order comment), register R11 of the M3c1 contract. No new AD or BF number: M3 takes AD-1346 (`scripts/ad_ceiling.py` on 2026-10-29: ceiling AD-1355 from GitHub issue titles, next AD-1356; none allocated here). **Tier:** HIGH (M1, M2), docs (M3). Nothing parked.
 **Dependencies:** M3c1 (`prompts/ad-1346-m3c1-shadow-seams-sinks.md`, with its amendments A1 to A4) merged to `origin/main`.
-**Anchors:** every SEARCH text outside §8 was read on the detached checkout `42c9db0f` (tree `cb200945`): `origin/main` `0ea829e5` (tree `04d0eb50`) plus the five M3c1 candidate commits `be0f5c70`..`42c9db0f`. The build base is `origin/main` `3432e5ab` (tree `b4fb31ce`): the M3c1 merge `d740c692` (tree `26402e36`) plus four documents-only commits that touch no path this contract edits or cites. Among the cited paths, the merged tree differs from `cb200945` only in M3c1's own text: docstring lines of `admission/recorder.py`, `admission/seam.py` and `admission/store.py`, and M3c1's own `PROGRESS.md` paragraph and `DECISIONS.md` entry. Every SEARCH text still occurs once on the base (A1). 24 pairs (M1 22, M3 2), 1 new file besides this contract (`tests/test_ad1346_admission_shadow_routing.py`), 2 regenerated files in M3 (`docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json`).
+**Anchors:** every SEARCH text outside §8 was read on the detached checkout `42c9db0f` (tree `cb200945`): `origin/main` `0ea829e5` (tree `04d0eb50`) plus the five M3c1 candidate commits `be0f5c70`..`42c9db0f`. The build base is `origin/main` `3432e5ab` (tree `b4fb31ce`): the M3c1 merge `d740c692` (tree `26402e36`) plus four documents-only commits that touch no path this contract edits. Among the cited paths, the M3c1 merge's tree `26402e36` differs from `cb200945` only in M3c1's own text: docstring lines of `admission/recorder.py`, `admission/seam.py` and `admission/store.py`, M3c1's own `PROGRESS.md` paragraph and `DECISIONS.md` entry, and its contract `prompts/ad-1346-m3c1-shadow-seams-sinks.md`. Every SEARCH text still occurs once on the base (A1). 24 pairs (M1 22, M3 2), 1 new file besides this contract (`tests/test_ad1346_admission_shadow_routing.py`), 2 regenerated files in M3 (`docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json`).
 **Contract file:** `prompts/ad-1346-m3c2-shadow-routing-seams.md`.
 
 **Identifiers.**
@@ -156,7 +156,7 @@
   - As M3c1 D64 says, the statement awaits nothing, and on a slot-id key it does a constant number of dictionary operations.
   - The proactive `presented_id` is `agent.id` from `rt.registry.all()`. The DM route's is a key `runtime.registry.get(agent_id)` found (`agents.py:2954-2956`).
   - I did not trace the forms of the Ward Room's target ids or the fan-out's candidate ids (register R23). A DID would take `resolve_slot_id`'s scan (D64).
-  - **What to measure:** the persisted `latency_by_work_kind` row for `proactive_cycle` (#1601 acceptance 7), and N as the `proactive_cycle` aggregate count per hour divided by 30 cycles per hour. Register R22.
+  - **What to measure:** the persisted `latency_by_work_kind` row for `proactive_cycle` (#1601 evidence 7), and N as the `proactive_cycle` aggregate count per hour divided by 30 cycles per hour. Register R22.
 - **D74 Census and T16.**
   - `SHADOW_SITES` gains the six rows, each with count 1, and `SHADOW_PENDING` keeps the six M3c3 rows.
   - 9a also asserts that the registered work kinds are a subset of `WORK_KINDS`. A misspelt kind would otherwise surface only as a counted `shadow` failure (`record.py:59-60` raises inside `shadow`'s `try`). 9b and 9c are unchanged.
@@ -172,7 +172,7 @@
 - **D75 The crossing and golden tests (#1604 property 12).**
   - **The boot.** It loads `config/system.yaml` from the checkout, as `ProbOSRuntime` does when given no config (`runtime.py:235`, `:662`) and as `tests/test_ad1343_stop_crossing.py` X1 to X3 boot. It uses `MockLLMClient` and a data directory under `tmp_path`, and sets `admission.shadow_enabled`.
     - A `SystemConfig()` boot builds neither the Ward Room router nor the proactive loop: `WardRoomConfig.enabled` defaults to False (`config_models/crew.py:314`), and the loop needs both `proactive_cognitive.enabled` and a Ward Room (`finalize.py:4324`).
-    - "No vessel": nothing is read from `%LOCALAPPDATA%`, and the data directory is `tmp_path`. This contract claims nothing else about what a `system.yaml` boot does in the background.
+    - "No vessel": the test file's text names no `%LOCALAPPDATA%` path (§15's grep), and each boot's data directory is under `tmp_path`. This contract claims nothing else about what a `system.yaml` boot does.
   - **The proactive loop** is driven as X3 does it. The test calls `await rt.proactive_loop.stop()`, which cancels and awaits the loop's task (`proactive.py:944-952`); `_run_cycle`'s only caller in `src` is that task (`:962`). It then turns `stagger_enabled` off and spies `_check_unread_dms` and `_think_for_agent`. No think reaches the model.
   - **The HTTP routes** are called in-process through `httpx.ASGITransport`. In httpx's words: "You can configure an `httpx` client to call directly into an async Python web application using the ASGI protocol". The docs page carries no version; `pyproject.toml:29` pins `httpx>=0.27`. `_calling` in `tests/test_ad1343_stop_crossing.py:60-64` and `_ack_client` in `tests/test_ad1343_agent_stop.py:1207-1214` call routes the same way.
     - The DM route runs over the boot itself (X2's form).
@@ -227,10 +227,10 @@
   - In tests: the keyword-only constructor gains a keyword that defaults to None. `_ward_router` (`tests/test_ad1343_agent_stop.py:1056-1073`) passes keywords and does not pass it.
   - Nothing in `tests` pins the signature (Absence Verified).
 - **`WardRoomRouter._admission`:** read by `_route_to_agents`'s statement and by G3's premise.
-- **The six checks' results:** each site still acts on the same record. Three sites now hold the record in a local `_stopped`, a name no other line of those functions uses (Absence Verified).
+- **The six checks' results:** each site still acts on the same record. Three sites now hold the record in a local `_stopped`, a name those functions did not use before (Absence Verified).
 - **`shadow_at`:** after M1, called by 11 statements in 9 files: M3c1's 5 in three files (`tools/registry.py` 1, `cognitive/cognitive_agent.py` 2, `cognitive/agentic_dispatch.py` 2) and this slice's 6, one in each of six more files. 9c pins this.
 - **`SHADOW_SITES` and `SHADOW_PENDING`:** read by 9a to 9c only.
-- **T16's name:** named only in its own file and in the M3c1 contract (Absence Verified).
+- **T16's name:** besides its own file, named only in the M3c1 contract (the old name) and in this contract (the old name in M1-21's SEARCH and in §11, the new name in M1-21's REPLACE), measured at the candidate head in A2.
 
 ## 6. Tests
 
@@ -1016,7 +1016,7 @@ REPLACE:
 ```
 ### AD-1346 M3c2 -- the shadow admission decision beside the six routing seams (2026-10-29, #1604)
 
-AD-1346 M3c2 puts M3a's shadow decision beside the stop check of the six routing seams: the proactive cycle, Ward Room routing, the Captain's DM route, a group fan-out turn, the Captain's browser-action ACK and the inline browser action of a DM reply (#1601 evidence 1, 4 and 12). The contract is `prompts/ad-1346-m3c2-shadow-routing-seams.md`.
+AD-1346 M3c2 puts M3a's shadow decision beside the stop check of the six routing seams: the proactive cycle, Ward Room routing, the Captain's DM route, a group fan-out turn, the Captain's browser-action ACK and the inline browser action of a DM reply (#1601 evidence 1 and 4). The contract is `prompts/ad-1346-m3c2-shadow-routing-seams.md`.
 
 - *D67 (one slice).* The six share one statement shape, one census move and one consumer-census change. Rejected: splitting the routers from the loop and the Ward Room router (two reviews of the same census for no reduction in risk).
 - *D68 (statements).* One `shadow_at` statement after each check's result and before the site acts on it, with no await between. Where the check was written inline in an `if`, its call moves unchanged into a local. Rejected: a second `active_stop` call (it would double the stop's counts) and a statement inside the `if` (the admit path would go unshadowed).
@@ -1024,7 +1024,7 @@ AD-1346 M3c2 puts M3a's shadow decision beside the stop check of the six routing
 - *D70, D71 (requests).* Work kinds `proactive_cycle`, `ward_room_notice`, `direct_message`, `group_turn` and `browser_action` (the ACK and the inline action), all from M3a's vocabulary, so the per-day bound of parity rows stays 1,056. Origins: `system` for the cycle and for a group turn (the round cannot tell the Captain's turn from an agent's kickoff); the post's author at the Ward Room; `captain`, or `system` for a system-triggered turn, at the DM route; `captain` at the ACK; `agent` at the inline action.
 - *D73 (cost).* One call per alive crew agent per cycle, each awaiting nothing. From M3c1's bench, about 5.3 µs per call (the would-refuse path's worst round); the persisted latency for `proactive_cycle` is the measurement of record.
 - *D74 (census).* The six rows move to `SHADOW_SITES`, and 9a checks each registered work kind against the vocabulary. T16 is narrowed as M3c1 planned: the only routers that name the service or import the package are the three shadowed ones, and none of them is a module of #1604 property 11's routes.
-- *D75 (golden).* G3 and G4 boot from `config/system.yaml` on `tmp_path` with the mock LLM. G3 shows each of the six records today's outcome under a Captain's stop. G4 shows the same calls answer byte-identically with the switch on and off, counting the order exactly once at the proactive, DM-route and ACK seams.
+- *D75 (golden).* G3 and G4 boot from `config/system.yaml` with a data directory under `tmp_path` and the mock LLM. G3 shows each of the six records today's outcome under a Captain's stop. G4 shows the same calls answer byte-identically with the switch on and off, counting the order exactly once at the proactive, DM-route and ACK seams.
 - *Tests.* One new file (`tests/test_ad1346_admission_shadow_routing.py`); 9a and T16 updated.
 - *Residual, accepted.* Register R19 to R23 of the contract: the Ward Room's and the DM route's admitted paths are not driven by the golden test; a group turn's origin is `system`; one noisy site can crowd others out of the disagreement ring; proactive cost read from the persisted latency; the id forms at two sites not traced.
 - *Reversal.* Set `admission.shadow_enabled: false`, or revert the M3c2 commits.
@@ -1248,10 +1248,10 @@ Not confirmed by reading (still a prediction):
 4. **Requests.** The work kinds and seams match D70. No vocabulary changes, and the 1,056 bound and P13 are untouched.
 5. **Census.** 9a holds with the six moved rows, and every registered work kind is in `WORK_KINDS`. 9c holds.
 6. **T16.** The expected sets are exactly D74's. The router pin admits exactly the three shadowed routers, and none of property 11's route modules.
-7. **Tests.** G3 boots on `tmp_path` with the mock LLM. It asserts the injection premise and, for each of the six pairs, a refuse row, plus admit rows for the four pairs it drives before the order. G4 compares the two boots' normalised texts.
+7. **Tests.** G3 boots with its data directory under `tmp_path` and the mock LLM. It asserts the injection premise and, for each of the six pairs, a refuse row, plus admit rows for the four pairs it drives before the order. G4 compares the two boots' normalised texts.
 8. **Baselines.** `architecture-baseline.yaml` is byte-identical, and the seam manifest is unchanged.
 9. **Head text.** Each comment, docstring and tracker sentence is true at its own milestone, and the new test file's module docstring matches what its tests do.
-10. **Test file hygiene.** The new file reads no environment variable, spawns no process and opens no socket (§15), and boots only on `tmp_path`.
+10. **Test file hygiene.** The new file's text reads no environment variable and imports or calls no `subprocess` or `socket` (§15's grep), and each boot's data directory is under `tmp_path`.
 
 ## 15. Acceptance criteria
 
@@ -1270,7 +1270,7 @@ Not confirmed by reading (still a prediction):
   - `db = await open_read_only(data_dir / STORE_FILENAME)`.
 
   G4's `_boot(` call passes `tmp_path / ("on" if enabled else "off")`.
-- `grep -n "system.yaml" tests/test_ad1346_admission_shadow_routing.py` prints two lines: the module docstring's and `_SYSTEM_YAML`'s. The file reads that repository file and no other configuration.
+- `grep -n "system.yaml" tests/test_ad1346_admission_shadow_routing.py` prints two lines: the module docstring's and `_SYSTEM_YAML`'s.
 - The `--check` scripts of §12 pass. The broad gate's receipt is green.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
@@ -1286,6 +1286,10 @@ The orchestrator applied this contract by tool to stage trees on the build base 
 
 It changes no decision's content, no mutation row, no row anchor and no case count. §7 and §8 still hold 24 pairs (M1 22, M3 2). §11's records of `cb200945` stay as read; the only change to §11 is that its list of predictions is split into what was measured and what is still unconfirmed. A1b (2026-10-30) makes the Anchors paragraph's account of the merged tree exact and deletes or weakens seven further inexact phrases (§8's cross-reference and date rule, §15, this section's first paragraph, D73's two cost bullets and its line in M3-02's REPLACE), with no change to any design. A1c (2026-10-30) checks each citation of M3c1 against its merged contract and source, and repairs four (D73's "bound", the Dependencies line, the Identifiers line, §14's T15) and R12's sentence on P13.
 
+## 17. Amendment A2 (2026-10-30, after review round 1, on the candidate head 7fdfaf45)
+
+Review round 1 of the candidate (head `7fdfaf45`: the contract, M1, M2 and M3 on `3432e5ab`) found no code defect and four false sentences, which A2 repairs. The first is §14 item 10's "spawns no process" and "boots only on `tmp_path`". The round's audit hook on G3 saw 19 `git` child processes, all started by the knowledge store the boot starts (`knowledge/records_store.py:1299`, `knowledge/store.py:1231`), and one archive path under the per-worker archive root of `tests/conftest.py`'s `_bf919_isolated_archive` fixture. The second is §5's T16 bullet, which this contract's own presence at the head falsified. The third is M3-02's "#1601 evidence 1, 4 and 12": #1601's evidence list ends at 8, and the golden test is #1604 property 12. The fourth is the Anchors paragraph's "or cites". A sweep for the same four classes repaired eight more phrases: D73's and R22's "#1601 acceptance 7" (now evidence 7), D75's "No vessel" bullet, §5's `_stopped` bullet, §14 item 7, §15's sentence on configuration, D75's line in M3-02's REPLACE, and the Anchors list of M3c1's own text, which lacked its contract. Each repair deletes or narrows a sentence to what a source grep, a `git diff` or the issues show. It changes no decision's content, no mutation row, no row anchor and no case count. §7's 22 pairs are unchanged. Of §8's two pairs, M3-02's REPLACE changes in two sentences (A2-3, A2-8), so `DECISIONS.md` takes a review-repair build; M3-01 is unchanged. §11's records of `cb200945` stay as read.
+
 ## For the register (#1604)
 
 - **Closed by this slice:** register R11.
@@ -1297,6 +1301,6 @@ It changes no decision's content, no mutation row, no row anchor and no case cou
 - **R19:** G3 and G4 do not drive the Ward Room's or the DM route's admitted path, because each runs a full agent turn through the mock LLM. 9b pins those statements, and X1 and X2 cover the admitted behaviour. At M3e or the ruling, read the live `admit` rows for `ward_room_notice` and `direct_message`.
 - **R20:** a group turn records `origin="system"` with the thread, because `_fan_one_round` does not receive `opener_id`. If the evidence needs Captain-versus-agent at that seam, thread the opener in.
 - **R21:** the 1,000-row disagreement ring is shared by every site, so a site with a standing disagreement can evict the others' samples. `shadow_parity` stays exact. Decide at the evidence report whether to sample per seam.
-- **R22:** proactive cost. Read the persisted `latency_by_work_kind` for `proactive_cycle`, and N as its aggregate count per hour divided by 30 (#1601 acceptance 7). It joins register R14.
+- **R22:** proactive cost. Read the persisted `latency_by_work_kind` for `proactive_cycle`, and N as its aggregate count per hour divided by 30 (#1601 evidence 7). It joins register R14.
 - **R23:** the id forms at the Ward Room's targets (`find_targets`) and the fan-out's candidates were not traced. They are predicted to be registry slot ids; a DID would take the slot-cache scan (M3c1 D64).
 - **Inherited and still open:** register R10 and R13 to R18.
