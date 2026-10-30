@@ -84,6 +84,11 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
     },
     # AD-1346 M3c: the helper a stop-check site calls; held to the decision files' rules (no await, lock, file or connection).
     "seam.py": {"__future__", "probos.admission.service", "probos.admission.taxonomy"},
+    # AD-1346 M3d1: the work-ticket library; held to the decision files' rules, and it does not log.
+    "tickets.py": {
+        "__future__", "collections", "collections.abc", "dataclasses", "secrets", "time", "typing",
+        "probos.admission.taxonomy", "probos.agent_stop",
+    },
 }
 #: AD-1346 M3b: the persistence files. T14 holds each to its imports; they may await, open the store and log.
 _PERSISTENCE_IMPORTS: dict[str, set[str]] = {
@@ -488,9 +493,10 @@ async def test_the_service_reads_no_configuration_and_holds_only_its_two_depende
 
 
 def test_the_decision_files_await_nothing_and_every_file_imports_only_its_allowlist() -> None:
-    """T14: in the decision files no await, lock, file or connection call, and logging and the clock only in shadow;
-    the import allowlist per file of the package. AD-1346 M3b renamed this test and added the persistence files'
-    allowlists when the package gained files that await and open a store."""
+    """T14: in the decision files no await, lock, file or connection call; logging only in ``shadow``, and in
+    ``service.py`` the clock only in ``shadow`` (``tickets.py``, added by AD-1346 M3d1, reads its registry's injected
+    clock); the import allowlist per file of the package. AD-1346 M3b renamed this test and added the persistence
+    files' allowlists when the package gained files that await and open a store."""
     assert admission_package.__all__ == ["VERDICT_KEYS", "AdmissionService", "AdmissionVerdict", "WorkRequest"]
     assert sorted(p.name for p in _PACKAGE.glob("*.py")) == sorted(_ALLOWED_IMPORTS | _PERSISTENCE_IMPORTS), (
         "premise: the package's files"
