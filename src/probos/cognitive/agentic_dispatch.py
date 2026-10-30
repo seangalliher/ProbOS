@@ -28,7 +28,8 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, ClassVar, Protocol
 
 from probos import work_item_steps as owned_steps
-from probos.admission.seam import shadow_at  # AD-1346 M3c
+from probos.admission.carrier import NO_HOLD  # AD-1346 M3d2
+from probos.admission.seam import hold_at, shadow_at  # AD-1346 M3c; hold_at: AD-1346 M3d2
 from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, refuse_new_run  # AD-1343 A2
 from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
@@ -2707,58 +2708,67 @@ class WorkItemAgenticExecutor:
                 shadow_at(getattr(runtime, "admission_service", None), presented_id=agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id="agentic_run", refused=True)
                 raise
             shadow_at(getattr(runtime, "admission_service", None), presented_id=agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id="agentic_run", refused=False)
-        if any(value is not None for value in (
-            owned_steps_execution_port, owned_steps_execution_lease, owned_steps_execution_permit,
-        )):
-            if (
-                owned_steps_execution_port is None or owned_steps_execution_lease is None
-                or owned_steps_execution_permit is None
-                or owned_steps_execution_permit.assignee_id != agent_id
-                or owned_steps_execution_lease.snapshot.control.thread_id != thread_id
-                or (extra_context or {}).get("_crew_work_item_id") != owned_steps_execution_permit.child_id
-                or (extra_context or {}).get("_crew_session_id") != owned_steps_execution_permit.parent_id
-            ):
-                raise owned_steps.OwnedStepsError("owned_steps_execution_binding_invalid")
-            await owned_steps_execution_port.validate(owned_steps_execution_lease, owned_steps_execution_permit)
-        arguments = {
-            "agent_id": agent_id, "instructions": instructions, "task_text": task_text,
-            "runtime": runtime, "department": department, "rank": rank,
-            "thread_id": thread_id, "max_iterations": max_iterations, "tier": tier,
-            "extra_context": extra_context, "priority": priority,
-            "compose_disposition": compose_disposition, "compactor": compactor,
-            "compaction_threshold": compaction_threshold, "token_budget": token_budget,
-            "failure_scope": failure_scope, "work_item_id_provider": work_item_id_provider,
-            "on_run_started": on_run_started,
-        }
-        if owned_steps_turn_id is not None:
-            arguments["owned_steps_turn_id"] = owned_steps_turn_id
-        if owned_steps_initial_view is not None:
-            arguments["owned_steps_initial_view"] = owned_steps_initial_view
-        # AD-1208: forwarded only when armed, so every other caller's arguments are
-        # unchanged (test_ad1239 pins the exact dict).
-        if max_total_iterations is not None:
-            arguments["max_total_iterations"] = max_total_iterations
-        # AD-1156: forwarded only in plan mode, for the same reason.
-        if plan_mode_tool_ids is not None:
-            arguments["plan_mode_tool_ids"] = plan_mode_tool_ids
-        # AD-1320: transported unchanged; absent => the arguments are unchanged.
-        if budget_awareness_state is not None:
-            arguments["budget_awareness_state"] = budget_awareness_state
-        # AD-1322: transported unchanged; absent => the arguments are unchanged.
-        if inner_loop_hook is not None:
-            arguments["inner_loop_hook"] = inner_loop_hook
-        # AD-1347 S3: forwarded only when set, for the same reason.
-        if confinement is not None:
-            arguments["confinement"] = confinement
-        if fault_observer_for(runtime) is not None:
-            arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
-        registry = getattr(runtime, "tool_registry", None)
-        registration = registry.get("browser") if registry is not None else None
-        browser = getattr(registration, "tool", None)
-        if isinstance(browser, BrowserTool):
-            async with browser.reserve_use(agent_id=agent_id) as browser_use:
-                return await self._run_reserved(browser_use=browser_use, **arguments)
-        return await self._run_reserved(**arguments)
+            # AD-1346 M3d2 (D109, D111): the run's work ticket, in shadow, when the registry issues one: a child of the
+            # carried ticket when the run is delegated (its context carries _delegation_depth) and a ticket is carried,
+            # else a root; ended on every path by the finally below. It blocks nothing.
+            _run_hold = hold_at(getattr(runtime, "admission_service", None), presented_id=agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, child=type(extra_context) is dict and "_delegation_depth" in extra_context)
+        else:
+            _run_hold = NO_HOLD  # an admitted turn takes no ticket of its own: it runs under whatever its turn carries
+        try:
+            if any(value is not None for value in (
+                owned_steps_execution_port, owned_steps_execution_lease, owned_steps_execution_permit,
+            )):
+                if (
+                    owned_steps_execution_port is None or owned_steps_execution_lease is None
+                    or owned_steps_execution_permit is None
+                    or owned_steps_execution_permit.assignee_id != agent_id
+                    or owned_steps_execution_lease.snapshot.control.thread_id != thread_id
+                    or (extra_context or {}).get("_crew_work_item_id") != owned_steps_execution_permit.child_id
+                    or (extra_context or {}).get("_crew_session_id") != owned_steps_execution_permit.parent_id
+                ):
+                    raise owned_steps.OwnedStepsError("owned_steps_execution_binding_invalid")
+                await owned_steps_execution_port.validate(owned_steps_execution_lease, owned_steps_execution_permit)
+            arguments = {
+                "agent_id": agent_id, "instructions": instructions, "task_text": task_text,
+                "runtime": runtime, "department": department, "rank": rank,
+                "thread_id": thread_id, "max_iterations": max_iterations, "tier": tier,
+                "extra_context": extra_context, "priority": priority,
+                "compose_disposition": compose_disposition, "compactor": compactor,
+                "compaction_threshold": compaction_threshold, "token_budget": token_budget,
+                "failure_scope": failure_scope, "work_item_id_provider": work_item_id_provider,
+                "on_run_started": on_run_started,
+            }
+            if owned_steps_turn_id is not None:
+                arguments["owned_steps_turn_id"] = owned_steps_turn_id
+            if owned_steps_initial_view is not None:
+                arguments["owned_steps_initial_view"] = owned_steps_initial_view
+            # AD-1208: forwarded only when armed, so every other caller's arguments are
+            # unchanged (test_ad1239 pins the exact dict).
+            if max_total_iterations is not None:
+                arguments["max_total_iterations"] = max_total_iterations
+            # AD-1156: forwarded only in plan mode, for the same reason.
+            if plan_mode_tool_ids is not None:
+                arguments["plan_mode_tool_ids"] = plan_mode_tool_ids
+            # AD-1320: transported unchanged; absent => the arguments are unchanged.
+            if budget_awareness_state is not None:
+                arguments["budget_awareness_state"] = budget_awareness_state
+            # AD-1322: transported unchanged; absent => the arguments are unchanged.
+            if inner_loop_hook is not None:
+                arguments["inner_loop_hook"] = inner_loop_hook
+            # AD-1347 S3: forwarded only when set, for the same reason.
+            if confinement is not None:
+                arguments["confinement"] = confinement
+            if fault_observer_for(runtime) is not None:
+                arguments.update(fault_turn=fault_turn, fault_attempted=fault_attempted)
+            registry = getattr(runtime, "tool_registry", None)
+            registration = registry.get("browser") if registry is not None else None
+            browser = getattr(registration, "tool", None)
+            if isinstance(browser, BrowserTool):
+                async with browser.reserve_use(agent_id=agent_id) as browser_use:
+                    return await self._run_reserved(browser_use=browser_use, **arguments)
+            return await self._run_reserved(**arguments)
+        finally:
+            _run_hold.end()
 
     async def _run_reserved(
         self,

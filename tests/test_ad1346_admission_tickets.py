@@ -1,8 +1,9 @@
 """AD-1346 M3d1 (#1604): work tickets and the ticket registry, over a real Captain's stop record.
 
-``probos.admission.tickets`` is the ticket library of epic #1601's design note, and no ``src`` file outside the package
-names it yet (K15). These tests drive ``TicketRegistry`` over a real ``AgentStopService`` under ``tmp_path`` with a
-clock the test moves, and pin the registry's half of #1604 property 9 and the in-process half of property 5:
+``probos.admission.tickets`` is the ticket library of epic #1601's design note; outside the package
+``probos/runtime.py`` names it, to build the registry (K15, from AD-1346 M3d2). These tests drive ``TicketRegistry`` over
+a real ``AgentStopService`` under ``tmp_path`` with a clock the test moves, and pin the registry's half of #1604
+property 9 and the in-process half of property 5:
 
 - K1  the ticket codes are a closed tuple in the AD-1316 stable-code syntax, disjoint from the verdict's
       ``REASON_CODES``; the effects, the operations, the finding's keys and the bounds are pinned.
@@ -30,8 +31,8 @@ clock the test moves, and pin the registry's half of #1604 property 9 and the in
 - K13 a ticket presented for another principal is ``ticket_principal_mismatch``.
 - K14 a full registry refuses with ``ticket_registry_full`` and adds no entry; an issue first drops entries from the
       oldest while the oldest ended more than ``retain_seconds`` ago.
-- K15 no ``src`` file outside the package names the registry, the ticket or the module, and the registry's class
-      stays within the SRP trigger's method count.
+- K15 outside the package ``probos/runtime.py`` names the registry, the ticket or the module (AD-1346 M3d2), and
+      the registry's class stays within the SRP trigger's method count.
 """
 
 from __future__ import annotations
@@ -443,10 +444,11 @@ async def test_the_registry_is_bounded_and_drops_ended_entries_in_issue_order(
     assert len(registry) == 1, "every entry that ended long enough ago was dropped first"
 
 
-def test_the_registry_has_no_caller_outside_the_package_and_stays_within_the_srp_method_trigger() -> None:
-    """K15: no src file outside ``probos/admission/`` contains the text ``WorkTicket``, ``TicketRegistry``,
-    ``admission.tickets`` or ``admission import tickets`` (the slice that adds the first caller updates this test), and
-    ``TicketRegistry`` has at most 15 direct methods, the SRP trigger of ``scripts/check_architecture_principles.py``."""
+def test_only_the_runtime_names_the_registry_outside_the_package_and_it_stays_within_the_srp_method_trigger() -> None:
+    """K15: the src files outside ``probos/admission/`` that contain the text ``WorkTicket``, ``TicketRegistry``,
+    ``admission.tickets`` or ``admission import tickets`` are exactly ``probos/runtime.py``, which builds the registry
+    (AD-1346 M3d2 updated this test when it added that caller), and ``TicketRegistry`` has at most 15 direct methods, the
+    SRP trigger of ``scripts/check_architecture_principles.py``."""
     named: list[str] = []
     for path in sorted(_SRC.rglob("*.py")):
         rel = path.relative_to(_SRC.parent).as_posix()
@@ -455,7 +457,7 @@ def test_the_registry_has_no_caller_outside_the_package_and_stays_within_the_srp
         text = path.read_text(encoding="utf-8")
         if any(name in text for name in ("WorkTicket", "TicketRegistry", "admission.tickets", "admission import tickets")):
             named.append(rel)
-    assert named == [], named
+    assert named == ["probos/runtime.py"], named
     tree = ast.parse((_SRC / "admission" / "tickets.py").read_text(encoding="utf-8"))
     (registry_class,) = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "TicketRegistry"]
     methods = [node.name for node in registry_class.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
