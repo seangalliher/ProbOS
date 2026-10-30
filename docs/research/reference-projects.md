@@ -29,6 +29,7 @@ Projects appear here only as technical design references. Positioning against th
 | OpenAI Codex | 2026-10-14 | absorption | `codex-harness-absorption.md` |
 | Claude Code | 2026-10-16 | checked | Bash permission rules (compound splitting, wrappers, assignments, documented limits) for AD-1328 (#1530), `prompts/ad-1328-s1-command-policy-core.md`; sandbox and permission model studied for AD-1335 (#1557); lexical search in the AD-989 ripgrep absorption (2026-06-13, `DECISIONS.md`); context forking in `cognitive-sub-task-protocol.md` (2026-04-15) |
 | GitHub Copilot coding agent | 2026-10-15 | checked | AD-1336 (#1558) Prior art |
+| GitHub Agentic Workflows (gh-aw; runs Copilot, Claude Code, Codex, Gemini or Pi in Actions) | 2026-10-30 | absorption | `gh-aw-absorption.md` (job architecture, safe outputs, threat detection, protected files, `min-integrity`, MCP gateway, audit and cost docs; `sandbox.md`, `permissions.md`; not `engines.md` or the ADRs); drove BF-943 (#1707), the protected-paths floor for the runtime writers |
 | OpenCode (magic context) | 2026-05-08 | absorption | `opencode-magic-context-absorption.md` |
 | SWE-agent | 2026-03-20 | passing | AD-360 builder guardrails (container-scoped isolation) |
 | Aider | 2026-10-18 | checked | AD-360 (pre-edit dirty commit, edit-lint-test-reflect); AD-989 (lexical search); BF-904a (#1585) Prior Art, `prompts/bf-904a-native-build-git-hardening.md` (`--git-commit-verify` default False) |
