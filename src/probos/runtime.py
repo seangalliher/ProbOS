@@ -2947,10 +2947,15 @@ class ProbOSRuntime:
             # Phase 1a started. The import and the constructor are inside the try; the except branch logs
             # an Exception and assigns nothing, so the attribute keeps its __init__ None (#1604, property 11;
             # D31, D34). Its log call has no guard of its own (D36). AD-1346 M3b passes the recorder above, or None.
+            # AD-1346 M3d2 (D108): the work-ticket registry, built in the same try over the same stop record with the
+            # configured delegation depth, and handed to the service; a constructor that raises leaves the service
+            # unbuilt, as above. It is in memory, and nothing persists it.
             try:
                 from probos.admission import AdmissionService
+                from probos.admission.tickets import TicketRegistry
 
-                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder)
+                tickets = TicketRegistry(self.agent_stops, max_depth=self.config.agentic_tools.delegation_max_depth)
+                self.admission_service = AdmissionService(self.identity_service, self.agent_stops, recorder=shadow_recorder, tickets=tickets)
             except Exception:  # AD-1346 M3a (#1604, property 11; D31, D34)
                 logger.warning("AD-1346 M3a: the shadow admission service was not built; runtime.admission_service stays None", exc_info=True)
         else:

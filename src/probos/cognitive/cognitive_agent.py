@@ -21,7 +21,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos import work_item_steps as owned_steps
-from probos.admission.seam import shadow_at  # AD-1346 M3c
+from probos.admission.seam import hold_at, shadow_at  # AD-1346 M3c; hold_at: AD-1346 M3d2
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -7983,6 +7983,16 @@ class CognitiveAgent(BaseAgent):
             if _stopped is not None:
                 return _stopped.refuse_intent(intent, self.id)
 
+        # AD-1346 M3d2 (D109): the intent's work ticket, in shadow, taken past the stop check above (which returns when
+        # it refuses): a root in the carrier when the registry issues one, ended on every path by the finally. It blocks nothing.
+        _intent_hold = hold_at(getattr(getattr(self, "_runtime", None), "admission_service", None), presented_id=self.id, work_kind="intent", seam=SEAM_INTENT, child=False)
+        try:
+            return await self._handle_admitted_intent(intent)
+        finally:
+            _intent_hold.end()
+
+    async def _handle_admitted_intent(self, intent: IntentMessage) -> IntentResult | None:
+        """``handle_intent``'s work past its stop check, moved here unchanged by AD-1346 M3d2 so that its ticket ends in one ``finally``."""
         # AD-397: always accept direct_message if targeted to this agent
         # AD-407b: always accept ward_room_notification if targeted to this agent
         is_direct = (
@@ -8691,6 +8701,19 @@ class CognitiveAgent(BaseAgent):
                     confidence=0.0,
                     reasoning_summary=STOP_REASON_CODE,
                 )
+
+        # AD-1346 M3d2 (D109): the consultation's work ticket, in shadow, taken past the stop check above (which returns
+        # when it refuses): a root in the carrier when the registry issues one, ended on every path by the finally. It blocks nothing.
+        _consultation_hold = hold_at(getattr(getattr(self, "_runtime", None), "admission_service", None), presented_id=self.id, work_kind="consultation", seam=SEAM_CONSULTATION, child=False)
+        try:
+            return await self._answer_consultation(request)
+        finally:
+            _consultation_hold.end()
+
+    async def _answer_consultation(self, request: Any) -> Any:
+        """``handle_consultation_request``'s work past its stop check, moved here by AD-1346 M3d2, unchanged but for this
+        import, so that its ticket ends in one ``finally``."""
+        from probos.cognitive.consultation import ConsultationResponse
 
         callsign = getattr(self, "callsign", None) or self.agent_type
         logger.info(
