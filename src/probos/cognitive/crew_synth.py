@@ -46,6 +46,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, active_stop
 from probos.cognitive.crew_verdict import criteria_to_json, judge_to_json
 from probos.cognitive.crew_verifier import SubtaskVerifier
@@ -990,6 +991,8 @@ class CrewSynthesizer:
         # facilitator is refused here, after the inputs are validated and with no await before the model call.
         if admitted_synthesis is not True:  # A4 (F1): claimed by the owned resume after its own check; not refused again
             stopped = active_stop(getattr(self._runtime, "agent_stops", None), producer_key, SEAM_AGENTIC_RUN)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(getattr(self._runtime, "admission_service", None), presented_id=producer_key, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id=parent_key, refused=stopped is not None)
             if stopped is not None:
                 raise AgentStopped(stopped)
         try:

@@ -55,6 +55,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from probos import work_item_steps as owned_steps
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, active_stop, standing_stop
 from probos.cognitive.crew_verdict import (
     CriterionVerdict,
@@ -1245,6 +1246,7 @@ def _session_correction_runtime(
         explicit_denial_ids=denied_ids,
     )
     registry.set_permission_store(projected_permission_store)
+    registry.set_admission(getattr(runtime, "admission_service", None))  # AD-1346 M3c: a correction's tool calls are shadowed at the sink, as the ship's are
     for tool_id in selected:
         if tool_id in mesh_ids:
             continue
@@ -1573,7 +1575,10 @@ class SubtaskVerifier:
         )
         while rounds < self._max_rounds:
             # AD-1343: a stopped producer is not re-run; its refuted result escalates unverified below.
-            if active_stop(getattr(self._runtime, "agent_stops", None), result.agent_id, SEAM_AGENTIC_RUN) is not None:
+            stopped = active_stop(getattr(self._runtime, "agent_stops", None), result.agent_id, SEAM_AGENTIC_RUN)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(getattr(self._runtime, "admission_service", None), presented_id=result.agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id=getattr(result, "work_item_id", ""), refused=stopped is not None)
+            if stopped is not None:
                 break
             rounds += 1
             critiqued_task = f"{task_text}\n\nCRITIQUE:\n{verdict.critique}"
@@ -2029,6 +2034,8 @@ class SubtaskVerifier:
             # AD-1343: a stopped producer is not re-run; checked before a correction is admitted. A3 (R2): raised, not
             # returned, so no outcome is recorded and nothing reads the stop as exhaustion.
             stopped = active_stop(getattr(self._runtime, "agent_stops", None), current.agent_id, SEAM_AGENTIC_RUN)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(getattr(self._runtime, "admission_service", None), presented_id=current.agent_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id=current.work_item_id, refused=stopped is not None)
             if stopped is not None:
                 raise AgentStopped(stopped)  # A3 (R2): before admission, so nothing was admitted or executed
             critiqued_task = (

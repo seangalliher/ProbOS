@@ -20,8 +20,9 @@ AD-1187 sense: no room scopes, owns or receives the work. Depth is read from the
 stored record, never taken from the caller.
 
 S1 creates and governs; it runs nothing, and nothing calls it until S2. Expiry is the store's own
-TTL sweep (``WorkItemStore._expire_ttl_items``); this service holds no loop. It never calls AD-1346's
-``decide``, issues no ticket and widens no tool's departments or ranks.
+TTL sweep (``WorkItemStore._expire_ttl_items``); this service holds no loop. Beside the requester's stop
+check it hands AD-1346's shadow admission decision the same work (``shadow_at``, M3c3), which blocks and
+charges nothing; it issues no ticket and widens no tool's departments or ranks.
 """
 
 from __future__ import annotations
@@ -35,11 +36,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_AGENT_WORK, STOP_REASON_CODE, StopRecord, active_stop, standing_stop
 from probos.tools.protocol import ToolPermission
 from probos.workforce import AGENT_WORK_METADATA_KEY, BookableResource, WorkItem
 
 if TYPE_CHECKING:
+    from probos.admission import AdmissionService
     from probos.agent_stop import AgentStopService
     from probos.config import AgentWorkConfig
     from probos.identity_service import IdentityRef
@@ -284,6 +287,7 @@ class AgentWorkService:
         directory: CrewDirectory,
         stop_gate: AgentStopService,
         clock: Callable[[], float] = time.time,
+        admission_service: AdmissionService | None = None,
     ) -> None:
         if any(value is None for value in (config, store, tools, identities, directory, stop_gate)):
             raise ValueError("agent_work_dependencies_required")
@@ -293,6 +297,7 @@ class AgentWorkService:
         self._identities = identities
         self._directory = directory
         self._stop_gate = stop_gate
+        self._admission_service = admission_service  # AD-1346 M3c: the requester's shadow statement; None shadows nothing
         self._clock = clock
         self._lock = asyncio.Lock()
 
@@ -524,8 +529,11 @@ class AgentWorkService:
         return member, ref, depth
 
     def _requester_stop(self, slot_id: str) -> StopRecord | None:
-        """AD-1343: the requester's stop, counted as one refusal at SEAM_AGENT_WORK."""
-        return active_stop(self._stop_gate, slot_id, SEAM_AGENT_WORK)
+        """AD-1343: the requester's stop, counted as one refusal at SEAM_AGENT_WORK; AD-1346 M3c shadows it."""
+        stopped = active_stop(self._stop_gate, slot_id, SEAM_AGENT_WORK)
+        # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+        shadow_at(self._admission_service, presented_id=slot_id, work_kind="agent_work", seam=SEAM_AGENT_WORK, origin="agent", origin_id=slot_id, refused=stopped is not None)
+        return stopped
 
     def _stopped_now(self, slot_id: str) -> bool:
         """AD-1343: whether a colleague is stopped; asked of many candidates, so nothing is counted."""
@@ -619,6 +627,7 @@ async def open_agent_work_service(
     directory: CrewDirectory | None,
     stop_gate: AgentStopService | None,
     clock: Callable[[], float] = time.time,
+    admission_service: AdmissionService | None = None,
 ) -> AgentWorkService | None:
     """The one way the runtime builds the service (D1). None while ``config.enabled`` is False, touching nothing.
 
@@ -651,7 +660,7 @@ async def open_agent_work_service(
         return None
     service = AgentWorkService(
         config=config, store=store, tools=tools, identities=identities,
-        directory=directory, stop_gate=stop_gate, clock=clock,
+        directory=directory, stop_gate=stop_gate, clock=clock, admission_service=admission_service,  # AD-1346 M3c
     )
     store.set_agent_work_claim_gate(service.claim_allowed)
     logger.info(

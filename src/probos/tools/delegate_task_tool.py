@@ -55,6 +55,7 @@ import uuid
 import time
 from typing import Any, NoReturn
 
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_DELEGATION, STOP_REASON_CODE, AgentStopped, StopRecord, active_stop
 from probos.tools.delegation_budget import (
     DELEGATION_TREE_BUDGET_KEY,
@@ -377,6 +378,8 @@ class DelegateTaskTool:
 
             # AD-1343: a stopped target starts nothing; refused before any tree slot, binding or run.
             stopped = active_stop(getattr(self._runtime, "agent_stops", None), target.id, SEAM_DELEGATION)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(getattr(self._runtime, "admission_service", None), presented_id=target.id, work_kind="delegated_task", seam=SEAM_DELEGATION, origin="agent", origin_id=ctx.get("agent_id", ""), refused=stopped is not None)
             if stopped is not None:
                 return _stopped_target(stopped, t0)
 

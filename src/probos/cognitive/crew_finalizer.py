@@ -23,6 +23,7 @@ from pydantic import (
 )
 
 from probos import work_item_steps as owned_steps
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_AGENTIC_RUN, AgentStopped, AgentStopService, active_stop
 from probos.cognitive.crew_session import CrewRecoveryTransientError, CrewSynthesisMetadata
 from probos.crew_execution_usage import read_crew_execution_token_usage
@@ -56,6 +57,7 @@ from probos.cognitive.crew_verifier import (
 )
 
 if TYPE_CHECKING:
+    from probos.admission import AdmissionService
     from probos.artifacts import Artifact, ArtifactStore
     from probos.attachments.store import AttachmentStore
     from probos.cognitive.crew_executor import SubtaskResult
@@ -701,6 +703,7 @@ class CrewSessionFinalizer:
         approval_threshold: float = 0.6,
         use_confidence_weights: bool = True,
         agent_stops: AgentStopService | None = None,
+        admission_service: AdmissionService | None = None,
     ) -> None:
         if (
             type(approval_threshold) not in (int, float)
@@ -722,6 +725,7 @@ class CrewSessionFinalizer:
         self._approval_threshold = float(approval_threshold)
         self._use_confidence_weights = use_confidence_weights
         self._agent_stops = agent_stops  # AD-1343 A3: a stopped facilitator's synthesis is not claimed
+        self._admission_service = admission_service  # AD-1346 M3c: the resume's shadow statement; None shadows nothing
         self._active_claims: dict[str, _ClaimAttempt] = {}
         register_owned = getattr(
             self._sessions,
@@ -2013,7 +2017,10 @@ class CrewSessionFinalizer:
         facilitator = self._live_agent(session.facilitator_id)
         if facilitator is None:
             raise ValueError("synthesis_producer_unavailable")
-        if active_stop(self._agent_stops, session.facilitator_id, SEAM_AGENTIC_RUN) is not None:
+        _stopped = active_stop(self._agent_stops, session.facilitator_id, SEAM_AGENTIC_RUN)
+        # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+        shadow_at(self._admission_service, presented_id=session.facilitator_id, work_kind="agentic_run", seam=SEAM_AGENTIC_RUN, origin="system", origin_id=getattr(session, "task_id", ""), refused=_stopped is not None)
+        if _stopped is not None:
             # AD-1343 A3 (R1): checked before the synthesis is claimed, so no claim is left behind. N1: the order is
             # transient, not an integrity conflict. The owner's recovery loop retries with backoff; the session continues
             # if the order is lifted in time and otherwise ends recovery_retry_exhausted, which the Captain may retry.

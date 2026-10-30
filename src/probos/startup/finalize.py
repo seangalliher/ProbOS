@@ -2409,6 +2409,7 @@ def _wire_crew_orchestrator(*, runtime: Any, config: "SystemConfig") -> bool:
             True,
         ),
         agent_stops=getattr(runtime, "agent_stops", None),  # AD-1343 A3: a stopped facilitator's synthesis is not claimed
+        admission_service=getattr(runtime, "admission_service", None),  # AD-1346 M3c: the resume's shadow statement; None shadows nothing
     )
     runtime.crew_orchestrator = CrewOrchestrator(  # public attr (Wave 5 conv #1)
         assignment_resolver=assignment_resolver,
