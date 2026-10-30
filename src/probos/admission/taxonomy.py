@@ -1,11 +1,13 @@
 """AD-1346 M3a (#1604): the closed vocabularies of the shadow admission decision.
 
 Each vocabulary here is a set of values a verdict carries or, for ``TODAY_OUTCOMES`` (AD-1346
-M3c), a value recorded beside one; ``admission_shadow.db`` persists them, so each is append-only:
+M3c), a value recorded beside one, or, for ``TICKET_REASON_CODES`` (AD-1346 M3d1), the code a
+work-ticket finding carries. ``admission_shadow.db`` persists the verdict's values and today's
+outcome, and the ticket codes keep the same rule, so each is append-only:
 a value is added by the slice that needs it and is not renamed or removed.
 The seams extend the stop's ``SEAMS``, imported from ``probos.agent_stop``, because seam
-names key the stop's persisted refusal counts (AD-1343 S1). The reason codes use the
-AD-1316 stable-code syntax (``execution/authority.py``, ``_REASON_CODE_RE``), shared by
+names key the stop's persisted refusal counts (AD-1343 S1). The reason codes and the ticket codes
+use the AD-1316 stable-code syntax (``execution/authority.py``, ``_REASON_CODE_RE``), shared by
 syntax and not imported (D8).
 """
 
@@ -63,6 +65,26 @@ REASON_IDENTITY_UNRESOLVED: Final = "identity_unresolved"
 REASON_SYSTEM_PRINCIPAL_UNLISTED: Final = "system_principal_unlisted"
 REASON_CODES: Final[tuple[str, ...]] = (
     REASON_ADMITTED, REASON_AGENT_STOPPED, REASON_IDENTITY_UNRESOLVED, REASON_SYSTEM_PRINCIPAL_UNLISTED,
+)
+
+#: AD-1346 M3d1: the work-ticket codes (``probos.admission.tickets``), a second closed vocabulary of this one
+#: taxonomy. Each fits the AD-1316 syntax and none is in ``REASON_CODES``: a ticket finding carries one and an
+#: ``AdmissionVerdict`` never does, so the per-day bounds computed over ``REASON_CODES`` do not move. Append-only.
+TICKET_ISSUED: Final = "ticket_issued"
+TICKET_LIVE: Final = "ticket_live"
+TICKET_MISSING: Final = "ticket_missing"
+TICKET_UNKNOWN: Final = "ticket_unknown"
+TICKET_TEST_REFUSED: Final = "ticket_test_refused"
+TICKET_REVOKED: Final = "ticket_revoked"
+TICKET_EXPIRED: Final = "ticket_expired"
+TICKET_PRINCIPAL_MISMATCH: Final = "ticket_principal_mismatch"
+TICKET_OUT_OF_SCOPE: Final = "ticket_out_of_scope"
+TICKET_WIDENED: Final = "ticket_widened"
+TICKET_TOO_DEEP: Final = "ticket_too_deep"
+TICKET_REGISTRY_FULL: Final = "ticket_registry_full"
+TICKET_REASON_CODES: Final[tuple[str, ...]] = (
+    TICKET_ISSUED, TICKET_LIVE, TICKET_MISSING, TICKET_UNKNOWN, TICKET_TEST_REFUSED, TICKET_REVOKED, TICKET_EXPIRED,
+    TICKET_PRINCIPAL_MISMATCH, TICKET_OUT_OF_SCOPE, TICKET_WIDENED, TICKET_TOO_DEEP, TICKET_REGISTRY_FULL,
 )
 
 CHECK_PRINCIPAL: Final = "principal"
