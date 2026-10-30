@@ -78,7 +78,7 @@
   - T1 pins the `WORK_KINDS` tuple (`tests/test_ad1346_admission_service.py:218-221`).
   - T16 pins which files name the service or import the package (`:548-591`).
   - 9a to 9c (`tests/test_ad1343_stop_seam_inventory.py:234-265`).
-  - The S1 source-order test with `SOURCE_ORDER` (registry `:98-110`); I15 (`:189-200`); I16, whose census pins only the `agent_stops` keyword (`:211-216`; `PINNED_KEYWORDS`, `tests/fixtures/ad1343_seam_census.py:41`); I18 (`ADMITTED_SYNTHESIS_SITES`, registry `:128-130`).
+  - The S1 source-order test with `SOURCE_ORDER` (registry `:98-110`); I15 (`:189-200`); I16 (`:211-216`), whose census records only keywords in `PINNED_KEYWORDS` (`admitted_turn`, `agent_stops`, `admitted_synthesis`; `tests/fixtures/ad1343_seam_census.py:41`, `:82`); I18 (`ADMITTED_SYNTHESIS_SITES`, registry `:128-130`).
   - Source scans of the edited files: `tests/test_ad1155_loop_until_done.py:578-587`, `tests/test_ad1130_outcome_only_room_trust.py:1549-1564`.
   - The narrow-projection test `tests/test_ad1126_verified_finalization.py:1771-1813`.
   - P13 (`tests/test_ad1346_admission_shadow_parity.py:445-451`) and S9 (`tests/test_ad1346_admission_shadow_store.py:262-267`), which recompute the bounds from the vocabularies.
@@ -176,8 +176,8 @@
     - M3c2's DECISIONS bullet "stays 1,056" (M3-03), which now says the bound is 1,152 from M3c3.
     - The M3c1 and M3c2 contracts are records of their read trees and are not edited. M3c2's PROGRESS paragraph quotes no number.
   - **Report and declaration:** the report's queries group by the stored `work_kind` column (`report.py:26-52`), and the storage declaration names constants, not counts (`storage_declarations.py:26-31`). Neither changes.
-  - **Compatibility:** `SCHEMA_VERSION` stays 1; the columns are `TEXT` with no `CHECK` (`store.py:79-133`), and only `WorkRequest` checks a kind (`record.py:59-60`). An older build's `start` accepts the file (M3c1 D58), its `prune` deletes by day, and its report returns `agent_work` rows like any other. It writes none.
-    - Executed before the build (2026-10-30): the M3c2 build `9db6f3d8`, whose `WORK_KINDS` has no `agent_work`, opened a file holding `agent_work` rows in `shadow_aggregates`, `shadow_parity`, `shadow_samples` and `shadow_disagreements` and ran all eight `REPORT_QUERIES`: the parity query returned both `agent_work` rows, and the aggregate, sample and disagreement queries one each. A `prune` dated 90 days later left 0 rows.
+  - **Compatibility:** `SCHEMA_VERSION` stays 1; the columns are `TEXT` with no `CHECK` (`store.py:79-133`), and only `WorkRequest` checks a kind (`record.py:59-60`). An older build's `start` accepts the file (M3c1 D58), and its report returns `agent_work` rows like any other. It writes none.
+    - Executed before the build (2026-10-30): the M3c2 build `9db6f3d8`, whose `WORK_KINDS` has no `agent_work`, opened a file holding `agent_work` rows in `shadow_aggregates`, `shadow_parity`, `shadow_samples` and `shadow_disagreements` and ran all eight `REPORT_QUERIES`: the parity query returned both `agent_work` rows, and the aggregate, sample and disagreement queries one each. A `prune` dated 90 days later then left 0 rows in `shadow_aggregates` and `shadow_parity` and 1 in each of `shadow_samples` and `shadow_disagreements`; `prune` deletes from neither sample table (`store.py:368-403`).
   - Rejected:
     - `delegated_task` or `tool_call` for a create: the unit differs, and its parity rows would merge with another site's;
     - one kind per create type (self-task, assignment, request): `_admit` runs one check for all three (`agent_work.py:494-524`).
@@ -211,7 +211,6 @@
   - **9b also pins `refused`:**
     - at a site with one statement, `<name> is not None`, where `<name>` is the name the check's first call is assigned to on its line;
     - at the run entry, `True` on one statement and `False` on the other.
-    - Without this rule, a statement passing a constant would survive at every site G5 and G6 do not drive.
     - Measured before the build: it holds at all sixteen sites at M1's tree (M1's focused gate, 880 passed), and 9b fails at the base with only M1's test and fixture pairs applied; M1's gate re-measures it. Nine of M3c1's and M3c2's eleven statements read `refused=<the check's local> is not None` (Grep, §11); the run entry's two pass `True` and `False`.
   - 9c is unchanged; after M1 it pins sixteen (file, function) pairs.
   - **T16 after this slice:**
@@ -239,7 +238,7 @@
   - **Counts under the order (measured before the build: G5 and G6 pass on their first run; M2's gate re-measures them):**
     - exactly 1 at `delegation` and at `agent_work`. In `src`, `_requester_stop` is reached only through `_admit` (`agent_work.py:512`) from the two chain-tag calls, and `DelegateTaskTool.invoke` only through another agent's tool call naming the stopped agent;
     - at least 2 at `agentic_run`: the synthesis and the resume both count there, and the ship's own runs can also reach it.
-  - **Pinned by the census tests (9b, 9c), not driven:** `converge` and `converge_for_session`. Each reaches its check only after a refuted, non-defect verdict from a full judge pass (`crew_verifier.py:1561-1567`, `:1999-2021`).
+  - **Pinned by the census tests (9b, 9c), not driven by G5 or G6:** `converge` and `converge_for_session`. Each reaches its check only after a refuted, non-defect verdict from a full judge pass (`crew_verifier.py:1561-1567`, `:1999-2021`).
     - Their stop behaviour is covered by `tests/test_ad1343_agent_stop_crew.py:315` (legacy), and by `tests/test_ad1343_agent_stop_verify.py:478` and `tests/test_ad1343_stop_crossing_finalizer.py:172` (session); register R24.
   - Rejected:
     - stubbing `verify_for_session` to reach the session loop: the test would pin a stub's verdict shape, which `_session_round` and `_terminal_for_verdict` then read;
@@ -271,12 +270,12 @@
 
 - **`CrewSessionFinalizer.__init__`:**
   - In `src`: one construction, `startup/finalize.py:2391` (Absence).
-  - In tests: constructions pass keywords and not the new one, which defaults to None. `tests/test_ad1343_stop_crossing_finalizer.py:104` reads only whether `agent_stops` is a parameter. I16's census pins only the `agent_stops` keyword (`PINNED_KEYWORDS`).
+  - In tests: constructions pass keywords and not the new one, which defaults to None. `tests/test_ad1343_stop_crossing_finalizer.py:104` reads only whether `agent_stops` is a parameter. I16's census records only keywords in `PINNED_KEYWORDS` (`tests/fixtures/ad1343_seam_census.py:41`, `:82`), which does not hold `admission_service`.
 - **`AgentWorkService.__init__` and `open_agent_work_service`:**
   - In `src`: one construction (`agent_work.py:652`) and one opener call (`runtime.py:3518`).
   - In tests: opener calls (`tests/test_ad1347_s1_agent_work.py:174`, `:674`, `:681`; `tests/test_ad1347_s3_execution.py:208`) pass no `admission_service`. W1's spy forwards `**kwargs` (`tests/test_ad1347_s1_wiring.py:105-107`).
 - **`WORK_KINDS`:** read in `src` by `WorkRequest` (`record.py:59`); in tests by T1 (pinned tuple, M1-29), T3 (a loop), 9a (a subset), P13 and S9 (products).
-- **`_session_correction_runtime`:** called in `src` by `converge_for_session` (`crew_verifier.py:2148`), and by tests in `tests/test_ad1190_delegation_tree_budget.py`, `tests/test_ad1205_fault_paths.py` and `tests/test_ad1241_mcp_offer_budget.py`. Their runtimes hold no `admission_service`, so `getattr` returns None and the projected registry keeps shadowing nothing.
+- **`_session_correction_runtime`:** called in `src` by `converge_for_session` (`crew_verifier.py:2148`), and by tests in `tests/test_ad1190_delegation_tree_budget.py`, `tests/test_ad1205_fault_paths.py` and `tests/test_ad1241_mcp_offer_budget.py`. Their runtimes hold no `admission_service`, so `getattr` returns None and the projected registry keeps shadowing nothing. G5 (M2) also calls it, on the boot's runtime (D87).
 - **The projected registry's `_admission`:** read by `check_and_invoke`'s statement (`registry.py:398`) and by G5's premise.
 - **The six checks' results:** each site still acts on the same record. Two sites now hold it in a new local (`stopped` in `converge`, `_stopped` in `_resume_synthesis`), and `_requester_stop` returns the same record through `stopped`.
 - **`shadow_at`:** after M1, called by 17 statements in 14 files: the base's 11 in nine files (Grep count, §11) and this slice's 6 in five more files, two in `cognitive/crew_verifier.py` and one in each of the other four (§15). Measured before the build: at M1's tree the registry holds 16 `SHADOW_SITES` rows with 17 statements in 14 files. 9b pins the counts and 9c the functions.
@@ -1433,7 +1432,7 @@ HOLDS: yes
 CLAIM: source scans of the edited crew and agent-work files
 RUN:   Grep "agent_work\.py|delegate_task_tool\.py|crew_synth\.py|crew_finalizer\.py|crew_verifier\.py" tests; Grep "base_source_blobs|production_pristine" tests;
        Grep "getsource\((DelegateTaskTool|AgentWorkService|CrewSessionFinalizer|CrewSynthesizer|SubtaskVerifier|_session_correction_runtime)" tests
-FOUND: the registry rows; tests/fixtures/ad1152_agentic_off_golden.json:12 (base_source_blobs, which no test reads: only the JSON matches);
+FOUND: the registry rows; tests/fixtures/ad1152_agentic_off_golden.json:12 (a `base_source_blobs` entry; that key matches only in the JSON, at :4), the JSON :3 and test_ad1152_agentic_correlation.py:523 (`production_pristine`, which the test asserts from the JSON);
        test_ad1130:1551; test_ad1155:586 and getsource :578; test_ad1195:66; test_layer_boundaries.py:106-108; file_durations.json
 HOLDS: yes (none reads the text M1 adds: no "AD-1155", "token_budget", "compactor", "verify", "synthesize" or "record_outcome" call)
 
@@ -1505,7 +1504,7 @@ Not confirmed by reading and not measured (prediction):
 1. **Five sites share `(agentic_run, agentic_run)`:** the run entry (two statements) and the four crew sites. Parity rows cannot say which site; disagreement samples carry `origin_id` [R27].
 2. **One correction, one or two verdicts.** A session correction is shadowed once (D84); a legacy correction is shadowed twice, by its loop's check and by the run entry on the ship runtime [R26].
 3. **The crew sites record `system`.** Who started the crew task is not held at these functions [R25].
-4. **Two crew loops are pinned structurally only** [R24].
+4. **G5 and G6 do not drive the two correction loops;** 9b and 9c pin their statements [R24].
 5. **A create is a request, not a unit of executed work.** The S3 runner's standing-stop question before each run is unshadowed by design (D89).
 
 ## 14. Diff Reviewer: properties to verify
@@ -1563,6 +1562,10 @@ Not confirmed by reading and not measured (prediction):
 ## 16. Amendment A1 (2026-10-30, before the build, on the base `c58b3015`)
 
 A1 repairs what the orchestrator's pre-build run of this contract found (35 of 35 pairs applied on `9db6f3d8`; stages m1, m2 and trk measured) and what the Architect's sweep after it found. It covers: §5's file count for this slice's six statements; two Absence FOUND lines that differed from the grep's output; the predictions that run measured, now stated with their results (the collection count, 9b at sixteen sites, the class spans, the boot, the counts under the order, §12's architecture check, §15's 18 lines, D84's rejected property and D83's compatibility); D86's "ten statements" (nine, plus the run entry's two); "five statements" sharing `(agentic_run, agentic_run)` (five sites, six statements) in §8, §13 and R27; "9b alone" and "only by 9b" (9c also fails when a statement is removed); "stop record" for the boot's stop service; "the default boot"; and "readable by any build". Text that lands changes only in the new file's docstrings and one premise message (§7.13.N) and in M3-02's REPLACE. A1 changes no decision's content, no mutation row, row anchor or case count, and §7 and §8 still hold 35 pairs (M1 32, M3 3).
+
+## 17. Amendment A2 (2026-10-30, after review round 1, on the candidate head aa4d5657)
+
+A2 repairs the two findings of review round 1: D83's "A `prune` dated 90 days later left 0 rows" (it left 0 in `shadow_aggregates` and `shadow_parity` and 1 in each sample table, which `prune` does not touch), and D86's "would survive at every site G5 and G6 do not drive", now deleted (M3c1's GT-1 to GT-4 and M3c2's RG-1 to RG-6 mutate `refused` to `False` at ten sites and are killed by G1 and G3). It then sweeps the head text for the same two classes, measured results stated wider than what was counted and universal or exclusive claims about what tests drive or pin. That sweep removes D83's "its `prune` deletes by day", scopes D87's "not driven" and §13's "pinned structurally only" to G5 and G6, corrects the two "I16's census pins only the `agent_stops` keyword" claims (`PINNED_KEYWORDS` holds three), adds G5 to §5's callers of `_session_correction_runtime`, and adds to one Absence FOUND line the two `production_pristine` hits its RUN prints. A2 changes no decision's content, no mutation row, row anchor or case count. §7 and §8 still hold 35 pairs (M1 32, M3 3), and none of their text changes, so no text that lands changes.
 
 ## For the register (#1604)
 
