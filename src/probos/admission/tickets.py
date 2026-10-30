@@ -1,7 +1,7 @@
-"""AD-1346 M3d1 (#1604): work tickets and the registry that is their authority, in memory, with no caller yet.
+"""AD-1346 M3d1 (#1604): work tickets and the registry that is their authority, in memory.
 
 A work ticket is the capability of epic #1601's design note. ``TicketRegistry.issue`` registers one
-for a unit of work a shadow decision admitted, ``issue_child`` registers one no wider than its parent for work
+for a unit of work admitted at its seam, ``issue_child`` registers one no wider than its parent for work
 that unit hands on, and ``check`` is the liveness check an effect point runs. The registry is the
 authority: ``check`` and ``issue_child`` read what they compare (principal, scope, budget, parent,
 expiry) from the registry's entry for the presented ticket's id, never from the presented object. A
@@ -212,7 +212,7 @@ class TicketRegistry:
     def issue(
         self, *, principal_key: str, work_kind: str, seam: str, scope: TicketScope, budget: TicketBudget,
     ) -> TicketIssue:
-        """Register a root ticket (depth 0, no parent) for work a shadow decision admitted; it expires ``ttl_seconds`` from now."""
+        """Register a root ticket (depth 0, no parent) for a unit of work admitted at its seam; it expires ``ttl_seconds`` from now."""
         _require(principal_key, work_kind, seam, scope, budget)
         now = self._clock()
         return self._register(principal_key, work_kind, seam, scope, budget, None, now, now + self._ttl)

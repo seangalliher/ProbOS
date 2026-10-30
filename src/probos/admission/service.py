@@ -12,6 +12,10 @@ built with one also hands each verdict ``shadow`` counted, and its measured time
 the site's own outcome (``today_outcome``), which ``shadow`` checks and hands to the recorder for
 parity, and ``close``, after which ``shadow`` returns None at once.
 ``probos.admission.seam.shadow_at`` calls ``shadow`` with the outcome a site's own check reached.
+AD-1346 M3d2 added an optional ``TicketRegistry`` and ``hold``: ``probos.admission.seam.hold_at`` calls ``hold``
+at three entries, past their own stop check, and ``hold`` issues that unit's work ticket into the carrier
+(``probos.admission.carrier``); with no registry, or after ``close``, it issues nothing. ``hold`` has an
+``except Exception`` of its own, which counts in ``failures`` and logs as ``shadow``'s does.
 The service reads no configuration.
 """
 
@@ -19,12 +23,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
+from probos.admission.carrier import CURRENT_TICKET, NO_HOLD, TicketHold
 from probos.admission.checks import ADMITTED, check_agent_stop, check_principal, resolve_principal
 from probos.admission.record import AdmissionVerdict, WorkRequest
 from probos.admission.recorder import ShadowRecorder
 from probos.admission.taxonomy import LATENCY_BUCKETS, OUTCOME_ADMIT, OUTCOME_WOULD_REFUSE, TODAY_OUTCOMES
+from probos.admission.tickets import TICKET_EFFECTS, TicketBudget, TicketRegistry, TicketScope
 from probos.agent_stop import AgentStopService
 from probos.identity_service import IdentityService
 
@@ -32,6 +38,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+#: AD-1346 M3d2 (D113): every ticket ``hold`` issues may reach both effect points and has no ceiling (M5 owns accounts).
+_WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
+_NO_CEILINGS: Final = TicketBudget()
 
 
 class AdmissionService:
@@ -44,6 +54,7 @@ class AdmissionService:
         *,
         clock: Callable[[], int] = time.perf_counter_ns,
         recorder: ShadowRecorder | None = None,
+        tickets: TicketRegistry | None = None,
     ) -> None:
         if not isinstance(identity_service, IdentityService):
             raise TypeError("AdmissionService needs the IdentityService facade")
@@ -51,10 +62,13 @@ class AdmissionService:
             raise TypeError("AdmissionService needs the AgentStopService record")
         if recorder is not None and not isinstance(recorder, ShadowRecorder):
             raise TypeError("AdmissionService takes a ShadowRecorder or None")
+        if tickets is not None and not isinstance(tickets, TicketRegistry):
+            raise TypeError("AdmissionService takes a TicketRegistry or None")
         self._identities = identity_service
         self._stops = stop_service
         self._clock = clock
         self._recorder = recorder
+        self._tickets = tickets  # AD-1346 M3d2: compared with None, never by truth (an empty registry is falsy)
         self._closed = False
         self._tally: dict[tuple[str, str, str], int] = {}
         self._latency: list[int] = [0] * LATENCY_BUCKETS
@@ -128,8 +142,47 @@ class AdmissionService:
         return None
 
     def close(self) -> None:
-        """Decide nothing from now on: a later ``shadow`` returns None at once; ``decide`` is unaffected (AD-1346 M3c, D61)."""
+        """Decide and issue nothing from now on: a later ``shadow`` returns None at once and a later ``hold`` returns ``NO_HOLD``; ``decide`` is unaffected (AD-1346 M3c, D61; M3d2)."""
         self._closed = True
+
+    def hold(self, *, presented_id: str, work_kind: str, seam: str, child: bool) -> TicketHold:
+        """Issue the work ticket of one unit an entry's own stop check admitted and put it in the carrier (AD-1346 M3d2).
+
+        ``probos.admission.seam.hold_at`` calls it. With no registry, or after ``close``, it returns ``NO_HOLD`` and
+        issues nothing. Otherwise the ticket's principal is the key ``decide`` gives the presented id (the slot when it
+        resolves, D112), its scope both effect points and its budget no ceiling (D113). It is a child of the carried
+        ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
+        ticket, or None when the registry refused the issue and counted its finding (D114), until the hold's ``end``.
+        An ``Exception`` raised here is counted in ``failures`` and logged, and the carrier is left as it was; a
+        ``BaseException`` that is not an ``Exception`` propagates.
+        """
+        if self._closed or self._tickets is None:
+            return NO_HOLD
+        try:
+            key = resolve_principal(presented_id, self._identities).key
+            parent = CURRENT_TICKET.get() if child is True else None
+            if parent is None:
+                issued = self._tickets.issue(
+                    principal_key=key, work_kind=work_kind, seam=seam, scope=_WORK_SCOPE, budget=_NO_CEILINGS,
+                )
+            else:
+                issued = self._tickets.issue_child(
+                    parent, principal_key=key, work_kind=work_kind, seam=seam, scope=_WORK_SCOPE, budget=_NO_CEILINGS,
+                )
+            token = CURRENT_TICKET.set(issued.ticket)
+            return TicketHold(self._tickets, issued.ticket, token)
+        except Exception:  # D114: counted and logged; the carrier is left as it was
+            self._failures += 1
+            try:
+                logger.log(
+                    logging.WARNING if self._failures == 1 else logging.DEBUG,
+                    "AD-1346 M3d2: a work ticket's issue raised (%d failures so far); hold() returned NO_HOLD and the carrier is unchanged",
+                    self._failures,
+                    exc_info=True,
+                )
+            except Exception:  # noqa: BLE001 -- F-212 (D59): a logging handler that raised must not reach the entry
+                pass  # the failure is already counted in ``failures``
+            return NO_HOLD
 
     def _count(self, verdict: AdmissionVerdict, elapsed_ns: int) -> None:
         key = (verdict.seam, verdict.work_kind, verdict.reason_code)
@@ -146,5 +199,5 @@ class AdmissionService:
 
     @property
     def failures(self) -> int:
-        """Exceptions that ``shadow``'s ``except Exception`` counted since this service was built."""
+        """Exceptions that the ``except Exception`` of ``shadow`` or of ``hold`` counted since this service was built."""
         return self._failures
