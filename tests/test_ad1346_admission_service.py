@@ -29,9 +29,10 @@ a real ``CallsignRegistry`` and a real ``AgentStopService``, all under ``tmp_pat
 - T15 the seam census: the package calls none of the stop's guard functions and starts no agent work.
 - T16 outside the package the service is named only by ``runtime.py``, ``startup/shutdown.py``, ``startup/finalize.py``
       (which hands it to the Ward Room router and the crew session finalizer) and twelve shadowed-site files, which read
-      it from a runtime or take it in a constructor; the package is imported only by ``runtime.py`` and the fourteen
-      shadowed-site files; the only routers that do either are the three whose routes AD-1346 M3c2 shadows, and none of
-      them serves a route #1604 property 11 keeps ungated.
+      it from a runtime or take it in a constructor; the package is imported only by ``runtime.py``, the fourteen
+      shadowed-site files and, from AD-1346 M3d3a, the model gateway's module ``cognitive/llm_client.py``; the only
+      routers that do either are the three whose routes AD-1346 M3c2 shadows, and none of them serves a route #1604
+      property 11 keeps ungated.
 """
 
 from __future__ import annotations
@@ -571,7 +572,7 @@ def test_the_package_calls_no_stop_guard_and_starts_no_agent_work() -> None:
     assert first_line(function("src/probos/admission/checks.py", "check_agent_stop"), calls("stop_for")) > 0
 
 
-def test_only_the_wiring_and_the_shadowed_seams_name_the_service_or_import_the_package() -> None:
+def test_only_the_wiring_the_shadowed_seams_and_the_model_gateway_name_the_service_or_import_the_package() -> None:
     """T16: the consumer census (#1604, property 11). Outside the package the runtime builds the service and shutdown
     closes and releases it. Each site AD-1346 M3c1 to M3c3 shadow reaches it the way it reaches its stop gate: ten files
     read ``admission_service`` from a runtime (``cognitive_agent.py``, ``agentic_dispatch.py``, ``proactive.py``,
@@ -579,8 +580,10 @@ def test_only_the_wiring_and_the_shadowed_seams_name_the_service_or_import_the_p
     also hands it to a correction's projected registry, and three routers); ``tools/registry.py`` is handed it by
     ``set_admission``; ``ward_room_router.py`` and ``crew_finalizer.py`` take it in their constructors from
     ``startup/finalize.py``; and ``agent_work.py`` takes it in its constructor from ``runtime.py``. Each of those fourteen
-    imports ``probos.admission``. The only routers that name the service or import the package are the three whose routes
-    M3c2 shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
+    imports ``probos.admission``. From AD-1346 M3d3a the model gateway's module, ``cognitive/llm_client.py``, imports it
+    too, and ``runtime.py`` hands ``OpenAICompatibleClient`` the service through its own ``set_admission``. AD-1346 M3d3a
+    renamed this test. The only routers that name the service or import the package are the three whose routes M3c2
+    shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
     # #1604 property 11: the Captain's stop and lift (``routers/agent_stop.py``, ``/api/stops``), and health and status
     # (``routers/system.py``: ``/api/health``, ``/api/status``; ``routers/voice.py``: ``/api/voice/health``;
     # ``routers/desktop.py``: ``/api/desktop/status``); ``api.py`` builds the app.
@@ -616,7 +619,7 @@ def test_only_the_wiring_and_the_shadowed_seams_name_the_service_or_import_the_p
         "probos/cognitive/crew_finalizer.py", "probos/cognitive/crew_synth.py", "probos/cognitive/crew_verifier.py",
         "probos/cognitive/dm/reply_pipeline.py", "probos/proactive.py", "probos/routers/agent_actions.py",
         "probos/routers/agents.py", "probos/routers/thread_fanout.py", "probos/runtime.py", "probos/tools/delegate_task_tool.py",
-        "probos/tools/registry.py", "probos/ward_room_router.py",
+        "probos/tools/registry.py", "probos/ward_room_router.py", "probos/cognitive/llm_client.py",
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {"probos/routers/agent_actions.py", "probos/routers/agents.py", "probos/routers/thread_fanout.py"}, sorted(routes)

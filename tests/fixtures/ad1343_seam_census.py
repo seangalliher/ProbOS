@@ -38,6 +38,7 @@ RECORDED = STOP_CALLEES | AGENT_WORK_METHODS | {
     "CrewRecoveryTransientError", "finalize", "run_crew_task",  # N1
     "shadow_at",  # AD-1346 M3c: the shadow statement beside a stop check
     "hold_at",  # AD-1346 M3d2: the work-ticket hold an admitted entry takes (tests/test_ad1346_admission_ticket_issue.py, I10)
+    "check_at",  # AD-1346 M3d3a: the sink check at the tool sink and the model gateway (tests/test_ad1346_admission_ticket_sinks.py, SK7)
 }
 PINNED_KEYWORDS = frozenset({"admitted_turn", "agent_stops", "admitted_synthesis"})  # recorded as "name=value" on any call passing one
 CREW_PREFIX = "src/probos/cognitive/crew_"
@@ -200,4 +201,4 @@ if __name__ == "__main__":
     rows = model_call_report()
     for file, function_name, receiver, how in rows:
         print(f"{file}::{function_name}  {receiver}.complete(...)  {how}")
-    print(f"{len(rows)} model call sites outside the crew modules (report only; #1601 M3 gates them)")
+    print(f"{len(rows)} model call sites outside the crew modules (report only; AD-1346 M3d3a checks the work ticket at the gateway, OpenAICompatibleClient.complete, not per call site)")
