@@ -98,8 +98,8 @@
   - A ceiling the child leaves None is the parent's; a ceiling it sets is at most the parent's when the parent has one.
   - Its expiry is `min(now + ttl, parent.expires_at)`.
   - Refusals: a parent that is not live is refused with its own code; a deeper child with `ticket_too_deep`; a wider child with `ticket_widened`. A refusal adds no entry.
-  - `max_depth` is the value `delegation_max_depth` holds (`config_models/agentic.py:1025`, default 1, bounds 0 to 3). `DelegateTaskTool` enforces that bound (`delegate_task_tool.py:323`) and hands it to `DelegationTreeBudget.admit` (`:416-420`).
-  - Reframed from "bounded by `DelegationTreeBudget`": that object holds no depth and is None when no tree ceiling is set (`delegation_budget.py:236-242`). The bound is the same one, so nothing is weakened.
+  - `max_depth` is a keyword argument of the registry's constructor, and the registry enforces the value it is given. M3d2 is to build it with `max_depth` from `agentic_tools.delegation_max_depth` (register R29).
+  - Reframed from "bounded by `DelegationTreeBudget`": that object holds no depth and is None when no tree ceiling is set (`delegation_budget.py:236-242`), so the depth bound is the registry's `max_depth`.
 - **D96 Revocation.**
   - `revoke(ticket)` marks a registered entry and each registered descendant revoked, and returns the count.
   - `check` (and `issue_child`, for a parent) reads `AgentStopService.stop_for` for the entry's principal and then for each registered ancestor's. The first entry found under a stop is revoked with its subtree and keeps the order's `stop_id`. It stays revoked after a lift.
@@ -145,8 +145,8 @@
   - **Record.** Persisted in an additive table plus a ring of `TicketFinding.to_dict()` samples through the recorder, version kept at 1, as M3c's D58 did.
   - Rejected: folding sink results into `AdmissionVerdict` (it clashes with the stop verdict at `(tool_call, tool)` and floods parity with designed disagreements); log lines; AD-1195 events.
 - **D104 Census, T16 and the golden test.**
-  - This slice adds no `shadow_at` call and no file outside the package that names the service or the package, so `SHADOW_SITES`, 9a to 9c and T16 are unchanged.
-  - T15's census covers `tickets.py` automatically (`c.file.startswith("src/probos/admission/")`, `:541`).
+  - This slice adds no `shadow_at` call and changes no `src` file outside the package, so `SHADOW_SITES`, 9a to 9c and T16 are unchanged.
+  - T15's census covers `tickets.py` automatically (`c.file.startswith("src/probos/admission/")`).
   - The golden test (#1604 property 12) needs a caller and belongs to M3d2.
   - The M0 `.complete(` report (`tests/fixtures/ad1343_seam_census.py:181-195`) is M3d3's.
 - **D105 No trust, budget or stop is written.** Its one call on the stop service is `self._stops.stop_for(node.principal_key)` (`grep -n "self\._stops\." src/probos/admission/tickets.py` prints that one line). T15 pins that the package calls no name in the census's `GUARD_CALLEES` (`tests/fixtures/ad1343_seam_census.py:27`) and no agent-work call; K11 pins that the stop's refusal counts stay empty. It writes only its own entries, order, children index and tally, and it charges nothing.
@@ -164,11 +164,11 @@
 
 - **`taxonomy.py`:**
   - New names only (`TICKET_*` constants and `TICKET_REASON_CODES`), read by `tickets.py` and K1.
-  - `taxonomy.py`'s imports are unchanged, so T1's import pin (`test_ad1346_admission_service.py:205-210`) holds.
+  - `taxonomy.py`'s imports are unchanged, so T1's import pin holds.
   - No test enumerates the module's names (Absence).
-- **T14's allowlist:** gains the key `tickets.py`; read by T14 alone (`:495-525`).
+- **T14's allowlist:** gains the key `tickets.py`; read by T14 alone.
 - **`probos.admission.tickets`:** read by K1 to K15. Outside the package no `src` file names it (Absence; K15 pins it).
-- **`probos.admission.__all__`:** unchanged, so T14's assertion (`:494`) holds.
+- **`probos.admission.__all__`:** unchanged, so T14's assertion holds.
 
 ## 6. Tests
 
@@ -1575,7 +1575,12 @@ A1d (2026-10-30, on `bb6e6451`) repairs two sentences:
 
 A1d-2 is its only landing text, in the test-file block. No code line, TK row's Line text, decision, case count or §8 pair changes.
 
-## For the register (#1604)
+A2 (2026-10-30, after review round 1 of the candidate head `113b36cf`) repairs sentences that describe the head:
+- D95's bullet pair, which said `max_depth` is the value `delegation_max_depth` holds and that the bound is the same one. Nothing at this head performs that wiring. The pair now names the constructor argument and states the wiring as M3d2's (register R29) (A2-1).
+- D104's claim that no file outside the package names the service or the package. The slice's new test file falsifies it. It now says the slice changes no `src` file outside the package (A2-2).
+- Line numbers of `tests/test_ad1346_admission_service.py` in D104 and §5 that do not match the head, which the slice edits. They are deleted (A2-3 to A2-6).
+
+The reviewer found no code defect. A2 has no landing text, and §7 and §8 are untouched. No decision, mutation row, case count, code line or §14 property changes.
 
 - **Advanced by this slice:** #1604 property 9 (the registry rule, the `TestTicket` refusal, attenuation with depth, one taxonomy with causes) and the in-process half of property 5 (K11).
 - **R29, M3d2 (next):**
