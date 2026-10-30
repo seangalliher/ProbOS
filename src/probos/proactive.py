@@ -29,6 +29,7 @@ def _strip_bracket_markers(text: str) -> str:
     return _BRACKET_MARKER_RE.sub(' ', text).strip()
 
 from probos.config import format_trust
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_PROACTIVE, active_stop
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
@@ -1009,13 +1010,17 @@ class ProactiveCognitiveLoop:
         # AD-636: Count eligible agents for stagger calculation
         eligible_agents: list[Any] = []
         _stops = getattr(rt, "agent_stops", None)  # AD-1343: the Captain's stop
+        _admission = getattr(rt, "admission_service", None)  # AD-1346 M3c: the shadow decision, read from the runtime as the stop is
         for agent in rt.registry.all():
             if not is_crew_agent(agent, rt.ontology):
                 continue
             if not agent.is_alive:
                 continue
             # AD-1343: a stopped agent is offered no proactive work, duty or BF-156 DM sweep.
-            if active_stop(_stops, agent.id, SEAM_PROACTIVE) is not None:
+            _stopped = active_stop(_stops, agent.id, SEAM_PROACTIVE)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(_admission, presented_id=agent.id, work_kind="proactive_cycle", seam=SEAM_PROACTIVE, origin="system", origin_id="proactive_cycle", refused=_stopped is not None)
+            if _stopped is not None:
                 continue
             # AD-486: Skip agents still in Birth Chamber (pre-graduation).
             # Default-disabled chamber (no runtime.birth_chamber) treats

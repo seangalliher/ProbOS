@@ -5584,6 +5584,7 @@ async def finalize_startup(
             notify_fn=runtime.notify,
             proactive_loop=proactive_loop,
             agent_stops=getattr(runtime, "agent_stops", None),
+            admission=getattr(runtime, "admission_service", None),  # AD-1346 M3c: the Ward Room's shadow statement; None shadows nothing
         )
         # AD-637c: Only wire router ref for fallback path (NATS disconnected).
         # When NATS is connected, events flow through JetStream → consumer callback.

@@ -31,6 +31,7 @@ import ast
 from pathlib import Path
 
 from probos import agent_stop
+from probos.admission.taxonomy import WORK_KINDS
 from probos.security.url_guard import validate_public_url
 # AD-1343 M0: the census and its tables are shared with the seam registry guard (tests/test_ad1343_seam_registry.py);
 # imported under their S1 names so the tests below are unchanged.
@@ -231,10 +232,13 @@ def test_the_crew_run_asks_eligibility_right_before_its_run_entry() -> None:
 
 
 def test_every_stop_check_is_shadowed_or_pending() -> None:
-    """9a (AD-1346 M3c): each S1 stop check is in exactly one of SHADOW_SITES and SHADOW_PENDING."""
+    """9a (AD-1346 M3c): each S1 stop check is in exactly one of SHADOW_SITES and SHADOW_PENDING, and each shadowed site
+    reports a work kind of the closed vocabulary (a misspelt one would only be a counted shadow failure at run time)."""
     assert not set(_SHADOW_SITES) & set(_SHADOW_PENDING)
     both = set(_SHADOW_SITES) | set(_SHADOW_PENDING)
     assert both == set(_STOP_CHECK_SITES), sorted(both ^ set(_STOP_CHECK_SITES))
+    kinds = {kind for kind, _ in _SHADOW_SITES.values()}
+    assert kinds <= set(WORK_KINDS), sorted(kinds - set(WORK_KINDS))
 
 
 def test_each_shadowed_site_calls_shadow_at_beside_its_check() -> None:

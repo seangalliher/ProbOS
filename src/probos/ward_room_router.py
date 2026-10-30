@@ -13,11 +13,13 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_WARD_ROOM, active_stop
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
 
 if TYPE_CHECKING:
+    from probos.admission import AdmissionService
     from probos.agent_stop import AgentStopService, StopRecord
     from probos.cognitive.episodic import EpisodicMemory
     from probos.config import SystemConfig
@@ -39,6 +41,8 @@ class WardRoomRouter:
     _WARD_ROOM_COOLDOWN_SECONDS = 30  # Minimum seconds between responses per agent (captain-triggered)
     # AD-1343: the Captain's stop. A class default so a router built without it routes as before.
     _agent_stops: "AgentStopService | None" = None
+    # AD-1346 M3c: the shadow admission service, handed in beside the stop; None (the class default) shadows nothing.
+    _admission: "AdmissionService | None" = None
 
     def __init__(
         self,
@@ -56,6 +60,7 @@ class WardRoomRouter:
         notify_fn: Callable | None = None,
         proactive_loop: ProactiveCognitiveLoop | None = None,
         agent_stops: "AgentStopService | None" = None,
+        admission: "AdmissionService | None" = None,
     ) -> None:
         self._ward_room = ward_room
         self._registry = registry
@@ -70,6 +75,7 @@ class WardRoomRouter:
         self._notify_fn = notify_fn
         self._proactive_loop = proactive_loop
         self._agent_stops = agent_stops
+        self._admission = admission
 
         # State
         self._cooldowns: dict[str, float] = {}  # agent_id -> last_response_timestamp
@@ -642,6 +648,8 @@ class WardRoomRouter:
 
             # AD-1343: a stopped agent is not notified; a thread that addressed it is told once.
             stopped = active_stop(self._agent_stops, agent_id, SEAM_WARD_ROOM)
+            # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+            shadow_at(self._admission, presented_id=agent_id, work_kind="ward_room_notice", seam=SEAM_WARD_ROOM, origin="captain" if is_captain else "agent" if is_agent_post else "system", origin_id=author_id, refused=stopped is not None)
             if stopped is not None:
                 if is_direct_target:
                     await self._post_stop_notice(thread_id, agent_id, stopped)

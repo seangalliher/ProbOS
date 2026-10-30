@@ -41,6 +41,7 @@ from probos.cognitive.introspective_telemetry import (
     UPTIME_POPULATION,
     UPTIME_SOURCE,
 )
+from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_DM_ROUTE, active_stop
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
@@ -2961,6 +2962,8 @@ async def _agent_chat_impl(
     # AD-1343: a stopped agent takes no DM turn. Refused before the thread, the owned-steps
     # capture, the send and the reply pipeline, so nothing is held, stored or replayed.
     _stopped = active_stop(getattr(runtime, "agent_stops", None), agent_id, SEAM_DM_ROUTE)
+    # AD-1346 M3c: the shadow decision beside the check, with what the check did; it blocks nothing.
+    shadow_at(getattr(runtime, "admission_service", None), presented_id=agent_id, work_kind="direct_message", seam=SEAM_DM_ROUTE, origin="system" if getattr(req, "system_trigger", False) is True else "captain", origin_id="dm_route", refused=_stopped is not None)
     if _stopped is not None:
         raise HTTPException(status_code=409, detail=_stopped.sender_detail())
 
