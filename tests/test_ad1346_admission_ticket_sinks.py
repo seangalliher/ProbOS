@@ -8,10 +8,11 @@ first statement. These tests drive it over a real ``IdentityService`` and a real
 a ``TicketRegistry`` on a clock the test moves, a real ``ToolRegistry``, the real gateway with the request it would send
 replaced by a canned answer, and the real run entry with a scripted body in place of the agentic loop; SK9 boots twice.
 
-- SK1  the service takes an event loop or None; with no registry, or once closed, a sink check counts nothing; with
-       one it counts the registry's finding for what the carrier holds: ``ticket_missing`` with nothing carried,
-       ``ticket_live`` for a live ticket (with no principal compared when the presented id is None),
-       ``ticket_principal_mismatch`` for another agent's id and ``ticket_expired`` once the hold ended; it returns None.
+- SK1  the service refuses a ``loop`` that is not an event loop; with no registry, or once closed, a sink check
+       counts nothing; with one it counts the registry's finding for what the carrier holds: ``ticket_missing``
+       with nothing carried, ``ticket_live`` for a live ticket (with no principal compared when the presented id is
+       None), ``ticket_principal_mismatch`` for another agent's id and ``ticket_expired`` once the hold ended; it
+       returns None.
 - SK2  ``check_at`` passes over None, a plain object and a look-alike, and forwards the effect and the presented id to
        an exact ``AdmissionService``.
 - SK3  a sink check whose registry raises is counted in ``failures`` and logged at WARNING and then DEBUG, a logging
@@ -19,7 +20,7 @@ replaced by a canned answer, and the real run entry with a scripted body in plac
 - SK4  the thread rule (D128): a sink on another thread, or in a worker running a loop of its own as
        ``consultation/llm_decomposer.py`` does, reads the carrier there and hands the check to the service's loop, which
        counts it in ``off_loop_checks``; the registry's checks run on that loop's thread; a check handed over and then
-       closed is not run; a hand-off to a closed loop counts nothing and raises nothing.
+       closed is not run; a hand-off to a closed loop raises nothing, runs no check and counts no failure.
 - SK5  #1604 property 5, the run, in memory: inside the real run entry's hold, the next model call and tool call after
        a Captain's stop on the run's agent count ``ticket_revoked``, with the stop's id on the entry; before the stop
        both count ``ticket_live`` and today's tool check admits the call.
@@ -222,7 +223,8 @@ def _gateway(service: AdmissionService | None) -> _OfflineGateway:
 
 
 def _runtime(tools: ToolRegistry, service: AdmissionService) -> SimpleNamespace:
-    """What the run entry reads from a runtime: the tool registry (its stop gate) and the admission service."""
+    """A runtime holding the tool registry (its stop gate) and the admission service; the run entry's other reads of a
+    runtime (``getattr`` with a default) find nothing."""
     return SimpleNamespace(tool_registry=tools, admission_service=service)
 
 
@@ -317,7 +319,7 @@ async def test_a_sink_check_counts_the_registrys_finding_for_what_the_carrier_ho
 async def test_check_at_calls_only_an_exact_service_and_forwards_the_effect_and_the_presented_id(
     gate: AdmissionService, tickets: TicketRegistry,
 ) -> None:
-    """SK2 (kills SKX-11)."""
+    """SK2 (kills SKX-11, SKX-17)."""
 
     class _LookAlike:
         calls = 0
@@ -330,6 +332,15 @@ async def test_check_at_calls_only_an_exact_service_and_forwards_the_effect_and_
     assert _LookAlike.calls == 0 and tickets.tally() == {}
     assert check_at(gate, effect=SEAM_MODEL_CALL, presented_id=AGENT_A) is None
     assert tickets.tally() == {("model_call", "ticket_missing"): 1}
+    held = gate.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+    assert held.ticket is not None, "premise: the registry issued the ticket"
+    try:
+        assert check_at(gate, effect=SEAM_TOOL, presented_id=AGENT_B) is None
+    finally:
+        held.end()
+    assert tickets.tally() == {
+        ("model_call", "ticket_missing"): 1, ("issue", "ticket_issued"): 1, ("tool", "ticket_principal_mismatch"): 1,
+    }, "check_at forwards the presented id: another agent's id is compared with the ticket's principal"
 
 
 async def test_a_sink_check_that_raises_is_counted_and_logged_and_the_sink_gets_none(
