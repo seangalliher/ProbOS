@@ -72,7 +72,7 @@
 - **The offer.** `ShadowRecorder.offer_ticket(finding, *, off_loop)` checks the finding (D151), counts it under (hour, operation, code, work kind, `off_loop`), and keeps a sample of every code except `ticket_issued` and `ticket_live`, `ticket_missing` in a buffer of its own. It awaits nothing and does no I/O.
 - **The writer.** `_flush` detaches the pending work-ticket part as a `TicketBatch` into the batch's `tickets` field, and counts `ticket_written` when the write commits. `_restore` adds the part back within the two buffers. `_pending` counts it. `start` marks the hour for a work-ticket marker row.
 - **The failing part (D150).** When a write raises an `Exception` and its work-ticket part holds a finding count or a sample, `_flush` writes the batch again at once. The second write replaces those counts and samples with dropped counts in the work-ticket markers. If it raises too, the batch is put back whole.
-- **The offer points (D152).** `hold` offers the issue's finding before it sets the carrier. `_check_ticket` offers the check's finding after the off-loop count. Both are inside their existing `except Exception`.
+- **The offer points (D152).** `hold` offers the issue's finding before it sets the carrier. `_check_ticket` offers the check's finding after the off-loop count.
 - **Stop.** The shutdown order is unchanged. `stop`'s warning counts the work-ticket findings and samples it could not write.
 
 ## 3. Decisions (numbered after M3d3b1's D137 to D148)
@@ -83,15 +83,14 @@
 - **D150 A work-ticket part that raises does not hold the verdicts back** (answers M3d3b1's R52 bullet). Options, ranked:
   1. **Chosen: a second write at once with the ticket rows counted as dropped.** When `write_batch` raises an `Exception` and `batch.tickets` holds a finding count, a sample or a missing sample, `_flush` calls `_write_without_ticket_rows(batch)`. That writes `replace(batch, tickets=_as_dropped(batch.tickets))`. In `_as_dropped`'s part, the offered counts are kept, each finding count is added to its hour's dropped count, each sample adds one to its hour's samples-dropped count, and no finding count or sample remains.
      - If that write commits, the verdicts and the work-ticket markers are in the file, and `ticket_dropped` and `ticket_samples_dropped` count what was lost.
-     - If it raises an `Exception`, the original batch is put back whole by `_restore`, and each failed write is counted in `flush_failures`, unless the log call in `_failed` raises (F-212's class): the flush then ends with the batch already put back, `_run` counts a flush error, and only the second write's failure is counted. "Whole": a detached part never holds more samples than its buffer, and `_restore` keeps the batch's samples first, so only offers made during the writes can overflow (TO6).
+     - If it raises an `Exception`, the original batch is put back whole by `_restore`. "Whole": a detached part never holds more samples than its buffer, and `_restore` keeps the batch's samples first, so only offers made during the writes can overflow (TO6).
      - A `BaseException` that is not an `Exception` puts the batch back and propagates; the first write's failure is then not counted. No test raises one (§10, "Expected to survive").
-     - So a finding or sample can never keep the verdicts from a write: the second write of such a flush holds neither.
      - The other direction is not bounded: a verdict part that raises still holds the ticket part back (register R62).
   2. Rejected: `offer_ticket` checks every field so that no part can raise. It depends on a complete list of what `persisted_finding`, `json.dumps` and SQLite's binding can raise. That list already misses a lone-surrogate id (register R60), and a later store change reopens it. The R53 checks are kept for the bound, not for this.
   3. Rejected: a separate transaction for the ticket part. It reverses D140's one transaction, changes M3d3b1's store after its review, and a poison part still retries on every flush and is never written.
   4. Rejected: never restoring a ticket part whose write raised. It loses the ticket part on every failed write, an outage included, while the verdicts are kept; the verdicts are still held back for that flush.
   5. Considered, deferred: halving the ticket part until the failing sample is isolated, the shape of AWS Lambda's `BisectBatchOnFunctionError` (§13). It costs up to log2(n) writes per flush for a cause no `src` producer reaches.
-  - The cost of the choice is register R59 (a failure that clears between two writes drops one flush's ticket rows, counted) and R64 (two writes per flush while the store fails).
+  - The cost of the choice is register R59 (a failure that clears between two writes drops one flush's ticket rows, counted) and R64.
 - **D151 The offer's contract** (refines D140; closes register R53 for the recorder's writes).
   - Signature: `offer_ticket(finding: TicketFinding, *, off_loop: bool) -> None`.
   - Once `stop` began it counts `ticket_late` and checks and keeps nothing (as `offer` counts `late`).
@@ -107,13 +106,13 @@
     - a new key beyond `PENDING_KEY_LIMIT` is counted as `ticket_dropped`, per hour and in total, and not sampled;
     - a sample beyond its buffer is counted as `ticket_samples_dropped`, per hour and in total.
   - The ids are digested only when written (`persisted_finding`, M3d3b1's D144). The recorder holds the finding as offered, in memory.
-  - Fail open: a raising offer is an `Exception` inside the service's existing `try`, counted once in `failures` (D152). The recorder counts nothing for it.
+  - Fail open: an offer that raises an `Exception` is counted once in the service's `failures` (D152). The recorder counts nothing for it.
   - Rejected:
     - a sixth counter for refused findings (silent, and outside R52's five);
     - inferring `off_loop` in the recorder (only the service knows a check was handed over).
 - **D152 Who offers, where, and on which thread** (refines D140).
   - `hold`: `if self._recorder is not None: self._recorder.offer_ticket(issued.finding, off_loop=False)`, after the issue and before `CURRENT_TICKET.set`. An offer that raises therefore leaves the carrier as it was. For an `Exception`, `hold` returns `NO_HOLD`, and an entry the issue added stays registered (register R63). This adds no path to register R45.
-  - `_check_ticket`: `finding = self._tickets.check(...)`, the off-loop count, then `self._recorder.offer_ticket(finding, off_loop=off_loop)`. A raising offer leaves the check counted in the registry's tally and in `off_loop_checks`, and counts one failure.
+  - `_check_ticket`: `finding = self._tickets.check(...)`, the off-loop count, then `self._recorder.offer_ticket(finding, off_loop=off_loop)`. A raising offer leaves the check counted in the registry's tally.
   - `self._recorder` is compared with None, as `shadow` does (`service.py:147` on `35045636`).
   - Thread: each offer runs in the same function, on the same thread, as the registry call whose finding it offers.
     - In the runtime the sink checks run on the service's loop (D128). `ProbOSRuntime.start` starts the recorder's flusher and builds the service with `loop=asyncio.get_running_loop()` in the same coroutine (`runtime.py:2936-2937`, `:2959`), so the sink offers and the flusher share a thread.
@@ -130,7 +129,7 @@
     - `samples_dropped`: buffer overflow at the offer and at `_restore`, plus D150's.
   - Once every pending count of a (boot, hour) is committed, offered = written + dropped there. `ticket_late` stays in memory. TO4, TO5, TO6 and TO10 check the identity on the cases they build.
   - `start` marks its hour for a work-ticket marker row (zeros), as it does for the verdict markers. So every boot whose first write succeeded is listed by `ticket_markers_by_boot`.
-  - **The crash window.** The producer count is persisted in the transaction of the counts it describes, so a process that ends without `stop` loses both and no marker shows it. The loss is what was pending: up to `FLUSH_INTERVAL_SECONDS` of offers, more after failed writes, which `flush_failures` counts and the first of which is logged at WARNING. The property 8 report (M3e) is to:
+  - **The crash window.** The producer count is persisted in the transaction of the counts it describes, so a process that ends without `stop` loses both and no marker shows it. The loss is what was pending: up to `FLUSH_INTERVAL_SECONDS` of offers, more after failed writes. The property 8 report (M3e) is to:
     - list the boots of `ticket_markers_by_boot`;
     - count as possible crash windows the boots whose end AD-820 did not mark clean (`shutdown_integrity.py:15-24`: the next start refuses unless `--force-unclean`);
     - state the bound above for each.
@@ -149,12 +148,12 @@
   - TO11 is the wiring: a boot with an `OpenAICompatibleClient` subclass that starts no health probe and answers with a canned response (SK9's), one model call, `runtime.stop()`, then a `model_call`/`ticket_missing` row and the boot's marker row with offered equal to written in the store.
   - Rejected: the whole chain on a boot (an agentic run needs a scripted body, which a boot cannot take).
 - **D156 The cost with the recorder** (D146's method; #1604 property 7).
-  - Run by the orchestrator on M1's stage, before the review, on the Captain's Windows host, CPython 3.12.13, idle.
+  - Run by the orchestrator on M1's stage, before the review, on the Captain's Windows host, CPython 3.12.13.
   - D132's setup, timing and variants (a) to (d), each with `recorder=ShadowRecorder(store)` over an `AdmissionShadowStore` started in a temporary directory. The recorder is not started, and a fresh registry and recorder are built per round.
   - Report each median and 99th percentile beside D132's figures without a recorder, as recorded on #1604 and in M3d3a's DECISIONS bullet. M3d3a's record gives the medians (c) 5.0 to 5.1 µs and (a) 9.0 to 9.2 µs.
   - In (d) each check offers `ticket_missing`: the first 1,000 offers of a round keep a sample and later ones count a dropped sample. Report which path dominates. In (a) the service also offers a verdict per iteration.
   - Also report the time of one `write_batch` of one round's work-ticket part, 20 times (the flusher's cost, off the hot path).
-  - Prediction: (c) and (d) each grow by less than 1.5 µs median, and (a) and (b) by less than 3 µs. No 99th percentile is predicted. The offer adds one wall-clock read, one hour lookup, five type checks, one set lookup, two or three dict updates and, for a sampled code, one `TicketSample` and one list append.
+  - Prediction: (c) and (d) each grow by less than 1.5 µs median, and (a) and (b) by less than 3 µs. No 99th percentile is predicted.
 - **D157 Census and structure pins.**
   - `ShadowRecorder`: 12 direct methods before, 14 after (`offer_ticket`, `_write_without_ticket_rows`), against the trigger above 15. `_as_dropped` and `_first` are module functions. Its span grows from 196 lines (`recorder.py:90-285` on `35045636`) to 301, against 500 (both counts and the span by `ast` on the pre-build run of M1's stage; `recorder.py` grows from 285 to 456 lines).
   - `AdmissionService` gains no method and no attribute.
@@ -197,7 +196,7 @@
 - **`ShadowBatch.tickets`.** Now filled by `_flush`, read and replaced by `_write_without_ticket_rows`, read by `write_batch` and `_restore`. Every other builder of a `ShadowBatch` (tests, D143's check) is unchanged.
 - **`TicketBatch`, `TicketSample`.** Now built in `src` by `recorder.py` (`TicketBatch` in `_flush` and `_as_dropped`, `TicketSample` in `offer_ticket`), besides `ShadowBatch`'s default `TicketBatch` (`store.py`), M3d3b1's test file and D143's check.
 - **The four `ticket_` tables.** Now written by the recorder through `write_batch` on a vessel. Their readers in `src` (the report's queries and `prune`) are unchanged; the new file reads them too.
-- **`AdmissionService.hold` and `_check_ticket`.** Their return values, the carrier, `failures`, `off_loop_checks` and the registry's tally are unchanged for a service built with no recorder. With a recorder, `failures` also counts a raising offer (TO9). Callers in `src`: `seam.hold_at` at three entries and `check_ticket` from the two sinks. Tests reach them directly or through an entry, a sink or a boot; among them M3d2's issue tests, M3d3a's sink tests and TO8 to TO11.
+- **`AdmissionService.hold` and `_check_ticket`.** Their return values, the carrier, `failures`, `off_loop_checks` and the registry's tally are unchanged for a service built with no recorder. With a recorder, `failures` also counts an offer that raises an `Exception` (TO9). Callers in `src`: `seam.hold_at` at three entries and `check_ticket` from the two sinks. Tests reach them directly or through an entry, a sink or a boot; among them M3d2's issue tests, M3d3a's sink tests and TO8 to TO11.
 - **`stop`'s warning.** Read by people and by TO7's `record.args`; no test reads its message text (Absence Verified, on `35045636`).
 
 ## 6. Tests
@@ -505,8 +504,8 @@ SEARCH:
 REPLACE:
 ```
                 # A log call in _flush that raised (F-212's class) runs after any batch it detached was put
-                # back or written (_restore, or D150's second write, precedes each _failed); the next tick
-                # flushes again. Counted, not logged, because the log call may be what raised.
+                # back or written; the next tick flushes again. Counted, not logged, because the log call
+                # may be what raised.
 ```
 
 **M1-09** (`stop`'s docstring)
@@ -883,9 +882,9 @@ that read one back do so with SQL or with the report's queries on a ``mode=ro`` 
        put back within both buffers counts no sample as dropped.
 - TO8  the service offers the finding of each issue (a refused one included) and of each sink check, with
        ``off_loop`` for the check handed to its loop, each on the loop's thread.
-- TO9  an offer that raises is one counted failure: ``hold`` returns ``NO_HOLD`` with the carrier as it was and the
-       issued entry registered, and each sink check whose offer raises counts one failure more, a handed-over one after
-       its off-loop count.
+- TO9  an offer that raises a ``RuntimeError`` is one counted failure: ``hold`` returns ``NO_HOLD`` with the carrier
+       as it was and the issued entry registered, and each sink check whose offer raises counts one failure more, a
+       handed-over one after its off-loop count.
 - TO10 #1604 property 5, persisted: in the real run entry, after a Captain's stop on the delegating agent, the next
        model and tool calls of its delegated child and then its own count ``ticket_revoked``; after ``stop`` the report
        shows them by operation, their samples with digested ids and the stop's id, and the markers offered equal to
@@ -1469,8 +1468,8 @@ async def test_the_service_offers_each_issue_and_sink_finding_on_the_thread_of_i
 async def test_an_offer_that_raises_is_one_counted_failure_and_hold_leaves_the_carrier_as_it_was(
     identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry, store: AdmissionShadowStore,
 ) -> None:
-    """TO9: #1604 property 6 for the offers; an offer that raises counts one failure, in ``hold`` it runs before the
-    carrier is set, and in ``_check_ticket`` after the off-loop count."""
+    """TO9: #1604 property 6 for the offers; an offer that raises a ``RuntimeError`` counts one failure, in ``hold`` it
+    runs before the carrier is set, and in ``_check_ticket`` after the off-loop count."""
     plain = AdmissionService(identities, stops, tickets=tickets)
     service = AdmissionService(
         identities, stops, recorder=_RaisingTicketRecorder(store), tickets=tickets, loop=asyncio.get_running_loop(),
@@ -1640,7 +1639,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1346 (2026-10-30), #1604 M3d3b2 -- the recorder's offers: the work-ticket findings of an issue and of a sink check, written to `admission_shadow.db`.** `ShadowRecorder.offer_ticket` checks a `TicketFinding` (its type, an exact `bool` `off_loop`, exact-`str` key parts and a work kind in `WORK_KINDS` or empty), counts it by hour, operation, code, work kind and `off_loop`, and keeps a sample of every code but `ticket_issued` and `ticket_live`, `ticket_missing` in a buffer of its own; each flush writes that part in the transaction of the verdicts. `AdmissionService.hold` offers the issue's finding before it sets the carrier, and `_check_ticket` the sink check's after its off-loop count, both inside their existing `except Exception`. When a write raises and its work-ticket part holds a finding count or a sample, the flush writes the batch again at once with those counted as dropped in the work-ticket markers, so a finding or sample cannot keep the verdicts from that second write; when it raises too, the batch is put back whole. `COUNTER_NAMES` appends five `ticket_` totals, `start` marks the boot's hour in the work-ticket markers, and `stop`'s warning counts the work-ticket findings and samples it could not write. A new test file drives a Captain's stop through the real run entry and its delegated child to the report's `ticket_` queries, and a boot's model call to the store after `runtime.stop()`. The contract is `prompts/ad-1346-m3d3b2-ticket-offers.md`.
+**AD-1346 (2026-10-30), #1604 M3d3b2 -- the recorder's offers: the work-ticket findings of an issue and of a sink check, written to `admission_shadow.db`.** `ShadowRecorder.offer_ticket` checks a `TicketFinding` (its type, an exact `bool` `off_loop`, exact-`str` key parts and a work kind in `WORK_KINDS` or empty), counts it by hour, operation, code, work kind and `off_loop`, and keeps a sample of every code but `ticket_issued` and `ticket_live`, `ticket_missing` in a buffer of its own; each flush writes that part in the transaction of the verdicts. `AdmissionService.hold` offers the issue's finding before it sets the carrier, and `_check_ticket` the sink check's after its off-loop count. `COUNTER_NAMES` appends five `ticket_` totals, `start` marks the boot's hour in the work-ticket markers, and `stop`'s warning counts the work-ticket findings and samples it could not write. A new test file drives a Captain's stop through the real run entry and its delegated child to the report's `ticket_` queries, and a boot's model call to the store after `runtime.stop()`. The contract is `prompts/ad-1346-m3d3b2-ticket-offers.md`.
 
 **AD-1346 (2026-10-30), #1604 M3d3b1 -- 
 ```
@@ -1657,11 +1656,10 @@ REPLACE:
 
 AD-1346 M3d3b2 fills the work ticket's persisted record that M3d3b1 built: the shadow recorder takes the findings the ticket registry answers at an issue (`hold`) and at a sink check (`_check_ticket`) and writes them behind, in the flush transaction of the verdicts. It delivers #1604 property 8's service-written record and markers for the work ticket, and the persisted evidence of properties 3 and 5 and of registers R37 to R39 and R49. The contract is `prompts/ad-1346-m3d3b2-ticket-offers.md`.
 
-- *D150 (a failing part).* When a write raises and its work-ticket part holds a finding count or a sample, the flush writes the batch again at once with each of them counted as dropped in the work-ticket markers, so a finding or sample cannot keep the verdicts from that second write; when it raises too, the batch is put back whole. Rejected: checks in the offer that would have to cover everything the store can raise, a separate transaction for the work-ticket part (which would reverse D140), and never putting a failed work-ticket part back.
+- *D150 (a failing part).* When a write raises an `Exception` and its work-ticket part holds a finding count or a sample, the flush writes the batch again at once with each of them counted as dropped in the work-ticket markers, so a finding or sample cannot keep the verdicts from that second write; when it raises too, the batch is put back whole. Rejected: checks in the offer that would have to cover everything the store can raise, a separate transaction for the work-ticket part (which would reverse D140), and never putting a failed work-ticket part back.
 - *D151 (the offer).* `offer_ticket(finding, *, off_loop)` refuses with `TypeError` or `ValueError` what the store's bound cannot hold (register R53); it counts every accepted finding, samples none of `ticket_issued` and `ticket_live`, and keeps `ticket_missing` samples apart, with the verdicts' bounds and the ring sizes as buffers.
 - *D152 (the offer points).* In `hold` before the carrier is set, so a raising offer leaves it as it was; in `_check_ticket` after the off-loop count; each on the thread of the registry call it reports. Rejected: a registry hook, and offers from the seam helpers, which receive no finding.
 - *D153 (markers and the crash window).* Per boot and hour, offered equals written plus dropped once committed; `start` marks a work-ticket marker row. A crash loses the pending counts with their markers; the property 8 report is to count the boots whose end AD-820 did not mark clean, with a bound of the flush interval and any failed writes. Rejected: a clean-stop row (a schema change) and writing the offered count ahead of its counts.
-- *D156 (the cost).* D132's variants repeated with the recorder on the first stage that has the offers; the figures are recorded below once measured.
 - *D158 (the clock).* From this deploy, a fix that changes which findings are kept, or under which key, restarts the 7 days for the sink records; a fix to the markers, the start mark, the stop warning, the counters, a report query or the digest does not.
 - *Tests.* One new file (`tests/test_ad1346_admission_ticket_offers.py`, TO1 to TO12); P13 now pins M3c's two counter names by position, T14's `recorder.py` allowlist gains `dataclasses` and `probos.admission.tickets`, and the record test's docstring names the recorder as the part's producer.
 - *Residual, accepted.* Register R58 to R64 of the contract.
@@ -1773,7 +1771,6 @@ How the rows are killed (each TO<n> is the case whose test function the row's Ki
 - **OX-52:** TO5's marker row lacks its `ticket_missing` sample (samples dropped 2).
 
 **Pinned with no row** (lines that occur more than once, or are not one-line mutants):
-- the `self._restore(batch)` and `self._failed("write")` calls in `_flush` and `_write_without_ticket_rows`: TO6's restored counts and TO5's, TO6's and TO7's `flush_failures` and log levels pin them;
 - `_first`'s `return samples[:limit]`: TO6's ring counts;
 - hold's offer coming before `CURRENT_TICKET.set`: TO9;
 - each offer's thread: TO8;
@@ -1945,7 +1942,6 @@ HOLDS: yes
   - `failures`'s docstring (the offers raise inside the three `except Exception` blocks it names).
 
   M3d3b1's dated entries and its acceptance greps (`TicketBatch(` in `src`) are records of their date.
-- **`gen_ad_ledger.py --check`:** passes after M3 regenerates both files (prediction).
 - **Test collection:** `git diff --name-status --diff-filter=AD <slice base>..HEAD -- 'tests/test_*.py'` lists exactly one `A` file, `tests/test_ad1346_admission_ticket_offers.py`.
 - **D156's cost run** on M1's stage, before the review (orchestrator).
 
@@ -1971,20 +1967,19 @@ HOLDS: yes
 4. The crash window [R61].
 5. A verdict part that raises holds the ticket part back [R62].
 6. A raising offer in `hold` leaves the unit without a ticket of its own [R63].
-7. Two writes per flush while the store fails [R64].
+7. A store that fails every write [R64].
 8. A lone-surrogate id at `ticket_digest` [R60].
 9. The offer's cost on every model and tool call (D156).
 10. `ticket_late` is unreachable on the runtime's single-thread stop path (D154).
 
 ## 14. Diff Reviewer: properties to verify
 
-1. **The verdict path is unchanged where no finding is involved.** A batch whose write raises and whose work-ticket part holds no finding count and no sample is put back by `_restore` before `_failed`, exactly as before. A `BaseException` that is not an `Exception` from the first write puts the batch back and propagates without a second write.
+1. **The verdict path is unchanged where no finding is involved.** A batch whose write raises and whose work-ticket part holds no finding count and no sample is put back by `_restore`, exactly as before. A `BaseException` that is not an `Exception` from the first write puts the batch back and propagates without a second write.
 2. **D150.**
    - The second write runs only for an `Exception` and a part with counts or samples.
    - Its work-ticket part is `_as_dropped(...)`, which holds no finding count and no sample.
    - If the second write raises, the original batch (not the reduced one) is put back.
    - If it commits, `ticket_dropped` and `ticket_samples_dropped` gain exactly what the part lost.
-   - Before each `_failed`, the batch was either written or put back.
 3. **Bounds.**
    - `offer_ticket` adds no new key beyond `PENDING_KEY_LIMIT` and no sample beyond its buffer, and counts each overflow per hour and in total.
    - `_restore` keeps at most each buffer and counts the rest.
@@ -2049,12 +2044,17 @@ A3 (2026-10-30, after M3d3b1's review rounds; read on `6a11747b`, this contract 
 - A settled item: §17's item on A2's test edits, which the orchestrator's census of the oracle executed, is deleted, and A2's paragraph names those items without their numbers (A3-26).
 - Text that lands: A3-9 and A3-10 in the new file (§7.5.N); A3-11 and A3-12 in M3-01, and A3-13 and A3-14 in M3-02 (§8).
 
+A4 (2026-10-30, after the first cross-family review round; read on `62d2eb45`, tree `2e3e95e1`, the built candidate) repairs:
+- A coverage attribution: §10's "Pinned with no row" bullet on the `_restore` and `_failed` calls is deleted (A4-17).
+- Universals over a failure's members (an `Exception` or another `BaseException`; the prune or a write; the log call of either `_failed`; a check on the loop or handed over): `PROGRESS.md`'s D150 sentence is deleted and `DECISIONS.md`'s names an `Exception` (A4-14, A4-15); `_run`'s comment and §14 item 2 no longer say what precedes each `_failed` (A4-11, A4-20); §14 item 1 no longer places `_failed` after `_restore` (A4-19); D150's count of failed writes and its sentence that a finding or sample can never keep the verdicts from a write are deleted (A4-2, A4-3); D151, §5 and R63 name an `Exception` (A4-5, A4-10, A4-24); D152 no longer says a raising offer counts a failure and an `off_loop_checks` entry (A4-6); D153 no longer says what `flush_failures` counts of the failed writes or which is logged at WARNING (A4-7); R64 names an `Exception` and no longer counts `flush_failures` (A4-25); TO9's bullet and docstring name the `RuntimeError` it raises (A4-12, A4-13).
+- Counts of what the code does: D156's count of the offer's operations is deleted (A4-9); D150's gloss of R64 is deleted (A4-4); blind spot 7 no longer counts writes (A4-18).
+- Placement: §2's and `PROGRESS.md`'s sentences that placed the offers inside the `except Exception` are deleted (A4-1, A4-14).
+- Settled by measurement: D156's "idle" is deleted (A4-8); `DECISIONS.md`'s D156 bullet, which said the figures were to be recorded below, is deleted (A4-16); §17's item on D156's figures is deleted and the items after it are renumbered (A4-22, A4-23); §12's bullet that called the ledger check a prediction is deleted, and so are the items that remained in §17, which now says "None." (A4-26, A4-27).
+- Text that lands: A4-11 in `recorder.py` (M1-08's REPLACE, §7.1); A4-12 and A4-13 in the new file (§7.5.N); A4-14 in M3-01, and A4-15 and A4-16 in M3-02 (§8).
+
 ## 17. Claims not yet confirmed
 
-1. The application on the merged M3d3b1 base (the files listed under "Which text describes the head"). The pre-build run applied the 21 pairs and the new file on `4d6ce6f5`, whose `src` and `tests` equal `35045636`'s.
-2. D156's figures (predictions only).
-3. The campaign of record on the M2 tree with A3's file: each §10 Line occurs once at M1's and M2's trees, 52 of 52 rows are killed, and the equivalents listed under "Expected to survive" survive where the census runs them. The orchestrator's census of A1's file (52 of 52) and the pre-build census of the file before A1 (49 of 49) are not of record. If M1's files match the stage of the census of A1's file by sha256, the 12 rows whose killer neither A1 nor A2 edits (OX-1, OX-6, OX-10, OX-12, OX-13, OX-16, OX-17, OX-45 to OX-49) need not run again; the other 40 do.
-4. `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` after M3 regenerates the ledger.
+None.
 
 ## For the register (#1604)
 
@@ -2071,6 +2071,6 @@ A3 (2026-10-30, after M3d3b1's review rounds; read on `6a11747b`, this contract 
 - **R60:** `ticket_digest` encodes with UTF-8's strict handler, so a `ticket_unknown` sample whose shown id holds a lone surrogate would fail its write. Executed on the pre-build run (CPython 3.12.13, the candidate's code): `"\ud800".encode("utf-8")` and `probos.admission.store.ticket_digest("\ud800")` each raise `UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed`. No test depends on it: TO5's poison is a `None` id. No producer in `src` reaches it while I11 holds: only `hold` sets the carrier, with registry-issued hex ids. D150 bounds it to one flush's ticket part. Repair (`surrogatepass`, which changes no digest of a valid `str`): considered, deferred to a follow-up of M3d3b1's store.
 - **R61:** the crash window is not in the markers (D153). The property 8 report is to count boots whose end AD-820 did not mark clean. AD-820's marker is written before the recorder stops, so an end between the two is not flagged.
 - **R62:** a verdict part that raises on every write still holds the ticket part back (D150 bounds one direction only). This was already true for verdict values.
-- **R63:** an offer that raises in `hold` returns `NO_HOLD` with the issued entry registered. The unit runs under the carrier as it was: with no ticket when none was carried, so that its sink checks count `ticket_missing`, or under the enclosing unit's ticket (TO9's case) (injected only).
-- **R64:** while the store fails every write, each flush whose part holds findings makes two writes and counts two `flush_failures`; `stop`'s own flushes make at most four writes, after the flusher's last flush (at most two more) when the recorder was started.
+- **R63:** an offer that raises an `Exception` in `hold` returns `NO_HOLD` with the issued entry registered. The unit runs under the carrier as it was: with no ticket when none was carried, so that its sink checks count `ticket_missing`, or under the enclosing unit's ticket (TO9's case) (injected only).
+- **R64:** while every write raises an `Exception`, each flush whose part holds findings makes two writes; `stop`'s own flushes make at most four writes, after the flusher's last flush (at most two more) when the recorder was started.
 - **Inherited and still open:** registers R10, R13 to R18, R19 to R23, R24 to R28, R32 to R34, R36, R37 to R45, R47 to R51, R53 for the store and for a wall clock that steps back, R54 to R57.
