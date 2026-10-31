@@ -452,4 +452,4 @@ def test_the_parity_key_space_and_the_disagreement_ring_are_bounded() -> None:
     assert DISAGREEMENT_RING_SIZE == 1_000 and recorder_module.DISAGREEMENT_BUFFER_LIMIT == DISAGREEMENT_RING_SIZE
     one_day = len(WORK_KINDS) * len(SEAMS) * len(TODAY_OUTCOMES) * len(REASON_CODES)
     assert one_day * AGGREGATE_RETENTION_DAYS < AGGREGATE_ROW_LIMIT, one_day
-    assert recorder_module.COUNTER_NAMES[-2:] == ("disagreement_samples_dropped", "flush_errors")
+    assert recorder_module.COUNTER_NAMES[6:8] == ("disagreement_samples_dropped", "flush_errors")  # AD-1346 M3d3b2 appended five after them
