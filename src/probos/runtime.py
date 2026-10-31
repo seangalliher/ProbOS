@@ -3094,6 +3094,8 @@ class ProbOSRuntime:
         self._expertise_directory = cog.expertise_directory  # AD-600
         self._telemetry_service = cog.telemetry_service  # AD-461
         self.dependency_resolver = cog.dependency_resolver  # AD-838c
+        if self.dependency_resolver is not None:  # AD-1346 M3e2a: the install sink's service; None checks nothing
+            self.dependency_resolver.set_admission(self.admission_service)
         self.schema_version_store = cog.schema_version_store  # AD-818
 
         # AD-588: Introspective Telemetry Service

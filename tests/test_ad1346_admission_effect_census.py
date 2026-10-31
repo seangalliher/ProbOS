@@ -1,19 +1,21 @@
 """AD-1346 M3e1 (#1604): the sink set, the subprocess effect point's census, its sinks and its crossing test.
 
 ``tests/fixtures/ad1346_effect_census.py`` holds the census: BF-892's launch scan by (file, enclosing function), each row
-covered by a subprocess sink, a system principal, the operator's command line, or a later slice. These tests check the
-census against the code, and drive three of the five sinks over a real ``IdentityService`` and ``AgentStopService`` under
-``tmp_path`` and a ``TicketRegistry`` on a fixed clock.
+covered by a subprocess sink, a system principal, the operator's command line, a later slice or, from AD-1346 M3e2a, no
+reach from other ``src`` code. These tests check the census against the code, and drive three of AD-1346 M3e1's five
+sinks over a real ``IdentityService`` and ``AgentStopService`` under ``tmp_path`` and a ``TicketRegistry`` on a fixed
+clock.
 
 - EC1  the effect ``subprocess`` is a ``TICKET_EFFECTS`` member and not a seam, and ``ticket_findings``' per-day bound
        is 1,248 rows, 43,680 over 35 days, below ``AGGREGATE_ROW_LIMIT``.
 - EC2  every (file, function) of BF-892's scan is a row with its launch count, and every row is one; the census holds
-       7 sink, 16 system, 5 command-line and 11 pending launches, the pending ones M3e2's.
-- EC3  each sink function holds one ``check_at`` call, a statement of its own, with the runtime's service, the effect
-       ``EFFECT_SUBPROCESS`` and the row's presented id, on a line before its launch or its reference to the launching
-       function.
-- EC4  a sink whose launch is in another function: in its file, that function's name is referenced only in the sink's
-       function and its own.
+       11 sink launches in 7 rows, 19 system, 5 command-line, 3 unreached and 1 pending launch, the pending one
+       M3e2b's (AD-1346 M3e2a).
+- EC3  each sink function holds one ``check_at`` call, a statement of its own, with the row's service (the runtime's or,
+       from AD-1346 M3e2a, ``self._admission``), the effect ``EFFECT_SUBPROCESS`` and the row's presented id, on a line
+       before its launch or its reference to the next function of its chain.
+- EC4  a sink whose launch is in another function: in its file, each function of its chain after the sink's function
+       (AD-1346 M3e2a: through ``via``, to the launching one) is referenced only in the function before it and in its own.
 - EC5  ``SYSTEM_PRINCIPALS`` is the set of the system rows' principals and the ``system:`` literals a seam statement
        presents, each admitted by ``check_principal``.
 - EC6  each command-line row is in a module under ``OUTSIDE_RUNTIME``, and no other ``src`` module imports one by an
@@ -79,6 +81,7 @@ from tests.fixtures.ad1346_effect_census import (
     Pending,
     Sink,
     System,
+    Unreached,
     census_problems,
     launch_counts,
     launch_lines,
@@ -202,10 +205,11 @@ def test_every_launch_bf892_scans_is_a_row_and_every_row_a_launch() -> None:
     assert census_problems(found, SUBPROCESS_SITES) == []
     by_kind = {
         kind: sum(count for count, cover in SUBPROCESS_SITES.values() if type(cover) is kind)
-        for kind in (Sink, System, OutsideRuntime, Pending)
+        for kind in (Sink, System, OutsideRuntime, Pending, Unreached)
     }
-    assert by_kind == {Sink: 7, System: 16, OutsideRuntime: 5, Pending: 11}, by_kind
-    assert {cover.owner for _count, cover in SUBPROCESS_SITES.values() if type(cover) is Pending} == {"M3e2"}
+    assert by_kind == {Sink: 11, System: 19, OutsideRuntime: 5, Pending: 1, Unreached: 3}, by_kind  # AD-1346 M3e2a
+    assert sum(type(cover) is Sink for _count, cover in SUBPROCESS_SITES.values()) == 7
+    assert {cover.owner for _count, cover in SUBPROCESS_SITES.values() if type(cover) is Pending} == {"M3e2b"}
     assert sum(found.values()) == 39
 
 
@@ -219,14 +223,15 @@ def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:
         checks = [node for node in ast.walk(fn) if calls("check_at")(node)]
         assert len(checks) == 1, (path, cover.check, len(checks))
         call = checks[0]
-        assert [ast.unparse(arg) for arg in call.args] == [SERVICE_EXPR], (path, cover.check)
+        assert cover.service in (SERVICE_EXPR, "self._admission"), (path, cover.check)  # AD-1346 M3e2a: the two forms
+        assert [ast.unparse(arg) for arg in call.args] == [cover.service], (path, cover.check)
         keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
         assert keywords == {"effect": "EFFECT_SUBPROCESS", "presented_id": cover.presented}, (path, cover.check, keywords)
         assert any(isinstance(node, ast.Expr) and node.value is call for node in ast.walk(fn)), (path, cover.check)
         if cover.check == scope:
             before = min(lines[(path, scope)])
         else:
-            name = scope.rsplit(".", 1)[-1]
+            name = (cover.via[0] if cover.via else scope).rsplit(".", 1)[-1]  # AD-1346 M3e2a: the next function of the chain
             before = min(
                 node.lineno for node in ast.walk(fn)
                 if (isinstance(node, ast.Attribute) and node.attr == name) or (isinstance(node, ast.Name) and node.id == name)
@@ -234,14 +239,19 @@ def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:
         assert call.lineno < before, (path, cover.check, call.lineno, before)
 
 
-def test_a_sinks_launching_function_is_reached_only_from_its_check_function() -> None:
-    """EC4: in its file, a sink's separate launching function is referenced only in the sink's function and in itself."""
+def test_the_references_along_a_sinks_chain() -> None:
+    """EC4."""
     rows = [(path, scope, cover) for (path, scope), (_n, cover) in SUBPROCESS_SITES.items() if isinstance(cover, Sink)]
     split = [(path, scope, cover) for path, scope, cover in rows if cover.check != scope]
-    assert {path for path, _scope, _cover in split} == {"src/probos/agents/shell_command.py", "src/probos/agents/red_team.py"}
+    assert {path for path, _scope, _cover in split} == {
+        "src/probos/agents/shell_command.py", "src/probos/agents/red_team.py", "src/probos/execution/isolation.py",
+    }
     for path, scope, cover in split:
         tree = ast.parse(src_sources()[path], filename=path)
-        assert references_outside(tree, scope.rsplit(".", 1)[-1], (cover.check, scope)) == [], path
+        chain = (cover.check, *cover.via, scope)  # AD-1346 M3e2a: each link, in call order
+        for index in range(1, len(chain)):
+            caller, callee = chain[index - 1], chain[index]
+            assert references_outside(tree, callee.rsplit(".", 1)[-1], (caller, callee)) == [], (path, callee)
 
 
 def test_the_system_principal_allowlist_is_what_the_census_names() -> None:

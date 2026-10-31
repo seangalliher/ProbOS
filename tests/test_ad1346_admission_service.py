@@ -587,6 +587,10 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
     renamed this test. From AD-1346 M3e1 the five subprocess sinks' modules (``agents/shell_command.py``,
     ``agents/red_team.py``, ``agents/code_search.py``, ``cognitive/scout.py``, ``cognitive/swe_harness/tools.py``) read
     ``admission_service`` from their runtime and import ``probos.admission``, and AD-1346 M3e1 renamed this test again.
+    From AD-1346 M3e2a ``agents/code_runner.py`` and ``tools/code_execution_tool.py`` read it from their runtime and hand
+    it to ``SubprocessSandbox``, whose module ``execution/isolation.py`` names it and imports ``probos.admission``;
+    ``runtime.py`` hands it to ``DependencyResolver`` through ``set_admission``, and ``cognitive/dependency_resolver.py``
+    imports the package.
     The only routers that name the service or import the package are the three whose routes M3c2
     shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
     # #1604 property 11: the Captain's stop and lift (``routers/agent_stop.py``, ``/api/stops``), and health and status
@@ -620,6 +624,7 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/startup/shutdown.py", "probos/tools/delegate_task_tool.py",
         "probos/agents/code_search.py", "probos/agents/red_team.py", "probos/agents/shell_command.py",
         "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
+        "probos/agents/code_runner.py", "probos/execution/isolation.py", "probos/tools/code_execution_tool.py",  # AD-1346 M3e2a
     }, sorted(named)
     assert importers == {
         "probos/agent_work.py", "probos/cognitive/agentic_dispatch.py", "probos/cognitive/cognitive_agent.py",
@@ -629,6 +634,7 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/tools/registry.py", "probos/ward_room_router.py", "probos/cognitive/llm_client.py",
         "probos/agents/code_search.py", "probos/agents/red_team.py", "probos/agents/shell_command.py",
         "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
+        "probos/cognitive/dependency_resolver.py", "probos/execution/isolation.py",  # AD-1346 M3e2a
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {"probos/routers/agent_actions.py", "probos/routers/agents.py", "probos/routers/thread_fanout.py"}, sorted(routes)

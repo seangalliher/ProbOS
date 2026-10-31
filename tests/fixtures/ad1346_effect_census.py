@@ -8,13 +8,16 @@ The subprocess class is read from BF-892's launch scan (``_scan_tree`` in ``test
 module docstring lists what a static scan cannot see). Each (file, enclosing function) that scan finds is a row of
 ``SUBPROCESS_SITES`` with its launch count and one coverage:
 
-- ``Sink(check, presented)``: the function ``check`` of the same file holds a ``check_at`` call for ``EFFECT_SUBPROCESS``
-  with ``SERVICE_EXPR`` as its service and ``presented`` as its presented id;
+- ``Sink(check, presented, service, via)``: the function ``check`` of the same file holds a ``check_at`` call for
+  ``EFFECT_SUBPROCESS`` with ``service`` (by default ``SERVICE_EXPR``) as its service and ``presented`` as its presented
+  id; ``via`` names, in call order, the functions between ``check`` and the launching one (AD-1346 M3e2a);
 - ``System(principal, reason)``: a launch in a Ship's Computer service, under ``principal``;
 - ``OutsideRuntime(reason)``: a launch in a module under ``OUTSIDE_RUNTIME``;
-- ``Pending(owner, reason)``: a launch whose sink the slice ``owner`` adds.
+- ``Pending(owner, reason)``: a launch whose sink the slice ``owner`` adds;
+- ``Unreached(names, reason)``: a launch that no other ``src`` code reaches through ``names`` (AD-1346 M3e2a).
 
-``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code, and SK7
+``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code (the Unreached rows' reach,
+``unreached_references``: ``tests/test_ad1346_admission_subprocess_plumbing.py``, SP1), and SK7
 (``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions``.
 """
 
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,7 +49,7 @@ _SEAM_HELPERS: Final = frozenset({"shadow_at", "hold_at", "check_at"})
 EFFECT_CLASSES: Final[dict[str, str]] = {
     "model_call": "AD-1346 M3d3a: OpenAICompatibleClient.complete (SK7, SK8)",
     "tool": "AD-1346 M3d3a: ToolRegistry.check_and_invoke (SK7)",
-    "subprocess": "AD-1346 M3e1: SUBPROCESS_SITES; its Pending rows, AD-1346 M3e2",
+    "subprocess": "AD-1346 M3e1 and M3e2a: SUBPROCESS_SITES; its Pending row, AD-1346 M3e2b",
     "egress": "AD-1346 M3e3",
     "store_write": "AD-1346 M3e4",
 }
@@ -57,6 +61,8 @@ DELIVERED: Final = frozenset({"model_call", "tool", "subprocess"})
 class Sink:
     check: str
     presented: str
+    service: str = SERVICE_EXPR  # AD-1346 M3e2a: a component handed its service passes ``self._admission`` (D175)
+    via: tuple[str, ...] = ()  # AD-1346 M3e2a: the functions between ``check`` and the launching one, in call order (D179)
 
 
 @dataclass(frozen=True)
@@ -76,26 +82,39 @@ class Pending:
     reason: str
 
 
+@dataclass(frozen=True)
+class Unreached:
+    names: tuple[str, ...]
+    reason: str
+
+
 _TOOL_PRESENTED: Final = "context.get('agent_id') if type(context) is dict else None"
 
-#: (file, enclosing function as BF-892 scopes it) -> (launches there, coverage). D163.
-SUBPROCESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | System | OutsideRuntime | Pending]]] = {
+#: AD-1346 M3e2a (D175): the service a component handed it passes to ``check_at``.
+_COMPONENT_SERVICE: Final = "self._admission"
+#: AD-1346 M3e2a (D177): the names by which other src code could reach the container sandboxes' launches.
+_CONTAINER_NAMES: Final = ("container_sandbox", "InProcessContainerSandbox", "DockerContainerSandbox", "get_container_sandbox")
+
+#: (file, enclosing function as BF-892 scopes it) -> (launches there, coverage). D163; AD-1346 M3e2a: D174 to D178.
+SUBPROCESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | System | OutsideRuntime | Pending | Unreached]]] = {
     # Sinks: a launch an agent or model text directs, as that agent's work.
     ("src/probos/agents/shell_command.py", "ShellCommandAgent._run_sync"): (2, Sink("ShellCommandAgent._run_command", "None")),
     ("src/probos/agents/red_team.py", "RedTeamAgent._run_verify_sync"): (2, Sink("RedTeamAgent._verify_run_command", "None")),
     ("src/probos/agents/code_search.py", "CodeSearchAgent._search_rg"): (1, Sink("CodeSearchAgent._search_rg", "None")),
     ("src/probos/cognitive/scout.py", "ScoutAgent._search_github"): (1, Sink("ScoutAgent._search_github", "self.id")),
     ("src/probos/cognitive/swe_harness/tools.py", "RunCommandTool.invoke"): (1, Sink("RunCommandTool.invoke", _TOOL_PRESENTED)),
-    # Pending: the launching code holds no service today (register R70).
-    ("src/probos/execution/isolation.py", "SubprocessSandbox._run_sync_inner"): (1, Pending("M3e2", "agent-written code; code_runner, code_execution_tool and skill_forge build the sandbox")),
-    ("src/probos/cognitive/builder.py", "_run_git._sync_run"): (1, Pending("M3e2", "an approved build's git")),
-    ("src/probos/cognitive/builder.py", "_run_tests._sync_run"): (1, Pending("M3e2", "an approved build's tests")),
-    ("src/probos/cognitive/builder.py", "_run_targeted_tests._sync_run"): (1, Pending("M3e2", "an approved build's targeted tests")),
-    ("src/probos/cognitive/builder.py", "_is_dirty_working_tree"): (2, Pending("M3e2", "an approved build's tree check")),
-    ("src/probos/cognitive/dependency_resolver.py", "DependencyResolver._install_package"): (3, Pending("M3e2", "a package named by agent-designed code")),
-    ("src/probos/security/container_sandbox.py", "InProcessContainerSandbox.run"): (1, Pending("M3e2", "a thread workspace command; no src module calls get_container_sandbox")),
-    ("src/probos/security/container_sandbox.py", "DockerContainerSandbox.run"): (1, Pending("M3e2", "a thread workspace command; no src module calls get_container_sandbox")),
+    # AD-1346 M3e2a: two components handed the service (D175, D176).
+    ("src/probos/execution/isolation.py", "SubprocessSandbox._run_sync_inner"): (1, Sink("SubprocessSandbox.run", "None", service=_COMPONENT_SERVICE, via=("SubprocessSandbox._run_sync",))),
+    ("src/probos/cognitive/dependency_resolver.py", "DependencyResolver._install_package"): (3, Sink("DependencyResolver._install_package", "None", service=_COMPONENT_SERVICE)),
+    # Pending: the launching code holds no service today (register R76).
+    ("src/probos/cognitive/builder.py", "_run_targeted_tests._sync_run"): (1, Pending("M3e2b", "model-authored tests of an approved build")),
+    # Unreached: no other src code reaches the launch through its names (D177).
+    ("src/probos/cognitive/builder.py", "_run_tests._sync_run"): (1, Unreached(("_run_tests",), "the whole suite; no build path calls it since BF-897")),
+    ("src/probos/security/container_sandbox.py", "InProcessContainerSandbox.run"): (1, Unreached(_CONTAINER_NAMES, "a thread workspace command; no other src module names the module")),
+    ("src/probos/security/container_sandbox.py", "DockerContainerSandbox.run"): (1, Unreached(_CONTAINER_NAMES, "a thread workspace command; no other src module names the module")),
     # System: a launch in a Ship's Computer service.
+    ("src/probos/cognitive/builder.py", "_run_git._sync_run"): (1, System(SHIP, "the build pipeline's git verbs, hardened (BF-904a); names and messages are data")),
+    ("src/probos/cognitive/builder.py", "_is_dirty_working_tree"): (2, System(SHIP, "git rev-parse and status of the build tree, fixed argv")),
     ("src/probos/audio/tts/resident.py", "PiperWorker._spawn"): (1, System(SHIP, "resident piper; text on stdin")),
     ("src/probos/avatars/blender_renderer.py", "BlenderRenderer.render"): (1, System(SHIP, "blender running ProbOS's own script")),
     ("src/probos/avatars/rhubarb_backend.py", "_convert_to_wav._run_sync"): (1, System(SHIP, "ffmpeg, fixed argv")),
@@ -212,4 +231,34 @@ def outside_importers(sources: dict[str, str]) -> list[tuple[str, int]]:
                 continue
             if any(name == module or name.startswith(f"{module}.") for name in names for module in _OUTSIDE_MODULES):
                 found.append((rel, node.lineno))
+    return found
+
+
+def _reaching(node: ast.AST, outer: str, own: bool, wanted: frozenset[str], found: list[int]) -> None:
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            _reaching(child, outer or child.name, own, wanted, found)
+            continue
+        if isinstance(child, (ast.Import, ast.ImportFrom)):
+            dotted = [alias.name for alias in child.names] + [getattr(child, "module", None) or ""]
+            hit = any(part in wanted for name in dotted for part in name.split("."))
+        elif isinstance(child, ast.Attribute):
+            hit = child.attr in wanted and (own or not (isinstance(child.value, ast.Name) and child.value.id == "self"))
+        else:
+            hit = isinstance(child, ast.Name) and child.id in wanted
+        if hit and not (own and outer in wanted):
+            found.append(child.lineno)
+        _reaching(child, outer, own, wanted, found)
+
+
+def unreached_references(sources: dict[str, str], path: str, names: tuple[str, ...]) -> list[tuple[str, int]]:
+    """(file, line) of references to ``names`` in ``sources`` (AD-1346 M3e2a, D177)."""
+    wanted = frozenset(names)
+    found: list[tuple[str, int]] = []
+    for rel, source in sources.items():
+        text = unicodedata.normalize("NFKC", source)
+        if any(name in text for name in wanted):
+            lines: list[int] = []
+            _reaching(ast.parse(source, filename=rel), "", rel == path, wanted, lines)
+            found += [(rel, line) for line in lines]
     return found
