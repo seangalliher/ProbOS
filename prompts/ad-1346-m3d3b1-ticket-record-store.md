@@ -76,7 +76,7 @@
   - P6 pins the tables after a version-1 file opens (`tests/test_ad1346_admission_shadow_parity.py:286-305`).
   - Q1 pins `REPORT_QUERIES`'s names in order (`tests/test_ad1346_admission_shadow_report.py:32-35`), and Q5 that the report module's string constants begin with no write or schema keyword (`:108-114`).
   - T14 pins each persistence file's imports (`tests/test_ad1346_admission_service.py:99-113`; `store.py` at `:109-112`).
-  - S11 pins the declaration's fields other than its text (`tests/test_ad1346_admission_shadow_store.py:288-297`).
+  - S11 pins the declaration's fields other than its text and its lifecycle owner (`tests/test_ad1346_admission_shadow_store.py:288-297`).
 
 ## 2. Solution
 
@@ -182,7 +182,6 @@
   - `check_store_registry.py --check` passed in the orchestrator's pre-build run (2026-10-30) with `docs/development/store-baseline.yaml` unchanged and the base's numbers, as with M3c1's two tables.
   - `AdmissionShadowStore` gains no method: the helpers are module functions. Its span grows from 173 to 218 lines by `ast` in the same run, against the trigger `span > 500`. `docs/development/architecture-baseline.yaml` has no row for it.
   - T14's `store.py` allowlist gains `hashlib`, `re` and `probos.admission.tickets` (a `TYPE_CHECKING` import).
-  - Q5 holds: every new report constant begins with `SELECT`, `GROUP`, `ORDER` or `FROM`.
 - **D146 The cost with the recorder** (#1604 property 7; run by M3d3b2 on its M1 stage, on the Captain's Windows host, CPython 3.12.13, idle).
   - Setup: D132's, plus `recorder=ShadowRecorder(store)` over an `AdmissionShadowStore` started in a temporary directory.
     - The recorder is not started, so no flush runs during a round.
@@ -223,7 +222,7 @@
   - Read by the five new report queries, D143's check and the new test file; TR7 also drops them from a file.
   - `check_store_registry.py` finds their `CREATE TABLE` statements in `store.py`, the declaration's owner module (§12), and the declaration's `backup="included"` covers the file that holds them.
 - **`REPORT_QUERIES`** (five names appended). `run_query` admits them by name. Q1 pins the names in order and requires each to begin with `SELECT ` and hold no `;`; Q5 reads every string constant in `report.py`. In the new file TR7 selects the names that begin with `ticket_`, and TR7 and TR8 run each; D143's check runs every name of the build it imports. The existing names, their SQL, P12 and Q2 are unchanged.
-- **The declaration's text.** Read by people. `check_store_registry.py` requires the title not to be blank, and reads the retention note only for a retention other than bounded (this declaration's is bounded); it reads no other text field this slice edits. S11 pins the other fields.
+- **The declaration's text.** Read by people. `check_store_registry.py` requires the title not to be blank.
 - **T14's `store.py` allowlist.** Read by T14.
 
 ## 6. Tests
@@ -1015,12 +1014,16 @@ or with the report's queries.
       ``AGGREGATE_ROW_LIMIT``.
 - TR7 on a version-1 file without the ticket tables each ``ticket_`` report query raises ``sqlite3.OperationalError``
       on a read-only connection; ``start`` then keeps the file's rows and adds the tables.
-- TR8 the five ``ticket_`` report queries answer on a ``mode=ro`` connection to a store two boots wrote, each ring's
-      newest sample first and one marker row per boot, with the marker rows of hours that have only a dropped or only
-      a samples-dropped count; a delete on it raises.
+- TR8 the five ``ticket_`` report queries answer on a ``mode=ro`` connection to a store two boots wrote: the findings
+      counted per (operation, code, work kind, ``off_loop``), each ring's newest sample first and one marker row per
+      boot, with the marker rows of hours that have only a dropped or only a samples-dropped count; a delete on it
+      raises.
 - TR9 ``persisted_finding`` shows the ticket and parent ids as ``ticket_digest`` in their fields and, where they have
-      the registry's form (32 lowercase hex characters), in the cause; an id of another alphabet, length or case stays
-      in the cause as it is, and every other value, the stop's id included, is the finding's.
+      the registry's form (32 lowercase hex characters), at each place in the cause; an id of 16, 31 or 33 lowercase
+      hex characters, or of 32 characters one of which is not lowercase hex (each other printable ASCII character
+      and an Arabic-Indic digit), stays in the cause as it is; each id is looked for on its own; and every other
+      value, the stop's id included, is the finding's. ``ticket_digest`` is ``""`` for ``""`` and otherwise SHA-256
+      over UTF-8, cut to ``TICKET_DIGEST_CHARS``.
 """
 
 from __future__ import annotations
@@ -1241,7 +1244,7 @@ async def test_a_failed_batch_rolls_back_its_ticket_rows_and_a_later_commit_does
 async def test_prune_deletes_old_ticket_days_and_markers_and_leaves_the_rings(
     store: AdmissionShadowStore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TR5 (kills TRX-9, TRX-10, TRX-11)."""
+    """TR5 (kills TRX-9, TRX-10, TRX-11, TRX-21)."""
     old, kept, today = utc_hour(T0 - 35 * DAY_SECONDS), utc_hour(T0 - 34 * DAY_SECONDS), utc_hour(T0)
     assert (old, kept) == ("2026-09-23T12", "2026-09-24T12")  # premise
     findings = {(hour, "tool", "ticket_live", "agentic_run", False): 1 for hour in (old, kept, today)}
@@ -1257,9 +1260,11 @@ async def test_prune_deletes_old_ticket_days_and_markers_and_leaves_the_rings(
     assert await rows(store.path, "SELECT hour FROM ticket_markers ORDER BY hour") == [(kept,), (today,)]
     rings = "SELECT (SELECT COUNT(*) FROM ticket_samples), (SELECT COUNT(*) FROM ticket_missing_samples)"
     assert await rows(store.path, rings) == [(1, 1)], "neither ring is pruned by day"
-    monkeypatch.setattr(store_module, "MARKER_ROW_LIMIT", 1)
+    await store.write_batch("boot-0", _with_tickets(TicketBatch(offered={today: 1})))
+    monkeypatch.setattr(store_module, "MARKER_ROW_LIMIT", 2)
     assert await store.prune(T0) == (0, 0)
-    assert await rows(store.path, "SELECT hour FROM ticket_markers ORDER BY hour") == [(today,)]
+    remaining = await rows(store.path, "SELECT boot_id, hour FROM ticket_markers ORDER BY boot_id")
+    assert remaining == [("boot-0", today), (BOOT, today)], "the oldest hour goes first, whichever boot wrote it"
 
 
 def test_the_ticket_key_space_and_the_rings_are_bounded_by_named_constants() -> None:
@@ -1270,8 +1275,8 @@ def test_the_ticket_key_space_and_the_rings_are_bounded_by_named_constants() -> 
 
 
 async def test_a_file_without_the_ticket_tables_keeps_its_rows_and_gains_them_at_start(tmp_path: Path) -> None:
-    """TR7: D143. The file is this build's with its four ticket tables dropped, which leaves the tables a build
-    without them creates."""
+    """TR7: D143. The file is this build's with its four ticket tables dropped, which leaves the tables AD-1346 M3c's
+    store creates."""
     shadow = AdmissionShadowStore(data_dir=tmp_path / "data")
     await shadow.start()
     try:
@@ -1285,7 +1290,7 @@ async def test_a_file_without_the_ticket_tables_keeps_its_rows_and_gains_them_at
         await db.commit()
     finally:
         await db.close()
-    assert await rows(shadow.path, TABLES) == SHADOW_TABLES, "premise: the tables of a build without the ticket tables"
+    assert await rows(shadow.path, TABLES) == SHADOW_TABLES, "premise: the tables AD-1346 M3c's store creates"
     assert tuple(name for name in REPORT_QUERIES if name.startswith("ticket_")) == tuple(TICKET_QUERIES)
     reader = await open_read_only(shadow.path)
     try:
@@ -1304,8 +1309,10 @@ async def test_a_file_without_the_ticket_tables_keeps_its_rows_and_gains_them_at
 
 
 async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Path) -> None:
-    """TR8 (kills TRX-18, TRX-19): a second boot, ``boot-0``, writes only a dropped and a samples-dropped count, each at
-    an hour of its own. Its id sorts before ``boot-a`` and its hours after, so only the order by hour puts ``boot-a`` first."""
+    """TR8 (kills TRX-18, TRX-19, TRX-22): for each of operation, code, work kind and ``off_loop``, two findings
+    differ in it alone. A second boot, ``boot-0``, writes only a dropped and a samples-dropped count, at two different
+    hours. Its id sorts before ``boot-a`` and its first hour after ``boot-a``'s, so the order by hour puts ``boot-a``
+    first and the order by id would not."""
     first, second, third = utc_hour(T0), utc_hour(T0 + DAY_SECONDS), utc_hour(T0 + DAY_SECONDS + HOUR)
     shadow = AdmissionShadowStore(data_dir=tmp_path / "data")
     await shadow.start()
@@ -1314,6 +1321,9 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
             findings={
                 (first, "tool", "ticket_live", "agentic_run", False): 2,
                 (second, "tool", "ticket_live", "agentic_run", False): 1,
+                (second, "tool", "ticket_live", "agentic_run", True): 1,
+                (second, "tool", "ticket_live", "", True): 1,
+                (second, "tool", "ticket_missing", "", True): 1,
                 (second, "model_call", "ticket_missing", "", True): 1,
             },
             samples=[TicketSample(first, T0, _unknown(), False), TicketSample(first, T0 + 1, _unknown(), True)],
@@ -1321,7 +1331,7 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
                 TicketSample(second, T0 + DAY_SECONDS, _missing(), True),
                 TicketSample(second, T0 + DAY_SECONDS + 1, _missing(), False),
             ],
-            offered={first: 2, second: 3},
+            offered={first: 2, second: 6},
             dropped={second: 1},
         )))
         await shadow.write_batch("boot-0", _with_tickets(TicketBatch(dropped={second: 1}, samples_dropped={third: 1})))
@@ -1330,10 +1340,14 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
     reader = await open_read_only(shadow.path)
     try:
         assert await run_query(reader, "ticket_findings_by_operation", (DAY,)) == [
-            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "agentic_run", 0, 3),
+            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "", 1, 1),
+            ("tool", "ticket_live", "agentic_run", 0, 3), ("tool", "ticket_live", "agentic_run", 1, 1),
+            ("tool", "ticket_missing", "", 1, 1),
         ]
         assert await run_query(reader, "ticket_findings_by_operation", ("2026-10-29",)) == [
-            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "agentic_run", 0, 1),
+            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "", 1, 1),
+            ("tool", "ticket_live", "agentic_run", 0, 1), ("tool", "ticket_live", "agentic_run", 1, 1),
+            ("tool", "ticket_missing", "", 1, 1),
         ]
         assert await run_query(reader, "ticket_findings_by_operation", ("2026-10-30",)) == []
         newest = await run_query(reader, "ticket_samples", (1,))
@@ -1341,7 +1355,7 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
         noted = await run_query(reader, "ticket_missing_samples", (1,))
         assert [row[3:7] for row in noted] == [("model_call", "ticket_missing", "", 0)], "the newest sample first"
         assert await run_query(reader, "ticket_markers_by_boot") == [
-            (BOOT, first, second, 5, 4, 1, 0), ("boot-0", second, third, 0, 0, 1, 1),
+            (BOOT, first, second, 8, 7, 1, 0), ("boot-0", second, third, 0, 0, 1, 1),
         ]
         assert await run_query(reader, "ticket_days_recorded") == [(DAY,), ("2026-10-29",)]
         with pytest.raises(sqlite3.OperationalError):
@@ -1351,10 +1365,11 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
 
 
 def test_a_persisted_finding_shows_ticket_ids_only_as_digests() -> None:
-    """TR9 (kills TRX-12, TRX-13, TRX-14, TRX-15, TRX-16)."""
-    ticket, parent, stop = "ab" * 16, "cd" * 16, "ef" * 16
+    """TR9 (kills TRX-12, TRX-13, TRX-14, TRX-15, TRX-16, TRX-20)."""
+    ticket, parent, stop = "0123456789abcdef" * 2, "fedcba9876543210" * 2, "ef" * 16
     finding = TicketFinding(
-        "model_call", "ticket_revoked", f"Ticket {ticket} of a child of {parent} is under the Captain's stop {stop}.",
+        "model_call", "ticket_revoked",
+        f"Ticket {ticket} of a child of {parent} is under the Captain's stop {stop}; ticket {ticket} is revoked.",
         ticket_id=ticket, principal_key="agent", presented_key="agent", parent_id=parent, depth=1,
         work_kind="delegated_task", stop_id=stop,
     )
@@ -1362,17 +1377,28 @@ def test_a_persisted_finding_shows_ticket_ids_only_as_digests() -> None:
     assert list(body) == list(TICKET_FINDING_KEYS)
     assert (body["ticket_id"], body["parent_id"], body["stop_id"]) == (ticket_digest(ticket), ticket_digest(parent), stop)
     assert body["cause"] == (
-        f"Ticket {ticket_digest(ticket)} of a child of {ticket_digest(parent)} is under the Captain's stop {stop}."
+        f"Ticket {ticket_digest(ticket)} of a child of {ticket_digest(parent)} is under the Captain's stop {stop}; "
+        f"ticket {ticket_digest(ticket)} is revoked."
     )
     same = ("operation", "code", "principal_key", "presented_key", "depth", "work_kind", "stop_id")
     assert {name: body[name] for name in same} == {name: finding.to_dict()[name] for name in same}
     short = TicketFinding("tool", "ticket_unknown", "The presented object is not a ticket the registry holds.", ticket_id="T")
     assert persisted_finding(short)["cause"] == short.cause, "an id not of the issued form is not looked for in the cause"
-    for odd in ("ab" * 8, "AB" * 16):
+    lowercase_hex = "0123456789abcdef"
+    odd_ids = ["ab" * 8, "a" * 31, "a" * 33, "\u0661" + "a" * 31]
+    odd_ids += [char + "a" * 31 for char in map(chr, range(32, 127)) if char not in lowercase_hex]
+    for odd in odd_ids:
         other = TicketFinding("tool", "ticket_unknown", f"The presented id {odd} is unknown.", ticket_id=odd)
-        assert persisted_finding(other)["cause"] == other.cause, f"{odd} is not of the issued form"
+        assert persisted_finding(other)["cause"] == other.cause, f"{odd!r} is not of the issued form"
+    upper = "AB" * 16
+    mixed = TicketFinding(
+        "tool", "ticket_unknown", f"The id {upper} names {parent}.", ticket_id=upper, parent_id=parent,
+    )
+    assert persisted_finding(mixed)["cause"] == f"The id {upper} names {ticket_digest(parent)}.", "each id alone"
     assert persisted_finding(short)["ticket_id"] == ticket_digest("T")
     assert ticket_digest("") == "" and ticket_digest(ticket) == hashlib.sha256(ticket.encode("utf-8")).hexdigest()[:16]
+    accented = "ticket-\u00e9"
+    assert ticket_digest(accented) == hashlib.sha256(accented.encode("utf-8")).hexdigest()[:16], "over UTF-8"
     assert len(ticket_digest("T")) == TICKET_DIGEST_CHARS == 16
 ```
 
@@ -1429,7 +1455,7 @@ AD-1346 M3d3b1 adds the tables, writes, bounds and report queries of the work ti
 - *D147 (the clock).* From M3d3b2's deploy, a fix that changes which findings are kept, or under which key, restarts the 7 days for the sink records; a fix to a report query, the markers or the digest does not.
 - *Tests.* One new file (`tests/test_ad1346_admission_ticket_record.py`, TR1 to TR9); the store's table list (S1), P6, the report's names (Q1) and T14's `store.py` allowlist are updated.
 - *Residual, accepted.* Register R52 to R57 of the contract.
-- *Reversal.* Revert the M3d3b1 commits. A file this build started keeps its four tables, which no statement of a build without them names (D143); no build writes a row into them before M3d3b2.
+- *Reversal.* Revert the M3d3b1 commits. A file this build started keeps its four tables, which no statement of a build without them names (D143).
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -1468,6 +1494,9 @@ Group and its `--tests`: every TRX row runs against `tests/test_ad1346_admission
 | TRX-17 | M1 | `src/probos/admission/store.py` | `int(sample.off_loop), json.dumps(persisted_finding(finding), separators=(",", ":")),` | `int(sample.off_loop), json.dumps(finding.to_dict(), separators=(",", ":")),` | `test_a_batch_writes_ticket_findings_by_day_their_samples_and_their_markers` |
 | TRX-18 | M1 | `src/probos/admission/report.py` | `"SELECT operation, code, work_kind, off_loop, SUM(findings) FROM ticket_findings WHERE day >= ? "` | `"SELECT operation, code, work_kind, off_loop, SUM(findings) FROM ticket_findings "` | `test_the_ticket_queries_answer_on_a_read_only_connection` |
 | TRX-19 | M1 | `src/probos/admission/report.py` | `"FROM ticket_markers GROUP BY boot_id ORDER BY MIN(hour), boot_id"` | `"FROM ticket_markers ORDER BY MIN(hour), boot_id"` | `test_the_ticket_queries_answer_on_a_read_only_connection` |
+| TRX-20 | M1 | `src/probos/admission/store.py` | `if _ISSUED_ID.fullmatch(raw):` | `if _ISSUED_ID.match(raw):` | `test_a_persisted_finding_shows_ticket_ids_only_as_digests` |
+| TRX-21 | M1 | `src/probos/admission/store.py` | `"DELETE FROM ticket_markers WHERE rowid IN (SELECT rowid FROM ticket_markers ORDER BY hour, boot_id LIMIT ?)"` | `"DELETE FROM ticket_markers WHERE rowid IN (SELECT rowid FROM ticket_markers ORDER BY boot_id, hour LIMIT ?)"` | `test_prune_deletes_old_ticket_days_and_markers_and_leaves_the_rings` |
+| TRX-22 | M1 | `src/probos/admission/report.py` | `"GROUP BY operation, code, work_kind, off_loop ORDER BY operation, code, work_kind, off_loop"` | `"GROUP BY operation, code, work_kind ORDER BY operation, code, work_kind, off_loop"` | `test_the_ticket_queries_answer_on_a_read_only_connection` |
 
 How the rows are killed (each TR<n> is the case whose test function the row's Killed-by cell names):
 - **TRX-1:** TR1's key list for `ticket_findings` lacks `off_loop`.
@@ -1479,7 +1508,7 @@ How the rows are killed (each TR<n> is the case whose test function the row's Ki
 - **TRX-8:** TR2's `ticket_markers` is empty.
 - **TRX-9:** TR5 keeps the 2026-09-23 finding day.
 - **TRX-10:** TR5 keeps the 2026-09-23T12 marker hour.
-- **TRX-11:** TR5 keeps two marker rows under a limit of 1.
+- **TRX-11:** TR5 keeps three marker rows under a limit of 2.
 - **TRX-12, TRX-13:** TR9's field is the raw id.
 - **TRX-14:** TR9's cause keeps the raw ids.
 - **TRX-15:** TR9's 16-character hex id is replaced in its cause.
@@ -1487,7 +1516,24 @@ How the rows are killed (each TR<n> is the case whose test function the row's Ki
 - **TRX-17:** TR2's ring row contains the raw id.
 - **TRX-18:** TR8's query gets one parameter for no placeholder and raises.
 - **TRX-19:** TR8's markers come back as one row for the two boots.
-- **Pinned with no row** (the census does not run them): TR8's second boot kills the `ticket_hours` union without its `dropped` or `samples_dropped` term (its line holds `|`, which this table would have to escape); TR8's limit-1 read of `ticket_missing_samples` kills that query's order without `DESC` (its line, `"ORDER BY seq DESC LIMIT ?"`, occurs three times in `report.py`); TR9's uppercase id kills `[0-9a-fA-F]{32}` and TR2's exact ring text kills `json.dumps` without `separators` (lines that already have a row).
+- **TRX-20:** TR9's 33-character hex id is replaced in its cause.
+- **TRX-21:** TR5 deletes `boot-0`'s marker of the current hour and keeps `boot-a`'s older one.
+- **TRX-22:** TR8's `tool`, `ticket_live`, `agentic_run` findings come back as one row for both `off_loop` values.
+- **Pinned with no row** (the census does not run them; the orchestrator runs them by execution):
+  - lines that hold `|` or are not unique: TR5's `boot-0` marker, which has only an offered count, and TR8's second boot kill the `ticket_hours` union without its `offered`, `dropped` or `samples_dropped` term (its line holds `|`, which this table would have to escape); TR8's limit-1 reads kill each ring query's order without `DESC` (`"ORDER BY seq DESC LIMIT ?"` occurs three times in `report.py`).
+  - TRX-15's line: a class wider by one character (`[0-9a-z]{32}`, `[0-9a-fA-F]{32}`, `[\da-f]{32}`, `\w{32}`, `.{32}`) or `re.IGNORECASE`, killed by TR9's ids of 32 characters one of which is not lowercase hex; a narrower class (`[0-9a-e]{32}`, `[a-f]{32}`), killed by its issued ids, which hold every hex digit; other bounds (`{31,32}`, `{32,33}`, `{32,64}`, `{32,}`, `{1,32}`), killed by its ids of 31 and 33 characters and of 16.
+  - TRX-20's line: `search` for `fullmatch`, killed by the 33-character id; testing one id's form for both ids (`fullmatch(finding.ticket_id)` or `fullmatch(finding.parent_id)`), killed by TR9's finding with an uppercase id and an issued parent.
+  - TRX-14's line: `cause.replace(raw, ticket_digest(raw), 1)`, killed by TR9's cause, which names the ticket's id twice.
+  - TRX-16's line: `value.encode("ascii")` or `value.encode("latin-1")`, killed by TR9's digest of a non-ASCII value.
+  - TRX-17's line: `json.dumps` without `separators`, killed by TR2's exact ring text.
+  - TRX-22's line: the grouping without `operation`, `code` or `work_kind`, killed by TR8's findings that differ in that column alone.
+- **Expected to survive** (equivalent, or a property that no TR bullet, name or docstring states):
+  - `int(off_loop)` or `int(sample.off_loop)` without `int` (equivalent: `sqlite3` stores a `bool` as 1 or 0);
+  - a ring's trim moved out of its `if` (equivalent while the ring sizes do not change between writes: a ring is already within its size);
+  - `"hour < ?"` as `"hour <= ?"` in the ticket marker prune, and `count > MARKER_ROW_LIMIT` as `>=` (equivalent: an hour never equals a day string, and the delete's `LIMIT` is then 0);
+  - the two retention constants swapped in `prune`'s ticket cutoffs, and `[:16]` for `[:TICKET_DIGEST_CHARS]` (equivalent while the values are equal);
+  - `MAX(hour)` for `MIN(hour)` in the markers query's order, and the `boot_id` tie-break of the oldest-marker delete (TR8 states an order by hour, and TR5's oldest hour is unique);
+  - `AUTOINCREMENT` or a column's type in the four tables, and the ring queries' columns other than operation, code, work kind and `off_loop` (TR1 states columns, NOT NULL and keys; TR8 reads those four columns).
 
 ## 11. Verified Against Codebase (2026-10-30, read on `60440cb2`, tree `2158c8d8`)
 
@@ -1593,7 +1639,6 @@ HOLDS: yes
 - **`check_seam_contracts.py`:** not touched; no seam symbol changes.
 - **Config:** no field.
 - **T14:** `store.py`'s allowlist gains `hashlib`, `re` and `probos.admission.tickets` (M1-24). The other allowlists, the logging rule and `__all__` are unchanged.
-- **Q5:** each new string constant in `report.py` begins with `SELECT`, `GROUP`, `ORDER` or `FROM`.
 - **Every sentence and test that quotes a set this slice changes:**
   - `store.py`'s module docstring (M1-01, M1-02), `ShadowBatch`'s, `write_batch`'s and `prune`'s docstrings (M1-07, M1-09, M1-12);
   - the declaration's title and notes (M1-14 to M1-16);
@@ -1793,12 +1838,26 @@ A2 (2026-10-30, after the M3d3a review's findings F1 to F4: their four classes s
 
 Landing text changes in §7.7 (M1-25: A2-4), §7.10.N (A2-5 to A2-17) and §8 (M3-02: A2-18); §7.1 to §7.6 do not change. A2's executable changes are statements and assertions of TR2, TR5, TR8 and TR9 (A2-10, A2-12 to A2-17); no `def`, no SEARCH text of §7 or §8 and no line of `src` changes, and the slice still has 27 pairs and 9 cases. §10 now has 19 rows: TRX-19 is new and TRX-15's Mutate-to changed. No decision or register row is added; D149 and R58 stay free.
 
+A3 (2026-10-30, after cross-family review round 1 on `4d6ce6f5`, the M3d3b1 candidate: four findings, each a false sentence, and no production defect) repairs:
+- F1, TR9's bullet: it said an id of another alphabet, length or case stays in the cause, and `_ISSUED_ID` as `[0-9a-z]{32}` or `[0-9a-f]{32,64}` passed TR9. Ruled S (Architect, 2026-10-30). TR9's issued ids now hold every hex digit, and its cause names the ticket's id twice (A3-11). Its ids not of the issued form are 16, 31 and 33 lowercase hex characters, and 32 characters one of which is any other printable ASCII character or an Arabic-Indic digit. One finding has an uppercase id and an issued parent. `ticket_digest` is checked on a non-ASCII value, because D144 and its docstring say "over UTF-8" (A3-12). The bullet states what these pin (A3-2). New row TRX-20 (A3-17, A3-19).
+- F1's class, coverage claims, swept clause by clause over TR1 to TR9 against each token's one-line mutants:
+  - TR5's "the oldest markers" was tested with one boot, so a delete ordered by boot first passed. TR5 now adds a second boot's newer marker and a limit of 2 (A3-3, A3-4). This also kills the `ticket_hours` union without its `offered` term. New row TRX-21; TRX-11's note follows (A3-17 to A3-19).
+  - `ticket_findings_by_operation` passed without any one of its four grouping columns. TR8's findings now differ in each column alone, and its bullet says so (A3-1, A3-7 to A3-10). New row TRX-22.
+  - §10 lists the mutants left alive, each equivalent or claimed by no clause (A3-20).
+- F2, Q5: Q5 rejects constants that begin with a write or schema keyword; it is not a prefix allowlist. D145's and §12's prefix sentences are deleted (A3-15, A3-21). §1's account of Q5 and §14 item 6 are kept.
+- F3: "no build writes a row into them before M3d3b2" is deleted from M3-02's *Reversal.* bullet (A3-13).
+- F4: §5's sentences on the retention note and on no other text field are deleted. `check_store_registry.py` extracts every keyword of the call and reads `retention_note` before testing the retention (A3-16).
+- F2 and F4's class, what a test reads or checks: S11 does not pin the declaration's lifecycle owner. §5's "S11 pins the other fields" is deleted (A3-16), and §1's record now names the exception (A3-14).
+- F3's class, what a build does: TR7's docstring and premise message said the tables "a build without them" creates, which an M3b build's three tables are not. Both now name AD-1346 M3c's store (A3-5, A3-6). TR8's docstring said `boot-0`'s hours sort after `boot-a`'s, but one of them is also one of `boot-a`'s. It now says the first hour does (A3-7).
+
+Landing text changes in §7.10.N (A3-1 to A3-12, `tests/test_ad1346_admission_ticket_record.py`) and §8 (M3-02: A3-13, `DECISIONS.md`); §7.1 to §7.7 do not change, and no line of `src` changes. A3's executable changes are statements and assertions of TR5, TR8 and TR9 (A3-4, A3-8 to A3-12); no `def` and no SEARCH text of §7 or §8 changes, and the slice still has 27 pairs and 9 cases. §10 now has 22 rows: TRX-20, TRX-21 and TRX-22 are new. No decision or register row is added.
+
 ## 17. Claims not yet confirmed
 
 1. `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` after M3 regenerates the ledger on the real tree. The oracle's tracker stage did not regenerate it, and the ledger test failed 3 there, as expected.
 2. On the merged M3d3a base: the pairs M1-24, M1-25, M3-01 and M3-02, and the M3d3a code cited under "Which text describes the head".
-3. Whether the orchestrator's D143 run stays of record (the two `git diff --stat` conditions of its Process bullet; A2 changes no file under `src`). The census does not: A2 changes the new file, so under Process the campaign of record reruns the unmutated baseline and all 19 rows.
-4. The A2 text, which no gate has run: the statements and assertions it adds to TR2, TR5, TR8 and TR9 (A2-10, A2-12 to A2-17), TRX-15's new mutant and TRX-19's kill.
+3. Whether the orchestrator's D143 run stays of record (the two `git diff --stat` conditions of its Process bullet; A2 and A3 change no file under `src`). The census does not: A3 changes the new file, so under Process the campaign of record reruns the unmutated baseline and all 22 rows.
+4. The A3 text, which no gate has run: the statements and assertions it adds to TR5, TR8 and TR9 (A3-4, A3-8 to A3-12) and the kills of TRX-20, TRX-21 and TRX-22. The A2 text was built as M2 (`3e39d0b9`): on `4d6ce6f5` the new file and the four edited test files passed (70, the orchestrator's run), and cross-family review round 1 ran rows TRX-1, TRX-2, TRX-6, TRX-9, TRX-15, TRX-17, TRX-18 and TRX-19 there, each killed.
 
 The orchestrator's run on the A1 text (2026-10-30, scratch trees of `41324376`) confirmed what item 4 listed before A2: an AST comparison of the eight code files, docstrings stripped, found no executable line changed; the census killed 18 of 18 rows after an unmutated baseline of 9 passed; D143's five commands exited 0 and printed every expected line; M1's focused list passed (473); and the new file collected 9.
 
