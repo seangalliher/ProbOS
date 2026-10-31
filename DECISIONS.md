@@ -1069,19 +1069,19 @@ AD-1346 M3d3b2 fills the work ticket's persisted record that M3d3b1 built: the s
 
 ### AD-1346 M3e1 -- the subprocess effect point, its census and the sink-set guard (2026-10-31, #1604)
 
-AD-1346 M3e1 is the first of five M3e slices. It adds the subprocess effect to the work ticket, a shadow sink check at five sinks where an agent or model text directs a launch, and a census that gives every launch BF-892's scan finds under `src` a coverage, with a guard test. It advances #1604 property 1 for the subprocess class and property 12 at three of the new sinks. The contract is `prompts/ad-1346-m3e1-subprocess-effect-census.md`.
+AD-1346 M3e1 is the first of five M3e slices. It adds the subprocess effect to the work ticket, a shadow sink check at five sinks where an agent or model text directs a launch, the runtime handed to the shell, code-search and red team agents that `create_pool` and `_spawn_red_team` build, and a census that gives every launch BF-892's scan finds under `src` a coverage, with a guard test. It advances #1604 property 1 for the subprocess class and property 12 at three of the new sinks. The contract is `prompts/ad-1346-m3e1-subprocess-effect-census.md`.
 
 - *D160 (the cut).* M3e1 subprocess; M3e2 the 11 pending launches; M3e3 egress; M3e4 agent-attributed store writes; M3e5 the reports and the start of the 7-day period. Rejected: one M3e, and a guard over every class before their designs.
 - *D161 (the vocabulary).* `EFFECT_SUBPROCESS` is appended to `TICKET_EFFECTS`, not to the seams; `ticket_findings`' per-day bound becomes 1,248 rows, 43,680 over 35 days, below the 100,000-row limit. Rejected: a seam of its own, which would grow the verdicts' bounds.
-- *D162 and D163 (the census).* The rows read BF-892's launch scan. A launch that an agent or model text directs is a sink where its function holds the runtime; a launch in a Ship's Computer service is `system:ship_computer`; `probos.__main__` and the doctor are the operator's command line; launches that need a service the code does not hold are M3e2's.
+- *D162 and D163 (the census).* The rows read BF-892's launch scan. A launch that an agent or model text directs is a sink where its function reads the service from its object's runtime; a launch in a Ship's Computer service is `system:ship_computer`; `probos.__main__` and the doctor are the operator's command line; launches that need a service the code does not hold are M3e2's.
 - *D164 (the presented id).* The three mesh utility agents present no principal, the scout its own id, `run_command` the tool context's agent id.
-- *D165 (the handle).* One statement per site, reading the runtime's service as the M3c sites do. Rejected: a module-global service, a context variable carrying the service, and a process-wide audit hook.
+- *D165 (the handle).* One statement per site, reading the runtime's service as the M3c sites do. `ProbOSRuntime.create_pool` hands the runtime to a shell or code-search pool made without a `runtime` keyword, and `_spawn_red_team` to each red team agent; the code-search agent's read floor (BF-758) reads the same runtime. Rejected: a module-global service, a context variable carrying the service, and a process-wide audit hook.
 - *D166 (the allowlist).* A test holds `SYSTEM_PRINCIPALS` to the system rows' principals and the literals a seam statement presents; it stays `{"system:ship_computer"}`.
 - *D168 (the sink set).* Five classes are declared; the delivered ones must equal the members of `TICKET_EFFECTS`.
 - *D171 (the clock).* The 7-day period counts from M3e5's deploy. From then, a fix to a subprocess sink's statement, effect or presented id, to a row's coverage kind, or to `TICKET_EFFECTS` restarts it for the subprocess records.
-- *Tests.* Two new files (`tests/fixtures/ad1346_effect_census.py`; `tests/test_ad1346_admission_effect_census.py`, EC1 to EC10); K1's vocabulary asserts, SK7's census equality and T16's two sets are updated, and T16 is renamed.
+- *Tests.* Three new files (`tests/fixtures/ad1346_effect_census.py`; `tests/test_ad1346_admission_effect_census.py`, EC1 to EC10; `tests/test_ad1346_admission_sink_wiring.py`, SW1 to SW3); K1's vocabulary asserts, SK7's census equality and T16's two sets are updated, and T16 is renamed.
 - *Residual, accepted.* Register R65 to R75 of the contract.
-- *Reversal.* Revert the M3e1 commits. The five statements and the effect go; rows a vessel already wrote under the operation `subprocess` stay in `ticket_findings` and the rings, which M3d3b1's `prune` and ring trims bound.
+- *Reversal.* Revert the M3e1 commits. The five statements, the runtime hand-off and the effect go; rows a vessel already wrote under the operation `subprocess` stay in `ticket_findings` and the rings, which M3d3b1's `prune` and ring trims bound.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 
