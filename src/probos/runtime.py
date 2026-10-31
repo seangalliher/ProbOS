@@ -3326,6 +3326,8 @@ class ProbOSRuntime:
         self.initiative = struct.initiative
         self.build_queue = struct.build_queue
         self.build_dispatcher = struct.build_dispatcher
+        if self.build_dispatcher is not None:  # AD-1346 M3e2b: the targeted-test sink's service for the dispatcher's builds; None checks nothing
+            self.build_dispatcher.set_admission(self.admission_service)
         self.service_profiles = struct.service_profiles
         self.directive_store = struct.directive_store
         self._bill_runtime = struct.bill_runtime  # AD-618d

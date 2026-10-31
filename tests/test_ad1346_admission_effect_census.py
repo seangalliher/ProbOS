@@ -9,13 +9,16 @@ clock.
 - EC1  the effect ``subprocess`` is a ``TICKET_EFFECTS`` member and not a seam, and ``ticket_findings``' per-day bound
        is 1,248 rows, 43,680 over 35 days, below ``AGGREGATE_ROW_LIMIT``.
 - EC2  every (file, function) of BF-892's scan is a row with its launch count, and every row is one; the census holds
-       11 sink launches in 7 rows, 19 system, 5 command-line, 3 unreached and 1 pending launch, the pending one
-       M3e2b's (AD-1346 M3e2a).
-- EC3  each sink function holds one ``check_at`` call, a statement of its own, with the row's service (the runtime's or,
-       from AD-1346 M3e2a, ``self._admission``), the effect ``EFFECT_SUBPROCESS`` and the row's presented id, on a line
-       before its launch or its reference to the next function of its chain.
+       12 sink launches in 8 rows, 19 system, 5 command-line and 3 unreached launches, and no pending one (AD-1346
+       M3e2b).
+- EC3  each sink function holds one ``check_at`` call, a statement of its own, with the row's service (the runtime's,
+       from AD-1346 M3e2a ``self._admission``, or from AD-1346 M3e2b the executor's parameter ``admission_service``),
+       the effect ``EFFECT_SUBPROCESS`` and the row's presented id, on a line before its launch or its reference to the
+       next function of its chain.
 - EC4  a sink whose launch is in another function: in its file, each function of its chain after the sink's function
-       (AD-1346 M3e2a: through ``via``, to the launching one) is referenced only in the function before it and in its own.
+       (AD-1346 M3e2a: through ``via``, to the launching one) is referenced only in the function before it and in its own;
+       a function nested in the one before it is not searched, since its name is local to that function (AD-1346
+       M3e2b: the builder's ``_run_targeted_tests._sync_run`` is the one such link).
 - EC5  ``SYSTEM_PRINCIPALS`` is the set of the system rows' principals and the ``system:`` literals a seam statement
        presents, each admitted by ``check_principal``.
 - EC6  each command-line row is in a module under ``OUTSIDE_RUNTIME``, and no other ``src`` module imports one by an
@@ -207,9 +210,9 @@ def test_every_launch_bf892_scans_is_a_row_and_every_row_a_launch() -> None:
         kind: sum(count for count, cover in SUBPROCESS_SITES.values() if type(cover) is kind)
         for kind in (Sink, System, OutsideRuntime, Pending, Unreached)
     }
-    assert by_kind == {Sink: 11, System: 19, OutsideRuntime: 5, Pending: 1, Unreached: 3}, by_kind  # AD-1346 M3e2a
-    assert sum(type(cover) is Sink for _count, cover in SUBPROCESS_SITES.values()) == 7
-    assert {cover.owner for _count, cover in SUBPROCESS_SITES.values() if type(cover) is Pending} == {"M3e2b"}
+    assert by_kind == {Sink: 12, System: 19, OutsideRuntime: 5, Pending: 0, Unreached: 3}, by_kind  # AD-1346 M3e2b
+    assert sum(type(cover) is Sink for _count, cover in SUBPROCESS_SITES.values()) == 8
+    assert [site for site, (_count, cover) in SUBPROCESS_SITES.items() if type(cover) is Pending] == []  # AD-1346 M3e2b: D160's zero
     assert sum(found.values()) == 39
 
 
@@ -223,7 +226,7 @@ def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:
         checks = [node for node in ast.walk(fn) if calls("check_at")(node)]
         assert len(checks) == 1, (path, cover.check, len(checks))
         call = checks[0]
-        assert cover.service in (SERVICE_EXPR, "self._admission"), (path, cover.check)  # AD-1346 M3e2a: the two forms
+        assert cover.service in (SERVICE_EXPR, "self._admission", "admission_service"), (path, cover.check)  # AD-1346 M3e2b: the three forms
         assert [ast.unparse(arg) for arg in call.args] == [cover.service], (path, cover.check)
         keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
         assert keywords == {"effect": "EFFECT_SUBPROCESS", "presented_id": cover.presented}, (path, cover.check, keywords)
@@ -240,18 +243,26 @@ def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:
 
 
 def test_the_references_along_a_sinks_chain() -> None:
-    """EC4."""
+    """EC4: in its file, each function of a sink's chain after its check function is referenced only in the function
+    before it and in itself; a function nested in the one before it is not searched (AD-1346 M3e2b), and the builder's
+    is the one such link."""
     rows = [(path, scope, cover) for (path, scope), (_n, cover) in SUBPROCESS_SITES.items() if isinstance(cover, Sink)]
     split = [(path, scope, cover) for path, scope, cover in rows if cover.check != scope]
     assert {path for path, _scope, _cover in split} == {
         "src/probos/agents/shell_command.py", "src/probos/agents/red_team.py", "src/probos/execution/isolation.py",
+        "src/probos/cognitive/builder.py",  # AD-1346 M3e2b
     }
+    nested: list[tuple[str, str]] = []
     for path, scope, cover in split:
         tree = ast.parse(src_sources()[path], filename=path)
         chain = (cover.check, *cover.via, scope)  # AD-1346 M3e2a: each link, in call order
         for index in range(1, len(chain)):
             caller, callee = chain[index - 1], chain[index]
+            if callee.startswith(f"{caller}."):  # AD-1346 M3e2b: a nested function's name is local to the one that defines it
+                nested.append((path, callee))
+                continue
             assert references_outside(tree, callee.rsplit(".", 1)[-1], (caller, callee)) == [], (path, callee)
+    assert nested == [("src/probos/cognitive/builder.py", "_run_targeted_tests._sync_run")]  # AD-1346 M3e2b
 
 
 def test_the_system_principal_allowlist_is_what_the_census_names() -> None:
