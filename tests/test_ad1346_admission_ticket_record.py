@@ -5,8 +5,8 @@ SQLite in ``tmp_path``.
 verdicts: finding counts per (UTC day, operation, code, work kind, ``off_loop``), two sample rings (the batch's
 ``missing`` samples in ``ticket_missing_samples``, its other samples in ``ticket_samples``) and marker rows per (boot,
 UTC hour); ``prune`` bounds the counts and the markers. In ``src`` the recorder, the one caller of ``write_batch``,
-builds each batch without a work-ticket part, so that part is the empty default until AD-1346 M3d3b2 adds the
-recorder's offers. The tests that write the part build it directly, with findings from a real ``TicketRegistry``
+fills that part from its offers from AD-1346 M3d3b2 (``tests/test_ad1346_admission_ticket_offers.py``). The tests
+here that write the part build it directly, with findings from a real ``TicketRegistry``
 over a real ``AgentStopService`` under ``tmp_path`` or built as ``TicketFinding`` values, and read it back with SQL
 or with the report's queries.
 

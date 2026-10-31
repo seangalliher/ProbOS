@@ -98,8 +98,8 @@ _ALLOWED_IMPORTS: dict[str, set[str]] = {
 #: AD-1346 M3b: the persistence files. T14 holds each to its imports; they may await, open the store and log.
 _PERSISTENCE_IMPORTS: dict[str, set[str]] = {
     "recorder.py": {
-        "__future__", "asyncio", "collections.abc", "logging", "time", "typing", "uuid", "probos.admission.record",
-        "probos.admission.store", "probos.admission.taxonomy",
+        "__future__", "asyncio", "collections.abc", "dataclasses", "logging", "time", "typing", "uuid",
+        "probos.admission.record", "probos.admission.store", "probos.admission.taxonomy", "probos.admission.tickets",
     },
     "report.py": {
         "__future__", "collections.abc", "pathlib", "types", "typing", "probos.protocols",
@@ -510,7 +510,8 @@ def test_the_decision_files_await_nothing_and_every_file_imports_only_its_allowl
     package. AD-1346 M3b renamed this test and added the persistence files' allowlists when the package gained files that
     await and open a store. AD-1346 M3d3a added ``asyncio`` to ``service.py``'s allowlist, for ``get_running_loop`` and
     ``call_soon_threadsafe``, neither of which awaits. AD-1346 M3d3b added ``hashlib``, ``re`` and
-    ``probos.admission.tickets`` to ``store.py``'s."""
+    ``probos.admission.tickets`` to ``store.py``'s, and AD-1346 M3d3b2 ``dataclasses`` and ``probos.admission.tickets``
+    to ``recorder.py``'s."""
     assert admission_package.__all__ == ["VERDICT_KEYS", "AdmissionService", "AdmissionVerdict", "WorkRequest"]
     assert sorted(p.name for p in _PACKAGE.glob("*.py")) == sorted(_ALLOWED_IMPORTS | _PERSISTENCE_IMPORTS), (
         "premise: the package's files"

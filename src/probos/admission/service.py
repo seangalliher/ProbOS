@@ -17,9 +17,13 @@ at three entries, past their own stop check, and ``hold`` issues that unit's wor
 (``probos.admission.carrier``); with no registry, or after ``close``, it issues nothing. ``hold`` has an
 ``except Exception`` of its own, which counts in ``failures`` and logs as ``shadow``'s does.
 AD-1346 M3d3a added ``check_ticket``: ``probos.admission.seam.check_at`` calls it at the tool sink and the model
-gateway, and nothing is refused or persisted. A service built with an event loop checks on that loop: a sink on
+gateway, and nothing is refused. A service built with an event loop checks on that loop: a sink on
 another thread, or on another thread's loop, hands its check there with ``call_soon_threadsafe`` (D128). A sink check
 that raises an ``Exception`` in ``_check_ticket`` is counted in ``failures`` and logged, as ``hold``'s is.
+AD-1346 M3d3b2: a service built with a recorder also hands the finding of each issue and of each sink check that the
+registry answers, in ``hold`` and in ``_check_ticket``, to ``ShadowRecorder.offer_ticket``, inside the same ``try`` and,
+in ``hold``, before the carrier is set; an ``Exception`` from that offer is counted in ``failures`` and logged as the
+rest of that ``try``'s are.
 The service reads no configuration.
 """
 
@@ -171,6 +175,9 @@ class AdmissionService:
         resolves, D112); ``hold`` asks for both effect points and no ceiling (D113). The ticket is a child of the carried
         ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
         ticket, or None when the registry refused the issue and counted its finding (D114).
+        AD-1346 M3d3b2 (D152): with a recorder, the issue's finding is offered to ``ShadowRecorder.offer_ticket`` before
+        the carrier is set, so an offer that raises leaves the carrier as it was; for an ``Exception``, an entry the
+        issue added stays registered and ``hold`` returns ``NO_HOLD``.
         An ``Exception`` raised here is counted in ``failures`` and logged; a
         ``BaseException`` that is not an ``Exception`` propagates.
         """
@@ -187,6 +194,8 @@ class AdmissionService:
                 issued = self._tickets.issue_child(
                     parent, principal_key=key, work_kind=work_kind, seam=seam, scope=_WORK_SCOPE, budget=_NO_CEILINGS,
                 )
+            if self._recorder is not None:  # AD-1346 M3d3b2 (D152): before the carrier is set, so a raising offer leaves it
+                self._recorder.offer_ticket(issued.finding, off_loop=False)
             token = CURRENT_TICKET.set(issued.ticket)
             return TicketHold(self._tickets, issued.ticket, token)
         except Exception:  # D114: counted and logged
@@ -228,16 +237,20 @@ class AdmissionService:
 
         With no registry, or after ``close`` (a check handed over before it included), it checks nothing. The principal
         compared is the key ``decide`` gives ``presented_id`` when that is a non-empty ``str``, else none. A check handed
-        over from elsewhere is counted in ``off_loop_checks`` once answered. An ``Exception`` is counted in ``failures``
+        over from elsewhere is counted in ``off_loop_checks`` once answered. AD-1346 M3d3b2 (D152): with a recorder, the
+        finding is then offered to ``ShadowRecorder.offer_ticket`` with ``off_loop``, on the thread the check ran on.
+        An ``Exception`` is counted in ``failures``
         and logged, as ``hold``'s is; a ``BaseException`` that is not an ``Exception`` propagates.
         """
         if self._closed or self._tickets is None:  # no registry, or closed (a check handed over before close included): nothing is checked
             return None
         try:
             key = resolve_principal(presented_id, self._identities).key if type(presented_id) is str and presented_id else ""
-            self._tickets.check(ticket, effect=effect, presented_key=key)
+            finding = self._tickets.check(ticket, effect=effect, presented_key=key)
             if off_loop:
                 self._off_loop[effect] = self._off_loop.get(effect, 0) + 1
+            if self._recorder is not None:  # AD-1346 M3d3b2 (D152): after the off-loop count, on the thread of the check
+                self._recorder.offer_ticket(finding, off_loop=off_loop)
         except Exception:  # D129: counted and logged; the sink gets None
             self._failures += 1
             try:
