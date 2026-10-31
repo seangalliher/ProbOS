@@ -14,7 +14,7 @@
 
 **Which text describes the head.**
 - **Records of the read tree `2158c8d8` (commit `60440cb2`):** the Status and Anchors paragraphs, §1, §11 (Verified Against Codebase, Absence Verified), the internal citations in §13, and every SEARCH text in §7 and §8. Each SEARCH text occurs once in its file on that tree, and no earlier pair of this contract edits those lines.
-- **M3d3a is built and not merged** (2026-10-30): its candidate head after its A2 repair, `1ae78c8a` (tree `a7fd7db1`), is in cross-family review round 2. The orchestrator found the `src/` and `tests/` blobs of the earlier head `41324376` (tree `ec57d499`) equal to those of `60440cb2`, and `git diff --stat 41324376 1ae78c8a` lists only M3d3a's contract, `tests/test_ad1346_admission_ticket_sinks.py` and the two regenerated ledger files, so the records above describe the candidate's code except that test file. A review repair may change them. On the merged base, before the build, re-verify:
+- **When A2 was written, M3d3a was built and not merged** (2026-10-30): its candidate head after its A2 repair, `1ae78c8a` (tree `a7fd7db1`), was in cross-family review round 2. The orchestrator found the `src/` and `tests/` blobs of the earlier head `41324376` (tree `ec57d499`) equal to those of `60440cb2`, and `git diff --stat 41324376 1ae78c8a` lists only M3d3a's contract, `tests/test_ad1346_admission_ticket_sinks.py` and the two regenerated ledger files, so the records above describe the candidate's code except that test file. A review repair may change them. On the merged base, before the build, re-verify:
   - the files this contract **edits** that M3d3a also edits:
     - `tests/test_ad1346_admission_service.py` (M1-24 edits T14's `store.py` allowlist entry; M1-25 edits the T14 docstring lines M3d3a wrote);
     - `PROGRESS.md` (M3-01 anchors on M3d3a's paragraph head, whose date follows M3d3a's own date rule);
@@ -76,7 +76,6 @@
   - P6 pins the tables after a version-1 file opens (`tests/test_ad1346_admission_shadow_parity.py:286-305`).
   - Q1 pins `REPORT_QUERIES`'s names in order (`tests/test_ad1346_admission_shadow_report.py:32-35`), and Q5 that the report module's string constants begin with no write or schema keyword (`:108-114`).
   - T14 pins each persistence file's imports (`tests/test_ad1346_admission_service.py:99-113`; `store.py` at `:109-112`).
-  - S11 pins the declaration's fields other than its text and its lifecycle owner (`tests/test_ad1346_admission_shadow_store.py:288-297`).
 
 ## 2. Solution
 
@@ -222,7 +221,7 @@
   - Read by the five new report queries, D143's check and the new test file; TR7 also drops them from a file.
   - `check_store_registry.py` finds their `CREATE TABLE` statements in `store.py`, the declaration's owner module (§12), and the declaration's `backup="included"` covers the file that holds them.
 - **`REPORT_QUERIES`** (five names appended). `run_query` admits them by name. Q1 pins the names in order and requires each to begin with `SELECT ` and hold no `;`; Q5 reads every string constant in `report.py`. In the new file TR7 selects the names that begin with `ticket_`, and TR7 and TR8 run each; D143's check runs every name of the build it imports. The existing names, their SQL, P12 and Q2 are unchanged.
-- **The declaration's text.** Read by people. `check_store_registry.py` requires the title not to be blank.
+- **The declaration's text.** Read by people. `check_store_registry.py` requires the title not to be blank, and `test_the_ast_and_import_paths_agree_on_every_declaration` (`tests/test_ad1256_store_registry.py`) requires the checker's AST reading of the title, retention note and notes to equal the imported ones.
 - **T14's `store.py` allowlist.** Read by T14.
 
 ## 6. Tests
@@ -1613,11 +1612,6 @@ RUN:   Grep "admission\.shadow-decisions|admission_shadow\.db" outside prompts/,
 FOUND: PROGRESS.md, DECISIONS.md, admission/taxonomy.py, admission/storage_declarations.py, admission/store.py, admission/report.py, and eight tests
 HOLDS: yes (no docs/ file)
 
-CLAIM: no test reads the store's, the report's or the declaration's text other than Q5's constants check and T14's imports
-RUN:   Grep "store\.py|report\.py|storage_declarations|__doc__" tests, glob test_ad1346_*.py
-FOUND: service.py:104, :108, :109 (T14's allowlist keys); shadow_parity.py:68 (a comment); shadow_report.py:110 (Q5); shadow_store.py:290 (S11's module name)
-HOLDS: yes
-
 CLAIM: a Captain's stop id has the form of an issued ticket id, so the cause rule must not digest every 32-hex run
 RUN:   Grep "stop_id\s*=|token_hex|uuid" src/probos/agent_stop.py
 FOUND: :31 import uuid; :424 StopRecord(uuid.uuid4().hex, ...)
@@ -1646,7 +1640,7 @@ HOLDS: yes
   - S1 and its bullet, P6 and its bullet, Q1, T14 and its docstring (M1-19 to M1-25), and in the new file TR1's and TR7's table lists and TR7's `ticket_` names; Q2's bullet and name are the exception §14 item 7 names.
 
   `taxonomy.py`'s docstring (the db persists the verdict's values, and the ticket codes keep the same rule) and `carrier.py`'s ("Nothing here ... is persisted", said of the carrier) stay true. M3d3a's dated entries, which say the sink record is M3d3b's, are records of their date.
-- **`gen_ad_ledger.py --check`:** passes after M3 regenerates both files (prediction).
+- **`gen_ad_ledger.py --check`:** passes after M3 regenerates both files.
 - **Test collection:** `git diff --name-status --diff-filter=AD <slice base>..HEAD -- 'tests/test_*.py'` lists exactly one `A` file, `tests/test_ad1346_admission_ticket_record.py`.
 - **D143's older-build check** (run by the orchestrator before the build, 2026-10-30; Process says when it is run again on the M1 stage).
   - Save this script outside the repository, in a directory of its own.
@@ -1798,7 +1792,7 @@ HOLDS: yes
    - `recorder.py`, `service.py` and `runtime.py` are untouched.
    - Nothing in `src` fills a `TicketBatch` (§15's grep).
 6. **Report.** Names are appended and none is changed; each new SQL is one SELECT; Q5 holds.
-7. **Head text.** Each docstring and comment in `store.py`, `report.py`, `storage_declarations.py`, the edited tests and the new file is true at its own milestone, except Q2's module bullet and name in `tests/test_ad1346_admission_shadow_report.py`. They say each and every query, but since M3c appended two queries Q2 has run only M3b's six; this slice appends five more, which TR7 and TR8 run (P12 runs M3c's two). No line number of a file this slice edits appears in head text.
+7. **Head text.** Each docstring and comment this slice adds or changes in `store.py`, `report.py`, `storage_declarations.py`, the edited tests and the new file is true at its own milestone. Q2's module bullet and name in `tests/test_ad1346_admission_shadow_report.py`, which this slice keeps, say each and every query, but since M3c appended two queries Q2 has run only M3b's six; this slice appends five more, which TR7 and TR8 run (P12 runs M3c's two). No line number of a file this slice edits appears in head text.
 8. **Test file hygiene.**
    - The new file's text reads no environment variable, imports or calls no `subprocess` or `socket`, starts no thread and no runtime, and puts every data directory under `tmp_path` (§15).
    - These are properties of the file's text.
@@ -1817,7 +1811,7 @@ HOLDS: yes
 ## 16. Corrections to this contract
 
 A1 (2026-10-30, after the orchestrator's pre-build run on `41324376`, the M3d3a candidate head, and its dry application on `60440cb2` and `41324376`) repairs:
-- Defect 1: predictions since measured. The dry application (A1-1), the collected count (A1-5), D143's executed check (A1-3, A1-11, A1-33, A1-34), the census, now of record under a stated condition (A1-4), the span and the store registry check in D145 and §12 (A1-12, A1-31, A1-32), and §17, which now lists only what is not yet confirmed (A1-39). §12's ledger line and D146's figures stay predictions.
+- Defect 1: predictions since measured. The dry application (A1-1), the collected count (A1-5), D143's executed check (A1-3, A1-11, A1-33, A1-34), the census, now of record under a stated condition (A1-4), the span and the store registry check in D145 and §12 (A1-12, A1-31, A1-32), and §17, which now lists only what is not yet confirmed (A1-39). D146's figures stay predictions.
 - Defect 2: the base statement now says M3d3a is built, in review and not merged (A1-2). The records of `60440cb2` stay dated to it, the `git diff --stat 302e6bf9 60440cb2` record included.
 - Defect 3, the sweep:
   - claims wider than the code or the tests: D138's model and tool calls (A1-7); the store's "each bounded" (A1-14); `ticket_findings`'s bound and `off_loop` meaning, which the store neither checks nor gives (A1-15, A1-26); the ring-size comments, which named codes the store does not read (A1-16); `TicketSample`'s docstring, which gave an issue finding a sink check (A1-17); the report docstring's account of which files lack the tables, and its "parity queries" for two names (A1-18); TR2's bullet (A1-19); PROGRESS's ring content and prune constants (A1-20, A1-21); DECISIONS' D138, which stated M3d3b2's sampling rules as this slice's, and D140's loop (A1-25, A1-27); §9's existing constants, of which `_SCHEMA` changes (A1-30); §14 item 4's cause rule (A1-37).
@@ -1847,19 +1841,21 @@ A3 (2026-10-30, after cross-family review round 1 on `4d6ce6f5`, the M3d3b1 cand
 - F2, Q5: Q5 rejects constants that begin with a write or schema keyword; it is not a prefix allowlist. D145's and §12's prefix sentences are deleted (A3-15, A3-21). §1's account of Q5 and §14 item 6 are kept.
 - F3: "no build writes a row into them before M3d3b2" is deleted from M3-02's *Reversal.* bullet (A3-13).
 - F4: §5's sentences on the retention note and on no other text field are deleted. `check_store_registry.py` extracts every keyword of the call and reads `retention_note` before testing the retention (A3-16).
-- F2 and F4's class, what a test reads or checks: S11 does not pin the declaration's lifecycle owner. §5's "S11 pins the other fields" is deleted (A3-16), and §1's record now names the exception (A3-14).
+- F2 and F4's class, what a test reads or checks: S11 does not pin the declaration's lifecycle owner. §5's "S11 pins the other fields" is deleted (A3-16).
 - F3's class, what a build does: TR7's docstring and premise message said the tables "a build without them" creates, which an M3b build's three tables are not. Both now name AD-1346 M3c's store (A3-5, A3-6). TR8's docstring said `boot-0`'s hours sort after `boot-a`'s, but one of them is also one of `boot-a`'s. It now says the first hour does (A3-7).
 
 Landing text changes in §7.10.N (A3-1 to A3-12, `tests/test_ad1346_admission_ticket_record.py`) and §8 (M3-02: A3-13, `DECISIONS.md`); §7.1 to §7.7 do not change, and no line of `src` changes. A3's executable changes are statements and assertions of TR5, TR8 and TR9 (A3-4, A3-8 to A3-12); no `def` and no SEARCH text of §7 or §8 changes, and the slice still has 27 pairs and 9 cases. §10 now has 22 rows: TRX-20, TRX-21 and TRX-22 are new. No decision or register row is added.
 
+A4 (2026-10-30, after cross-family review round 2 on `a4ad2774`, the M3d3b1 candidate after repair 1: one finding, R2-1) repairs:
+- R2-1: §1's sentence on what S11 pins is deleted (A4-1), with the clause of A3's paragraph that described it (A4-7).
+- R2-1's class, what an existing test reads or pins: §5's account of the declaration's text names the store registry test that compares its AST and imported fields (A4-2); §11's absence record on which tests read the store's, the report's and the declaration's text is deleted (A4-3); §14 item 7 is scoped to the docstrings and comments this slice adds or changes (A4-4).
+- Records and predictions since settled: the front matter's account of M3d3a's candidate is dated to A2 (A4-5); §17's items and its record of the run on the A1 text are deleted (A4-6); §12's ledger line is no longer marked a prediction (A4-9), and A1's paragraph no longer calls it one (A4-10).
+
+No line of `src` and no text of §7, §8 or §10 changes.
+
 ## 17. Claims not yet confirmed
 
-1. `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` after M3 regenerates the ledger on the real tree. The oracle's tracker stage did not regenerate it, and the ledger test failed 3 there, as expected.
-2. On the merged M3d3a base: the pairs M1-24, M1-25, M3-01 and M3-02, and the M3d3a code cited under "Which text describes the head".
-3. Whether the orchestrator's D143 run stays of record (the two `git diff --stat` conditions of its Process bullet; A2 and A3 change no file under `src`). The census does not: A3 changes the new file, so under Process the campaign of record reruns the unmutated baseline and all 22 rows.
-4. The A3 text, which no gate has run: the statements and assertions it adds to TR5, TR8 and TR9 (A3-4, A3-8 to A3-12) and the kills of TRX-20, TRX-21 and TRX-22. The A2 text was built as M2 (`3e39d0b9`): on `4d6ce6f5` the new file and the four edited test files passed (70, the orchestrator's run), and cross-family review round 1 ran rows TRX-1, TRX-2, TRX-6, TRX-9, TRX-15, TRX-17, TRX-18 and TRX-19 there, each killed.
-
-The orchestrator's run on the A1 text (2026-10-30, scratch trees of `41324376`) confirmed what item 4 listed before A2: an AST comparison of the eight code files, docstrings stripped, found no executable line changed; the census killed 18 of 18 rows after an unmutated baseline of 9 passed; D143's five commands exited 0 and printed every expected line; M1's focused list passed (473); and the new file collected 9.
+None.
 
 ## For the register (#1604)
 
