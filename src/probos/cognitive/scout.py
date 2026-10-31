@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.process_chains import (
     ProcessChainDefinition,
@@ -401,6 +403,7 @@ class ScoutAgent(CognitiveAgent):
         """Search GitHub via gh CLI for authenticated rate limits (AD-395)."""
         encoded_query = f"{query} stars:>={min_stars}"
         logger.info("Scout: searching GitHub — %s", encoded_query[:100])
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_SUBPROCESS, presented_id=self.id)  # AD-1346 M3e1: the subprocess sink, in shadow; it blocks nothing
         try:
             result = await asyncio.to_thread(
                 subprocess.run,

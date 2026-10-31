@@ -12,6 +12,8 @@ from typing import Any
 
 import httpx
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.agents.http_fetch import safe_fetch_method
 from probos.execution.command_env import build_command_env
 from probos.execution.command_gate import CommandPolicyGate
@@ -313,6 +315,7 @@ class RedTeamAgent(BaseAgent):
         refused = self._command_policy_verification(target_agent_id, intent, claimed, command)
         if refused is not None:
             return refused
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e1: the subprocess sink, in shadow; it blocks nothing (D164: no principal)
         try:
             loop = asyncio.get_running_loop()
             deadline = time.monotonic() + _RERUN_TIMEOUT_S

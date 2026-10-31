@@ -38,7 +38,7 @@ RECORDED = STOP_CALLEES | AGENT_WORK_METHODS | {
     "CrewRecoveryTransientError", "finalize", "run_crew_task",  # N1
     "shadow_at",  # AD-1346 M3c: the shadow statement beside a stop check
     "hold_at",  # AD-1346 M3d2: the work-ticket hold an admitted entry takes (tests/test_ad1346_admission_ticket_issue.py, I10)
-    "check_at",  # AD-1346 M3d3a: the sink check at the tool sink and the model gateway (tests/test_ad1346_admission_ticket_sinks.py, SK7)
+    "check_at",  # AD-1346 M3d3a: the sink check at the tool sink and the model gateway (tests/test_ad1346_admission_ticket_sinks.py, SK7); AD-1346 M3e1: and at the subprocess sinks (tests/test_ad1346_admission_effect_census.py, EC3)
 }
 PINNED_KEYWORDS = frozenset({"admitted_turn", "agent_stops", "admitted_synthesis"})  # recorded as "name=value" on any call passing one
 CREW_PREFIX = "src/probos/cognitive/crew_"

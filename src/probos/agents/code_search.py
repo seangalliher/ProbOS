@@ -29,6 +29,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.execution.command_env import trusted_command_env
 from probos.substrate.agent import BaseAgent
 from probos.substrate.file_walk import iter_files
@@ -193,6 +195,7 @@ class CodeSearchAgent(BaseAgent):
         if plan["glob"]:
             args += ["--glob", plan["glob"]]
         args += ["--regexp", plan["pattern"], str(root)]
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e1: the subprocess sink, in shadow; it blocks nothing (D164: no principal)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
