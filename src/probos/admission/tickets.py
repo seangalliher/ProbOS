@@ -34,6 +34,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Final
 
 from probos.admission.taxonomy import (
+    EFFECT_SUBPROCESS,
     SEAM_MODEL_CALL,
     SEAMS,
     TICKET_EXPIRED,
@@ -56,8 +57,9 @@ from probos.agent_stop import SEAM_TOOL, AgentStopService
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-#: The effect points a scope names: the tool sink's seam (AD-1343) and the model gateway's.
-TICKET_EFFECTS: Final[tuple[str, ...]] = (SEAM_TOOL, SEAM_MODEL_CALL)
+#: The effect points a scope names: the tool sink's seam (AD-1343), the model gateway's and, from AD-1346 M3e1, a
+#: subprocess launch's (D161). Append-only: ``TICKET_OPERATIONS`` keys the persisted ``ticket_findings`` rows.
+TICKET_EFFECTS: Final[tuple[str, ...]] = (SEAM_TOOL, SEAM_MODEL_CALL, EFFECT_SUBPROCESS)
 OP_ISSUE: Final = "issue"
 #: What a finding is about: an issue, or the check at one effect point.
 TICKET_OPERATIONS: Final[tuple[str, ...]] = (OP_ISSUE, *TICKET_EFFECTS)

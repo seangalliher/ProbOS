@@ -22,6 +22,9 @@ from probos.agent_stop import STOP_REASON_CODE
 SEAM_MODEL_CALL: Final = "model_call"
 EFFECT_SEAMS: Final[frozenset[str]] = frozenset({SEAM_MODEL_CALL})
 SEAMS: Final[frozenset[str]] = STOP_SEAMS | EFFECT_SEAMS
+#: AD-1346 M3e1 (D161): the effect a subprocess sink checks a work ticket for, a member of ``TICKET_EFFECTS``. It is not
+#: a seam: no verdict names it, so ``SEAMS`` and the verdicts' per-day bounds do not move. Append-only, as the codes are.
+EFFECT_SUBPROCESS: Final = "subprocess"
 
 #: v1 (D20): the work the stop seams admit, plus effect-point calls whose unit is not yet known.
 WORK_KINDS: Final[tuple[str, ...]] = (
@@ -102,7 +105,9 @@ DEFERRED_CHECKS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 SYSTEM_PRINCIPAL_PREFIX: Final = "system:"
-#: D17: grows by census in AD-1346 M3e.
+#: D17: grows by census in AD-1346 M3e. From AD-1346 M3e1, EC5 (``tests/test_ad1346_admission_effect_census.py``)
+#: holds it equal to the principals of the subprocess census's system rows and the ``system:`` literals a seam statement
+#: presents (D166).
 SYSTEM_PRINCIPALS: Final[frozenset[str]] = frozenset({"system:ship_computer"})
 
 #: D30: log2 buckets of ``decide`` time in integer nanoseconds.
