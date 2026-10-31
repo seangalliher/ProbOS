@@ -106,7 +106,7 @@
     - a new key beyond `PENDING_KEY_LIMIT` is counted as `ticket_dropped`, per hour and in total, and not sampled;
     - a sample beyond its buffer is counted as `ticket_samples_dropped`, per hour and in total.
   - The ids are digested only when written (`persisted_finding`, M3d3b1's D144). The recorder holds the finding as offered, in memory.
-  - Fail open: an offer that raises an `Exception` is counted once in the service's `failures` (D152). The recorder counts nothing for it.
+  - Fail open: an offer that raises an `Exception` is counted once in the service's `failures` (D152).
   - Rejected:
     - a sixth counter for refused findings (silent, and outside R52's five);
     - inferring `off_loop` in the recorder (only the service knows a check was handed over).
@@ -1939,7 +1939,7 @@ HOLDS: yes
   - `tickets.py` ("it has no store and nothing restores it", said of the registry);
   - the declaration's notes ("Written by probos.admission.recorder.ShadowRecorder");
   - `store.py`'s docstrings;
-  - `failures`'s docstring (the offers raise inside the three `except Exception` blocks it names).
+  - `failures`'s docstring.
 
   M3d3b1's dated entries and its acceptance greps (`TicketBatch(` in `src`) are records of their date.
 - **Test collection:** `git diff --name-status --diff-filter=AD <slice base>..HEAD -- 'tests/test_*.py'` lists exactly one `A` file, `tests/test_ad1346_admission_ticket_offers.py`.
@@ -2051,6 +2051,12 @@ A4 (2026-10-30, after the first cross-family review round; read on `62d2eb45`, t
 - Placement: §2's and `PROGRESS.md`'s sentences that placed the offers inside the `except Exception` are deleted (A4-1, A4-14).
 - Settled by measurement: D156's "idle" is deleted (A4-8); `DECISIONS.md`'s D156 bullet, which said the figures were to be recorded below, is deleted (A4-16); §17's item on D156's figures is deleted and the items after it are renumbered (A4-22, A4-23); §12's bullet that called the ledger check a prediction is deleted, and so are the items that remained in §17, which now says "None." (A4-26, A4-27).
 - Text that lands: A4-11 in `recorder.py` (M1-08's REPLACE, §7.1); A4-12 and A4-13 in the new file (§7.5.N); A4-14 in M3-01, and A4-15 and A4-16 in M3-02 (§8).
+
+A5 (2026-10-31, after the second cross-family review round; read on `8c964792`, tree `5eb1e8b2`, the repaired candidate) repairs:
+- A failure's members: D151's sentence that the recorder counts nothing for an offer that raises is deleted (A5-1).
+- Placement: §12's parenthetical that placed the offers inside the three `except Exception` blocks is deleted (A5-2).
+- A5-1 and A5-2 change this contract only: no line of `src`, of the tests, of `PROGRESS.md` or of `DECISIONS.md`.
+- Recorded, not repaired (listed in the landing comment on #1604): `stop`'s docstring (M1-09's REPLACE) says that a write that raises an `Exception` is counted and logged by the flush and is not raised from `stop`; when a logging handler raises in that flush, its exception propagates from `stop` (F-212's class; injected only).
 
 ## 17. Claims not yet confirmed
 
