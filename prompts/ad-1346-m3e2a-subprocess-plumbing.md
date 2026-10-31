@@ -13,7 +13,7 @@
 
 **Which text describes the head.**
 - **Records of the read tree `45542e38` (commit `1a2c1438`):** the Status and Anchors paragraphs, §1, §11 (Verified Against Codebase, Absence Verified), the internal citations in §13, each citation marked "on `1a2c1438`", and every SEARCH text in §7 and §8. Each SEARCH text occurs once in its file on that tree, in the order the pairs are applied.
-- **The M3e1 files.** M3e1 is merged: `origin/main` is `9f78d3ec`, whose tree `35166542` is the tree of M3e1's gated head `32f83d1b`. Its four commits after `1a2c1438` (A2's contract and repair, A3's contract, and the campaign bullet) changed seven files (`src/probos/runtime.py`, seven lines; `tests/test_ad490_agent_wiring_security_logs.py`; `DECISIONS.md`; `PROGRESS.md`; the two regenerated AD-ledger files; M3e1's contract) and added `tests/test_ad1346_admission_sink_wiring.py`. On that tree the 34 pairs of §7 and §8 apply by tool with no failure (14 files changed, 446 insertions, 43 deletions by `git diff --shortstat`, the AD ledger not regenerated). Re-verified there:
+- **The M3e1 files.** M3e1 is merged: `origin/main` is `9f78d3ec`, whose tree `35166542` is the tree of M3e1's gated head `32f83d1b`. Its four commits after `1a2c1438` (A2's contract and repair, A3's contract, and the campaign bullet) changed seven files (`src/probos/runtime.py`, seven lines; `tests/test_ad490_agent_wiring_security_logs.py`; `DECISIONS.md`; `PROGRESS.md`; the two regenerated AD-ledger files; M3e1's contract) and added `tests/test_ad1346_admission_sink_wiring.py`. Before A4, on that tree the 34 pairs of §7 and §8 applied by tool with no failure (14 files changed, 446 insertions, 43 deletions by `git diff --shortstat`, the AD ledger not regenerated). Re-verified there:
   - the M3e1 files this contract **edits**: `tests/fixtures/ad1346_effect_census.py` (M1-14 to M1-19, M2-01, M2-02); `tests/test_ad1346_admission_effect_census.py` (M1-20 to M1-26); `tests/test_ad1346_admission_service.py` (T16, M1-27 to M1-29); `src/probos/admission/service.py` (M1-11, M1-12 anchor on M3e1's M1-05 and M1-08 lines); `src/probos/admission/seam.py` (M1-13 anchors on M3e1's M1-09 lines); `PROGRESS.md` (M3-01 anchors on M3e1's paragraph head) and `DECISIONS.md` (M3-02 anchors on the heading after M3e1's entry);
   - the M3e1 code it **cites**, unedited: SK7 (`tests/test_ad1346_admission_ticket_sinks.py:507-526`); `tests/fixtures/ad1343_seam_census.py` (`census`, `function`, `calls`); `check_at` (`seam.py:49-53`); `check_ticket` (`service.py:218-238`); EC9's and EC10's fixtures, which SP4 and SP5 copy.
   - the M3e1 decisions and registers it cites: D164, R68 and R70 read as before. A2 reworded D163's definition of a `Sink` (a function that reads the service from its object's `_runtime` attribute), D165's bullets and D169, and deleted R73's second sentence; D163's rows, which D178 cites, are unchanged.
@@ -65,7 +65,7 @@
   - a fifth coverage, `Unreached(names, reason)`;
   - the 11 pending launches become 2 sink rows (4 launches), 2 system rows (3), 3 unreached rows (3) and 1 pending row owned by `M3e2b` (1).
 - **The totals.** Sink 11 launches in 7 rows, System 19, OutsideRuntime 5, Unreached 3, Pending 1; 39 in all, BF-892's floor.
-- **The guards.** EC3 checks each sink's service form and follows `via`; EC4 checks each link of a chain; SP1 checks that no other `src` code references an unreached row's names; SP3 pins the wiring by AST.
+- **The guards.** EC3 checks each sink's service form and follows `via`; EC4 checks each link of a chain; SP1 holds that `unreached_references` reports nothing for each unreached row.
 - **The crossing test** (SP4) and **the golden test** (SP5) drive the real tool, sandbox and installer, with each launch replaced and `subprocess.Popen` replaced by a recorder that raises.
 
 ## 3. Decisions (numbered after M3e1's D160 to D173)
@@ -155,8 +155,8 @@
 
 | File | M | Cases | What |
 |---|---|---|---|
-| `tests/test_ad1346_admission_subprocess_plumbing.py` | M2 | 5 | SP1 to SP5: the unreached rows' reach; the reach helper on synthetic modules; the wiring by AST; the crossing test over the real run entry, tool, sandbox and installer; the golden test |
-| `tests/test_ad1346_admission_effect_census.py` | M1 | unchanged count | the docstring; EC2's counts, owner and sink-row count; EC3's service form and chain; EC4's links |
+| `tests/test_ad1346_admission_subprocess_plumbing.py` | M2 | 5 | SP1 to SP5: the unreached rows' reach; the reach helper on synthetic modules; the sandbox constructions' keyword and the `set_admission` call, by AST; the crossing test over the real run entry, tool, sandbox and installer; the golden test |
+| `tests/test_ad1346_admission_effect_census.py` | M1 | unchanged count | the docstring; EC2's counts, owner and sink-row count; EC3's service form and chain; EC4's links, name and docstring |
 | `tests/test_ad1346_admission_service.py` | M1 | unchanged count | T16's docstring and its two sets |
 | `tests/test_issue1417_run_python_child_ownership.py` | M1 | unchanged count | `test_normal_tool_runs_are_unchanged`'s constructor record |
 
@@ -536,8 +536,8 @@ REPLACE:
 - EC3  each sink function holds one ``check_at`` call, a statement of its own, with the row's service (the runtime's or,
        from AD-1346 M3e2a, ``self._admission``), the effect ``EFFECT_SUBPROCESS`` and the row's presented id, on a line
        before its launch or its reference to the next function of its chain.
-- EC4  a sink whose launch is in another function: in its file, each function of the chain from the sink's function to
-       the launching one (AD-1346 M3e2a: through ``via``) is referenced only in the function before it and in its own.
+- EC4  a sink whose launch is in another function: in its file, each function of its chain after the sink's function
+       (AD-1346 M3e2a: through ``via``, to the launching one) is referenced only in the function before it and in its own.
 ```
 
 **M1-22** (`tests/test_ad1346_admission_effect_census.py`, the fixture import)
@@ -603,6 +603,10 @@ REPLACE:
 
 SEARCH:
 ```
+def test_a_sinks_launching_function_is_reached_only_from_its_check_function() -> None:
+    """EC4: in its file, a sink's separate launching function is referenced only in the sink's function and in itself."""
+    rows = [(path, scope, cover) for (path, scope), (_n, cover) in SUBPROCESS_SITES.items() if isinstance(cover, Sink)]
+    split = [(path, scope, cover) for path, scope, cover in rows if cover.check != scope]
     assert {path for path, _scope, _cover in split} == {"src/probos/agents/shell_command.py", "src/probos/agents/red_team.py"}
     for path, scope, cover in split:
         tree = ast.parse(src_sources()[path], filename=path)
@@ -610,6 +614,10 @@ SEARCH:
 ```
 REPLACE:
 ```
+def test_the_references_along_a_sinks_chain() -> None:
+    """EC4."""
+    rows = [(path, scope, cover) for (path, scope), (_n, cover) in SUBPROCESS_SITES.items() if isinstance(cover, Sink)]
+    split = [(path, scope, cover) for path, scope, cover in rows if cover.check != scope]
     assert {path for path, _scope, _cover in split} == {
         "src/probos/agents/shell_command.py", "src/probos/agents/red_team.py", "src/probos/execution/isolation.py",
     }
@@ -677,16 +685,31 @@ REPLACE:
 
 ### 7.2 M2
 
-**M2-01** (`tests/fixtures/ad1346_effect_census.py`, the docstring's last paragraph)
+**M2-01** (`tests/fixtures/ad1346_effect_census.py`, the docstring's last paragraph and an import)
 
 SEARCH:
 ```
 ``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code, and SK7
+(``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions``.
+"""
+
+from __future__ import annotations
+
+import ast
+import functools
 ```
 REPLACE:
 ```
 ``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code (the Unreached rows' reach,
 ``unreached_references``: ``tests/test_ad1346_admission_subprocess_plumbing.py``, SP1), and SK7
+(``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions``.
+"""
+
+from __future__ import annotations
+
+import ast
+import functools
+import unicodedata
 ```
 
 **M2-02** (`tests/fixtures/ad1346_effect_census.py`, appended after `outside_importers`)
@@ -722,13 +745,12 @@ def _reaching(node: ast.AST, outer: str, own: bool, wanted: frozenset[str], foun
 
 
 def unreached_references(sources: dict[str, str], path: str, names: tuple[str, ...]) -> list[tuple[str, int]]:
-    """(file, line) of each reference to ``names`` in ``sources`` (AD-1346 M3e2a, D177): a name, an attribute (in a module
-    other than ``path``, not an attribute of ``self``), or an import whose names or module hold one as a dotted part; in
-    ``path`` itself, only those outside the module-level functions and classes so named."""
+    """(file, line) of references to ``names`` in ``sources`` (AD-1346 M3e2a, D177)."""
     wanted = frozenset(names)
     found: list[tuple[str, int]] = []
     for rel, source in sources.items():
-        if any(name in source for name in wanted):
+        text = unicodedata.normalize("NFKC", source)
+        if any(name in text for name in wanted):
             lines: list[int] = []
             _reaching(ast.parse(source, filename=rel), "", rel == path, wanted, lines)
             found += [(rel, line) for line in lines]
@@ -747,9 +769,9 @@ census rows that no other ``src`` code reaches.
        functions and classes so named, and elsewhere an attribute of something other than ``self`` and three
        import forms; it does not report an attribute of ``self`` in another module, a reference inside a named
        function, or a name that only contains one.
-- SP3  the wiring, by AST: ``src`` holds five ``SubprocessSandbox`` constructions; the code runner's two and the code
-       execution tool's two pass ``admission_service`` read from their runtime, and ``SkillForge._smoke_test``'s passes
-       none; ``ProbOSRuntime.start`` calls ``self.dependency_resolver.set_admission(self.admission_service)``.
+- SP3  by AST: ``src`` holds five calls named ``SubprocessSandbox``; the code runner's two and the code execution
+       tool's two pass ``admission_service`` read from their runtime, and ``SkillForge._smoke_test``'s passes none;
+       ``ProbOSRuntime.start`` holds the call ``self.dependency_resolver.set_admission(self.admission_service)``.
 - SP4  #1604 property 1's crossing test for the two sinks: inside the real run entry, a real ``CodeExecutionTool``
        whose runtime holds the service runs its ``SubprocessSandbox``, and a ``DependencyResolver`` handed the service
        installs a package; each counts ``ticket_live``, after a Captain's stop ``ticket_revoked``, and outside any hold
@@ -768,6 +790,7 @@ import ast
 import asyncio
 import json
 import subprocess
+import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -944,19 +967,20 @@ def test_unreached_references_reports_each_way_in_and_nothing_else() -> None:
         "src/probos/c.py": "import probos.sandbox_mod as m\n",
         "src/probos/d.py": "class D:\n    def f(self):\n        return self.launch\n",
         "src/probos/e.py": "def f(runner):\n    return runner.launch()\n",
+        "src/probos/f.py": "def f(runner):\n    return runner.\uff4caunch()\n",
         "src/probos/g.py": "relaunch = 1\nlaunched = 2\n",
         "src/probos/h.py": "from probos.other import launch_all\n",
     }
     assert unreached_references(sources, "src/probos/sandbox_mod.py", ("sandbox_mod", "launch")) == [
         ("src/probos/sandbox_mod.py", 7), ("src/probos/sandbox_mod.py", 10), ("src/probos/a.py", 1),
-        ("src/probos/b.py", 1), ("src/probos/c.py", 1), ("src/probos/e.py", 2),
+        ("src/probos/b.py", 1), ("src/probos/c.py", 1), ("src/probos/e.py", 2), ("src/probos/f.py", 2),
     ]
 
 
 def test_the_sandbox_constructions_and_the_installer_receive_the_runtimes_service() -> None:
-    """SP3 (D175; kills EP-4, EP-6): the wire from the runtime to each sink, by AST."""
+    """SP3 (D175; kills EP-4, EP-6)."""
     built = sum(
-        1 for rel, source in src_sources().items() if "SubprocessSandbox" in source
+        1 for rel, source in src_sources().items() if "SubprocessSandbox" in unicodedata.normalize("NFKC", source)
         for node in ast.walk(ast.parse(source, filename=rel)) if calls("SubprocessSandbox")(node)
     )
     assert built == sum(len(services) for services in _SANDBOX_BUILDERS.values()) == 5
@@ -1126,7 +1150,6 @@ The rows are EP-1 to EP-8 and EP-10.
 
 **Expected to survive, among them:**
 - `DependencyResolver._admission`'s class default changed to another non-service value: `check_at` passes over anything but an exact `AdmissionService`.
-- `unreached_references`' text prefilter replaced by `True`: it only skips modules that cannot hold a reference.
 - A check statement moved, within its block, to another line still before its hand-off or launch: EC3 checks only the order.
 
 ## 11. Verified Against Codebase (2026-10-31, read on `1a2c1438`, tree `45542e38`)
@@ -1256,7 +1279,7 @@ HOLDS: yes
 - A1-2: §1 says `_run_tests` (`:2895`) has no `src` caller; its `_sync_run` launches at `:2908`.
 - A1-3: §1's T16 bullet excludes `probos/admission/` (`:603-604`).
 - A1-4: §1 quotes `srp-size`'s span and trigger lines (`:559`, `:566`), cites BF-892's floor at `:78`, and deletes the bullets on the whole-`src` text scanners and the prose bans (§14 property 6 names those tests).
-- A1-5: §2's guard bullet says SP1 checks references to an unreached row's names.
+- A1-5: §2's guard bullet said SP1 checks references to an unreached row's names (A4-2 replaces it).
 - A1-6: D176 scopes the tool sink's earlier check to calls through `ToolRegistry.check_and_invoke`.
 - A1-7: D177's rejected option names constructors no other `src` module calls.
 - A1-8 and A1-9: D178 drops the quotation marks around `BuildPipeline`'s docstring, gives `_run_git`'s 13 call lines with the command, and says no build entry's file names `hold_at`, `.hold(` or `CURRENT_TICKET`.
@@ -1284,6 +1307,23 @@ HOLDS: yes
 **A3 (2026-10-31, before review round 1; the orchestrator's mechanical amendment, contract-only).**
 - A3-1 and A3-2: §5's sandbox bullet and §14's first item say that `check_at` raises only what `check_ticket` raises and that the real `check_ticket` lets no `Exception` out, citing the bodies of `check_at` and `check_ticket` (`seam.py:49-53`, `service.py:230-238`) in place of the module docstring's lines.
 - A3-3: §17 holds no item: the campaign of §10 and the ledger check it listed have run.
+
+**A4 (2026-10-31, after review round 1).** Its SEARCH texts were read on `c7a6d689` (tree `ccc8adb4`); the lines A4-6 and A4-10 add to M1-26's and M2-01's SEARCH texts were also read on `1a2c1438` and on M3e1's merge `9f78d3ec` (`git show <commit>:<path>`).
+- A4-1: the head bullet on the M3e1 files says the 34 pairs applied on M3e1's merge before A4.
+- A4-2: §2's guard bullet says SP1 holds that `unreached_references` reports nothing for each unreached row, and deletes its SP3 clause.
+- A4-3 and A4-4: §6's SP row names SP3's subjects; its EC row adds EC4's name and docstring.
+- A4-5 (LANDING, `tests/test_ad1346_admission_effect_census.py`, and M1-21's REPLACE): EC4's bullet names the functions of a chain after the sink's function.
+- A4-6 to A4-8 (A4-8 LANDING, the same file): M1-26's SEARCH and REPLACE reach up to EC4's `def`; EC4 is named `test_the_references_along_a_sinks_chain`, and its docstring is "EC4.".
+- A4-9 to A4-12 (A4-12 LANDING, `tests/fixtures/ad1346_effect_census.py`): M2-01 reaches down to the imports and adds `import unicodedata`.
+- A4-13 (LANDING, the fixture, and M2-02's REPLACE): `unreached_references`' docstring keeps "(file, line) of references to ``names`` in ``sources``", and its prefilter tests `unicodedata.normalize("NFKC", source)`.
+- A4-14 to A4-17 (LANDING, `tests/test_ad1346_admission_subprocess_plumbing.py`, and §7.3): SP3's bullet says `src` holds five calls named `SubprocessSandbox` and `ProbOSRuntime.start` holds the call; the file imports `unicodedata`; SP2 gains `src/probos/f.py`, whose attribute spells `launch` with a fullwidth `l` written as `\uff4c`, and expects its line 2; SP3's docstring is "SP3 (D175; kills EP-4, EP-6)." and its prefilter tests the NFKC form of the text.
+- A4-18: §10 deletes the expected survivor on the prefilter.
+- A4-19: A1-5 says what §2's bullet said before A4-2.
+- A4-20: this paragraph.
+- *F1 (P2, the reach helper's prefilter).* Python converts names to NFKC while parsing ("All names are converted into the normalization form NFKC while parsing", Python 3.15.2 language reference, Lexical analysis), so a prefilter on raw text skipped a module that imports a row's name spelled with a compatibility character. Options: (A) test the NFKC form of the text; (B) delete the prefilter; (C) keep the code, delete the claim and register the gap. Chosen: A, which compares the form the parser compares. Rejected: B, under which each of SP1's three calls parses and walks every `src` file; C, which leaves SP1 able to pass over an import of a row's name. SP2's `src/probos/f.py` is a module the raw prefilter skips and A's parses; no row is added to §10, whose campaign of record ran on the M2 tree. SP3's prefilter, the same pattern, tests the NFKC form too.
+- *F2 (P3, SP3's reach).* Options: (A) delete the sentences that said SP3 pins the wiring; (B) add placement and guard assertions to SP3 and a row. Chosen: A; §14 item 3 still asks the Diff Reviewer for the guard. Rejected: B, more test code and a new row to make a sentence true.
+- *F3 (P3, EC4's name and docstring).* The `def` and the docstring lie above M1-26's SEARCH. Options: (A) extend M1-26 up to the `def` with a LANDING pair; (B) a new section of pairs in the form of M3e1's §7.5. Chosen: A: M1-26 stays the one pair for EC4, and §7 keeps 34 pairs. Rejected: B, a second place to look for EC4's edit. The name names the test's subject; the module docstring's EC4 bullet states what it checks.
+- *F4 (P3, the helper's docstring).* The enumeration and "each" are deleted. Rejected: an enumeration rewritten from the helper's branches.
 
 ## 17. Claims not yet confirmed
 
