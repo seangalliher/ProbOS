@@ -1792,7 +1792,7 @@ HOLDS: yes
    - `recorder.py`, `service.py` and `runtime.py` are untouched.
    - Nothing in `src` fills a `TicketBatch` (§15's grep).
 6. **Report.** Names are appended and none is changed; each new SQL is one SELECT; Q5 holds.
-7. **Head text.** Each docstring and comment this slice adds or changes in `store.py`, `report.py`, `storage_declarations.py`, the edited tests and the new file is true at its own milestone. Q2's module bullet and name in `tests/test_ad1346_admission_shadow_report.py`, which this slice keeps, say each and every query, but since M3c appended two queries Q2 has run only M3b's six; this slice appends five more, which TR7 and TR8 run (P12 runs M3c's two). No line number of a file this slice edits appears in head text.
+7. **Head text.** Q2's module bullet and name in `tests/test_ad1346_admission_shadow_report.py`, which this slice keeps, say each and every query, but since M3c appended two queries Q2 has run only M3b's six; this slice appends five more, which TR7 and TR8 run (P12 runs M3c's two).
 8. **Test file hygiene.**
    - The new file's text reads no environment variable, imports or calls no `subprocess` or `socket`, starts no thread and no runtime, and puts every data directory under `tmp_path` (§15).
    - These are properties of the file's text.
@@ -1848,10 +1848,14 @@ Landing text changes in §7.10.N (A3-1 to A3-12, `tests/test_ad1346_admission_ti
 
 A4 (2026-10-30, after cross-family review round 2 on `a4ad2774`, the M3d3b1 candidate after repair 1: one finding, R2-1) repairs:
 - R2-1: §1's sentence on what S11 pins is deleted (A4-1), with the clause of A3's paragraph that described it (A4-7).
-- R2-1's class, what an existing test reads or pins: §5's account of the declaration's text names the store registry test that compares its AST and imported fields (A4-2); §11's absence record on which tests read the store's, the report's and the declaration's text is deleted (A4-3); §14 item 7 is scoped to the docstrings and comments this slice adds or changes (A4-4).
+- R2-1's class, what an existing test reads or pins: §5's account of the declaration's text names the store registry test that compares its AST and imported fields (A4-2); §11's absence record on which tests read the store's, the report's and the declaration's text is deleted (A4-3).
 - Records and predictions since settled: the front matter's account of M3d3a's candidate is dated to A2 (A4-5); §17's items and its record of the run on the A1 text are deleted (A4-6); §12's ledger line is no longer marked a prediction (A4-9), and A1's paragraph no longer calls it one (A4-10).
 
 No line of `src` and no text of §7, §8 or §10 changes.
+
+A5 (2026-10-30, after cross-family review round 3 on `41317b05`, the M3d3b1 candidate after repair 2: one finding, R3-1) repairs:
+- R3-1: §14 item 7's sentence on each docstring and comment this slice adds or changes is deleted (A5-1), with the clause of A4's paragraph that described its scope (A5-2). The slice changes the module docstring of `tests/test_ad1346_admission_shadow_store.py` (M1-19), and that docstring keeps S11's bullet, which says more than S11's body pins.
+- R3-1's class, a sentence whose unit holds text this slice did not write: §14 item 7's sentence on line numbers in head text is deleted (A5-1).
 
 ## 17. Claims not yet confirmed
 
