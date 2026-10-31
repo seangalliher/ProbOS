@@ -145,7 +145,7 @@
 ## 5. Consumers of every value this changes
 
 - **`SubprocessSandbox.__init__`.** A keyword with a default; positional callers are unaffected (the parameters are keyword-only). `test_issue1417:616` records the keywords (M1-30). Tests that replace `SubprocessSandbox.run`, `_run_sync` or `_run_sync_inner` with their own function skip the replaced code; tests that replace `run` skip the check.
-- **`SubprocessSandbox.run`.** The statement is an expression statement whose value is discarded; `check_at` returns None and lets no `Exception` out (`seam.py:15-19`). Its argument `self._admission` is read before that call, outside that guarantee; `__init__` sets it (M1-02).
+- **`SubprocessSandbox.run`.** The statement is an expression statement whose value is discarded; `check_at` returns None and raises only what `check_ticket` raises, and the real `check_ticket` lets no `Exception` out (`seam.py:49-53`; `service.py:230-238`). Its argument `self._admission` is read before that call, outside that guarantee; `__init__` sets it (M1-02).
 - **`DependencyResolver`.** It gains `set_admission` and a class attribute `_admission = None`. `_install_package` returns the same value. With `install_fn` set (no `src` caller sets it) it returns before the check.
 - **`ProbOSRuntime.start`.** After `self.dependency_resolver = cog.dependency_resolver`, when that is not None, it calls `set_admission(self.admission_service)`. An `Exception` raised by that call propagates from `start`.
 - **The service's counts.** With a registry, a check the service makes counts its finding under the operation `subprocess` (SP4's and SP5's `tickets.tally()`); with a recorder, `_check_ticket` offers it to `ShadowRecorder.offer_ticket` (M3d3b2, `service.py:258`).
@@ -1231,7 +1231,7 @@ HOLDS: yes
 
 ## 14. Diff Reviewer: properties to verify
 
-1. **No answer changes.** Each new `check_at` statement is an expression statement whose value is discarded; `check_at` returns None and lets no `Exception` out (`seam.py:15-19`). The constructions pass one more keyword; `set_admission` assigns one attribute.
+1. **No answer changes.** Each new `check_at` statement is an expression statement whose value is discarded; `check_at` returns None and raises only what `check_ticket` raises, and the real `check_ticket` lets no `Exception` out (`seam.py:49-53`; `service.py:230-238`). The constructions pass one more keyword; `set_admission` assigns one attribute.
 2. **Placement.** The sandbox's check follows the `if request.workdir is not None:` block (whose `except` arm returns) and precedes the `try` whose body awaits `run_in_executor(self._executor, self._run_sync, request)`. The installer's check follows the `install_fn` return and precedes `loop = asyncio.get_running_loop()`.
 3. **The wiring.** The code runner's two and the tool's two constructions pass `getattr(self._runtime, "admission_service", None)`; `ProbOSRuntime.start` calls `set_admission` only when `self.dependency_resolver is not None`.
 4. **The census.** The 39 launches split 11/19/5/3/1; every Unreached row's scope begins with one of its names; the one Pending row is owned by `M3e2b`.
@@ -1281,10 +1281,13 @@ HOLDS: yes
 - A2-5: §13's citation of those calls says "on `1a2c1438`".
 - A2-6: R83 deletes its second sentence, which does not hold at the tool's two constructions: they sit inside `CodeExecutionTool.invoke`'s `try`, whose `except Exception` handles a raise.
 
+**A3 (2026-10-31, before review round 1; the orchestrator's mechanical amendment, contract-only).**
+- A3-1 and A3-2: §5's sandbox bullet and §14's first item say that `check_at` raises only what `check_ticket` raises and that the real `check_ticket` lets no `Exception` out, citing the bodies of `check_at` and `check_ticket` (`seam.py:49-53`, `service.py:230-238`) in place of the module docstring's lines.
+- A3-3: §17 holds no item: the campaign of §10 and the ledger check it listed have run.
+
 ## 17. Claims not yet confirmed
 
-1. The campaign of record on the M2 tree (§10: EP-1 to EP-8 and EP-10).
-2. `python -P scripts/gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` after M3's regeneration.
+None.
 
 ## For the register (#1604)
 
