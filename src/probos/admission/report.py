@@ -2,6 +2,9 @@
 
 ``REPORT_QUERIES`` maps each frozen name to one SELECT. A later slice may add a name; none is
 renamed or removed, so the queries the M4 ruling runs keep the names this slice gives them (#1604).
+AD-1346 M3c appended ``parity_by_work_kind`` and ``disagreement_samples``, and AD-1346 M3d3b the five
+``ticket_`` queries, which read the work-ticket tables; on a file without those tables they raise
+``sqlite3.OperationalError``.
 ``run_query`` runs one on a connection its caller opened; ``open_read_only`` opens the file with
 SQLite's ``mode=ro`` (BF-906), on which a write to the file raises (a ``TEMP`` table can still be
 created and written on it). ``p99_bucket`` reads a latency histogram built from
@@ -51,6 +54,24 @@ REPORT_QUERIES: Final[Mapping[str, str]] = MappingProxyType({
         "SELECT seq, boot_id, hour, work_kind, seam, today_outcome, outcome, reason_code, latency_ns, verdict_json "
         "FROM shadow_disagreements ORDER BY seq DESC LIMIT ?"
     ),
+    # AD-1346 M3d3b (D142): the work-ticket findings (since day), the two rings (limit), the markers and the days.
+    "ticket_findings_by_operation": (
+        "SELECT operation, code, work_kind, off_loop, SUM(findings) FROM ticket_findings WHERE day >= ? "
+        "GROUP BY operation, code, work_kind, off_loop ORDER BY operation, code, work_kind, off_loop"
+    ),
+    "ticket_samples": (
+        "SELECT seq, boot_id, hour, operation, code, work_kind, off_loop, finding_json FROM ticket_samples "
+        "ORDER BY seq DESC LIMIT ?"
+    ),
+    "ticket_missing_samples": (
+        "SELECT seq, boot_id, hour, operation, code, work_kind, off_loop, finding_json FROM ticket_missing_samples "
+        "ORDER BY seq DESC LIMIT ?"
+    ),
+    "ticket_markers_by_boot": (
+        "SELECT boot_id, MIN(hour), MAX(hour), SUM(offered), SUM(written), SUM(dropped), SUM(samples_dropped) "
+        "FROM ticket_markers GROUP BY boot_id ORDER BY MIN(hour), boot_id"
+    ),
+    "ticket_days_recorded": "SELECT DISTINCT day FROM ticket_findings ORDER BY day",
 })
 
 
