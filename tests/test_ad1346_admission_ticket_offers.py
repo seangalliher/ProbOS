@@ -32,9 +32,9 @@ that read one back do so with SQL or with the report's queries on a ``mode=ro`` 
        put back within both buffers counts no sample as dropped.
 - TO8  the service offers the finding of each issue (a refused one included) and of each sink check, with
        ``off_loop`` for the check handed to its loop, each on the loop's thread.
-- TO9  an offer that raises is one counted failure: ``hold`` returns ``NO_HOLD`` with the carrier as it was and the
-       issued entry registered, and each sink check whose offer raises counts one failure more, a handed-over one after
-       its off-loop count.
+- TO9  an offer that raises a ``RuntimeError`` is one counted failure: ``hold`` returns ``NO_HOLD`` with the carrier
+       as it was and the issued entry registered, and each sink check whose offer raises counts one failure more, a
+       handed-over one after its off-loop count.
 - TO10 #1604 property 5, persisted: in the real run entry, after a Captain's stop on the delegating agent, the next
        model and tool calls of its delegated child and then its own count ``ticket_revoked``; after ``stop`` the report
        shows them by operation, their samples with digested ids and the stop's id, and the markers offered equal to
@@ -618,8 +618,8 @@ async def test_the_service_offers_each_issue_and_sink_finding_on_the_thread_of_i
 async def test_an_offer_that_raises_is_one_counted_failure_and_hold_leaves_the_carrier_as_it_was(
     identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry, store: AdmissionShadowStore,
 ) -> None:
-    """TO9: #1604 property 6 for the offers; an offer that raises counts one failure, in ``hold`` it runs before the
-    carrier is set, and in ``_check_ticket`` after the off-loop count."""
+    """TO9: #1604 property 6 for the offers; an offer that raises a ``RuntimeError`` counts one failure, in ``hold`` it
+    runs before the carrier is set, and in ``_check_ticket`` after the off-loop count."""
     plain = AdmissionService(identities, stops, tickets=tickets)
     service = AdmissionService(
         identities, stops, recorder=_RaisingTicketRecorder(store), tickets=tickets, loop=asyncio.get_running_loop(),

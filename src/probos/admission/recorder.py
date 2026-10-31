@@ -308,8 +308,8 @@ class ShadowRecorder:
                 await self._flush()
             except Exception:  # noqa: BLE001 -- R1 (#1604, D59): the flusher outlives a flush that raised
                 # A log call in _flush that raised (F-212's class) runs after any batch it detached was put
-                # back or written (_restore, or D150's second write, precedes each _failed); the next tick
-                # flushes again. Counted, not logged, because the log call may be what raised.
+                # back or written; the next tick flushes again. Counted, not logged, because the log call
+                # may be what raised.
                 self._totals["flush_errors"] += 1
 
     async def stop(self) -> None:
