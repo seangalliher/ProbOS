@@ -22,12 +22,16 @@ or with the report's queries.
       ``AGGREGATE_ROW_LIMIT``.
 - TR7 on a version-1 file without the ticket tables each ``ticket_`` report query raises ``sqlite3.OperationalError``
       on a read-only connection; ``start`` then keeps the file's rows and adds the tables.
-- TR8 the five ``ticket_`` report queries answer on a ``mode=ro`` connection to a store two boots wrote, each ring's
-      newest sample first and one marker row per boot, with the marker rows of hours that have only a dropped or only
-      a samples-dropped count; a delete on it raises.
+- TR8 the five ``ticket_`` report queries answer on a ``mode=ro`` connection to a store two boots wrote: the findings
+      counted per (operation, code, work kind, ``off_loop``), each ring's newest sample first and one marker row per
+      boot, with the marker rows of hours that have only a dropped or only a samples-dropped count; a delete on it
+      raises.
 - TR9 ``persisted_finding`` shows the ticket and parent ids as ``ticket_digest`` in their fields and, where they have
-      the registry's form (32 lowercase hex characters), in the cause; an id of another alphabet, length or case stays
-      in the cause as it is, and every other value, the stop's id included, is the finding's.
+      the registry's form (32 lowercase hex characters), at each place in the cause; an id of 16, 31 or 33 lowercase
+      hex characters, or of 32 characters one of which is not lowercase hex (each other printable ASCII character
+      and an Arabic-Indic digit), stays in the cause as it is; each id is looked for on its own; and every other
+      value, the stop's id included, is the finding's. ``ticket_digest`` is ``""`` for ``""`` and otherwise SHA-256
+      over UTF-8, cut to ``TICKET_DIGEST_CHARS``.
 """
 
 from __future__ import annotations
@@ -248,7 +252,7 @@ async def test_a_failed_batch_rolls_back_its_ticket_rows_and_a_later_commit_does
 async def test_prune_deletes_old_ticket_days_and_markers_and_leaves_the_rings(
     store: AdmissionShadowStore, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TR5 (kills TRX-9, TRX-10, TRX-11)."""
+    """TR5 (kills TRX-9, TRX-10, TRX-11, TRX-21)."""
     old, kept, today = utc_hour(T0 - 35 * DAY_SECONDS), utc_hour(T0 - 34 * DAY_SECONDS), utc_hour(T0)
     assert (old, kept) == ("2026-09-23T12", "2026-09-24T12")  # premise
     findings = {(hour, "tool", "ticket_live", "agentic_run", False): 1 for hour in (old, kept, today)}
@@ -264,9 +268,11 @@ async def test_prune_deletes_old_ticket_days_and_markers_and_leaves_the_rings(
     assert await rows(store.path, "SELECT hour FROM ticket_markers ORDER BY hour") == [(kept,), (today,)]
     rings = "SELECT (SELECT COUNT(*) FROM ticket_samples), (SELECT COUNT(*) FROM ticket_missing_samples)"
     assert await rows(store.path, rings) == [(1, 1)], "neither ring is pruned by day"
-    monkeypatch.setattr(store_module, "MARKER_ROW_LIMIT", 1)
+    await store.write_batch("boot-0", _with_tickets(TicketBatch(offered={today: 1})))
+    monkeypatch.setattr(store_module, "MARKER_ROW_LIMIT", 2)
     assert await store.prune(T0) == (0, 0)
-    assert await rows(store.path, "SELECT hour FROM ticket_markers ORDER BY hour") == [(today,)]
+    remaining = await rows(store.path, "SELECT boot_id, hour FROM ticket_markers ORDER BY boot_id")
+    assert remaining == [("boot-0", today), (BOOT, today)], "the oldest hour goes first, whichever boot wrote it"
 
 
 def test_the_ticket_key_space_and_the_rings_are_bounded_by_named_constants() -> None:
@@ -277,8 +283,8 @@ def test_the_ticket_key_space_and_the_rings_are_bounded_by_named_constants() -> 
 
 
 async def test_a_file_without_the_ticket_tables_keeps_its_rows_and_gains_them_at_start(tmp_path: Path) -> None:
-    """TR7: D143. The file is this build's with its four ticket tables dropped, which leaves the tables a build
-    without them creates."""
+    """TR7: D143. The file is this build's with its four ticket tables dropped, which leaves the tables AD-1346 M3c's
+    store creates."""
     shadow = AdmissionShadowStore(data_dir=tmp_path / "data")
     await shadow.start()
     try:
@@ -292,7 +298,7 @@ async def test_a_file_without_the_ticket_tables_keeps_its_rows_and_gains_them_at
         await db.commit()
     finally:
         await db.close()
-    assert await rows(shadow.path, TABLES) == SHADOW_TABLES, "premise: the tables of a build without the ticket tables"
+    assert await rows(shadow.path, TABLES) == SHADOW_TABLES, "premise: the tables AD-1346 M3c's store creates"
     assert tuple(name for name in REPORT_QUERIES if name.startswith("ticket_")) == tuple(TICKET_QUERIES)
     reader = await open_read_only(shadow.path)
     try:
@@ -311,8 +317,10 @@ async def test_a_file_without_the_ticket_tables_keeps_its_rows_and_gains_them_at
 
 
 async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Path) -> None:
-    """TR8 (kills TRX-18, TRX-19): a second boot, ``boot-0``, writes only a dropped and a samples-dropped count, each at
-    an hour of its own. Its id sorts before ``boot-a`` and its hours after, so only the order by hour puts ``boot-a`` first."""
+    """TR8 (kills TRX-18, TRX-19, TRX-22): for each of operation, code, work kind and ``off_loop``, two findings
+    differ in it alone. A second boot, ``boot-0``, writes only a dropped and a samples-dropped count, at two different
+    hours. Its id sorts before ``boot-a`` and its first hour after ``boot-a``'s, so the order by hour puts ``boot-a``
+    first and the order by id would not."""
     first, second, third = utc_hour(T0), utc_hour(T0 + DAY_SECONDS), utc_hour(T0 + DAY_SECONDS + HOUR)
     shadow = AdmissionShadowStore(data_dir=tmp_path / "data")
     await shadow.start()
@@ -321,6 +329,9 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
             findings={
                 (first, "tool", "ticket_live", "agentic_run", False): 2,
                 (second, "tool", "ticket_live", "agentic_run", False): 1,
+                (second, "tool", "ticket_live", "agentic_run", True): 1,
+                (second, "tool", "ticket_live", "", True): 1,
+                (second, "tool", "ticket_missing", "", True): 1,
                 (second, "model_call", "ticket_missing", "", True): 1,
             },
             samples=[TicketSample(first, T0, _unknown(), False), TicketSample(first, T0 + 1, _unknown(), True)],
@@ -328,7 +339,7 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
                 TicketSample(second, T0 + DAY_SECONDS, _missing(), True),
                 TicketSample(second, T0 + DAY_SECONDS + 1, _missing(), False),
             ],
-            offered={first: 2, second: 3},
+            offered={first: 2, second: 6},
             dropped={second: 1},
         )))
         await shadow.write_batch("boot-0", _with_tickets(TicketBatch(dropped={second: 1}, samples_dropped={third: 1})))
@@ -337,10 +348,14 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
     reader = await open_read_only(shadow.path)
     try:
         assert await run_query(reader, "ticket_findings_by_operation", (DAY,)) == [
-            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "agentic_run", 0, 3),
+            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "", 1, 1),
+            ("tool", "ticket_live", "agentic_run", 0, 3), ("tool", "ticket_live", "agentic_run", 1, 1),
+            ("tool", "ticket_missing", "", 1, 1),
         ]
         assert await run_query(reader, "ticket_findings_by_operation", ("2026-10-29",)) == [
-            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "agentic_run", 0, 1),
+            ("model_call", "ticket_missing", "", 1, 1), ("tool", "ticket_live", "", 1, 1),
+            ("tool", "ticket_live", "agentic_run", 0, 1), ("tool", "ticket_live", "agentic_run", 1, 1),
+            ("tool", "ticket_missing", "", 1, 1),
         ]
         assert await run_query(reader, "ticket_findings_by_operation", ("2026-10-30",)) == []
         newest = await run_query(reader, "ticket_samples", (1,))
@@ -348,7 +363,7 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
         noted = await run_query(reader, "ticket_missing_samples", (1,))
         assert [row[3:7] for row in noted] == [("model_call", "ticket_missing", "", 0)], "the newest sample first"
         assert await run_query(reader, "ticket_markers_by_boot") == [
-            (BOOT, first, second, 5, 4, 1, 0), ("boot-0", second, third, 0, 0, 1, 1),
+            (BOOT, first, second, 8, 7, 1, 0), ("boot-0", second, third, 0, 0, 1, 1),
         ]
         assert await run_query(reader, "ticket_days_recorded") == [(DAY,), ("2026-10-29",)]
         with pytest.raises(sqlite3.OperationalError):
@@ -358,10 +373,11 @@ async def test_the_ticket_queries_answer_on_a_read_only_connection(tmp_path: Pat
 
 
 def test_a_persisted_finding_shows_ticket_ids_only_as_digests() -> None:
-    """TR9 (kills TRX-12, TRX-13, TRX-14, TRX-15, TRX-16)."""
-    ticket, parent, stop = "ab" * 16, "cd" * 16, "ef" * 16
+    """TR9 (kills TRX-12, TRX-13, TRX-14, TRX-15, TRX-16, TRX-20)."""
+    ticket, parent, stop = "0123456789abcdef" * 2, "fedcba9876543210" * 2, "ef" * 16
     finding = TicketFinding(
-        "model_call", "ticket_revoked", f"Ticket {ticket} of a child of {parent} is under the Captain's stop {stop}.",
+        "model_call", "ticket_revoked",
+        f"Ticket {ticket} of a child of {parent} is under the Captain's stop {stop}; ticket {ticket} is revoked.",
         ticket_id=ticket, principal_key="agent", presented_key="agent", parent_id=parent, depth=1,
         work_kind="delegated_task", stop_id=stop,
     )
@@ -369,15 +385,26 @@ def test_a_persisted_finding_shows_ticket_ids_only_as_digests() -> None:
     assert list(body) == list(TICKET_FINDING_KEYS)
     assert (body["ticket_id"], body["parent_id"], body["stop_id"]) == (ticket_digest(ticket), ticket_digest(parent), stop)
     assert body["cause"] == (
-        f"Ticket {ticket_digest(ticket)} of a child of {ticket_digest(parent)} is under the Captain's stop {stop}."
+        f"Ticket {ticket_digest(ticket)} of a child of {ticket_digest(parent)} is under the Captain's stop {stop}; "
+        f"ticket {ticket_digest(ticket)} is revoked."
     )
     same = ("operation", "code", "principal_key", "presented_key", "depth", "work_kind", "stop_id")
     assert {name: body[name] for name in same} == {name: finding.to_dict()[name] for name in same}
     short = TicketFinding("tool", "ticket_unknown", "The presented object is not a ticket the registry holds.", ticket_id="T")
     assert persisted_finding(short)["cause"] == short.cause, "an id not of the issued form is not looked for in the cause"
-    for odd in ("ab" * 8, "AB" * 16):
+    lowercase_hex = "0123456789abcdef"
+    odd_ids = ["ab" * 8, "a" * 31, "a" * 33, "\u0661" + "a" * 31]
+    odd_ids += [char + "a" * 31 for char in map(chr, range(32, 127)) if char not in lowercase_hex]
+    for odd in odd_ids:
         other = TicketFinding("tool", "ticket_unknown", f"The presented id {odd} is unknown.", ticket_id=odd)
-        assert persisted_finding(other)["cause"] == other.cause, f"{odd} is not of the issued form"
+        assert persisted_finding(other)["cause"] == other.cause, f"{odd!r} is not of the issued form"
+    upper = "AB" * 16
+    mixed = TicketFinding(
+        "tool", "ticket_unknown", f"The id {upper} names {parent}.", ticket_id=upper, parent_id=parent,
+    )
+    assert persisted_finding(mixed)["cause"] == f"The id {upper} names {ticket_digest(parent)}.", "each id alone"
     assert persisted_finding(short)["ticket_id"] == ticket_digest("T")
     assert ticket_digest("") == "" and ticket_digest(ticket) == hashlib.sha256(ticket.encode("utf-8")).hexdigest()[:16]
+    accented = "ticket-\u00e9"
+    assert ticket_digest(accented) == hashlib.sha256(accented.encode("utf-8")).hexdigest()[:16], "over UTF-8"
     assert len(ticket_digest("T")) == TICKET_DIGEST_CHARS == 16

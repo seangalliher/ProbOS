@@ -1048,7 +1048,7 @@ AD-1346 M3d3b1 adds the tables, writes, bounds and report queries of the work ti
 - *D147 (the clock).* From M3d3b2's deploy, a fix that changes which findings are kept, or under which key, restarts the 7 days for the sink records; a fix to a report query, the markers or the digest does not.
 - *Tests.* One new file (`tests/test_ad1346_admission_ticket_record.py`, TR1 to TR9); the store's table list (S1), P6, the report's names (Q1) and T14's `store.py` allowlist are updated.
 - *Residual, accepted.* Register R52 to R57 of the contract.
-- *Reversal.* Revert the M3d3b1 commits. A file this build started keeps its four tables, which no statement of a build without them names (D143); no build writes a row into them before M3d3b2.
+- *Reversal.* Revert the M3d3b1 commits. A file this build started keeps its four tables, which no statement of a build without them names (D143).
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 
