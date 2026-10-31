@@ -3,7 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-30
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601). The first of five M3e slices (D160). No new AD or BF number: M3 takes AD-1346 (`scripts/ad_ceiling.py` on 2026-10-30: ceiling AD-1355 from GitHub issue titles, next AD-1356; none allocated here). **Tier:** HIGH (M1, M2, M3), docs (M4). Nothing parked.
 **Dependencies:** AD-1346 M3d3b1 (PR #1715) and M3d3b2 (`prompts/ad-1346-m3d3b2-ticket-offers.md`) merged to `origin/main`. The build base is `origin/main` at the M3d3b2 merge.
-**Anchors:** every SEARCH text in §7.1 to §7.4 and §8 was read on the detached checkout `485bed6e` (tree `8088112f`): M3d3b1's pushed head `812ef44a` plus the M3d3b2 contract and its milestones applied by tool (scratch commits, never pushed). 30 pairs (M1 10, M2 18, M4 2), 2 new files besides this contract (`tests/fixtures/ad1346_effect_census.py`, `tests/test_ad1346_admission_effect_census.py`), 2 regenerated files in M4 (`docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json`). §7.5 (A2) adds 2 pairs and 1 new file, read on `1a2c1438` (tree `45542e38`).
+**Anchors:** every SEARCH text in §7.1 to §7.4 and §8 was read on the detached checkout `485bed6e` (tree `8088112f`): M3d3b1's pushed head `812ef44a` plus the M3d3b2 contract and its milestones applied by tool (scratch commits, never pushed). 30 pairs (M1 10, M2 18, M4 2), 2 new files besides this contract (`tests/fixtures/ad1346_effect_census.py`, `tests/test_ad1346_admission_effect_census.py`), 2 regenerated files in M4 (`docs/development/open-ads-report.md`, `docs/development/ad-ledger-snapshot.json`). §7.5 (A2) adds 3 pairs and 1 new file, read on `1a2c1438` (tree `45542e38`).
 **Contract file:** `prompts/ad-1346-m3e1-subprocess-effect-census.md`.
 
 **Identifiers.**
@@ -1226,7 +1226,7 @@ async def test_with_and_without_the_service_the_subprocess_sinks_answer_identica
 
 Review round 1 (F1): `create_agent_fleet` makes the shell and code-search pools with no `runtime` keyword (`startup/agent_fleet.py:51-57`), and `_spawn_red_team` built each `RedTeamAgent` with none, so those three agents' `_runtime` was None and their sink statements read no service. A2M-01 and A2M-02 hand them the runtime; A2M-03 drives both factories; A2M-04 gives the red team double of an existing test the keyword `_spawn_red_team` now passes.
 
-- One Builder delegation and one local commit, subject `AD-1346 M3e1, A2: ... (#1604)`, staged by explicit path; `git add` the new file before the focused gate (§4). The same commit applies to `PROGRESS.md` and `DECISIONS.md` the sentences A2 changes in §8's M4-01 and M4-02 text, then regenerates the ledger with `python -P scripts/gen_ad_ledger.py` and commits both files as the tool writes them. A2 adds no dated string to a tracker.
+- One Builder delegation and one local commit, subject `AD-1346 M3e1, A2 (#1604): ...`, staged by explicit path; `git add` the new file before the focused gate (§4). The same commit applies to `PROGRESS.md` and `DECISIONS.md` the sentences A2 changes in §8's M4-01 and M4-02 text, then regenerates the ledger with `python -P scripts/gen_ad_ledger.py` and commits both files as the tool writes them. A2 adds no dated string to a tracker.
 - The SEARCH texts below were read on `1a2c1438` (tree `45542e38`); each occurs once in its file there. The code in this section is fenced with tildes.
 
 **A2M-01** (`src/probos/runtime.py`, `ProbOSRuntime.create_pool`)
@@ -1762,7 +1762,6 @@ HOLDS: yes
 - **BF-892:** no launch is added or moved out of its function. `RunCommandTool.invoke`'s direct allowlist launch and `ScoutAgent._search_github`'s by-reference launch stay (`:509`, `:511`).
 - **The whole-`src` text scanners** (§1): the new `src` text holds `admission_service` and `probos.admission`, which T16 reads (M2-15 to M2-18), and none of the names the others scan.
 - **Config:** no field. **Collection:** `git diff --name-status --diff-filter=AD <slice base>..HEAD -- 'tests/test_*.py'` lists exactly two `A` files, `tests/test_ad1346_admission_effect_census.py` and `tests/test_ad1346_admission_sink_wiring.py`.
-- **`gen_ad_ledger.py --check`:** runs after A2 regenerates both files (§17).
 
 ## 13. Prior Art and Blind Spots
 
@@ -1841,12 +1840,15 @@ HOLDS: yes
 - A2-27 and A2-33 take A2's `runtime.py` lines out of §9's and §15's unchanged lists; A2-30 counts two added test files; A2-31, A2-38 and A2-40 record that SW2 drives the red team's sink; A2-32 adds §14 item 7; A2-33 adds the new file's acceptance lines.
 - S2: A2-39 deletes R73's second sentence. S1 (a `check_ticket` replaced by one that raises propagates through `check_at`) is not repaired here; it is recorded for the wave's follow-up issue.
 - A2-34 to A2-37 mark the A1 items whose text A2 replaces (A1-6, A1-15, A1-34, A1-51). A2-37 adds this paragraph.
-- A2-41 to A2-47 add A2M-04, the `runtime` keyword in the red team double of `tests/test_ad490_agent_wiring_security_logs.py`, which refuses the keyword `_spawn_red_team` now passes, and name it in the milestone, the Tests list, the §4 and §6 rows and §7.5; A2-48 adds this bullet.
+- A2-41 to A2-47 add A2M-04, the `runtime` keyword in the red team double of `tests/test_ad490_agent_wiring_security_logs.py`, which refused the keyword `_spawn_red_team` now passes, and name it in the milestone, the Tests list, the §4 and §6 rows and §7.5; A2-48 adds this bullet.
+
+**A3 (2026-10-31, after round 2).**
+- A3-1 says section 7.5 adds 3 pairs (A2M-01, A2M-02, A2M-04) and 1 new file. A3-2 empties §17 and A3-3 deletes §12's ledger-check bullet, which pointed at it: the campaign of record on the A2 tree (EX-1 to EX-12) and the ledger check with `tests/test_ad1184_ad_ledger.py` have run on `a396e36c`. A3-4 says the red team double refused the keyword before A2M-04, and A3-5 gives the A2 commit's subject as committed. A3-6 adds this paragraph.
+- No `src` line, test, mutation row, decision or register row changes in A3.
 
 ## 17. Claims not yet confirmed
 
-1. The campaign of record on the A2 tree (§10, EX-1 to EX-12).
-2. `gen_ad_ledger.py --check` and `tests/test_ad1184_ad_ledger.py` after A2's regeneration.
+None.
 
 ## For the register (#1604)
 
