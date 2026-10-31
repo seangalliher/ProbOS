@@ -7,9 +7,9 @@ census rows that no other ``src`` code reaches.
        functions and classes so named, and elsewhere an attribute of something other than ``self`` and three
        import forms; it does not report an attribute of ``self`` in another module, a reference inside a named
        function, or a name that only contains one.
-- SP3  the wiring, by AST: ``src`` holds five ``SubprocessSandbox`` constructions; the code runner's two and the code
-       execution tool's two pass ``admission_service`` read from their runtime, and ``SkillForge._smoke_test``'s passes
-       none; ``ProbOSRuntime.start`` calls ``self.dependency_resolver.set_admission(self.admission_service)``.
+- SP3  by AST: ``src`` holds five calls named ``SubprocessSandbox``; the code runner's two and the code execution
+       tool's two pass ``admission_service`` read from their runtime, and ``SkillForge._smoke_test``'s passes none;
+       ``ProbOSRuntime.start`` holds the call ``self.dependency_resolver.set_admission(self.admission_service)``.
 - SP4  #1604 property 1's crossing test for the two sinks: inside the real run entry, a real ``CodeExecutionTool``
        whose runtime holds the service runs its ``SubprocessSandbox``, and a ``DependencyResolver`` handed the service
        installs a package; each counts ``ticket_live``, after a Captain's stop ``ticket_revoked``, and outside any hold
@@ -28,6 +28,7 @@ import ast
 import asyncio
 import json
 import subprocess
+import unicodedata
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -204,19 +205,20 @@ def test_unreached_references_reports_each_way_in_and_nothing_else() -> None:
         "src/probos/c.py": "import probos.sandbox_mod as m\n",
         "src/probos/d.py": "class D:\n    def f(self):\n        return self.launch\n",
         "src/probos/e.py": "def f(runner):\n    return runner.launch()\n",
+        "src/probos/f.py": "def f(runner):\n    return runner.\uff4caunch()\n",
         "src/probos/g.py": "relaunch = 1\nlaunched = 2\n",
         "src/probos/h.py": "from probos.other import launch_all\n",
     }
     assert unreached_references(sources, "src/probos/sandbox_mod.py", ("sandbox_mod", "launch")) == [
         ("src/probos/sandbox_mod.py", 7), ("src/probos/sandbox_mod.py", 10), ("src/probos/a.py", 1),
-        ("src/probos/b.py", 1), ("src/probos/c.py", 1), ("src/probos/e.py", 2),
+        ("src/probos/b.py", 1), ("src/probos/c.py", 1), ("src/probos/e.py", 2), ("src/probos/f.py", 2),
     ]
 
 
 def test_the_sandbox_constructions_and_the_installer_receive_the_runtimes_service() -> None:
-    """SP3 (D175; kills EP-4, EP-6): the wire from the runtime to each sink, by AST."""
+    """SP3 (D175; kills EP-4, EP-6)."""
     built = sum(
-        1 for rel, source in src_sources().items() if "SubprocessSandbox" in source
+        1 for rel, source in src_sources().items() if "SubprocessSandbox" in unicodedata.normalize("NFKC", source)
         for node in ast.walk(ast.parse(source, filename=rel)) if calls("SubprocessSandbox")(node)
     )
     assert built == sum(len(services) for services in _SANDBOX_BUILDERS.values()) == 5

@@ -14,8 +14,8 @@ clock.
 - EC3  each sink function holds one ``check_at`` call, a statement of its own, with the row's service (the runtime's or,
        from AD-1346 M3e2a, ``self._admission``), the effect ``EFFECT_SUBPROCESS`` and the row's presented id, on a line
        before its launch or its reference to the next function of its chain.
-- EC4  a sink whose launch is in another function: in its file, each function of the chain from the sink's function to
-       the launching one (AD-1346 M3e2a: through ``via``) is referenced only in the function before it and in its own.
+- EC4  a sink whose launch is in another function: in its file, each function of its chain after the sink's function
+       (AD-1346 M3e2a: through ``via``, to the launching one) is referenced only in the function before it and in its own.
 - EC5  ``SYSTEM_PRINCIPALS`` is the set of the system rows' principals and the ``system:`` literals a seam statement
        presents, each admitted by ``check_principal``.
 - EC6  each command-line row is in a module under ``OUTSIDE_RUNTIME``, and no other ``src`` module imports one by an
@@ -239,8 +239,8 @@ def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:
         assert call.lineno < before, (path, cover.check, call.lineno, before)
 
 
-def test_a_sinks_launching_function_is_reached_only_from_its_check_function() -> None:
-    """EC4: in its file, a sink's separate launching function is referenced only in the sink's function and in itself."""
+def test_the_references_along_a_sinks_chain() -> None:
+    """EC4."""
     rows = [(path, scope, cover) for (path, scope), (_n, cover) in SUBPROCESS_SITES.items() if isinstance(cover, Sink)]
     split = [(path, scope, cover) for path, scope, cover in rows if cover.check != scope]
     assert {path for path, _scope, _cover in split} == {

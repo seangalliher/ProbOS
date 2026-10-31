@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -251,13 +252,12 @@ def _reaching(node: ast.AST, outer: str, own: bool, wanted: frozenset[str], foun
 
 
 def unreached_references(sources: dict[str, str], path: str, names: tuple[str, ...]) -> list[tuple[str, int]]:
-    """(file, line) of each reference to ``names`` in ``sources`` (AD-1346 M3e2a, D177): a name, an attribute (in a module
-    other than ``path``, not an attribute of ``self``), or an import whose names or module hold one as a dotted part; in
-    ``path`` itself, only those outside the module-level functions and classes so named."""
+    """(file, line) of references to ``names`` in ``sources`` (AD-1346 M3e2a, D177)."""
     wanted = frozenset(names)
     found: list[tuple[str, int]] = []
     for rel, source in sources.items():
-        if any(name in source for name in wanted):
+        text = unicodedata.normalize("NFKC", source)
+        if any(name in text for name in wanted):
             lines: list[int] = []
             _reaching(ast.parse(source, filename=rel), "", rel == path, wanted, lines)
             found += [(rel, line) for line in lines]
