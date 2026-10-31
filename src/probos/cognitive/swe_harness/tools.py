@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.cognitive.builder_paths import constitution_write_refusal
 from probos.cognitive.standing_orders import (
     is_standing_order_name,
@@ -1312,6 +1314,7 @@ class RunCommandTool:
                         error=refusal or verdict.refusal_message,
                         metadata=policy_result_metadata(verdict),
                     )
+            check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_SUBPROCESS, presented_id=context.get("agent_id") if type(context) is dict else None)  # AD-1346 M3e1: the subprocess sink, in shadow; it blocks nothing
             # Cross-platform: use shell=True via create_subprocess_shell
             proc = await _asyncio.create_subprocess_shell(
                 str(command) if verdict is None else command,

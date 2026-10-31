@@ -24,6 +24,8 @@ AD-1346 M3d3b2: a service built with a recorder also hands the finding of each i
 registry answers, in ``hold`` and in ``_check_ticket``, to ``ShadowRecorder.offer_ticket``, inside the same ``try`` and,
 in ``hold``, before the carrier is set; an ``Exception`` from that offer is counted in ``failures`` and logged as the
 rest of that ``try``'s are.
+AD-1346 M3e1: ``check_at`` is also called at five subprocess sinks with the effect ``subprocess``, which ``TICKET_EFFECTS``
+now holds, so the scope ``hold`` asks for includes it.
 The service reads no configuration.
 """
 
@@ -48,7 +50,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: AD-1346 M3d2 (D113): the scope and budget ``hold`` asks for: both effect points, no ceiling (M5 owns accounts).
+#: AD-1346 M3d2 (D113): the scope and budget ``hold`` asks for: every effect point of ``TICKET_EFFECTS`` (three from
+#: AD-1346 M3e1), no ceiling (M5 owns accounts).
 _WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
 _NO_CEILINGS: Final = TicketBudget()
 
@@ -172,7 +175,8 @@ class AdmissionService:
 
         ``probos.admission.seam.hold_at`` calls it. With no registry, or after ``close``, it returns ``NO_HOLD`` and
         issues nothing. Otherwise the ticket's principal is the key ``decide`` gives the presented id (the slot when it
-        resolves, D112); ``hold`` asks for both effect points and no ceiling (D113). The ticket is a child of the carried
+        resolves, D112); ``hold`` asks for every effect point of ``TICKET_EFFECTS`` and no ceiling (D113; AD-1346 M3e1
+        added ``subprocess``). The ticket is a child of the carried
         ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
         ticket, or None when the registry refused the issue and counted its finding (D114).
         AD-1346 M3d3b2 (D152): with a recorder, the issue's finding is offered to ``ShadowRecorder.offer_ticket`` before
@@ -214,7 +218,8 @@ class AdmissionService:
     def check_ticket(self, *, effect: str, presented_id: object) -> None:
         """The sink check of one effect point, in shadow: the registry's finding for the ticket the carrier holds (AD-1346 M3d3a).
 
-        ``probos.admission.seam.check_at`` calls it at the tool sink and the model gateway. It reads the carrier in the
+        ``probos.admission.seam.check_at`` calls it at the tool sink, the model gateway and, from AD-1346 M3e1, five
+        subprocess sinks. It reads the carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the
         ticket it read, to that loop with ``call_soon_threadsafe``, so a service built with a loop makes its sink

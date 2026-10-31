@@ -11,6 +11,8 @@ import sys
 import time
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.execution.command_env import build_command_env
 from probos.execution.command_gate import (
     COMMAND_POLICY_REFUSAL_KEY,
@@ -189,6 +191,7 @@ class ShellCommandAgent(BaseAgent):
         if refusal is not None:
             return refusal
 
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e1: the subprocess sink, in shadow; it blocks nothing (D164: no principal)
         loop = asyncio.get_running_loop()
         # BF-893 (#1544): one deadline, measured from submission, is shared with the worker. Its own
         # budget used to start when a pool thread picked the job up, so with the shared executor busy the

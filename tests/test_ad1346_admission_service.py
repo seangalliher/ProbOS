@@ -574,7 +574,7 @@ def test_the_package_calls_no_stop_guard_and_starts_no_agent_work() -> None:
     assert first_line(function("src/probos/admission/checks.py", "check_agent_stop"), calls("stop_for")) > 0
 
 
-def test_only_the_wiring_the_shadowed_seams_and_the_model_gateway_name_the_service_or_import_the_package() -> None:
+def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_import_the_package() -> None:
     """T16: the consumer census (#1604, property 11). Outside the package the runtime builds the service and shutdown
     closes and releases it. Each site AD-1346 M3c1 to M3c3 shadow reaches it the way it reaches its stop gate: ten files
     read ``admission_service`` from a runtime (``cognitive_agent.py``, ``agentic_dispatch.py``, ``proactive.py``,
@@ -584,7 +584,10 @@ def test_only_the_wiring_the_shadowed_seams_and_the_model_gateway_name_the_servi
     ``startup/finalize.py``; and ``agent_work.py`` takes it in its constructor from ``runtime.py``. Each of those fourteen
     imports ``probos.admission``. From AD-1346 M3d3a the model gateway's module, ``cognitive/llm_client.py``, imports it
     too, and ``runtime.py`` hands ``OpenAICompatibleClient`` the service through its own ``set_admission``. AD-1346 M3d3a
-    renamed this test. The only routers that name the service or import the package are the three whose routes M3c2
+    renamed this test. From AD-1346 M3e1 the five subprocess sinks' modules (``agents/shell_command.py``,
+    ``agents/red_team.py``, ``agents/code_search.py``, ``cognitive/scout.py``, ``cognitive/swe_harness/tools.py``) read
+    ``admission_service`` from their runtime and import ``probos.admission``, and AD-1346 M3e1 renamed this test again.
+    The only routers that name the service or import the package are the three whose routes M3c2
     shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
     # #1604 property 11: the Captain's stop and lift (``routers/agent_stop.py``, ``/api/stops``), and health and status
     # (``routers/system.py``: ``/api/health``, ``/api/status``; ``routers/voice.py``: ``/api/voice/health``;
@@ -615,6 +618,8 @@ def test_only_the_wiring_the_shadowed_seams_and_the_model_gateway_name_the_servi
         "probos/cognitive/dm/reply_pipeline.py", "probos/proactive.py", "probos/routers/agent_actions.py",
         "probos/routers/agents.py", "probos/routers/thread_fanout.py", "probos/runtime.py", "probos/startup/finalize.py",
         "probos/startup/shutdown.py", "probos/tools/delegate_task_tool.py",
+        "probos/agents/code_search.py", "probos/agents/red_team.py", "probos/agents/shell_command.py",
+        "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
     }, sorted(named)
     assert importers == {
         "probos/agent_work.py", "probos/cognitive/agentic_dispatch.py", "probos/cognitive/cognitive_agent.py",
@@ -622,6 +627,8 @@ def test_only_the_wiring_the_shadowed_seams_and_the_model_gateway_name_the_servi
         "probos/cognitive/dm/reply_pipeline.py", "probos/proactive.py", "probos/routers/agent_actions.py",
         "probos/routers/agents.py", "probos/routers/thread_fanout.py", "probos/runtime.py", "probos/tools/delegate_task_tool.py",
         "probos/tools/registry.py", "probos/ward_room_router.py", "probos/cognitive/llm_client.py",
+        "probos/agents/code_search.py", "probos/agents/red_team.py", "probos/agents/shell_command.py",
+        "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {"probos/routers/agent_actions.py", "probos/routers/agents.py", "probos/routers/thread_fanout.py"}, sorted(routes)

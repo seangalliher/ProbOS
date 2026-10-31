@@ -2665,6 +2665,12 @@ class ProbOSRuntime:
             if gate is not None:
                 spawn_kwargs["command_policy_gate"] = gate
 
+        if agent_type in (ShellCommandAgent.agent_type, CodeSearchAgent.agent_type) and "runtime" not in spawn_kwargs:
+            # AD-1346 M3e1 (#1604): these agents' subprocess sinks read the admission service from their
+            # runtime; the pool keeps its spawn kwargs, so a respawned or added member gets it too. A
+            # caller's own value wins. The code-search agent's read floor (BF-758) reads it as well.
+            spawn_kwargs["runtime"] = self
+
         on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
             self.onboarding.wire_agent
             if getattr(self, "onboarding", None) is not None
@@ -2743,6 +2749,7 @@ class ProbOSRuntime:
             # explicit value (a pool made with a caller's own value can differ).
             agent = RedTeamAgent(
                 pool="red_team", agent_id=agent_id,
+                runtime=self,  # AD-1346 M3e1 (#1604): the re-run's subprocess sink reads the admission service from it
                 command_env_passthrough=tuple(self.config.execution.command_env_passthrough),
                 # AD-1328 S2a (#1530): a command the policy would not run is not re-run.
                 command_policy_gate=getattr(self, "command_policy_gate", None),
