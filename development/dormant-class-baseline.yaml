@@ -1,0 +1,487 @@
+# AD-1270 (#1324): production classes that nothing in production uses, each with its disposition.
+# Regenerate with: python -P scripts/check_dormant_classes.py --update-baseline
+# It keeps reviewed rows, adds new classes as 'unreviewed' and drops rows that are no longer dormant.
+# disposition: wire, retire or staged (owner: an issue or AD), or false-positive (note: why).
+# One row per class and nothing more: no description, status or test data. It is not a capability registry.
+classes:
+  agents/corrupted.py::CorruptedFileReaderAgent:
+    disposition: false-positive
+    note: a deliberately corrupted file reader kept in src for the consensus tests (its docstring); no production user by design
+  agents/federation_recall_agent.py::FederationRecallAgent:
+    disposition: wire
+    owner: '#1324'
+  avatars/asset_manifest.py::AssetManifest:
+    disposition: wire
+    owner: '#1324'
+  avatars/peer_perception.py::PeerObservation:
+    disposition: wire
+    owner: '#1324'
+  channels/gmail_adapter.py::GmailAdapter:
+    disposition: wire
+    owner: '#1324'
+  channels/matrix_adapter.py::MatrixAdapter:
+    disposition: wire
+    owner: '#1324'
+  channels/teams_adapter.py::TeamsAdapter:
+    disposition: wire
+    owner: '#1324'
+  channels/telegram_adapter.py::TelegramAdapter:
+    disposition: wire
+    owner: '#1324'
+  cognitive/anchor_quality.py::AnchorProfile:
+    disposition: wire
+    owner: '#1324'
+  cognitive/builder_specialist.py::SpecialistRouter:
+    disposition: wire
+    owner: '#1324'
+  cognitive/builder_specialist.py::SpecialtyMatchResult:
+    disposition: wire
+    owner: '#1324'
+  cognitive/chain_checkpoint.py::ChainCheckpointStore:
+    disposition: wire
+    owner: '#1324'
+  cognitive/dm/action_dispatcher.py::ActionDispatcher:
+    disposition: wire
+    owner: '#1324'
+  cognitive/elastic_commission.py::CommissionReceipt:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/elastic_commission.py::ElasticCommissionService:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/elastic_commission.py::SlotView:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/elastic_commission.py::TeamView:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/episodic_mock.py::MockEpisodicMemory:
+    disposition: false-positive
+    note: in-memory episodic memory test double kept in src for the tests (its docstring); no persistence and no production user by design
+  cognitive/gap_aggregation.py::FederatedGapSnapshot:
+    disposition: wire
+    owner: '#1324'
+  cognitive/insights.py::CrewInteraction:
+    disposition: retire
+    owner: '#1324'
+  cognitive/insights.py::TopicCount:
+    disposition: retire
+    owner: '#1324'
+  cognitive/memory_security.py::MemorySecurityGate:
+    disposition: wire
+    owner: '#1324'
+  cognitive/memory_security.py::MemorySecurityRegistry:
+    disposition: wire
+    owner: '#1324'
+  cognitive/memory_security.py::StoreSecurityDecision:
+    disposition: wire
+    owner: '#1324'
+  cognitive/memory_transparency.py::MemoryProvenance:
+    disposition: wire
+    owner: '#1324'
+  cognitive/memory_transparency.py::MemoryTransparencyService:
+    disposition: wire
+    owner: '#1324'
+  cognitive/memory_transparency.py::TransparentMemory:
+    disposition: wire
+    owner: '#1324'
+  cognitive/orders.py::StandingOrderPredicate:
+    disposition: false-positive
+    note: a call protocol written without a Protocol base and used only as an annotation; the default predicate is the function at orders.py:51, so the D3 Protocol exemption misses it
+  cognitive/peer_observation_monitor.py::CascadeSignalDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::FrequencyDriftDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::PatternFinding:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::PeerObservationMonitor:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::PermissionDenialPatternDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::PrivilegedTierLeakageDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::RegisterDriftDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::StaticImpressionDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/peer_observation_monitor.py::SycophancyPatternDetector:
+    disposition: wire
+    owner: '#1324'
+  cognitive/predictive_branching/executor.py::SpeculationRequest:
+    disposition: wire
+    owner: '#1324'
+  cognitive/predictive_branching/policy.py::NoOpIdleSpeculationPolicy:
+    disposition: wire
+    owner: '#1324'
+  cognitive/predictive_branching/policy.py::NoOpPreplayHook:
+    disposition: wire
+    owner: '#1324'
+  cognitive/priority4_cleanup.py::BoundaryEvolutionProposal:
+    disposition: wire
+    owner: '#1324'
+  cognitive/priority4_cleanup.py::CompetencyResult:
+    disposition: wire
+    owner: '#1324'
+  cognitive/priority4_cleanup.py::CurriculumRequirement:
+    disposition: wire
+    owner: '#1324'
+  cognitive/priority4_cleanup.py::DiagnosticActionResult:
+    disposition: wire
+    owner: '#1324'
+  cognitive/priority4_cleanup.py::MovingRangeChart:
+    disposition: wire
+    owner: '#1324'
+  cognitive/priority4_cleanup.py::PacingPolicy:
+    disposition: wire
+    owner: '#1324'
+  cognitive/profile_currency.py::LiveSkill:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/profile_currency.py::RegistryComponentSource:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/profile_qualification_store.py::ProfileOutcomeLearning:
+    disposition: staged
+    owner: AD-1288 (#1335)
+  cognitive/repair_approval.py::CandidateApprovalCheck:
+    disposition: staged
+    owner: AD-1299 (#1352)
+  cognitive/repair_candidate.py::RepairCandidate:
+    disposition: staged
+    owner: AD-1299 (#1352)
+  cognitive/repair_evidence_store.py::EvidenceAssessment:
+    disposition: staged
+    owner: AD-1299 (#1352)
+  cognitive/retrieval_practice.py::RetrievalPracticeResult:
+    disposition: wire
+    owner: '#1324'
+  cognitive/self_improvement/stage_contract.py::StageContract:
+    disposition: wire
+    owner: '#1324'
+  cognitive/self_improvement/versioning.py::AgentVersion:
+    disposition: wire
+    owner: '#1324'
+  cognitive/self_improvement/versioning.py::ShadowComparisonResult:
+    disposition: wire
+    owner: '#1324'
+  cognitive/self_perception.py::SelfPerceptionProjection:
+    disposition: wire
+    owner: '#1324'
+  cognitive/skill_forge.py::ForgeResult:
+    disposition: staged
+    owner: AD-1338 (#1565)
+  cognitive/skill_forge.py::SkillForge:
+    disposition: staged
+    owner: AD-1338 (#1565)
+  consensus/quorum.py::QuorumResult:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  consultation/refs.py::WorkspaceRef:
+    disposition: wire
+    owner: '#1324'
+  crew_development/discovery/cross_functional.py::CrossFunctionalSuggestion:
+    disposition: wire
+    owner: '#1324'
+  crew_development/discovery/strength_map.py::StrengthRecord:
+    disposition: wire
+    owner: '#1324'
+  earned_agency.py::UncertaintyContext:
+    disposition: wire
+    owner: '#1324'
+  events.py::AgentCapacityApproachingEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildFailureEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildGeneratedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildProgressEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildResolvedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildStartedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::BuildSuccessEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CascadeConfabulationEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CircuitBreakerTripEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsensusEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationCompletedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationFailedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationRequestedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ConsultationTimeoutEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CorroborationProvenanceValidatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CorroborationVerifiedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::CounselorAssessmentEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignFailureEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignGeneratedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignProgressEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DesignStartedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::DreamCompleteEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::EmergenceMetricsEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::HebbianUpdateEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ObservableStateMismatchEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::PeerRepetitionDetectedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ProcedureFallbackLearningEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModFailureEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModImportApprovedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModProgressEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModRetryCompleteEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModStartedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfModSuccessEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::SelfMonitoringConcernEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::TaskExecutionCompleteEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::TrustCascadeEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::TrustUpdateEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomEchoDetectedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomEndorsementEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomPostCreatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomThreadCreatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::WardRoomThreadUpdatedEvent:
+    disposition: retire
+    owner: '#1324'
+  events.py::ZoneRecoveryEvent:
+    disposition: retire
+    owner: '#1324'
+  execution/authority.py::AdmissionRequest:
+    disposition: wire
+    owner: '#1324'
+  execution/authority.py::EnforcementSourceSnapshot:
+    disposition: wire
+    owner: '#1324'
+  execution/authority.py::ManifestPublicationRequest:
+    disposition: wire
+    owner: '#1324'
+  execution/effect_broker.py::EffectCoverageReport:
+    disposition: wire
+    owner: '#1324'
+  federation/a2a/client.py::A2AClient:
+    disposition: wire
+    owner: '#1324'
+  federation/cluster_monitor.py::FederationClusterMonitor:
+    disposition: wire
+    owner: '#1324'
+  federation/hebbian_map.py::FederationHebbianMap:
+    disposition: wire
+    owner: '#1324'
+  federation/mock_transport.py::MockFederationTransport:
+    disposition: false-positive
+    note: in-memory federation transport test double (its docstring); production uses FederationTransport or the NATS transport
+  federation/mock_transport.py::MockTransportBus:
+    disposition: false-positive
+    note: shared message bus for the MockFederationTransport test double; no production user by design
+  federation/multicast_discovery.py::MulticastDiscovery:
+    disposition: wire
+    owner: '#1324'
+  governance/decision_queue.py::QueuedDecision:
+    disposition: wire
+    owner: '#1324'
+  holodeck/scenarios.py::ScenarioOutcome:
+    disposition: wire
+    owner: '#1324'
+  integrations/mcp_bridge/adapter.py::MCPToolAdapter:
+    disposition: wire
+    owner: '#1324'
+  integrations/sharepoint_routing.py::DocumentProvenance:
+    disposition: wire
+    owner: '#1324'
+  integrations/sharepoint_routing.py::SharePointLocation:
+    disposition: wire
+    owner: '#1324'
+  integrations/sharepoint_routing.py::SharePointRouter:
+    disposition: wire
+    owner: '#1324'
+  maturity/registry.py::MaturityRegistry:
+    disposition: false-positive
+    note: built by load_default_registry for scripts/gen_capability_truth.py:44-48, outside the scanned src tree
+  mesh/nats_bus.py::MockNATSBus:
+    disposition: false-positive
+    note: test double kept in src for the tests; production names it only under TYPE_CHECKING
+  naming.py::FederationDisplayFormat:
+    disposition: wire
+    owner: '#1324'
+  packs/loader.py::PackLoadResult:
+    disposition: wire
+    owner: '#1324'
+  proactive.py::DailyBriefingScheduler:
+    disposition: wire
+    owner: '#1324'
+  proactive.py::ProactiveScanAgent:
+    disposition: wire
+    owner: '#1324'
+  security/autonomy_boundaries.py::BoundaryProbingDetector:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  security/autonomy_boundaries.py::DisengagementResponse:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  security/autonomy_boundaries.py::ProbingPattern:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  security/autonomy_boundaries.py::ProtectiveDisengagement:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  security/contagion.py::CommunicationContagionFirewall:
+    disposition: wire
+    owner: '#1324'
+  security/contagion.py::ContagionMatch:
+    disposition: wire
+    owner: '#1324'
+  security/contagion.py::ContagionScanner:
+    disposition: wire
+    owner: '#1324'
+  security/container_sandbox.py::CommandOutcome:
+    disposition: staged
+    owner: AD-1335 (#1557)
+  security/container_sandbox.py::ContainerExec:
+    disposition: staged
+    owner: AD-1335 (#1557)
+  security/container_sandbox.py::DockerContainerSandbox:
+    disposition: staged
+    owner: AD-1335 (#1557)
+  security/container_sandbox.py::InProcessContainerSandbox:
+    disposition: staged
+    owner: AD-1335 (#1557)
+  security/data_classification.py::ClassificationPolicy:
+    disposition: wire
+    owner: '#1324'
+  security/permission_card.py::PermissionCardManager:
+    disposition: wire
+    owner: '#1324'
+  security/permission_model.py::PermissionConfig:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  security/trust_integrity.py::TrustViolation:
+    disposition: staged
+    owner: AD-1353 (#1659)
+  storage/registry.py::StoreRegistry:
+    disposition: false-positive
+    note: declaration-only registry by design (storage/registry.py:3-9), read by tests through load_default_store_registry; it has no runtime role
+  substrate/durable_events.py::DurableAnswer:
+    disposition: wire
+    owner: '#1324'
+  substrate/telemetry.py::TelemetrySample:
+    disposition: retire
+    owner: '#1324'
+  task_sessions/browser.py::BrowserTask:
+    disposition: wire
+    owner: '#1324'
+  tools/adapters.py::DeterministicFunctionAdapter:
+    disposition: wire
+    owner: '#1324'
+  tools/work_permits.py::WorkPermit:
+    disposition: staged
+    owner: AD-1348 (#1630)
+  tools/work_permits.py::WorkPermitStore:
+    disposition: staged
+    owner: AD-1348 (#1630)
+  types.py::ConnectionWeight:
+    disposition: retire
+    owner: '#1324'
+  voice/_substrate.py::BrowserSpeechRecognizer:
+    disposition: retire
+    owner: '#1324'
+  voice/_substrate.py::SilentTextToSpeech:
+    disposition: retire
+    owner: '#1324'
+  voice/_substrate.py::StaticWakeWordDetector:
+    disposition: retire
+    owner: '#1324'
+  voice/_substrate.py::TranscriptionResult:
+    disposition: retire
+    owner: '#1324'
+  ward_room/models.py::ChannelMembership:
+    disposition: retire
+    owner: '#1324'
+  ward_room/models.py::WardRoomEndorsement:
+    disposition: retire
+    owner: '#1324'
+  ward_room_pipeline.py::AgentResponse:
+    disposition: wire
+    owner: '#1324'
+  watch_rotation.py::DutyShift:
+    disposition: retire
+    owner: '#1324'
+schema_version: 1

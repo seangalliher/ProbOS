@@ -1,0 +1,2173 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Probabilistic agent-native OS runtime">
+      
+      
+        <meta name="author" content="Sean Galliher">
+      
+      
+        <link rel="canonical" href="https://probos.dev/research/agensh-organization-harness-absorption/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Agensh Absorption: Self-Organized Multi-Agent Harness - ProbOS</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agensh-absorption-self-organized-multi-agent-harness" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="ProbOS" class="md-header__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ProbOS
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Agensh Absorption: Self-Organized Multi-Agent Harness
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="amber"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="ProbOS" class="md-nav__button md-logo" aria-label="ProbOS" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ProbOS
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/seangalliher/ProbOS" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    seangalliher/ProbOS
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    What ProbOS Is
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/shell/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interactive Shell
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/desktop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/substrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Substrate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/consensus/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consensus
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/cognitive/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/experience/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experience
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/federation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Federation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/self-perception-framing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Perception Framing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/architecture-review-2026-10-20/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Review (2026-10-20)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/hxi-glass-bridge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HXI Glass Bridge (Design)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agents
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agents
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Key Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/status/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Status
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/nooplex-readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Nooplex Readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/platform-maturity-program/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Maturity Program
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/composable-cognition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Composable Cognition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Structure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/design-principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/deterministic-ship/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Probabilistic Crew, Deterministic Ship
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/config-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Research
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Research
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cognitive-jit-procedural-learning-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive JIT & Procedural Learning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../emergent-coordination-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emergent Coordination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../self-regulation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cognitive Self-Regulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-capability-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Capability Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crew-development-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crew Development Framework
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../group-psychometrics-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Psychometrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../universal-agent-activation-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Universal Agent Activation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memvid-evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Memvid Evaluation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Community
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Community
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="https://discord.gg/cbprTVfsjt" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Discord
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#purpose" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purpose
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-agensh-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Agensh is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#evidence-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evidence assessment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#per-mechanism-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-mechanism decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blind-spots-the-paper-does-not-discuss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blind spots the paper does not discuss
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art-considered-bounded-2026-10-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prior art considered (bounded, 2026-10-28)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ownership-question-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ownership question (resolved)
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="agensh-absorption-self-organized-multi-agent-harness">Agensh Absorption: Self-Organized Multi-Agent Harness<a class="headerlink" href="#agensh-absorption-self-organized-multi-agent-harness" title="Permanent link">&para;</a></h1>
+<p><em>Sean Galliher, 2026-10-28</em>
+<em>Source: "Agensh: Scaling Organizational Intelligence to 1,024 Agents" (Zhan, Song, Dong, Huang, Lian, Xia, Wei; Microsoft Research), arXiv 2609.26781, 2026-09-22. Read in full from the PDF (13 pages, appendices A-C included).</em>
+<em>Repository: <a href="https://github.com/microsoft/Agensh">github.com/microsoft/Agensh</a> (MIT; README only was read).</em>
+<strong>Drafted by:</strong> <code>claude-architect</code> (Claude Code, Opus 5.5), 2026-10-28</p>
+<h2 id="purpose">Purpose<a class="headerlink" href="#purpose" title="Permanent link">&para;</a></h2>
+<p>This note records what ProbOS takes from Agensh, what it rejects, and why. Its main job is to stop the rejected mechanisms being proposed again.</p>
+<p><strong>Outcome (Captain, 2026-10-28):</strong> ProbOS takes only one idea. A disproved approach is recorded on the CrewSession's blackboard, as <code>evidence</code> with a <code>disproved</code> marker, so that teammates see it before they repeat it. This is a short amendment to AD-1289 (#1336); the draft is in <code>docs/research/agensh-amendment-1336-draft.md</code>. Nothing goes to the Ward Room, which is a social board.</p>
+<p><strong>Why so little.</strong> Persistent crew already collaborate on one task through CrewSession (AD-1124 to AD-1133):</p>
+<ul>
+<li>the plan is decomposed (<code>crew_orchestrator.py:23</code>: resolve, delegate, fan-out, verify, synthesize);</li>
+<li>sub-tasks are assigned by capability × trust × department (AD-864, <code>crew_assignment.py:1</code>);</li>
+<li>ingress is deduplicated (AD-1128, <code>DECISIONS.md:2525</code>);</li>
+<li>results are finalized only once verified (AD-1126, <code>crew_finalizer.py:1</code>).</li>
+</ul>
+<p>Agensh's claiming, overlap and self-assignment machinery makes up for having no planner. ProbOS has one, and #1336 already gives each CrewSession its own board.</p>
+<h2 id="what-agensh-is">What Agensh is<a class="headerlink" href="#what-agensh-is" title="Permanent link">&para;</a></h2>
+<p>Agensh runs many copies of one worker over shared infrastructure, with <strong>no central orchestrator</strong>. Each worker repeats a five-step loop (paper section 2.1): gather context, claim a sub-task, act, verify against the acceptance criteria, merge. The infrastructure has three parts (section 2.2):</p>
+<ul>
+<li><strong>Shared workspace:</strong> Gitea. There is one issue per area a worker takes, and pull requests carry the merges.</li>
+<li><strong>Message interface:</strong> Mattermost. There is one task channel, plus direct messages.</li>
+<li><strong>Shared context board:</strong> an append-only log of short typed entries, adapted from DeLM (Mao and Mirhoseini, arXiv 2606.10662).</li>
+</ul>
+<p>The worker prompt is in Appendix A. The entry kinds are:</p>
+<ul>
+<li><code>OBSERVED</code>: reference behaviour the worker noticed.</li>
+<li><code>FACT</code>: something it confirmed.</li>
+<li><code>FAIL</code>: "a hypothesis you falsified (the highest-value entry: it stops peers spending budget on it)".</li>
+<li><code>CLAIM</code>: an area it is working on.</li>
+<li><code>PATCH_SUMMARY</code>: <code>files= | idea= | evidence=</code>.</li>
+</ul>
+<p>Entries are capped at 100 characters, or 300 for <code>PATCH_SUMMARY</code>. A longer version goes in <code>detail</code>, which <code>board_unfold</code> returns. <code>board_read</code> returns the latest 2,000 entries, and <code>board_grep</code> runs AND/OR keyword search over the whole history. Two rules sit in the prompt: "Do not re-derive a peer's <code>FACT</code>, and do not retry something recorded as <code>FAIL</code>."</p>
+<p><strong>Delivery</strong> (Appendix B):</p>
+<ul>
+<li>At turn start, the worker receives queued workspace notices, channel messages and recent board entries.</li>
+<li>During a turn, a wrapper around each <em>infrastructure</em> (MCP) tool call adds pending direct messages and new board entries to that call's result. It "does not interrupt an arbitrary running process".</li>
+<li>The prompt tells the worker how to react to an entry that arrives mid-turn:</li>
+<li>a <code>FAIL</code>: stop if you are doing that thing;</li>
+<li>a <code>CLAIM</code> on what you are building: settle the collision by direct message;</li>
+<li>any other <code>CLAIM</code>: keep going.</li>
+<li>After 10 idle minutes, a worker is prompted to keep working. A turn that publishes no board entry is followed by a reminder to publish.</li>
+</ul>
+<h2 id="evidence-assessment">Evidence assessment<a class="headerlink" href="#evidence-assessment" title="Permanent link">&para;</a></h2>
+<p>The Captain's reading was checked against the PDF.</p>
+<table>
+<thead>
+<tr>
+<th>Claim</th>
+<th>Verdict</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No ablations</td>
+<td><strong>Confirmed.</strong> Only the agent count varies (1, 8, 32 and 128 agents, plus 1,024 on pandoc). No mechanism is removed, including the board, <code>FAIL</code>, claims and mid-turn delivery.</td>
+<td>§3.1, Figs 1, 5 and 6</td>
+</tr>
+<tr>
+<td>Compute not normalized</td>
+<td><strong>Confirmed.</strong> Every configuration has the same 6-hour wall clock, and each worker is its own GPT-5.6-sol session (272K input tokens). No token or cost figures are given. Start-up is staggered: one agent every 30 s in the first hour, then one every 3 s. So at 1,024 the last worker starts about 1 h 45 min in, and the compute is "hundreds of times" the single agent's rather than exactly 1,024×.</td>
+<td>§3.1; App. C</td>
+</tr>
+<tr>
+<td>Single runs, no variance</td>
+<td><strong>No run count, error bars or seeds are reported.</strong> Several curves are not monotonic, which is consistent with noise of a few points: ctags is 25.82% with 1 agent and 18.47% with 8; FFmpeg is 13.22% at 32 and 12.89% at 128; gromacs reads 19.69, 19.37 and 19.37 across 1, 8 and 32.</td>
+<td>Fig. 5</td>
+</tr>
+<tr>
+<td>Asymmetric continuation mechanisms</td>
+<td><strong>Confirmed.</strong> The single-agent baseline has a stop hook. Teams have a 10-minute idle detector. The prompts are almost identical, but the triggers differ: the hook fires at every stop, while teams can sit idle for 10 minutes. This confounds the 1-versus-N comparison, in an unknown direction.</td>
+<td>App. C</td>
+</tr>
+<tr>
+<td>Emergent cooperation is anecdotal</td>
+<td><strong>Confirmed.</strong> It consists of narrative examples per scale, with no counts and no coding scheme.</td>
+<td>§3.2</td>
+</tr>
+<tr>
+<td>Narrow scope</td>
+<td><strong>Confirmed.</strong> One model (GPT-5.6-sol, high effort) on one harness (Copilot), five ProgramBench tasks, and 1,024 agents only on pandoc.</td>
+<td>§3, App. C</td>
+</tr>
+<tr>
+<td><em>Added:</em> diminishing returns</td>
+<td>Going from 128 to 1,024 agents on pandoc (8× the agents) adds 4.12 points (50.94 to 55.06). The 5-task mean at 128 agents is 28.78%.</td>
+<td>§3.1</td>
+</tr>
+<tr>
+<td><em>Added:</em> autonomy is a precondition of the setup</td>
+<td>The prompt's iron rule 1 reads: "Fully autonomous ... do not wait for instructions, do not ask on mattermost 'what to do next'".</td>
+<td>App. A</td>
+</tr>
+</tbody>
+</table>
+<p><strong>What the paper does and does not show.</strong> It shows that, on these tasks, more workers on this harness reached higher scores within a fixed wall clock. It shows nothing about which mechanism contributed. In particular, there is no evidence that <code>FAIL</code> entries, claims or mid-turn delivery help on their own. ProbOS therefore borrows none of the paper's numbers. It adopts only the one mechanism that is cheap and fits the CrewSession board: recording disproved approaches.</p>
+<h2 id="per-mechanism-decisions">Per-mechanism decisions<a class="headerlink" href="#per-mechanism-decisions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Agensh mechanism</th>
+<th>Decision</th>
+<th>ProbOS anchor (verified 2026-10-28)</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>FAIL</code>: a falsified approach, "the highest-value entry"</td>
+<td><strong>Absorb, minimally.</strong> It becomes <code>evidence</code> with the marker <code>disproved: true</code> and a link to at least one supporting entry, written only by an agent. No new kind is added, following the precedent of #1337's CORAL amendment ("no new kind is added"); a marker can be filtered on without every consumer learning a kind. Teammates in the same CrewSession receive the session's current <code>disproved</code> entries in the bounded read at the start of an attempt. Independence-declared, review, verification and adjudication slots do not receive them until they submit.</td>
+<td>#1336 Decision (kinds list); <code>elastic_team.py:255</code>; #1337 CORAL amendment</td>
+<td>#1336 amendment</td>
+</tr>
+<tr>
+<td>2</td>
+<td>"Do not retry anything recorded as <code>FAIL</code>"</td>
+<td><strong>Adapt: no ban.</strong> A ban would turn one wrong <code>FAIL</code> into a dead branch for everyone. To retry deliberately, an agent first files a <code>challenge</code> that targets the entry.</td>
+<td>#1336 Decision (<code>challenge</code> with target reference)</td>
+<td>#1336 amendment</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Mid-turn delivery of a new <code>FAIL</code> or <code>CLAIM</code></td>
+<td><strong>Rejected (Captain, 2026-10-28).</strong> Teammates in one CrewSession work on sub-tasks that the planner assigned, so a disproved approach seen at the start of an attempt is enough. Delivery mid-turn would need a delivery table, a new prompt block and a new prompt-injection surface, and nothing in the paper shows it pays for that. <em>Do not re-propose without a measured duplicate-work problem inside a CrewSession.</em></td>
+<td><code>agentic_loop.py:1749-1776</code> (the per-request blocks it would have joined)</td>
+<td>none</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>CLAIM</code> = "I am taking this area", made before the work</td>
+<td><strong>Rejected (Captain, 2026-10-28). CrewSession already decomposes and assigns, so claims and overlap checks are not needed.</strong> Agensh workers claim because there is no planner. In ProbOS, the CrewSession plan decomposes the task (<code>crew_orchestrator.py:23</code>) and AD-864 assigns each sub-task by capability × trust × department (<code>crew_assignment.py:1</code>). Exclusive occupancy, where it matters, is AD-1159 work permits (<code>tools/work_permits.py:38-47</code>). Note also that #1336's <code>claim</code> means an assertion of truth, not "I am taking this". <em>Do not re-propose area claims, declared scope or overlap notices.</em></td>
+<td><code>crew_orchestrator.py:23</code>; <code>crew_assignment.py:1</code>; <code>tools/work_permits.py:38-47</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Claim overlap settled by direct message</td>
+<td><strong>Rejected with row 4.</strong> No overlap arises when sub-tasks are assigned by the planner.</td>
+<td>as row 4</td>
+<td>none</td>
+</tr>
+<tr>
+<td>5a</td>
+<td>Re-keying the board to any work item, so that ordinary crew work can have one</td>
+<td><strong>Rejected (Captain, 2026-10-28).</strong> The board stays CrewSession-owned, as #1336 is written. Each CrewSession already has its board, and crew who work together on one task do so through a CrewSession.</td>
+<td>#1336 Decision</td>
+<td>none</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Turn-start delivery of channel posts</td>
+<td><strong>Already present; not adopted for the board.</strong> The Ward Room remains the social channel, by the Captain's direction.</td>
+<td><code>agent_work_runner.py:393-414</code>, <code>:595-615</code> (terminal notices are Ward Room posts)</td>
+<td>none</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Short capped entries plus <code>detail</code> / <code>board_unfold</code></td>
+<td><strong>Already covered.</strong> #1336 already bounds every body. The separate headline was only needed for mid-turn delivery, which was rejected.</td>
+<td>#1336 Decision ("bodies are strictly bounded")</td>
+<td>none</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>PATCH_SUMMARY</code> (files, idea, evidence)</td>
+<td><strong>Reject as a kind; already covered.</strong> It maps to <code>evidence</code> plus <code>artifact_ref</code>, and MASS's output contract already requires a <code>claim</code> to link <code>evidence</code> before an attempt can complete.</td>
+<td>#1336 MASS amendment</td>
+<td>none</td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>OBSERVED</code> / <code>FACT</code>; "do not re-derive a peer's <code>FACT</code>"</td>
+<td><strong>Map to the existing kinds; reject the rule.</strong> <code>OBSERVED</code> and <code>FACT</code> map to <code>evidence</code> and <code>claim</code>. In ProbOS a claim never becomes true by repetition; only an accepted <code>decision</code> does. "Do not re-derive" conflicts with slots declared <code>independence</code>.</td>
+<td>#1336 Decision; <code>elastic_team.py:255</code>; #1337 CORAL amendment</td>
+<td>none</td>
+</tr>
+<tr>
+<td>10</td>
+<td>Verify against the acceptance criteria before merge</td>
+<td><strong>Already present.</strong></td>
+<td><code>workforce.py:1414</code> (<code>verification</code> column); <code>crew_session.py:1832</code> (<code>success_criteria</code>); MASS output contract on #1336</td>
+<td>none</td>
+</tr>
+<tr>
+<td>11</td>
+<td>Reminder when a turn publishes no entry</td>
+<td><strong>Reject as a separate mechanism.</strong> The MASS output contract already refuses completion and names the unmet clause, and CORAL reflection checkpoints (#1337) cover long-running attempts. A third nudge would duplicate them.</td>
+<td>#1336 MASS amendment; #1337 CORAL amendment</td>
+<td>none</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>board_grep</code> over the full history</td>
+<td><strong>Considered, deferred.</strong> ProbOS reads are already cursor-paged over the full history and filtered by kind and slot/task. One CrewSession's board is small enough for that.</td>
+<td>#1336 Decision (bounded filtered reads)</td>
+<td>none</td>
+</tr>
+<tr>
+<td>13</td>
+<td>Idle nudge; T-45 and T-5 wrap-up reminders</td>
+<td><strong>Rejected.</strong> The CrewSession lifecycle and its verified finalization (AD-1126, <code>crew_finalizer.py:1</code>) own pacing and completion. Deadline-aware wrap-up through <code>due_at</code> (<code>workforce.py:1406</code>) is a separate question.</td>
+<td>—</td>
+<td>none</td>
+</tr>
+<tr>
+<td>14</td>
+<td>No central orchestrator; iron rule "fully autonomous"</td>
+<td><strong>Reject.</strong> Chain of command, escalation to the Captain, and governed decisions stay.</td>
+<td>—</td>
+<td>Do Not Build</td>
+</tr>
+<tr>
+<td>15</td>
+<td>Agent count as a scaling dimension (1,024 workers)</td>
+<td><strong>Reject as a claim.</strong> It is unablated and the compute is not normalized (see the assessment).</td>
+<td>—</td>
+<td>Do Not Build</td>
+</tr>
+</tbody>
+</table>
+<h2 id="blind-spots-the-paper-does-not-discuss">Blind spots the paper does not discuss<a class="headerlink" href="#blind-spots-the-paper-does-not-discuss" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>A wrong <code>FAIL</code> poisons the search.</strong> The entry Agensh values most is also the riskiest one. That is why row 2 replaces the ban with a challenge path, and why a <code>disproved</code> entry must link evidence.</li>
+<li><strong>Peer text in another agent's prompt is an injection channel.</strong> This was one reason to reject mid-turn delivery (row 3). Entries that are read at the start of an attempt are still peer-written data, not instructions.</li>
+<li><strong>Independence.</strong> A review, verification or adjudication slot, or a slot declared <code>independence</code>, must not receive peers' <code>disproved</code> reasoning before it submits. This extends #1337's CORAL rule that "workers read outcomes, not reasoning".</li>
+<li><strong>Cost.</strong> Every delivery mechanism adds tokens. The paper reports none, and this was another reason to keep only the read at attempt start.</li>
+<li><strong>HXI consumer.</strong> No change for AD-1310 (#1361). No kind is added, so the canvas's object list is unchanged.</li>
+</ol>
+<h2 id="prior-art-considered-bounded-2026-10-28">Prior art considered (bounded, 2026-10-28)<a class="headerlink" href="#prior-art-considered-bounded-2026-10-28" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>DeLM</strong> (arXiv 2606.10662), the origin of Agensh's shared context: arxiv.org is not reachable from this session, so the paper was not read. It is recorded here as a lead, not as evidence.</li>
+<li><strong>Claude Code agent teams</strong> (<a href="https://code.claude.com/docs/en/agent-teams">docs</a>), checked 2026-10-28:</li>
+<li>Claiming is exclusive and uses file locking. Not needed here: in ProbOS the CrewSession planner assigns the sub-tasks, and exclusive occupancy is AD-1159 work permits.</li>
+<li>A <code>TaskCompleted</code> hook can block completion, which is the same shape as the MASS output contract. Nothing new.</li>
+<li>Messages between agents are treated as untrusted and cannot relay an approval. Absorbed as blind spot 2.</li>
+<li><strong>Reference projects</strong> (<code>reference-projects.md</code>, judged on 2026-10-28): the Claude Code row is up to date (2026-10-16), so this check is recorded beside it. AutoGen and CrewAI are <em>passing</em> rows and therefore count as never reviewed. They were considered and deferred: the paper does not cite them for these mechanisms.</li>
+</ul>
+<h2 id="ownership-question-resolved">Ownership question (resolved)<a class="headerlink" href="#ownership-question-resolved" title="Permanent link">&para;</a></h2>
+<p><strong>Resolved by the Captain, 2026-10-28:</strong> the board stays CrewSession-owned, as #1336 is written. A first draft proposed keying the board to any root work item, so that ordinary crew work could have one. It was declined: crew who work together on one task do so through a CrewSession, and each CrewSession already has its board. Nothing was widened, so no ratification was needed.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2025-2026 Nooplex LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
