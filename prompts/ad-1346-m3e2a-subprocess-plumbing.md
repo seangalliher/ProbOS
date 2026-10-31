@@ -1322,8 +1322,12 @@ HOLDS: yes
 - A4-20: this paragraph.
 - *F1 (P2, the reach helper's prefilter).* Python converts names to NFKC while parsing ("All names are converted into the normalization form NFKC while parsing", Python 3.15.2 language reference, Lexical analysis), so a prefilter on raw text skipped a module that imports a row's name spelled with a compatibility character. Options: (A) test the NFKC form of the text; (B) delete the prefilter; (C) keep the code, delete the claim and register the gap. Chosen: A, which compares the form the parser compares. Rejected: B, under which each of SP1's three calls parses and walks every `src` file; C, which leaves SP1 able to pass over an import of a row's name. SP2's `src/probos/f.py` is a module the raw prefilter skips and A's parses; no row is added to §10, whose campaign of record ran on the M2 tree. SP3's prefilter, the same pattern, tests the NFKC form too.
 - *F2 (P3, SP3's reach).* Options: (A) delete the sentences that said SP3 pins the wiring; (B) add placement and guard assertions to SP3 and a row. Chosen: A; §14 item 3 still asks the Diff Reviewer for the guard. Rejected: B, more test code and a new row to make a sentence true.
-- *F3 (P3, EC4's name and docstring).* The `def` and the docstring lie above M1-26's SEARCH. Options: (A) extend M1-26 up to the `def` with a LANDING pair; (B) a new section of pairs in the form of M3e1's §7.5. Chosen: A: M1-26 stays the one pair for EC4, and §7 keeps 34 pairs. Rejected: B, a second place to look for EC4's edit. The name names the test's subject; the module docstring's EC4 bullet states what it checks.
+- *F3 (P3, EC4's name and docstring).* The `def` and the docstring lie above M1-26's SEARCH. Options: (A) extend M1-26 up to the `def` with a LANDING pair; (B) a new section of pairs in the form of M3e1's §7.5. Chosen: A: M1-26 stays the one pair for EC4, and §7 and §8 keep 34 pairs. Rejected: B, a second place to look for EC4's edit. The name names the test's subject; the module docstring's EC4 bullet states what it checks.
 - *F4 (P3, the helper's docstring).* The enumeration and "each" are deleted. Rejected: an enumeration rewritten from the helper's branches.
+
+**A5 (2026-10-31, after review round 2; the orchestrator's mechanical amendment, contract-only).**
+- A5-1: A4's F3 paragraph said that "§7 keeps 34 pairs". §7 holds 32 pairs (M1 30, M2 2) and §8 holds 2 (M3), so it says that "§7 and §8 keep 34 pairs", the count the Anchors paragraph and the head bullet give.
+- A5-2: this paragraph.
 
 ## 17. Claims not yet confirmed
 
