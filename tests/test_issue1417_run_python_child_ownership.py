@@ -613,7 +613,7 @@ async def test_normal_tool_runs_are_unchanged(
     assert result.error == error
     assert seen == output
     assert trail == record
-    assert constructed == [((), {"scratch_root": str(tmp_path / "scratch")})]
+    assert constructed == [((), {"scratch_root": str(tmp_path / "scratch"), "admission_service": None})]  # AD-1346 M3e2a: the runtime's service; this runtime has none
 
 
 @pytest.mark.parametrize("case", ["success", "nonzero"])

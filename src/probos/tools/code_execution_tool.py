@@ -786,11 +786,11 @@ class CodeExecutionTool:
                 code, requested_by=requesting_agent
             )
             if ticket.executor is None:
-                sandbox = SubprocessSandbox(scratch_root=str(scratch_root))
+                sandbox = SubprocessSandbox(scratch_root=str(scratch_root), admission_service=getattr(self._runtime, "admission_service", None))  # AD-1346 M3e2a: the sandbox's subprocess sink reads the runtime's service
             else:
                 # AD-1246: a long run gets the service's pool, not a default thread.
                 sandbox = SubprocessSandbox(
-                    scratch_root=str(scratch_root), executor=ticket.executor,
+                    scratch_root=str(scratch_root), executor=ticket.executor, admission_service=getattr(self._runtime, "admission_service", None),
                 )
             # AD-1221: stand up a loopback fetch relay for THIS run only, so the
             # script can fetch and extract in one process. Returns ({}, None)

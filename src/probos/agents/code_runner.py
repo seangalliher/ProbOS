@@ -223,7 +223,7 @@ class CodeRunnerAgent(BaseAgent):
 
     async def _run_python(self, plan: dict) -> dict[str, Any]:
         cfg = self._execution_config()
-        sandbox = SubprocessSandbox(scratch_root=cfg.scratch_dir)
+        sandbox = SubprocessSandbox(scratch_root=cfg.scratch_dir, admission_service=getattr(self._runtime, "admission_service", None))  # AD-1346 M3e2a: the sandbox's subprocess sink reads the runtime's service (the script run)
         owner = plan["owner"]
         workdir, persistent = self._resolve_workdir(cfg, owner)
         packages = plan["packages"]
@@ -391,7 +391,7 @@ class CodeRunnerAgent(BaseAgent):
                 "success": False,
                 "error": "Package install disabled (set config.execution.allow_package_install).",
             }
-        sandbox = SubprocessSandbox(scratch_root=cfg.scratch_dir)
+        sandbox = SubprocessSandbox(scratch_root=cfg.scratch_dir, admission_service=getattr(self._runtime, "admission_service", None))  # AD-1346 M3e2a: the sandbox's subprocess sink reads the runtime's service (the package install)
         workdir, persistent = self._resolve_workdir(cfg, owner)
         try:
             workdir.mkdir(parents=True, exist_ok=True)
