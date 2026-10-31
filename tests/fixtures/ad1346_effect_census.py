@@ -16,7 +16,8 @@ module docstring lists what a static scan cannot see). Each (file, enclosing fun
 - ``Pending(owner, reason)``: a launch whose sink the slice ``owner`` adds;
 - ``Unreached(names, reason)``: a launch that no other ``src`` code reaches through ``names`` (AD-1346 M3e2a).
 
-``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code, and SK7
+``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code (the Unreached rows' reach,
+``unreached_references``: ``tests/test_ad1346_admission_subprocess_plumbing.py``, SP1), and SK7
 (``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions``.
 """
 
@@ -229,4 +230,35 @@ def outside_importers(sources: dict[str, str]) -> list[tuple[str, int]]:
                 continue
             if any(name == module or name.startswith(f"{module}.") for name in names for module in _OUTSIDE_MODULES):
                 found.append((rel, node.lineno))
+    return found
+
+
+def _reaching(node: ast.AST, outer: str, own: bool, wanted: frozenset[str], found: list[int]) -> None:
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            _reaching(child, outer or child.name, own, wanted, found)
+            continue
+        if isinstance(child, (ast.Import, ast.ImportFrom)):
+            dotted = [alias.name for alias in child.names] + [getattr(child, "module", None) or ""]
+            hit = any(part in wanted for name in dotted for part in name.split("."))
+        elif isinstance(child, ast.Attribute):
+            hit = child.attr in wanted and (own or not (isinstance(child.value, ast.Name) and child.value.id == "self"))
+        else:
+            hit = isinstance(child, ast.Name) and child.id in wanted
+        if hit and not (own and outer in wanted):
+            found.append(child.lineno)
+        _reaching(child, outer, own, wanted, found)
+
+
+def unreached_references(sources: dict[str, str], path: str, names: tuple[str, ...]) -> list[tuple[str, int]]:
+    """(file, line) of each reference to ``names`` in ``sources`` (AD-1346 M3e2a, D177): a name, an attribute (in a module
+    other than ``path``, not an attribute of ``self``), or an import whose names or module hold one as a dotted part; in
+    ``path`` itself, only those outside the module-level functions and classes so named."""
+    wanted = frozenset(names)
+    found: list[tuple[str, int]] = []
+    for rel, source in sources.items():
+        if any(name in source for name in wanted):
+            lines: list[int] = []
+            _reaching(ast.parse(source, filename=rel), "", rel == path, wanted, lines)
+            found += [(rel, line) for line in lines]
     return found
