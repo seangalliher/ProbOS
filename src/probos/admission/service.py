@@ -27,6 +27,8 @@ rest of that ``try``'s are.
 AD-1346 M3e1: ``check_at`` is also called at subprocess sinks (five from M3e1, seven from AD-1346 M3e2a, eight from AD-1346 M3e2b) with the effect
 ``subprocess``, which ``TICKET_EFFECTS`` now holds, so the scope ``hold`` asks for includes it.
 AD-1346 M3e3a: ``TICKET_EFFECTS`` also holds ``egress``, so that scope includes it too.
+AD-1346 M3e3b: ``check_at`` is also called at two egress sinks with the effect ``egress`` and at the image endpoint
+with ``model_call``.
 The service reads no configuration.
 """
 
@@ -220,7 +222,8 @@ class AdmissionService:
         """The sink check of one effect point, in shadow: the registry's finding for the ticket the carrier holds (AD-1346 M3d3a).
 
         ``probos.admission.seam.check_at`` calls it at the tool sink, the model gateway and, from AD-1346 M3e1, the
-        subprocess sinks (seven from AD-1346 M3e2a, eight from AD-1346 M3e2b). It reads the carrier in the
+        subprocess sinks (seven from AD-1346 M3e2a, eight from AD-1346 M3e2b), and from AD-1346 M3e3b two egress sinks
+        and the image endpoint. It reads the carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the
         ticket it read, to that loop with ``call_soon_threadsafe``, so a service built with a loop makes its sink

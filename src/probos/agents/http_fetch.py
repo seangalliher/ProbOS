@@ -11,6 +11,8 @@ from typing import Any, ClassVar
 
 import httpx
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_EGRESS
 from probos.security.url_guard import (
     PinnedTarget,
     validate_and_pin_public_url,
@@ -204,6 +206,15 @@ class HttpFetchAgent(BaseAgent):
         """Wire or disconnect the EgressPolicy for active SSRF enforcement."""
         cls._egress_policy = policy
 
+    # AD-1346 M3e3b (#1604): the shadow admission service that the egress sink in ``_fetch_url`` hands ``check_at``.
+    # Class-level, like ``_egress_policy``: ``ProbOSRuntime.start`` sets it and shutdown sets it back to None.
+    _admission: ClassVar[Any] = None
+
+    @classmethod
+    def set_admission(cls, service: Any) -> None:
+        """AD-1346 M3e3b: wire or disconnect the admission service of the egress sink in ``_fetch_url``."""
+        cls._admission = service
+
     async def handle_intent(self, intent: IntentMessage) -> IntentResult | None:
         """Full lifecycle: perceive -> decide -> act -> report."""
         import time as _time
@@ -382,6 +393,7 @@ class HttpFetchAgent(BaseAgent):
             )
             return {"success": False, "error": UNSAFE_METHOD_REFUSAL}
         method = safe
+        check_at(self._admission, effect=EFFECT_EGRESS, presented_id=None)  # AD-1346 M3e3b: the egress sink, in shadow, in the awaiting task before the URL floor and the coalescing; it blocks nothing (D164: no principal)
         error = self._validate_url(url)
         if error:
             return {"success": False, "error": f"SSRF protection: {error}"}

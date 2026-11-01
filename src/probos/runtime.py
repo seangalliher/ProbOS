@@ -3437,6 +3437,7 @@ class ProbOSRuntime:
             self.tool_registry.set_admission(self.admission_service)  # AD-1346 M3c: its shadow statement; None shadows nothing
         if isinstance(self.llm_client, OpenAICompatibleClient):  # AD-1346 M3d3a (D127): the model gateway's sink check; None checks nothing
             self.llm_client.set_admission(self.admission_service)
+        HttpFetchAgent.set_admission(self.admission_service)  # AD-1346 M3e3b (D203): the http_fetch egress sink's service, class-level; shutdown sets it back to None
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687
