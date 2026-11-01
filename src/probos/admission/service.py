@@ -30,6 +30,7 @@ AD-1346 M3e3a: ``TICKET_EFFECTS`` also holds ``egress``, so that scope includes 
 AD-1346 M3e3b: ``check_at`` is also called at two egress sinks with the effect ``egress`` and at the image endpoint
 with ``model_call``.
 AD-1346 M3e3c: and at the browser engine's start and its CDP connect with ``egress``.
+AD-1346 M3e4a: ``TICKET_EFFECTS`` also holds ``store_write``, so that scope includes it too.
 The service reads no configuration.
 """
 
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: AD-1346 M3d2 (D113): the scope and budget ``hold`` asks for: every effect point of ``TICKET_EFFECTS`` (three from
-#: AD-1346 M3e1, four from AD-1346 M3e3a), no ceiling (M5 owns accounts).
+#: AD-1346 M3e1, four from AD-1346 M3e3a, five from AD-1346 M3e4a), no ceiling (M5 owns accounts).
 _WORK_SCOPE: Final = TicketScope(frozenset(TICKET_EFFECTS))
 _NO_CEILINGS: Final = TicketBudget()
 
@@ -180,7 +181,7 @@ class AdmissionService:
         ``probos.admission.seam.hold_at`` calls it. With no registry, or after ``close``, it returns ``NO_HOLD`` and
         issues nothing. Otherwise the ticket's principal is the key ``decide`` gives the presented id (the slot when it
         resolves, D112); ``hold`` asks for every effect point of ``TICKET_EFFECTS`` and no ceiling (D113; AD-1346 M3e1
-        added ``subprocess``, AD-1346 M3e3a ``egress``). The ticket is a child of the carried
+        added ``subprocess``, AD-1346 M3e3a ``egress``, AD-1346 M3e4a ``store_write``). The ticket is a child of the carried
         ticket when ``child is True`` and the carrier holds one, else a root (D111). The carrier then holds the new
         ticket, or None when the registry refused the issue and counted its finding (D114).
         AD-1346 M3d3b2 (D152): with a recorder, the issue's finding is offered to ``ShadowRecorder.offer_ticket`` before

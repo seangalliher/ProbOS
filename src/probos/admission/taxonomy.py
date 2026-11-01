@@ -28,6 +28,9 @@ EFFECT_SUBPROCESS: Final = "subprocess"
 #: AD-1346 M3e3a (D196): the effect an egress sink checks a work ticket for, a member of ``TICKET_EFFECTS`` and not a seam,
 #: as ``EFFECT_SUBPROCESS`` is. Append-only.
 EFFECT_EGRESS: Final = "egress"
+#: AD-1346 M3e4a (D219): the effect of a store write, a member of ``TICKET_EFFECTS`` and not a seam, as ``EFFECT_EGRESS``
+#: is. Append-only.
+EFFECT_STORE_WRITE: Final = "store_write"
 
 #: v1 (D20): the work the stop seams admit, plus effect-point calls whose unit is not yet known.
 WORK_KINDS: Final[tuple[str, ...]] = (

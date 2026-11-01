@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Final
 
 from probos.admission.taxonomy import (
     EFFECT_EGRESS,
+    EFFECT_STORE_WRITE,
     EFFECT_SUBPROCESS,
     SEAM_MODEL_CALL,
     SEAMS,
@@ -59,9 +60,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 #: The effect points a scope names: the tool sink's seam (AD-1343), the model gateway's, from AD-1346 M3e1 a subprocess
-#: launch's (D161) and, from AD-1346 M3e3a, an egress point's (D196). Append-only: ``TICKET_OPERATIONS`` keys the
-#: persisted ``ticket_findings`` rows.
-TICKET_EFFECTS: Final[tuple[str, ...]] = (SEAM_TOOL, SEAM_MODEL_CALL, EFFECT_SUBPROCESS, EFFECT_EGRESS)
+#: launch's (D161), from AD-1346 M3e3a an egress point's (D196) and, from AD-1346 M3e4a, a store write's (D219).
+#: Append-only: ``TICKET_OPERATIONS`` keys the persisted ``ticket_findings`` rows.
+TICKET_EFFECTS: Final[tuple[str, ...]] = (SEAM_TOOL, SEAM_MODEL_CALL, EFFECT_SUBPROCESS, EFFECT_EGRESS, EFFECT_STORE_WRITE)
 OP_ISSUE: Final = "issue"
 #: What a finding is about: an issue, or the check at one effect point.
 TICKET_OPERATIONS: Final[tuple[str, ...]] = (OP_ISSUE, *TICKET_EFFECTS)
