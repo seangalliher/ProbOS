@@ -1,4 +1,4 @@
-"""AD-1346 M3e1 (#1604): the sink set of property 1 and the census of its subprocess effect point.
+"""AD-1346 M3e1 (#1604): the sink set of property 1 and the census of its subprocess effect point; AD-1346 M3e3a: and of its egress point.
 
 #1604 property 1 asks that every effect-point primitive (model call, tool call, subprocess, egress, store write) call the
 shadow ``decide()`` or the shadow sink check, or hold a pinned ``system`` principal from a pinned allowlist. ``EFFECT_CLASSES`` names those five
@@ -19,6 +19,17 @@ module docstring lists what a static scan cannot see). Each (file, enclosing fun
 ``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code (the Unreached rows' reach,
 ``unreached_references``: ``tests/test_ad1346_admission_subprocess_plumbing.py``, SP1), and SK7
 (``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions``.
+
+AD-1346 M3e3a: the egress class is read from a scan of its own, ``egress_points``, which parses every ``src`` module. A
+call whose callee is a name of ``EGRESS_PRIMITIVES``, as the module's absolute imports bind it, is one point; a call
+whose callee is not is one point for each argument, positional or keyword, that is. A name that no absolute import in
+the module binds is not resolved. Points are grouped by (file, enclosing scope), scoped as BF-892 scopes a launch, into
+the rows of ``EGRESS_SITES``, each with its count and one coverage: ``Pending``, ``System``, ``OutsideRuntime``,
+``OtherClass`` or ``ReachedOnlyFrom``. Among what the scan cannot see: a request made on a client built at another
+point, a client a caller passes in, a name bound by anything but an absolute import, and a call inside a third-party
+library. ``imported_modules`` reads the same imports; ``IMPORTS_WITHOUT_PRIMITIVE`` lists the top-level modules among
+them, other than ``probos`` and the standard library's, that are the first component of no primitive's name.
+``tests/test_ad1346_admission_egress_census.py`` checks the rows and those modules against the code.
 """
 
 from __future__ import annotations
@@ -50,11 +61,11 @@ EFFECT_CLASSES: Final[dict[str, str]] = {
     "model_call": "AD-1346 M3d3a: OpenAICompatibleClient.complete (SK7, SK8)",
     "tool": "AD-1346 M3d3a: ToolRegistry.check_and_invoke (SK7)",
     "subprocess": "AD-1346 M3e1, M3e2a and M3e2b: SUBPROCESS_SITES",
-    "egress": "AD-1346 M3e3",
+    "egress": "AD-1346 M3e3a: EGRESS_SITES; its sinks, AD-1346 M3e3b",
     "store_write": "AD-1346 M3e4",
 }
 #: The classes a member of ``TICKET_EFFECTS`` covers.
-DELIVERED: Final = frozenset({"model_call", "tool", "subprocess"})
+DELIVERED: Final = frozenset({"model_call", "tool", "subprocess", "egress"})
 
 
 @dataclass(frozen=True)
@@ -136,6 +147,99 @@ SUBPROCESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | System | Outside
     ("src/probos/__main__.py", "_check_nats"): (1, OutsideRuntime("nats-server")),
     ("src/probos/__main__.py", "_cmd_reset"): (2, OutsideRuntime("git add and commit during probos reset")),
     ("src/probos/doctor/checks/sandbox_check.py", "_docker_info_sync"): (1, OutsideRuntime("docker info for probos doctor")),
+}
+
+#: AD-1346 M3e3a (D194): the callees the egress census counts, by the dotted name a module's absolute imports give them.
+EGRESS_PRIMITIVES: Final = frozenset({
+    "httpx.AsyncClient", "httpx.Client", "httpx.get", "httpx.post", "httpx.put", "httpx.patch", "httpx.delete",
+    "httpx.head", "httpx.options", "httpx.request", "httpx.stream",
+    "requests.get", "requests.post", "requests.put", "requests.patch", "requests.delete", "requests.head",
+    "requests.options", "requests.request", "requests.Session",
+    "aiohttp.ClientSession", "aiohttp.request", "urllib.request.urlopen", "websockets.connect", "websockets.client.connect",
+    "socket.socket", "socket.create_connection", "asyncio.open_connection",
+    "smtplib.SMTP", "smtplib.SMTP_SSL", "imaplib.IMAP4", "imaplib.IMAP4_SSL",
+    "nats.connect", "discord.Client", "zeroconf.Zeroconf", "zeroconf.asyncio.AsyncZeroconf",
+    "playwright.async_api.async_playwright", "playwright.sync_api.sync_playwright",
+    "zmq.Context", "zmq.asyncio.Context",
+})
+
+#: AD-1346 M3e3a (D201): the top-level modules ``src`` imports, other than ``probos`` and the standard library's, that are
+#: the first component of no name of ``EGRESS_PRIMITIVES``.
+IMPORTS_WITHOUT_PRIMITIVE: Final = frozenset({
+    "PIL", "aiosqlite", "bpy", "chromadb", "copilot", "croniter", "cryptography", "docx", "dotenv", "facenet_pytorch",
+    "fastapi", "jsonschema", "keyring", "msal", "openpyxl", "pptx", "pydantic", "pypdf", "rich", "starlette", "torch",
+    "uvicorn", "yaml",
+})
+
+
+@dataclass(frozen=True)
+class OtherClass:
+    """AD-1346 M3e3a (D195): a client whose agent-attributed requests the delivered class ``effect_class`` checks in
+    the function ``check``, a (file, qualified name) pair."""
+
+    effect_class: str
+    check: tuple[str, str]
+    reason: str
+
+
+@dataclass(frozen=True)
+class ReachedOnlyFrom:
+    """AD-1346 M3e3a (D195): a point whose ``names`` ``unreached_references`` finds only in files under ``allowed``."""
+
+    names: tuple[str, ...]
+    allowed: tuple[str, ...]
+    reason: str
+
+
+_MODEL_GATEWAY_CHECK: Final = ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient.complete")
+
+#: (file, enclosing scope) -> (egress points there, coverage). AD-1346 M3e3a: D194, D195.
+EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideRuntime | OtherClass | ReachedOnlyFrom]]] = {
+    # Pending: agent or model text picks the destination or the content; AD-1346 M3e3b adds the sink.
+    ("src/probos/agents/http_fetch.py", "HttpFetchAgent._follow_and_fetch"): (1, Pending("M3e3b", "the http_fetch intent's URL, and fetch_governed's")),
+    ("src/probos/agents/red_team.py", "RedTeamAgent._verify_http_fetch"): (1, Pending("M3e3b", "the URL of the http_fetch intent it verifies")),
+    ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"): (1, Pending("M3e3b", "an agent's prompt to the image endpoint")),
+    ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"): (1, Pending("M3e3b", "the browser tool's engine")),
+    ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Pending("M3e3b", "the browser tool's engine, over CDP")),
+    # Another delivered class checks the client's agent-attributed requests.
+    ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client"): (1, OtherClass("model_call", _MODEL_GATEWAY_CHECK, "the model gateway's tier client; its endpoint probe is register R48's")),
+    # System.
+    ("src/probos/integrations/mcp_bridge/transport.py", "HttpTransport.__init__"): (1, System(SHIP, "an operator-approved MCP server over HTTP")),
+    ("src/probos/integrations/mcp_bridge/mcp_oauth.py", "McpOAuthProvider.__init__"): (1, System(SHIP, "an MCP server's OAuth flow")),
+    ("src/probos/channels/matrix_client.py", "MatrixClient.__init__"): (1, System(SHIP, "the operator's Matrix channel")),
+    ("src/probos/channels/slack_client.py", "SlackClient.__init__"): (1, System(SHIP, "the operator's Slack channel")),
+    ("src/probos/channels/teams_client.py", "TeamsClient.__init__"): (1, System(SHIP, "the operator's Teams channel")),
+    ("src/probos/channels/telegram_client.py", "TelegramClient.__init__"): (1, System(SHIP, "the operator's Telegram channel")),
+    ("src/probos/channels/gmail_adapter.py", "GmailAdapter._fetch_unseen"): (1, System(SHIP, "the operator's Gmail inbox")),
+    ("src/probos/channels/gmail_adapter.py", "GmailAdapter._acknowledge"): (1, System(SHIP, "the operator's Gmail inbox")),
+    ("src/probos/channels/gmail_adapter.py", "GmailAdapter._send_sync"): (1, System(SHIP, "the operator's Gmail SMTP")),
+    ("src/probos/channels/discord_adapter.py", "DiscordAdapter.start"): (1, System(SHIP, "the operator's Discord bot")),
+    ("src/probos/channels/discord_adapter.py", "DiscordAdapter._run_with_error_handling"): (1, System(SHIP, "the operator's Discord bot")),
+    ("src/probos/consultation/delivery.py", "GitHubAdapter._default_http_post"): (1, System(SHIP, "a consultation delivery")),
+    ("src/probos/startup/finalize.py", "_wire_repair_dispatcher"): (1, System(SHIP, "the repair pipeline's GitHub issue client")),
+    ("src/probos/federation/attachment_fetch.py", "fetch_remote_attachment"): (1, System(SHIP, "a federation peer's attachment")),
+    ("src/probos/federation/attachment_fetch.py", "fetch_remote_attachment_signed"): (1, System(SHIP, "a federation peer's attachment")),
+    ("src/probos/federation/ard/client.py", "ArdClient._get_bytes"): (1, System(SHIP, "an ARD request")),
+    ("src/probos/federation/ard/client.py", "ArdClient._post_bytes"): (1, System(SHIP, "an ARD request")),
+    ("src/probos/federation/ard/publication.py", "publish_catalog"): (1, System(SHIP, "ARD catalog publication")),
+    ("src/probos/packs/marketplace.py", "fetch_marketplace_index"): (1, System(SHIP, "the marketplace index")),
+    ("src/probos/cloud_pickers/google_drive.py", "GoogleDriveProvider.__init__"): (1, System(SHIP, "the Captain's Google Drive picker")),
+    ("src/probos/integrations/m365_connector.py", "_graph_get"): (1, System(SHIP, "Microsoft Graph")),
+    ("src/probos/mesh/nats_bus.py", "NATSBus.start"): (1, System(SHIP, "the ship's NATS bus")),
+    ("src/probos/federation/transport.py", "FederationTransport.start"): (1, System(SHIP, "the operator's configured federation peers, over the ZeroMQ fallback transport")),
+    ("src/probos/discovery/advertiser.py", "resolve_lan_ipv4"): (1, System(SHIP, "the LAN address lookup")),
+    ("src/probos/discovery/advertiser.py", "ZeroconfAdvertiser.start"): (1, System(SHIP, "mDNS advertisement")),
+    ("src/probos/federation/multicast_discovery.py", "_multicast_available"): (1, System(SHIP, "federation multicast discovery")),
+    ("src/probos/federation/multicast_discovery.py", "MulticastDiscovery.start"): (2, System(SHIP, "federation multicast discovery")),
+    # Named only in the files under ``allowed``.
+    ("src/probos/federation/a2a/client.py", "A2AClient.__init__"): (1, ReachedOnlyFrom(("A2AClient",), ("src/probos/federation/a2a/__init__.py",), "no src module but its package names it")),
+    ("src/probos/provider_setup.py", "_probe_client"): (1, ReachedOnlyFrom(("provider_setup",), OUTSIDE_RUNTIME, "the setup and doctor probes")),
+    # The operator's command line (D167).
+    ("src/probos/__main__.py", "_ensure_ollama"): (3, OutsideRuntime("the Ollama, before boot")),
+    ("src/probos/__main__.py", "_check_nats._probe"): (1, OutsideRuntime("the NATS server, before boot")),
+    ("src/probos/__main__.py", "_detect_llm_providers"): (1, OutsideRuntime("probos init's provider detection")),
+    ("src/probos/doctor/checks/federation_check.py", "_FederationCheck.run"): (1, OutsideRuntime("probos doctor's federation check")),
+    ("src/probos/doctor/checks/nats_check.py", "_NATSCheck.run"): (1, OutsideRuntime("probos doctor's NATS check")),
 }
 
 
@@ -264,3 +368,85 @@ def unreached_references(sources: dict[str, str], path: str, names: tuple[str, .
             _reaching(ast.parse(source, filename=rel), "", rel == path, wanted, lines)
             found += [(rel, line) for line in lines]
     return found
+
+
+def _import_aliases(tree: ast.Module) -> dict[str, frozenset[str]]:
+    """AD-1346 M3e3a: the dotted names each name is bound to by the module's absolute imports, in any scope."""
+    names: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                names.setdefault(bound, set()).add(alias.name if alias.asname else bound)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            for alias in node.names:
+                names.setdefault(alias.asname or alias.name, set()).add(f"{node.module}.{alias.name}")
+    return {name: frozenset(targets) for name, targets in names.items()}
+
+
+def _primitive(node: ast.AST, aliases: dict[str, frozenset[str]]) -> str | None:
+    """The first name of ``EGRESS_PRIMITIVES``, in sorted order, that ``node`` may denote, or None."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    heads = aliases.get(node.id, frozenset()) if isinstance(node, ast.Name) else frozenset()
+    tail = "".join(f".{part}" for part in reversed(parts))
+    matches = sorted(head + tail for head in heads if head + tail in EGRESS_PRIMITIVES)
+    return matches[0] if matches else None
+
+
+class _EgressScan(ast.NodeVisitor):
+    def __init__(self, aliases: dict[str, frozenset[str]]) -> None:
+        self.aliases = aliases
+        self.scope: list[str] = []
+        self.points: list[tuple[str, int, str, str]] = []
+
+    def _enter(self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    visit_ClassDef = visit_FunctionDef = visit_AsyncFunctionDef = _enter
+
+    def visit_Call(self, node: ast.Call) -> None:
+        where = ".".join(self.scope) or "<module>"
+        callee = _primitive(node.func, self.aliases)
+        if callee is not None:
+            self.points.append((where, node.lineno, callee, "direct"))
+        else:
+            for arg in [*node.args, *(keyword.value for keyword in node.keywords)]:
+                passed = _primitive(arg, self.aliases)
+                if passed is not None:
+                    self.points.append((where, node.lineno, passed, "by-reference"))
+        self.generic_visit(node)
+
+
+def egress_scan(source: str, filename: str = "<egress>") -> list[tuple[str, int, str, str]]:
+    """(scope, line, primitive, shape) of each egress point in one module's source (AD-1346 M3e3a, D194)."""
+    tree = ast.parse(source, filename=filename)
+    scan = _EgressScan(_import_aliases(tree))
+    scan.visit(tree)
+    return scan.points
+
+
+@functools.lru_cache(maxsize=1)
+def egress_points() -> tuple[tuple[str, str, int, str, str], ...]:
+    """(file, scope, line, primitive, shape) of each egress point in ``src``."""
+    return tuple((rel, *point) for rel, source in src_sources().items() for point in egress_scan(source, rel))
+
+
+def egress_counts() -> dict[tuple[str, str], int]:
+    """The egress points by (file, enclosing scope)."""
+    return dict(Counter((path, scope) for path, scope, _line, _primitive, _shape in egress_points()))
+
+
+@functools.lru_cache(maxsize=1)
+def imported_modules() -> frozenset[str]:
+    """The first component of each dotted name ``_import_aliases`` reads from a ``src`` module (AD-1346 M3e3a, D201)."""
+    return frozenset(
+        target.split(".")[0]
+        for rel, source in src_sources().items()
+        for targets in _import_aliases(ast.parse(source, filename=rel)).values()
+        for target in targets
+    )
