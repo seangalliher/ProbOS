@@ -7,7 +7,9 @@ the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229)
 that holds a point in the Ward Room's ``messages.py`` and ``threads.py`` and in ``cognitive/episodic.py`` a
 ``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
 ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
-``STORE_WRITE_FILES`` is a file and carries no count (D220).
+``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
+gives, for each file whose row is ``Pending("M3e4d")``, a scope whose SQL write statement records a row D239 makes
+agent-attributed, and the name in that scope of the id the row records as its author, creator or requester.
 
 Among what the scan cannot see: a statement whose text starts in a part that is not a constant (a name, a call, a
 placeholder), SQL not in upper case, a string inside an f-string's placeholder, and the other store-write primitives,
@@ -35,7 +37,7 @@ SQL_WRITE_STARTS: Final = (
 #: Matched at the start of a string's text, after leading whitespace.
 SQL_WRITE: Final = re.compile(r"\s*(?:" + "|".join(SQL_WRITE_STARTS) + r")(?:\s|$)")
 
-_UNCLASSIFIED: Final = Pending("M3e4c", "unclassified: M3e4c enumerates the file's production writers")
+_AGENT_ATTRIBUTED: Final = Pending("M3e4d", "agent-attributed (D239): AGENT_ATTRIBUTED_SCOPES names a scope and its author (register R113)")
 
 
 def _docstrings(tree: ast.Module) -> set[int]:
@@ -94,38 +96,54 @@ def sql_write_files() -> frozenset[str]:
     return frozenset(path for path, _scope, _line in sql_write_points())
 
 
+#: AD-1346 M3e4c (D239, D240): each file whose row is ``Pending("M3e4d")`` -> (a scope whose SQL write statement
+#: records a row D239 makes agent-attributed, the name in that scope of the id the row records as its author, creator
+#: or requester).
+AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
+    "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
+    "src/probos/assignment.py": ("AssignmentService.create_assignment", "created_by"),
+    "src/probos/capability_request.py": ("CapabilityRequestStore.file_request", "agent_id"),
+    "src/probos/cognitive/clinical_notes_store.py": ("ClinicalNotesStore.write_note", "author_agent_id"),
+    "src/probos/persistent_tasks.py": ("PersistentTaskStore.create_task", "created_by"),
+    "src/probos/skill_request.py": ("SkillRequestStore.file_request", "agent_id"),
+    "src/probos/threads/__init__.py": ("ChatThreadStore.append_message_once", "author_id"),
+    "src/probos/ward_room/channels.py": ("ChannelManager.create_channel", "created_by"),
+    "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
+}
+
 #: AD-1346 M3e4a (D220, D221): each other ``src`` file that holds a SQL write statement -> its coverage (AD-1346 M3e4b,
 #: D229: the files of ``STORE_WRITE_SCOPES`` are not rows here).
 STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
-    # Unclassified (D221): M3e4c reads each file's production writers (register R112).
-    "src/probos/artifacts/__init__.py": _UNCLASSIFIED,
-    "src/probos/assignment.py": _UNCLASSIFIED,
-    "src/probos/capability_request.py": _UNCLASSIFIED,
-    "src/probos/cognitive/clinical_audit_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/clinical_notes_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/counselor.py": _UNCLASSIFIED,
-    "src/probos/cognitive/elastic_team_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/journal.py": _UNCLASSIFIED,
-    "src/probos/cognitive/participant_index.py": _UNCLASSIFIED,
-    "src/probos/cognitive/procedure_challenges.py": _UNCLASSIFIED,
-    "src/probos/cognitive/procedure_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/self_distillation/prober.py": _UNCLASSIFIED,
-    "src/probos/cognitive/standing_interest_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/workflow_cron.py": _UNCLASSIFIED,
-    "src/probos/cognitive/working_memory_store.py": _UNCLASSIFIED,
-    "src/probos/crew_profile.py": _UNCLASSIFIED,
-    "src/probos/directive_store.py": _UNCLASSIFIED,
-    "src/probos/fault_issue_filings.py": _UNCLASSIFIED,
-    "src/probos/fault_report.py": _UNCLASSIFIED,
-    "src/probos/holodeck/scenarios.py": _UNCLASSIFIED,
-    "src/probos/holodeck/team_simulations.py": _UNCLASSIFIED,
-    "src/probos/persistent_tasks.py": _UNCLASSIFIED,
-    "src/probos/routers/scheduled_tasks.py": _UNCLASSIFIED,
-    "src/probos/skill_request.py": _UNCLASSIFIED,
-    "src/probos/task_sessions/__init__.py": _UNCLASSIFIED,
-    "src/probos/threads/__init__.py": _UNCLASSIFIED,
-    "src/probos/ward_room/channels.py": _UNCLASSIFIED,
-    "src/probos/workforce.py": _UNCLASSIFIED,
+    # Agent-attributed (AD-1346 M3e4c, D239, D240): M3e4d's (register R113).
+    "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
+    "src/probos/assignment.py": _AGENT_ATTRIBUTED,
+    "src/probos/capability_request.py": _AGENT_ATTRIBUTED,
+    "src/probos/cognitive/clinical_notes_store.py": _AGENT_ATTRIBUTED,
+    "src/probos/persistent_tasks.py": _AGENT_ATTRIBUTED,
+    "src/probos/skill_request.py": _AGENT_ATTRIBUTED,
+    "src/probos/threads/__init__.py": _AGENT_ATTRIBUTED,
+    "src/probos/ward_room/channels.py": _AGENT_ATTRIBUTED,
+    "src/probos/workforce.py": _AGENT_ATTRIBUTED,
+    # System (AD-1346 M3e4c, D239): each reason names what the file records.
+    "src/probos/cognitive/clinical_audit_store.py": System(SHIP, "the clinical audit log"),
+    "src/probos/cognitive/counselor.py": System(SHIP, "cognitive profiles and assessments, keyed by the agent assessed (D239)"),
+    "src/probos/cognitive/elastic_team_store.py": System(SHIP, "elastic team specs, worker slots, attempts and their outcomes"),
+    "src/probos/cognitive/journal.py": System(SHIP, "the cognitive journal: model-call metrics, chain traces, causal templates, optimisation records"),
+    "src/probos/cognitive/participant_index.py": System(SHIP, "the episode participant index"),
+    "src/probos/cognitive/procedure_challenges.py": System(SHIP, "procedure challenges, comparisons and cycles"),
+    "src/probos/cognitive/procedure_store.py": System(SHIP, "procedures, the agents they came from, their lineage, promotion decisions and counters (D239)"),
+    "src/probos/cognitive/self_distillation/prober.py": System(SHIP, "ontology probe results, keyed by the agent probed (D239)"),
+    "src/probos/cognitive/standing_interest_store.py": System(SHIP, "standing interests: a holder's kind, subject and expiry (D239)"),
+    "src/probos/cognitive/workflow_cron.py": System(SHIP, "workflow cron triggers and their firing times"),
+    "src/probos/cognitive/working_memory_store.py": System(SHIP, "working-memory snapshots, keyed by agent: copies (D218)"),
+    "src/probos/crew_profile.py": System(SHIP, "crew profiles"),
+    "src/probos/directive_store.py": System(SHIP, "directives, whose issuer is recorded as a type, not an agent id (D239)"),
+    "src/probos/fault_issue_filings.py": System(SHIP, "the issue filings of fault reports"),
+    "src/probos/fault_report.py": System(SHIP, "tool fault reports: a tool's error, the run it was seen in and its resolution"),
+    "src/probos/holodeck/scenarios.py": System(SHIP, "scenario gap links"),
+    "src/probos/holodeck/team_simulations.py": System(SHIP, "team simulation records and debriefs"),
+    "src/probos/routers/scheduled_tasks.py": System(SHIP, "a scheduled task's agent hint"),
+    "src/probos/task_sessions/__init__.py": System(SHIP, "task sessions and their runs"),
     # System (D221).
     "src/probos/acm.py": System(SHIP, "lifecycle and commissioning records"),
     "src/probos/admission/store.py": System(SHIP, "admission_shadow.db; the admission service's own record is not checked (D218)"),
