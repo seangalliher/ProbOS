@@ -3438,6 +3438,13 @@ class ProbOSRuntime:
         if isinstance(self.llm_client, OpenAICompatibleClient):  # AD-1346 M3d3a (D127): the model gateway's sink check; None checks nothing
             self.llm_client.set_admission(self.admission_service)
         HttpFetchAgent.set_admission(self.admission_service)  # AD-1346 M3e3b (D203): the http_fetch egress sink's service, class-level; shutdown sets it back to None
+        from probos.cognitive.episodic import EpisodicMemory
+        from probos.ward_room import WardRoomService
+
+        if isinstance(self.ward_room, WardRoomService):  # AD-1346 M3e4b (D233): the Ward Room's store-write checks; None checks nothing
+            self.ward_room.set_admission(self.admission_service)
+        if isinstance(self.episodic_memory, EpisodicMemory):  # AD-1346 M3e4b (D233): the episodic store's check; None checks nothing
+            self.episodic_memory.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687

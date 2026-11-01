@@ -1,18 +1,20 @@
 """AD-1346 M3e4a (#1604): the census of #1604 property 1's store-write class, its SQL write statements.
 
 ``tests/fixtures/ad1346_store_census.py`` holds the census: ``sql_write_points`` scans ``src`` for SQL write
-statements, and ``STORE_WRITE_FILES`` gives each file that holds one a coverage.
+statements; ``STORE_WRITE_SCOPES`` gives each scope that holds one in three files a coverage (AD-1346 M3e4b), and
+``STORE_WRITE_FILES`` gives each other file that holds one a coverage.
 
-- WC1  every file the scan finds is a row and every row is one: 79 files, 3 pending for AD-1346 M3e4b, 28 pending for
-       AD-1346 M3e4c, 47 system and 1 command-line.
+- WC1  every file the scan finds is a row of ``STORE_WRITE_FILES`` or a file of ``STORE_WRITE_SCOPES``, not both, and
+       every row is one: 79 files, of which 3 are scoped and 76 are rows (28 pending for AD-1346 M3e4c, 47 system and 1
+       command-line); in the scoped files the scopes the scan finds are the rows of ``STORE_WRITE_SCOPES``: 5 checks
+       and 13 system rows under ``system:ship_computer``.
 - WC2  the scan on a synthetic module: a constant, an f-string whose table is a placeholder, a triple-quoted statement
        that starts on the line after its quotes, an implicit concatenation, the left operand of ``+``, a statement in a
        lambda, one in a nested function and a module-level constant are points; a module's, a class's and a
        function's docstring, a ``SELECT``, a ``CREATE TABLE``, prose with a write's words after its start, lower-case
        SQL, a bytes constant and a string inside an f-string's placeholder are not.
-- WC3  the rows pending for AD-1346 M3e4b are ``cognitive/episodic.py``, ``ward_room/messages.py`` and
-       ``ward_room/threads.py``; a pending row's owner is M3e4b or M3e4c; ``admission/store.py`` and ``agent_stop.py``
-       are system rows.
+- WC3  a pending row's owner is AD-1346 M3e4c; ``admission/store.py`` and ``agent_stop.py`` are system rows; the
+       checked scopes are the episodic store's and the Ward Room's posts, edits, endorsements and threads.
 - WC4  the system rows' principal is ``system:ship_computer``, a member of ``SYSTEM_PRINCIPALS``; the command-line row
        is ``__main__.py``, under ``OUTSIDE_RUNTIME``; in ``src`` the scan finds the Ward Room's f-string whose table is a
        placeholder and a knowledge-edge statement that starts on the line after its quotes, each in its async method.
@@ -25,7 +27,14 @@ from collections.abc import Callable
 
 from probos.admission.taxonomy import SYSTEM_PRINCIPALS
 from tests.fixtures.ad1346_effect_census import OUTSIDE_RUNTIME, SHIP, OutsideRuntime, Pending, System, src_sources
-from tests.fixtures.ad1346_store_census import STORE_WRITE_FILES, sql_write_files, sql_write_points, sql_write_scan
+from tests.fixtures.ad1346_store_census import (
+    STORE_WRITE_FILES,
+    STORE_WRITE_SCOPES,
+    StoreCheck,
+    sql_write_files,
+    sql_write_points,
+    sql_write_scan,
+)
 
 _SYNTHETIC = '''\
 """INSERT INTO module_doc VALUES (1)"""
@@ -75,14 +84,21 @@ def _scopes(path: str, wanted: Callable[[list[str], int], bool]) -> set[str]:
 
 
 def test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one() -> None:
-    """WC1 (D219, D220, D221; kills EW-7): a file that gains its first SQL write statement fails here until it is
-    classified."""
+    """WC1 (D219, D220, D221; AD-1346 M3e4b: D229; kills EV-9): a file that gains its first SQL write statement, or a
+    scope of a scoped file that gains its first, fails here until it is classified."""
     found = sql_write_files()
-    assert sorted(found - STORE_WRITE_FILES.keys()) == []
-    assert sorted(STORE_WRITE_FILES.keys() - found) == []
+    scoped = {path for path, _scope in STORE_WRITE_SCOPES}
+    assert sorted(scoped & STORE_WRITE_FILES.keys()) == []
+    assert sorted(found - STORE_WRITE_FILES.keys() - scoped) == []
+    assert sorted((STORE_WRITE_FILES.keys() | scoped) - found) == []
     kinds = Counter(_kind(cover) for cover in STORE_WRITE_FILES.values())
-    assert kinds == {"Pending M3e4b": 3, "Pending M3e4c": 28, "System": 47, "OutsideRuntime": 1}, kinds
-    assert len(found) == 79
+    assert kinds == {"Pending M3e4c": 28, "System": 47, "OutsideRuntime": 1}, kinds
+    assert len(found) == 79 and len(scoped) == 3, (len(found), sorted(scoped))
+    points = {(path, scope) for path, scope, _line in sql_write_points() if path in scoped}
+    assert sorted(points - STORE_WRITE_SCOPES.keys()) == []
+    assert sorted(STORE_WRITE_SCOPES.keys() - points) == []
+    assert Counter(type(cover).__name__ for cover in STORE_WRITE_SCOPES.values()) == {"StoreCheck": 5, "System": 13}
+    assert {cover.principal for cover in STORE_WRITE_SCOPES.values() if isinstance(cover, System)} == {SHIP}
 
 
 def test_the_sql_write_scan_on_a_synthetic_module() -> None:
@@ -100,14 +116,18 @@ def test_the_sql_write_scan_on_a_synthetic_module() -> None:
 
 
 def test_the_pending_rows_and_the_rows_of_the_services_that_check() -> None:
-    """WC3 (D218, D221; kills EW-8)."""
+    """WC3 (D218, D221; AD-1346 M3e4b: D229; kills EW-8)."""
     pending = {path: cover.owner for path, cover in STORE_WRITE_FILES.items() if isinstance(cover, Pending)}
-    assert sorted(path for path, owner in pending.items() if owner == "M3e4b") == [
-        "src/probos/cognitive/episodic.py", "src/probos/ward_room/messages.py", "src/probos/ward_room/threads.py",
-    ]
-    assert set(pending.values()) == {"M3e4b", "M3e4c"}
+    assert set(pending.values()) == {"M3e4c"}
     for path in ("src/probos/admission/store.py", "src/probos/agent_stop.py"):
         assert type(STORE_WRITE_FILES[path]) is System, path
+    assert sorted(site for site, cover in STORE_WRITE_SCOPES.items() if isinstance(cover, StoreCheck)) == [
+        ("src/probos/cognitive/episodic.py", "EpisodicMemory.store"),
+        ("src/probos/ward_room/messages.py", "MessageStore.create_post"),
+        ("src/probos/ward_room/messages.py", "MessageStore.edit_post"),
+        ("src/probos/ward_room/messages.py", "MessageStore.endorse"),
+        ("src/probos/ward_room/threads.py", "ThreadManager.create_thread"),
+    ]
 
 
 def test_the_system_and_command_line_rows_and_two_shapes_the_scan_finds_in_src() -> None:

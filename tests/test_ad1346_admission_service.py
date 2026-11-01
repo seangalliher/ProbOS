@@ -596,6 +596,8 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
     from the runtime it is given and imports the package.
     From AD-1346 M3e3c ``tools/browser/session.py`` reads ``admission_service`` from the runtime its session is handed
     and imports the package.
+    From AD-1346 M3e4b ``ward_room/service.py`` and ``cognitive/episodic.py`` import the package, and ``runtime.py``
+    hands ``WardRoomService`` and ``EpisodicMemory`` the service through their own ``set_admission``.
     The routers that name the service or import the package are the three whose routes M3c2 shadows and, from AD-1346
     M3e2b, ``routers/build.py``, and none of them is a module of #1604 property 11's routes, which are never
     admission-gated."""
@@ -647,6 +649,7 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/cognitive/builder.py",  # AD-1346 M3e2b
         "probos/agents/http_fetch.py", "probos/cognitive/image_gen_dispatch.py",  # AD-1346 M3e3b
         "probos/tools/browser/session.py",  # AD-1346 M3e3c
+        "probos/cognitive/episodic.py", "probos/ward_room/service.py",  # AD-1346 M3e4b
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {
