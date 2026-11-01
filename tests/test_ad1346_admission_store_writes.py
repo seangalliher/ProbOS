@@ -2,9 +2,9 @@
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
-after its policy check, presenting the episode's one agent id or None. ``ProbOSRuntime.start`` hands both objects the
-service through their ``set_admission``. ``tests/fixtures/ad1346_store_census.py`` lists the checks
-(``STORE_WRITE_SCOPES``).
+after its policy check, presenting the episode's one agent id or None. ``ProbOSRuntime.start`` hands the service
+through ``set_admission`` to the runtime's Ward Room when it is a ``WardRoomService`` and to its episodic store when it
+is an ``EpisodicMemory``. ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
        ``self._admission``, ``EFFECT_STORE_WRITE`` and the row's presented id; in the Ward Room it is the statement after
@@ -17,8 +17,8 @@ service through their ``set_admission``. ``tests/fixtures/ad1346_store_census.py
        of those two callees reference none of the four methods.
 - WM3  #1604 property 1 at the five checks: each counts ``ticket_missing`` outside a hold, ``ticket_live`` for the
        hold's agent or no presented id inside it, ``ticket_principal_mismatch`` for another agent inside it and
-       ``ticket_revoked`` after a Captain's stop; a thread and a post made through a Ward Room that holds the episodic
-       store each count a second check, their episode's store.
+       ``ticket_revoked`` after a Captain's stop; a thread and a post that a Ward Room holding the episodic store also
+       stores as episodes each count a second check, their episode's store.
 - WM4  #1604 property 12 at the five checks: a Ward Room and an episodic store answer the same with the service and
        without it, with nothing carried, under a live ticket and after a Captain's stop.
 - WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room

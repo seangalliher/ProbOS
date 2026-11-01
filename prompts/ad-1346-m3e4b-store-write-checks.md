@@ -136,7 +136,7 @@
     4. class-level (D203; process-wide).
 - **D234 Counting** (question 5; extends D224).
   - Each checked write counts one `store_write` finding.
-  - A thread or post made through a Ward Room that holds the episodic store also stores its episode (`ward_room/threads.py:618`, `ward_room/messages.py:376`), so it counts twice. A peer echo adds one more (`threads.py:660`, `messages.py:418`).
+  - A thread or a post that a Ward Room holding the episodic store also stores as an episode (`ward_room/threads.py:618`, `ward_room/messages.py:376`) adds one finding at the episodic check, if that store holds the service. A peer echo stored the same way adds a finding of its own (`threads.py:660`, `messages.py:418`).
   - D224 stands: a post through a registry tool is also counted at `tool`. No module under `src/probos/tools` names a checked entry (Absence Verified).
   - R108's rule extends: M3e5 reads `store_write` findings as checked writes, not as posts or units of work (register R115).
   - Ranked:
@@ -812,9 +812,9 @@ REPLACE:
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
-after its policy check, presenting the episode's one agent id or None. ``ProbOSRuntime.start`` hands both objects the
-service through their ``set_admission``. ``tests/fixtures/ad1346_store_census.py`` lists the checks
-(``STORE_WRITE_SCOPES``).
+after its policy check, presenting the episode's one agent id or None. ``ProbOSRuntime.start`` hands the service
+through ``set_admission`` to the runtime's Ward Room when it is a ``WardRoomService`` and to its episodic store when it
+is an ``EpisodicMemory``. ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
        ``self._admission``, ``EFFECT_STORE_WRITE`` and the row's presented id; in the Ward Room it is the statement after
@@ -827,8 +827,8 @@ service through their ``set_admission``. ``tests/fixtures/ad1346_store_census.py
        of those two callees reference none of the four methods.
 - WM3  #1604 property 1 at the five checks: each counts ``ticket_missing`` outside a hold, ``ticket_live`` for the
        hold's agent or no presented id inside it, ``ticket_principal_mismatch`` for another agent inside it and
-       ``ticket_revoked`` after a Captain's stop; a thread and a post made through a Ward Room that holds the episodic
-       store each count a second check, their episode's store.
+       ``ticket_revoked`` after a Captain's stop; a thread and a post that a Ward Room holding the episodic store also
+       stores as episodes each count a second check, their episode's store.
 - WM4  #1604 property 12 at the five checks: a Ward Room and an episodic store answer the same with the service and
        without it, with nothing carried, under a live ticket and after a Captain's stop.
 - WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room
@@ -1204,7 +1204,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1346 (2026-11-01), #1604 M3e4b -- the Ward Room's and the episodic store's store-write checks, in shadow.** `WardRoomService.create_thread`, `create_post`, `edit_post` and `endorse` and `EpisodicMemory.store` call the work-ticket sink check with `store_write`, presenting the author or voter id, or the episode's one agent id, and `ProbOSRuntime.start` hands both objects the shadow service. The census splits the three files by scope: 5 checked scopes and 13 of the ship's own records. Nothing is refused or charged, and with `admission.shadow_enabled` false the service is None and nothing is checked. The contract is `prompts/ad-1346-m3e4b-store-write-checks.md`.
+**AD-1346 (2026-11-01), #1604 M3e4b -- the Ward Room's and the episodic store's store-write checks, in shadow.** `WardRoomService.create_thread`, `create_post`, `edit_post` and `endorse` and `EpisodicMemory.store` call the work-ticket sink check with `store_write`, presenting the author or voter id, or the episode's one agent id (else none), and `ProbOSRuntime.start` hands the shadow service to the runtime's Ward Room when it is a `WardRoomService` and to its episodic store when it is an `EpisodicMemory`. The census splits the three files by scope: 5 checked scopes and 13 of the ship's own records. Nothing is refused or charged, and with `admission.shadow_enabled` false the service is None and nothing is checked. The contract is `prompts/ad-1346-m3e4b-store-write-checks.md`.
 
 **AD-1346 (2026-11-01), #1604 M3e4a -- 
 ```
@@ -1224,8 +1224,8 @@ AD-1346 M3e4b is the second part of D160's M3e4. The Ward Room's four content-wr
 - *D228 (the cut).* One slice: the five checks, the hand-off, the scope table and their tests. Rejected: the Ward Room and the episodic store in two slices.
 - *D229 and D230 (the census).* The three files are split into 18 (file, scope) rows: 5 checked, 13 of the ship's own records and copies. A new write scope in them fails the census; an AST test reads how the Ward Room's four checked scopes are reached.
 - *D231 and D232 (the checks).* The Ward Room's checks follow BF-903's guard and present the entry's author or voter id; the store's follows its policy check and presents the episode's one agent id, else None.
-- *D233 (the hand-off).* A class default of None and an instance `set_admission`, called from `ProbOSRuntime.start` for the runtime's own Ward Room and episodic store.
-- *D234 and D235.* A thread or post through a Ward Room that holds the episodic store counts twice (its episode's store too); shadow off costs a type comparison per check, plus the store's presented-id read.
+- *D233 (the hand-off).* A class default of None and an instance `set_admission`, called from `ProbOSRuntime.start` for the runtime's Ward Room when it is a `WardRoomService` and for its episodic store when it is an `EpisodicMemory`.
+- *D234 and D235.* Each checked write counts one `store_write` finding, and an episode that a Ward Room also stores for a thread, a post or a peer echo adds one finding at the episodic check; shadow off costs a type comparison per check, plus the store's presented-id read.
 - *Tests.* One new file (WM1 to WM5); WC1, WC3, SK7 and T16 updated.
 - *Residual, accepted.* Register R115 to R120 of the contract.
 - *Reversal.* Revert the M3e4b commits. The checks, the hand-off and the scope table go; the three files go back to `Pending("M3e4b")`.
@@ -1264,7 +1264,7 @@ AD-1346 M3e4b is the second part of D160's M3e4. The Ward Room's four content-wr
 **Expected to survive, among them:**
 - The runtime's two `isinstance` tests mutated to `True`: each runtime WM5 boots holds both objects.
 - `_sole_agent_id`'s `type(ids[0]) is str and ids[0]` conjuncts deleted: no case presents a non-`str` or empty id.
-- Either class default `_admission: object = None` deleted: each object these three files build is handed a service or None before it writes.
+- Either class default `_admission: object = None` deleted: each object these three files build is handed a service or None before its first checked-entry call.
 
 ## 11. Verified Against Codebase (2026-11-01, read on `fcac48c5`)
 
@@ -1318,9 +1318,9 @@ d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py -> CEILING AD-1356
 ## Absence Verified (2026-11-01, run on `fcac48c5`)
 
 ```
-CLAIM: the identifiers WM<n>, EV-<n>, D228 to D237, R115 to R120 and the new test file's name are unused
+CLAIM: none of the identifiers WM<n>, EV-<n>, D228 to D237 and R115 to R120 is defined anywhere, and the new test file's name is free
 RUN:   rg -n '\b(WB|WM|WX|WQ)[0-9]+\b' .; rg -l '\bEV-[0-9]+|\bD22[89]\b|\bD23[0-9]\b' .; rg -c '\bR11[5-9]\b|\bR12[0-9]\b' DECISIONS.md; Glob tests/test_ad1346_admission_store*.py
-FOUND: nothing; prompts/ad-1346-m3e4a-store-write-census.md (:835, its own claim that D217 to D229 are unused); 0; test_ad1346_admission_store_census.py only
+FOUND: nothing; prompts/ad-1346-m3e4a-store-write-census.md (:835, a mention and not a definition: its own claim that D217 to D229 are unused); 0; test_ad1346_admission_store_census.py only
 HOLDS: yes (WS<n> is taken: prompts/ad-1340-s1-archive-and-erase.md:1453 uses WS1)
 
 CLAIM: the new names are free in src and tests
@@ -1331,11 +1331,6 @@ HOLDS: yes
 CLAIM: no module under src/probos/tools names a checked entry
 RUN:   rg -n 'create_post|create_thread|episodic_memory\.store|\.endorse\(|edit_post' src/probos/tools
 FOUND: nothing
-HOLDS: yes
-
-CLAIM: no other src code calls MessageStore's or ThreadManager's checked methods through the service's attributes
-RUN:   rg -n '_messages\.(create_post|edit_post|endorse|...)|_threads\.(create_thread|...)' src/probos
-FOUND: ward_room/service.py:418, :471, :478, :484 (the four delegations), plus its other delegations (:423, :429, :435, :491, :502, :506, :145)
 HOLDS: yes
 
 CLAIM: the modules the two hand-offs reach name none of the four methods
@@ -1369,7 +1364,7 @@ HOLDS: yes (start() spans :2786 to :3792)
   - Adopted: the egress census's `references_outside` for WM2.
 - **External.** Skipped: this slice applies ProbOS's own sink pattern to two more objects. **Reference projects** (`docs/research/reference-projects.md`, judged on 2026-11-01): considered, not examined.
 - **Blind spots, decided:**
-  - a post counts twice, its episode too (D234, R115);
+  - a post that is also stored as an episode adds one finding (D234, R115);
   - writes outside any hold (R116);
   - system, Captain or other agents' ids inside a hold (R117);
   - reach paths the AST cannot see (D230, R118);
@@ -1399,18 +1394,20 @@ HOLDS: yes (start() spans :2786 to :3792)
 - The §12 checks hold.
 - The §10 campaign of record kills EV-1 to EV-13, each by its named test, after an unmutated baseline passes.
 - The broad gate passes once after M3, with its receipt.
-- `tests/test_ad1346_admission_store_writes.py` spawns no process, opens no socket, reads no environment variable and writes only under `tmp_path`: `rg -n "subprocess|socket|environ|getenv|LOCALAPPDATA" tests/test_ad1346_admission_store_writes.py` prints nothing (exit 1).
+- The new test file's own text names none of subprocess, socket, environ, getenv or LOCALAPPDATA: `rg -n "subprocess|socket|environ|getenv|LOCALAPPDATA" tests/test_ad1346_admission_store_writes.py` prints nothing (exit 1).
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. Corrections to this contract
 
-**A1 (2026-11-01, after M3e4a's merge; the orchestrator's mechanical amendment, contract-only).** A1-1 adds the merge record to the header: the merge, its tree, the files in which it differs from the read tree, the heading M3-02 anchors on at `:1178`, and the oracle's result on it. A1-2 deletes the sentence on the machine's local time from section 8's paragraph that begins `Substitute before committing`. A1-3 deletes the parenthesis after `HOLDS: yes` in the Absence Verified entry on the modules under `src/probos/tools`. A1-4 deletes the clause on an outside analogue and the clause on the reference projects from section 13's External bullet. A1-5 states what WM2's name check counts. D230 and the WM2 paragraph of the new file's module docstring (section 7.2, rewrapped to the same five lines) said the two classes are `named as code` only in `ward_room/service.py`; they now say the names `appear as ast.Name nodes` only there, which is what the test asserts. Section 11's result line for `MessageStore` and `ThreadManager` now lists every hit of its `rg`, among them the two `class` statements. A1-6 narrows the first line of section 9 to the behaviour of `check_at`, `check_ticket` and `hold`, and says that M1-13 to M1-15 only add the new call sites to three docstrings. A1-7 writes this paragraph. The pairs of sections 7 and 8 are unchanged, and so is the code of the new file.
+**A1 (2026-11-01, after M3e4a's merge; the orchestrator's mechanical amendment, contract-only).** A1-1 adds the merge record to the header: the merge, its tree, the files in which it differs from the read tree, the heading M3-02 anchors on at `:1178`, and the oracle's result on it. A1-2 deletes the sentence on the machine's local time from section 8's paragraph that begins `Substitute before committing`. A1-3 deletes the parenthesis after `HOLDS: yes` in the Absence Verified entry on the modules under `src/probos/tools`. A1-4 deletes the clause on an outside analogue and the clause on the reference projects from section 13's External bullet. A1-5 states what WM2's name check counts. D230 and the WM2 paragraph of the new file's module docstring (section 7.2, rewrapped to the same five lines) said the two classes are `named as code` only in `ward_room/service.py`; they now say the names `appear as ast.Name nodes` only there, which is what the test asserts. Section 11's result line for `MessageStore` and `ThreadManager` now lists every hit of its `rg`, among them the two `class` statements. A1-6 narrows the first line of section 9 to the behaviour of `check_at`, `check_ticket` and `hold`, and says that M1-13 to M1-15 only add the new call sites to three docstrings. A1-7 writes this paragraph. A1 changes none of the pairs of sections 7 and 8 and none of the new file's code.
+
+**A2 (2026-11-01, after review round 1; the orchestrator's amendment: each repair deletes a claim or states the condition the code has).** A2-1: D234, the DECISIONS bullet on D234 and D235, section 13's blind-spot bullet, R115 and the WM3 paragraph of the new file's module docstring no longer say that a thread or a post counts twice; they say that an episode the Ward Room also stores for a thread, a post or a peer echo adds one finding at the episodic check. A2-2: section 15's bullet on the new test file says what its `rg` establishes, that the file's text names none of five words, and no longer says that the file's tests spawn no process, read no environment variable and write only under `tmp_path`. A2-3: the PROGRESS paragraph, the DECISIONS bullet on D233 and the new file's module docstring say that the runtime hands the service to its Ward Room when it is a `WardRoomService` and to its episodic store when it is an `EpisodicMemory`, and the PROGRESS paragraph says that the episode's presented id may be none. A2-4: section 10's expected survivor on the class defaults says that each object is handed a service or None before its first checked-entry call, not before it writes. A2-5: the Absence Verified entry on the identifiers says that none is defined and marks its one hit as a mention, and the entry on calls through the service's attributes is deleted. A2-6 writes this paragraph and the last sentence of A1. A2 changes none of the pairs of section 7.1, M2-01 and M2-02 and none of the new file's code; the replacement text of M3-01 and M3-02 and the new file's module docstring carry A2-1 and A2-3.
 
 ## For the register (#1604)
 
 - **R110:** delivered by M3e4b (D228 to D236).
 - **R114:** advanced (D235). Measure with shadow on, before M3e5's period: `SELECT day, SUM(findings) FROM ticket_findings WHERE operation = 'store_write' GROUP BY day` on `admission_shadow.db`.
-- **R115:** a thread or post made through a Ward Room that holds the episodic store counts its entry's check and its episode's store, and a peer echo adds one (D234). A post through a registry tool also counts at `tool` (D224). M3e5 reads `store_write` findings as checked writes, not as posts or units of work (R108 extended).
+- **R115:** a thread or a post that a Ward Room holding the episodic store also stores as an episode counts its entry's check and its episode's store, and a stored peer echo adds one (D234). A post through a registry tool also counts at `tool` (D224). M3e5 reads `store_write` findings as checked writes, not as posts or units of work (R108 extended).
 - **R116:** a write outside any hold counts `ticket_missing`. `hold_at` is called at three entries: `agentic_dispatch.py:2714`, `cognitive_agent.py:7988`, `:8707`. M3e5 measures which writers write inside a hold before M7 decides anything.
 - **R117:** inside an agent's hold, a write presented as `"system"`, `"captain"`, `SHIP_COMPUTER_ID` or another agent's id counts `ticket_principal_mismatch`. M3e5 separates these from an agent writing as another.
 - **R118:** WM2 does not see:

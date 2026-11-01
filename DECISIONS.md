@@ -1182,8 +1182,8 @@ AD-1346 M3e4b is the second part of D160's M3e4. The Ward Room's four content-wr
 - *D228 (the cut).* One slice: the five checks, the hand-off, the scope table and their tests. Rejected: the Ward Room and the episodic store in two slices.
 - *D229 and D230 (the census).* The three files are split into 18 (file, scope) rows: 5 checked, 13 of the ship's own records and copies. A new write scope in them fails the census; an AST test reads how the Ward Room's four checked scopes are reached.
 - *D231 and D232 (the checks).* The Ward Room's checks follow BF-903's guard and present the entry's author or voter id; the store's follows its policy check and presents the episode's one agent id, else None.
-- *D233 (the hand-off).* A class default of None and an instance `set_admission`, called from `ProbOSRuntime.start` for the runtime's own Ward Room and episodic store.
-- *D234 and D235.* A thread or post through a Ward Room that holds the episodic store counts twice (its episode's store too); shadow off costs a type comparison per check, plus the store's presented-id read.
+- *D233 (the hand-off).* A class default of None and an instance `set_admission`, called from `ProbOSRuntime.start` for the runtime's Ward Room when it is a `WardRoomService` and for its episodic store when it is an `EpisodicMemory`.
+- *D234 and D235.* Each checked write counts one `store_write` finding, and an episode that a Ward Room also stores for a thread, a post or a peer echo adds one finding at the episodic check; shadow off costs a type comparison per check, plus the store's presented-id read.
 - *Tests.* One new file (WM1 to WM5); WC1, WC3, SK7 and T16 updated.
 - *Residual, accepted.* Register R115 to R120 of the contract.
 - *Reversal.* Revert the M3e4b commits. The checks, the hand-off and the scope table go; the three files go back to `Pending("M3e4b")`.
