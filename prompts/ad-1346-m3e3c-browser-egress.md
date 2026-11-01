@@ -73,7 +73,6 @@
     2. the engine start first, the CDP connect later (the second part is one statement and one keyword, and a review cycle of its own);
     3. this plus a check per navigation (its place is undecided and its count unbounded: register R106).
 - **D211 The place** (question 1). In `BrowserSession.start` and `BrowserSession.connect`, after the ended-session refusal and before `self._ensure_host()`.
-  - The two methods are where every `src` engine start and CDP connect passes (§1, Absence Verified), whichever caller reached `BrowserTool`.
   - The check runs in the task that awaits `start` or `connect`. A check in `_start_impl` or `_connect_impl` would run in the task `_initialize` creates (`session.py:201`) and, with BF-695's host, on the host loop (`:182-189`), where `check_ticket` hands the check to the service's loop as an off-loop check (`admission/service.py:235-241`).
   - A refused restart or reconnect is not checked; nothing is started.
   - Presented id: `self._agent_id`, the agent `BrowserTool.invoke` reads from its context (`tool.py:751`, passed at `:1116`) or the `agent_id` the bridge is given (`:1208`), as `run_command` presents its context's agent (M3e1's D164). A session is built for one agent (`session.py:104`, `:110`) and BF-749 keys it by agent (`tool.py:1140-1141`), unlike D164's utility agents, which present None.
@@ -91,7 +90,7 @@
     2. a class-level `BrowserSession.set_admission` from `ProbOSRuntime.start` (process-wide, register R102's shape, and a shutdown pair);
     3. a new constructor keyword on `BrowserTool` (same reach as 1, a wider signature).
 - **D213 What counts once and what twice** (question 3). Each effect point a unit of work reaches is checked once, there.
-  - A `BrowserTool.invoke` through the registry that creates a session is counted at `tool` (`registry.py:398`) and at `egress` (this slice), as a `run_command` call is counted at `tool` and at `subprocess` (M3e1's D164). `ticket_findings` (`admission/store.py:28`) then holds that call under the operation `tool` and its engine start under `egress`. A call on a live session is counted at `tool` only. BE2 pins both.
+  - A `BrowserTool.invoke` through the registry that creates a session is counted at `tool` (`registry.py:398`) and at `egress` (this slice), as a `run_command` call is counted at `tool` and at `subprocess` (M3e1's D164). `ticket_findings` (`admission/store.py:28`) then holds that call under the operation `tool` and its engine start under `egress`.
   - D206's rule (one request, one class) concerns one request reaching two classes' checks; here the tool call and the engine start are two operations.
   - Ranked:
     1. this;
@@ -115,9 +114,7 @@
 
 ## 5. Consumers of every value this changes
 
-- **The two `check_at` statements.** SK7 (via `egress_check_functions`), ES1, BE2 and BE3 read them.
 - **The bridge session's `_runtime`.** `BrowserSession.connect`'s check reads it; `session.py:255` is in `_start_impl`, which `connect` does not call.
-- **`EGRESS_SITES`' rows.** EN1, EN3, ES1 and `egress_check_functions` read them.
 - **`src` text.**
   - `tools/browser/session.py` gains `admission_service` and two imports of `probos.admission` (T16, M1-13, M1-14).
   - `tools/browser/tool.py` gains no `admission` text and none of `test_bf695_playwright_host.py:1035`'s four strings.
@@ -912,7 +909,7 @@ HOLDS: yes
 
 ## 14. Diff Reviewer: properties to verify
 
-1. **No answer changes.** Each new `check_at` statement's value is unused; the bridge factory's new keyword sets an attribute that `connect` and `_connect_impl` do not read; no existing statement of an edited function moves or changes.
+1. **No answer changes.** Each new `check_at` statement's value is unused.
 2. **Placement.**
    - In `start` the check follows the ended-session refusal and precedes `self._ensure_host()`; in `connect` likewise.
    - Each is a statement of its function's body.
@@ -948,6 +945,8 @@ A difference is a hard stop for the Architect, not a Builder edit.
 **A1 (2026-10-31, after the orchestrator's pre-build run; mechanical, contract only).** The run applied the 18 M1 pairs, the new file and the 2 tracker pairs by tool to M3e3b's candidate (0 failures; 12 files, +350 -25) and found one defect in this contract's own text. A1-1 removes the double backticks from the comment that M1-05 adds to the bridge factory (it now reads "for the egress check in BrowserSession.connect") and from EB-6's Line cell, and deletes the note under the table that described them: `s6_census.py` reads a Line cell as a code span and stopped at EB-6 ("the anchor occurs 0 times"). A1-2 deletes section 16's items 1 to 4, which the run measured: `tools/browser/session.py`, `tools/browser/tool.py` and `runtime.py` each import first in a fresh interpreter and after `probos.admission`; BE1 to BE3 pass against M1's source (3 passed) and with the ES and EN files (14 passed), and the new file collects 3 tests; the 22-file M1 gate passes 478 with 3 skips (the tests that need a real Playwright and Chromium), and the architecture, store-registry, seam-contract, config-facade, config-profile and config-reference checks pass with no baseline file changed; the campaign of section 10 kills EB-1 to EB-10 by their named tests (unmutated baseline 14 passed). A1-3 writes this paragraph.
 
 **A2 (2026-11-01, after M3e3b's merge; the orchestrator's mechanical amendment, contract-only).** A2-1 rewrites the sub-bullet on M3e3b's review in the header as the merge record: the merge, its tree, the two files in which it differs from the read tree, the heading M3-02 anchors on at `:1148`, and the oracle's result on it. A2-2 deletes the Absence Verified entry on the tests that read `session.py`'s or `tool.py`'s text: at its recorded tree T16 (`tests/test_ad1346_admission_service.py:611`) also reads both files' text and is not in the entry. A2-3 writes this paragraph.
+
+**A3 (2026-11-01, before review round 1; the orchestrator's mechanical amendment, contract-only).** A3-1 deletes the two clauses after the first in section 14's item 1. A3-2 deletes the first and third bullets of section 5. A3-3 deletes the last two sentences of the first sub-bullet of D213. A3-4 deletes the first sub-bullet of D211. The pairs of sections 7 and 8 are unchanged. A3-5 writes this paragraph.
 
 ## For the register (#1604)
 
