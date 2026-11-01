@@ -1116,9 +1116,10 @@ class BrowserTool:
             agent_id=agent_id,
             emit_event=self._emit_event,
             # BF-822: lets this session's route guard consult a standing
-            # approval before refusing a method-preserving redirect. Passed
-            # only here and NOT to the AD-1052b bridge factory, which attaches
-            # to the Captain's own browser and is deliberately unguarded.
+            # approval before refusing a method-preserving redirect.
+            # AD-1346 M3e3c (D212): the AD-1052b bridge factory passes it too,
+            # for the egress check in ``BrowserSession.connect``;
+            # ``_connect_impl`` installs no route guard.
             runtime=self._runtime,
         )
         self._sessions[new_id] = session
@@ -1206,6 +1207,7 @@ class BrowserTool:
         new_id = uuid.uuid4().hex
         session = self._session_factory(
             session_id=new_id, config=self._config, agent_id=agent_id, emit_event=self._emit_event,
+            runtime=self._runtime,  # AD-1346 M3e3c (D212): for the egress check in BrowserSession.connect
         )
         self._sessions[new_id] = session
         record = _SessionLifecycle(state=BrowserLifecycleState.CREATING, published=False)

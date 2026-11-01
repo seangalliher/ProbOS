@@ -204,12 +204,17 @@ def _claimed(intent: IntentMessage) -> IntentResult:
 
 
 def test_each_egress_sink_and_the_image_endpoint_hold_one_check_before_the_request() -> None:
-    """ES1 (D204 to D207; kills EH-8, EH-12, EH-13)."""
+    """ES1 (D204 to D207; AD-1346 M3e3c: D211, D214; kills EH-8, EH-12, EH-13, EB-3, EB-5, EB-7, EB-9)."""
     lines: dict[tuple[str, str], list[int]] = {}
     for path, scope, line, _primitive, _shape in egress_points():
         lines.setdefault((path, scope), []).append(line)
     sinks = [(site, cover) for site, (_n, cover) in EGRESS_SITES.items() if isinstance(cover, Sink)]
-    assert sorted(site for site, _cover in sinks) == [_FETCH_ROW, _VERIFY_ROW]
+    assert sorted(site for site, _cover in sinks) == [
+        _FETCH_ROW,
+        _VERIFY_ROW,
+        ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"),  # AD-1346 M3e3c
+        ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"),  # AD-1346 M3e3c
+    ]
     for (path, scope), cover in sinks:
         fn = function(path, cover.check)
         (call,) = [node for node in ast.walk(fn) if calls("check_at")(node)]
