@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from probos.admission.seam import check_at
-from probos.admission.taxonomy import EFFECT_SUBPROCESS
+from probos.admission.taxonomy import EFFECT_EGRESS, EFFECT_SUBPROCESS
 from probos.agents.http_fetch import safe_fetch_method
 from probos.execution.command_env import build_command_env
 from probos.execution.command_gate import CommandPolicyGate
@@ -527,6 +527,7 @@ class RedTeamAgent(BaseAgent):
                 ),
                 confidence=self.confidence,
             )
+        check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_EGRESS, presented_id=None)  # AD-1346 M3e3b: the egress sink, in shadow; it blocks nothing (D164: no principal)
         try:
             async with httpx.AsyncClient(timeout=4.0) as client:
                 response = await client.request(method, url)

@@ -18,14 +18,15 @@ module docstring lists what a static scan cannot see). Each (file, enclosing fun
 
 ``tests/test_ad1346_admission_effect_census.py`` checks the rows against the code (the Unreached rows' reach,
 ``unreached_references``: ``tests/test_ad1346_admission_subprocess_plumbing.py``, SP1), and SK7
-(``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions``.
+(``tests/test_ad1346_admission_ticket_sinks.py``) reads ``subprocess_sink_functions`` and, from AD-1346 M3e3b, ``egress_check_functions``.
 
 AD-1346 M3e3a: the egress class is read from a scan of its own, ``egress_points``, which parses every ``src`` module. A
 call whose callee is a name of ``EGRESS_PRIMITIVES``, as the module's absolute imports bind it, is one point; a call
 whose callee is not is one point for each argument, positional or keyword, that is. A name that no absolute import in
 the module binds is not resolved. Points are grouped by (file, enclosing scope), scoped as BF-892 scopes a launch, into
-the rows of ``EGRESS_SITES``, each with its count and one coverage: ``Pending``, ``System``, ``OutsideRuntime``,
-``OtherClass`` or ``ReachedOnlyFrom``. Among what the scan cannot see: a request made on a client built at another
+the rows of ``EGRESS_SITES``, each with its count and one coverage: ``Sink`` (AD-1346 M3e3b: its check function holds
+one ``check_at`` call for ``EFFECT_EGRESS``), ``Pending``, ``System``, ``OutsideRuntime``, ``OtherClass`` or
+``ReachedOnlyFrom``. Among what the scan cannot see: a request made on a client built at another
 point, a client a caller passes in, a name bound by anything but an absolute import, and a call inside a third-party
 library. ``imported_modules`` reads the same imports; ``IMPORTS_WITHOUT_PRIMITIVE`` lists the top-level modules among
 them, other than ``probos`` and the standard library's, that are the first component of no primitive's name.
@@ -61,7 +62,7 @@ EFFECT_CLASSES: Final[dict[str, str]] = {
     "model_call": "AD-1346 M3d3a: OpenAICompatibleClient.complete (SK7, SK8)",
     "tool": "AD-1346 M3d3a: ToolRegistry.check_and_invoke (SK7)",
     "subprocess": "AD-1346 M3e1, M3e2a and M3e2b: SUBPROCESS_SITES",
-    "egress": "AD-1346 M3e3a: EGRESS_SITES; its sinks, AD-1346 M3e3b",
+    "egress": "AD-1346 M3e3a: EGRESS_SITES; its sinks, AD-1346 M3e3b and M3e3c",
     "store_write": "AD-1346 M3e4",
 }
 #: The classes a member of ``TICKET_EFFECTS`` covers.
@@ -194,15 +195,16 @@ class ReachedOnlyFrom:
 _MODEL_GATEWAY_CHECK: Final = ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient.complete")
 
 #: (file, enclosing scope) -> (egress points there, coverage). AD-1346 M3e3a: D194, D195.
-EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideRuntime | OtherClass | ReachedOnlyFrom]]] = {
-    # Pending: agent or model text picks the destination or the content; AD-1346 M3e3b adds the sink.
-    ("src/probos/agents/http_fetch.py", "HttpFetchAgent._follow_and_fetch"): (1, Pending("M3e3b", "the http_fetch intent's URL, and fetch_governed's")),
-    ("src/probos/agents/red_team.py", "RedTeamAgent._verify_http_fetch"): (1, Pending("M3e3b", "the URL of the http_fetch intent it verifies")),
-    ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"): (1, Pending("M3e3b", "an agent's prompt to the image endpoint")),
-    ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"): (1, Pending("M3e3b", "the browser tool's engine")),
-    ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Pending("M3e3b", "the browser tool's engine, over CDP")),
+EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | Pending | System | OutsideRuntime | OtherClass | ReachedOnlyFrom]]] = {
+    # Sinks (AD-1346 M3e3b, D203 to D205): agent or model text picks the destination; the check function holds the check.
+    ("src/probos/agents/http_fetch.py", "HttpFetchAgent._follow_and_fetch"): (1, Sink("HttpFetchAgent._fetch_url", "None", service=_COMPONENT_SERVICE, via=("HttpFetchAgent._fetch_url_uncoalesced",))),
+    ("src/probos/agents/red_team.py", "RedTeamAgent._verify_http_fetch"): (1, Sink("RedTeamAgent._verify_http_fetch", "None")),
+    # Pending: the browser tool's engine; AD-1346 M3e3c adds its sink (D202).
+    ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"): (1, Pending("M3e3c", "the browser tool's engine")),
+    ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Pending("M3e3c", "the browser tool's engine, over CDP")),
     # Another delivered class checks the client's agent-attributed requests.
     ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client"): (1, OtherClass("model_call", _MODEL_GATEWAY_CHECK, "the model gateway's tier client; its endpoint probe is register R48's")),
+    ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"): (1, OtherClass("model_call", ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"), "an agent's prompt to the operator's image_gen tier, which bypasses the model gateway")),
     # System.
     ("src/probos/integrations/mcp_bridge/transport.py", "HttpTransport.__init__"): (1, System(SHIP, "an operator-approved MCP server over HTTP")),
     ("src/probos/integrations/mcp_bridge/mcp_oauth.py", "McpOAuthProvider.__init__"): (1, System(SHIP, "an MCP server's OAuth flow")),
@@ -265,6 +267,12 @@ def launch_lines() -> dict[tuple[str, str], list[int]]:
 def subprocess_sink_functions() -> set[tuple[str, str]]:
     """(file, function) of each subprocess sink's check."""
     return {(path, cover.check) for (path, _scope), (_count, cover) in SUBPROCESS_SITES.items() if isinstance(cover, Sink)}
+
+
+def egress_check_functions() -> set[tuple[str, str]]:
+    """AD-1346 M3e3b: (file, function) of each egress sink's check and of each other-class row's check."""
+    sinks = {(path, cover.check) for (path, _scope), (_count, cover) in EGRESS_SITES.items() if isinstance(cover, Sink)}
+    return sinks | {cover.check for _count, cover in EGRESS_SITES.values() if isinstance(cover, OtherClass)}
 
 
 def census_problems(found: dict[tuple[str, str], int], listed: dict[tuple[str, str], tuple[int, object]]) -> list[str]:

@@ -1,17 +1,18 @@
 """AD-1346 M3e3a (#1604): the census of #1604 property 1's egress class.
 
 ``tests/fixtures/ad1346_effect_census.py`` holds the census: ``egress_points`` scans ``src`` for egress points by
-(file, enclosing scope), and ``EGRESS_SITES`` gives each (file, scope) one coverage. No sink is added by AD-1346 M3e3a:
-each pending row's sink is AD-1346 M3e3b's.
+(file, enclosing scope), and ``EGRESS_SITES`` gives each (file, scope) one coverage. AD-1346 M3e3b adds two egress
+sinks and checks the image endpoint as a model call (``tests/test_ad1346_admission_egress_sinks.py``); the two pending
+rows' sinks are AD-1346 M3e3c's.
 
-- EN1  every (file, scope) the scan finds is a row with its count, and every row is one: 43 points in 40 rows, 5
-       pending, 1 of another class, 28 system in 27 rows, 2 reached only from named files and 7 command-line in 5 rows.
+- EN1  every (file, scope) the scan finds is a row with its count, and every row is one: 43 points in 40 rows, 2 sink,
+       2 pending, 2 of another class, 28 system in 27 rows, 2 reached only from named files and 7 command-line in 5 rows.
 - EN2  the scan on a synthetic module: an import alias, a lambda, a nested function, an argument, a keyword argument, a
        from-import, a function's own import and a module-level call are points; a parameter named like a module, a
        method of an attribute, an annotation and a name only a relative import binds are not.
-- EN3  the pending rows, each owned by ``M3e3b``.
-- EN4  the other-class row names a delivered class other than egress, in its own file, and its check function holds one
-       ``check_at`` call whose effect is that class's constant.
+- EN3  the pending rows, each owned by ``M3e3c`` (AD-1346 M3e3b).
+- EN4  each other-class row names a delivered class other than egress, in its own file, and its check function holds
+       one ``check_at`` call whose effect is that class's constant; AD-1346 M3e3b adds the image endpoint's row.
 - EN5  for each row reached only from named files, ``unreached_references`` finds a reference to its names, and every
        one it finds is in a file under the row's ``allowed`` prefixes.
 - EN6  the system rows' principal is ``system:ship_computer``, a member of ``SYSTEM_PRINCIPALS``; the command-line rows
@@ -40,6 +41,7 @@ from tests.fixtures.ad1346_effect_census import (
     OutsideRuntime,
     Pending,
     ReachedOnlyFrom,
+    Sink,
     System,
     census_problems,
     egress_counts,
@@ -58,11 +60,11 @@ def test_every_egress_point_is_a_row_and_every_row_a_point() -> None:
     """EN1 (D194, D195; kills EG-3, EG-5, EG-7): a new, removed or recounted egress point fails here."""
     found = egress_counts()
     assert census_problems(found, EGRESS_SITES) == []
-    kinds = (Pending, OtherClass, System, ReachedOnlyFrom, OutsideRuntime)
+    kinds = (Sink, Pending, OtherClass, System, ReachedOnlyFrom, OutsideRuntime)  # AD-1346 M3e3b: Sink
     points = {kind.__name__: sum(n for n, cover in EGRESS_SITES.values() if type(cover) is kind) for kind in kinds}
     rows = {kind.__name__: sum(type(cover) is kind for _n, cover in EGRESS_SITES.values()) for kind in kinds}
-    assert points == {"Pending": 5, "OtherClass": 1, "System": 28, "ReachedOnlyFrom": 2, "OutsideRuntime": 7}, points
-    assert rows == {"Pending": 5, "OtherClass": 1, "System": 27, "ReachedOnlyFrom": 2, "OutsideRuntime": 5}, rows
+    assert points == {"Sink": 2, "Pending": 2, "OtherClass": 2, "System": 28, "ReachedOnlyFrom": 2, "OutsideRuntime": 7}, points
+    assert rows == {"Sink": 2, "Pending": 2, "OtherClass": 2, "System": 27, "ReachedOnlyFrom": 2, "OutsideRuntime": 5}, rows
     assert sum(found.values()) == 43
 
 
@@ -109,23 +111,23 @@ def test_the_egress_scan_on_synthetic_modules() -> None:
     ]
 
 
-def test_each_pending_egress_row_is_owned_by_m3e3b() -> None:
-    """EN3 (D195, D199)."""
+def test_each_pending_egress_row_is_owned_by_m3e3c() -> None:
+    """EN3 (D195, D199; AD-1346 M3e3b: D202)."""
     pending = sorted(site for site, (_n, cover) in EGRESS_SITES.items() if isinstance(cover, Pending))
     assert pending == [
-        ("src/probos/agents/http_fetch.py", "HttpFetchAgent._follow_and_fetch"),
-        ("src/probos/agents/red_team.py", "RedTeamAgent._verify_http_fetch"),
-        ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"),
         ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"),
         ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"),
     ]
-    assert {cover.owner for _n, cover in EGRESS_SITES.values() if isinstance(cover, Pending)} == {"M3e3b"}
+    assert {cover.owner for _n, cover in EGRESS_SITES.values() if isinstance(cover, Pending)} == {"M3e3c"}
 
 
 def test_an_other_class_row_names_a_delivered_class_whose_check_its_function_holds() -> None:
-    """EN4 (D195; kills EG-8)."""
+    """EN4 (D195; AD-1346 M3e3b: D206; kills EG-8, EH-15)."""
     rows = [(site, cover) for site, (_n, cover) in EGRESS_SITES.items() if isinstance(cover, OtherClass)]
-    assert [site for site, _cover in rows] == [("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client")]
+    assert sorted(site for site, _cover in rows) == [
+        ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"),
+        ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client"),
+    ]
     for (path, _scope), cover in rows:
         assert cover.effect_class in DELIVERED and cover.effect_class != "egress", cover
         assert cover.check[0] == path, cover
