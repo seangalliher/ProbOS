@@ -1,0 +1,179 @@
+"""AD-1346 M3e4a (#1604): the census of #1604 property 1's store-write class: its SQL write statements.
+
+``sql_write_scan`` parses one module and reports each SQL write statement in it: a ``str`` constant that is not a
+docstring, or an f-string read with each placeholder as ``_``, whose text ``SQL_WRITE`` matches at its start after
+leading whitespace. A point is (enclosing scope, line), scoped as the egress scan scopes one. ``sql_write_files`` runs
+the scan over every ``src`` module, and ``STORE_WRITE_FILES`` gives each file that holds a point one coverage, a
+``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row is a file and
+carries no count (D220).
+
+Among what the scan cannot see: a statement whose text starts in a part that is not a constant (a name, a call, a
+placeholder), SQL not in upper case, a string inside an f-string's placeholder, and the other store-write primitives,
+among them a ChromaDB write, a file write and a JetStream publish (register R111).
+``tests/test_ad1346_admission_store_census.py`` checks the rows against the code.
+"""
+
+from __future__ import annotations
+
+import ast
+import functools
+import re
+from typing import Final
+
+from tests.fixtures.ad1346_effect_census import SHIP, OutsideRuntime, Pending, System, src_sources
+
+#: AD-1346 M3e4a (D219): the starts of a SQL write statement, in upper case.
+SQL_WRITE_STARTS: Final = (
+    r"INSERT\s+(?:OR\s+[A-Z]+\s+)?INTO",
+    r"REPLACE\s+INTO",
+    r"UPDATE\s+\w+\s+SET",
+    r"DELETE\s+FROM",
+)
+#: Matched at the start of a string's text, after leading whitespace.
+SQL_WRITE: Final = re.compile(r"\s*(?:" + "|".join(SQL_WRITE_STARTS) + r")(?:\s|$)")
+
+_UNCLASSIFIED: Final = Pending("M3e4c", "unclassified: M3e4c enumerates the file's production writers")
+
+
+def _docstrings(tree: ast.Module) -> set[int]:
+    """The ids of the docstring constants of the module and of each class and function in it."""
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                found.add(id(first.value))
+    return found
+
+
+class _SqlWriteScan(ast.NodeVisitor):
+    def __init__(self, docstrings: set[int]) -> None:
+        self.docstrings = docstrings
+        self.scope: list[str] = []
+        self.points: list[tuple[str, int]] = []
+
+    def _enter(self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    visit_ClassDef = visit_FunctionDef = visit_AsyncFunctionDef = _enter
+
+    def _point(self, node: ast.expr, text: str) -> None:
+        if SQL_WRITE.match(text):
+            self.points.append((".".join(self.scope) or "<module>", node.lineno))
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and id(node) not in self.docstrings:
+            self._point(node, node.value)
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
+        # The placeholders are not visited: a string inside one is not a point.
+        self._point(node, "".join(part.value if isinstance(part, ast.Constant) else "_" for part in node.values))
+
+
+def sql_write_scan(source: str, filename: str = "<sql>") -> list[tuple[str, int]]:
+    """(scope, line) of each SQL write statement in one module's source (AD-1346 M3e4a, D219)."""
+    tree = ast.parse(source, filename=filename)
+    scan = _SqlWriteScan(_docstrings(tree))
+    scan.visit(tree)
+    return scan.points
+
+
+@functools.lru_cache(maxsize=1)
+def sql_write_points() -> tuple[tuple[str, str, int], ...]:
+    """(file, scope, line) of each SQL write statement in ``src``."""
+    return tuple((rel, *point) for rel, source in src_sources().items() for point in sql_write_scan(source, rel))
+
+
+def sql_write_files() -> frozenset[str]:
+    """The ``src`` files that hold a SQL write statement."""
+    return frozenset(path for path, _scope, _line in sql_write_points())
+
+
+#: AD-1346 M3e4a (D220, D221): each ``src`` file that holds a SQL write statement -> its coverage.
+STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
+    # Agent-attributed (D218): M3e4b adds the checks and splits these files by scope (register R110).
+    "src/probos/cognitive/episodic.py": Pending("M3e4b", "episodes, among its writes"),
+    "src/probos/ward_room/messages.py": Pending("M3e4b", "posts, among its writes"),
+    "src/probos/ward_room/threads.py": Pending("M3e4b", "threads, among its writes"),
+    # Unclassified (D221): M3e4c reads each file's production writers (register R112).
+    "src/probos/artifacts/__init__.py": _UNCLASSIFIED,
+    "src/probos/assignment.py": _UNCLASSIFIED,
+    "src/probos/capability_request.py": _UNCLASSIFIED,
+    "src/probos/cognitive/clinical_audit_store.py": _UNCLASSIFIED,
+    "src/probos/cognitive/clinical_notes_store.py": _UNCLASSIFIED,
+    "src/probos/cognitive/counselor.py": _UNCLASSIFIED,
+    "src/probos/cognitive/elastic_team_store.py": _UNCLASSIFIED,
+    "src/probos/cognitive/journal.py": _UNCLASSIFIED,
+    "src/probos/cognitive/participant_index.py": _UNCLASSIFIED,
+    "src/probos/cognitive/procedure_challenges.py": _UNCLASSIFIED,
+    "src/probos/cognitive/procedure_store.py": _UNCLASSIFIED,
+    "src/probos/cognitive/self_distillation/prober.py": _UNCLASSIFIED,
+    "src/probos/cognitive/standing_interest_store.py": _UNCLASSIFIED,
+    "src/probos/cognitive/workflow_cron.py": _UNCLASSIFIED,
+    "src/probos/cognitive/working_memory_store.py": _UNCLASSIFIED,
+    "src/probos/crew_profile.py": _UNCLASSIFIED,
+    "src/probos/directive_store.py": _UNCLASSIFIED,
+    "src/probos/fault_issue_filings.py": _UNCLASSIFIED,
+    "src/probos/fault_report.py": _UNCLASSIFIED,
+    "src/probos/holodeck/scenarios.py": _UNCLASSIFIED,
+    "src/probos/holodeck/team_simulations.py": _UNCLASSIFIED,
+    "src/probos/persistent_tasks.py": _UNCLASSIFIED,
+    "src/probos/routers/scheduled_tasks.py": _UNCLASSIFIED,
+    "src/probos/skill_request.py": _UNCLASSIFIED,
+    "src/probos/task_sessions/__init__.py": _UNCLASSIFIED,
+    "src/probos/threads/__init__.py": _UNCLASSIFIED,
+    "src/probos/ward_room/channels.py": _UNCLASSIFIED,
+    "src/probos/workforce.py": _UNCLASSIFIED,
+    # System (D221).
+    "src/probos/acm.py": System(SHIP, "lifecycle and commissioning records"),
+    "src/probos/admission/store.py": System(SHIP, "admission_shadow.db; the admission service's own record is not checked (D218)"),
+    "src/probos/agent_stop.py": System(SHIP, "the Captain's stop orders; the stop service's own record is not checked (D218)"),
+    "src/probos/approval_authority.py": System(SHIP, "approval authority records"),
+    "src/probos/clearance_grants.py": System(SHIP, "clearance grants"),
+    "src/probos/cognitive/activation_tracker.py": System(SHIP, "memory activation records"),
+    "src/probos/cognitive/circuit_breaker_history_store.py": System(SHIP, "circuit breaker history"),
+    "src/probos/cognitive/episode_archive.py": System(SHIP, "copies of episodes leaving live memory (D218)"),
+    "src/probos/cognitive/eviction_audit.py": System(SHIP, "the episode eviction audit"),
+    "src/probos/cognitive/intent_grants.py": System(SHIP, "intent grants"),
+    "src/probos/cognitive/profile_qualification_store.py": System(SHIP, "profile qualification records"),
+    "src/probos/cognitive/qualification.py": System(SHIP, "qualification records"),
+    "src/probos/cognitive/repair_evidence_store.py": System(SHIP, "repair evidence"),
+    "src/probos/cognitive/retrieval_practice.py": System(SHIP, "retrieval practice schedules"),
+    "src/probos/cognitive/schema_versions.py": System(SHIP, "schema versions"),
+    "src/probos/cognitive/skill_catalog.py": System(SHIP, "the skill catalog"),
+    "src/probos/cognitive/skill_grants.py": System(SHIP, "skill grants"),
+    "src/probos/consensus/trust.py": System(SHIP, "trust records"),
+    "src/probos/continue_extension_permits.py": System(SHIP, "continue-extension permits"),
+    "src/probos/decision_pre_clearance.py": System(SHIP, "decision pre-clearances"),
+    "src/probos/economic_calibration.py": System(SHIP, "economic calibration records"),
+    "src/probos/execution/authority.py": System(SHIP, "the execution authority's records"),
+    "src/probos/execution/command_approvals.py": System(SHIP, "command approvals"),
+    "src/probos/federation/hebbian_map.py": System(SHIP, "federation Hebbian weights"),
+    "src/probos/federation_envelope_store.py": System(SHIP, "federation envelopes"),
+    "src/probos/identity.py": System(SHIP, "identity records"),
+    "src/probos/identity_key_binding.py": System(SHIP, "identity key bindings"),
+    "src/probos/identity_transfer_marks.py": System(SHIP, "identity transfer marks"),
+    "src/probos/integrations/mcp_bridge/department_grants.py": System(SHIP, "MCP department grants"),
+    "src/probos/integrations/mcp_bridge/risk.py": System(SHIP, "MCP risk records"),
+    "src/probos/integrations/mcp_bridge/store.py": System(SHIP, "the MCP bridge store"),
+    "src/probos/knowledge/archive_ledger.py": System(SHIP, "the archive ledger"),
+    "src/probos/knowledge/archive_store.py": System(SHIP, "promoted copies, with their author's provenance (D218)"),
+    "src/probos/knowledge/edges.py": System(SHIP, "knowledge edges"),
+    "src/probos/knowledge/rejection_cache.py": System(SHIP, "dream rejections"),
+    "src/probos/knowledge/semantic_store.py": System(SHIP, "the Captain's work layer, with copied episode text (D218)"),
+    "src/probos/mesh/routing.py": System(SHIP, "routing records"),
+    "src/probos/perception/wm_store.py": System(SHIP, "the perception store"),
+    "src/probos/security/audit.py": System(SHIP, "the audit log"),
+    "src/probos/security/audit_log.py": System(SHIP, "the assistant audit log"),
+    "src/probos/security/pairing/store.py": System(SHIP, "pairings"),
+    "src/probos/service_profile.py": System(SHIP, "service profiles"),
+    "src/probos/skill_framework.py": System(SHIP, "skill records"),
+    "src/probos/substrate/event_log.py": System(SHIP, "the event log"),
+    "src/probos/tools/action_approvals.py": System(SHIP, "action approvals"),
+    "src/probos/tools/permissions.py": System(SHIP, "tool permissions"),
+    "src/probos/tools/work_permits.py": System(SHIP, "work permits"),
+    # The operator's command line (D167).
+    "src/probos/__main__.py": OutsideRuntime("probos reset's eviction audit row"),
+}
