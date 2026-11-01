@@ -203,7 +203,7 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideR
     ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Pending("M3e3b", "the browser tool's engine, over CDP")),
     # Another delivered class checks the client's agent-attributed requests.
     ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client"): (1, OtherClass("model_call", _MODEL_GATEWAY_CHECK, "the model gateway's tier client; its endpoint probe is register R48's")),
-    # System: the operator, the Captain or a federation peer picks the destination.
+    # System.
     ("src/probos/integrations/mcp_bridge/transport.py", "HttpTransport.__init__"): (1, System(SHIP, "an operator-approved MCP server over HTTP")),
     ("src/probos/integrations/mcp_bridge/mcp_oauth.py", "McpOAuthProvider.__init__"): (1, System(SHIP, "an MCP server's OAuth flow")),
     ("src/probos/channels/matrix_client.py", "MatrixClient.__init__"): (1, System(SHIP, "the operator's Matrix channel")),
@@ -215,7 +215,7 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideR
     ("src/probos/channels/gmail_adapter.py", "GmailAdapter._send_sync"): (1, System(SHIP, "the operator's Gmail SMTP")),
     ("src/probos/channels/discord_adapter.py", "DiscordAdapter.start"): (1, System(SHIP, "the operator's Discord bot")),
     ("src/probos/channels/discord_adapter.py", "DiscordAdapter._run_with_error_handling"): (1, System(SHIP, "the operator's Discord bot")),
-    ("src/probos/consultation/delivery.py", "GitHubAdapter._default_http_post"): (1, System(SHIP, "a Captain-approved consultation delivery")),
+    ("src/probos/consultation/delivery.py", "GitHubAdapter._default_http_post"): (1, System(SHIP, "a consultation delivery")),
     ("src/probos/startup/finalize.py", "_wire_repair_dispatcher"): (1, System(SHIP, "the repair pipeline's GitHub issue client")),
     ("src/probos/federation/attachment_fetch.py", "fetch_remote_attachment"): (1, System(SHIP, "a federation peer's attachment")),
     ("src/probos/federation/attachment_fetch.py", "fetch_remote_attachment_signed"): (1, System(SHIP, "a federation peer's attachment")),
@@ -235,7 +235,7 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideR
     ("src/probos/federation/a2a/client.py", "A2AClient.__init__"): (1, ReachedOnlyFrom(("A2AClient",), ("src/probos/federation/a2a/__init__.py",), "no src module but its package names it")),
     ("src/probos/provider_setup.py", "_probe_client"): (1, ReachedOnlyFrom(("provider_setup",), OUTSIDE_RUNTIME, "the setup and doctor probes")),
     # The operator's command line (D167).
-    ("src/probos/__main__.py", "_ensure_ollama"): (3, OutsideRuntime("the local Ollama, before boot")),
+    ("src/probos/__main__.py", "_ensure_ollama"): (3, OutsideRuntime("the Ollama, before boot")),
     ("src/probos/__main__.py", "_check_nats._probe"): (1, OutsideRuntime("the NATS server, before boot")),
     ("src/probos/__main__.py", "_detect_llm_providers"): (1, OutsideRuntime("probos init's provider detection")),
     ("src/probos/doctor/checks/federation_check.py", "_FederationCheck.run"): (1, OutsideRuntime("probos doctor's federation check")),
