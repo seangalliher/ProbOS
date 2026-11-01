@@ -100,7 +100,7 @@
   - M3e4b adds a per-scope sub-table for its three files, since `ward_room/messages.py` also writes memberships and credibility.
   - Ranked:
     1. this;
-    2. (file, enclosing scope) with counts, as the egress census does (the 460 lines span far more scopes than that census's 40 rows, and every store edit would move a count);
+    2. (file, enclosing scope) with counts, as the egress census does (the 460 lines span far more scopes than that census's 40 rows);
     3. one row per declared store (needs a write-to-store map the registry does not hold).
 - **D221 The classification** (question 7).
   - `Pending("M3e4b")`: `ward_room/messages.py`, `ward_room/threads.py`, `cognitive/episodic.py`.
@@ -131,7 +131,6 @@
 - **D225 Cost** (question 6; measured in M3e4b, register R114).
   - Shadow off: `ProbOSRuntime.start` builds no service when `admission.shadow_enabled` is false (`runtime.py:2926`, `:2970`). `check_at` then does one type comparison and returns (`seam.py:54`).
   - Shadow on: a carrier read, a principal resolve, a registry check and a recorder offer (`service.py:236-264`).
-  - M3e4a adds no runtime work.
 - **D226 Tests** (question 8).
   - M3e4a: WC1 to WC4, and the updates to EC1, EC7 and K1.
   - M3e4b:
@@ -705,7 +704,7 @@ def test_the_system_and_command_line_rows_and_two_shapes_the_scan_finds_in_src()
 - the paragraph head `**AD-1346 (2026-11-01), #1604 M3e4a -- ` in M3-01's REPLACE;
 - the heading `### AD-1346 M3e4a -- the store-write effect and its SQL census (2026-11-01, #1604)` in M3-02's REPLACE.
 
-Substitute before committing. The machine's local time is UTC-6, so its date changes at 06:00Z. M3-01's SEARCH is M3e3c's head as built on `a078e79c`. If M3e3c merges under another date, use that date in the SEARCH. No other deviation is permitted.
+Substitute before committing. M3-01's SEARCH is M3e3c's head as built on `a078e79c`. If M3e3c merges under another date, use that date in the SEARCH. No other deviation is permitted.
 
 Then regenerate the ledger with `python -P scripts/gen_ad_ledger.py` (write mode) and commit both files as the tool writes them.
 
@@ -784,7 +783,7 @@ AD-1346 M3e4a is the first part of D160's M3e4. It adds the work-ticket effect `
 **Expected to survive, among them:**
 - `(?:\s|$)` deleted from `SQL_WRITE`: no case distinguishes a start followed by a word character.
 - `[A-Z]+` in the `INSERT OR` start mutated to `\w+`: no case has a lower-case conflict word.
-- Removing `@functools.lru_cache(maxsize=1)`: it affects time only.
+- Removing `@functools.lru_cache(maxsize=1)`.
 
 ## 11. Verified Against Codebase (2026-11-01, read on `a078e79c`)
 
@@ -906,6 +905,8 @@ HOLDS: yes (the upper-case, start-anchored scan loses none of these shapes on th
 **A1 (2026-11-01, after the orchestrator's pre-build run; mechanical, contract only).** The run applied the 12 M1 pairs, the two new files and the 2 tracker pairs by tool to M3e3c's candidate (0 failures) and measured what this section's four items had left open: `sql_write_files()` equals the rows' 79 files and WC1 to WC4 pass (4 passed alone, 21 with the effect and egress census files; the new file collects 4 tests); WC1 to WC4 take 7.8 seconds together; the M1 gate (10 files) passes 118; `check_store_registry.py --check` and `check_architecture_principles.py --check` pass with no baseline file changed; the campaign of section 10 kills EW-1 to EW-12 by their named tests (unmutated baseline 29 passed). A1-1 deletes the `ruff check` bullet of section 12. A1-2 replaces this section's four items by this paragraph. A1-3 deletes the last sub-bullet of section 5's first bullet, a closed list of the tests that pin or read `TICKET_EFFECTS`; `test_ad1346_admission_ticket_issue.py:86` and `test_ad1346_admission_ticket_record.py:112` read it too. A1-4 deletes the header bullet that named M3e3c files this contract neither edits nor depends on: EN4 reads `DELIVERED`, which M1-07 edits. A1-5 writes this paragraph. The Architect's amendment of the same day, made on the orchestrator's evidence that three `System` rows hold copies of agent content (D218), is in sections 3, 7.2, 8, 11 and 13.
 
 **A2 (2026-11-01, after M3e3c's merge; the orchestrator's mechanical amendment, contract-only).** A2-1 adds the merge record to the header: the merge, its tree, the files in which it differs from the read tree, the heading M3-02 anchors on at `:1162`, and the oracle's result on it. A2-2 weakens the first sub-bullet of section 2's census. A2-3 deletes the pointer `(§11)` after `credibility` in D220. A2-4 deletes the first sentence of section 13's reference-projects bullet. A2-5 deletes `delete` from R111's list of the ChromaDB calls in `cognitive/episodic.py`. A2-6 writes this paragraph. The pairs of sections 7 and 8 are unchanged.
+
+**A3 (2026-11-01, after review round 1; the orchestrator's mechanical amendment, contract-only).** A3-1 deletes the clause `and every store edit would move a count` from D220's second ranked option. A3-2 deletes D225's last sub-bullet. A3-3 deletes the sentence on the machine's local time from section 8's paragraph that begins `Substitute before committing`. A3-4 deletes `: it affects time only` from section 10's third expected survivor. The pairs of sections 7 and 8 are unchanged. A3-5 writes this paragraph.
 
 ## For the register (#1604)
 
