@@ -1168,11 +1168,6 @@ RUN:   Grep "dispatch_image_gen|image_gen_dispatch" src
 FOUND: reply_pipeline.py:927 (comment), :929 (import), :931; image_gen_dispatch.py:116 (def); comments doctor/checks/llm_check.py:64, knowledge/erasure.py:43, cognitive/llm_client.py:44; provider_setup.py:41, :57 (is_image_gen_tier_configured)
 HOLDS: yes
 
-CLAIM: the tests that read the edited modules' source are the four found; the new text trips none
-RUN:   Grep "getsource\((HttpFetchAgent|RedTeamAgent|dispatch_image_gen|image_gen)|agents/http_fetch\.py|agents\" / \"http_fetch|\"http_fetch\.py\"|image_gen_dispatch\.py\"|\"red_team\.py\"" tests
-FOUND: test_ad152_regressions.py:88 (first timeout= number); test_ad730_3_agent_image_gen.py:399 (strings at :403-412); test_bf772_fetch_failures_are_honest.py:297 (keys at :299); test_ad1344_constitution_write_refusal.py:760 (a write-site row); the census fixture and EN3 (rows)
-HOLDS: yes: no new line holds "timeout", ":403-412"'s strings, or removes ":299"'s keys
-
 CLAIM: no test pins the whole set of ProbOSRuntime.start's set_admission calls
 RUN:   Grep "set_admission" tests
 FOUND: membership assertions BT1 (test_ad1346_admission_build_test_sink.py:218) and SP3 (test_ad1346_admission_subprocess_plumbing.py:231); other hits call it on doubles
@@ -1260,6 +1255,8 @@ HOLDS: yes
 **A1 (2026-10-31, after the orchestrator's pre-build run; mechanical, contract only).** The run applied the 30 M1 pairs, the new file and the 2 tracker pairs by tool to M3e3a's candidate (0 failures; 15 files, +449 -36) and found three defects in this contract's own text. A1-1 corrects the Anchors paragraph to "32 pairs (M1 30, M3 2)" and deletes the parenthetical after M1-30, which gave the M1 count as 29 and told the Builder that its own count of 30 was a hard stop. A1-2 replaces the shorthand "(EH-n's line)" in section 10's Line cells by "the EH-n line", the form `s6_census.py` reads (it stopped at the shorthand), and A1-3 rewrites the sentence that names the rows sharing a line: EH-1, EH-2, EH-3 and EH-11; EH-7 and EH-8; EH-9 and EH-10. A1-4 deletes section 17's items 2 to 5, which the run measured: the architecture check exits 0 with `srp-size=92, layer-import=0, db-connect=30, unowned-task=13`; `http_fetch`, `red_team`, `image_gen_dispatch`, `runtime` and `shutdown` each import first in a fresh interpreter and after `probos.admission`; ES1 to ES4 pass with the other 17 tests of their three files (21 passed, and the new file collects 4); and the 21-file M1 gate passes 447. A1-5 renumbers section 17 and writes this paragraph.
 
 **A2 (2026-10-31, after M3e3a's merge; the orchestrator's mechanical amendment, contract-only).** A2-1 adds the header bullet "The M3e3a merge" after the bullet on the files M3e3a writes: the merge, its tree, the five files in which it differs from the read tree, the heading M3-02 anchors on at `:1134`, and the oracle's result on it. A2-2 deletes section 17's item 1, which that oracle measured, and renumbers the other two. A2-3 writes this paragraph.
+
+**A3 (2026-10-31, after review round 1; the orchestrator's amendment, contract only).** A3-1 deletes the Absence Verified entry that claimed the tests that read the edited modules' source are the four its grep found (its CLAIM, RUN, FOUND and HOLDS lines): tests that walk `src` read those modules too, and the grep does not find them. A3-2 writes this paragraph.
 
 ## 17. Claims not yet confirmed
 
