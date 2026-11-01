@@ -199,9 +199,9 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | Pending | System | O
     # Sinks (AD-1346 M3e3b, D203 to D205): agent or model text picks the destination; the check function holds the check.
     ("src/probos/agents/http_fetch.py", "HttpFetchAgent._follow_and_fetch"): (1, Sink("HttpFetchAgent._fetch_url", "None", service=_COMPONENT_SERVICE, via=("HttpFetchAgent._fetch_url_uncoalesced",))),
     ("src/probos/agents/red_team.py", "RedTeamAgent._verify_http_fetch"): (1, Sink("RedTeamAgent._verify_http_fetch", "None")),
-    # Pending: the browser tool's engine; AD-1346 M3e3c adds its sink (D202).
-    ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"): (1, Pending("M3e3c", "the browser tool's engine")),
-    ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Pending("M3e3c", "the browser tool's engine, over CDP")),
+    # Sinks (AD-1346 M3e3c, D211 to D214): the browser tool's engine; the check function holds the check, before the engine starts or connects.
+    ("src/probos/tools/browser/session.py", "BrowserSession._start_impl"): (1, Sink("BrowserSession.start", "self._agent_id", via=("BrowserSession._start_and_record",))),
+    ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Sink("BrowserSession.connect", "self._agent_id")),
     # Another delivered class checks the client's agent-attributed requests.
     ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client"): (1, OtherClass("model_call", _MODEL_GATEWAY_CHECK, "the model gateway's tier client; its endpoint probe is register R48's")),
     ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"): (1, OtherClass("model_call", ("src/probos/cognitive/image_gen_dispatch.py", "dispatch_image_gen"), "an agent's prompt to the operator's image_gen tier, which bypasses the model gateway")),
