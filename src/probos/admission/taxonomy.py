@@ -25,6 +25,9 @@ SEAMS: Final[frozenset[str]] = STOP_SEAMS | EFFECT_SEAMS
 #: AD-1346 M3e1 (D161): the effect a subprocess sink checks a work ticket for, a member of ``TICKET_EFFECTS``. It is not
 #: a seam: no verdict names it, so ``SEAMS`` and the verdicts' per-day bounds do not move. Append-only, as the codes are.
 EFFECT_SUBPROCESS: Final = "subprocess"
+#: AD-1346 M3e3a (D196): the effect an egress sink checks a work ticket for, a member of ``TICKET_EFFECTS`` and not a seam,
+#: as ``EFFECT_SUBPROCESS`` is. Append-only.
+EFFECT_EGRESS: Final = "egress"
 
 #: v1 (D20): the work the stop seams admit, plus effect-point calls whose unit is not yet known.
 WORK_KINDS: Final[tuple[str, ...]] = (

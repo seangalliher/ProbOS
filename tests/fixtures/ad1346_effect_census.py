@@ -50,11 +50,11 @@ EFFECT_CLASSES: Final[dict[str, str]] = {
     "model_call": "AD-1346 M3d3a: OpenAICompatibleClient.complete (SK7, SK8)",
     "tool": "AD-1346 M3d3a: ToolRegistry.check_and_invoke (SK7)",
     "subprocess": "AD-1346 M3e1, M3e2a and M3e2b: SUBPROCESS_SITES",
-    "egress": "AD-1346 M3e3",
+    "egress": "AD-1346 M3e3a: EGRESS_SITES; its sinks, AD-1346 M3e3b",
     "store_write": "AD-1346 M3e4",
 }
 #: The classes a member of ``TICKET_EFFECTS`` covers.
-DELIVERED: Final = frozenset({"model_call", "tool", "subprocess"})
+DELIVERED: Final = frozenset({"model_call", "tool", "subprocess", "egress"})
 
 
 @dataclass(frozen=True)
