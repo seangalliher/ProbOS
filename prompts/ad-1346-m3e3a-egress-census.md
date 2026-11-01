@@ -88,7 +88,7 @@
     - the red team's re-fetch of a verified URL;
     - an agent's prompt to the image endpoint;
     - the browser tool's engine.
-  - A point is `System(SHIP)` when the operator, the Captain or a federation peer picks the destination: the channels, the OAuth and MCP servers, federation and ARD, the marketplace, the Drive picker, Microsoft Graph, the repair issue client, a Captain-approved consultation delivery, the NATS bus and LAN discovery.
+  - `System(SHIP)` points, among them: the channels, the OAuth and MCP servers, federation and ARD, the marketplace, the Drive picker, Microsoft Graph, the repair issue client, a consultation delivery, the NATS bus and LAN discovery.
   - `OtherClass("model_call", (llm_client.py, "OpenAICompatibleClient.complete"))` is the model gateway's tier client:
     - its model calls are counted once, by the model-call class at `complete` (`llm_client.py:1473`);
     - its other request is the endpoint probe that `check_connectivity` and the health probe make (register R48; the reason is read, not pinned, register R93).
@@ -476,7 +476,7 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideR
     ("src/probos/tools/browser/session.py", "BrowserSession._connect_impl"): (1, Pending("M3e3b", "the browser tool's engine, over CDP")),
     # Another delivered class checks the client's agent-attributed requests.
     ("src/probos/cognitive/llm_client.py", "OpenAICompatibleClient._build_client"): (1, OtherClass("model_call", _MODEL_GATEWAY_CHECK, "the model gateway's tier client; its endpoint probe is register R48's")),
-    # System: the operator, the Captain or a federation peer picks the destination.
+    # System.
     ("src/probos/integrations/mcp_bridge/transport.py", "HttpTransport.__init__"): (1, System(SHIP, "an operator-approved MCP server over HTTP")),
     ("src/probos/integrations/mcp_bridge/mcp_oauth.py", "McpOAuthProvider.__init__"): (1, System(SHIP, "an MCP server's OAuth flow")),
     ("src/probos/channels/matrix_client.py", "MatrixClient.__init__"): (1, System(SHIP, "the operator's Matrix channel")),
@@ -488,7 +488,7 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideR
     ("src/probos/channels/gmail_adapter.py", "GmailAdapter._send_sync"): (1, System(SHIP, "the operator's Gmail SMTP")),
     ("src/probos/channels/discord_adapter.py", "DiscordAdapter.start"): (1, System(SHIP, "the operator's Discord bot")),
     ("src/probos/channels/discord_adapter.py", "DiscordAdapter._run_with_error_handling"): (1, System(SHIP, "the operator's Discord bot")),
-    ("src/probos/consultation/delivery.py", "GitHubAdapter._default_http_post"): (1, System(SHIP, "a Captain-approved consultation delivery")),
+    ("src/probos/consultation/delivery.py", "GitHubAdapter._default_http_post"): (1, System(SHIP, "a consultation delivery")),
     ("src/probos/startup/finalize.py", "_wire_repair_dispatcher"): (1, System(SHIP, "the repair pipeline's GitHub issue client")),
     ("src/probos/federation/attachment_fetch.py", "fetch_remote_attachment"): (1, System(SHIP, "a federation peer's attachment")),
     ("src/probos/federation/attachment_fetch.py", "fetch_remote_attachment_signed"): (1, System(SHIP, "a federation peer's attachment")),
@@ -508,7 +508,7 @@ EGRESS_SITES: Final[dict[tuple[str, str], tuple[int, Pending | System | OutsideR
     ("src/probos/federation/a2a/client.py", "A2AClient.__init__"): (1, ReachedOnlyFrom(("A2AClient",), ("src/probos/federation/a2a/__init__.py",), "no src module but its package names it")),
     ("src/probos/provider_setup.py", "_probe_client"): (1, ReachedOnlyFrom(("provider_setup",), OUTSIDE_RUNTIME, "the setup and doctor probes")),
     # The operator's command line (D167).
-    ("src/probos/__main__.py", "_ensure_ollama"): (3, OutsideRuntime("the local Ollama, before boot")),
+    ("src/probos/__main__.py", "_ensure_ollama"): (3, OutsideRuntime("the Ollama, before boot")),
     ("src/probos/__main__.py", "_check_nats._probe"): (1, OutsideRuntime("the NATS server, before boot")),
     ("src/probos/__main__.py", "_detect_llm_providers"): (1, OutsideRuntime("probos init's provider detection")),
     ("src/probos/doctor/checks/federation_check.py", "_FederationCheck.run"): (1, OutsideRuntime("probos doctor's federation check")),
@@ -834,7 +834,7 @@ REPLACE:
 AD-1346 M3e3a is the first part of D160's M3e3. It adds the effect `egress` to the work-ticket effects and a census of the egress points in `src`, with its guard; it adds no sink. It advances #1604 property 1 for the egress class. The contract is `prompts/ad-1346-m3e3a-egress-census.md`.
 
 - *D194 (the point).* A call of a network-library name, or such a name passed as an argument, resolved through the module's absolute imports, counted by (file, enclosing scope) by a scan in the census fixture. Rejected: D160's text pattern, which also matches request stores and misses, among others, `smtplib`, `imaplib`, `nats`, `discord`, `zeroconf`, ZeroMQ, raw sockets and Playwright.
-- *D195 (the classification).* Pending where agent or model text picks the destination or the content; System where the operator, the Captain or a peer picks it; the model gateway's client under the model-call class, which checks its model calls at `complete`; two points named only by their package or the command line; the command line. Rejected: a second count of model calls as egress.
+- *D195 (the classification).* Pending where agent or model text picks the destination or the content; System under the pinned ship principal; the model gateway's client under the model-call class, which checks its model calls at `complete`; two points named only by their package or the command line; the command line. Rejected: a second count of model calls as egress.
 - *D196 (the effect).* `EFFECT_EGRESS` appended to `TICKET_EFFECTS`: the per-day bound is 1,560 rows, 54,600 over 35 days; no schema change. Rejected: adding it with the first sink.
 - *D197.* No check in this slice; M3e3b settles each sink's place and hand-off.
 - *D199 (the cut).* M3e3a the census, M3e3b the five pending points' sinks, `http_fetch` first.
@@ -1056,6 +1056,8 @@ HOLDS: yes
 **A1 (2026-10-31, after the orchestrator's pre-build run).** That run, on the unamended contract, applied every pair, passed EN1 to EN6 (EN2's list, EN5's references and EN6's three shapes among them) and killed EG-1 to EG-10 by their named tests. It found ZeroMQ's context outside `EGRESS_PRIMITIVES`; the scan's absolute-import and keyword-argument clauses pinned by no test; an EN6 comment that read as placing the import in `_probe`; and an R91 wider than the wiring. A1-14, A1-15 and A1-20 add `zmq.Context`, `zmq.asyncio.Context` and the `FederationTransport.start` row, and A1-4, A1-5, A1-7, A1-17 and A1-25 recount (43 points in 40 rows, System 28 in 27, 17 points the pattern misses). A1-9 adds D201; A1-13, A1-14, A1-16, A1-18, A1-19 and A1-24 build it (`IMPORTS_WITHOUT_PRIMITIVE`, `imported_modules`, EN7); A1-27, A1-34, A1-35, A1-36 and A1-40 record it. A1-21, A1-22 and A1-30 pin the two clauses with EN2's lines 27 to 29 and add EG-11 to EG-14; A1-29 says EG-5 and EG-11 share a line. A1-23 places EN6's import in `_check_nats`. A1-39 restates R91's reach and names BF-945 (#1720), as A1-35 does in §13. From A1's sweep: A1-5, A1-6, A1-13, A1-17 and A1-26 count an argument point where the scan counts one and say that only absolute imports resolve; A1-25 drops "by import-resolved callee"; A1-26 makes D194's list of what the pattern misses partial; A1-11 says which files name the fixture's new public names; A1-28 and A1-36 name `tickets.py`'s import and the `#:` comments; A1-37 replaces §15's grep, which printed the `_CLASS_CONSTANT` line, and says the file reads `src` through the fixtures. A1-1, A1-2, A1-3, A1-8, A1-10, A1-12 and A1-33 name EN7, D201 and the new fixture names in the head lists and move the test count to 7. A1-31 and A1-32 record A1's reads. A1-38 writes this paragraph and replaces §17's items 1 to 4, which the run measured, with A1's claims.
 
 **A2 (2026-10-31, after M3e2b's merge; the orchestrator's mechanical amendment, contract-only).** A2-1 deletes the clause that `PROGRESS.md` runs newest first from §8's "Where the entries land" paragraph, as M3e2b's amendment A3 did. A2-2 rewrites the head's M3e2b bullet as the merge record. A2-3 deletes this section's "None.", which A1's paragraph follows. A2-4 completes §2's sentence on what EN7 fails on (a member that is the first component of a primitive's name). A2-5 adds to §10's expected survivors the mutant that drops `"__future__"` from the names EN7 subtracts. A2-6 deletes §17's items 1 to 3, which the pre-build run on A1 measured, and the sentence that called them derived by reading. A2-7 writes this paragraph.
+
+**A3 (2026-10-31, after review round 1; the orchestrator's amendment, from the reviewer's own smallest deletions).** The round found three false descriptions in head text and no defect of behaviour. A3-1 deletes "Captain-approved " from the consultation delivery's reason (§3's `System` bullet and M2-03's row): `DeliveryRequest.requires_approval` defaults to False, and `deliver` dispatches a request without an approval when it is False (`consultation/delivery.py:297`, `:650-660`). A3-2 deletes "local " from `_ensure_ollama`'s reason (M2-03's row): it sends its requests to the `base_url` of each configured Ollama tier (`__main__.py:238`, `:246`, `:298`, `:301`). A3-3 removes the clauses that say who picks a `System` point's destination, which `resolve_lan_ipv4` does not satisfy (it connects a datagram socket to the fixed address `8.8.8.8`, port 80, `discovery/advertiser.py:55`), and says what is left: §3's `System` bullet lists its points "among them", M2-03's comment reads "System.", and D195 in §8's M3-02 reads "System under the pinned ship principal", which EN6 asserts. A3-4 writes this paragraph.
 
 ## 17. Claims not yet confirmed
 
