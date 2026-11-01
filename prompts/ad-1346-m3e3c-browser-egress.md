@@ -84,7 +84,7 @@
     5. in `_start_impl` and `_connect_impl` (the host loop, above).
 - **D212 The hand-off** (question 2). The check reads the service from the session's `_runtime`, as `SERVICE_EXPR` (fixture `:54`), at each call.
   - Production path: `_wire_browser_tool` builds `BrowserTool(runtime=runtime)` (`startup/finalize.py:438-442`) and sets `runtime.browser_tool` (`:461`); `_create_session` passes `runtime=self._runtime` (`tool.py:1122`); M1-05 adds it to the bridge factory. The service is read when the check runs, so the order in which `ProbOSRuntime.start` builds the service and the tool does not matter. BE1 boots a runtime with the tool on and drives `runtime.browser_tool`, the object `reply_pipeline.py:1084` and `agent_actions.py:75` read.
-  - `src` reads a session's `_runtime` only at `session.py:255`, in `_start_impl` (Absence Verified); `connect` does not call `_start_impl`, and `_connect_impl` installs no route guard (`:270-292`).
+  - `connect` does not call `_start_impl`, and `_connect_impl` installs no route guard (`:270-292`).
   - Ranked:
     1. this (no process-wide state, no new signature);
     2. a class-level `BrowserSession.set_admission` from `ProbOSRuntime.start` (process-wide, register R102's shape, and a shutdown pair);
@@ -863,11 +863,6 @@ RUN:   Grep "_runtime" src/probos/tools/browser
 FOUND: session.py:115 (assigned), :255; tool.py:166, :917, :926, :937, :1059, :1122 (the tool's own); actions.py:1017 (a params key "_runtime")
 HOLDS: yes
 
-CLAIM: no src module names task_sessions/browser.py's functions or BrowserTask
-RUN:   Grep "render_script|write_script|build_container_command" src; Grep "BrowserTask\b|task_sessions/browser|\.browser import" src; Grep "task_sessions\.browser|task_sessions import browser|from probos\.task_sessions" src
-FOUND: task_sessions/browser.py only (blender_renderer.py:71 is a docstring's "<render_script>"); scheduler.py:32, runtime.py:856, routers/task_sessions.py:98 import other names
-HOLDS: yes
-
 CLAIM: no src router calls hold_at
 RUN:   Grep -l "hold_at" src/probos
 FOUND: cognitive/cognitive_agent.py, cognitive/agentic_dispatch.py, admission/seam.py, admission/service.py
@@ -947,6 +942,8 @@ A difference is a hard stop for the Architect, not a Builder edit.
 **A2 (2026-11-01, after M3e3b's merge; the orchestrator's mechanical amendment, contract-only).** A2-1 rewrites the sub-bullet on M3e3b's review in the header as the merge record: the merge, its tree, the two files in which it differs from the read tree, the heading M3-02 anchors on at `:1148`, and the oracle's result on it. A2-2 deletes the Absence Verified entry on the tests that read `session.py`'s or `tool.py`'s text: at its recorded tree T16 (`tests/test_ad1346_admission_service.py:611`) also reads both files' text and is not in the entry. A2-3 writes this paragraph.
 
 **A3 (2026-11-01, before review round 1; the orchestrator's mechanical amendment, contract-only).** A3-1 deletes the two clauses after the first in section 14's item 1. A3-2 deletes the first and third bullets of section 5. A3-3 deletes the last two sentences of the first sub-bullet of D213. A3-4 deletes the first sub-bullet of D211. The pairs of sections 7 and 8 are unchanged. A3-5 writes this paragraph.
+
+**A4 (2026-11-01, after review round 1; the orchestrator's mechanical amendment, contract-only).** A4-1 deletes the first clause of the second sub-bullet of D212. A4-2 deletes the Absence Verified entry on `task_sessions/browser.py`'s functions and `BrowserTask`. The pairs of sections 7 and 8 are unchanged. A4-3 writes this paragraph.
 
 ## For the register (#1604)
 
