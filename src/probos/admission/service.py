@@ -31,6 +31,8 @@ AD-1346 M3e3b: ``check_at`` is also called at two egress sinks with the effect `
 with ``model_call``.
 AD-1346 M3e3c: and at the browser engine's start and its CDP connect with ``egress``.
 AD-1346 M3e4a: ``TICKET_EFFECTS`` also holds ``store_write``, so that scope includes it too.
+AD-1346 M3e4b: ``check_at`` is also called with ``store_write`` at the Ward Room's four content-write entries and at
+the episodic store.
 The service reads no configuration.
 """
 
@@ -225,7 +227,8 @@ class AdmissionService:
 
         ``probos.admission.seam.check_at`` calls it at the tool sink, the model gateway and, from AD-1346 M3e1, the
         subprocess sinks (seven from AD-1346 M3e2a, eight from AD-1346 M3e2b), and from AD-1346 M3e3b two egress sinks
-        and the image endpoint, and from AD-1346 M3e3c the browser engine's start and its CDP connect. It reads the
+        and the image endpoint, and from AD-1346 M3e3c the browser engine's start and its CDP connect, and from AD-1346
+        M3e4b the Ward Room's four content-write entries and the episodic store. It reads the
         carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the

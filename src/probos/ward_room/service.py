@@ -9,6 +9,8 @@ from typing import Any
 
 import aiosqlite
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.config import format_trust
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
@@ -44,6 +46,8 @@ _CHANNEL_TYPE_OF_POST = "SELECT c.channel_type FROM posts p JOIN threads t ON t.
 
 class WardRoomService(EventEmitterMixin):
     """Ship's Computer communication fabric — Reddit-style threaded discussions."""
+
+    _admission: object = None  # AD-1346 M3e4b (D233, set_admission): None checks nothing
 
     def __init__(
         self,
@@ -264,6 +268,10 @@ class WardRoomService(EventEmitterMixin):
         """
         self._visiting_officers = registry
 
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4b (D233): the service the four content-write entries hand ``check_at``; None checks nothing."""
+        self._admission = service
+
     def _require_visitor(self, actor_id: str, capability: str, entry: str) -> None:
         """BF-903: refuse a visiting officer whose session lacks ``capability`` at ``entry``; anyone else passes."""
         require_visitor_capability(
@@ -415,6 +423,7 @@ class WardRoomService(EventEmitterMixin):
         author_callsign: str = "", thread_mode: str = "discuss", max_responders: int = 0,
     ) -> WardRoomThread:
         await self._require_visitor_write(author_id, "create_thread", _CHANNEL_TYPE_OF_CHANNEL, channel_id)  # BF-903
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=author_id)  # AD-1346 M3e4b (D231): the thread's store-write check, in shadow, after BF-903's guard; it blocks nothing
         return await self._threads.create_thread(
             channel_id, author_id, title, body, author_callsign, thread_mode, max_responders,
         )
@@ -468,6 +477,7 @@ class WardRoomService(EventEmitterMixin):
         parent_id: str | None = None, author_callsign: str = "",
     ) -> WardRoomPost:
         await self._require_visitor_write(author_id, "create_post", _CHANNEL_TYPE_OF_THREAD, thread_id)  # BF-903
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=author_id)  # AD-1346 M3e4b (D231): the post's store-write check, in shadow, after BF-903's guard; it blocks nothing
         return await self._messages.create_post(thread_id, author_id, body, parent_id, author_callsign)
 
     async def get_post(self, post_id: str) -> dict[str, Any] | None:
@@ -475,12 +485,14 @@ class WardRoomService(EventEmitterMixin):
 
     async def edit_post(self, post_id: str, author_id: str, new_body: str) -> WardRoomPost:
         await self._require_visitor_write(author_id, "edit_post", _CHANNEL_TYPE_OF_POST, post_id)  # BF-903
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=author_id)  # AD-1346 M3e4b (D231): the edit's store-write check, in shadow, after BF-903's guard; it blocks nothing
         return await self._messages.edit_post(post_id, author_id, new_body)
 
     async def endorse(
         self, target_id: str, target_type: str, voter_id: str, direction: str,
     ) -> dict[str, Any]:
         self._require_visitor(voter_id, CAP_WARD_ROOM_POST, "endorse")  # BF-903
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=voter_id)  # AD-1346 M3e4b (D231): the endorsement's store-write check, in shadow, after BF-903's guard; it blocks nothing
         return await self._messages.endorse(target_id, target_type, voter_id, direction)
 
     async def get_credibility(self, agent_id: str) -> WardRoomCredibility:

@@ -3,9 +3,11 @@
 ``sql_write_scan`` parses one module and reports each SQL write statement in it: a ``str`` constant that is not a
 docstring, or an f-string read with each placeholder as ``_``, whose text ``SQL_WRITE`` matches at its start after
 leading whitespace. A point is (enclosing scope, line), scoped as the egress scan scopes one. ``sql_write_files`` runs
-the scan over every ``src`` module, and ``STORE_WRITE_FILES`` gives each file that holds a point one coverage, a
-``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row is a file and
-carries no count (D220).
+the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229) gives each (file, enclosing scope)
+that holds a point in the Ward Room's ``messages.py`` and ``threads.py`` and in ``cognitive/episodic.py`` a
+``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
+``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
+``STORE_WRITE_FILES`` is a file and carries no count (D220).
 
 Among what the scan cannot see: a statement whose text starts in a part that is not a constant (a name, a call, a
 placeholder), SQL not in upper case, a string inside an f-string's placeholder, and the other store-write primitives,
@@ -18,6 +20,7 @@ from __future__ import annotations
 import ast
 import functools
 import re
+from dataclasses import dataclass
 from typing import Final
 
 from tests.fixtures.ad1346_effect_census import SHIP, OutsideRuntime, Pending, System, src_sources
@@ -91,12 +94,9 @@ def sql_write_files() -> frozenset[str]:
     return frozenset(path for path, _scope, _line in sql_write_points())
 
 
-#: AD-1346 M3e4a (D220, D221): each ``src`` file that holds a SQL write statement -> its coverage.
+#: AD-1346 M3e4a (D220, D221): each other ``src`` file that holds a SQL write statement -> its coverage (AD-1346 M3e4b,
+#: D229: the files of ``STORE_WRITE_SCOPES`` are not rows here).
 STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
-    # Agent-attributed (D218): M3e4b adds the checks and splits these files by scope (register R110).
-    "src/probos/cognitive/episodic.py": Pending("M3e4b", "episodes, among its writes"),
-    "src/probos/ward_room/messages.py": Pending("M3e4b", "posts, among its writes"),
-    "src/probos/ward_room/threads.py": Pending("M3e4b", "threads, among its writes"),
     # Unclassified (D221): M3e4c reads each file's production writers (register R112).
     "src/probos/artifacts/__init__.py": _UNCLASSIFIED,
     "src/probos/assignment.py": _UNCLASSIFIED,
@@ -177,3 +177,49 @@ STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
     # The operator's command line (D167).
     "src/probos/__main__.py": OutsideRuntime("probos reset's eviction audit row"),
 }
+
+
+@dataclass(frozen=True)
+class StoreCheck:
+    """AD-1346 M3e4b (D229, D230): a scope whose SQL write statements the function ``check``, a (file, qualified
+    name) pair, checks with ``check_at``, presenting ``presented``. ``via`` is empty when ``check`` is the scope, else
+    the attribute of ``check``'s class through which ``check`` calls the scope."""
+
+    check: tuple[str, str]
+    presented: str
+    via: str = ""
+
+
+_WARD_ROOM: Final = "src/probos/ward_room/service.py"
+_MESSAGES: Final = "src/probos/ward_room/messages.py"
+_THREADS: Final = "src/probos/ward_room/threads.py"
+_EPISODIC: Final = "src/probos/cognitive/episodic.py"
+
+#: AD-1346 M3e4b (D229): each (file, enclosing scope) of these three files that holds a SQL write statement -> its coverage.
+STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
+    # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
+    (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
+    (_MESSAGES, "MessageStore.edit_post"): StoreCheck((_WARD_ROOM, "WardRoomService.edit_post"), "author_id", "_messages"),
+    (_MESSAGES, "MessageStore.endorse"): StoreCheck((_WARD_ROOM, "WardRoomService.endorse"), "voter_id", "_messages"),
+    (_THREADS, "ThreadManager.create_thread"): StoreCheck((_WARD_ROOM, "WardRoomService.create_thread"), "author_id", "_threads"),
+    (_EPISODIC, "EpisodicMemory.store"): StoreCheck((_EPISODIC, "EpisodicMemory.store"), "_sole_agent_id(episode)"),
+    # System (D218): the Ward Room's and the memory's own records about agents, and copies.
+    (_MESSAGES, "MessageStore.set_restriction"): System(SHIP, "posting restrictions"),
+    (_MESSAGES, "MessageStore.remove_restriction"): System(SHIP, "posting restrictions"),
+    (_MESSAGES, "MessageStore._update_credibility"): System(SHIP, "the credibility an endorsement moves"),
+    (_MESSAGES, "MessageStore.subscribe"): System(SHIP, "channel memberships"),
+    (_MESSAGES, "MessageStore.unsubscribe"): System(SHIP, "channel memberships"),
+    (_MESSAGES, "MessageStore.update_last_seen"): System(SHIP, "a member's last-seen time"),
+    (_THREADS, "ThreadManager.update_thread"): System(SHIP, "thread settings: locked, pinned, mode, responder cap"),
+    (_THREADS, "ThreadManager.archive_dm_messages"): System(SHIP, "DM thread archival"),
+    (_THREADS, "ThreadManager.prune_old_threads"): System(SHIP, "the retention prune"),
+    (_EPISODIC, "_delete_fts_rows"): System(SHIP, "keyword-index rows deleted by _erase_fts_file and _cleanup_sidecars"),
+    (_EPISODIC, "EpisodicMemory._reconcile_fts_index"): System(SHIP, "the keyword index's start-up reconciliation"),
+    (_EPISODIC, "EpisodicMemory.seed"): System(SHIP, "the bulk seed of warm boot and the memory probes"),
+    (_EPISODIC, "EpisodicMemory._write_restore_sidecars"): System(SHIP, "an episode restore_from_archive copies back (D218)"),
+}
+
+
+def store_write_check_functions() -> set[tuple[str, str]]:
+    """AD-1346 M3e4b: (file, function) of each store-write check."""
+    return {cover.check for cover in STORE_WRITE_SCOPES.values() if isinstance(cover, StoreCheck)}

@@ -30,8 +30,9 @@ replaced by a canned answer, and the real run entry with a scripted body in plac
        counts ``ticket_live``.
 - SK7  the sink census: in ``src``, ``check_at`` is called in the two sinks, once each, and otherwise only in the
        functions of the subprocess sinks that ``tests/fixtures/ad1346_effect_census.py`` lists (AD-1346 M3e1) and in
-       the check functions of its egress sinks and other-class rows (AD-1346 M3e3b, ``egress_check_functions``); in each
-       of the two, with the sink's own service attribute, effect constant and presented id; at the tool sink it is the
+       the check functions of its egress sinks and other-class rows (AD-1346 M3e3b, ``egress_check_functions``) and in
+       the store-write checks of ``tests/fixtures/ad1346_store_census.py`` (AD-1346 M3e4b, ``store_write_check_functions``);
+       in each of the two, with the sink's own service attribute, effect constant and presented id; at the tool sink it is the
        statement right after the
        shadow statement and right before ``if stopped is not None:``, at the gateway the first statement after the
        docstring.
@@ -91,6 +92,7 @@ from probos.tools.registry import ToolRegistry
 from probos.types import LLMRequest, LLMResponse
 from tests.fixtures.ad1343_seam_census import calls, census, function
 from tests.fixtures.ad1346_effect_census import egress_check_functions, subprocess_sink_functions
+from tests.fixtures.ad1346_store_census import store_write_check_functions
 
 INSTANCE_ID = "ad1346-m3d3a-ship"
 VESSEL_NAME = "Ad1346m3d3a"
@@ -508,7 +510,7 @@ async def test_a_captains_stop_reaches_a_delegated_childs_next_calls_and_not_a_r
 def test_the_sink_check_is_called_once_in_each_of_the_two_sinks_in_its_place() -> None:
     """SK7: the sink census, in the manner of 9b, 9c and I10."""
     found = {(c.file, c.function) for c in census() if c.callee == "check_at"}
-    assert found == set(_SINK_SITES) | subprocess_sink_functions() | egress_check_functions(), sorted(found)  # AD-1346 M3e1: and the subprocess sinks; AD-1346 M3e3b: and the egress checks
+    assert found == set(_SINK_SITES) | subprocess_sink_functions() | egress_check_functions() | store_write_check_functions(), sorted(found)  # AD-1346 M3e1: and the subprocess sinks; AD-1346 M3e3b: and the egress checks; AD-1346 M3e4b: and the store-write checks
     for (rel, qualname), (effect, presented) in _SINK_SITES.items():
         fn = function(rel, qualname)
         sinks = [n for n in ast.walk(fn) if calls("check_at")(n)]

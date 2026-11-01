@@ -20,6 +20,8 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.affect_scorer import score_affect
 from probos.cognitive.similarity import jaccard_similarity
@@ -1355,6 +1357,16 @@ async def _erase_store_file(kind: str, path: str | None, ids: list[str]) -> bool
     return True
 
 
+def _sole_agent_id(episode: Episode) -> str | None:
+    """AD-1346 M3e4b (D232): the id ``store`` presents to its store-write check: the episode's one agent id, else None.
+
+    An episode that names no agent, or more than one, presents None, so the check compares no principal. It reads
+    ``agent_ids`` with ``getattr`` and a default, as D127 reads a request's ``agent_id``.
+    """
+    ids = getattr(episode, "agent_ids", None)
+    return ids[0] if type(ids) is list and len(ids) == 1 and type(ids[0]) is str and ids[0] else None
+
+
 class EpisodicMemory:
     """ChromaDB-backed episodic memory with semantic similarity recall."""
 
@@ -1362,6 +1374,8 @@ class EpisodicMemory:
     MAX_EPISODES_PER_HOUR = 20  # per agent, rolling window
     SIMILARITY_WINDOW_MINUTES = 30
     SIMILARITY_THRESHOLD = 0.8  # Jaccard word-level
+
+    _admission: object = None  # AD-1346 M3e4b (D233, set_admission): None checks nothing
 
     def __init__(
         self,
@@ -1579,6 +1593,10 @@ class EpisodicMemory:
     def set_anomaly_window_manager(self, manager: Any) -> None:
         """AD-673: Wire anomaly window manager for episode stamping."""
         self._anomaly_window_manager = manager
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4b (D233): the service ``store`` hands ``check_at``; None checks nothing."""
+        self._admission = service
 
     def set_participant_index(self, index: Any) -> None:
         """AD-570b: Wire the participant index after construction."""
@@ -1997,6 +2015,7 @@ class EpisodicMemory:
         """Persist one authoritative episode and report the primary-store outcome."""
         if not isinstance(duplicate_policy, EpisodeDuplicatePolicy):
             raise TypeError("duplicate_policy must be an EpisodeDuplicatePolicy")
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=_sole_agent_id(episode))  # AD-1346 M3e4b (D232): the episode's store-write check, in shadow, after the policy check; it blocks nothing
         if not self._collection:
             logger.debug(
                 "Episode %s was not persisted because the primary collection is unavailable",
