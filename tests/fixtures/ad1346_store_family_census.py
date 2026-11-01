@@ -172,7 +172,7 @@ VECTOR_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     (_EVOLUTION, "EvolutionStore.record_lesson"): System(SHIP, "a lesson: a summary, a category, an outcome and the proposal it came from, with no author id (D239)"),
 }
 
-#: AD-1346 M3e4c2 (D251): a JetStream write scope that publishes an agent's text under its author's id.
+#: AD-1346 M3e4c2 (D251): a JetStream write scope that can publish an agent's text under its author's id.
 _BUS_AGENT_ATTRIBUTED: Final = Pending("M3e4d", "agent-attributed (D239, D251): BUS_AGENT_ATTRIBUTED names a scope that records the author (register R113)")
 
 #: AD-1346 M3e4c2 (D251): each (file, scope) of ``BUS_WRITE_SCOPES`` whose row is ``Pending("M3e4d")`` -> (a file, a
@@ -186,9 +186,9 @@ BUS_AGENT_ATTRIBUTED: Final[dict[tuple[str, str], tuple[str, str, str]]] = {
 #: AD-1346 M3e4c2 (D247, D248, D251): each (file, enclosing scope) outside ``NATS_BUS`` that holds a JetStream write ->
 #: its coverage.
 BUS_WRITE_SCOPES: Final[dict[tuple[str, str], System | Pending]] = {
-    ("src/probos/mesh/intent.py", "IntentBus.dispatch_async"): System(SHIP, "an intent's fields as _serialize_intent writes them, for the agent it targets; a Ward Room notification holds an event's author id and title and its thread's text, copies of rows the Ward Room stores (D218)"),
+    ("src/probos/mesh/intent.py", "IntentBus.dispatch_async"): System(SHIP, "an intent's fields as _serialize_intent writes them; a Ward Room notification holds an event's author id and title and its thread's text, copies of rows the Ward Room stores (D218)"),
     ("src/probos/runtime.py", "ProbOSRuntime._emit_event"): _BUS_AGENT_ATTRIBUTED,
-    ("src/probos/startup/communication.py", "init_communication._ward_room_emit"): System(SHIP, "a Ward Room event's type and data: ids, scores, settings, a prune summary, and a new thread's or post's author id, title or mentions, copies of rows the Ward Room has stored (D218)"),
+    ("src/probos/startup/communication.py", "init_communication._ward_room_emit"): System(SHIP, "a Ward Room event's type and data: a new thread's or post's author id, title or mentions, copies of rows the Ward Room has stored (D218), and ids, scores, Hebbian weights, thread settings, peer-repetition matches and a prune summary, records about agents or the Ward Room's own state that hold no agent's text (D239)"),
     ("src/probos/cognitive/chain_nats_bridge.py", "ChainNATSBridge._safe_publish"): _BUS_AGENT_ATTRIBUTED,
     ("src/probos/cognitive/chain_nats_bridge.py", "ChainNATSBridge.ensure_stream"): System(SHIP, "the cognitive chain stream"),
     ("src/probos/startup/nats.py", "init_nats"): System(SHIP, "the four streams, recreated, which deletes the messages they held"),
