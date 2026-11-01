@@ -446,6 +446,7 @@ async def _execute_build(
             llm_client=getattr(rt, "llm_client", None),
             escalation_hook=None,
             enforce_sealed_core=sealed_core_enforced(rt),  # BF-904b (#1585): the runtime's flag; no runtime is passed
+            admission_service=getattr(rt, "admission_service", None),  # AD-1346 M3e2b: the targeted-test sink's service; None checks nothing
         )
 
         if result.success:

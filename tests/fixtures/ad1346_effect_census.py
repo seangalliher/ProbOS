@@ -49,7 +49,7 @@ _SEAM_HELPERS: Final = frozenset({"shadow_at", "hold_at", "check_at"})
 EFFECT_CLASSES: Final[dict[str, str]] = {
     "model_call": "AD-1346 M3d3a: OpenAICompatibleClient.complete (SK7, SK8)",
     "tool": "AD-1346 M3d3a: ToolRegistry.check_and_invoke (SK7)",
-    "subprocess": "AD-1346 M3e1 and M3e2a: SUBPROCESS_SITES; its Pending row, AD-1346 M3e2b",
+    "subprocess": "AD-1346 M3e1, M3e2a and M3e2b: SUBPROCESS_SITES",
     "egress": "AD-1346 M3e3",
     "store_write": "AD-1346 M3e4",
 }
@@ -92,6 +92,8 @@ _TOOL_PRESENTED: Final = "context.get('agent_id') if type(context) is dict else 
 
 #: AD-1346 M3e2a (D175): the service a component handed it passes to ``check_at``.
 _COMPONENT_SERVICE: Final = "self._admission"
+#: AD-1346 M3e2b (D187): the executor of an approved build passes its own parameter to ``check_at``.
+_PARAMETER_SERVICE: Final = "admission_service"
 #: AD-1346 M3e2a (D177): the names by which other src code could reach the container sandboxes' launches.
 _CONTAINER_NAMES: Final = ("container_sandbox", "InProcessContainerSandbox", "DockerContainerSandbox", "get_container_sandbox")
 
@@ -106,8 +108,8 @@ SUBPROCESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | System | Outside
     # AD-1346 M3e2a: two components handed the service (D175, D176).
     ("src/probos/execution/isolation.py", "SubprocessSandbox._run_sync_inner"): (1, Sink("SubprocessSandbox.run", "None", service=_COMPONENT_SERVICE, via=("SubprocessSandbox._run_sync",))),
     ("src/probos/cognitive/dependency_resolver.py", "DependencyResolver._install_package"): (3, Sink("DependencyResolver._install_package", "None", service=_COMPONENT_SERVICE)),
-    # Pending: the launching code holds no service today (register R76).
-    ("src/probos/cognitive/builder.py", "_run_targeted_tests._sync_run"): (1, Pending("M3e2b", "model-authored tests of an approved build")),
+    # AD-1346 M3e2b: the executor of an approved build, handed the service by the three src calls of it (D185 to D187).
+    ("src/probos/cognitive/builder.py", "_run_targeted_tests._sync_run"): (1, Sink("execute_approved_build", "None", service=_PARAMETER_SERVICE, via=("_run_targeted_tests",))),
     # Unreached: no other src code reaches the launch through its names (D177).
     ("src/probos/cognitive/builder.py", "_run_tests._sync_run"): (1, Unreached(("_run_tests",), "the whole suite; no build path calls it since BF-897")),
     ("src/probos/security/container_sandbox.py", "InProcessContainerSandbox.run"): (1, Unreached(_CONTAINER_NAMES, "a thread workspace command; no other src module names the module")),

@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_SUBPROCESS
 from probos.cognitive.builder_paths import (
     builder_write_refusal,
     fix_loop_path,
@@ -3254,6 +3256,7 @@ async def execute_approved_build(
     specialty: str = "general",
     expected_git_dir: str | None = None,
     enforce_sealed_core: bool | None = None,
+    admission_service: object = None,
 ) -> BuildResult:
     """Execute an approved build: write files, run tests, create git branch.
 
@@ -3273,6 +3276,11 @@ async def execute_approved_build(
             are observed (AD-481f: a warning per write, never a refusal). None
             reads ``runtime``'s config (``BuildPipeline``); the /api/build routes
             and the dispatcher pass the flag, because they pass no runtime.
+        admission_service: AD-1346 M3e2b. The service the targeted-test sink
+            checks each attempt's run with, in shadow (``check_at``); anything
+            but an exact ``AdmissionService``, None by default, checks nothing.
+            The /api/build resolve route and ``BuildPipeline`` read it from their
+            runtime; the dispatcher passes the one ``ProbOSRuntime.start`` hands it.
     """
     result = BuildResult(success=False, spec=spec)
     identity_lost = False
@@ -3562,6 +3570,7 @@ async def execute_approved_build(
             for attempt in range(1 + max_fix_attempts):
                 # BF-904b (#1585): read at the start of each attempt, so a file an earlier repair created is targeted.
                 all_changed_files = written + modified_files
+                check_at(admission_service, effect=EFFECT_SUBPROCESS, presented_id=None)  # AD-1346 M3e2b: the targeted-test sink, in shadow, in the awaiting task before each attempt's run; it blocks nothing (D188: no principal)
                 # Targeted tests only (AD-344). BF-897: there is no full-suite phase here.
                 passed, test_output, _targeted_files = await _run_targeted_tests(
                     work_dir, all_changed_files, timeout=TARGETED_TEST_TIMEOUT_S,

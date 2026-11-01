@@ -27,12 +27,9 @@ a real ``CallsignRegistry`` and a real ``AgentStopService``, all under ``tmp_pat
       of the package imports only its allowlist (AD-1346 M3b's persistence files have allowlists of their own and may
       await).
 - T15 the seam census: the package calls none of the stop's guard functions and starts no agent work.
-- T16 outside the package the service is named only by ``runtime.py``, ``startup/shutdown.py``, ``startup/finalize.py``
-      (which hands it to the Ward Room router and the crew session finalizer) and twelve shadowed-site files, which read
-      it from a runtime or take it in a constructor; the package is imported only by ``runtime.py``, the fourteen
-      shadowed-site files and, from AD-1346 M3d3a, the model gateway's module ``cognitive/llm_client.py``; the only
-      routers that do either are the three whose routes AD-1346 M3c2 shadows, and none of them serves a route #1604
-      property 11 keeps ungated.
+- T16 outside the package, the files whose text names ``admission_service`` and those that import ``probos.admission``
+      are the two sets the test lists; the routers among them are the three whose routes AD-1346 M3c2 shadows and,
+      from AD-1346 M3e2b, ``routers/build.py``, and none of them serves a route #1604 property 11 keeps ungated.
 """
 
 from __future__ import annotations
@@ -591,8 +588,12 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
     it to ``SubprocessSandbox``, whose module ``execution/isolation.py`` names it and imports ``probos.admission``;
     ``runtime.py`` hands it to ``DependencyResolver`` through ``set_admission``, and ``cognitive/dependency_resolver.py``
     imports the package.
-    The only routers that name the service or import the package are the three whose routes M3c2
-    shadows, and none of them is a module of #1604 property 11's routes, which are never admission-gated."""
+    From AD-1346 M3e2b ``cognitive/builder.py`` takes it as ``execute_approved_build``'s ``admission_service`` and
+    imports the package; ``routers/build.py`` and ``build_pipeline.py`` read it from their runtime and pass it to the
+    executor, and ``build_dispatcher.py`` passes the service ``runtime.py`` hands it through ``set_admission``.
+    The routers that name the service or import the package are the three whose routes M3c2 shadows and, from AD-1346
+    M3e2b, ``routers/build.py``, and none of them is a module of #1604 property 11's routes, which are never
+    admission-gated."""
     # #1604 property 11: the Captain's stop and lift (``routers/agent_stop.py``, ``/api/stops``), and health and status
     # (``routers/system.py``: ``/api/health``, ``/api/status``; ``routers/voice.py``: ``/api/voice/health``;
     # ``routers/desktop.py``: ``/api/desktop/status``); ``api.py`` builds the app.
@@ -625,6 +626,7 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/agents/code_search.py", "probos/agents/red_team.py", "probos/agents/shell_command.py",
         "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
         "probos/agents/code_runner.py", "probos/execution/isolation.py", "probos/tools/code_execution_tool.py",  # AD-1346 M3e2a
+        "probos/build_dispatcher.py", "probos/build_pipeline.py", "probos/cognitive/builder.py", "probos/routers/build.py",  # AD-1346 M3e2b
     }, sorted(named)
     assert importers == {
         "probos/agent_work.py", "probos/cognitive/agentic_dispatch.py", "probos/cognitive/cognitive_agent.py",
@@ -635,7 +637,11 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/agents/code_search.py", "probos/agents/red_team.py", "probos/agents/shell_command.py",
         "probos/cognitive/scout.py", "probos/cognitive/swe_harness/tools.py",  # AD-1346 M3e1: the subprocess sinks
         "probos/cognitive/dependency_resolver.py", "probos/execution/isolation.py",  # AD-1346 M3e2a
+        "probos/cognitive/builder.py",  # AD-1346 M3e2b
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
-    assert routes == {"probos/routers/agent_actions.py", "probos/routers/agents.py", "probos/routers/thread_fanout.py"}, sorted(routes)
+    assert routes == {
+        "probos/routers/agent_actions.py", "probos/routers/agents.py", "probos/routers/thread_fanout.py",
+        "probos/routers/build.py",  # AD-1346 M3e2b: the resolve route hands it to the executor
+    }, sorted(routes)
     assert not routes & never_gated, sorted(routes & never_gated)
