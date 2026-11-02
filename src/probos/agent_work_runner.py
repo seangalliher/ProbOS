@@ -10,10 +10,11 @@ events (one listener):
   same tool sink and also starts the run itself);
 - an item that ends has its live bookings closed and is reported, once per recipient, to its requester and watchers.
 
-Every run is confined (``ToolCallConfinement``): the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual and a call to
-any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order), which may file it as an
-AD-1154 ``action`` request. A run that filed a call can park the item ``blocked`` on the first request its gate
-returned, through AD-855's ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
+Every run is confined (``ToolCallConfinement``): the executor refuses a call whose tool id its registry does not hold
+(AD-1356 S1.1); the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual; and a call to any other tool is put to the
+run's gate (``_gate_for``, whose docstring gives its order), which may file it as an AD-1154 ``action`` request. A run
+that filed a call can park the item ``blocked`` on the first request its gate returned, through AD-855's
+``block_on_request``; its approval fulfils it and AD-855 resumes the item through
 ``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
 item's assignee filed on it are read, oldest first. A denied one cancels the item; else a pending one, or an approved
 one not yet fulfilled, parks the item on it again; else the run goes ahead, and a fulfilled one may admit its call once

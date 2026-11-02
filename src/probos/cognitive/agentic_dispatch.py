@@ -298,8 +298,9 @@ _PLAN_MODE_TOOL_REFUSAL: str = (
     "switches to execute mode; finish the plan and name the step that needs "
     "this tool."
 )
-# AD-1347 S3 (#1627): agent-created work runs confined. Its calls to the tools in the run's set run as usual; a call to
-# any other tool is put to the run's gate, which admits it, files it for the Captain's approval (an AD-1154
+# AD-1347 S3 (#1627): agent-created work runs confined. AD-1356 S1.1: a call whose tool id the executor's registry does
+# not hold is refused before the run's set is consulted. Its other calls to the tools in the run's set run as usual; a
+# call to any other tool is put to the run's gate, which admits it, files it for the Captain's approval (an AD-1154
 # ``action``), answers it (BF-947) or refuses it. Error-shaped and final, in the AD-1154 voice; never defect evidence.
 CONFINED_CALL_FILED: str = (
     "That call needs the Captain's approval before it runs. It was filed for review and did not run. Do not "
@@ -315,6 +316,11 @@ CONFINED_CALL_ANSWERED: str = (
     "That call already ran in this work under its approval, so it did not run again. Its result is in your task "
     "text or earlier in this run."
 )
+# AD-1356 S1.1: the refusal, under a confinement, of a call whose tool id the executor's registry does not hold.
+UNREGISTERED_TOOL_REFUSAL: str = (
+    "That call names no registered tool, so it did not run and was not filed for approval. Use "
+    "search_capabilities to find a registered tool for this step."
+)
 CONFINEMENT_ADMIT = "admit"
 CONFINEMENT_FILED = "filed"
 CONFINEMENT_REFUSED = "refused"
@@ -324,19 +330,19 @@ CONFINEMENT_ANSWERED = "answered"  # BF-947
 # the tool, so they are never defect evidence.
 _NEVER_RAN_REFUSALS: frozenset[str] = frozenset({
     _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,
-    CONFINED_CALL_ANSWERED,
+    CONFINED_CALL_ANSWERED, UNREGISTERED_TOOL_REFUSAL,
 })
 
 
 @dataclass(frozen=True)
 class ToolCallConfinement:
-    """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate every other call is put to.
+    """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate for the run's other calls.
 
     ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
     Captain's approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
-    (not filed). Enforced first in the executor's invoke, before plan mode and the AD-1154 browser inbox, so the
-    decision is made at the tool call, never by reading the plan. BF-947: ``record``, when set, is handed results of
-    admitted calls (``record_admitted``).
+    (not filed). Enforced in the executor's invoke after AD-1356 S1.1's refusal of a tool id the registry does not
+    hold, and before plan mode and the AD-1154 browser inbox, so the decision is made at the tool call, never by
+    reading the plan. BF-947: ``record``, when set, is handed results of admitted calls (``record_admitted``).
     """
 
     tool_ids: frozenset[str]
@@ -831,6 +837,14 @@ class _DispatchGuardMixin:
         confinement = self._confinement
         confined_admission = False
         admitted_params = params  # BF-947: what the gate was asked, for record_admitted
+        # AD-1356 S1.1: under a confinement, when the executor has a registry, a str tool id that resolves to no
+        # registered tool is refused here, before the confinement's set and gate, so it is never filed. An ambiguous
+        # name (``_resolve_tool_id`` answers None) goes on to the gate.
+        if confinement is not None and self._registry is not None and type(tool_id) is str:
+            resolved = self._resolve_tool_id(tool_id)
+            if resolved is not None and self._registry.get(resolved) is None:
+                strict_log("confinement", "confinement_refused")
+                return refuse(ToolResult(error=UNREGISTERED_TOOL_REFUSAL), "confinement_refused")
         if confinement is not None and tool_id not in confinement.tool_ids:
             refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)
             if refusal is not None:
@@ -985,7 +999,8 @@ class _DispatchConfigurationMixin:
         self._plan_mode_tool_ids = tool_ids
 
     def confine_calls(self, confinement: ToolCallConfinement) -> None:
-        """AD-1347 S3: put every call to a tool outside ``confinement.tool_ids`` to its gate, first in :meth:`invoke`."""
+        """AD-1347 S3: put every call to a tool outside ``confinement.tool_ids`` to its gate in :meth:`invoke`, after
+        AD-1356 S1.1 refuses a call whose tool id the registry does not hold."""
         self._confinement = confinement
 
     def restrict_browser_actions(self, actions: frozenset[str]) -> None:
@@ -2135,6 +2150,7 @@ def classify_tool_fault_error(error: Any) -> str | None:
             _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
             _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
             CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED, CONFINED_CALL_ANSWERED,  # AD-1347 S3, BF-947
+            UNREGISTERED_TOOL_REFUSAL,  # AD-1356 S1.1
             "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])

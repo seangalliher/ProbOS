@@ -536,11 +536,12 @@ def test_the_plan_mode_refusal_is_a_policy_outcome() -> None:
     assert not is_capability_gap(_REFUSAL)
     assert classify_tool_fault_error(_REFUSAL) == "permission_denied"
     never_ran = getattr(agentic_dispatch, "_NEVER_RAN_REFUSALS", frozenset())
-    # AD-1347 S3: a confined call that was filed or refused never ran either; BF-947: nor one the gate answered.
+    # AD-1347 S3: a confined call that was filed or refused never ran either; BF-947: nor one the gate answered;
+    # AD-1356 S1.1: nor one refused because its tool id is not registered.
     assert never_ran == {
         _REFUSAL, agentic_dispatch._DEFERRED_SCHEMA_REFUSAL,
         agentic_dispatch.CONFINED_CALL_FILED, agentic_dispatch.CONFINED_CALL_NOT_FILED,
-        agentic_dispatch.CONFINED_CALL_ANSWERED,
+        agentic_dispatch.CONFINED_CALL_ANSWERED, agentic_dispatch.UNREGISTERED_TOOL_REFUSAL,
     }
 
 
