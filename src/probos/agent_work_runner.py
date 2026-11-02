@@ -11,8 +11,9 @@ events (one listener):
 - an item that ends has its live bookings closed and is reported, once per recipient, to its requester and watchers.
 
 Every run is confined (``ToolCallConfinement``): the executor refuses a call whose tool id its registry does not hold
-(AD-1356 S1.1); the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual; and a call to any other tool is put to the
-run's gate (``_gate_for``, whose docstring gives its order), which may file it as an AD-1154 ``action`` request. A run
+(AD-1356 S1.1); the routine tools (``tools.effect_tiers.routine_tool_ids``, read once at the run's start, AD-1356 S2)
+run as usual; and a call to any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order),
+which may file it as an AD-1154 ``action`` request. A run
 that filed a call can park the item ``blocked`` on the first request its gate returned, through AD-855's
 ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
 ``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
@@ -59,6 +60,7 @@ from probos.capability_request import (
     validate_action_payload,
 )
 from probos.events import EventType
+from probos.tools.effect_tiers import routine_tool_ids
 from probos.tools.protocol import ToolPermission, ToolResultPresentation
 from probos.workforce import AGENT_WORK_METADATA_KEY, WorkItem
 
@@ -67,14 +69,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The tools an agent-created work run calls directly: the plan-mode read set (``agent_mode.PLAN_MODE_TOOL_IDS``, each
-#: asserted read-only there) without the three that reach off the ship (web_search, read_page, http_fetch) and without
-#: discover_work_items. Every other call is filed for the Captain's approval: a new or renamed tool is filed until
-#: someone decides it only reads.
-AGENT_WORK_READ_TOOL_IDS: Final[frozenset[str]] = frozenset({
-    "event_log_query", "oracle_query", "self_query", "search_capabilities", "use_skill",
-    "work_item_status", "read_owned_steps", "recall_artifact", "message_receipts", "load_tools",
-})
 APPROVAL_ACTION: Final = AGENT_WORK_CALL_ACTION  # A1 (F1): one definition, shared with the fulfilment predicate
 APPROVAL_SCOPE_PREFIX: Final = AGENT_WORK_SCOPE_PREFIX
 #: A1 (F15): parameters an approval never records, as AD-1154's inbox strips them (``_APPROVAL_PARAM_STRIP_KEYS``): a
@@ -217,7 +211,7 @@ def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[Carr
     ``carried`` results (BF-947), and the confinement in plain words."""
     provenance = _provenance(item)
     reason = provenance.get("reason") if type(provenance.get("reason")) is str else ""
-    tool = provenance.get("tool_id") if type(provenance.get("tool_id")) is str else "the read-only tools you hold"
+    tool = provenance.get("tool_id") if type(provenance.get("tool_id")) is str else "the routine reads you hold"
     details = f"{item.description}\n\n" if item.description and item.description != item.title else ""
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
     earlier = "".join(f"- {entry.tool_id} {entry.params}: {entry.output}\n" for entry in carried)
@@ -231,7 +225,7 @@ def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[Carr
         f"Asked by {requester}. Reason: {reason}. Tool named: {tool}.\n\n"
         f"Current UTC time: {stamp}.\n\n"
         f"{earlier}"
-        "Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "
+        "Routine reads run directly. A call to another tool may be filed for approval instead of running; this work "
         "continues when no call you filed on it awaits a decision or its fulfilment, and ends if one of them is "
         "denied. Do the reading, then answer with what you found and the tool results you relied on. Your answer is "
         "posted where the work was asked for."
@@ -608,11 +602,15 @@ class AgentWorkRunner:
             if await _cancel_or_park(self._store, self._parking, item.id, linked):
                 return
             from probos.cognitive.agentic_dispatch import ToolCallConfinement
+            from probos.security.file_access import permitted_read_roots
 
             agent = self._agents.get(slot)
             filed: list[str] = []
+            # AD-1356 S2: the routine tools, read once here; the set does not change during the run. read_file and
+            # codebase_read_source are routine only while security_infra.read_roots confines reads.
             confinement = ToolCallConfinement(
-                AGENT_WORK_READ_TOOL_IDS, self._gate_for(item.id, _admissions(linked, slot, item.id), filed),
+                routine_tool_ids(reads_confined=bool(permitted_read_roots(self._runtime))),
+                self._gate_for(item.id, _admissions(linked, slot, item.id), filed),
                 record=self.carried.recorder(item.id),
             )
             try:
