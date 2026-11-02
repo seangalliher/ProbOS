@@ -1168,3 +1168,11 @@ class CapabilityRequestStore(EventEmitterMixin):
             finally:
                 await db.close()
         return self._cache.get(request_id)
+
+
+def requests_for_work_item(store: CapabilityRequestStore, work_item_id: str) -> list[CapabilityRequest]:
+    """BF-947: the requests in ``store``'s cache linked to ``work_item_id``, in any status, oldest first. No I/O."""
+    return sorted(
+        (req for req in store._cache.values() if req.work_item_id == work_item_id),
+        key=_created_at_sort_key,
+    )

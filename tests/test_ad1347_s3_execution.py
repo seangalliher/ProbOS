@@ -38,6 +38,7 @@ from probos.capability_request import CapabilityRequest, CapabilityRequestStore,
 from probos.cognitive import agentic_dispatch
 from probos.cognitive.agent_mode import PLAN_MODE_TOOL_IDS
 from probos.cognitive.agentic_dispatch import (
+    CONFINED_CALL_ANSWERED,
     CONFINED_CALL_FILED,
     CONFINED_CALL_NOT_FILED,
     ToolCallConfinement,
@@ -365,11 +366,13 @@ async def test_a_chain_request_is_announced_claimed_run_and_reported_in_its_orig
 
 # X2
 async def test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_it_exactly_once(tmp_path: Path) -> None:
-    """Acceptance 4: filed, nothing run; approved, the item resumes and the call runs once; a repeat is filed; denied,
-    the item ends and the Captain's reason reaches the origin thread."""
+    """Acceptance 4: filed, nothing run; approved, the item resumes and the call runs once; BF-947: a repeat in that run
+    is answered and does not run (before BF-947 it was filed), and a new call is filed; denied, the item ends and the
+    Captain's reason reaches the origin thread."""
     script = [
         _call("hull_survey", {}), _final("Waiting for the Captain."),
-        _call("hull_survey", {}, "c1"), _call("hull_survey", {}, "c2"), _final("Surveyed once."),
+        _call("hull_survey", {}, "c1"), _call("hull_survey", {}, "c2"), _call("hull_survey", {"deck": "2"}, "c3"),
+        _final("Surveyed once."),
     ]
     async with _rig(tmp_path, script) as rig:
         origin = await _thread_in(rig, "engineering", "laforge-1")
@@ -394,9 +397,11 @@ async def test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_i
         await _pump(rig)
         again = await rig.store.get_work_item(item_id)
         assert rig.survey.calls == 1, "the approval admits the call it was asked for, once"
+        assert _seen(rig, CONFINED_CALL_ANSWERED), "BF-947: the repeat is answered, not filed"
         assert again is not None and again.status == "blocked"
         second_id = again.metadata["capability_request_id"]
-        assert second_id != first_id and (await rig.requests.get(second_id)).status == "pending"
+        second = await rig.requests.get(second_id)
+        assert second_id != first_id and second.status == "pending" and second.payload["params"] == {"deck": "2"}
         denied = await decide_capability_request(
             second_id, CapabilityRequestDecideRequest(approve=False, reason="once is enough"), runtime=captain,
         )
