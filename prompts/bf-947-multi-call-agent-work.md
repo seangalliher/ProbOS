@@ -2,7 +2,8 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-01
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02 (Amendment 2, §17)
-**Status:** ready to build. **Base:** `d5f105985440c69b256c2074a5283eef204ebdb1` (origin/main at PR #1733). **Dependencies:** none. **Tier:** M1 HIGH, M2 HIGH, M3 STANDARD. **Estimated tests:** 2 new files (12 tests; MC12 runs twice), 2 edited tests, 1 edited vitest case.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02 (Amendment 3, §17)
+**Status:** ready to build. **Base:** `d5f105985440c69b256c2074a5283eef204ebdb1` (origin/main at PR #1733). **Dependencies:** none. **Tier:** M1 HIGH, M2 HIGH, M3 STANDARD. **Estimated tests:** 2 new files (13 tests; MC12 and MC13 run twice each), 2 edited tests, 1 edited vitest case.
 **BF number:** BF-947, held by the title of #1724.
 
 **Which text describes the head.** §1 to §3 describe the base `d5f10598`; their line numbers are the base's. The head is what the pairs and new-file blocks of §7 and §8 produce, applied in order. Where any prose here differs from a REPLACE or new-file block, the block wins. Head text means every docstring, comment, log message, error string, agent-facing string and test docstring in those blocks, plus the tracker entries (§8) and the commit messages (§5).
@@ -43,7 +44,7 @@ Each item below is on the base:
 | M | Tier | Pairs | Gate |
 |---|---|---|---|
 | M1 | HIGH | P1-1 to P1-7, N1-1 | G1 |
-| M2 | HIGH | P2-1 to P2-15, N2-1 | G2 |
+| M2 | HIGH | P2-1 to P2-16, N2-1 | G2 |
 | M3 | STANDARD | P3-1 to P3-5, the ledger | G3 |
 
 **G1:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf947_confinement_answer.py tests/test_ad1156_plan_execute_mode.py tests/test_ad1347_s3_execution.py tests/test_ad1154_approval_inbox.py tests/test_ad1152_agentic_correlation.py -q -n 0`
@@ -80,6 +81,7 @@ Each item below is on the base:
 | MC10 | confinement_answer | `test_an_answered_call_never_runs_and_its_refusal_is_a_never_ran_policy_outcome` | M1 |
 | MC11 | confinement_answer | `test_an_admitted_result_is_handed_to_record_and_a_record_that_raises_is_logged` | M1 |
 | MC12 | multi_call | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept` (`the_run_returns`, `the_run_raises`) | A2 (F2) |
+| MC13 | multi_call | `test_a_run_stopped_after_a_late_result_leaves_no_result_kept` (`the_model`, `the_failure_handler`) | A3 (F2) |
 
 Edited:
 - X2 (`test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_it_exactly_once`) pinned "a repeat is filed". It now pins "a repeat is answered", and its denial step uses a new call. The docstring records why.
@@ -686,7 +688,8 @@ async def _cancel_or_park(store: Any, parking: Any, work_item_id: str, linked: l
 async def _forget_if_ended(store: Any, carried: CarriedResults, work_item_id: str) -> None:
     """BF-947 A2 (F2): drop the results kept on an item that has ended or is gone. A call in flight when the item ended
     returns after the terminal event dropped them and is recorded then, so ``_run`` calls this after its executor
-    returns and in its failure handler. Never raises: when the item cannot be read, its results stay (L12)."""
+    returns and in its failure handler. When reading the item raises an ``Exception``, its results stay (L12); it
+    catches nothing else, so a cancellation propagates."""
     try:
         latest = await store.get_work_item(work_item_id)
     except Exception:
@@ -977,6 +980,31 @@ REPLACE:
                 logger.warning("AD-1347: work item %s could not be marked failed; it stays in_progress", work_item_id, exc_info=True)
             # BF-947 A2 (F2): an item that ended while the run was failing gets no event from the transition above.
             await _forget_if_ended(self._store, self.carried, work_item_id)
+```
+
+**P2-16** `src/probos/agent_work_runner.py` (A3, F2: a run that ends once `stop()` has begun)
+
+SEARCH:
+```python
+        finally:
+            self._active.discard(work_item_id)
+            if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now
+                self._restart.discard(work_item_id)
+                self._start(work_item_id)
+```
+REPLACE:
+```python
+        finally:
+            # BF-947 A3 (F2): once ``stop`` has begun, the run keeps nothing for its item, whatever its exit. A call it
+            # admitted may have been recorded after the terminal event dropped the item's results, and ``stop``'s
+            # cancellation can arrive before either ``_forget_if_ended`` call completes, the failure handler's included.
+            # No call of this run is in flight here, and a stopped runner starts no run again.
+            if self._stopping:  # A3 (F2)
+                self.carried.forget(work_item_id)
+            self._active.discard(work_item_id)
+            if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now
+                self._restart.discard(work_item_id)
+                self._start(work_item_id)
 ```
 
 **N2-1** New file `tests/test_bf947_multi_call_agent_work.py`:
@@ -1364,6 +1392,75 @@ async def test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept(
         ended = await rig.store.get_work_item(item_id)
         assert ended is not None and ended.status == "cancelled" and rig.survey.calls == 1
         assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the late result is not kept on the ended item"
+
+
+# MC13
+@pytest.mark.parametrize("held_in", ["the_model", "the_failure_handler"])
+async def test_a_run_stopped_after_a_late_result_leaves_no_result_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_in: str,
+) -> None:
+    """A3 (F2): an admitted call returns after its item was cancelled and the terminal event dropped the item's
+    results, and is recorded then. ``stop`` then cancels the run while it waits for the model, or while its failure
+    handler marks the item failed, before that handler's ``_forget_if_ended``. The run's ``finally`` keeps nothing for
+    the item on either exit."""
+    reached, never = asyncio.Event(), asyncio.Event()
+
+    async def held_model(request: LLMRequest) -> Any:
+        reached.set()
+        await never.wait()
+        raise AssertionError("the model is never released")
+
+    last: Any = held_model if held_in == "the_model" else _final("Surveyed deck one.")
+    script = [
+        _call("hull_survey", DECK_1, "c1"), _final("Waiting for the Captain."), _call("hull_survey", DECK_1, "c2"), last,
+    ]
+    async with _rig(tmp_path, script) as rig:
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        item_id = await _self_task(rig, origin.id)
+        await _pump(rig)
+        [request] = requests_for_work_item(rig.requests, item_id)
+        if held_in == "the_failure_handler":
+            _restarted(rig, executor=_RaisesAfterRun(llm_client=rig.llm))
+            transition = rig.store.transition_work_item
+
+            async def held_failure(work_item_id: str, new_status: str, *args: Any, **kwargs: Any) -> Any:
+                if new_status == "failed":
+                    reached.set()
+                    await never.wait()
+                return await transition(work_item_id, new_status, *args, **kwargs)
+
+            monkeypatch.setattr(rig.store, "transition_work_item", held_failure)
+        entered, released = asyncio.Event(), asyncio.Event()
+        survey = rig.survey.invoke
+
+        async def held(params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+            entered.set()
+            await released.wait()
+            return await survey(params, context)
+
+        monkeypatch.setattr(rig.survey, "invoke", held)
+        deciding = asyncio.create_task(_decide(rig, request.id, approve=True))
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            moved = await rig.store.transition_work_item(
+                item_id, "cancelled", source="captain", expected_status="in_progress",
+            )
+            assert moved is not None
+            events = list(rig.work_events)
+            rig.work_events.clear()
+            for kind, data in events:
+                await rig.runner.on_store_event({"type": getattr(kind, "value", kind), "data": data})
+            assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the terminal event dropped the results"
+            released.set()
+            await asyncio.wait_for(reached.wait(), 10)
+            assert len(rig.runner.carried.for_agent(item_id, "forge-1")) == 1, "the late result was recorded"
+        finally:
+            released.set()
+            await rig.runner.stop()
+            await asyncio.gather(deciding, return_exceptions=True)  # its wait for the run ends with the cancellation
+        ended = await rig.store.get_work_item(item_id)
+        assert ended is not None and ended.status == "cancelled" and rig.survey.calls == 1
+        assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "a stopped run keeps nothing for its item"
 ```
 
 ### 7.3 M3 (the HXI)
@@ -1458,7 +1555,7 @@ REPLACE:
 - *Admission.* Each fulfilled one of those requests admits its call once (the claim-once row `approval_use:<request id>`).
 - *Results.* The runner keeps, in memory, the result of each admitted call that returned no error: the newest 8 per item, 1,500 characters of output and 200 of parameters each, by agent. The next run's task text lists them, and the gate answers a repeat with `CONFINED_CALL_ANSWERED`, a never-ran refusal. The task text states the current UTC time.
 - *Rejected.* A list of request ids under a new key with a changed AD-855 driver, which every parked kind shares; one request for all of a run's calls; results in the item's metadata, which the store's `WORK_ITEM_UPDATED` event carries; results by reference in the AttachmentStore (considered, deferred); telling the agent of a denial and continuing.
-- *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L12 of the contract.
+- *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L13 of the contract.
 - *Reversal.* Revert the three commits. The requests filed stay in the inbox, and AD-855 acts on the parked one as before.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -1513,8 +1610,10 @@ Line cells hold the source line without its leading indentation.
 | BM-24 | `src/probos/agent_work_runner.py` | `await _forget_if_ended(self._store, self.carried, work_item_id)` | `pass` | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept[the_run_raises]` |
 | BM-25 | `src/probos/agent_work_runner.py` | `if latest is None or latest.status in TERMINAL_STATUSES:` | `if latest is None:` | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept` (both cases) |
 | BM-26 | `src/probos/agent_work_runner.py` | `if latest is None or latest.status in TERMINAL_STATUSES:` | `if True:` | `test_a_resumed_run_is_given_earlier_results_and_a_repeat_is_answered_not_filed` |
+| BM-27 | `src/probos/agent_work_runner.py` | `if self._stopping:  # A3 (F2)` | `if False:  # A3 (F2)` | `test_a_run_stopped_after_a_late_result_leaves_no_result_kept` (both cases) |
+| BM-28 | `src/probos/agent_work_runner.py` | `self.carried.forget(work_item_id)` | `pass` | `test_a_run_stopped_after_a_late_result_leaves_no_result_kept` (both cases) |
 
-Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad1347_s3_execution.py` and `tests/test_ad1156_plan_execute_mode.py`, run each row against the file that holds its killer. Record the base tree and the sha256 of the three mutated `src` files. A2: the campaign of record is on the amended M2 head. Rerun every row whose `src` file differs from the one the earlier campaign recorded: all `agent_work_runner.py` rows (BM-1 to BM-8, BM-12, BM-13, BM-17 to BM-20, BM-22 to BM-26) and the `agentic_dispatch.py` rows (BM-9 to BM-11, BM-15, BM-16; P1-2 and P1-7 change that file). BM-14 is carried when the sha256 of `capability_request.py` matches the earlier record, and BM-21 when the card's file does.
+Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad1347_s3_execution.py` and `tests/test_ad1156_plan_execute_mode.py`, run each row against the file that holds its killer. Record the base tree and the sha256 of the three mutated `src` files. A2: the campaign of record is on the amended M2 head. Rerun every row whose `src` file differs from the one the earlier campaign recorded: all `agent_work_runner.py` rows (BM-1 to BM-8, BM-12, BM-13, BM-17 to BM-20, BM-22 to BM-26) and the `agentic_dispatch.py` rows (BM-9 to BM-11, BM-15, BM-16; P1-2 and P1-7 change that file). BM-14 is carried when the sha256 of `capability_request.py` matches the earlier record, and BM-21 when the card's file does. A3: the campaign of record is on the A3 head. P2-16 and H4 change only `agent_work_runner.py`, so rerun every row on it (BM-1 to BM-8, BM-12, BM-13, BM-17 to BM-20, BM-22 to BM-28). BM-9 to BM-11, BM-15, BM-16, BM-14 and BM-21 are carried when their files' sha256 match the A2 campaign's record. A line cell matches the whole source line without its indentation. BM-27's cell keeps its inline comment because `_start` also holds the line `if self._stopping:`. BM-22's `carried.forget(work_item_id)` and BM-28's `self.carried.forget(work_item_id)` are different lines.
 
 ## 11. Recorded limits
 
@@ -1529,7 +1628,8 @@ Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad134
 - **L9.** The model may ignore the stated time and still call a tool for it; that call is filed.
 - **L10.** An approved `read_file` of an earlier run's AD-1240 workspace result runs in a later run, and the tool decides whether that run may read it (AD-1356 S1.3).
 - **L11.** Requests a previous claimant filed are neither admitted for, nor cancel, nor park the next claimant (MC7).
-- **L12.** A2: when a run cannot read its item after the executor returns, or in its failure handler, the item's kept results stay (logged). A later terminal status event drops them; if the item had already ended, they stay for the runner's lifetime.
+- **L12.** A2: when reading its item raises an `Exception` after the executor returns, or in the failure handler, the item's kept results stay (logged). A later terminal status event drops them. If the item had already ended, no event follows, and they stay for the runner's lifetime unless `stop()` began before that run ended (P2-16).
+- **L13.** A3: `except AgentStopped` returns without `_forget_if_ended`. A result recorded after its item ended and before an `AgentStopped` ended the run stays for the runner's lifetime, unless `stop()` began before that run ended (P2-16).
 
 ## 12. Verified Against Codebase (2026-11-01, on `d5f10598`)
 
@@ -1668,13 +1768,13 @@ A8 CLAIM: _reject_reserved_metadata refuses SCAFFOLD_METADATA_FLAG and steps_con
 2. A call is admitted only after a successful `claim_work_notice(item, agent, "approval_use:" + id)` for a `fulfilled` request. That request must have this `work_item_id` (`requests_for_work_item`), this slot as `agent_id`, and a valid `agent_work_call` (`_linked_calls`).
 3. The gate's order matches its docstring: refused when it cannot record the call; answered; admitted; refused at the pending cap; filed; refused when the filing returns no request.
 4. `_cancel_or_park` runs after `_begin` and before the executor. A denied request cancels before any run; an undecided one re-parks before any run.
-5. Kept results live only in `AgentWorkRunner.carried`. They are per item, read per agent, and bounded at 8 entries, 1,500 characters and 200 characters. They are dropped on a terminal status event and by `_forget_if_ended`, which `_run` calls after its executor returns and in its failure handler.
+5. Kept results live only in `AgentWorkRunner.carried`. They are per item, read per agent, and bounded at 8 entries, 1,500 characters and 200 characters. They are dropped on a terminal status event; by `_forget_if_ended`, which `_run` calls after its executor returns and in its failure handler; and by `_run`'s `finally` once `stop()` has begun.
 6. `record_admitted` is called only for a confined admission, with the parameters the gate saw. A `record` that raises is logged and the result is returned unchanged.
 7. With no confinement, `_invoke_reserved_body` returns what the base returned.
 8. Every added or rewritten docstring, comment, refusal text, agent-facing text, card copy and test docstring is true of the head, in the code's branch order.
 9. No config field, `EventType`, request kind or persisted key is added. The runner's cancel also writes AD-855's existing `denial_reason`.
 10. MC4 builds the pre-fix state without the runner, and MC5 replaces the runner without reusing its memory.
-11. No exit of `_run` after its executor started leaves a result kept on an ended item. The return path and the failure handler call `_forget_if_ended`. `AgentStopped` comes only from `refuse_new_run` at the executor's entry, before any call. A cancelled run records nothing, because `gather` awaits its cancelled tool tasks and `record_admitted` follows the tool's return.
+11. After its executor started, `_run` leaves a result kept on an ended item only under L12 or L13. Its return path and its failure handler call `_forget_if_ended`. `stop()` sets `_stopping` before it cancels the runs. Once it is set, `_run`'s `finally` drops the item's results on every exit, including a cancellation that arrives in the failure handler before its `_forget_if_ended` (MC13). No call of a run is in flight when its `finally` runs: `gather` awaits its cancelled tool tasks before the cancellation propagates, and `record_admitted` follows the tool's return in the same task.
 
 ## 16. Acceptance criteria
 
@@ -1729,3 +1829,33 @@ FOUND: none
 HOLDS: yes
 ```
 Unchanged by A2: every other SEARCH and REPLACE text of §7 and §8, §13, and AD-1356 S1.
+
+**Amendment 3 (2026-11-02, `claude-architect`, after review round 2 of the repair `283b0717`).** This repairs the two findings of round 2:
+- **R2-1 (P2).** A run that `stop()` cancelled after a late result was recorded kept that result. `except asyncio.CancelledError` re-raised with nothing dropped. A cancellation that arrives in the failure handler skips that handler's `_forget_if_ended` and the `CancelledError` clause alike, because handlers of one `try` do not catch what another of its handlers raises. New P2-16: `_run`'s `finally` drops the item's results once `stop()` has begun. Rejected: a drop in the `CancelledError` branch, which misses the failure handler (MC13's second case); and a drop in `stop()` after its `gather`, which needs a method on `CarriedResults` and runs only if `stop` itself completes. This adds MC13, BM-27, BM-28 and L13, and rewrites §15 items 5 and 11 and L12. A2's sentence "`AgentStopped` comes only from `refuse_new_run`" is withdrawn; L13 records that exit.
+- **R2-2 (P3).** `_forget_if_ended`'s docstring no longer says "Never raises". It catches `Exception` only, so a cancellation of its read propagates.
+- §4, §6, §10's campaign note, the header and P3-5's count of limits follow from these. No method is added to `AgentWorkRunner` (15) or `CarriedResults`.
+
+Verified on `283b0717`:
+```
+agent_work_runner.py: 288-301 _forget_if_ended (294 except Exception); 536-542 stop (538 _stopping, 540-541 cancel);
+  544-559 _start (551 refuses when stopping; 557 the only create_task; 558-559 _tasks); 413/538/551 every _stopping;
+  561-644 _run: 605-608 AgentStopped return, 611 forget after the executor, 624-625 CancelledError re-raise,
+  626-639 failure handler (636 inner except Exception; 639 forget), 640-644 finally
+startup/shutdown.py:1763 the only call of the runner's stop; 1764 the runner is released
+agent_stop.py:612, crew_synth.py:997, crew_verifier.py:2040 every raise AgentStopped
+swe_harness/agentic_loop.py:2461-2469 gather (DD-5); 2478-2481 and 2805-2806 re-raise under protected effects
+tests/test_ad1347_s3_execution.py:150 _rig takes list[Any]; 89-98 a callable script entry is awaited; 261 _pump's gather
+logs/bf947r2/terminal_cancellation.py: runner.stop kept_after_run=1 (the defect MC13 pins); HELPER_NEVER_RAISES propagated=true
+```
+Absence verified on `283b0717`:
+```
+CLAIM: nothing in src but AgentWorkRunner.stop cancels a run
+RUN:   Grep "work_runner\.(stop|running)|runner\.running" src; Grep "all_tasks\(" src; Grep "create_task|self\._tasks" agent_work_runner.py
+FOUND: shutdown.py:1763 (stop); none; 408, 418, 539, 557-559 (the runner's own)
+HOLDS: yes
+CLAIM: no test reads a runner's kept results after stop()
+RUN:   Grep "\.carried\b|CarriedResults" tests; Grep "stop\(\)|carried" tests/test_{bf947,ad1347}*.py
+FOUND: test_bf947_multi_call_agent_work.py only; its stop() calls (231, 248) read nothing after
+HOLDS: yes
+```
+Unchanged by A3: every other SEARCH and REPLACE text of §7 and §8, §13, MC1 to MC12, and AD-1356 S1.
