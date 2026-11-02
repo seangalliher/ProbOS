@@ -1241,6 +1241,17 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 - *Mutation campaign of record (2026-11-01, win32).* 7 of 7 killed; none survived, was inert or invalid. Tree `2b9ac42e049958a1f4b569295b7f0d9413541c28` (commit `caabbf5c`) is M3e4c3b's head before its contract-only amendment A2 and before the docs commit that records this bullet, and the commit on which the census ran; that docs commit changes `DECISIONS.md` only (the AD ledger check passes on it unchanged). The runner ran the 7 rows of the contract's mutation table one at a time, each restored before the next, in one run (unmutated baseline over the test files the rows run: 6 passed); each row ran the test file that holds its named killer: EJ 7 rows (EJ-1 to EJ-7) against `tests/test_ad1346_admission_file_write_census.py`. The named killer failed in every row. Killers (with the `test_` prefix dropped): rows EJ-1, EJ-4, EJ-5, EJ-6 the_directories_m3e4c3b_classifies; row EJ-2 every_file_with_a_file_write_is_a_row_and_every_row_is_one; row EJ-3 the_agent_attributed_row_writes_and_records_its_author; row EJ-7 the_command_line_rows. sha256 of the working copies (CRLF) of the files the rows mutate: `tests/fixtures/ad1346_file_write_census.py` `7f2e2ccf66a980877d8d52ccf69f5771f97089b2588de2e3ec57c92cbc9f4446`.
 - *Reversal.* Revert the M3e4c3b commits.
 
+### AD-1356 S1 -- Agent work stops filing what a rule can decide (2026-11-02, #1722)
+
+- *Scope.* `cognitive/agentic_dispatch.py` (`UNREGISTERED_TOOL_REFUSAL`), `tools/protocol.py` (`CALLER_INPUT_ERROR_MARK`, `is_caller_input_error`), `fault_report.py`, `fault_detection.py`, `tools/publish_finding_tool.py`, `agent_work_runner.py` (`_recovery_read`), tests. Contract `prompts/ad-1356-s1-stop-filing-what-a-rule-decides.md`.
+- *Unknown tools.* Under a confinement, a call whose resolved tool id the executor's registry does not hold is refused before the confinement's set and gate, a never-ran refusal. A call with no confinement keeps the registry's not-found result.
+- *Input errors.* A `ToolResult.error` that starts with the tool's id and `_invalid:` marks a caller error; `detect_tool_defect` and `collect_tool_fault_batch` skip it. `publish_finding`'s two outcomes that were not the caller's input moved to `publish_finding_failed:`.
+- *Recovery reads.* The gate admits a call `_recovery_read` accepts without an approval or a filing; `read_file` decides whose result it is. The runner does not keep a `WorkspaceSliceToolResult`.
+- *Duplicates.* No rule added; `_commit` is unchanged. The live board (2026-11-02) held no two of 43 items with the same requester, kind, department, tool, assignee and normalised title; the cited duplicates were reworded and from two requesters.
+- *Rejected.* Refusing unregistered ids with no confinement; a docstring-only convention; a filter in `FaultReportStore.file_fault`; the raw-path recovery test; an exact same-work rule with no live case; title-similarity matching.
+- *Residual.* Recorded limits L1 to L12 of the contract.
+- *Reversal.* Revert the four commits.
+
 ### BF-947 -- An agent-work item waits for each call it filed, and each approval admits its call once (2026-11-02, #1724)
 
 - *Scope.* `capability_request.py` (`requests_for_work_item`), `cognitive/agentic_dispatch.py` (`ToolCallConfinement`: `CONFINEMENT_ANSWERED`, `record`), `agent_work_runner.py`, the approval card's copy, tests. Contract `prompts/bf-947-multi-call-agent-work.md`.
