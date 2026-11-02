@@ -11,7 +11,7 @@
 On `0ac7bdf3`:
 
 1. An agent-work run calls only `AGENT_WORK_READ_TOOL_IDS` directly (`agent_work_runner.py:74-77`, used at `:615`). A call to any other registered tool goes to the gate. That includes the code reads that made up 16 of the 28 requests on 2026-10-31 (#1722), which the gate filed for the Captain.
-2. There is no table of tool effects. The nearest classifiers are plan mode's allowlist (`cognitive/agent_mode.py:68-83`, whose test is "changes nothing", not "needs no approval"), the effect broker's classes (`execution/effect_broker.py:322-351`), and `derive_tool_permission`. #1722 rules the last one out for tiering.
+2. There is no table of tool effects. The nearest classifiers are plan mode's allowlist (`cognitive/agent_mode.py:68-83`), the effect broker's classes (`execution/effect_broker.py:322-351`), and `derive_tool_permission`. #1722 rules the last one out for tiering.
 3. `read_file` and `codebase_read_source` read through `resolve_for_runtime` (`swe_harness/tools.py:448`, `:754`). With `security_infra.read_roots` unset, that reaches files outside the data directory and config files (`security/file_access.py:160`, `:165-176`, `:197-206`).
 4. `list_files` resolves its path with `_resolve_path` (`swe_harness/tools.py:245-248`, called at `:542`), never through the read policy.
 5. The agent is told "Read-only tools run directly." (`agent_work_runner.py:234`). Before S2 that was already false for the web reads, which are read-only and filed.
@@ -71,8 +71,8 @@ What an empty `read_roots` allows: `permitted_read_roots` returns `[]` (`file_ac
 
 **D5. Plan mode and the table.**
 1. **Chosen: not shared.**
-   - Plan mode's test is "changes nothing": it admits off-ship reads and withholds `read_file`, which `test_ad1240_tool_result_delivery.py:4946` asserts.
-   - Routine's test is "needs no approval": it excludes off-ship reach and admits file reads only when confined.
+   - Plan mode admits off-ship reads and withholds `read_file`, which `test_ad1240_tool_result_delivery.py:4946` asserts.
+   - Routine needs no approval: it excludes off-ship reach and admits file reads only when confined.
    - The two sets differ in both directions, and sharing would change DM plan-mode turns. ET2 pins how they relate.
 2. Plan mode = the routine set. Rejected: it removes the web reads from plan mode and adds `read_file`.
 3. Routine = plan mode minus off-ship reads. Rejected: a plan-mode addition would silently become routine.
@@ -122,7 +122,7 @@ Edited: `tests/test_ad1347_s3_execution.py` (import, the two plan-mode relation 
 """AD-1356 S2 (#1722): the tool-effect table, the one source of agent-work tiering.
 
 A tool's tier names who authorises an agent-work call to it, in AD-676's names: a ``routine`` call runs with no
-approval; an ``elevated`` or ``critical`` call is put to the run's gate. A tool is in the table only by name. A tool id
+approval. A tool is in the table only by name. A tool id
 the table does not list (a new or renamed tool, every ``mcp:`` tool) and an id that is not a str are critical.
 
 ``routine_tool_ids`` is what a run reads (``agent_work_runner``); ``tool_tier`` classifies one id. The members are
@@ -140,7 +140,7 @@ TIER_ROUTINE: Final = "routine"
 TIER_ELEVATED: Final = "elevated"
 TIER_CRITICAL: Final = "critical"
 
-#: Routine: each reads, changes nothing and stays on the ship. The ten tools agent work called directly before
+#: Routine: each reads and stays on the ship. The ten tools agent work called directly before
 #: AD-1356 S2, and three code readers.
 ROUTINE_TOOL_IDS: Final[frozenset[str]] = frozenset({
     "event_log_query", "oracle_query", "self_query", "search_capabilities", "use_skill",
@@ -148,7 +148,7 @@ ROUTINE_TOOL_IDS: Final[frozenset[str]] = frozenset({
     "codebase_query", "codebase_read_source", "read_file",
 })
 #: The routine tools that read a path through the operator's read policy (``security.file_access.resolve_for_runtime``).
-#: With ``security_infra.read_roots`` unset that policy reaches any file outside the runtime's data directory and config
+#: With ``security_infra.read_roots`` unset that policy reaches outside the runtime's data directory and config
 #: files, so these are routine only while the roots are set, and critical otherwise.
 READ_POLICY_TOOL_IDS: Final[frozenset[str]] = frozenset({"codebase_read_source", "read_file"})
 #: Elevated: reads that reach past what the ship holds or past the read policy. find_mcp_tool discovers and offers new
@@ -586,7 +586,7 @@ REPLACE:
 - *Read policy.* `read_file` and `codebase_read_source` are routine only while `security_infra.read_roots` is set, and critical otherwise. `_recovery_read` still decides a `read_file` of a workspace result while they are critical. `codebase_query` reads only the codebase index and is routine either way.
 - *list_files.* Elevated: it resolves its path without the read policy, so `read_roots` does not confine it.
 - *MCP.* Not listed, so critical; AD-1019b's `McpToolRisk` mapping arrives with S3, its first consumer.
-- *Plan mode.* Not shared: plan mode bars state change and admits off-ship reads; routine bars off-ship reach and admits confined file reads.
+- *Plan mode.* Not shared: plan mode admits off-ship reads; routine bars off-ship reach and admits confined file reads.
 - *Rejected.* Intersecting with the registry at run start (tools are registered inside the run); narrowing to the agent's offer in the executor; routine file reads with no roots set; `list_files` routine; plan mode as the table; mapping `McpToolRisk` with no consumer; AD-676's `ActionRiskRegistry`.
 - *Residual.* Recorded limits L1 to L11 of the contract.
 - *Reversal.* Revert the AD-1356 S2 commits.
@@ -623,13 +623,13 @@ The Line cells hold the source line without its leading indentation. Prefix `RX`
 | RX-10 | `src/probos/agent_work_runner.py` | `"Routine reads run directly. A call to another tool may be filed for approval instead of running; this work "` | `"Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "` | `test_with_read_roots_set_a_file_read_runs_without_approval_and_list_files_is_still_filed` |
 
 How each killer dies:
-- **ET4 (RX-1, RX-7, RX-8):** the read runs, so nothing is filed, and `[request] =` raises.
-- **ET3 (RX-2, RX-9):** `read_file` is filed, so there are two requests and `[request] =` raises.
+- **ET4 (RX-1, RX-7, RX-8):** the read runs, so nothing is filed.
+- **ET3 (RX-2, RX-9):** `read_file` is filed, so there are two requests.
 - **ET3 (RX-4):** `list_files` runs, so nothing is filed.
 - **ET3 (RX-10):** `_seen(rig, "Routine reads run directly.")` is False.
 - **ET5 (RX-3):** `codebase_query` is filed, the item parks, and `index.asked` is `[]`.
 - **ET1 (RX-5):** the elevated loop fails.
-- **ET1 (RX-6):** `_Named("read_file")` is routine and `["read_file"]` raises TypeError.
+- **ET1 (RX-6):** `_Named("read_file")` is routine.
 
 **Campaign of record.** After an unmutated baseline of N1-2 and the edited `test_ad1347_s3_execution.py`, run each row against the file that holds its killer. Record the base tree and the sha256 of each mutated `src` file.
 
@@ -642,7 +642,7 @@ How each killer dies:
 - **L5.** `mcp:` tools are critical in S2. S3 adds the `McpToolRisk` mapping.
 - **L6.** `discover_work_items` is in plan mode's read set but not in the table, so it is critical and filed as before.
 - **L7.** `BLOCKED_REASON` and the filed rationale still say "outside the read-only set", although some filed calls are reads (`list_files`, the web reads, `find_mcp_tool`, and `read_file` with no roots). This predates S2 for the web reads. The text is pinned by `ui/e2e/fixtures/ad1347-agent-work-approvals.json` and `test_ad1347_s3_execution.py:657`.
-- **L8.** `permitted_read_roots` logs one warning per run for each unusable configured entry. An all-unusable list still confines reads to the workspace root and counts as confined.
+- **L8.** `permitted_read_roots` logs one warning for each unusable configured entry. An all-unusable list still confines reads to the workspace root and counts as confined.
 - **L9.** `read_roots` confines the filesystem reads that resolve through `resolve_for_runtime` ship-wide (Q5), the Captain's DM reads included. S2 reads that policy and does not change it.
 - **L10.** Elevated has no decider other than the Captain until S3. S3 must also give a rule for a routine tool that is filed because reads are unconfined: `tool_tier` already calls it critical, so `CAPTAIN_RESERVED`.
 - **L11.** #1722's replay acceptance will count `list_files` (6 of 28) as elevated, decided by a chief after S3, not routine. The Captain-routed count stays 3.

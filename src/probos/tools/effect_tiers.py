@@ -1,7 +1,7 @@
 """AD-1356 S2 (#1722): the tool-effect table, the one source of agent-work tiering.
 
 A tool's tier names who authorises an agent-work call to it, in AD-676's names: a ``routine`` call runs with no
-approval; an ``elevated`` or ``critical`` call is put to the run's gate. A tool is in the table only by name. A tool id
+approval. A tool is in the table only by name. A tool id
 the table does not list (a new or renamed tool, every ``mcp:`` tool) and an id that is not a str are critical.
 
 ``routine_tool_ids`` is what a run reads (``agent_work_runner``); ``tool_tier`` classifies one id. The members are
@@ -19,7 +19,7 @@ TIER_ROUTINE: Final = "routine"
 TIER_ELEVATED: Final = "elevated"
 TIER_CRITICAL: Final = "critical"
 
-#: Routine: each reads, changes nothing and stays on the ship. The ten tools agent work called directly before
+#: Routine: each reads and stays on the ship. The ten tools agent work called directly before
 #: AD-1356 S2, and three code readers.
 ROUTINE_TOOL_IDS: Final[frozenset[str]] = frozenset({
     "event_log_query", "oracle_query", "self_query", "search_capabilities", "use_skill",
@@ -27,7 +27,7 @@ ROUTINE_TOOL_IDS: Final[frozenset[str]] = frozenset({
     "codebase_query", "codebase_read_source", "read_file",
 })
 #: The routine tools that read a path through the operator's read policy (``security.file_access.resolve_for_runtime``).
-#: With ``security_infra.read_roots`` unset that policy reaches any file outside the runtime's data directory and config
+#: With ``security_infra.read_roots`` unset that policy reaches outside the runtime's data directory and config
 #: files, so these are routine only while the roots are set, and critical otherwise.
 READ_POLICY_TOOL_IDS: Final[frozenset[str]] = frozenset({"codebase_read_source", "read_file"})
 #: Elevated: reads that reach past what the ship holds or past the read policy. find_mcp_tool discovers and offers new
