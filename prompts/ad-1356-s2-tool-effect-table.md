@@ -10,7 +10,7 @@
 
 On `0ac7bdf3`:
 
-1. An agent-work run calls only `AGENT_WORK_READ_TOOL_IDS` directly (`agent_work_runner.py:74-77`, used at `:615`). Every other call goes to the gate. That includes the code reads that made up 16 of the 28 requests on 2026-10-31 (#1722), which the gate filed for the Captain.
+1. An agent-work run calls only `AGENT_WORK_READ_TOOL_IDS` directly (`agent_work_runner.py:74-77`, used at `:615`). A call to any other registered tool goes to the gate. That includes the code reads that made up 16 of the 28 requests on 2026-10-31 (#1722), which the gate filed for the Captain.
 2. There is no table of tool effects. The nearest classifiers are plan mode's allowlist (`cognitive/agent_mode.py:68-83`, whose test is "changes nothing", not "needs no approval"), the effect broker's classes (`execution/effect_broker.py:322-351`), and `derive_tool_permission`. #1722 rules the last one out for tiering.
 3. `read_file` and `codebase_read_source` read through `resolve_for_runtime` (`swe_harness/tools.py:448`, `:754`). With `security_infra.read_roots` unset, that reaches files outside the data directory and config files (`security/file_access.py:160`, `:165-176`, `:197-206`).
 4. `list_files` resolves its path with `_resolve_path` (`swe_harness/tools.py:245-248`, called at `:542`), never through the read policy.
@@ -65,7 +65,7 @@ What an empty `read_roots` allows: `permitted_read_roots` returns `[]` (`file_ac
    - S2 lists the native elevated tools: `find_mcp_tool`; `web_search`, `read_page` and `http_fetch` (Q6); and `list_files`.
    - An `mcp:` id is not listed, so it is critical.
    - The AD-1019b mapping (OPEN → elevated; CONFIRM and CONSENSUS → critical) lands in S3 with its first consumer and a whole-path test. The risk is read from `_McpTool.effective_risk()` (`agentic_dispatch.py:1741-1760`) through the registry S3's classifier already takes.
-   - In S2, elevated and critical calls both go to the gate and are filed for the Captain exactly as today.
+   - In S2, a call to an elevated or critical tool goes to the gate, which decides it exactly as today.
 2. Add an `mcp_risk` parameter now. Rejected: no S2 caller would pass it, so it would be built, tested and inert.
 3. Read the MCP `readOnlyHint` and `openWorldHint` annotations. Rejected: the MCP spec says clients MUST treat annotations as untrusted unless they come from trusted servers, and AD-1019b's operator-set risk is the decided source.
 
@@ -566,7 +566,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1356 S2 (2026-11-02), #1722 -- the tool-effect table; agent work runs its routine tier with no approval.** `tools/effect_tiers.py` is the one table that tiers agent-work tool calls, in AD-676's names: routine, elevated, and critical for every tool it does not list, `mcp:` tools and non-str ids included. Routine: the ten tools agent work already called directly, plus `codebase_query`, `codebase_read_source` and `read_file`; the two path readers are routine only while `security_infra.read_roots` confines reads, and critical otherwise. Elevated: `find_mcp_tool`, `web_search`, `read_page`, `http_fetch` and `list_files`, whose path no read policy confines. A run reads its routine set once at its start (`routine_tool_ids`); a call to any other tool goes to the run's gate as before, so elevated and critical calls are still filed for the Captain. `AGENT_WORK_READ_TOOL_IDS` is removed, and the run is told that routine reads run directly. Plan mode is unchanged. No config field. The contract is `prompts/ad-1356-s2-tool-effect-table.md`.
+**AD-1356 S2 (2026-11-02), #1722 -- the tool-effect table; agent work runs its routine tier with no approval.** `tools/effect_tiers.py` is the one table that tiers agent-work tool calls, in AD-676's names: routine, elevated, and critical for every tool it does not list, `mcp:` tools and non-str ids included. Routine: the ten tools agent work already called directly, plus `codebase_query`, `codebase_read_source` and `read_file`; the two path readers are routine only while `security_infra.read_roots` confines reads, and critical otherwise. Elevated: `find_mcp_tool`, `web_search`, `read_page`, `http_fetch` and `list_files`, whose path no read policy confines. A run reads its routine set once at its start (`routine_tool_ids`); the run's gate for every other call is unchanged. `AGENT_WORK_READ_TOOL_IDS` is removed, and the run is told that routine reads run directly. Plan mode is unchanged. No config field. The contract is `prompts/ad-1356-s2-tool-effect-table.md`.
 
 ```
 
