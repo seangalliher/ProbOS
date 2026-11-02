@@ -1,7 +1,8 @@
 # BF-947 (#1724): an agent-work item waits for each call it filed, admits each approved one once, and is given the results of calls it already made
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-01
-**Status:** ready to build. **Base:** `d5f105985440c69b256c2074a5283eef204ebdb1` (origin/main at PR #1733). **Dependencies:** none. **Tier:** M1 HIGH, M2 HIGH, M3 STANDARD. **Estimated tests:** 2 new files (11 tests), 2 edited tests, 1 edited vitest case.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02 (Amendment 2, §17)
+**Status:** ready to build. **Base:** `d5f105985440c69b256c2074a5283eef204ebdb1` (origin/main at PR #1733). **Dependencies:** none. **Tier:** M1 HIGH, M2 HIGH, M3 STANDARD. **Estimated tests:** 2 new files (12 tests; MC12 runs twice), 2 edited tests, 1 edited vitest case.
 **BF number:** BF-947, held by the title of #1724.
 
 **Which text describes the head.** §1 to §3 describe the base `d5f10598`; their line numbers are the base's. The head is what the pairs and new-file blocks of §7 and §8 produce, applied in order. Where any prose here differs from a REPLACE or new-file block, the block wins. Head text means every docstring, comment, log message, error string, agent-facing string and test docstring in those blocks, plus the tracker entries (§8) and the commit messages (§5).
@@ -20,7 +21,7 @@ Each item below is on the base:
 
 - **M1 (`agentic_dispatch.py`):**
   - a verdict `CONFINEMENT_ANSWERED` and its refusal `CONFINED_CALL_ANSWERED`, which joins `_NEVER_RAN_REFUSALS` and the `permission_denied` class;
-  - an optional `ToolCallConfinement.record`, which `_invoke_reserved_body` hands each admitted call's result once the tool has returned.
+  - an optional `ToolCallConfinement.record`, to which `_invoke_reserved_body` hands results of admitted calls.
 - **M2 (`capability_request.py`, `agent_work_runner.py`):**
   - a module function `requests_for_work_item(store, work_item_id)`, the requests in the store's cache linked to the item, oldest first. It is a function, not a method: the store has 15 direct methods, the srp-size limit;
   - before a run, `_cancel_or_park` reads the assignee's agent-work requests on the item. A denied one cancels the item, a pending or approved-unfulfilled one parks it again, and otherwise every fulfilled one is admissible once;
@@ -41,8 +42,8 @@ Each item below is on the base:
 
 | M | Tier | Pairs | Gate |
 |---|---|---|---|
-| M1 | HIGH | P1-1 to P1-6, N1-1 | G1 |
-| M2 | HIGH | P2-1 to P2-14, N2-1 | G2 |
+| M1 | HIGH | P1-1 to P1-7, N1-1 | G1 |
+| M2 | HIGH | P2-1 to P2-15, N2-1 | G2 |
 | M3 | STANDARD | P3-1 to P3-5, the ledger | G3 |
 
 **G1:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf947_confinement_answer.py tests/test_ad1156_plan_execute_mode.py tests/test_ad1347_s3_execution.py tests/test_ad1154_approval_inbox.py tests/test_ad1152_agentic_correlation.py -q -n 0`
@@ -78,6 +79,7 @@ Each item below is on the base:
 | MC9 | multi_call | `test_the_runner_keeps_the_newest_results_without_an_error_each_cut` | M3's bounds |
 | MC10 | confinement_answer | `test_an_answered_call_never_runs_and_its_refusal_is_a_never_ran_policy_outcome` | M1 |
 | MC11 | confinement_answer | `test_an_admitted_result_is_handed_to_record_and_a_record_that_raises_is_logged` | M1 |
+| MC12 | multi_call | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept` (`the_run_returns`, `the_run_raises`) | A2 (F2) |
 
 Edited:
 - X2 (`test_a_call_outside_the_read_set_parks_the_item_and_an_approval_runs_it_exactly_once`) pinned "a repeat is filed". It now pins "a repeat is answered", and its denial step uses a new call. The docstring records why.
@@ -175,8 +177,8 @@ class ToolCallConfinement:
     ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
     Captain's approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
     (not filed). Enforced first in the executor's invoke, before plan mode and the AD-1154 browser inbox, so the
-    decision is made at the tool call, never by reading the plan. BF-947: ``record``, when set, is handed the result of
-    each admitted call that returns from the tool (``record_admitted``).
+    decision is made at the tool call, never by reading the plan. BF-947: ``record``, when set, is handed results of
+    admitted calls (``record_admitted``).
     """
 
     tool_ids: frozenset[str]
@@ -301,6 +303,23 @@ REPLACE:
     }
 ```
 
+**P1-7** `src/probos/cognitive/agentic_dispatch.py` (A2, F1: base text that no other pair touches)
+
+SEARCH:
+```python
+# AD-1347 S3 (#1627): agent-created work runs confined. Its calls to the tools in the run's set run as usual; a call to
+# any other tool is put to the run's gate, which files it for the Captain's approval (an AD-1154 ``action``) or admits
+# the one call an approval on record covers. Error-shaped and final, in the AD-1154 voice; never defect evidence.
+CONFINED_CALL_FILED: str = (
+```
+REPLACE:
+```python
+# AD-1347 S3 (#1627): agent-created work runs confined. Its calls to the tools in the run's set run as usual; a call to
+# any other tool is put to the run's gate, which admits it, files it for the Captain's approval (an AD-1154
+# ``action``), answers it (BF-947) or refuses it. Error-shaped and final, in the AD-1154 voice; never defect evidence.
+CONFINED_CALL_FILED: str = (
+```
+
 **N1-1** New file `tests/test_bf947_confinement_answer.py`:
 ```python
 """BF-947 (#1724) M1: the confinement's answered verdict and its record of admitted results.
@@ -418,12 +437,13 @@ A denial cancels the item (AD-855) and the report names the Captain's reason.
 REPLACE:
 ```python
 Every run is confined (``ToolCallConfinement``): the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual and a call to
-any other tool is put to the run's gate, which files it as an AD-1154 ``action`` request instead of running it. After
-such a run the item parks ``blocked`` on the first request its gate returned, through AD-855's ``block_on_request``;
-its approval fulfils it and AD-855 resumes the item through ``resume_agent_work``, and its denial cancels the item
-(AD-855). BF-947: before a run, the agent-work requests the item's assignee filed on it are read, oldest first. A
-denied one cancels the item; else a pending one, or an approved one not yet fulfilled, parks the item on it again; else
-the gate admits each call a fulfilled request covers, once per request (a claim-once row). The run is given the results
+any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order), which may file it as an
+AD-1154 ``action`` request. A run that filed a call can park the item ``blocked`` on the first request its gate
+returned, through AD-855's ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
+``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
+item's assignee filed on it are read, oldest first. A denied one cancels the item; else a pending one, or an approved
+one not yet fulfilled, parks the item on it again; else the run goes ahead, and a fulfilled one may admit its call once
+(a claim-once row). The run is given the results
 this runner keeps of calls admitted on the item for the same agent, and the gate answers a repeat of one of those calls
 without running it. The report reads a denial's reason from the request.
 ```
@@ -583,10 +603,10 @@ def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[Carr
         f"Asked by {requester}. Reason: {reason}. Tool named: {tool}.\n\n"
         f"Current UTC time: {stamp}.\n\n"
         f"{earlier}"
-        "Read-only tools run directly. A call to any other tool is filed for approval and does not run now; this work "
-        "continues when no call it filed awaits a decision or its fulfilment, and ends if one of them is denied. Do "
-        "the reading, then answer with what you found and the tool results you relied on. Your answer is posted where "
-        "the work was asked for."
+        "Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "
+        "continues when no call you filed on it awaits a decision or its fulfilment, and ends if one of them is "
+        "denied. Do the reading, then answer with what you found and the tool results you relied on. Your answer is "
+        "posted where the work was asked for."
     )
 ```
 
@@ -661,6 +681,22 @@ async def _cancel_or_park(store: Any, parking: Any, work_item_id: str, linked: l
         return False
     await parking.block_on_request(work_item_id=work_item_id, request_id=waiting.id, reason=BLOCKED_REASON)
     return True
+
+
+async def _forget_if_ended(store: Any, carried: CarriedResults, work_item_id: str) -> None:
+    """BF-947 A2 (F2): drop the results kept on an item that has ended or is gone. A call in flight when the item ended
+    returns after the terminal event dropped them and is recorded then, so ``_run`` calls this after its executor
+    returns and in its failure handler. Never raises: when the item cannot be read, its results stay (L12)."""
+    try:
+        latest = await store.get_work_item(work_item_id)
+    except Exception:
+        logger.warning(
+            "BF-947: work item %s could not be read after its run; the results kept on it stay", work_item_id,
+            exc_info=True,
+        )
+        return
+    if latest is None or latest.status in TERMINAL_STATUSES:
+        carried.forget(work_item_id)
 
 
 async def _denial_reason(requests: Any, item: WorkItem) -> str:
@@ -788,9 +824,12 @@ REPLACE:
                 if record.kind == KIND_REQUEST:
                     await self._store.unassign_work_item(item.id, reason="the claimant was stopped by the Captain")
                 return
-            # A1 (F5): first, so a claimant stopped (or that lost the tool) after it filed a call is released, never
-            # parked; a call it filed stays on the Captain's queue: AD-855 acts only on an item parked on that request,
-            # and a run admits only calls its own assignee filed (BF-947).
+            # BF-947 A2 (F2): a call in flight when the item ended was recorded after the terminal event dropped the
+            # item's results; no call of this run is in flight now.
+            await _forget_if_ended(self._store, self.carried, item.id)
+            # A1 (F5): before the park, so a claimant stopped (or that lost the tool) after it filed a call is released,
+            # never parked; a call it filed stays on the Captain's queue: AD-855 acts only on an item parked on that
+            # request, and a run admits only calls its own assignee filed (BF-947).
 ```
 
 **P2-12** `src/probos/agent_work_runner.py`
@@ -915,6 +954,31 @@ REPLACE:
         assert second_id != first_id and second.status == "pending" and second.payload["params"] == {"deck": "2"}
 ```
 
+**P2-15** `src/probos/agent_work_runner.py` (A2, F2: the run's failure handler)
+
+SEARCH:
+```python
+            try:
+                if await self._store.transition_work_item(
+                    work_item_id, "failed", source=RUN_SOURCE, expected_status="in_progress",
+                ) is not None:
+                    await _close_bookings(self._store, work_item_id, completed=False)
+            except Exception:
+                logger.warning("AD-1347: work item %s could not be marked failed; it stays in_progress", work_item_id, exc_info=True)
+```
+REPLACE:
+```python
+            try:
+                if await self._store.transition_work_item(
+                    work_item_id, "failed", source=RUN_SOURCE, expected_status="in_progress",
+                ) is not None:
+                    await _close_bookings(self._store, work_item_id, completed=False)
+            except Exception:
+                logger.warning("AD-1347: work item %s could not be marked failed; it stays in_progress", work_item_id, exc_info=True)
+            # BF-947 A2 (F2): an item that ended while the run was failing gets no event from the transition above.
+            await _forget_if_ended(self._store, self.carried, work_item_id)
+```
+
 **N2-1** New file `tests/test_bf947_multi_call_agent_work.py`:
 ```python
 """BF-947 (#1724): an agent-work item that files several calls waits for each, admits each approved one once, and is
@@ -927,11 +991,14 @@ driven by a scripted model. On the base this file fails at import (``CarriedResu
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
 from probos.agent_work_runner import (
@@ -994,11 +1061,16 @@ async def _decide(rig: Any, request_id: str, *, approve: bool, reason: str = "")
     await _pump(rig)
 
 
-def _restarted(rig: Any, *, clock: Callable[[], float] = time.time) -> AgentWorkRunner:
-    """A new runner over the same stores, as the next start builds one: its kept results start empty."""
+def _restarted(
+    rig: Any, *, clock: Callable[[], float] = time.time, executor: WorkItemAgenticExecutor | None = None,
+) -> AgentWorkRunner:
+    """A new runner over the same stores, as the next start builds one: its kept results start empty. ``executor``
+    defaults to a ``WorkItemAgenticExecutor`` over the rig's model."""
     runner = AgentWorkRunner(
         service=rig.service, store=rig.store, ward_room=rig.wr, tools=rig.tools, requests=rig.requests,
-        parking=rig.driver, executor=WorkItemAgenticExecutor(llm_client=rig.llm), runtime=rig.runtime,
+        parking=rig.driver,
+        executor=executor if executor is not None else WorkItemAgenticExecutor(llm_client=rig.llm),
+        runtime=rig.runtime,
         agents=rig.runtime.registry, callsign_of=lambda slot: CALLSIGNS.get(slot, slot),
         ttl_seconds=AgentWorkConfig(enabled=True).ttl_seconds, clock=clock,
     )
@@ -1236,6 +1308,62 @@ def test_the_runner_keeps_the_newest_results_without_an_error_each_cut() -> None
     assert (len(cut.params), len(cut.output)) == (CARRIED_PARAMS_MAX_CHARS, CARRIED_RESULT_MAX_CHARS)
     carried.forget("wi-carried-2")
     assert carried.for_agent("wi-carried-2", "forge-1") == ()
+
+
+class _RaisesAfterRun(WorkItemAgenticExecutor):
+    """The real executor, whose run then raises: a failure after the run's calls returned."""
+
+    async def run(self, **kwargs: Any) -> Any:
+        await super().run(**kwargs)
+        raise RuntimeError("the run failed after its calls returned")
+
+
+# MC12
+@pytest.mark.parametrize("raises", [False, True], ids=["the_run_returns", "the_run_raises"])
+async def test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raises: bool,
+) -> None:
+    """A2 (F2): an admitted call still running when its item is cancelled returns after the terminal event dropped the
+    item's results, and is recorded then. The run reads the item again after its executor returns, or in its failure
+    handler when the executor raises, and keeps nothing for the ended item."""
+    script = [
+        _call("hull_survey", DECK_1, "c1"), _final("Waiting for the Captain."),
+        _call("hull_survey", DECK_1, "c2"), _final("Surveyed deck one."),
+    ]
+    async with _rig(tmp_path, script) as rig:
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        item_id = await _self_task(rig, origin.id)
+        await _pump(rig)
+        [request] = requests_for_work_item(rig.requests, item_id)
+        if raises:
+            _restarted(rig, executor=_RaisesAfterRun(llm_client=rig.llm))
+        entered, released = asyncio.Event(), asyncio.Event()
+        survey = rig.survey.invoke
+
+        async def held(params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+            entered.set()
+            await released.wait()
+            return await survey(params, context)
+
+        monkeypatch.setattr(rig.survey, "invoke", held)
+        deciding = asyncio.create_task(_decide(rig, request.id, approve=True))
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            moved = await rig.store.transition_work_item(
+                item_id, "cancelled", source="captain", expected_status="in_progress",
+            )
+            assert moved is not None
+            events = list(rig.work_events)
+            rig.work_events.clear()
+            for kind, data in events:
+                await rig.runner.on_store_event({"type": getattr(kind, "value", kind), "data": data})
+            assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the terminal event dropped the results"
+        finally:
+            released.set()
+            await asyncio.wait_for(deciding, 20)
+        ended = await rig.store.get_work_item(item_id)
+        assert ended is not None and ended.status == "cancelled" and rig.survey.calls == 1
+        assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the late result is not kept on the ended item"
 ```
 
 ### 7.3 M3 (the HXI)
@@ -1330,7 +1458,7 @@ REPLACE:
 - *Admission.* Each fulfilled one of those requests admits its call once (the claim-once row `approval_use:<request id>`).
 - *Results.* The runner keeps, in memory, the result of each admitted call that returned no error: the newest 8 per item, 1,500 characters of output and 200 of parameters each, by agent. The next run's task text lists them, and the gate answers a repeat with `CONFINED_CALL_ANSWERED`, a never-ran refusal. The task text states the current UTC time.
 - *Rejected.* A list of request ids under a new key with a changed AD-855 driver, which every parked kind shares; one request for all of a run's calls; results in the item's metadata, which the store's `WORK_ITEM_UPDATED` event carries; results by reference in the AttachmentStore (considered, deferred); telling the agent of a denial and continuing.
-- *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L11 of the contract.
+- *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L12 of the contract.
 - *Reversal.* Revert the three commits. The requests filed stay in the inbox, and AD-855 acts on the parked one as before.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
@@ -1347,7 +1475,6 @@ Then regenerate the ledger (`python -P scripts/gen_ad_ledger.py`) and stage `doc
 ## 9. What this does NOT change
 
 - The behaviour of `capability_gap_driver.py`: it is not edited.
-- Every reader of `capability_request_id` (§10).
 - AD-1154's dedup, `file_action_request`, `decide`, the approval route, and the HXI payload decoder.
 - The read set `AGENT_WORK_READ_TOOL_IDS`.
 - The behaviour of every executor that has no confinement. P1-4 replaces `return replace(...)` with an assignment followed by `return result`, which is behaviour-equal.
@@ -1381,8 +1508,13 @@ Line cells hold the source line without its leading indentation.
 | BM-19 | `src/probos/agent_work_runner.py` | `self._by_item[work_item_id] = (*kept, entry)[-CARRIED_RESULTS_MAX:]` | `self._by_item[work_item_id] = (*kept, entry)` | `test_the_runner_keeps_the_newest_results_without_an_error_each_cut` |
 | BM-20 | `src/probos/agent_work_runner.py` | `output=str(getattr(result, "output", ""))[:CARRIED_RESULT_MAX_CHARS],` | `output=str(getattr(result, "output", "")),` | `test_the_runner_keeps_the_newest_results_without_an_error_each_cut` |
 | BM-21 | `ui/src/components/capability/CapabilityRequestCard.tsx` | `{agentWork && <p>Work item {approvalDisplayText(expected.work_item_id ?? '')} runs again when no other call its` | `{agentWork && <p>Approval resumes work item {approvalDisplayText(expected.work_item_id ?? '')}. no other call its` | `says when an agent-work item runs again and offers no standing approval; an ordinary action keeps both` (vitest) |
+| BM-22 | `src/probos/agent_work_runner.py` | `carried.forget(work_item_id)` | `pass` | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept` (both cases) |
+| BM-23 | `src/probos/agent_work_runner.py` | `await _forget_if_ended(self._store, self.carried, item.id)` | `pass` | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept[the_run_returns]` |
+| BM-24 | `src/probos/agent_work_runner.py` | `await _forget_if_ended(self._store, self.carried, work_item_id)` | `pass` | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept[the_run_raises]` |
+| BM-25 | `src/probos/agent_work_runner.py` | `if latest is None or latest.status in TERMINAL_STATUSES:` | `if latest is None:` | `test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept` (both cases) |
+| BM-26 | `src/probos/agent_work_runner.py` | `if latest is None or latest.status in TERMINAL_STATUSES:` | `if True:` | `test_a_resumed_run_is_given_earlier_results_and_a_repeat_is_answered_not_filed` |
 
-Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad1347_s3_execution.py` and `tests/test_ad1156_plan_execute_mode.py`, run each row against the file that holds its killer. Record the base tree and the sha256 of the three mutated `src` files.
+Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad1347_s3_execution.py` and `tests/test_ad1156_plan_execute_mode.py`, run each row against the file that holds its killer. Record the base tree and the sha256 of the three mutated `src` files. A2: the campaign of record is on the amended M2 head. Rerun every row whose `src` file differs from the one the earlier campaign recorded: all `agent_work_runner.py` rows (BM-1 to BM-8, BM-12, BM-13, BM-17 to BM-20, BM-22 to BM-26) and the `agentic_dispatch.py` rows (BM-9 to BM-11, BM-15, BM-16; P1-2 and P1-7 change that file). BM-14 is carried when the sha256 of `capability_request.py` matches the earlier record, and BM-21 when the card's file does.
 
 ## 11. Recorded limits
 
@@ -1397,6 +1529,7 @@ Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad134
 - **L9.** The model may ignore the stated time and still call a tool for it; that call is filed.
 - **L10.** An approved `read_file` of an earlier run's AD-1240 workspace result runs in a later run, and the tool decides whether that run may read it (AD-1356 S1.3).
 - **L11.** Requests a previous claimant filed are neither admitted for, nor cancel, nor park the next claimant (MC7).
+- **L12.** A2: when a run cannot read its item after the executor returns, or in its failure handler, the item's kept results stay (logged). A later terminal status event drops them; if the item had already ended, they stay for the runner's lifetime.
 
 ## 12. Verified Against Codebase (2026-11-01, on `d5f10598`)
 
@@ -1431,7 +1564,6 @@ Read tests/test_ad1156_plan_execute_mode.py :522-543
 Read ui/src/components/capability/CapabilityRequestCard.tsx :134-139; __tests__/CapabilityRequestCard.ad1347.test.tsx (whole)
 Read PROGRESS.md :1-3; DECISIONS.md :656-672, :1240-1247; grep -n "^### BF-94" DECISIONS.md -> 904
 Read prompts/bf-941-cold-start-detector-and-session-flag.md :1287-1322, :1456-1501
-grep capability_request_id src (20 hits, listed in the answer's Q1); ui (5 hits); tests (100 in 16 files)
 BF ceiling: git log --all --format=%s | grep -o "BF-9[4-9][0-9]" -> BF-941 only; prompts/bf-9[4-9]*.md -> bf-941 only;
   roadmap.md BF-9[2-9][0-9] -> one AD-753 row naming BF-927 (no tracker row); gh issue view 1723 / 1724 -> BF-946 / BF-947 titles;
   gh issue list --state all --search "sort:created-desc" --limit 60 -> BF-945 #1720, BF-946 #1723, BF-947 #1724 highest
@@ -1536,12 +1668,13 @@ A8 CLAIM: _reject_reserved_metadata refuses SCAFFOLD_METADATA_FLAG and steps_con
 2. A call is admitted only after a successful `claim_work_notice(item, agent, "approval_use:" + id)` for a `fulfilled` request. That request must have this `work_item_id` (`requests_for_work_item`), this slot as `agent_id`, and a valid `agent_work_call` (`_linked_calls`).
 3. The gate's order matches its docstring: refused when it cannot record the call; answered; admitted; refused at the pending cap; filed; refused when the filing returns no request.
 4. `_cancel_or_park` runs after `_begin` and before the executor. A denied request cancels before any run; an undecided one re-parks before any run.
-5. Kept results live only in `AgentWorkRunner.carried`. They are per item, read per agent, dropped on a terminal status event, and bounded at 8 entries, 1,500 characters and 200 characters.
-6. `record_admitted` is called only after the tool returned, only for a confined admission, with the parameters the gate saw. A `record` that raises is logged and the result is returned unchanged.
+5. Kept results live only in `AgentWorkRunner.carried`. They are per item, read per agent, and bounded at 8 entries, 1,500 characters and 200 characters. They are dropped on a terminal status event and by `_forget_if_ended`, which `_run` calls after its executor returns and in its failure handler.
+6. `record_admitted` is called only for a confined admission, with the parameters the gate saw. A `record` that raises is logged and the result is returned unchanged.
 7. With no confinement, `_invoke_reserved_body` returns what the base returned.
 8. Every added or rewritten docstring, comment, refusal text, agent-facing text, card copy and test docstring is true of the head, in the code's branch order.
 9. No config field, `EventType`, request kind or persisted key is added. The runner's cancel also writes AD-855's existing `denial_reason`.
 10. MC4 builds the pre-fix state without the runner, and MC5 replaces the runner without reusing its memory.
+11. No exit of `_run` after its executor started leaves a result kept on an ended item. The return path and the failure handler call `_forget_if_ended`. `AgentStopped` comes only from `refuse_new_run` at the executor's entry, before any call. A cancelled run records nothing, because `gather` awaits its cancelled tool tasks and `record_admitted` follows the tool's return.
 
 ## 16. Acceptance criteria
 
@@ -1559,3 +1692,40 @@ A8 CLAIM: _reject_reserved_metadata refuses SCAFFOLD_METADATA_FLAG and steps_con
 - P2-6 (the task text): "continues when every call it filed is decided" is "continues when no call it filed awaits a decision or its fulfilment" (the runner also waits for an approved request that is not yet fulfilled, as the card's copy in P3-2 says).
 - P2-7 (`_cancel_or_park`'s docstring): "the oldest pending request, or approved one not yet fulfilled" is "the oldest request in ``linked`` that is pending, or approved and not yet fulfilled" (the code takes the first of either status in the list's order).
 Unchanged: every other SEARCH text and REPLACE text of §7 and §8; every count; and every record of §12 and entry of Absence Verified.
+
+**Amendment 2 (2026-11-02, `claude-architect`, after review round 1 of the built candidate `2cd81872`).** This repairs F1 to F5 of the round-1 review:
+- **F1.** P2-2's module docstring and P2-6's task text no longer say that every call outside the read set is filed. The gate admits, answers, refuses or files a call, in `_gate_for`'s order. The task text says "no call you filed on it", because `_linked_calls` reads only the assignee's requests (L11). New P1-7 corrects the same claim in the base comment above `CONFINED_CALL_FILED`.
+- **F2.** New module function `_forget_if_ended`, called by `_run` after its executor returns (P2-11) and in its failure handler (new P2-15). This adds MC12, BM-22 to BM-26, L12, and §15 items 5 and 11. No method is added to `AgentWorkRunner`, which stays at 15.
+- **F3.** The timing claims are deleted from §2, P1-2's docstring and §15 item 6. An admitted call that a later guard refuses is not recorded: `_invoke_reserved_body` returns before `record_admitted` (L6).
+- **F4.** The §9 bullet on readers of `capability_request_id` is deleted.
+- **F5.** The §12 line counting `capability_request_id` hits is deleted.
+- §4, §6, the header and §10's campaign note follow from these. AD-1356 S1 is not touched.
+
+Verified on `2cd81872`:
+```
+agent_work_runner.py: 247-252 _linked_calls (251 agent_id == slot_id); 403-421 on_store_event (419 forget);
+  544-622 _run: 579-591 executor and AgentStopped, 595-597 F5 release, 598-600 park filed[0], 604-617 failure handler;
+  640-679 _gate_for, returns 658 refused, 661 answered, 666 admit, 668 refused, 674 refused; 90 TERMINAL_STATUSES; 65 logger
+agentic_dispatch.py: 301-303 the AD-1347 S3 comment (as on d5f10598); 331-340 ToolCallConfinement;
+  831-916 _invoke_reserved_body: returns 838, 853, 856, 870, 889 precede record_admitted at 915;
+  2731-2737 refuse_new_run at the run's entry
+agent_stop.py:603 def refuse_new_run; its only call: agentic_dispatch.py:2734
+swe_harness/agentic_loop.py:2461-2469 gather awaits every cancelled tool task (DD-5)
+startup/finalize.py:3535-3541 the runner's executor is WorkItemAgenticExecutor
+pyproject.toml:181 asyncio_mode = "auto"
+logs/bf947r1/terminal_result.py: retained results after all events=1 (the defect MC12 pins)
+```
+Absence verified on `2cd81872`:
+```
+CLAIM: no src, tests or ui text pins the sentences F1 replaces
+RUN:   Grep "does not run now|filed for (the Captain's )?approval and|this work (continues|resumes)|instead of running|
+       awaits a decision|ends if one of them" over src, tests, ui/src, docs, config
+FOUND: agent_work_runner.py:14, :211, :212 (replaced); CapabilityRequestCard.tsx:138 and its test :26 (the card's
+       own copy, true of the head, unchanged); shell_command.py:220, attention.py:6, test_ad1270f:1445, test_bf914:7 (unrelated)
+HOLDS: yes
+CLAIM: nothing imports tests/test_bf947_multi_call_agent_work.py (so _restarted's new keyword is local)
+RUN:   Grep "test_bf947_multi_call_agent_work import|from tests.test_bf947" tests
+FOUND: none
+HOLDS: yes
+```
+Unchanged by A2: every other SEARCH and REPLACE text of §7 and §8, §13, and AD-1356 S1.
