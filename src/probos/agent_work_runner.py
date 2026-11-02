@@ -11,10 +11,15 @@ events (one listener):
 - an item that ends has its live bookings closed and is reported, once per recipient, to its requester and watchers.
 
 Every run is confined (``ToolCallConfinement``): the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual and a call to
-any other tool is filed as an AD-1154 ``action`` request instead of running. After such a run the item parks
-``blocked`` on that request through AD-855's ``block_on_request``; the Captain's approval fulfils it, AD-855 resumes the
-item through ``resume_agent_work``, and the next run makes that one call (its approval is consumed on a claim-once row).
-A denial cancels the item (AD-855) and the report names the Captain's reason.
+any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order), which may file it as an
+AD-1154 ``action`` request. A run that filed a call can park the item ``blocked`` on the first request its gate
+returned, through AD-855's ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
+``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
+item's assignee filed on it are read, oldest first. A denied one cancels the item; else a pending one, or an approved
+one not yet fulfilled, parks the item on it again; else the run goes ahead, and a fulfilled one may admit its call once
+(a claim-once row). The run is given the results
+this runner keeps of calls admitted on the item for the same agent, and the gate answers a repeat of one of those calls
+without running it. The report reads a denial's reason from the request.
 
 The stop: every run enters at ``WorkItemAgenticExecutor.run``, which refuses a stopped agent at ``agentic_run``. A
 request whose claimant may no longer run it (stopped, moved, lost the tool) goes back to the board unclaimed, never
@@ -25,9 +30,11 @@ functions that run work, so the approval route's import of ``agent_work_approval
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from probos.agent_stop import AgentStopped
@@ -46,6 +53,7 @@ from probos.capability_request import (
     AGENT_WORK_SCOPE_PREFIX,
     action_dedup_key,
     agent_work_call,
+    requests_for_work_item,
     validate_action_payload,
 )
 from probos.events import EventType
@@ -94,6 +102,58 @@ _HANDLED_EVENTS: Final[frozenset[str]] = frozenset({
 })
 #: The claim tool renders its receipt through the invocation's presentation; the runner reads the board, not the text.
 _PRESENTATION: Final = ToolResultPresentation(render_complete=repr)
+#: BF-947: an agent-work request in these statuses is waited for (an approved one is not yet fulfilled).
+_UNDECIDED: Final[frozenset[str]] = frozenset({"pending", "approved"})
+#: BF-947 (M3): how many results of admitted calls the runner keeps per item, and how much of each it keeps.
+CARRIED_RESULTS_MAX: Final = 8
+CARRIED_RESULT_MAX_CHARS: Final = 1_500
+CARRIED_PARAMS_MAX_CHARS: Final = 200
+
+
+@dataclass(frozen=True)
+class CarriedResult:
+    """BF-947 (M3): the result of one call admitted in a run of an item, by the agent that made it."""
+
+    agent_id: str
+    key: str  # the call's ``action_dedup_key``
+    tool_id: str
+    params: str  # its recorded parameters as JSON, cut at ``CARRIED_PARAMS_MAX_CHARS``
+    output: str  # its output as text, cut at ``CARRIED_RESULT_MAX_CHARS``
+
+
+class CarriedResults:
+    """BF-947 (M3): per item, the results of admitted calls that returned no error, in this process only: the newest
+    ``CARRIED_RESULTS_MAX`` per item, oldest first; an entry replaces one with the same call key."""
+
+    def __init__(self) -> None:
+        self._by_item: dict[str, tuple[CarriedResult, ...]] = {}
+
+    def for_agent(self, work_item_id: str, agent_id: str) -> tuple[CarriedResult, ...]:
+        """The results kept on this item for ``agent_id``, oldest first."""
+        return tuple(entry for entry in self._by_item.get(work_item_id, ()) if entry.agent_id == agent_id)
+
+    def recorder(self, work_item_id: str) -> Callable[[str, Any, Any, Any], None]:
+        """The ``ToolCallConfinement.record`` of one run of this item."""
+
+        def record(agent_id: str, tool_id: Any, params: Any, result: Any) -> None:
+            payload = approval_payload(tool_id, params, work_item_id)
+            if payload is None or getattr(result, "error", None) is not None:
+                return
+            entry = CarriedResult(
+                agent_id=agent_id,
+                key=action_dedup_key(agent_id=agent_id, payload=payload, work_item_id=work_item_id),
+                tool_id=payload["tool_id"],
+                params=json.dumps(payload["params"], sort_keys=True, default=str)[:CARRIED_PARAMS_MAX_CHARS],
+                output=str(getattr(result, "output", ""))[:CARRIED_RESULT_MAX_CHARS],
+            )
+            kept = tuple(old for old in self._by_item.get(work_item_id, ()) if old.key != entry.key)
+            self._by_item[work_item_id] = (*kept, entry)[-CARRIED_RESULTS_MAX:]
+
+        return record
+
+    def forget(self, work_item_id: str) -> None:
+        """Drop the results kept on an item."""
+        self._by_item.pop(work_item_id, None)
 
 
 def agent_work_approval(request: Any) -> dict[str, Any] | None:
@@ -130,18 +190,29 @@ def _origin_thread(item: WorkItem) -> str:
     return thread_id if type(thread_id) is str else ""
 
 
-def task_text(item: WorkItem, *, requester: str) -> str:
-    """What the run is asked: the colleague's request, its reason and its tool, and the confinement in plain words."""
+def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[CarriedResult, ...] = ()) -> str:
+    """What the run is asked: the colleague's request, its reason and its tool, ``now`` (an epoch time) as UTC, the
+    ``carried`` results (BF-947), and the confinement in plain words."""
     provenance = _provenance(item)
     reason = provenance.get("reason") if type(provenance.get("reason")) is str else ""
     tool = provenance.get("tool_id") if type(provenance.get("tool_id")) is str else "the read-only tools you hold"
     details = f"{item.description}\n\n" if item.description and item.description != item.title else ""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    earlier = "".join(f"- {entry.tool_id} {entry.params}: {entry.output}\n" for entry in carried)
+    if earlier:
+        earlier = (
+            "Calls of this work that were approved and already ran, with their results (each cut at "
+            f"{CARRIED_RESULT_MAX_CHARS:,} characters). Do not make them again:\n{earlier}\n"
+        )
     return (
         f"Agent work {item.id}: {item.title}\n\n{details}"
         f"Asked by {requester}. Reason: {reason}. Tool named: {tool}.\n\n"
-        "Read-only tools run directly. A call to any other tool is filed for the Captain's approval and does not run "
-        "now; this work resumes after the Captain decides. Do the reading, then answer with what you found and the "
-        "tool results you relied on. Your answer is posted where the work was asked for."
+        f"Current UTC time: {stamp}.\n\n"
+        f"{earlier}"
+        "Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "
+        "continues when no call you filed on it awaits a decision or its fulfilment, and ends if one of them is "
+        "denied. Do the reading, then answer with what you found and the tool results you relied on. Your answer is "
+        "posted where the work was asked for."
     )
 
 
@@ -174,32 +245,80 @@ def outcome_text(item: WorkItem, outcome: str, *, mentions: str, denial: str = "
     return f"{head} ended as {outcome} without a result."
 
 
-async def _approved_admission(requests: Any, item: WorkItem, slot_id: str) -> tuple[str, str] | None:
-    """(request id, call key) of the approval this item was parked on and resumed by, or None."""
-    metadata = item.metadata if type(item.metadata) is dict else {}
-    request_id = metadata.get("capability_request_id")
-    if type(request_id) is not str or not request_id:
-        return None
-    request = await requests.get(request_id)
-    payload = agent_work_approval(request) if request is not None else None
-    if payload is None or request.status != "fulfilled" or request.agent_id != slot_id or request.work_item_id != item.id:
-        return None
-    return request_id, action_dedup_key(agent_id=slot_id, payload=payload, work_item_id=item.id)
+def _linked_calls(requests: Any, work_item_id: str, slot_id: str) -> list[Any]:
+    """BF-947: the agent-work call requests ``slot_id`` filed on this item, oldest first."""
+    return [
+        request for request in requests_for_work_item(requests, work_item_id)
+        if request.agent_id == slot_id and agent_work_approval(request) is not None
+    ]
+
+
+def _admissions(linked: list[Any], slot_id: str, work_item_id: str) -> dict[str, list[str]]:
+    """BF-947 (M2): call key -> the ids of the fulfilled requests in ``linked`` that cover it, oldest first."""
+    keys: dict[str, list[str]] = {}
+    for request in linked:
+        payload = agent_work_approval(request)
+        if request.status == "fulfilled" and payload is not None:
+            key = action_dedup_key(agent_id=slot_id, payload=payload, work_item_id=work_item_id)
+            keys.setdefault(key, []).append(request.id)
+    return keys
+
+
+async def _cancel_or_park(store: Any, parking: Any, work_item_id: str, linked: list[Any]) -> bool:
+    """BF-947 (M4): True when the item is not run now. The oldest denied request in ``linked`` moves it from
+    in_progress to cancelled, with that request's decision reason as ``denial_reason``; else the oldest request in
+    ``linked`` that is pending, or approved and not yet fulfilled, parks it on that request through
+    ``block_on_request``."""
+    denied = next((request for request in linked if request.status == "denied"), None)
+    if denied is not None:
+        moved = await store.transition_work_item(
+            work_item_id, "cancelled", source=RUN_SOURCE, expected_status="in_progress",
+            metadata_patch={"denial_reason": str(denied.decision_reason or "")},
+        )
+        if moved is not None:
+            await _close_bookings(store, work_item_id, completed=False)
+        return True
+    waiting = next((request for request in linked if request.status in _UNDECIDED), None)
+    if waiting is None:
+        return False
+    await parking.block_on_request(work_item_id=work_item_id, request_id=waiting.id, reason=BLOCKED_REASON)
+    return True
+
+
+async def _forget_if_ended(store: Any, carried: CarriedResults, work_item_id: str) -> None:
+    """BF-947 A2 (F2): drop the results kept on an item that has ended or is gone. A call in flight when the item ended
+    returns after the terminal event dropped them and is recorded then, so ``_run`` calls this after its executor
+    returns and in its failure handler. When reading the item raises an ``Exception``, its results stay (L12); it
+    catches nothing else, so a cancellation propagates."""
+    try:
+        latest = await store.get_work_item(work_item_id)
+    except Exception:
+        logger.warning(
+            "BF-947: work item %s could not be read after its run; the results kept on it stay", work_item_id,
+            exc_info=True,
+        )
+        return
+    if latest is None or latest.status in TERMINAL_STATUSES:
+        carried.forget(work_item_id)
 
 
 async def _denial_reason(requests: Any, item: WorkItem) -> str:
-    """The Captain's reason when the request this item was parked on was denied, else "".
+    """The reason recorded with a denied agent-work request of this item, else "": first the request the item was
+    parked on, then (BF-947) the requests its assignee filed on it, oldest first.
 
     Read from the request, not the item: AD-855 writes ``denial_reason`` only after the cancel this notice follows.
     """
     metadata = item.metadata if type(item.metadata) is dict else {}
     request_id = metadata.get("capability_request_id")
-    if type(request_id) is not str or not request_id:
-        return ""
-    request = await requests.get(request_id)
-    if request is None or request.status != "denied" or agent_work_approval(request) is None:
-        return ""
-    return str(request.decision_reason or "no reason recorded")[:MAX_REASON_CHARS]
+    candidates: list[Any] = []
+    if type(request_id) is str and request_id:
+        candidates.append(await requests.get(request_id))
+    if type(item.assigned_to) is str and item.assigned_to:
+        candidates.extend(_linked_calls(requests, item.id, item.assigned_to))
+    for request in candidates:
+        if request is not None and request.status == "denied" and agent_work_approval(request) is not None:
+            return str(request.decision_reason or "no reason recorded")[:MAX_REASON_CHARS]
+    return ""
 
 
 async def _close_bookings(store: Any, work_item_id: str, *, completed: bool) -> None:
@@ -290,6 +409,7 @@ class AgentWorkRunner:
         self._tasks: set[asyncio.Task[None]] = set()
         self._active: set[str] = set()
         self._restart: set[str] = set()  # A1 (F2): starts that arrived while the item ran; made when that run ends
+        self.carried = CarriedResults()  # BF-947 (M3)
         self._deliver_lock = asyncio.Lock()
         self._stopping = False
 
@@ -314,6 +434,7 @@ class AgentWorkRunner:
                 return
             if kind == EventType.WORK_ITEM_STATUS_CHANGED.value:
                 if item.status in TERMINAL_STATUSES:
+                    self.carried.forget(item.id)  # BF-947
                     await _close_bookings(self._store, item.id, completed=item.status == "done")
                     await self.deliver_due_notices()
             elif kind == EventType.WORK_ITEM_CREATED.value and record.kind == KIND_REQUEST:
@@ -444,7 +565,8 @@ class AgentWorkRunner:
 
         A1 (review round 1): a request's eligibility is asked again first (F5); a run that filed a call parks on it and
         one the executor parked itself stays parked (F3); only a completed run with an answer is done (F4,
-        ``_record_outcome``); a start that arrived during this run is made when it ends (F2).
+        ``_record_outcome``); a start that arrived during this run is made when it ends (F2). BF-947: before the agent
+        runs, ``_cancel_or_park`` cancels the item on a denied call or parks it on an undecided one.
         """
         try:
             item = await self._store.get_work_item(work_item_id)
@@ -460,18 +582,24 @@ class AgentWorkRunner:
                 return
             if not await self._begin(item):
                 return
+            linked = _linked_calls(self._requests, item.id, slot)
+            if await _cancel_or_park(self._store, self._parking, item.id, linked):
+                return
             from probos.cognitive.agentic_dispatch import ToolCallConfinement
 
             agent = self._agents.get(slot)
             filed: list[str] = []
             confinement = ToolCallConfinement(
-                AGENT_WORK_READ_TOOL_IDS,
-                self._gate_for(item.id, await _approved_admission(self._requests, item, slot), filed),
+                AGENT_WORK_READ_TOOL_IDS, self._gate_for(item.id, _admissions(linked, slot, item.id), filed),
+                record=self.carried.recorder(item.id),
             )
             try:
                 outcome = await self._executor.run(
                     agent_id=slot, instructions=str(getattr(agent, "instructions", "") or ""),
-                    task_text=task_text(item, requester=self._callsign_of(record.requester)),
+                    task_text=task_text(
+                        item, requester=self._callsign_of(record.requester), now=self._clock(),
+                        carried=self.carried.for_agent(item.id, slot),
+                    ),
                     runtime=self._runtime, failure_scope=item.id,
                     work_item_id_provider=lambda: item.id, confinement=confinement,
                 )
@@ -479,9 +607,12 @@ class AgentWorkRunner:
                 if record.kind == KIND_REQUEST:
                     await self._store.unassign_work_item(item.id, reason="the claimant was stopped by the Captain")
                 return
-            # A1 (F5): first, so a claimant stopped (or that lost the tool) after it filed a call is released, never
-            # parked; a call it filed stays on the Captain's queue, inert: AD-855 and the admission act only on an item
-            # parked on that request.
+            # BF-947 A2 (F2): a call in flight when the item ended was recorded after the terminal event dropped the
+            # item's results; no call of this run is in flight now.
+            await _forget_if_ended(self._store, self.carried, item.id)
+            # A1 (F5): before the park, so a claimant stopped (or that lost the tool) after it filed a call is released,
+            # never parked; a call it filed stays on the Captain's queue: AD-855 acts only on an item parked on that
+            # request, and a run admits only calls its own assignee filed (BF-947).
             if record.kind == KIND_REQUEST and not self._service.execution_allowed(item, slot):
                 await self._store.unassign_work_item(item.id, reason="the claimant was stopped or lost the tool during the run")
                 return
@@ -505,7 +636,15 @@ class AgentWorkRunner:
                     await _close_bookings(self._store, work_item_id, completed=False)
             except Exception:
                 logger.warning("AD-1347: work item %s could not be marked failed; it stays in_progress", work_item_id, exc_info=True)
+            # BF-947 A2 (F2): an item that ended while the run was failing gets no event from the transition above.
+            await _forget_if_ended(self._store, self.carried, work_item_id)
         finally:
+            # BF-947 A3 (F2): once ``stop`` has begun, the run keeps nothing for its item, whatever its exit. A call it
+            # admitted may have been recorded after the terminal event dropped the item's results, and ``stop``'s
+            # cancellation can arrive before either ``_forget_if_ended`` call completes, the failure handler's included.
+            # No call of this run is in flight here, and a stopped runner starts no run again.
+            if self._stopping:  # A3 (F2)
+                self.carried.forget(work_item_id)
             self._active.discard(work_item_id)
             if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now
                 self._restart.discard(work_item_id)
@@ -528,21 +667,32 @@ class AgentWorkRunner:
         return False
 
     def _gate_for(
-        self, work_item_id: str, admission: tuple[str, str] | None, filed: list[str],
+        self, work_item_id: str, admissions: dict[str, list[str]], filed: list[str],
     ) -> Callable[[str, Any, Any], Awaitable[str]]:
-        """The run's confinement gate: admit the one call an approval on record covers, else file the call for the
-        Captain's approval. Fails toward refusal: a call that cannot be recorded is not run."""
-        from probos.cognitive.agentic_dispatch import CONFINEMENT_ADMIT, CONFINEMENT_FILED, CONFINEMENT_REFUSED
+        """The run's confinement gate, in this order. A call that cannot be recorded is refused. A call whose result
+        this runner keeps on the item for the agent is answered and does not run (BF-947). A call a fulfilled request
+        in ``admissions`` covers is admitted, once per request; with each such request used, it goes on as any other
+        call. Any other call is refused when the agent has ``max_pending`` or more pending requests, else filed for
+        approval (refused when the filing returns no request)."""
+        from probos.cognitive.agentic_dispatch import (
+            CONFINEMENT_ADMIT,
+            CONFINEMENT_ANSWERED,
+            CONFINEMENT_FILED,
+            CONFINEMENT_REFUSED,
+        )
 
         async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
             payload = approval_payload(tool_id, params, work_item_id)
             if payload is None:
                 return CONFINEMENT_REFUSED
             key = action_dedup_key(agent_id=agent_id, payload=payload, work_item_id=work_item_id)
-            if admission is not None and key == admission[1] and await self._store.claim_work_notice(
-                work_item_id, agent_id, APPROVAL_USE_PREFIX + admission[0], self._clock(),
-            ):
-                return CONFINEMENT_ADMIT
+            if any(entry.key == key for entry in self.carried.for_agent(work_item_id, agent_id)):
+                return CONFINEMENT_ANSWERED
+            for request_id in admissions.get(key, ()):
+                if await self._store.claim_work_notice(
+                    work_item_id, agent_id, APPROVAL_USE_PREFIX + request_id, self._clock(),
+                ):
+                    return CONFINEMENT_ADMIT
             if self._requests.count_pending_sync(agent_id) >= self._max_pending:
                 return CONFINEMENT_REFUSED
             request = await self._requests.file_action_request(
