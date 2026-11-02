@@ -1229,6 +1229,17 @@ AD-1346 M3e4c3a is the first part of M3e4c3, the fifth part of D160's M3e4. It a
 - *Mutation campaign of record (2026-11-01, win32).* 15 of 15 killed; none survived, was inert or invalid. Tree `b6332ac56da42ff9655e1b025708fcbb11f47358` (commit `f69da43e`) is M3e4c3a's head before the docs commit that records this bullet, and the commit on which the census ran; that docs commit changes `DECISIONS.md` only (the AD ledger check passes on it unchanged). The runner ran the 15 rows of the contract's mutation table one at a time, each restored before the next, in one run (unmutated baseline over the test files the rows run: 5 passed); each row ran the test file that holds its named killer: EF 15 rows (EF-1 to EF-15) against `tests/test_ad1346_admission_file_write_census.py`. The named killer failed in every row. Killers (with the `test_` prefix dropped): rows EF-1, EF-2, EF-3, EF-4, EF-6, EF-9, EF-13, EF-14, EF-15 the_file_write_scan_on_a_synthetic_module; row EF-5 three_shapes_the_scan_finds_in_src; rows EF-7, EF-8 the_agent_attributed_row_writes_and_records_its_author; rows EF-10, EF-12 every_file_with_a_file_write_is_a_row_and_every_row_is_one; row EF-11 the_command_line_rows. sha256 of the working copies (CRLF) of the files the rows mutate: `tests/fixtures/ad1346_file_write_census.py` `3410af38fac8f0af2c015788b0ad48230c4108078cb2ea8a2c699e6e67f8a903`, `src/probos/knowledge/records_store.py` `17f827f05cdf84d0a43c7f8bcbebb0030c5f8d8db9caa1fac2c884e097461ef3`.
 - *Reversal.* Revert the M3e4c3a commits.
 
+### AD-1346 M3e4c3b -- the file-write rows of nine directories classified (2026-11-01, #1604)
+
+AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-write rows M3e4c3a left unclassified, each as the ship's; nothing is checked, refused or charged, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3b-file-write-classification.md`.
+
+- *D258 (the cut; revises register R130's order).* The rows under `agents/`, `consultation/`, `execution/`, `knowledge/`, `naval/`, `routers/`, `task_sessions/`, `tools/` and `ward_room/` now; M3e4c3c takes the other 50, whose owner becomes M3e4c3c. Rejected: R130's 38 files now; the 19 under `cognitive/` now instead; all 69 now.
+- *D259 (the classification).* The 19 files are `System` under the ship's principal, by D239 or D218. Rejected: `FileWriterAgent.commit_write` and `LocalFileAdapter.deliver` pending for M3e4d (each writes a caller's text and records no author); the Ward Room archive pending for M3e4d (copies, D218); the two VRM writes pending for M3e4d (keyed by the agent they are about, D239).
+- *D260 (the guard).* WF6. Rejected: the 19 paths pinned in the test; WF1's counts alone.
+- *Tests.* WF1's counts change; WF6 is new.
+- *Residual, accepted.* Register R132 and R133 of the contract.
+- *Reversal.* Revert the M3e4c3b commits.
+
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 
 - *Scope.* Standing-order text and its layout test only; nothing under `src/` changes. No AD or BF number, like the 2026-10-15 profile entries.
