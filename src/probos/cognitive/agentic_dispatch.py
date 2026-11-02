@@ -850,8 +850,9 @@ class _DispatchGuardMixin:
             if refusal is not None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(refusal, "confinement_refused")
-            # AD-1347 S3 A1 (F3): the Captain approved exactly this call, once; AD-1154's inbox below does not park it
-            # again (credential entry there stays refused).
+            # AD-1347 S3 A1 (F3): the gate admitted this call, under the Captain's approval of exactly this call, once,
+            # or as a read of a workspace-result path, which needs none (AD-1356 S1.3). AD-1154's inbox below does not
+            # park an admitted call (credential entry there stays refused).
             confined_admission = True
         if self._plan_mode_tool_ids is not None and tool_id not in self._plan_mode_tool_ids:
             if strict_dispatch is not None:

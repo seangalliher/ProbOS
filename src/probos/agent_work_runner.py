@@ -36,6 +36,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from probos.agent_stop import AgentStopped
@@ -124,7 +125,8 @@ class CarriedResult:
 
 class CarriedResults:
     """BF-947 (M3): per item, the results of admitted calls that returned no error, in this process only: the newest
-    ``CARRIED_RESULTS_MAX`` per item, oldest first; an entry replaces one with the same call key."""
+    ``CARRIED_RESULTS_MAX`` per item, oldest first; an entry replaces one with the same call key. AD-1356 S1.3: a
+    ``WorkspaceSliceToolResult`` is not kept."""
 
     def __init__(self) -> None:
         self._by_item: dict[str, tuple[CarriedResult, ...]] = {}
@@ -139,6 +141,10 @@ class CarriedResults:
         def record(agent_id: str, tool_id: Any, params: Any, result: Any) -> None:
             payload = approval_payload(tool_id, params, work_item_id)
             if payload is None or getattr(result, "error", None) is not None:
+                return
+            from probos.cognitive.swe_harness.tools import WorkspaceSliceToolResult
+
+            if isinstance(result, WorkspaceSliceToolResult):  # AD-1356 S1.3: a read of a workspace result is not kept
                 return
             entry = CarriedResult(
                 agent_id=agent_id,
@@ -174,6 +180,21 @@ def approval_payload(tool_id: Any, params: Any, work_item_id: str) -> dict[str, 
         "tool_id": tool_id, "action": APPROVAL_ACTION, "params": recorded,
         "scope_key": APPROVAL_SCOPE_PREFIX + work_item_id, "session_id": None, "thread_id": "",
     })
+
+
+def _recovery_read(tool_id: Any, params: Any, roots: list[Path]) -> bool:
+    """AD-1356 S1.3: a ``read_file`` call whose ``path`` is absolute, has no ``..`` part, has a part that
+    ``is_workspace_result_path`` recognises, and lies under one of ``roots``."""
+    raw = params.get("path") if tool_id == "read_file" and type(params) is dict else None
+    if type(raw) is not str:
+        return False
+    from probos.execution.workspace_results import is_workspace_result_path
+
+    path = Path(raw)
+    return (
+        path.is_absolute() and ".." not in path.parts and is_workspace_result_path(path)
+        and any(path.is_relative_to(root) for root in roots)
+    )
 
 
 def _provenance(item: WorkItem) -> dict[str, Any]:
@@ -670,19 +691,29 @@ class AgentWorkRunner:
     def _gate_for(
         self, work_item_id: str, admissions: dict[str, list[str]], filed: list[str],
     ) -> Callable[[str, Any, Any], Awaitable[str]]:
-        """The run's confinement gate, in this order. A call that cannot be recorded is refused. A call whose result
-        this runner keeps on the item for the agent is answered and does not run (BF-947). A call a fulfilled request
-        in ``admissions`` covers is admitted, once per request; with each such request used, it goes on as any other
-        call. Any other call is refused when the agent has ``max_pending`` or more pending requests, else filed for
-        approval (refused when the filing returns no request)."""
+        """The run's confinement gate, in this order. A call ``_recovery_read`` accepts over ``workspace_exempt_roots``
+        is admitted; it uses no approval, is not filed, and ``read_file`` decides whether the agent may read the path
+        (AD-1356 S1.3). A call that cannot be recorded is refused. A call whose result this runner keeps on the item
+        for the agent is answered and does not run (BF-947). A call a fulfilled request in ``admissions`` covers is
+        admitted, once per request; with each such request used, it goes on as any other call. Any other call is
+        refused when the agent has ``max_pending`` or more pending requests, else filed for approval (refused when the
+        filing returns no request)."""
         from probos.cognitive.agentic_dispatch import (
             CONFINEMENT_ADMIT,
             CONFINEMENT_ANSWERED,
             CONFINEMENT_FILED,
             CONFINEMENT_REFUSED,
         )
+        from probos.security.file_access import workspace_exempt_roots
+
+        roots = workspace_exempt_roots(self._runtime)
 
         async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
+            if _recovery_read(tool_id, params, roots):
+                logger.info(
+                    "AD-1356: agent work %s admitted a read of a workspace-result path; nothing was filed", work_item_id[:8],
+                )
+                return CONFINEMENT_ADMIT
             payload = approval_payload(tool_id, params, work_item_id)
             if payload is None:
                 return CONFINEMENT_REFUSED
