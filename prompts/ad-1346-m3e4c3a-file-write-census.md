@@ -51,7 +51,7 @@
 - **The rows (D254).** `FILE_WRITE_FILES` gives each of the 72 files one row: 1 `Pending("M3e4d")`, 2 `OutsideRuntime` (D167) and 69 `Pending("M3e4c3b")`.
 - **The classification (D255).** `knowledge/records_store.py` is agent-attributed under D239; `FILE_AGENT_ATTRIBUTED_SCOPES` names its scope `RecordsStore.write_entry` and its author name `author`. M3e4c3b classifies the 69 (register R130).
 - **The tests.**
-  - WF1 makes a file that gains its first file write fail until it is classified, and pins the point counts by name.
+  - WF1 makes a file that gains its first file write fail, and pins the point counts by name.
   - WF2 pins the scan's rule on a synthetic module.
   - WF3 checks the agent-attributed row against the code.
   - WF4 pins the command-line rows.
@@ -71,7 +71,7 @@
   - A point is a call whose function is:
     - an attribute named in `FILE_WRITE_METHODS` (`write_text`, `write_bytes`, `unlink`, `rmtree`, `copyfile`, `copy2`, `copytree`), on any receiver;
     - `os.<name>` for `replace`, `rename`, `remove`, `link` or `write`, or `shutil.<name>` for `copy` or `move` (`MODULE_WRITES`), called on the module's name;
-    - `os.open`, when one of its positional arguments holds an attribute named `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_APPEND` or `O_TRUNC` (`WRITE_FLAGS`);
+    - `os.open`, when one of its positional arguments holds an attribute named `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_APPEND` or `O_TRUNC` (`WRITE_FLAGS`), and only then;
     - named `open` or `fdopen` (a name or an attribute), when its `mode` keyword, or else one of its first two positional arguments, is a `str` constant of one to three characters from `rwxabt+` that holds `w`, `a`, `x` or `+`;
     - an attribute named `replace` or `rename` (`PATH_MOVES`), called with one positional argument and no keyword (`str.replace` takes two);
   - or, failing those, a call that passes as a positional argument an attribute named in `FILE_WRITE_METHODS` or `PATH_MOVES`: a method handed to another function to call (`loop.run_in_executor(None, path.rename, archive_path)`, `cognitive/session_manager.py:183`).
@@ -162,7 +162,7 @@ REPLACE:
 
 - an attribute named in ``FILE_WRITE_METHODS``;
 - ``os.<name>`` or ``shutil.<name>``, called on the module's name, for a name ``MODULE_WRITES`` gives that module;
-- ``os.open``, when one of its positional arguments holds an attribute named in ``WRITE_FLAGS``;
+- ``os.open``, when one of its positional arguments holds an attribute named in ``WRITE_FLAGS``, and only then;
 - named in ``OPENS`` (a name or an attribute), when its ``mode`` keyword, or else one of its first two positional
   arguments, is a ``str`` constant that ``WRITE_MODE`` matches whole and that holds a character of ``WRITE_CHARS``;
 - an attribute named in ``PATH_MOVES``, called with one positional argument and no keyword;
@@ -509,8 +509,7 @@ def _function(path: str, qualified: str) -> ast.FunctionDef | ast.AsyncFunctionD
 
 
 def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
-    """WF1 (D253, D254; kills EF-10, EF-12): a file that gains its first file write fails here until it is
-    classified."""
+    """WF1 (D253, D254; kills EF-10, EF-12): a file that gains its first file write fails here."""
     found = file_write_files()
     assert sorted(found - FILE_WRITE_FILES.keys()) == []
     assert sorted(FILE_WRITE_FILES.keys() - found) == []
@@ -632,7 +631,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1346 (2026-11-01), #1604 M3e4c3a -- the file-write store-write census.** An AST scan now finds the calls in `src` that write, move, copy or delete a file: `write_text`, `write_bytes`, `unlink`, `rmtree`, the `shutil` copies and moves, `os.replace`, `os.rename`, `os.remove`, `os.link`, `os.write`, `os.open` with a write flag, `open` and `fdopen` with a mode that writes, a `Path` move with one argument, and such a method handed to another function to call. Each of the 72 files that hold one is a row, so a file that gains its first file write fails a test until it is classified. The Ship's Records' file is pending for M3e4d: `RecordsStore.write_entry` writes a document with its author, which an HTTP route sets through a notebook write. The two command-line files are outside the runtime, and the other 69 wait for M3e4c3b's classification. No `src` file changes and nothing is checked. The contract is `prompts/ad-1346-m3e4c3a-file-write-census.md`.
+**AD-1346 (2026-11-01), #1604 M3e4c3a -- the file-write store-write census.** An AST scan now finds the calls in `src` that write, move, copy or delete a file: `write_text`, `write_bytes`, `unlink`, `rmtree`, the `shutil` copies and moves, `os.replace`, `os.rename`, `os.remove`, `os.link`, `os.write`, `os.open` with a write flag, `open` and `fdopen` with a mode that writes, a `Path` move with one argument, and such a method handed to another function to call. Each of the 72 files that hold one is a row, so a file that gains its first file write fails a test. The Ship's Records' file is pending for M3e4d: `RecordsStore.write_entry` writes a document with its author, which an HTTP route sets through a notebook write. The two command-line files are outside the runtime, and the other 69 wait for M3e4c3b's classification. No `src` file changes and nothing is checked. The contract is `prompts/ad-1346-m3e4c3a-file-write-census.md`.
 
 **AD-1346 (2026-11-01), #1604 M3e4c2 -- 
 ```
@@ -822,7 +821,7 @@ HOLDS: yes
 3. `_file_write` takes each branch the module docstring and D253 state, in that order, and no other.
 4. WF2's expected list matches the line numbers of its synthetic string.
 5. The `records_store.py` row: `RecordsStore.write_entry` writes a file whose frontmatter holds the `author` its caller passes, and `routers/records.py`'s notebook route passes the request path's `callsign` there through `write_notebook`. Read the code paths.
-6. Each `OutsideRuntime` reason names what its file does and the code supports it; no `Pending` reason asserts a classification.
+6. Each `OutsideRuntime` reason names what its file does and the code supports it.
 7. Each §10 mutant fails its named test on the M1 tree.
 8. No sentence in a new docstring, comment or row reason asserts a property the code or a test does not establish.
 
@@ -845,9 +844,16 @@ HOLDS: yes
 - §1: the sentence "No scan reads the calls that write, move, copy or delete a file" and the bullet "Nothing makes a new file write fail a test until it is classified" are deleted, and the next sentence names the file writes (D238). `tests/test_ad1344_constitution_write_refusal.py:873` (T35) reads the write calls of the paths of `_CENSUS_SCOPE` (`:741`) and fails on one that is not a row of `_WRITE_SITES` (`:886-887`).
 - D252: "the one classification D242 named" is "the classification of the Ship's Records' file". D255: the line "D217 holds: the one agent-attributed file found is left to M3e4d's check" is deleted.
 - M2-01's REPLACE (the PROGRESS paragraph) lists the primitives of D253 completely: `os.rename`, `os.remove` and the `shutil` moves are added. M2-02's REPLACE (the DECISIONS entry): "the store-write family no earlier scan reads" is "the family D238 left to M3e4c3".
-- "Which text describes the head": the parenthesis "(its review repairs)" after M3e4c2's fixture and test is deleted.
 - Absence Verified: the first entry carries a re-run of its first two commands on the merge.
 Unchanged: every SEARCH text of §7 and §8; every REPLACE text of §7 and §8 but its decision numbers (D252 to D257) and the two changes named above; every count and every row's type and key of the new fixture; and every record of §11 and entry of Absence Verified but those named above.
+
+**Amendment 2 (2026-11-01, the orchestrator, after round 1 of review of `dc34b89f`).** Changed, against the contract as committed in `b833cb8b`:
+- §2 (the WF1 bullet), §7.1 (the WF1 docstring) and §8 (M2-01's REPLACE, the PROGRESS paragraph): "until it is classified" is deleted.
+- §3 (D253's `os.open` bullet) and §7.1 (the fixture's module docstring): the `os.open` bullet ends ", and only then;" in place of ";".
+- §14, item 6: "; no `Pending` reason asserts a classification" is deleted.
+- §16: the bullet of Amendment 1 on the parenthesis "(its review repairs)" is deleted.
+- Register R131: ", not in the file" is deleted.
+Unchanged: every other line of the contract as committed in `b833cb8b`.
 
 ## For the register (#1604)
 
@@ -869,4 +875,4 @@ Unchanged: every SEARCH text of §7 and §8; every REPLACE text of §7 and §8 b
   3. M3e4d;
   4. M3e5.
   Inputs found here: `cognitive/dreaming.py:1025` renames Ship's Records documents into `_archived` through `RecordsStore._safe_path` (`:1021`), a write to the Ship's Records outside `records_store.py`; `ward_room/threads.py:1129` appends to the file `archive_path` names; `consultation/delivery.py:398` writes `request.content`; `agents/file_writer.py:164` writes `content`.
-- **R131:** M3e4d's split of `knowledge/records_store.py`: 8 points in 7 scopes (`write_entry`, `append_captains_log`, `write_bill`, `publish`, `write_workspace_file`, `append_workspace_file`, `_write_config`). `write_entry` records its `author` in the document (`:309`). `publish` rewrites a document's status, and the frontmatter it writes keeps the author the file holds (`:1094-1101`). `write_workspace_file` and `append_workspace_file` put `author` in a commit message when `auto_commit` is set, and in a debug log line, not in the file (`:1217-1220`, `:1242-1245`). M3e4d gives each scope its row.
+- **R131:** M3e4d's split of `knowledge/records_store.py`: 8 points in 7 scopes (`write_entry`, `append_captains_log`, `write_bill`, `publish`, `write_workspace_file`, `append_workspace_file`, `_write_config`). `write_entry` records its `author` in the document (`:309`). `publish` rewrites a document's status, and the frontmatter it writes keeps the author the file holds (`:1094-1101`). `write_workspace_file` and `append_workspace_file` put `author` in a commit message when `auto_commit` is set, and in a debug log line (`:1217-1220`, `:1242-1245`). M3e4d gives each scope its row.
