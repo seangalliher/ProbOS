@@ -1250,7 +1250,7 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 - *Duplicates.* No rule added; `_commit` is unchanged. The live board (2026-11-02) held no two of 43 items with the same requester, kind, department, tool, assignee and normalised title; the cited duplicates were reworded and from two requesters.
 - *Rejected.* Refusing unregistered ids with no confinement; a docstring-only convention; a filter in `FaultReportStore.file_fault`; the raw-path recovery test; an exact same-work rule with no live case; title-similarity matching.
 - *Residual.* Recorded limits L1 to L12 of the contract.
-- *Reversal.* Revert the four commits.
+- *Reversal.* Revert the AD-1356 S1 commits.
 
 ### BF-947 -- An agent-work item waits for each call it filed, and each approval admits its call once (2026-11-02, #1724)
 

@@ -78,7 +78,7 @@ On the base:
 
 Edited:
 - `test_the_plan_mode_refusal_is_a_policy_outcome` gains the new member of `_NEVER_RAN_REFUSALS`.
-- Four asserts in `test_ad1140_publish_finding.py` and one in `test_ad1191_delegation_wire.py` take the `publish_finding_failed:` codes.
+- Five asserts in `test_ad1140_publish_finding.py` and one in `test_ad1191_delegation_wire.py` take the `publish_finding_failed:` codes.
 
 ## 7. The contract
 
@@ -1160,7 +1160,7 @@ REPLACE:
 - *Duplicates.* No rule added; `_commit` is unchanged. The live board (2026-11-02) held no two of 43 items with the same requester, kind, department, tool, assignee and normalised title; the cited duplicates were reworded and from two requesters.
 - *Rejected.* Refusing unregistered ids with no confinement; a docstring-only convention; a filter in `FaultReportStore.file_fault`; the raw-path recovery test; an exact same-work rule with no live case; title-similarity matching.
 - *Residual.* Recorded limits L1 to L12 of the contract.
-- *Reversal.* Revert the four commits.
+- *Reversal.* Revert the AD-1356 S1 commits.
 
 ### BF-947 -- An agent-work item waits for each call it filed, and each approval admits its call once (2026-11-02, #1724)
 ```
