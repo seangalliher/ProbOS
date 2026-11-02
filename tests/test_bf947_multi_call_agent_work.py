@@ -381,3 +381,72 @@ async def test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept(
         ended = await rig.store.get_work_item(item_id)
         assert ended is not None and ended.status == "cancelled" and rig.survey.calls == 1
         assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the late result is not kept on the ended item"
+
+
+# MC13
+@pytest.mark.parametrize("held_in", ["the_model", "the_failure_handler"])
+async def test_a_run_stopped_after_a_late_result_leaves_no_result_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held_in: str,
+) -> None:
+    """A3 (F2): an admitted call returns after its item was cancelled and the terminal event dropped the item's
+    results, and is recorded then. ``stop`` then cancels the run while it waits for the model, or while its failure
+    handler marks the item failed, before that handler's ``_forget_if_ended``. The run's ``finally`` keeps nothing for
+    the item on either exit."""
+    reached, never = asyncio.Event(), asyncio.Event()
+
+    async def held_model(request: LLMRequest) -> Any:
+        reached.set()
+        await never.wait()
+        raise AssertionError("the model is never released")
+
+    last: Any = held_model if held_in == "the_model" else _final("Surveyed deck one.")
+    script = [
+        _call("hull_survey", DECK_1, "c1"), _final("Waiting for the Captain."), _call("hull_survey", DECK_1, "c2"), last,
+    ]
+    async with _rig(tmp_path, script) as rig:
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        item_id = await _self_task(rig, origin.id)
+        await _pump(rig)
+        [request] = requests_for_work_item(rig.requests, item_id)
+        if held_in == "the_failure_handler":
+            _restarted(rig, executor=_RaisesAfterRun(llm_client=rig.llm))
+            transition = rig.store.transition_work_item
+
+            async def held_failure(work_item_id: str, new_status: str, *args: Any, **kwargs: Any) -> Any:
+                if new_status == "failed":
+                    reached.set()
+                    await never.wait()
+                return await transition(work_item_id, new_status, *args, **kwargs)
+
+            monkeypatch.setattr(rig.store, "transition_work_item", held_failure)
+        entered, released = asyncio.Event(), asyncio.Event()
+        survey = rig.survey.invoke
+
+        async def held(params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+            entered.set()
+            await released.wait()
+            return await survey(params, context)
+
+        monkeypatch.setattr(rig.survey, "invoke", held)
+        deciding = asyncio.create_task(_decide(rig, request.id, approve=True))
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            moved = await rig.store.transition_work_item(
+                item_id, "cancelled", source="captain", expected_status="in_progress",
+            )
+            assert moved is not None
+            events = list(rig.work_events)
+            rig.work_events.clear()
+            for kind, data in events:
+                await rig.runner.on_store_event({"type": getattr(kind, "value", kind), "data": data})
+            assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the terminal event dropped the results"
+            released.set()
+            await asyncio.wait_for(reached.wait(), 10)
+            assert len(rig.runner.carried.for_agent(item_id, "forge-1")) == 1, "the late result was recorded"
+        finally:
+            released.set()
+            await rig.runner.stop()
+            await asyncio.gather(deciding, return_exceptions=True)  # its wait for the run ends with the cancellation
+        ended = await rig.store.get_work_item(item_id)
+        assert ended is not None and ended.status == "cancelled" and rig.survey.calls == 1
+        assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "a stopped run keeps nothing for its item"

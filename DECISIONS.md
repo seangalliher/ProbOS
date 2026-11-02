@@ -1248,7 +1248,7 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 - *Admission.* Each fulfilled one of those requests admits its call once (the claim-once row `approval_use:<request id>`).
 - *Results.* The runner keeps, in memory, the result of each admitted call that returned no error: the newest 8 per item, 1,500 characters of output and 200 of parameters each, by agent. The next run's task text lists them, and the gate answers a repeat with `CONFINED_CALL_ANSWERED`, a never-ran refusal. The task text states the current UTC time.
 - *Rejected.* A list of request ids under a new key with a changed AD-855 driver, which every parked kind shares; one request for all of a run's calls; results in the item's metadata, which the store's `WORK_ITEM_UPDATED` event carries; results by reference in the AttachmentStore (considered, deferred); telling the agent of a denial and continuing.
-- *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L12 of the contract.
+- *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L13 of the contract.
 - *Reversal.* Revert the three commits. The requests filed stay in the inbox, and AD-855 acts on the parked one as before.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)

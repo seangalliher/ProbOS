@@ -288,7 +288,8 @@ async def _cancel_or_park(store: Any, parking: Any, work_item_id: str, linked: l
 async def _forget_if_ended(store: Any, carried: CarriedResults, work_item_id: str) -> None:
     """BF-947 A2 (F2): drop the results kept on an item that has ended or is gone. A call in flight when the item ended
     returns after the terminal event dropped them and is recorded then, so ``_run`` calls this after its executor
-    returns and in its failure handler. Never raises: when the item cannot be read, its results stay (L12)."""
+    returns and in its failure handler. When reading the item raises an ``Exception``, its results stay (L12); it
+    catches nothing else, so a cancellation propagates."""
     try:
         latest = await store.get_work_item(work_item_id)
     except Exception:
@@ -638,6 +639,12 @@ class AgentWorkRunner:
             # BF-947 A2 (F2): an item that ended while the run was failing gets no event from the transition above.
             await _forget_if_ended(self._store, self.carried, work_item_id)
         finally:
+            # BF-947 A3 (F2): once ``stop`` has begun, the run keeps nothing for its item, whatever its exit. A call it
+            # admitted may have been recorded after the terminal event dropped the item's results, and ``stop``'s
+            # cancellation can arrive before either ``_forget_if_ended`` call completes, the failure handler's included.
+            # No call of this run is in flight here, and a stopped runner starts no run again.
+            if self._stopping:  # A3 (F2)
+                self.carried.forget(work_item_id)
             self._active.discard(work_item_id)
             if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now
                 self._restart.discard(work_item_id)
