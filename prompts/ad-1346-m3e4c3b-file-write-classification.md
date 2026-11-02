@@ -635,11 +635,9 @@ FOUND: prompts/ad-1346-m3e4c2-store-family-census.md:776 (CLAIM line "D245 to D2
 RE-RUN on the M3e4c3a merge `ac82876a` (Amendment 1), the first command only (the second reads the gitignored `logs/ad1346`): `prompts/ad-1346-m3e4c2-store-family-census.md:776`; `prompts/ad-1346-m3e4c3a-file-write-census.md` :744 :746 :747 (its CLAIM, FOUND and RE-RUN lines, which hold D259 and R139 and, at :747, D258 and R138), :840 (Amendment 1's line on decision numbers, which holds D259) and :874 (R130: "M3e4c3c: the 31 others"); no other file
 HOLDS: yes
 
-CLAIM: no Python file but the fixture and the file-write test names FILE_WRITE_FILES, the fixture's module or _CLASSIFIED
 RUN:   rg -n 'FILE_WRITE_FILES|M3e4c3b|ad1346_file_write_census|_CLASSIFIED\b' --glob '*.py' .
 FOUND: tests/fixtures/ad1346_file_write_census.py :15 :136 :145 :151; tests/fixtures/ad1346_effect_census.py:66 (EFFECT_CLASSES text); tests/test_ad1346_admission_file_write_census.py :3 :4 :7 :8 :34 :36 :131 :132 :134 :135 :187 :207 :210
 RE-RUN on the merge `ac82876a` (Amendment 1): `tests/fixtures/ad1346_file_write_census.py` :15 :136 :145 :151; `tests/fixtures/ad1346_effect_census.py:66`; `tests/test_ad1346_admission_file_write_census.py` :3 :4 :7 :8 :34 :36 :130 :131 :133 :134 :186 :206 :209 (WF1's docstring is one line on the merge, so the lines after it are one lower); no other file
-HOLDS: yes
 
 CLAIM: no other test reads the owner of a file-write row
 RUN:   rg -n '\.owner\b' tests
@@ -702,6 +700,10 @@ HOLDS: yes
 - Register R132: in the first bullet "fails no test, because no test reads a reason" is "is seen by none of WF1 to WF6"; in the second bullet ", and M3e5 or a later decision takes it up" is deleted.
 - Absence Verified: the entry on the naval files has one command, `rg -n 'agent|author|callsign|posted_by|created_by' src/probos/naval` (its two commands left `author` and `callsign` unsearched in `plan_of_day.py`), and its FOUND is nothing; each of the first three entries carries a re-run on the merge (the lines of M3e4c3a's contract and of its test file moved with its amendment A2 and repair r1).
 Unchanged: every SEARCH text of §7 and §8 but M1-09's; every REPLACE text of §7 and §8 but M1-09's docstring line and the two phrases of M2-01 named above; every count and every row's type and key; and every record of §11 and entry of Absence Verified but those named above.
+
+**Amendment 2 (2026-11-02, the orchestrator, after round 1 of review of `caabbf5c`).** Changed, against the contract as committed in `fd541ef7`:
+- Absence Verified, the second entry: its CLAIM line and its HOLDS line are deleted. `tests/fixtures/ad1346_effect_census.py:66` names FILE_WRITE_FILES and the fixture's module in its `EFFECT_CLASSES` text, which the entry's own FOUND line lists; its RUN, FOUND and RE-RUN lines stay.
+Unchanged: every other line of the contract as committed in `fd541ef7`.
 
 ## For the register (#1604)
 
