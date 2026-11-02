@@ -125,8 +125,7 @@ def _function(path: str, qualified: str) -> ast.FunctionDef | ast.AsyncFunctionD
 
 
 def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
-    """WF1 (D253, D254; kills EF-10, EF-12): a file that gains its first file write fails here until it is
-    classified."""
+    """WF1 (D253, D254; kills EF-10, EF-12): a file that gains its first file write fails here."""
     found = file_write_files()
     assert sorted(found - FILE_WRITE_FILES.keys()) == []
     assert sorted(FILE_WRITE_FILES.keys() - found) == []

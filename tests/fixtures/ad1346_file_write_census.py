@@ -4,7 +4,7 @@
 
 - an attribute named in ``FILE_WRITE_METHODS``;
 - ``os.<name>`` or ``shutil.<name>``, called on the module's name, for a name ``MODULE_WRITES`` gives that module;
-- ``os.open``, when one of its positional arguments holds an attribute named in ``WRITE_FLAGS``;
+- ``os.open``, when one of its positional arguments holds an attribute named in ``WRITE_FLAGS``, and only then;
 - named in ``OPENS`` (a name or an attribute), when its ``mode`` keyword, or else one of its first two positional
   arguments, is a ``str`` constant that ``WRITE_MODE`` matches whole and that holds a character of ``WRITE_CHARS``;
 - an attribute named in ``PATH_MOVES``, called with one positional argument and no keyword;
