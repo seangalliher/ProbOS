@@ -8,11 +8,14 @@ driven by a scripted model. On the base this file fails at import (``CarriedResu
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
 from probos.agent_work_runner import (
@@ -75,11 +78,16 @@ async def _decide(rig: Any, request_id: str, *, approve: bool, reason: str = "")
     await _pump(rig)
 
 
-def _restarted(rig: Any, *, clock: Callable[[], float] = time.time) -> AgentWorkRunner:
-    """A new runner over the same stores, as the next start builds one: its kept results start empty."""
+def _restarted(
+    rig: Any, *, clock: Callable[[], float] = time.time, executor: WorkItemAgenticExecutor | None = None,
+) -> AgentWorkRunner:
+    """A new runner over the same stores, as the next start builds one: its kept results start empty. ``executor``
+    defaults to a ``WorkItemAgenticExecutor`` over the rig's model."""
     runner = AgentWorkRunner(
         service=rig.service, store=rig.store, ward_room=rig.wr, tools=rig.tools, requests=rig.requests,
-        parking=rig.driver, executor=WorkItemAgenticExecutor(llm_client=rig.llm), runtime=rig.runtime,
+        parking=rig.driver,
+        executor=executor if executor is not None else WorkItemAgenticExecutor(llm_client=rig.llm),
+        runtime=rig.runtime,
         agents=rig.runtime.registry, callsign_of=lambda slot: CALLSIGNS.get(slot, slot),
         ttl_seconds=AgentWorkConfig(enabled=True).ttl_seconds, clock=clock,
     )
@@ -317,3 +325,59 @@ def test_the_runner_keeps_the_newest_results_without_an_error_each_cut() -> None
     assert (len(cut.params), len(cut.output)) == (CARRIED_PARAMS_MAX_CHARS, CARRIED_RESULT_MAX_CHARS)
     carried.forget("wi-carried-2")
     assert carried.for_agent("wi-carried-2", "forge-1") == ()
+
+
+class _RaisesAfterRun(WorkItemAgenticExecutor):
+    """The real executor, whose run then raises: a failure after the run's calls returned."""
+
+    async def run(self, **kwargs: Any) -> Any:
+        await super().run(**kwargs)
+        raise RuntimeError("the run failed after its calls returned")
+
+
+# MC12
+@pytest.mark.parametrize("raises", [False, True], ids=["the_run_returns", "the_run_raises"])
+async def test_a_call_that_returns_after_its_item_ended_leaves_no_result_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raises: bool,
+) -> None:
+    """A2 (F2): an admitted call still running when its item is cancelled returns after the terminal event dropped the
+    item's results, and is recorded then. The run reads the item again after its executor returns, or in its failure
+    handler when the executor raises, and keeps nothing for the ended item."""
+    script = [
+        _call("hull_survey", DECK_1, "c1"), _final("Waiting for the Captain."),
+        _call("hull_survey", DECK_1, "c2"), _final("Surveyed deck one."),
+    ]
+    async with _rig(tmp_path, script) as rig:
+        origin = await _thread_in(rig, "engineering", "laforge-1")
+        item_id = await _self_task(rig, origin.id)
+        await _pump(rig)
+        [request] = requests_for_work_item(rig.requests, item_id)
+        if raises:
+            _restarted(rig, executor=_RaisesAfterRun(llm_client=rig.llm))
+        entered, released = asyncio.Event(), asyncio.Event()
+        survey = rig.survey.invoke
+
+        async def held(params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+            entered.set()
+            await released.wait()
+            return await survey(params, context)
+
+        monkeypatch.setattr(rig.survey, "invoke", held)
+        deciding = asyncio.create_task(_decide(rig, request.id, approve=True))
+        try:
+            await asyncio.wait_for(entered.wait(), 10)
+            moved = await rig.store.transition_work_item(
+                item_id, "cancelled", source="captain", expected_status="in_progress",
+            )
+            assert moved is not None
+            events = list(rig.work_events)
+            rig.work_events.clear()
+            for kind, data in events:
+                await rig.runner.on_store_event({"type": getattr(kind, "value", kind), "data": data})
+            assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the terminal event dropped the results"
+        finally:
+            released.set()
+            await asyncio.wait_for(deciding, 20)
+        ended = await rig.store.get_work_item(item_id)
+        assert ended is not None and ended.status == "cancelled" and rig.survey.calls == 1
+        assert rig.runner.carried.for_agent(item_id, "forge-1") == (), "the late result is not kept on the ended item"

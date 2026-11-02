@@ -11,12 +11,13 @@ events (one listener):
 - an item that ends has its live bookings closed and is reported, once per recipient, to its requester and watchers.
 
 Every run is confined (``ToolCallConfinement``): the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual and a call to
-any other tool is put to the run's gate, which files it as an AD-1154 ``action`` request instead of running it. After
-such a run the item parks ``blocked`` on the first request its gate returned, through AD-855's ``block_on_request``;
-its approval fulfils it and AD-855 resumes the item through ``resume_agent_work``, and its denial cancels the item
-(AD-855). BF-947: before a run, the agent-work requests the item's assignee filed on it are read, oldest first. A
-denied one cancels the item; else a pending one, or an approved one not yet fulfilled, parks the item on it again; else
-the gate admits each call a fulfilled request covers, once per request (a claim-once row). The run is given the results
+any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order), which may file it as an
+AD-1154 ``action`` request. A run that filed a call can park the item ``blocked`` on the first request its gate
+returned, through AD-855's ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
+``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
+item's assignee filed on it are read, oldest first. A denied one cancels the item; else a pending one, or an approved
+one not yet fulfilled, parks the item on it again; else the run goes ahead, and a fulfilled one may admit its call once
+(a claim-once row). The run is given the results
 this runner keeps of calls admitted on the item for the same agent, and the gate answers a repeat of one of those calls
 without running it. The report reads a denial's reason from the request.
 
@@ -208,10 +209,10 @@ def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[Carr
         f"Asked by {requester}. Reason: {reason}. Tool named: {tool}.\n\n"
         f"Current UTC time: {stamp}.\n\n"
         f"{earlier}"
-        "Read-only tools run directly. A call to any other tool is filed for approval and does not run now; this work "
-        "continues when no call it filed awaits a decision or its fulfilment, and ends if one of them is denied. Do "
-        "the reading, then answer with what you found and the tool results you relied on. Your answer is posted where "
-        "the work was asked for."
+        "Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "
+        "continues when no call you filed on it awaits a decision or its fulfilment, and ends if one of them is "
+        "denied. Do the reading, then answer with what you found and the tool results you relied on. Your answer is "
+        "posted where the work was asked for."
     )
 
 
@@ -282,6 +283,22 @@ async def _cancel_or_park(store: Any, parking: Any, work_item_id: str, linked: l
         return False
     await parking.block_on_request(work_item_id=work_item_id, request_id=waiting.id, reason=BLOCKED_REASON)
     return True
+
+
+async def _forget_if_ended(store: Any, carried: CarriedResults, work_item_id: str) -> None:
+    """BF-947 A2 (F2): drop the results kept on an item that has ended or is gone. A call in flight when the item ended
+    returns after the terminal event dropped them and is recorded then, so ``_run`` calls this after its executor
+    returns and in its failure handler. Never raises: when the item cannot be read, its results stay (L12)."""
+    try:
+        latest = await store.get_work_item(work_item_id)
+    except Exception:
+        logger.warning(
+            "BF-947: work item %s could not be read after its run; the results kept on it stay", work_item_id,
+            exc_info=True,
+        )
+        return
+    if latest is None or latest.status in TERMINAL_STATUSES:
+        carried.forget(work_item_id)
 
 
 async def _denial_reason(requests: Any, item: WorkItem) -> str:
@@ -589,9 +606,12 @@ class AgentWorkRunner:
                 if record.kind == KIND_REQUEST:
                     await self._store.unassign_work_item(item.id, reason="the claimant was stopped by the Captain")
                 return
-            # A1 (F5): first, so a claimant stopped (or that lost the tool) after it filed a call is released, never
-            # parked; a call it filed stays on the Captain's queue: AD-855 acts only on an item parked on that request,
-            # and a run admits only calls its own assignee filed (BF-947).
+            # BF-947 A2 (F2): a call in flight when the item ended was recorded after the terminal event dropped the
+            # item's results; no call of this run is in flight now.
+            await _forget_if_ended(self._store, self.carried, item.id)
+            # A1 (F5): before the park, so a claimant stopped (or that lost the tool) after it filed a call is released,
+            # never parked; a call it filed stays on the Captain's queue: AD-855 acts only on an item parked on that
+            # request, and a run admits only calls its own assignee filed (BF-947).
             if record.kind == KIND_REQUEST and not self._service.execution_allowed(item, slot):
                 await self._store.unassign_work_item(item.id, reason="the claimant was stopped or lost the tool during the run")
                 return
@@ -615,6 +635,8 @@ class AgentWorkRunner:
                     await _close_bookings(self._store, work_item_id, completed=False)
             except Exception:
                 logger.warning("AD-1347: work item %s could not be marked failed; it stays in_progress", work_item_id, exc_info=True)
+            # BF-947 A2 (F2): an item that ended while the run was failing gets no event from the transition above.
+            await _forget_if_ended(self._store, self.carried, work_item_id)
         finally:
             self._active.discard(work_item_id)
             if work_item_id in self._restart:  # A1 (F2): a start that arrived during this run runs now

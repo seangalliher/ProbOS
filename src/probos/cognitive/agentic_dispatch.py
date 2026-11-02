@@ -299,8 +299,8 @@ _PLAN_MODE_TOOL_REFUSAL: str = (
     "this tool."
 )
 # AD-1347 S3 (#1627): agent-created work runs confined. Its calls to the tools in the run's set run as usual; a call to
-# any other tool is put to the run's gate, which files it for the Captain's approval (an AD-1154 ``action``) or admits
-# the one call an approval on record covers. Error-shaped and final, in the AD-1154 voice; never defect evidence.
+# any other tool is put to the run's gate, which admits it, files it for the Captain's approval (an AD-1154
+# ``action``), answers it (BF-947) or refuses it. Error-shaped and final, in the AD-1154 voice; never defect evidence.
 CONFINED_CALL_FILED: str = (
     "That call needs the Captain's approval before it runs. It was filed for review and did not run. Do not "
     "repeat it: a repeat is folded into the same request. Finish what the read-only tools allow and report "
@@ -335,8 +335,8 @@ class ToolCallConfinement:
     ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
     Captain's approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
     (not filed). Enforced first in the executor's invoke, before plan mode and the AD-1154 browser inbox, so the
-    decision is made at the tool call, never by reading the plan. BF-947: ``record``, when set, is handed the result of
-    each admitted call that returns from the tool (``record_admitted``).
+    decision is made at the tool call, never by reading the plan. BF-947: ``record``, when set, is handed results of
+    admitted calls (``record_admitted``).
     """
 
     tool_ids: frozenset[str]
