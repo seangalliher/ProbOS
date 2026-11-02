@@ -1556,7 +1556,7 @@ REPLACE:
 - *Results.* The runner keeps, in memory, the result of each admitted call that returned no error: the newest 8 per item, 1,500 characters of output and 200 of parameters each, by agent. The next run's task text lists them, and the gate answers a repeat with `CONFINED_CALL_ANSWERED`, a never-ran refusal. The task text states the current UTC time.
 - *Rejected.* A list of request ids under a new key with a changed AD-855 driver, which every parked kind shares; one request for all of a run's calls; results in the item's metadata, which the store's `WORK_ITEM_UPDATED` event carries; results by reference in the AttachmentStore (considered, deferred); telling the agent of a denial and continuing.
 - *Residual.* A restart forgets the kept results. A denial of a request the item is not parked on acts at the item's next run. Recorded limits L1 to L13 of the contract.
-- *Reversal.* Revert the three commits. The requests filed stay in the inbox, and AD-855 acts on the parked one as before.
+- *Reversal.* Revert the BF-947 commits. The requests filed stay in the inbox, and AD-855 acts on the parked one as before.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -1628,7 +1628,7 @@ Campaign of record: after an unmutated baseline of N1-1, N2-1, `tests/test_ad134
 - **L9.** The model may ignore the stated time and still call a tool for it; that call is filed.
 - **L10.** An approved `read_file` of an earlier run's AD-1240 workspace result runs in a later run, and the tool decides whether that run may read it (AD-1356 S1.3).
 - **L11.** Requests a previous claimant filed are neither admitted for, nor cancel, nor park the next claimant (MC7).
-- **L12.** A2: when reading its item raises an `Exception` after the executor returns, or in the failure handler, the item's kept results stay (logged). A later terminal status event drops them. If the item had already ended, no event follows, and they stay for the runner's lifetime unless `stop()` began before that run ended (P2-16).
+- **L12.** A2: when reading its item raises an `Exception` after the executor returns, or in the failure handler, the item's kept results stay (logged). A later terminal status event drops them. If the item had already ended, they stay for the runner's lifetime unless `stop()` began before that run ended (P2-16).
 - **L13.** A3: `except AgentStopped` returns without `_forget_if_ended`. A result recorded after its item ended and before an `AgentStopped` ended the run stays for the runner's lifetime, unless `stop()` began before that run ended (P2-16).
 
 ## 12. Verified Against Codebase (2026-11-01, on `d5f10598`)
