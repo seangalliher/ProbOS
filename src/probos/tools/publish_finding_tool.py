@@ -421,7 +421,9 @@ class PublishFindingTool:
 
         identity = self._resolve_identity(ctx)
         if identity is None:
-            return self._invalid("author", started)
+            return ToolResult(  # AD-1356 S1.2: not the caller's input, so not the _invalid: mark
+                error="publish_finding_failed:author", duration_ms=(time.monotonic() - started) * 1000.0,
+            )
         callsign, department = identity
 
         # AD-1141 DD-6: the ship budget is checked BEFORE the per-author one.
@@ -703,7 +705,9 @@ class PublishFindingTool:
                 "recorded and the agent is told the publication did not land",
                 callsign, claim_id[:8], exc_info=True,
             )
-            return self._invalid("write_failed", started)
+            return ToolResult(  # AD-1356 S1.2: not the caller's input, so not the _invalid: mark
+                error="publish_finding_failed:write_failed", duration_ms=(time.monotonic() - started) * 1000.0,
+            )
 
         self._record_quality("dedup_write")
         logger.info(
