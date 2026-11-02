@@ -310,15 +310,22 @@ CONFINED_CALL_NOT_FILED: str = (
     "That call needs the Captain's approval before it runs, and it could not be filed for review, so it did "
     "not run. Finish what the read-only tools allow and report what remains open."
 )
+# BF-947: the refusal for ``CONFINEMENT_ANSWERED``.
+CONFINED_CALL_ANSWERED: str = (
+    "That call already ran in this work under its approval, so it did not run again. Its result is in your task "
+    "text or earlier in this run."
+)
 CONFINEMENT_ADMIT = "admit"
 CONFINEMENT_FILED = "filed"
 CONFINEMENT_REFUSED = "refused"
+CONFINEMENT_ANSWERED = "answered"  # BF-947
 
 # AD-1189 / AD-1156: refusals of calls that never ran. They say nothing about
 # the tool, so they are never defect evidence.
-_NEVER_RAN_REFUSALS: frozenset[str] = frozenset(
-    {_DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED}
-)
+_NEVER_RAN_REFUSALS: frozenset[str] = frozenset({
+    _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,
+    CONFINED_CALL_ANSWERED,
+})
 
 
 @dataclass(frozen=True)
@@ -326,18 +333,22 @@ class ToolCallConfinement:
     """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate every other call is put to.
 
     ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
-    Captain's approval) or anything else (not filed). Enforced first in the executor's invoke, before plan mode and the
-    AD-1154 browser inbox, so the decision is made at the tool call, never by reading the plan.
+    Captain's approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
+    (not filed). Enforced first in the executor's invoke, before plan mode and the AD-1154 browser inbox, so the
+    decision is made at the tool call, never by reading the plan. BF-947: ``record``, when set, is handed the result of
+    each admitted call that returns from the tool (``record_admitted``).
     """
 
     tool_ids: frozenset[str]
     gate: Callable[[str, Any, Any], Awaitable[str]]
+    record: Callable[[str, Any, Any, ToolResult], None] | None = None
 
     def __post_init__(self) -> None:
         if (
             type(self.tool_ids) is not frozenset or not self.tool_ids
             or any(type(tool_id) is not str or not tool_id for tool_id in self.tool_ids)
             or not callable(self.gate)
+            or (self.record is not None and not callable(self.record))
         ):
             raise ValueError("tool_call_confinement_invalid")
 
@@ -353,7 +364,21 @@ class ToolCallConfinement:
             verdict = CONFINEMENT_REFUSED
         if verdict == CONFINEMENT_ADMIT:
             return None
+        if verdict == CONFINEMENT_ANSWERED:
+            return ToolResult(error=CONFINED_CALL_ANSWERED)
         return ToolResult(error=CONFINED_CALL_FILED if verdict == CONFINEMENT_FILED else CONFINED_CALL_NOT_FILED)
+
+    def record_admitted(self, agent_id: str, tool_id: Any, params: Any, result: ToolResult) -> None:
+        """BF-947: hand an admitted call's result to ``record`` when one is set; a ``record`` that raises is logged."""
+        if self.record is None:
+            return
+        try:
+            self.record(agent_id, tool_id, params, result)
+        except Exception:
+            logger.warning(
+                "BF-947: the result of an admitted call from agent %s was not kept for a later run", agent_id[:12],
+                exc_info=True,
+            )
 
 
 @dataclass(frozen=True)
@@ -805,6 +830,7 @@ class _DispatchGuardMixin:
 
         confinement = self._confinement
         confined_admission = False
+        admitted_params = params  # BF-947: what the gate was asked, for record_admitted
         if confinement is not None and tool_id not in confinement.tool_ids:
             refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)
             if refusal is not None:
@@ -881,10 +907,12 @@ class _DispatchGuardMixin:
         if restricted and result.error is None:
             result = replace(result, output=_bound_browser_output(result.output))
         if dispositions and result.error is None:
-            return replace(
+            result = replace(
                 result,
                 output=_with_disposition(result.output, " ".join(dispositions)),
             )
+        if confined_admission and confinement is not None:
+            confinement.record_admitted(agent_id, tool_id, admitted_params, result)
         return result
 
 
@@ -2106,7 +2134,7 @@ def classify_tool_fault_error(error: Any) -> str | None:
             _BROWSER_READ_ONLY_REFUSAL, _APPROVAL_PARKED_REFUSAL_NO_ID,
             _APPROVAL_INBOX_FULL_REFUSAL, _APPROVAL_CREDENTIAL_REFUSAL,
             _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
-            CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,  # AD-1347 S3
+            CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED, CONFINED_CALL_ANSWERED,  # AD-1347 S3, BF-947
             "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
