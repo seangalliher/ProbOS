@@ -1566,7 +1566,8 @@ def test_committed_baseline_records_the_measured_surface(
     # AD-1270 (#1324) slice 4c removes BootCampPhaseConfig.enabled and SystemConfig.boot_camp_phase (1881 -> 1879).
     # AD-1270 (#1324) slice 4c removes boot_camp.nudge_cooldown_seconds with AD-638's phases 2 and 3 (1879 -> 1878).
     # AD-1346 M3c (#1604) adds AdmissionConfig.shadow_enabled and SystemConfig.admission (1878 -> 1880).
-    assert counts["field_definitions"] == 1880  # AD-1206 intentionally adds github_repository.
+    # AD-1356 S4 (#1722) adds ApprovalInboxConfig's three agent_work_*_decider fields (1880 -> 1883).
+    assert counts["field_definitions"] == 1883  # AD-1206 intentionally adds github_repository.
     assert counts["aliased_fields"] == 1
     # AD-1270 (#1324) slice 4c removes the BootCampPhaseConfig model (names 310 -> 309, models 230 -> 229).
     assert len(baseline["names"]) == 310  # AD-1346 M3c (#1604): AdmissionConfig (309 -> 310)

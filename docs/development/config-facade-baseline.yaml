@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1890
-  field_definitions: 1880
+  canonical_dump_leaves: 1893
+  field_definitions: 1883
   incidental: 13
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: eaaefa0fc4e1f5fc1e077a706dfa4e5b1e79c58bedfa4bf834417919a044c596
+canonical_dump_sha256: 78eebb6f8ec49145999b7e7b59009b586a3763722ced0d2c06112ced7bed324d
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -579,7 +579,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 194ecb6d4587392d8350ce918819524e8183b189579d8deeb02a2de3caceff0f
+    schema_sha256: c1b68ee0d7447c4a06cdd1e5db749ac23765acfc22e0b822d82f21fca3ca91eb
     fields:
     - {default: 'False', name: enabled}
     - {default: 'False', name: standing_rules_enabled}
@@ -597,6 +597,9 @@ models:
     - {default: 'False', name: decision_pre_clearance_enabled}
     - {default: '24', name: decision_pre_clearance_default_ttl_hours}
     - {default: '168', name: decision_pre_clearance_max_ttl_hours}
+    - {default: '''auto''', name: agent_work_routine_decider}
+    - {default: '''chief''', name: agent_work_elevated_decider}
+    - {default: '''captain''', name: agent_work_critical_decider}
   ArchiveConfig:
     qualname: ArchiveConfig
     bases:
@@ -3421,7 +3424,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 6c998c8d6f09bb89ba42256fdbec3350205a7312e45c450ed548d1d606a5eea1
+    schema_sha256: bcaea570f9b86ac9f05acf3616597647547d677d4a2d2e253b4c2e5c600711ea
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

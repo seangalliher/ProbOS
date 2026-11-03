@@ -73,8 +73,10 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
     under their direct, in-department command; and the First Officer, for what the
     Captain has delegated, once ``approval_grace_seconds`` have passed (zero while
     the Captain is marked unavailable). A floor stays with the Captain alone: every
-    ``action`` request, every consensus build, and anything that cannot be
-    classified. Both records that widen authority -- the First Officer delegation
+    ``action`` request but an agent-work call whose tier's decider
+    (``agent_work_<tier>_decider`` below, AD-1356 S3 and S4) is ``auto`` or
+    ``chief``, every consensus build, and anything that cannot be classified. Both
+    records that widen authority -- the First Officer delegation
     and the Captain-unavailable mark -- always expire, clamped to
     ``first_officer_delegation_max_ttl_hours`` and
     ``captain_unavailable_max_ttl_hours``.
@@ -292,6 +294,44 @@ class ApprovalInboxConfig(BaseModel):  # AD-1154
             "AD-1214: ceiling on a decision pre-clearance's lifetime. A longer "
             "request is clamped, not rejected; expires_at is NOT NULL in the "
             "decision_pre_clearances schema."
+        ),
+    )
+    agent_work_routine_decider: Literal["auto", "chief", "captain"] = Field(
+        default="auto",
+        description=(
+            "AD-1356 S4: who decides an agent-work call to a routine tool "
+            "(tools.effect_tiers). auto: the run calls the tier's tools with "
+            "no approval. chief: AD-1213's route decides a filed call (a "
+            "department chief at the first hop in the requester's department, "
+            "the First Officer under a live delegation after "
+            "approval_grace_seconds, else the Captain; with "
+            "delegated_approvals_enabled off, the Captain). captain: the "
+            "Captain alone decides a filed call. Read at each agent-work run's "
+            "start and at each decision; a POST /api/config change applies at "
+            "restart."
+        ),
+    )
+    agent_work_elevated_decider: Literal["auto", "chief", "captain"] = Field(
+        default="chief",
+        description=(
+            "AD-1356 S4: who decides an agent-work call to an elevated tool "
+            "(find_mcp_tool, list_files, web_search, read_page, http_fetch, an "
+            "OPEN MCP tool). auto, chief and captain mean what they mean for "
+            "agent_work_routine_decider, except that a run never calls an MCP "
+            "tool directly, so under auto a filed call to one is decided as "
+            "under chief."
+        ),
+    )
+    agent_work_critical_decider: Literal["captain"] = Field(
+        default="captain",
+        description=(
+            "AD-1356 S4: fixed at captain. A filed critical agent-work call "
+            "(to a tool the table does not list, run_python, write and shell "
+            "tools among them; to an MCP tool not registered and enabled "
+            "under its id, or whose AD-1019b risk when the call is decided is "
+            "not OPEN or cannot be read; to read_file or codebase_read_source) "
+            "is the Captain's alone. Any other value fails validation, and no "
+            "decision reads this field."
         ),
     )
 

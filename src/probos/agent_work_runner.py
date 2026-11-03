@@ -11,9 +11,10 @@ events (one listener):
 - an item that ends has its live bookings closed and is reported, once per recipient, to its requester and watchers.
 
 Every run is confined (``ToolCallConfinement``): the executor refuses a call whose tool id its registry does not hold
-(AD-1356 S1.1); the routine tools (``tools.effect_tiers.routine_tool_ids``, read once at the run's start, AD-1356 S2)
-run as usual; and a call to any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order),
-which may file it as an AD-1154 ``action`` request. A run
+(AD-1356 S1.1); the tools whose tier the Captain's setting lets run with no approval (``direct_tool_ids`` in
+``tools.effect_tiers``, read once at the run's start, AD-1356 S2 and S4) run as usual; and a call to any other tool is
+put to the run's gate (``_gate_for``, whose docstring gives its order), which may file it as an AD-1154 ``action``
+request, whose decider follows its tier (AD-1356 S3 and S4). A run
 that filed a call can park the item ``blocked`` on the first request its gate returned, through AD-855's
 ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
 ``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
@@ -60,7 +61,7 @@ from probos.capability_request import (
     validate_action_payload,
 )
 from probos.events import EventType
-from probos.tools.effect_tiers import routine_tool_ids
+from probos.tools.effect_tiers import direct_tool_ids
 from probos.tools.protocol import ToolPermission, ToolResultPresentation
 from probos.workforce import AGENT_WORK_METADATA_KEY, WorkItem
 
@@ -83,7 +84,7 @@ SHIP_COMPUTER_ID: Final = "system"
 SHIP_COMPUTER_CALLSIGN: Final = "Ship's Computer"
 RUN_SOURCE: Final = "agent_work_runner"
 REPORT_MAX_CHARS: Final = 1_500
-BLOCKED_REASON: Final = "waiting for the Captain's decision on a tool call outside the read-only set"
+BLOCKED_REASON: Final = "waiting for a decision on a tool call this work filed for approval"
 TERMINAL_STATUSES: Final[frozenset[str]] = frozenset({"done", "failed", "cancelled"})
 #: A1 (F4): how a report names a run that stopped without a finished answer, by the executor's ``stopped_reason``
 #: (``agentic_loop``); ``complete`` without an answer, and any other reason, read as ``UNFINISHED_WORDS``.
@@ -606,10 +607,16 @@ class AgentWorkRunner:
 
             agent = self._agents.get(slot)
             filed: list[str] = []
-            # AD-1356 S2: the routine tools, read once here; the set does not change during the run. read_file and
-            # codebase_read_source are routine only while security_infra.read_roots confines reads.
+            # AD-1356 S2 and S4: the confinement's direct set, read once here; the set does not change during the run.
+            # read_file and codebase_read_source are in it only while security_infra.read_roots confines reads, and a
+            # tier's listed tools only while the Captain's approval_inbox setting for that tier is auto. It may be
+            # empty.
+            inbox = self._runtime.config.approval_inbox
             confinement = ToolCallConfinement(
-                routine_tool_ids(reads_confined=bool(permitted_read_roots(self._runtime))),
+                direct_tool_ids(
+                    reads_confined=bool(permitted_read_roots(self._runtime)),
+                    routine=inbox.agent_work_routine_decider, elevated=inbox.agent_work_elevated_decider,
+                ),
                 self._gate_for(item.id, _admissions(linked, slot, item.id), filed),
                 record=self.carried.recorder(item.id),
             )
@@ -726,7 +733,7 @@ class AgentWorkRunner:
             if self._requests.count_pending_sync(agent_id) >= self._max_pending:
                 return CONFINEMENT_REFUSED
             request = await self._requests.file_action_request(
-                agent_id, payload, rationale=f"agent work {work_item_id[:8]} called {tool_id}, outside the read-only set",
+                agent_id, payload, rationale=f"agent work {work_item_id[:8]} called {tool_id}, a call that needs approval",
                 work_item_id=work_item_id,
             )
             if request is None or not getattr(request, "id", ""):

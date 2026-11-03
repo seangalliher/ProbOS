@@ -43,8 +43,8 @@ Projects appear here only as technical design references. Positioning against th
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
 | LangGraph | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (an interrupt's resume re-runs the node from its start, as an AD-855 re-dispatch is a fresh run of the task); `cognitive-jit-procedural-learning-research.md` (orchestration survey) |
-| AutoGen | 2026-09-03 | passing | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md` |
-| CrewAI | 2026-09-03 | passing | the same two notes; `emergence-taxonomy.md` |
+| AutoGen | 2026-11-02 | checked | `cognitive-jit-procedural-learning-research.md`; `dynamic-communication-register-research.md`; AD-1356 S3 and S4 (#1722) Prior Art, `prompts/ad-1356-s3-s4-chain-of-command-and-who-decides.md` (0.2's `human_input_mode` on `ConversableAgent`: NEVER, TERMINATE (the default: input is asked for only when a termination condition is met) or ALWAYS; nothing new) |
+| CrewAI | 2026-11-02 | checked | the same two notes; `emergence-taxonomy.md`; AD-1356 S3 and S4 (#1722) Prior Art, `prompts/ad-1356-s3-s4-chain-of-command-and-who-decides.md` (the task's `human_input` flag: the agent asks before its final answer; confirm.dev's guide gates a tool with a `BaseTool` subclass that calls an approval service; nothing new) |
 | Letta (MemGPT) | 2026-10-17 | passing | `cognitive-jit-procedural-learning-research.md` (self-editing memory blocks); AD-1339 (#1566) Prior art (sleep-time agents, from a search summary); AD-1340 S1 (#1568), `prompts/ad-1340-s1-archive-and-erase.md` (an out-of-context archival tier, the same shape as the episode archive; nothing new) |
 | Voyager (skill library) | 2026-10-15 | passing | `cognitive-jit-procedural-learning-research.md`; AD-1338 (#1565) Prior art (from a search summary) |
 | Hermes Agent | 2026-06-06 | passing | `crew-capability-architecture.md` (self-improving skills, AD-596) |

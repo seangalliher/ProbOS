@@ -3,7 +3,8 @@
 A department chief may decide a non-destructive request from crew under their
 direct command. The First Officer may decide what the Captain has delegated,
 after a grace period in which the Captain has first refusal. Everything else --
-every action, every consensus build, anything that cannot be classified -- stays
+every action but an AD-1356 S3 agent-work call whose tier's decider is auto or
+chief, every consensus build, anything that cannot be classified -- stays
 with the Captain. Every delegated decision is notified to the Captain and
 audited, and every doubt refuses to the Captain.
 

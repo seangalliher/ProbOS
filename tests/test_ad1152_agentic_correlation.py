@@ -244,6 +244,11 @@ async def _off_observation(
     assert config["approval_inbox"].pop("decision_pre_clearance_enabled") is False
     assert config["approval_inbox"].pop("decision_pre_clearance_default_ttl_hours") == 24
     assert config["approval_inbox"].pop("decision_pre_clearance_max_ttl_hours") == 168
+    # AD-1356 S4's three agent-work deciders were added after this capture too; their defaults are the issue's table
+    # (routine auto, elevated chief), and this observation runs no agent work.
+    assert config["approval_inbox"].pop("agent_work_routine_decider") == "auto"
+    assert config["approval_inbox"].pop("agent_work_elevated_decider") == "chief"
+    assert config["approval_inbox"].pop("agent_work_critical_decider") == "captain"
     # AD-1228's five inert proactive_cognitive fields were added after this capture too.
     assert config["proactive_cognitive"].pop("standing_interests_enabled") is False
     assert config["proactive_cognitive"].pop("standing_interest_max_per_agent") == 12
