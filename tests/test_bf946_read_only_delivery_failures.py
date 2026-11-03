@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from probos.cognitive.swe_harness.result_offload import retry_delivery_error, safe_delivery_error
 from probos.cognitive.swe_harness.tool_call import result_delivery
 from probos.execution.workspace_results import TOOL_RESULT_THRESHOLD_BYTES
 from probos.tools.protocol import ToolResult
@@ -145,7 +146,6 @@ def _loop(llm: Any, executor: Any, runtime: Any, *, bound: int = _BOUND, structu
     )
 
 
-@pytest.mark.xfail(strict=True, reason="BF-946 M2: on the base a failed delivery ends the run")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("structured", [False, True])
 @pytest.mark.parametrize(("reader", "rows", "code"), [
@@ -283,7 +283,6 @@ async def test_a_fresh_frame_exactly_at_the_bound_is_delivered(tmp_path: Path) -
     assert llm.frames[0] == delivery.presentation and result.stopped_reason == "complete"
 
 
-@pytest.mark.xfail(strict=True, reason="BF-946 M2: on the base a failed delivery ends the run")
 @pytest.mark.asyncio
 async def test_a_fresh_frame_one_over_the_bound_comes_back_as_an_error(tmp_path: Path) -> None:
     """Acceptance 3 with no promise: one character over, the read-only result takes the error path."""
@@ -340,3 +339,13 @@ async def test_each_failed_delivery_logs_one_content_free_warning_naming_its_sit
     if found.groups():
         assert int(found[1]) > bound  # the frame that did not fit
     assert "dddd" not in message
+
+
+def test_the_retry_text_fits_the_bound_or_falls_back_to_the_bounded_code() -> None:
+    full = retry_delivery_error("capture_slots", 0)
+    assert full == _retry_text("capture_slots")
+    assert retry_delivery_error("capture_slots", len(full)) == full
+    assert retry_delivery_error("capture_slots", len(full) - 1) == safe_delivery_error("capture_slots", len(full) - 1)
+    assert retry_delivery_error("capture_slots", 10) == "!"
+    with pytest.raises(ValueError):
+        retry_delivery_error("Not A Code", _BOUND)

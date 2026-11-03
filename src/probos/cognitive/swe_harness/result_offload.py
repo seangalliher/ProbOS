@@ -452,6 +452,28 @@ def safe_delivery_error(code: str, max_chars: int) -> str:
     return text if len(text) <= min(128, max_chars if max_chars > 0 else 128) else "!"
 
 
+# BF-946: the guidance shown with a read-only call's failed delivery.
+_RETRY_GUIDANCE = (
+    "The call ran, but its result was not delivered. Ask for less "
+    "(for example a narrower window or a lower limit) and call again."
+)
+
+
+def retry_delivery_error(code: str, max_chars: int) -> str:
+    """BF-946: the bounded text for a failed delivery the run went on past.
+
+    The loop goes on past a failed delivery only from a read-only call, whose result
+    promised nothing, so asking again for less is safe. The text is
+    ``safe_delivery_error`` and ``_RETRY_GUIDANCE``; a bound too small for both gives
+    ``safe_delivery_error`` alone.
+    """
+    base = safe_delivery_error(code, max_chars)
+    if base == "!":
+        return base
+    text = f"{base} {_RETRY_GUIDANCE}"
+    return text if max_chars == 0 or len(text) <= max_chars else base
+
+
 def _admit(text: str, maximum: int) -> str:
     if maximum > 0 and len(text) > maximum:
         raise WorkspaceResultError("delivery_frame_too_large")
@@ -520,8 +542,8 @@ async def prepare_result(captured: CapturedConversion, context: DeliveryContext)
         return delivery_failure(captured, context, exc.code)
     except Exception:
         logger.error(
-            "Workspace result delivery preparation failed; the producer outcome is "
-            "retained and the loop will stop without retrying the producer",
+            "Workspace result delivery preparation failed (delivery_unavailable); the "
+            "producer outcome is retained and is never retried by delivery",
         )
         return delivery_failure(captured, context, "delivery_unavailable")
 
