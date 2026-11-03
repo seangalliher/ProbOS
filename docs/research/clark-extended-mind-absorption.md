@@ -1,7 +1,7 @@
 # Clark and Chalmers' Extended Mind: Absorption
 
 *Sean Galliher, 2026-11-02*
-*Source: Andy Clark and David Chalmers, "The Extended Mind" (*Analysis*, 1998), and Clark's *Supersizing the Mind* (2008). Drafted from general knowledge of both, without a copy at hand, so nothing is quoted. The ProbOS side was checked against `main` at `b773c662` on 2026-11-02. A companion to `primacy-of-perception-absorption.md` (PR #1738) and `gibson-affordances-absorption.md`.*
+*Source: Andy Clark and David Chalmers, "The Extended Mind" (*Analysis*, 1998), and Clark's *Supersizing the Mind* (2008). Drafted from general knowledge of both, without a copy at hand, so nothing is quoted. The ProbOS side was checked against `main` at `b773c662` on 2026-11-02 and re-checked at `f31afa56` on 2026-11-03. A companion to `primacy-of-perception-absorption.md` (PR #1738) and `gibson-affordances-absorption.md`.*
 
 ## Purpose
 
@@ -19,7 +19,7 @@ ProbOS crew keep notebooks in Ship's Records, and the ship keeps a shared record
 
 - **Otto's notebook, for every crew member.** Ship's Records (AD-434, `knowledge/records_store.py`) holds each agent's notebook at `notebooks/{callsign}/{topic}.md`. Any crew agent can save to it, from a Captain DM (AD-911, AD-912; `cognitive_agent.py:3226`) or on the proactive path.
 - **Reliably there.** For agents at AUTONOMOUS or UNRESTRICTED agency, each proactive cycle shows the notebook index, with each topic's last update (`cognitive_agent.py:9404-9414`, `:11311-11317`; built at `proactive.py:2765-2807`, gated at `:2611-2614`).
-- **Endorsed by its owner.** Notebook entries are private by default (AD-1157, `records_store.py:72`), written under the agent's callsign, and dated in frontmatter: `created`, `updated` and `revision` (`records_store.py:38-40`, `:312-325`). AD-552 suppresses a notebook write at revision 5 or more when it adds little new (`proactive.py:3186`, `:3228-3235`). Its agent-facing repetition warning is built (`proactive.py:2816-2829`) but nothing renders it.
+- **Endorsed by its owner.** Notebook entries are private by default (AD-1157, `records_store.py:72`), written under the agent's callsign, and dated in frontmatter: `created`, `updated` and `revision` (`records_store.py:38-40`, `:312-325`). AD-552 suppresses a notebook write at revision 5 or more when it adds little new (threshold at `proactive.py:3208-3215`, condition at `:3229-3235`). Its agent-facing repetition warning is built (`proactive.py:2816-2829`) but nothing renders it.
 - **The record over the recollection.** AD-986b (#928, closed) has an agent consult the chat transcript, the objective record, when its own episodic memory is lossy.
 - **Never delete, in progress.** AD-1340 (#1568, open) makes dream pruning archive episodes instead of deleting them; archive is already the default eviction (`config.py:861`). Parity says the same rule should hold for an agent's notebooks.
 
@@ -31,7 +31,7 @@ ProbOS crew keep notebooks in Ship's Records, and the ship keeps a shared record
 
 **Where ProbOS falls short.** Two read-back paths drop exactly that information:
 - **A notebook read back into context** shows only the topic and a snippet, `<notebook topic="...">` (`cognitive_agent.py:9416-9419`, `:11324-11327`). It omits the `updated` date that the index line just above it shows, and no read-back shows the `revision`.
-- **A Records result through `oracle_query`** is marked `[source:records relevance:0.82 age:0s]`. The `age` is the time since *retrieval*, not since the entry was written. `ProvenanceEnvelope.from_oracle_result` sets `retrieval_timestamp` to the current time (`cognitive/provenance.py:79-92`), and the tool renders the marker in the same call (`tools/oracle_query_tool.py:148`), so the age is always about zero. The entry's real dates are in its frontmatter, carried in the result's `metadata` (`oracle_service.py:1076-1083`) and not rendered by this tool. A six-month-old entry reads as brand new. The tool's own preamble tells agents to weigh a STALE entry lightly, and the marker can never say STALE. (The passive path, `query_formatted`, does show `by {author}` for Records, but no date.)
+- **A Records result through `oracle_query`** is marked `[source:records relevance:0.82 age:0s]`. The `age` is the time since *retrieval*, not since the entry was written. `ProvenanceEnvelope.from_oracle_result` sets `retrieval_timestamp` to the current time (`cognitive/provenance.py:83-93`, timestamp at `:89`), and the tool renders the marker in the same call (`tools/oracle_query_tool.py:148`), so the age is always about zero. The entry's real dates are in its frontmatter, carried in the result's `metadata` (`oracle_service.py:1076-1083`) and not rendered by this tool. A six-month-old entry reads as brand new. The tool's own preamble tells agents to weigh a STALE entry lightly, and the marker can never say STALE. (The passive path, `query_formatted`, does show `by {author}` for Records, but no date.)
 
 The second is a mislabel of the same kind AD-1294 fixed, when a match score was shown to agents as `confidence`.
 
@@ -39,7 +39,7 @@ The second is a mislabel of the same kind AD-1294 fixed, when a match score was 
 - Every read-back of external memory states who wrote it and when: "your note, updated 2026-10-12, revision 4", or "Ship's Records, written by Forge on 2026-05-03".
 - Fix the `age` marker: show the entry's `updated` date from frontmatter, or rename the field so it cannot be read as the content's age.
 
-*Owner: a BF for the `age` marker, in the AD-677 and AD-1294 lineage; the notebook read-back belongs with it.*
+*Owner: BF-950 (#1742), which covers the `age` marker and the notebook read-back.*
 
 ### 2. Easy to get at, when it is needed
 
@@ -47,9 +47,9 @@ The second is a mislabel of the same kind AD-1294 fixed, when a match score was 
 
 **In ProbOS.** On the proactive path, an agent that asks for a notebook with `[READ_NOTEBOOK topic]` gets it in the *next* cycle (AD-504, `proactive.py:3443-3444`, consumed at `:2847-2858`), so a note it chose can inform only the thought after the one that needed it. In agentic runs the agent can query Records through `oracle_query` within the run, and sees its own private notes because the tool passes its identity (`oracle_query_tool.py:322`).
 
-The proactive path also has a same-cycle pull: it searches for the agent's department name and injects the top hit as `notebook_content` (`proactive.py:2831-2842`). **That pull is a privacy defect, found while checking this note.** It calls `records_store.search(dept, scope=f"notebooks/{callsign}")` with no reader identity. `scope` there is a classification level, not a path, so the unknown value is treated as `ship`. A `private` entry (level 0) passes, the identity check is skipped when no reader is given (`records_store.py:139-145`), and `search` scans every entry (`:1107` onward). An agent can therefore be shown another crew member's private note. A reviewer reproduced it against a real `RecordsStore`; `tests/test_self_monitoring.py` mocks `search`, which is why tests miss it. It is to be filed as a BF, not fixed in this note.
+The proactive path also has a same-cycle pull: it searches for the agent's department name and injects the top hit as `notebook_content` (`proactive.py:2831-2842`). **That pull is a privacy defect, found while checking this note.** It calls `records_store.search(dept, scope=f"notebooks/{callsign}")` with no reader identity. `scope` there is a classification level, not a path, so the unknown value is treated as `ship`. A `private` entry (level 0) passes, the identity check is skipped when no reader is given (`records_store.py:139-145`), and `search` scans every entry (`:1107` onward). An agent can therefore be shown another crew member's private note. A reviewer reproduced it against a real `RecordsStore`; `tests/test_self_monitoring.py` mocks `search`, which is why tests miss it. It is filed as BF-949 (#1741).
 
-*Owner: the BF for the leak. Same-cycle access to the agent's own chosen note is then a design question for the proactive path.*
+*Owner: BF-949 (#1741) for the leak. Same-cycle access to the agent's own chosen note is then a design question for the proactive path.*
 
 ### 3. Parity as a design test for every new memory store
 
@@ -62,7 +62,7 @@ The proactive path also has a same-cycle pull: it searches for the agent's depar
 
 A store that fails the first two should be presented as a source to check, not as something the agent knows.
 
-*Owner: a review question for prompts that add a store the crew will rely on.*
+*Owner: a review question for prompts that add a store the crew will rely on. Tracked as a proposal on #1743.*
 
 ## A lens, not a build
 

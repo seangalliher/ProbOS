@@ -1,7 +1,7 @@
 # Gibson's Affordances: Absorption
 
 *Sean Galliher, 2026-11-02*
-*Source: James J. Gibson, *The Ecological Approach to Visual Perception* (1979), chiefly the chapter on affordances; and Don Norman's later distinction between an affordance and a signifier (*The Design of Everyday Things*, revised edition, 2013). Drafted from general knowledge of both, without a copy at hand, so nothing is quoted. The ProbOS side was checked against `main` at `b773c662` on 2026-11-02. A companion to `primacy-of-perception-absorption.md` (PR #1738, not yet merged).*
+*Source: James J. Gibson, *The Ecological Approach to Visual Perception* (1979), chiefly the chapter on affordances; and Don Norman's later distinction between an affordance and a signifier (*The Design of Everyday Things*, revised edition, 2013). Drafted from general knowledge of both, without a copy at hand, so nothing is quoted. The ProbOS side was checked against `main` at `b773c662` on 2026-11-02 and re-checked at `f31afa56` on 2026-11-03. A companion to `primacy-of-perception-absorption.md` (PR #1738, not yet merged).*
 
 ## Purpose
 
@@ -49,9 +49,9 @@ AD-1356's slices tier the decision. None of them, as filed on #1722, tells the a
 
 The gate stays authoritative. This changes what the agent is told, never what it may do.
 
-**Found while checking this note.** `routine_tool_ids` returns the whole table (13 tools), and the confinement holds it as is (`agent_work_runner.py:611-615`); nothing intersects it with the run's offer. #1722's S2 text says "the routine members registered for this agent". Whether a routine tool the agent does not hold is still blocked by the registry's grant check was not verified. Either way, a signal must name only the offered tools, which is why the first bullet says "offered to this run". #1722's table also lists `list_files` as routine, while the shipped table holds it elevated. Both divergences are for #1722's Architect.
+**Why the signal must intersect with the offer.** The confinement holds the whole routine table (13 tools; `agent_work_runner.py:611-615`). That is deliberate: S2's contract (decision D2 on #1722) keeps the set table-wide and decides at each call whether the agent holds the tool. A signal taken from the set alone would therefore name tools the agent does not hold. Likewise, `list_files` is elevated by S2's decision D4, because it resolves its path without the read policy (`DECISIONS.md:1274`), although the issue's first table listed it as routine.
 
-*Owner: AD-1356 (#1722), as an addition to S3, or a follow-up issue under it.*
+*Owner: AD-1356 (#1722). Posted there as input for S3 on 2026-11-03.*
 
 ### 2. Measure each agent's niche, not only its grants
 
@@ -65,7 +65,7 @@ Compared per agent, grants against these give two lists:
 - **granted and never used**: candidates for removal under least privilege;
 - **attempted and filed or refused**: candidates for a grant, a routine entry, or a better signal (item 1).
 
-*Owner: input for AD-1356 S4's per-tier settings and its earned-agency bar (paused), and for AD-983b's per-agent enablement.*
+*Owner: input for AD-1356 S4's per-tier settings and its earned-agency bar (paused), and for AD-983b's per-agent enablement. Tracked as a proposal on #1743.*
 
 ### 3. Every refusal names what is available instead
 
@@ -73,7 +73,7 @@ Compared per agent, grants against these give two lists:
 
 **In ProbOS.** The browser refusal and `UNREGISTERED_TOOL_REFUSAL` already do this. Make it the rule for every refusal an agent receives: say what was refused, why, and the nearest action that is available, and name only actions this agent actually has. `UNREGISTERED_TOOL_REFUSAL` shows why the last clause matters: it names `search_capabilities` unconditionally, so with `tool_search_enabled` off it points to a tool that is not registered. Refusals of calls that never ran are already kept out of the defect record (`_NEVER_RAN_REFUSALS`, `agentic_dispatch.py:331-334`). This item is about the agent's next step, not the record.
 
-*Owner: a convention for refusal text, applied first to the agent-work refusals in `agentic_dispatch.py:301-325`.*
+*Owner: a convention for refusal text. The agent-work refusals in `agentic_dispatch.py:301-325` are in the #1722 S3 input; the rest is a proposal on #1743.*
 
 ## A lens, not a build
 
