@@ -548,10 +548,8 @@ RUN:   grep -r -n -E 'ad1346_file_write_census|FILE_WRITE_METHODS|HANDED|file_wr
 FOUND: tests/fixtures/ad1346_file_write_census.py :3 :5 :12 :14 :38 :55 :84 :95 :119 :127 :129 :134; tests/test_ad1346_admission_file_write_census.py :3 :10 :46 :51 :52 :121 :155 :172 :174 :210 :282; tests/fixtures/ad1346_effect_census.py:66 (a string naming the fixture's path)
 HOLDS: yes
 
-CLAIM: the write path's only src callers are the ones D279 names
 RUN:   Grep 'store_tool_result\(|\.bind_agent\(' src; Grep 'ArtifactIO\(|_artifacts\.publish|GenerationReaper\(|reap_tool_results\(|_prepare_result\(|prepare_result\(' src
 FOUND: store_tool_result: definitions workspace_result_store.py:1082, workspace_results.py:317 :381; call result_offload.py:666. bind_agent: result_offload.py:258, cognitive/swe_harness/tools.py:389. ArtifactIO( :939; _artifacts.publish :1093; GenerationReaper( :935; reap_tool_results( workspace_result_store.py :1021 :1068 (calls) and :1134 (definition), workspace_results.py :326 :392 (definitions); prepare_result( agentic_loop.py:2895 (call), result_offload.py:573 (definition); _prepare_result( result_offload.py:576 (call), :589 (definition)
-HOLDS: yes
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -614,6 +612,9 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7, ev
 - M1-02's REPLACE (§7.1), and the fixture docstring it writes: the clause on the callers of a function that wraps a primitive (with its qualifier `other than the methods of PINNED_WRITES`) is deleted from the list of what the scan cannot see, and the list is re-wrapped. M1-02's SEARCH, which holds the older clause, is unchanged.
 - The register (here): R129's last clause (`; the callers of other wrappers are not`) and R140's bullet on a file that writes only through another file's wrapper function are deleted.
 Unchanged by this amendment: every other SEARCH text and every other REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 4 (2026-11-03, the orchestrator, after the third review round of M3e4d2, whose sweep of the Absence entries of this batch's contracts included this one).** One finding, repaired by deletion. Changed, against the contract as Amendment 3 left it: Absence entry 5 (the search for the callers of `store_tool_result`, `bind_agent` and the reaper) loses its CLAIM, that the write path's only `src` callers are those D279 names, and its HOLDS line. The CLAIM was broader than its RUN, which does not search for the callers of `_reap_entry`, `_publish_in` and `_drop_staged` (`execution/workspace_result_store.py:617`, `:682`, `:773` and `:827` at `0ae53d21`). The RUN and FOUND lines stay.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
 

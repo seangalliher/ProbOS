@@ -1088,7 +1088,7 @@ Glob tests/test_{...}.py (the 19 files of §4's M1 gate and tests/test_ad1184_ad
 ## Absence Verified (2026-11-03, run on `36a41ba6`)
 
 ```
-CLAIM: EY-<n>, WM8, WM9, D290 to D299, R147 to R159, M3e4d2, ad1346-m3e4d2, _create_two_tasks, _LATER and the two new test names are not used, outside the two CLAIM lines FOUND names
+CLAIM: EY-<n>, WM8, WM9, D290 to D299, R147 to R159, M3e4d2, ad1346-m3e4d2, _create_two_tasks and the two new test names are not used, outside the two CLAIM lines FOUND names
 RUN:   Grep '\bEY-[0-9]|\bWM(8|9)\b|\bD29[0-9]\b|\bR14[7-9]\b|\bR15[0-9]\b|M3e4d2|_create_two_tasks|ad1346-m3e4d2' over . (rg's default ignore rules, which skip logs/)
 FOUND: prompts/ad-1346-m3e4d1-note-and-skill-request-checks.md:1222 (M3e4d1's Absence CLAIM line, which names "WM6 to WM9" and "R145 to R149")
 RUN:   the same pattern over logs/ad1346
@@ -1184,6 +1184,10 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 - §3 D292 (the list of writes that check nothing), §5 and register R148: the bullet that a store held by no runtime keeps the class default None, the sentence of §5 that tests which build a store directly keep it, and the clause `or by a store the runtime does not hold` of R148's bullet are deleted (a store that a test builds and hands a service records findings, as WM8 and WM9 do).
 - §3 D295 (cost): the bullet that lists the carrier read, the principal resolve, the registry check and the recorder offer as the work of every `create_task` is deleted (the principal is resolved only for a non-empty string, and a recorder is optional).
 - Absence Verified, the CLAIM of the search for test files that name `PersistentTaskStore`: ` or persistent_tasks` is deleted (three test files name `persistent_tasks` without naming the class).
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 3 (2026-11-03, the orchestrator, after review round 3).** One finding of that round's sweep of the Absence entries, repaired by deletion. Changed, against the contract as Amendment 2 left it: the CLAIM of the first Absence entry no longer names `_LATER`: its searches for `_LATER` cover `tests` and `logs/ad1346` only (the entry's root-wide patterns do not hold it).
+Known error, not repaired here (found by the orchestrator after round 3; the Architect's round-three decision is to leave the text and record it): the premise, at line 107 (ranked option 2 of D290) and in register R147, item 1, that `room_inputs.py` calls a method of the chat thread store that writes through `asyncio.to_thread`, is false. Its calls at `room_inputs.py:100`, `:117`, `:205`, `:249`, `:267` and `:296` are `get_thread` and `list_messages`; the worker-thread call that writes is `cognitive/turn_promotion.py:1214`, which hands `_append_report_message` to `asyncio.to_thread`. M3e4d3's register note corrects it.
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
