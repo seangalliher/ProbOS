@@ -13,9 +13,11 @@ or, failing those, a call that passes as a positional argument an attribute name
 another function to call. A point is (enclosing scope, line, the name), scoped as ``sql_write_scan`` of
 ``tests/fixtures/ad1346_store_census.py`` scopes one. ``file_write_points`` runs the scan over every ``src`` module.
 ``FILE_WRITE_FILES`` gives each file that holds a point one coverage, a ``Pending``, ``System`` or ``OutsideRuntime`` of
-``tests/fixtures/ad1346_effect_census.py`` (D254); a row is a file and carries no count. ``FILE_AGENT_ATTRIBUTED_SCOPES``
-gives, for each file whose row is ``Pending("M3e4d")``, a scope that writes a file D239 makes agent-attributed and the
-name in that scope of the value the file records as the text's author (D255).
+``tests/fixtures/ad1346_effect_census.py`` (D254); a row is a file and carries no count. A file whose row is
+``Pending("M3e4d")`` is a key of ``FILE_AGENT_ATTRIBUTED_SCOPES`` or of ``FILE_AGENT_ATTRIBUTED_STATE_SCOPES``. The first
+gives a scope that writes a file D239 makes agent-attributed and the name in that scope of the value the file records
+as the text's author (D255). The second gives a scope, the author (a parameter of that scope, or ``<parameter>.<field>``
+for a field of the class that annotates the parameter), a module-level name and the writing scope (D274).
 
 Among what the scan cannot see (register R129): a mode or a flag held in a variable, a write through a handle opened
 elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, the callers
@@ -132,13 +134,19 @@ def file_write_files() -> frozenset[str]:
     return frozenset(path for path, _scope, _line, _name in file_write_points())
 
 
-_AGENT_ATTRIBUTED_FILE: Final = Pending("M3e4d", "agent-attributed (D239, D255): FILE_AGENT_ATTRIBUTED_SCOPES names a scope and its author (register R113)")
-_UNCLASSIFIED: Final = Pending("M3e4c3c", "not yet classified under D239 and D218 (register R130)")
+_AGENT_ATTRIBUTED_FILE: Final = Pending("M3e4d", "agent-attributed (D239, D255, D274): FILE_AGENT_ATTRIBUTED_SCOPES or FILE_AGENT_ATTRIBUTED_STATE_SCOPES names its writing scope and its author (register R113)")
 
-#: AD-1346 M3e4c3a (D254, D255): each file whose row is ``Pending("M3e4d")`` -> (a scope that writes a file D239 makes
+#: AD-1346 M3e4c3a (D254, D255): a file whose row is ``Pending("M3e4d")`` -> (a scope that writes a file D239 makes
 #: agent-attributed, the name in that scope of the value the file records as the text's author).
 FILE_AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
     "src/probos/knowledge/records_store.py": ("RecordsStore.write_entry", "author"),
+}
+#: AD-1346 M3e4c3e (D274): a file whose row is ``Pending("M3e4d")`` -> (a scope that takes the author, the author: a
+#: parameter of that scope, or ``<parameter>.<field>`` for a field of the class that annotates that parameter, a
+#: module-level name on which that scope calls a method with that parameter, the writing scope that scope calls).
+FILE_AGENT_ATTRIBUTED_STATE_SCOPES: Final[dict[str, tuple[str, str, str, str]]] = {
+    "src/probos/avatars/proposal_history.py": ("append", "agent_id", "_history", "_persist_locked"),
+    "src/probos/avatars/vision_proposal_history.py": ("append", "entry.agent_id", "_entries", "_persist_locked"),
 }
 
 #: AD-1346 M3e4c3a (D254): each ``src`` file that holds a file write -> its coverage.
@@ -168,55 +176,57 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     "src/probos/tools/browser/recording_reaper.py": System(SHIP, "RecordingReaper._reap_sync deletes recordings past retention or over the size cap: no text"),
     "src/probos/tools/code_execution_tool.py": System(SHIP, "a code run's work directory: its sandbox helper, staged thread attachments and its removal"),
     "src/probos/ward_room/threads.py": System(SHIP, "the Ward Room JSONL archive: prune_old_threads appends copies of the thread and post rows it prunes (D218)"),
-    # Not yet classified: M3e4c3c's (register R130, R133).
-    "src/probos/attachments/filesystem_store.py": _UNCLASSIFIED,
-    "src/probos/attachments/image_budget_store.py": _UNCLASSIFIED,
-    "src/probos/audio/tts/resident.py": _UNCLASSIFIED,
-    "src/probos/avatars/blender_renderer.py": _UNCLASSIFIED,
-    "src/probos/avatars/proposal_history.py": _UNCLASSIFIED,
-    "src/probos/avatars/rhubarb_backend.py": _UNCLASSIFIED,
-    "src/probos/avatars/telemetry_history.py": _UNCLASSIFIED,
-    "src/probos/avatars/vision_proposal_history.py": _UNCLASSIFIED,
-    "src/probos/captain_card/card.py": _UNCLASSIFIED,
-    "src/probos/cognitive/agent_patcher.py": _UNCLASSIFIED,
-    "src/probos/cognitive/builder.py": _UNCLASSIFIED,
-    "src/probos/cognitive/chain_checkpoint.py": _UNCLASSIFIED,
-    "src/probos/cognitive/checkpoint.py": _UNCLASSIFIED,
-    "src/probos/cognitive/copilot_adapter.py": _UNCLASSIFIED,
-    "src/probos/cognitive/dm/artifact_extractor.py": _UNCLASSIFIED,
-    "src/probos/cognitive/dream_manifest.py": _UNCLASSIFIED,
-    "src/probos/cognitive/dreaming.py": _UNCLASSIFIED,
-    "src/probos/cognitive/evidence_collector.py": _UNCLASSIFIED,
-    "src/probos/cognitive/peer_observation_monitor.py": _UNCLASSIFIED,
-    "src/probos/cognitive/ready_room/idea_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/sandbox.py": _UNCLASSIFIED,
-    "src/probos/cognitive/scout.py": _UNCLASSIFIED,
-    "src/probos/cognitive/self_improvement/versioning.py": _UNCLASSIFIED,
-    "src/probos/cognitive/self_mod.py": _UNCLASSIFIED,
-    "src/probos/cognitive/session_manager.py": _UNCLASSIFIED,
-    "src/probos/cognitive/skill_catalog.py": _UNCLASSIFIED,
-    "src/probos/cognitive/skill_forge.py": _UNCLASSIFIED,
-    "src/probos/cognitive/swe_harness/tools.py": _UNCLASSIFIED,
-    "src/probos/credential_store.py": _UNCLASSIFIED,
-    "src/probos/episodic_health.py": _UNCLASSIFIED,
-    "src/probos/experience/desktop/lifecycle.py": _UNCLASSIFIED,
-    "src/probos/identity_key_store.py": _UNCLASSIFIED,
-    "src/probos/infrastructure/backup.py": _UNCLASSIFIED,
-    "src/probos/infrastructure/snapshot_manifest.py": _UNCLASSIFIED,
-    "src/probos/integrations/template_registry.py": _UNCLASSIFIED,
-    "src/probos/maintenance/episodic_backup.py": _UNCLASSIFIED,
-    "src/probos/migration/__init__.py": _UNCLASSIFIED,
-    "src/probos/ontology/loader.py": _UNCLASSIFIED,
-    "src/probos/perception/identity.py": _UNCLASSIFIED,
-    "src/probos/perception/vision_overrides.py": _UNCLASSIFIED,
-    "src/probos/pidfile_guard.py": _UNCLASSIFIED,
-    "src/probos/proactive.py": _UNCLASSIFIED,
-    "src/probos/provider_setup.py": _UNCLASSIFIED,
-    "src/probos/runtime_config_service.py": _UNCLASSIFIED,
-    "src/probos/security/file_access.py": _UNCLASSIFIED,
-    "src/probos/security/keyring_backend.py": _UNCLASSIFIED,
-    "src/probos/shutdown_integrity.py": _UNCLASSIFIED,
-    "src/probos/startup/shutdown.py": _UNCLASSIFIED,
-    "src/probos/voice/wake_word_trainer.py": _UNCLASSIFIED,
-    "src/probos/warm_boot.py": _UNCLASSIFIED,
+    # AD-1346 M3e4c3c: the ship's (D239, D264).
+    "src/probos/cognitive/agent_patcher.py": System(SHIP, "AgentPatcher._patch_skill deletes the temporary file it loaded the patched skill source from: no text"),
+    "src/probos/cognitive/builder.py": System(SHIP, "execute_approved_build writes the content, or its text after replacement, with no author id (D239); _restore_pre_build_files restores saved bytes and deletes created files"),
+    "src/probos/cognitive/chain_checkpoint.py": System(SHIP, "ChainCheckpointStore.save writes a ChainCheckpoint, which has no author field (D239); delete removes it"),
+    "src/probos/cognitive/checkpoint.py": System(SHIP, "write_checkpoint writes the source text, node states and serialized form of a DAG, with no author key (D239); delete_checkpoint removes it"),
+    "src/probos/cognitive/copilot_adapter.py": System(SHIP, "seed_session_directory writes the non-empty file contents it is passed into a build session directory, with no author id (D239)"),
+    "src/probos/cognitive/dm/artifact_extractor.py": System(SHIP, "_to_docx_libreoffice writes the text it is passed, wrapped as HTML, into a temporary directory for LibreOffice, with no author id (D239)"),
+    "src/probos/cognitive/dream_manifest.py": System(SHIP, "DreamManifest._save writes a timestamp for each episode id and step marked processed: no text"),
+    "src/probos/cognitive/dreaming.py": System(SHIP, "DreamingEngine.dream_cycle renames each non-primary entry of a consolidated cluster into an _archived directory beside it: no text"),
+    "src/probos/cognitive/evidence_collector.py": System(SHIP, "EvidenceCollector._persist writes behaviour codes, a confidence and reasoning, with the author_id it observes (D239)"),
+    "src/probos/cognitive/peer_observation_monitor.py": System(SHIP, "PeerObservationMonitor._save_state writes a count and a last tier for each detector and observer pair: no text"),
+    "src/probos/cognitive/ready_room/idea_store.py": System(SHIP, "IdeaCaptureStore._save writes the title, body and captured_by of each idea; WF7: no src call outside the file passes captured_by (D239)"),
+    "src/probos/cognitive/sandbox.py": System(SHIP, "SandboxRunner.test_agent deletes the temporary file it loaded the generated agent source from: no text"),
+    "src/probos/cognitive/scout.py": System(SHIP, "_save_seen writes the repositories seen and their dates, and _scout_step_persist_report a daily report of findings; ScoutFinding has no author field (D239)"),
+    "src/probos/cognitive/self_improvement/versioning.py": System(SHIP, "LocalDiskPersistence.promote writes agent source and a sidecar holding the designer of its version; no src call builds an AgentVersion (D239)"),
+    "src/probos/cognitive/self_mod.py": System(SHIP, "SelfModificationPipeline.handle_add_skill deletes the temporary file it loaded the skill source from: no text"),
+    "src/probos/cognitive/session_manager.py": System(SHIP, "SessionManager._write writes a Session, which has no author field (D239); close_session renames it into archive"),
+    "src/probos/cognitive/skill_catalog.py": System(SHIP, "import_skill copies a skill directory, _rewrite_frontmatter adds ProbOS metadata to a SKILL.md frontmatter and remove_skill deletes a skill directory; none sets an author id (D239)"),
+    "src/probos/cognitive/skill_forge.py": System(SHIP, "SkillForge._write_files writes the files a model call generated into a temporary staging directory, with no author id (D239); forge removes the directory"),
+    "src/probos/cognitive/swe_harness/tools.py": System(SHIP, "WriteFileTool.invoke and EditFileTool.invoke write the text they are passed or edit, with no author id (D239); _locked_native_target opens a target read-write"),
+    # AD-1346 M3e4c3d: the ship's (D239, D269).
+    "src/probos/attachments/filesystem_store.py": System(SHIP, "FilesystemAttachmentStore.write writes a blob named by the content hash it is passed and an index entry of its origin, time, MIME type and size, with no author id (D239); unlink and unlink_if_unchanged delete blobs"),
+    "src/probos/attachments/image_budget_store.py": System(SHIP, "save writes the timestamps and image counts of each key of the budget tracker: no text"),
+    "src/probos/audio/tts/resident.py": System(SHIP, "PiperWorker._spawn opens a file in a temporary directory as the stderr of a Piper process, _request deletes the output file of a request and _release removes the directory"),
+    "src/probos/avatars/blender_renderer.py": System(SHIP, "BlenderRenderer.render writes the AvatarDSL it is passed as YAML and JSON drafts named by the agent id it is passed (D239), and deletes a rejected VRM output"),
+    "src/probos/avatars/rhubarb_backend.py": System(SHIP, "_convert_to_wav and generate_visemes delete the temporary WAV file that ffmpeg converts an audio file into: no text"),
+    "src/probos/avatars/telemetry_history.py": System(SHIP, "TelemetryHistoryWriter appends a snapshot of an agent's avatar state to a file named by its agent_id (D239)"),
+    "src/probos/captain_card/card.py": System(SHIP, "save_card writes a CaptainCard, which has no author field (D239)"),
+    "src/probos/credential_store.py": System(SHIP, "CredentialStore.rotate writes the secrets store with the value it is passed under the secret name: no author id"),
+    "src/probos/episodic_health.py": System(SHIP, "check_episodic_health opens a temporary file as the stderr of the episodic probe, and deletes it"),
+    "src/probos/experience/desktop/lifecycle.py": System(SHIP, "DesktopLifecycle deletes its lock file, and writes or deletes a fixed autostart entry: a macOS LaunchAgent plist or a Linux .desktop file"),
+    "src/probos/identity_key_store.py": System(SHIP, "PlaintextDevKeyStore.create writes a new key id and private key to a fresh file: no text"),
+    "src/probos/infrastructure/backup.py": System(SHIP, "BackupService copies database files into a snapshot or hard-links them from the prior one (D218), renames a snapshot into place and removes pruned and incomplete snapshots"),
+    "src/probos/infrastructure/snapshot_manifest.py": System(SHIP, "write_manifest writes a SnapshotManifest, which has no author field (D239)"),
+    "src/probos/integrations/template_registry.py": System(SHIP, "TemplateRegistry.create_from_template writes a template filled with the substitutions it is passed, with no author id (D239), and rewrites the template index with its use count"),
+    "src/probos/maintenance/episodic_backup.py": System(SHIP, "snapshot_episodic writes a tar of the Chroma artifacts it finds under the data directory (D218); _prune_old_snapshots deletes older snapshots"),
+    "src/probos/migration/__init__.py": System(SHIP, "execute_plan copies the files of a migration plan from their source paths to their target paths: no author id"),
+    "src/probos/ontology/loader.py": System(SHIP, "OntologyLoader._load_or_generate_instance_id_sync writes a new instance id: no text"),
+    "src/probos/perception/identity.py": System(SHIP, "IdentityResolver.enroll writes a face embedding, a model id and a version, and revoke deletes them: no text"),
+    "src/probos/perception/vision_overrides.py": System(SHIP, "_persist_locked writes a vision-capability setting for each agent type: no text"),
+    "src/probos/pidfile_guard.py": System(SHIP, "_try_atomic_create writes a process id to the pidfile, _takeover_lock opens its lock file and _acquire_unlocked deletes a pidfile before a retry: no text"),
+    "src/probos/proactive.py": System(SHIP, "DailyBriefingScheduler._save_state writes the briefing state (last trigger day, last reminder time, dismissed days): no text"),
+    "src/probos/provider_setup.py": System(SHIP, "write_config_atomic installs the config text it is passed after a backup copy of the file it replaces, with no author id (D239)"),
+    "src/probos/runtime_config_service.py": System(SHIP, "RuntimeConfigService._save writes an override value for each field id: no author id"),
+    "src/probos/security/file_access.py": System(SHIP, "PinnedDirectory.write_new writes the bytes it is passed to a new file, publish_file links a staged file to a name and remove_file deletes a file, with no author id (D239)"),
+    "src/probos/security/keyring_backend.py": System(SHIP, "KeyringCredentialBackend._save writes the scope, times and read count of each credential ref, and materialize_to_temp a temporary file holding a decrypted credential"),
+    "src/probos/shutdown_integrity.py": System(SHIP, "mark_clean_shutdown and mark_dirty_shutdown write a ShutdownStatusPayload, which has no author field (D239), through _atomic_write"),
+    "src/probos/startup/shutdown.py": System(SHIP, "shutdown writes the session record: its id, start and shutdown times, uptime, crew count and shutdown reason, with no author id (D239)"),
+    "src/probos/voice/wake_word_trainer.py": System(SHIP, "WakeWordTrainer.train deletes the positive training samples directory: no text"),
+    "src/probos/warm_boot.py": System(SHIP, "WarmBootService.restore and _load_skill_handler delete the temporary file they loaded restored agent or skill source from: no text"),
+    # Agent-attributed (D239, D269, D274): M3e4d's (register R113, R136).
+    "src/probos/avatars/proposal_history.py": _AGENT_ATTRIBUTED_FILE,
+    "src/probos/avatars/vision_proposal_history.py": _AGENT_ATTRIBUTED_FILE,
 }

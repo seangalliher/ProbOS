@@ -338,7 +338,8 @@ async def test_invoke_cancelled_inline_run_kills_the_child(
 
 
 async def test_bf733_abandoned_inline_run_is_stopped_when_reported(tmp_path: Path) -> None:
-    child = _Child(tmp_path, 70)
+    # BF-951 (#1523): 150 beats (about 15 s), so the deadline below lands well before the child ends.
+    child = _Child(tmp_path, 150)
     cfg = ExecutionConfig(enabled=True, scratch_dir=str(tmp_path / "scratch"))
     # Premise: an unarmed vessel, so the call takes the inline path.
     assert cfg.max_runtime_seconds == 0.0
@@ -372,9 +373,11 @@ async def test_bf733_abandoned_inline_run_is_stopped_when_reported(tmp_path: Pat
 
     hold: set[asyncio.Task[Any]] = set()
     try:
+        # BF-951 (#1523): the watchdog kills the child at promotion + deadline, so the child has about
+        # 6 s to start and write 3 beats; at 0.6 + 1.0 s two canonical gates failed that premise (#1604).
         ack = await run_with_promotion(
-            _turn, promote_after_seconds=0.6, runtime=runtime, agent_id="ezri",
-            thread_id="thread-1", request_text="run it", hold=hold, deadline_seconds=1.0,
+            _turn, promote_after_seconds=2.0, runtime=runtime, agent_id="ezri",
+            thread_id="thread-1", request_text="run it", hold=hold, deadline_seconds=4.0,
         )
         # Premise: the turn was promoted, and its child is running.
         assert ack == _ACK_TEMPLATE.format(work_item_id=runtime.work_item_store.created[0].id)
@@ -395,8 +398,10 @@ async def test_mesh_run_python_cancelled_by_ttl_kills_the_child(tmp_path: Path) 
     service = LongRunService()
     audit = _Audit()
     agent = _mesh_agent(tmp_path, service, audit, agent_id="cr-t3")
-    child = _Child(tmp_path, 70)
-    msg = IntentMessage(intent="run_python", params={"code": child.code, "timeout": 60}, ttl_seconds=1.0)
+    # BF-951 (#1523): the child has 4 s to start before the TTL cancels its handler, and 150 beats
+    # (about 15 s) keep it running well past the counts below.
+    child = _Child(tmp_path, 150)
+    msg = IntentMessage(intent="run_python", params={"code": child.code, "timeout": 60}, ttl_seconds=4.0)
     try:
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(agent.handle_intent(msg), msg.ttl_seconds)
