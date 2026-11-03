@@ -964,7 +964,7 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 
 - ET-3 mutates the ET-1 line and ET-4 mutates the ET-2 line: run each after restoring the row it follows.
 - ET-7 is killed when WM14's first `set_admission`, before `start`, calls `set_admission` on None.
-- The campaign re-runs no earlier row. M1 and M2 delete no earlier row's Line.
+- The campaign re-runs no earlier row.
 
 ## 11. Verified Against Codebase (2026-11-03, read on `7edf57fd`)
 
@@ -1140,6 +1140,9 @@ HOLDS: yes
 - §12: the sentence that ET-1 to ET-4 and ET-7 to ET-10 contain `'` is replaced by the rule for a Line that does (ET-9's Line holds none).
 - §13: the range `D284 to D310` is replaced by the decisions of M3e4d1 to M3e4d4 on the same questions (those slices number D283 to D311).
 - The orchestrator applied the 25 blocks of §7.1, the 8 of §7.2 and the 2 pairs of §8 by tool on `7edf57fd`'s tree with 0 failures.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
+
+**Amendment 2 (2026-11-03, the orchestrator, after the build, with review round 1 of this slice still running).** One finding of the same kind that review round 1 of M3e4d3 made, repaired by deletion before this slice's verdict. Changed, against the contract as Amendment 1 left it: §10: the sentence that M1 and M2 delete no earlier row's Line is deleted (the Line of EA-7, `prompts/ad-1346-m3e4c-store-write-classification.md:534`, is the `STORE_WRITE_FILES` row of `ward_room/channels.py` that M1-11 removes: it occurs once in `tests/fixtures/ad1346_store_census.py` at `7edf57fd` and not at this head).
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
 ## For the register (#1604)
