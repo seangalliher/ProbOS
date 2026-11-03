@@ -269,8 +269,10 @@ class WardRoomService(EventEmitterMixin):
         self._visiting_officers = registry
 
     def set_admission(self, service: object) -> None:
-        """AD-1346 M3e4b (D233): the service the four content-write entries hand ``check_at``; None checks nothing."""
+        """AD-1346 M3e4b (D233): the service the four content-write entries hand ``check_at``; None checks nothing. AD-1346 M3e4d5 (D315): it hands it on to the channel manager when ``start`` has built one."""
         self._admission = service
+        if self._channels is not None:  # AD-1346 M3e4d5 (D315): the channel manager's two checks; before start there is none
+            self._channels.set_admission(service)
 
     def _require_visitor(self, actor_id: str, capability: str, entry: str) -> None:
         """BF-903: refuse a visiting officer whose session lacks ``capability`` at ``entry``; anyone else passes."""

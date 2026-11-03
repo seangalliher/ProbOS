@@ -22,7 +22,8 @@ entries and the episodic store (``tests/test_ad1346_admission_store_writes.py``,
 clinical notes store's ``write_note`` and the skill request store's ``file_request`` and ``decide`` (WM1), and from
 AD-1346 M3e4d2 the persistent task store's ``create_task`` (WM1), and from AD-1346 M3e4d3 the chat thread store's
 ``create_thread`` and ``append_message_once`` (WM1), and from AD-1346 M3e4d4 the assignment service's
-``create_assignment`` (WM1). It returns
+``create_assignment`` (WM1), and from AD-1346 M3e4d5 the Ward Room channel manager's ``create_channel`` and
+``get_or_create_dm_channel`` (WM1). It returns
 None, awaits nothing and raises only what ``check_ticket`` raises:
 ``check_ticket`` lets none out.
 """
