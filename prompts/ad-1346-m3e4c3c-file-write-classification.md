@@ -77,7 +77,7 @@
   | `cognitive/ready_room/idea_store.py` | `:105`, `:106` `IdeaCaptureStore._save` | each idea's `title`, `body`, `captured_by` (`:93-104`); `capture` takes `captured_by` keyword-only from its caller (`:115-118`) | D239: no `src` call passes `captured_by` outside the file (Absence; held by WF7) |
   | `cognitive/sandbox.py` | `:144` `SandboxRunner.test_agent` | the unlink of the temporary file (`:79-85`) the generated agent's source is loaded from (`:90`) | a delete: no text |
   | `cognitive/scout.py` | `:221` `_save_seen`; `:292` `_scout_step_persist_report` | seen repository names with dates (`:219`); a report of `ScoutFinding`s (`:286-291`; fields `:84-98`) | D239: no author field |
-  | `cognitive/self_improvement/versioning.py` | `:145`, `:157` `LocalDiskPersistence.promote` | `record.source_code` and a sidecar holding `designer: {version.designer}` (`:146-156`) of an `AgentVersion` (`:33-44`) | D239: no `src` call builds an `AgentVersion` or calls `.promote` (Absence; the first held by WF7) |
+  | `cognitive/self_improvement/versioning.py` | `:145`, `:157` `LocalDiskPersistence.promote` | `record.source_code` and a sidecar holding `designer: {version.designer}` (`:146-156`) of an `AgentVersion` (`:33-44`) | D239: no `src` call builds an `AgentVersion` or calls `.promote` (Absence) |
   | `cognitive/self_mod.py` | `:612` `SelfModificationPipeline.handle_add_skill` | the unlink of the temporary file (`:592-598`) the skill source is loaded from (`:602`) | a delete: no text |
   | `cognitive/session_manager.py` | `:183` `SessionManager.close_session`; `:199` `SessionManager._write` | a `Session` (`:32-43`: ids, platform, `user_id`, `agent_type`, times, tasks, context) and its rename into `archive` (`:180-183`) | D239: no author field |
   | `cognitive/skill_catalog.py` | `:678` `import_skill`; `:814` `_rewrite_frontmatter`; `:843` `remove_skill` | a copied skill directory; ProbOS metadata keys (`:800-810`) added to a SKILL.md frontmatter; a skill directory's removal | D239: none sets an author id |
@@ -108,7 +108,7 @@
 
 - **`FILE_WRITE_FILES`** (19 values): WF1, WF3, WF4, WF6. No Python file outside the fixture and the test reads it (§11 Absence).
 - **`_UNCLASSIFIED`'s owner:** WF1, through `_kind`.
-- **`_CLASSIFIED`:** WF6. **WF6's name:** `test_the_directories_m3e4c3b_classifies` is named in Python only in the test file that defines it (§11 Absence); M3e4c3b's contract names it in its records.
+- **`_CLASSIFIED`:** WF6.
 
 ## 6. Tests
 
@@ -178,7 +178,7 @@ REPLACE:
     "src/probos/ward_room/threads.py": System(SHIP, "the Ward Room JSONL archive: prune_old_threads appends copies of the thread and post rows it prunes (D218)"),
     # AD-1346 M3e4c3c: the ship's (D239, D264).
     "src/probos/cognitive/agent_patcher.py": System(SHIP, "AgentPatcher._patch_skill deletes the temporary file it loaded the patched skill source from: no text"),
-    "src/probos/cognitive/builder.py": System(SHIP, "execute_approved_build writes the content of each file change, or its text after replacement, with no author id (D239); _restore_pre_build_files restores saved bytes and deletes created files"),
+    "src/probos/cognitive/builder.py": System(SHIP, "execute_approved_build writes the content, or its text after replacement, with no author id (D239); _restore_pre_build_files restores saved bytes and deletes created files"),
     "src/probos/cognitive/chain_checkpoint.py": System(SHIP, "ChainCheckpointStore.save writes a ChainCheckpoint, which has no author field (D239); delete removes it"),
     "src/probos/cognitive/checkpoint.py": System(SHIP, "write_checkpoint writes the source text, node states and serialized form of a DAG, with no author key (D239); delete_checkpoint removes it"),
     "src/probos/cognitive/copilot_adapter.py": System(SHIP, "seed_session_directory writes the non-empty file contents it is passed into a build session directory, with no author id (D239)"),
@@ -190,7 +190,7 @@ REPLACE:
     "src/probos/cognitive/ready_room/idea_store.py": System(SHIP, "IdeaCaptureStore._save writes the title, body and captured_by of each idea; WF7: no src call outside the file passes captured_by (D239)"),
     "src/probos/cognitive/sandbox.py": System(SHIP, "SandboxRunner.test_agent deletes the temporary file it loaded the generated agent source from: no text"),
     "src/probos/cognitive/scout.py": System(SHIP, "_save_seen writes the repositories seen and their dates, and _scout_step_persist_report a daily report of findings; ScoutFinding has no author field (D239)"),
-    "src/probos/cognitive/self_improvement/versioning.py": System(SHIP, "LocalDiskPersistence.promote writes agent source and a sidecar holding the designer of its version; WF7: no src call builds an AgentVersion (D239)"),
+    "src/probos/cognitive/self_improvement/versioning.py": System(SHIP, "LocalDiskPersistence.promote writes agent source and a sidecar holding the designer of its version; no src call builds an AgentVersion (D239)"),
     "src/probos/cognitive/self_mod.py": System(SHIP, "SelfModificationPipeline.handle_add_skill deletes the temporary file it loaded the skill source from: no text"),
     "src/probos/cognitive/session_manager.py": System(SHIP, "SessionManager._write writes a Session, which has no author field (D239); close_session renames it into archive"),
     "src/probos/cognitive/skill_catalog.py": System(SHIP, "import_skill copies a skill directory, _rewrite_frontmatter adds ProbOS metadata to a SKILL.md frontmatter and remove_skill deletes a skill directory; none sets an author id (D239)"),
@@ -395,7 +395,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1346 (2026-11-01), #1604 M3e4c3c -- the file-write rows under cognitive/ classified.** The 19 file-write rows under `cognitive/` are now the ship's, which makes 38 of the 72 rows the ship's. The test that holds the classified directories now covers `cognitive/`. A new test fails if a `src` call outside the idea store passes a `captured_by` keyword, or if a `src` call builds an `AgentVersion`. The other 31 rows wait for M3e4c3d. No `src` file changes and nothing is checked. The contract is `prompts/ad-1346-m3e4c3c-file-write-classification.md`.
+**AD-1346 (2026-11-01), #1604 M3e4c3c -- the file-write rows under cognitive/ classified.** The 19 file-write rows under `cognitive/` are now the ship's, which makes 38 of the 72 rows the ship's. The test that holds the classified directories now covers `cognitive/`. A new test fails if a `src` call outside the idea store passes a `captured_by` keyword. The other 31 rows wait for M3e4c3d. No `src` file changes and nothing is checked. The contract is `prompts/ad-1346-m3e4c3c-file-write-classification.md`.
 
 **AD-1356 S3 and S4 (2026-11-02), #1722 -- 
 ```
@@ -413,7 +413,7 @@ REPLACE:
 AD-1346 M3e4c3c is the third part of M3e4c3. It classifies the 19 file-write rows under `cognitive/`, each as the ship's; nothing is checked, refused or charged, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3c-file-write-classification.md`.
 
 - *D263 (the cut).* The 19 rows under `cognitive/` now; M3e4c3d takes the other 31, whose owner becomes M3e4c3d. Rejected: all 50 now; a smaller group now.
-- *D264 (the classification).* The 19 files are `System` under the ship's principal, by D239. Rejected: the idea store and the agent versioning file pending for M3e4d (no `src` call outside the idea store passes `captured_by`, and none builds an `AgentVersion`: WF7); the evidence collector pending for M3e4d (its `author_id` names what it observes); the build and SWE-harness writes pending for M3e4d (no author id).
+- *D264 (the classification).* The 19 files are `System` under the ship's principal, by D239. Rejected: the idea store and the agent versioning file pending for M3e4d (no `src` call outside the idea store passes `captured_by`, and none builds an `AgentVersion`); the evidence collector pending for M3e4d (its `author_id` names what it observes); the build and SWE-harness writes pending for M3e4d (no author id).
 - *D265 (the guards).* `cognitive/` joins WF6's directories and WF6 is renamed `test_the_classified_directories`; WF7 is new. Rejected: a second directory guard beside WF6; the 38 paths pinned; WF7 keyed on calls named `capture` and `promote`.
 - *Tests.* WF1's counts change; WF6 is renamed; WF7 is new.
 - *Residual, accepted.* Register R134 and R135 of the contract.
@@ -464,7 +464,7 @@ Reads (src/probos/cognitive/): agent_patcher.py :200-244; builder.py :113-125, :
   copilot_adapter.py :360-387; dm/artifact_extractor.py :187-211, :684-749; dream_manifest.py :1-90; dreaming.py :995-1038; evidence_collector.py :137-271, :520-569;
   peer_observation_monitor.py :576-589; ready_room/idea_store.py :1-140; sandbox.py :60-147; scout.py :84-98, :206-293; self_improvement/versioning.py :1-80, :100-164;
   self_mod.py :590-614; session_manager.py :1-199; skill_catalog.py :645-845; skill_forge.py :1-60, :160-317; swe_harness/tools.py :205-243, :1015-1047, :1150-1171
-Grep '^def |^async def |^class |^    def |^    async def ' src/probos/cognitive/builder.py -> BuildSpec :114, _restore_pre_build_files :1749, execute_approved_build :3246
+Grep '^def |^async def |^class |^    def |^    async def ' src/probos/cognitive/builder.py
 Grep 'captured_by\s*=' src -> idea_store.py :76 :125
 Grep '\.capture\(|IdeaCaptureStore|idea_store' src; Grep 'idea_capture_store' src -> finalize.py :4900 :4903 :4907 :4921 and the package's own lines
 Grep 'AgentVersion\b' src; Grep '\bpromote\(|_persistence\b' src; Grep 'AgentVersion\(|designer=|agent_persistence|persistence\.promote|\.promote\(record' src
@@ -472,7 +472,7 @@ Grep '\.record_observation\(' src -A 8 -> routers/thread_fanout.py:1447-1453 (au
 Read src/probos/startup/finalize.py :4898-4911
 grep -c -F "runtime.idea_capture_store = IdeaCaptureStore(" src/probos/startup/finalize.py -> 1
 grep -c -F "agent_persistence = LocalDiskPersistence(root_dir=cfg.persistence_root_dir)" src/probos/startup/finalize.py -> 1
-Grep '^\| E[A-Z]-1 \| M1 \| `src/' prompts -> EX-1, EQ-1, EB-1, EG-1, EH-1 (earlier campaigns that mutate a src line)
+Grep '^\| E[A-Z]-1 \| M1 \| `src/' prompts
 Trackers and tools:
 Read PROGRESS.md :1-4 (M3e4c3b's head :3)
 Grep '^### (AD-1346 M3e4c3|Explicit delegation models)' DECISIONS.md -> :1219 :1232 :1243
@@ -515,7 +515,7 @@ HOLDS: yes
 
 CLAIM: Session, ChainCheckpoint, BuildSpec and ScoutFinding have no author field; write_checkpoint's dict has no author key; _rewrite_frontmatter sets no author key
 RUN:   Read session_manager.py :32-43; chain_checkpoint.py :36-45; builder.py :113-124; scout.py :84-98; checkpoint.py :73-81; skill_catalog.py :799-810
-FOUND: Session: id, platform, user_id, agent_type, started_at, last_activity, active_tasks, context. ChainCheckpoint: checkpoint_id, chain_name, suspended_at_step, suspended_at, running_context, reason. BuildSpec: title, description, target_files, reference_files, test_files, ad_number, branch_name, constraints. ScoutFinding: repo_full_name, stars, url, classification, relevance, credibility, reliability, summary, insight, language, license, topics. Checkpoint dict: checkpoint_id, dag_id, source_text, created_at, updated_at, node_states, dag_json. Frontmatter keys set: probos-department, probos-skill-id, probos-min-proficiency, probos-min-rank, probos-intents
+FOUND: Session: id, platform, user_id, agent_type, started_at, last_activity, active_tasks, context. ChainCheckpoint: checkpoint_id, chain_name, suspended_at_step, suspended_at, running_context, reason. BuildSpec: title, description, target_files, reference_files, test_files, ad_number, branch_name, constraints. ScoutFinding: repo_full_name, stars, url, classification, relevance, credibility, reliability, summary, insight, language, license, topics. Checkpoint dict: checkpoint_id, dag_id, source_text, created_at, updated_at, node_states, dag_json
 RE-RUN on `693fef40` (Amendment 2): `git diff --name-only d5f10598 693fef40 -- src/probos/cognitive/session_manager.py src/probos/cognitive/chain_checkpoint.py src/probos/cognitive/builder.py src/probos/cognitive/scout.py src/probos/cognitive/checkpoint.py src/probos/cognitive/skill_catalog.py` prints nothing, so the fields and keys above stand
 HOLDS: yes
 ```
@@ -523,7 +523,6 @@ HOLDS: yes
 ## 12. Deterministic gate checks, resolved up front
 
 - `git diff --stat <base>..HEAD -- src` prints nothing after M1 and after M2 (EL-6 and EL-7 are restored after the campaign).
-- `git diff --name-only <base>..HEAD` after M1 lists exactly `tests/fixtures/ad1346_file_write_census.py` and `tests/test_ad1346_admission_file_write_census.py`; after M2 also `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`.
 - The collect-only count for `tests/test_ad1346_admission_file_write_census.py` is 7.
 - For each §10 Line, `grep -c -F` prints 1. No Line contains `'`: `$pat = '<line>'; grep -c -F $pat <file>`.
 - M1 is 8 SEARCH/REPLACE blocks (M1-01 and M1-02 in the fixture, M1-03 to M1-08 in the test); M2 is 2.
@@ -570,6 +569,16 @@ Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count 
 - §8: M2-01's SEARCH is AD-1356 S3 and S4's paragraph head (M3e4c3b's is no longer the first paragraph), and the last line of M2-01's REPLACE repeats it. M2-02's SEARCH is BF-946's heading, the heading after M3e4c3b's entry (the heading it named before is no longer the next one), and the last line of M2-02's REPLACE repeats it. The two sentences that name these anchors say so.
 - Absence Verified: each entry carries a re-run on the merge.
 Unchanged: every other SEARCH text and REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
+
+**Amendment 3 (2026-11-03, the orchestrator, after review round 1).** The review found seven statements that were not true of the candidate. Sweeping for the siblings of its fourth turned up three more places that name WF7 as what holds "no `src` call builds an `AgentVersion`": WF7 holds it only for a call whose function is named so (register R134 says so). Each is deleted or shortened; the fixture's two row reasons, `PROGRESS.md`'s paragraph and `DECISIONS.md`'s D264 line are repaired in the commit that records this amendment. Changed, against Amendment 2's contract:
+- §3, the row of `cognitive/self_improvement/versioning.py`: "the first held by WF7" is deleted from its last cell.
+- §5: the sentence on WF6's earlier test name (Amendment 1 had reworded it) is deleted.
+- §7.1, M1-02: the reason of `cognitive/builder.py` no longer says "of each file change", and the reason of `cognitive/self_improvement/versioning.py` no longer says "WF7:" before its absence (their REPLACE, and the fixture's rows).
+- §8, M2-01: the sentence on the new test no longer says that it fails if a `src` call builds an `AgentVersion` (its REPLACE, and `PROGRESS.md`'s paragraph). M2-02: D264's first parenthesis no longer ends with ": WF7" (its REPLACE, and `DECISIONS.md`).
+- §11: the results after `->` of the `builder.py` definitions record and of the earlier-campaigns record are deleted.
+- Absence Verified, the sixth entry: the last fragment of its FOUND line, the frontmatter keys, is deleted.
+- §12: the bullet that gave the file inventory from the base to the head is deleted.
+Unchanged: every SEARCH text; every other REPLACE text of §7 and §8; every count and every row's type and key; every §10 row.
 
 ## For the register (#1604)
 

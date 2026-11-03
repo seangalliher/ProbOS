@@ -1246,7 +1246,7 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 AD-1346 M3e4c3c is the third part of M3e4c3. It classifies the 19 file-write rows under `cognitive/`, each as the ship's; nothing is checked, refused or charged, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3c-file-write-classification.md`.
 
 - *D263 (the cut).* The 19 rows under `cognitive/` now; M3e4c3d takes the other 31, whose owner becomes M3e4c3d. Rejected: all 50 now; a smaller group now.
-- *D264 (the classification).* The 19 files are `System` under the ship's principal, by D239. Rejected: the idea store and the agent versioning file pending for M3e4d (no `src` call outside the idea store passes `captured_by`, and none builds an `AgentVersion`: WF7); the evidence collector pending for M3e4d (its `author_id` names what it observes); the build and SWE-harness writes pending for M3e4d (no author id).
+- *D264 (the classification).* The 19 files are `System` under the ship's principal, by D239. Rejected: the idea store and the agent versioning file pending for M3e4d (no `src` call outside the idea store passes `captured_by`, and none builds an `AgentVersion`); the evidence collector pending for M3e4d (its `author_id` names what it observes); the build and SWE-harness writes pending for M3e4d (no author id).
 - *D265 (the guards).* `cognitive/` joins WF6's directories and WF6 is renamed `test_the_classified_directories`; WF7 is new. Rejected: a second directory guard beside WF6; the 38 paths pinned; WF7 keyed on calls named `capture` and `promote`.
 - *Tests.* WF1's counts change; WF6 is renamed; WF7 is new.
 - *Residual, accepted.* Register R134 and R135 of the contract.

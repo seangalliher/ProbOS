@@ -178,7 +178,7 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     "src/probos/ward_room/threads.py": System(SHIP, "the Ward Room JSONL archive: prune_old_threads appends copies of the thread and post rows it prunes (D218)"),
     # AD-1346 M3e4c3c: the ship's (D239, D264).
     "src/probos/cognitive/agent_patcher.py": System(SHIP, "AgentPatcher._patch_skill deletes the temporary file it loaded the patched skill source from: no text"),
-    "src/probos/cognitive/builder.py": System(SHIP, "execute_approved_build writes the content of each file change, or its text after replacement, with no author id (D239); _restore_pre_build_files restores saved bytes and deletes created files"),
+    "src/probos/cognitive/builder.py": System(SHIP, "execute_approved_build writes the content, or its text after replacement, with no author id (D239); _restore_pre_build_files restores saved bytes and deletes created files"),
     "src/probos/cognitive/chain_checkpoint.py": System(SHIP, "ChainCheckpointStore.save writes a ChainCheckpoint, which has no author field (D239); delete removes it"),
     "src/probos/cognitive/checkpoint.py": System(SHIP, "write_checkpoint writes the source text, node states and serialized form of a DAG, with no author key (D239); delete_checkpoint removes it"),
     "src/probos/cognitive/copilot_adapter.py": System(SHIP, "seed_session_directory writes the non-empty file contents it is passed into a build session directory, with no author id (D239)"),
@@ -190,7 +190,7 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     "src/probos/cognitive/ready_room/idea_store.py": System(SHIP, "IdeaCaptureStore._save writes the title, body and captured_by of each idea; WF7: no src call outside the file passes captured_by (D239)"),
     "src/probos/cognitive/sandbox.py": System(SHIP, "SandboxRunner.test_agent deletes the temporary file it loaded the generated agent source from: no text"),
     "src/probos/cognitive/scout.py": System(SHIP, "_save_seen writes the repositories seen and their dates, and _scout_step_persist_report a daily report of findings; ScoutFinding has no author field (D239)"),
-    "src/probos/cognitive/self_improvement/versioning.py": System(SHIP, "LocalDiskPersistence.promote writes agent source and a sidecar holding the designer of its version; WF7: no src call builds an AgentVersion (D239)"),
+    "src/probos/cognitive/self_improvement/versioning.py": System(SHIP, "LocalDiskPersistence.promote writes agent source and a sidecar holding the designer of its version; no src call builds an AgentVersion (D239)"),
     "src/probos/cognitive/self_mod.py": System(SHIP, "SelfModificationPipeline.handle_add_skill deletes the temporary file it loaded the skill source from: no text"),
     "src/probos/cognitive/session_manager.py": System(SHIP, "SessionManager._write writes a Session, which has no author field (D239); close_session renames it into archive"),
     "src/probos/cognitive/skill_catalog.py": System(SHIP, "import_skill copies a skill directory, _rewrite_frontmatter adds ProbOS metadata to a SKILL.md frontmatter and remove_skill deletes a skill directory; none sets an author id (D239)"),
