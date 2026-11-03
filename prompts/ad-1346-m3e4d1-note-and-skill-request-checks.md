@@ -1232,11 +1232,6 @@ FOUND: tests/test_bf925_silent_guards.py, tests/test_bf722_approval_transaction_
 RUN:   Grep 'getsource|read_text|skill_request\.py|clinical_notes_store\.py|ast\.parse' over the seven files test_bf722_approval_transaction_integrity.py, test_ad904_clinical_notes.py, test_ad906_skill_request_store.py, test_ad907_skill_request_training.py, test_ad908_skill_requests_api.py, test_ad1213_delegated_approvals.py, test_bf925_silent_guards.py
 FOUND: nothing
 HOLDS: yes. The src-wide scanners (T16, K5, K15, I11, tests/test_ad1346_identity_service.py) read every module's text: §5.
-
-CLAIM: no test names the runtime's set_admission hand-off lines
-RUN:   Grep 'ward_room\.set_admission|episodic_memory\.set_admission|HttpFetchAgent\.set_admission' tests
-FOUND: nothing
-HOLDS: yes
 ```
 
 ## 12. Deterministic gate checks, resolved up front
@@ -1303,6 +1298,9 @@ Unchanged by this amendment: every other SEARCH text and every other REPLACE tex
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 **Amendment 5 (2026-11-03, the orchestrator, after review round 3, with the review of M3e4d2 round 1).** A sibling of a finding that review round 1 of M3e4d2 made against the same sentence: D288's bullet that lists the carrier read, the principal resolve, the registry check and the recorder offer as the work of a shadow-on check is deleted (the principal is resolved only for a non-empty string, and a recorder is optional).
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 6 (2026-11-03, the orchestrator, after review round 2 of M3e4d2).** One finding of that round's sweep of this contract, repaired by deletion. Changed, against the contract as Amendment 5 left it: the last entry of the Absence Verified block of §11 is deleted. Its CLAIM, that no test names the runtime's `set_admission` hand-off lines, was broader than its RUN, which searched the receivers `ward_room`, `episodic_memory` and `HttpFetchAgent` only: `tests/test_ad1346_admission_build_test_sink.py:218` and `tests/test_ad1346_admission_subprocess_plumbing.py:231` each name another hand-off line of `ProbOSRuntime.start`.
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
