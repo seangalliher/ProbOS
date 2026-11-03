@@ -1322,6 +1322,18 @@ AD-1346 M3e4d3 is the third part of M3e4d. `ChatThreadStore.create_thread` and `
 - *Residual, accepted.* Registers R149 and R150 of the contract.
 - *Reversal.* Revert the M3e4d3 commits.
 
+### AD-1346 M3e4d4 -- the assignment service's store-write check (2026-11-03, #1604)
+
+AD-1346 M3e4d4 is the fourth part of M3e4d. `AssignmentService.create_assignment` calls `check_at` with `store_write`, presenting `created_by`, as the statement before the call that inserts the assignment's row. `ProbOSRuntime.start` hands the runtime's `AssignmentService` the admission service, or None, through `set_admission`. `assignment.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d4-assignment-check.md`.
+
+- *D305 (the cut).* All of `assignment.py`: 5 write scopes, one of them a check. Rejected: with `ward_room/channels.py`; the four small files; `workforce.py` first.
+- *D306 (the rows).* `create_assignment` is a check; `add_member`, `remove_member`, `complete_assignment` and `dissolve_assignment` are the ship's by D239. Rejected: `add_member` as a check; the file kept pending.
+- *D307 (the check).* The statement before the INSERT, with module-scope imports. Rejected: before the channel's creation; at the route; function-scope imports.
+- *D308 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: a constructor keyword; an `is not None` guard; a shared mixin.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM12 and WM13 are new.
+- *Residual, accepted.* Registers R151 and R152 of the contract.
+- *Reversal.* Revert the M3e4d4 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
