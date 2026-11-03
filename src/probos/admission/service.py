@@ -37,6 +37,7 @@ AD-1346 M3e4d1: and at the clinical notes store's ``write_note`` and the skill r
 ``decide``.
 AD-1346 M3e4d2: and at the persistent task store's ``create_task``.
 AD-1346 M3e4d3: and at the chat thread store's ``create_thread`` and ``append_message_once``.
+AD-1346 M3e4d4: and at the assignment service's ``create_assignment``.
 The service reads no configuration.
 """
 
@@ -235,7 +236,8 @@ class AdmissionService:
         M3e4b the Ward Room's four content-write entries and the episodic store, and from AD-1346 M3e4d1 the clinical
         notes store's ``write_note`` and the skill request store's ``file_request`` and ``decide``, and from AD-1346
         M3e4d2 the persistent task store's ``create_task``, and from AD-1346 M3e4d3 the chat thread store's
-        ``create_thread`` and ``append_message_once``. It reads the
+        ``create_thread`` and ``append_message_once``, and from AD-1346 M3e4d4 the assignment service's
+        ``create_assignment``. It reads the
         carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the

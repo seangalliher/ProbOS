@@ -6,7 +6,8 @@ leading whitespace. A point is (enclosing scope, line), scoped as the egress sca
 the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229) gives each (file, enclosing scope)
 that holds a point in the Ward Room's ``messages.py`` and ``threads.py``, in ``cognitive/episodic.py`` and, from
 AD-1346 M3e4d1 (D284), in ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` and, from AD-1346 M3e4d2
-(D291), in ``persistent_tasks.py`` and, from AD-1346 M3e4d3 (D298), in ``threads/__init__.py`` a
+(D291), in ``persistent_tasks.py`` and, from AD-1346 M3e4d3 (D298), in ``threads/__init__.py`` and, from AD-1346
+M3e4d4 (D306), in ``assignment.py`` a
 ``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
 ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
 ``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
@@ -103,7 +104,6 @@ def sql_write_files() -> frozenset[str]:
 #: or requester).
 AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
     "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
-    "src/probos/assignment.py": ("AssignmentService.create_assignment", "created_by"),
     "src/probos/capability_request.py": ("CapabilityRequestStore.file_request", "agent_id"),
     "src/probos/ward_room/channels.py": ("ChannelManager.create_channel", "created_by"),
     "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
@@ -114,7 +114,6 @@ AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
 STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
     # Agent-attributed (AD-1346 M3e4c, D239, D240): M3e4d's (register R113).
     "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
-    "src/probos/assignment.py": _AGENT_ATTRIBUTED,
     "src/probos/capability_request.py": _AGENT_ATTRIBUTED,
     "src/probos/ward_room/channels.py": _AGENT_ATTRIBUTED,
     "src/probos/workforce.py": _AGENT_ATTRIBUTED,
@@ -210,9 +209,10 @@ _NOTES: Final = "src/probos/cognitive/clinical_notes_store.py"
 _SKILLS: Final = "src/probos/skill_request.py"
 _TASKS: Final = "src/probos/persistent_tasks.py"
 _CHATS: Final = "src/probos/threads/__init__.py"
+_ASSIGNMENTS: Final = "src/probos/assignment.py"
 
-#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291) and M3e4d3 (D298): each (file, enclosing scope) of these seven
-#: files that holds a SQL write statement -> its coverage.
+#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298) and M3e4d4 (D306): each (file, enclosing scope)
+#: of these eight files that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -276,6 +276,14 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     (_CHATS, "ProjectStore.pin_attachment"): System(SHIP, "a project's pinned_attachment_ids"),
     (_CHATS, "ProjectStore.unpin_attachment"): System(SHIP, "a project's pinned_attachment_ids"),
     (_CHATS, "ProjectStore.touch"): System(SHIP, "a project's last_active_at"),
+    # AD-1346 M3e4d4 (D306). Agent-attributed (D239): an assignment's name and mission with created_by, which the
+    # assignments route passes from its request, and its member rows; the check is its scope (D307).
+    (_ASSIGNMENTS, "AssignmentService.create_assignment"): StoreCheck((_ASSIGNMENTS, "AssignmentService.create_assignment"), "created_by"),
+    # System (D239): a member row names the agent it is about; the other two write an assignment's status.
+    (_ASSIGNMENTS, "AssignmentService.add_member"): System(SHIP, "an assignment's member row, which names the agent it is about (D239)"),
+    (_ASSIGNMENTS, "AssignmentService.remove_member"): System(SHIP, "the deletion of an assignment's member row"),
+    (_ASSIGNMENTS, "AssignmentService.complete_assignment"): System(SHIP, "an assignment's status and completed_at"),
+    (_ASSIGNMENTS, "AssignmentService.dissolve_assignment"): System(SHIP, "an assignment's status and completed_at, when it is dissolved"),
 }
 
 

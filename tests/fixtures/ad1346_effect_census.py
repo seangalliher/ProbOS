@@ -63,7 +63,7 @@ EFFECT_CLASSES: Final[dict[str, str]] = {
     "tool": "AD-1346 M3d3a: ToolRegistry.check_and_invoke (SK7)",
     "subprocess": "AD-1346 M3e1, M3e2a and M3e2b: SUBPROCESS_SITES",
     "egress": "AD-1346 M3e3a: EGRESS_SITES; its sinks, AD-1346 M3e3b and M3e3c",
-    "store_write": "AD-1346 M3e4a: STORE_WRITE_FILES; AD-1346 M3e4b, M3e4d1, M3e4d2 and M3e4d3: STORE_WRITE_SCOPES and its checks (tests/fixtures/ad1346_store_census.py); AD-1346 M3e4c2: VECTOR_WRITE_SCOPES and BUS_WRITE_SCOPES (tests/fixtures/ad1346_store_family_census.py); AD-1346 M3e4c3a: FILE_WRITE_FILES (tests/fixtures/ad1346_file_write_census.py)",
+    "store_write": "AD-1346 M3e4a: STORE_WRITE_FILES; AD-1346 M3e4b, M3e4d1, M3e4d2, M3e4d3 and M3e4d4: STORE_WRITE_SCOPES and its checks (tests/fixtures/ad1346_store_census.py); AD-1346 M3e4c2: VECTOR_WRITE_SCOPES and BUS_WRITE_SCOPES (tests/fixtures/ad1346_store_family_census.py); AD-1346 M3e4c3a: FILE_WRITE_FILES (tests/fixtures/ad1346_file_write_census.py)",
 }
 #: The classes a member of ``TICKET_EFFECTS`` covers.
 DELIVERED: Final = frozenset({"model_call", "tool", "subprocess", "egress", "store_write"})
