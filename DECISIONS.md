@@ -1241,6 +1241,17 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 - *Mutation campaign of record (2026-11-01, win32).* 7 of 7 killed; none survived, was inert or invalid. Tree `2b9ac42e049958a1f4b569295b7f0d9413541c28` (commit `caabbf5c`) is M3e4c3b's head before its contract-only amendment A2 and before the docs commit that records this bullet, and the commit on which the census ran; that docs commit changes `DECISIONS.md` only (the AD ledger check passes on it unchanged). The runner ran the 7 rows of the contract's mutation table one at a time, each restored before the next, in one run (unmutated baseline over the test files the rows run: 6 passed); each row ran the test file that holds its named killer: EJ 7 rows (EJ-1 to EJ-7) against `tests/test_ad1346_admission_file_write_census.py`. The named killer failed in every row. Killers (with the `test_` prefix dropped): rows EJ-1, EJ-4, EJ-5, EJ-6 the_directories_m3e4c3b_classifies; row EJ-2 every_file_with_a_file_write_is_a_row_and_every_row_is_one; row EJ-3 the_agent_attributed_row_writes_and_records_its_author; row EJ-7 the_command_line_rows. sha256 of the working copies (CRLF) of the files the rows mutate: `tests/fixtures/ad1346_file_write_census.py` `7f2e2ccf66a980877d8d52ccf69f5771f97089b2588de2e3ec57c92cbc9f4446`.
 - *Reversal.* Revert the M3e4c3b commits.
 
+### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
+
+- *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
+- *Continuation.* A failed delivery ends the run unless its call is tier 1 by `is_tier_1_tool_call`; the native readers are not, so every failed recovery or source read still ends it, and R2-1's refusals are unchanged.
+- *Text.* The model is shown `retry_delivery_error`: `safe_delivery_error` and a request to ask for less, or `safe_delivery_error` alone when the bound is too small. A stopped run's reply is unchanged.
+- *Log.* One WARNING per typed delivery failure: code, tool, agent, raise site, and the measured length against the bound for a frame `_admit` refuses for size.
+- *Measured.* At the 6,000 bound a fresh pointer frame of a result that is not delegated is under 5,600 characters; the live failure was a promised read over the bound (`_prepare_result`'s recovery branch), shown on a read-only copy of `events.db`.
+- *Rejected.* Continuing after any producer's failed delivery (a state-changing call could run twice); truncating an oversized frame (AD-1240 never truncates a delivery); raising `tool_result_max_chars`.
+- *Residual.* Recorded limits L1 to L11 of the contract; the promised read over the bound is the Captain's decision on #1723.
+- *Reversal.* Revert the BF-946 commits.
+
 ### AD-1356 S1 -- Agent work stops filing what a rule can decide (2026-11-02, #1722)
 
 - *Scope.* `cognitive/agentic_dispatch.py` (`UNREGISTERED_TOOL_REFUSAL`), `tools/protocol.py` (`CALLER_INPUT_ERROR_MARK`, `is_caller_input_error`), `fault_report.py`, `fault_detection.py`, `tools/publish_finding_tool.py`, `agent_work_runner.py` (`_recovery_read`), tests. Contract `prompts/ad-1356-s1-stop-filing-what-a-rule-decides.md`.
