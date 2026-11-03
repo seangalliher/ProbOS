@@ -1285,6 +1285,18 @@ AD-1346 M3e4c3f is the sixth part of M3e4c3. The file-write scan counts calls of
 - *Residual, accepted.* Register R140 of the contract.
 - *Reversal.* Revert the M3e4c3f commits.
 
+### AD-1346 M3e4d1 -- the clinical notes and skill request store-write checks (2026-11-03, #1604)
+
+AD-1346 M3e4d1 is the first part of M3e4d. `ClinicalNotesStore.write_note`, `SkillRequestStore.file_request` and `SkillRequestStore.decide` each call `check_at` with `store_write` as the statement before their `if self._db:`, presenting `author_agent_id`, `agent_id` and `decided_by`. `ProbOSRuntime.start` hands both stores the admission service, or None, through `set_admission`. The two files leave `STORE_WRITE_FILES` and are split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d1-note-and-skill-request-checks.md`.
+
+- *D283 (the cut).* These two files first: each check is its writing scope and presents a parameter of it, and each class stays under both review triggers with one more method. Rejected: all nine SQL files at once; one store; the file-write rows first; relabelling the rows left pending.
+- *D284 (the rows).* The note, the filing and the decision are checks; `begin_training` and `complete_for_simulation` are the ship's. `decide` is agent-attributed by D239: it records a reason with `decided_by`, and `DelegatedApprovalService.decide` passes the deciding agent's id there. Rejected: `decide` as the ship's.
+- *D285 (the checks).* Each is the statement before `if self._db:` and presents the scope's own parameter. Rejected: the body's first statement; inside the `if`; at the callers.
+- *D286 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D233 does. Rejected: a constructor keyword; a shared mixin.
+- *Tests.* WM1, WM3, WM4, WM5, WC1, WC3 and T16 change; WM6 and WM7 are new.
+- *Residual, accepted.* Registers R145 and R146 of the contract.
+- *Reversal.* Revert the M3e4d1 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
