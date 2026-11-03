@@ -2891,7 +2891,9 @@ class AgenticLoop:
                 use.tool_call.id, delivery_source, duration_ms,
                 max_chars=delivery_run.settings.max_chars,
             )
-            tcr = await prepare_result(captured, DeliveryContext(delivery_run, delivery_remaining))
+            tcr = await prepare_result(
+                captured, DeliveryContext(delivery_run, delivery_remaining, use.tool_call.name),
+            )
         if trace_correlation is not None:
             if strict and tcr.is_error:
                 tcr = replace(

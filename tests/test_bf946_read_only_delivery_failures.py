@@ -304,7 +304,6 @@ async def test_a_fresh_frame_one_over_the_bound_comes_back_as_an_error(tmp_path:
     assert _artifact_count(runtime) == 0
 
 
-@pytest.mark.xfail(strict=True, reason="BF-946 M3: the base logs no delivery-failure warning")
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("reader", "bound", "code", "site", "measured"), [
     pytest.param(False, _BOUND, "reader_unavailable", r"_prepare_result:\d+ > reader:\d+", r"n/a", id="no-reader"),

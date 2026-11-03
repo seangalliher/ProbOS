@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import secrets
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -429,6 +430,8 @@ class DeliveryRun:
 class DeliveryContext:
     run: DeliveryRun
     remaining_iterations: int
+    # BF-946: the producing call's tool name, for the delivery-failure log only.
+    tool_name: str = ""
 
 
 def delivery_failure(captured: CapturedConversion, context: DeliveryContext, code: str) -> ToolCallResult:
@@ -474,9 +477,18 @@ def retry_delivery_error(code: str, max_chars: int) -> str:
     return text if max_chars == 0 or len(text) <= max_chars else base
 
 
+class _OversizedFrame(WorkspaceResultError):
+    """A frame refused for its size, with the measured length and the bound, for BF-946's log only."""
+
+    def __init__(self, code: str, measured: int, bound: int) -> None:
+        super().__init__(code)
+        self.measured = measured
+        self.bound = bound
+
+
 def _admit(text: str, maximum: int) -> str:
     if maximum > 0 and len(text) > maximum:
-        raise WorkspaceResultError("delivery_frame_too_large")
+        raise _OversizedFrame("delivery_frame_too_large", len(text), maximum)
     return text
 
 
@@ -534,16 +546,36 @@ def _source_frame(reference: SourceRef, capture: CanonicalCapture, allowance: in
     )
 
 
+def _log_delivery_failure(exc: WorkspaceResultError, context: DeliveryContext) -> None:
+    """BF-946: one content-free WARNING per typed delivery failure.
+
+    It names the code, the tool, the agent, the raise site (the last two frames of
+    the refusal's traceback) and, for an ``_OversizedFrame``, the measured length
+    against the bound.
+    """
+    site = " > ".join(
+        f"{frame.name}:{frame.lineno}" for frame in traceback.extract_tb(exc.__traceback__)[-2:]
+    )
+    measured = f"{exc.measured} bound={exc.bound}" if isinstance(exc, _OversizedFrame) else "n/a"
+    logger.warning(
+        "BF-946: result delivery failed code=%s tool=%s agent=%s site=%s measured=%s; "
+        "the producer outcome is retained and is never retried by delivery",
+        exc.code, context.tool_name or "<unnamed>", context.run.agent_id[:12], site, measured,
+    )
+
+
 async def prepare_result(captured: CapturedConversion, context: DeliveryContext) -> ToolCallResult:
     """Prepare delivery without changing or retrying the producer's outcome."""
     try:
         return await _prepare_result(captured, context)
     except WorkspaceResultError as exc:
+        _log_delivery_failure(exc, context)
         return delivery_failure(captured, context, exc.code)
     except Exception:
         logger.error(
-            "Workspace result delivery preparation failed (delivery_unavailable); the "
-            "producer outcome is retained and is never retried by delivery",
+            "Workspace result delivery preparation failed (delivery_unavailable) tool=%s "
+            "agent=%s; the producer outcome is retained and is never retried by delivery",
+            context.tool_name or "<unnamed>", context.run.agent_id[:12],
         )
         return delivery_failure(captured, context, "delivery_unavailable")
 
