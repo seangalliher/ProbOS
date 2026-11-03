@@ -1,6 +1,7 @@
 """AD-1346 M3e4b (#1604): the store-write checks of the Ward Room and the episodic store, in shadow; AD-1346 M3e4d1:
 and of the clinical notes store and the skill request store; AD-1346 M3e4d2: and of the persistent task store;
-AD-1346 M3e4d3: and of the chat thread store; AD-1346 M3e4d4: and of the assignment service.
+AD-1346 M3e4d3: and of the chat thread store; AD-1346 M3e4d4: and of the assignment service; AD-1346 M3e4d5: and of
+the Ward Room's channel manager.
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
@@ -11,12 +12,15 @@ AD-1346 M3e4d2 ``PersistentTaskStore.create_task`` does, presenting ``created_by
 ``ChatThreadStore.create_thread`` and ``ChatThreadStore.append_message_once`` call it as the statement before their
 ``with self._connect() as conn:``, presenting ``meta.get("created_by_agent")`` and ``author_id``. From AD-1346 M3e4d4
 ``AssignmentService.create_assignment`` calls it as the statement before the call that inserts the assignment's row,
-presenting ``created_by``.
+presenting ``created_by``. From AD-1346 M3e4d5 ``ChannelManager.create_channel`` and
+``ChannelManager.get_or_create_dm_channel`` call it as the statement before the call that inserts the channel's row,
+presenting ``created_by`` and ``agent_a_id``.
 ``ProbOSRuntime.start`` hands the service through ``set_admission`` to the runtime's Ward Room when it is a
 ``WardRoomService``, to its episodic store when it is an ``EpisodicMemory``, to its clinical notes store when it is a
 ``ClinicalNotesStore``, to its skill request store when it is a ``SkillRequestStore``, to its persistent task store
 when it is a ``PersistentTaskStore``, to its chat thread store when it is a ``ChatThreadStore`` and to its assignment
-service when it is an ``AssignmentService``.
+service when it is an ``AssignmentService``. From AD-1346 M3e4d5 ``WardRoomService.set_admission`` hands it on to the
+Ward Room's channel manager when ``start`` has built one.
 ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
@@ -36,9 +40,10 @@ service when it is an ``AssignmentService``.
        without it, with nothing carried, under a live ticket and after a Captain's stop.
 - WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room,
        skill requests, persistent tasks and assignments on, the runtime's Ward Room, episodic store, clinical notes
-       store, skill request store, persistent task store, chat thread store and assignment service hold the runtime's
-       service and their writes reach ``check_ticket`` with the presented ids; with it false and assignments off, the
-       first six hold None and the runtime has no assignment service.
+       store, skill request store, persistent task store, chat thread store and assignment service, and from AD-1346
+       M3e4d5 the Ward Room's channel manager, hold the runtime's service and their writes reach ``check_ticket`` with
+       the presented ids; with it false and assignments off, the first six and the channel manager hold None and the
+       runtime has no assignment service.
 - WM6  #1604 property 1 at the three AD-1346 M3e4d1 checks: three rounds of four writes (a note by each of two agents,
        a filing by the first and its decision by the second), outside a hold, inside the first agent's hold, and inside
        it after a Captain's stop, tally 4 ``ticket_missing``, 2 ``ticket_live``, 2 ``ticket_principal_mismatch`` and 4
@@ -62,11 +67,19 @@ service when it is an ``AssignmentService``.
        ``ticket_missing``, 1 ``ticket_live``, 1 ``ticket_principal_mismatch`` and 2 ``ticket_revoked``.
 - WM13 #1604 property 12 at that check: two ``AssignmentService`` instances, one handed the admission service and one
        handed None, answer the same three rounds the same.
+- WM14 #1604 property 1 at the two AD-1346 M3e4d5 checks: a Ward Room handed the service before and after its start
+       runs three rounds of a channel the first agent creates, a DM channel the first agent opens with a peer, a channel
+       the second agent creates, the same DM channel again, which ``get_or_create_dm_channel`` returns before its
+       check, and a channel with the first's name, which ``create_channel`` refuses before its check, outside a hold,
+       inside the first agent's hold, and inside it after a Captain's stop; they tally 3 ``ticket_missing``, 2
+       ``ticket_live``, 1 ``ticket_principal_mismatch`` and 3 ``ticket_revoked``.
+- WM15 #1604 property 12 at those two checks: two Ward Rooms, one handed the admission service and one handed None,
+       answer the same three rounds the same.
 
 WM3 and WM4 use a real ``WardRoomService`` and ``EpisodicMemory``, WM6 and WM7 a real ``ClinicalNotesStore`` and
 ``SkillRequestStore``, WM8 and WM9 a real ``PersistentTaskStore``, WM10 and WM11 a real ``ChatThreadStore`` with a
-fixed clock, and WM12 and WM13 a real ``AssignmentService`` with no Ward Room, over ``tmp_path``, with a service built
-with the test's loop. WM5 boots a real runtime under
+fixed clock, WM12 and WM13 a real ``AssignmentService`` with no Ward Room, and WM14 and WM15 a real
+``WardRoomService``, over ``tmp_path``, with a service built with the test's loop. WM5 boots a real runtime under
 ``tmp_path`` and replaces ``AdmissionService.check_ticket``, as ``tests/test_ad1346_admission_egress_sinks.py``'s ES2
 does.
 """
@@ -385,7 +398,7 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; AD-1346 M3e4d2: D293; AD-1346 M3e4d3: D300; AD-1346
-    M3e4d4: D308; kills EV-7, EV-8, ED-5, ED-6, EY-3, EU-5, EO-3, EO-5)."""
+    M3e4d4: D308; AD-1346 M3e4d5: D315; kills EV-7, EV-8, ED-5, ED-6, EY-3, EU-5, EO-3, EO-5)."""
     memory = EpisodicMemory(db_path=str(tmp_path / "on" / "episodic" / "episodes.db"))
     config = _config(shadow_enabled=True)
     config.assignments.enabled = True  # AD-1346 M3e4d4: AssignmentConfig.enabled is off by default; the second runtime keeps it off
@@ -438,6 +451,12 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         assignment_mark = len(seen)
         await assignments.create_assignment("ad1346 m3e4d4 oscar", "working_group", AGENT_A, [AGENT_A], mission="ad1346 m3e4d4 papa")
         assert (True, AGENT_A) in seen[assignment_mark:], (assignment_mark, seen)
+        assert vars(room._channels)["_admission"] is service, "AD-1346 M3e4d5: the Ward Room handed it on to its channel manager"
+        channel_marks = [len(seen)]
+        await room.create_channel("ad1346 m3e4d5 golf", "custom", AGENT_B, description="ad1346 m3e4d5 hotel")
+        channel_marks.append(len(seen))
+        await room.get_or_create_dm_channel(AGENT_A, "peer9-ad1346-m3e4d5")
+        assert [seen[mark] for mark in channel_marks] == [(True, AGENT_B), (True, AGENT_A)], (channel_marks, seen)
     finally:
         await asyncio.wait_for(runtime.stop(), timeout=600)
     off_memory = EpisodicMemory(db_path=str(tmp_path / "off" / "episodic" / "episodes.db"))
@@ -457,6 +476,7 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         off_chats = off.chat_thread_store  # AD-1346 M3e4d3
         assert type(off_chats) is ChatThreadStore and vars(off_chats)["_admission"] is None, "built and handed None"
         assert off.assignment_service is None, "premise: assignments off; the hand-off's isinstance passes over None"  # AD-1346 M3e4d4
+        assert vars(off.ward_room._channels)["_admission"] is None, "AD-1346 M3e4d5: the Ward Room handed None on to its channel manager"
     finally:
         await asyncio.wait_for(off.stop(), timeout=600)
 
@@ -749,5 +769,83 @@ async def test_with_and_without_the_service_the_assignment_creations_answer_iden
         ("issue", "ticket_issued"): 1,
         ("store_write", "ticket_missing"): 2, ("store_write", "ticket_live"): 1,
         ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 2,
+    }
+    assert service.failures == 0
+
+
+async def _channel_round(room: WardRoomService, phase: int) -> list[object]:
+    """AD-1346 M3e4d5: one round of three checked creations, a channel by ``AGENT_A``, a DM channel ``AGENT_A`` opens
+    with a peer and a channel by ``AGENT_B``, then two calls that check nothing: the same DM channel again, which
+    ``get_or_create_dm_channel`` returns before its check, and a channel with the first's name, which ``create_channel``
+    refuses before its check. Returns each answer without the fields a fresh store draws, and the refusal's text."""
+    peer = f"peer{phase}-ad1346-m3e4d5"
+    first = await room.create_channel(f"ad1346 m3e4d5 alpha {phase}", "custom", AGENT_A, description=f"ad1346 m3e4d5 bravo {phase}")
+    dm = await room.get_or_create_dm_channel(AGENT_A, peer, callsign_a="Alpha", callsign_b="Peer")
+    second = await room.create_channel(f"ad1346 m3e4d5 charlie {phase}", "custom", AGENT_B, description=f"ad1346 m3e4d5 delta {phase}")
+    again = await room.get_or_create_dm_channel(AGENT_A, peer, callsign_a="Alpha", callsign_b="Peer")
+    refused: list[str] = []
+    try:
+        await room.create_channel(f"ad1346 m3e4d5 alpha {phase}", "custom", AGENT_A)
+    except ValueError as exc:
+        refused.append(str(exc))
+    return [_shape(first), _shape(dm), _shape(second), _shape(again), refused]
+
+
+async def test_the_channel_creation_checks_count_missing_live_mismatch_and_revoked(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM14 (#1604 property 1 at the two AD-1346 M3e4d5 checks; D314, D315; kills ET-3, ET-4, ET-5, ET-6, ET-7)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    room = WardRoomService(db_path=str(tmp_path / "ward_room.db"))
+    room.set_admission(service)  # before start: the Ward Room has no channel manager to hand it on to
+    await room.start()
+    room.set_admission(service)
+    try:
+        await _channel_round(room, 1)
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            await _channel_round(room, 2)
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d5: the Captain stops the held work")
+            await _channel_round(room, 3)
+        finally:
+            hold.end()
+        assert tickets.tally() == {
+            ("issue", "ticket_issued"): 1,
+            ("store_write", "ticket_missing"): 3, ("store_write", "ticket_live"): 2,
+            ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 3,
+        }
+        assert service.failures == 0
+    finally:
+        await room.stop()
+
+
+async def test_with_and_without_the_service_the_channel_creations_answer_identically(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM15 (#1604 property 12 at the two AD-1346 M3e4d5 checks; D316)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    rooms = [WardRoomService(db_path=str(tmp_path / f"channels_{i}.db")) for i in (0, 1)]
+    for room, held in zip(rooms, (service, None)):
+        await room.start()
+        room.set_admission(held)
+    try:
+        first = [await _channel_round(room, 1) for room in rooms]
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            second = [await _channel_round(room, 2) for room in rooms]
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d5: the golden test's stop")
+            third = [await _channel_round(room, 3) for room in rooms]
+        finally:
+            hold.end()
+    finally:
+        for room in rooms:
+            await room.stop()
+    assert first[0] == first[1] and second[0] == second[1] and third[0] == third[1]
+    assert first[0][1]["created_by"] == AGENT_A and first[0][1] == first[0][3], "premise: the DM channel's creator, and the same channel again"
+    assert first[0][4] == ["Channel 'ad1346 m3e4d5 alpha 1' already exists"], "premise: the refusal"
+    assert tickets.tally() == {
+        ("issue", "ticket_issued"): 1,
+        ("store_write", "ticket_missing"): 3, ("store_write", "ticket_live"): 2,
+        ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 3,
     }
     assert service.failures == 0
