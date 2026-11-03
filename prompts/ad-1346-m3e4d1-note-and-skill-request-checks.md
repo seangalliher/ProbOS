@@ -1149,9 +1149,9 @@ AD-1346 M3e4d1 is the first part of M3e4d. `ClinicalNotesStore.write_note`, `Ski
 ## 11. Verified Against Codebase (2026-11-03, read on `7d17b3df`)
 
 ```
-git log --oneline -8 -> 7d17b3df (M3e4c3c R2), 8d6d84f6 (M3e4c3d R2), 55c64b6b (M3e4c3e R1), 15b8c83b (M3e4c3d R1), 69f0f6bc (M3e4c3c R1), 0ae53d21 (M3e4c3e M2), 5cae2859 (M3e4c3e M1), f6511ed5 (M3e4c3e contract)
-git ls-files --eol DECISIONS.md PROGRESS.md src/probos/admission/seam.py src/probos/admission/service.py src/probos/cognitive/clinical_notes_store.py src/probos/runtime.py src/probos/skill_request.py tests/fixtures/ad1343_seam_census.py tests/fixtures/ad1346_effect_census.py tests/fixtures/ad1346_store_census.py tests/test_ad1346_admission_service.py tests/test_ad1346_admission_store_census.py tests/test_ad1346_admission_store_writes.py -> i/lf w/crlf for each
-d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py -> CEILING AD-1356 (git log --all subjects, GitHub issue titles (all states), prompts/ad-*.md filenames)
+git log --oneline -8
+git ls-files --eol DECISIONS.md PROGRESS.md src/probos/admission/seam.py src/probos/admission/service.py src/probos/cognitive/clinical_notes_store.py src/probos/runtime.py src/probos/skill_request.py tests/fixtures/ad1343_seam_census.py tests/fixtures/ad1346_effect_census.py tests/fixtures/ad1346_store_census.py tests/test_ad1346_admission_service.py tests/test_ad1346_admission_store_census.py tests/test_ad1346_admission_store_writes.py
+d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py
 Read tests/fixtures/ad1346_store_census.py :1-244 (docstring :6-8; _AGENT_ATTRIBUTED :40; AGENT_ATTRIBUTED_SCOPES :102-112, :105-109; STORE_WRITE_FILES :116-197, :118-126, :120-124; StoreCheck :200-208; _EPISODIC :214; comment :216; STORE_WRITE_SCOPES :217-238, :237; store_write_check_functions :241-243)
 Read tests/test_ad1346_admission_store_census.py :1-192 (docstring :4-11, :17-19; WC1 :92-106; WC3 :124-147, :125-134, :142-143; WC5 :186-191)
 Read tests/test_ad1346_admission_store_writes.py :1-371 (docstring :1-31, :18, :22-26; imports :49-58; _DRAWN :79-80; _shape :130-134, :131; _config :164-171, :167; WM1 :199-221, :200, :205, :221; WM3 :259-292, :262; WM4 :295-328, :298; WM5 :331-370, :334, :344-345, :356-357, :367-370)
@@ -1168,7 +1168,7 @@ Read src/probos/cognitive/clinical_notes_store.py :1-167 (imports :24-35; Clinic
 Read src/probos/skill_request.py :1-195, :193-391 (imports :20-32; SkillRequest :65-82; class :85-97; __init__ :99; stop :128-131; file_request :148-191, :158-178; decide :193-264, :214-235; begin_training :266-306, :286-294; complete_for_simulation :308-354, :333-341; get :364-389)
 Grep '^(    )?(async )?def ' src/probos/skill_request.py -> :99 :117 :128 :133 :148 :193 :266 :308 :356 :360 :364 :392
 Grep 'def |class |author_agent_id' src/probos/cognitive/clinical_notes_store.py (defs :68 :94 :107 :117 :122 :163 :181 :194)
-wc -l src/probos/skill_request.py src/probos/cognitive/clinical_notes_store.py -> 408, 202
+wc -l src/probos/skill_request.py src/probos/cognitive/clinical_notes_store.py
 Grep '(INSERT\s+(OR\s+[A-Z]+\s+)?INTO|REPLACE\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)' src/probos/skill_request.py -> :170 :230 :290 :338
 Grep (the same pattern) src/probos/cognitive/clinical_notes_store.py -> :141
 Grep (the same pattern) src/probos/capability_request.py -> :658 :783 :1029 :1086 :1126
@@ -1204,10 +1204,10 @@ Grep 'skill_requests|class SkillRequestsConfig' -A 3 src/probos/config.py
 Read src/probos/protocols.py :38-49 (EventEmitterMixin._emit :47-49)
 Read tests/test_ad1346_admission_ticket_sinks.py :29-36, :508-530 (SK7 :510-529, :513)
 Read tests/test_ad1346_admission_service.py :574-657 (T16 :574-603, :599-600; named :627-639; importers :640-653, :652)
-Read tests/fixtures/ad1346_effect_census.py :56-69 (:66); Grep 'EFFECT_CLASSES' tests -> fixture :4 :61, test :81 :295 :297
+Read tests/fixtures/ad1346_effect_census.py :56-69 (:66); Grep 'EFFECT_CLASSES' tests
 Grep '_SEAM_HELPERS' -B2 -A6 tests/fixtures/ad1346_effect_census.py
 Read tests/fixtures/ad1343_seam_census.py :20-42 (:41)
-Grep 'calls\("check_at"\)|"check_at"' tests -> tests/fixtures/ad1346_effect_census.py:58; tests/fixtures/ad1343_seam_census.py:41; tests/test_ad1346_admission_effect_census.py:233; tests/test_ad1346_admission_egress_sinks.py:220, :240; tests/test_ad1346_admission_egress_census.py:130; tests/test_ad1346_admission_store_family_census.py:180; tests/test_ad1346_admission_store_writes.py:208; tests/test_ad1346_admission_ticket_sinks.py:512, :516
+Grep 'calls\("check_at"\)|"check_at"' tests
 Read tests/test_ad1346_admission_effect_census.py :222-237 (EC3)
 Read tests/test_ad1346_admission_store_family_census.py :160-189 (WK3, :170)
 Grep '^### BF-946 |^### AD-1346 M3e4c3[a-z] |^### AD-1346 M3e4b ' DECISIONS.md -> :1178, :1219, :1232, :1244, :1255, :1266, :1277
@@ -1292,6 +1292,9 @@ HOLDS: yes
 - "Which text describes the head": the bullet that cited a draft of M3e4c3f's contract outside the repository for M3-01's SEARCH cites `PROGRESS.md:3` on the build's base instead; the build's base is M3e4c3f's M2 commit, `76db0d52` (on `cb6d61ef`, the M3e4c3c to M3e4c3e batch with BF-951), and not `origin/main` after a merge; BF-946's heading is at `DECISIONS.md:1288` on that base.
 - §11: the results of five records of searches with context lines (`-A`, `-B`) are deleted, and Absence entry 3's parenthetical of counts for a second glob is deleted; the records keep their commands.
 - The orchestrator applied the 36 blocks of §7 and the 2 pairs of §8 by tool on `76db0d52`'s tree with 0 failures: M3-01's SEARCH is M3e4c3f's paragraph, at `PROGRESS.md:3` there.
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 2 (2026-11-03, the orchestrator, before the first review, after the build).** Changed, against Amendment 1's text: §11 loses the results of six records that did not give their command's whole output (`git log --oneline -8`; `git ls-files --eol`; `scripts/ad_ceiling.py`; `wc -l`; the search for `EFFECT_CLASSES`; the search for `calls("check_at")`); the records keep their commands.
 Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
