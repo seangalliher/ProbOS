@@ -1,7 +1,7 @@
 # The Primacy of Perception: Absorption
 
 *Sean Galliher, 2026-11-02*
-*Source: Maurice Merleau-Ponty, *The Primacy of Perception*, a collection of essays edited by James M. Edie (Northwestern University Press, 1964). Drafted from general knowledge of the essays, without a copy at hand, so nothing is quoted. The ProbOS side was checked against `main` at `b773c662` on 2026-11-02.*
+*Source: Maurice Merleau-Ponty, *The Primacy of Perception*, a collection of essays edited by James M. Edie (Northwestern University Press, 1964). Drafted from general knowledge of the essays, without a copy at hand, so nothing is quoted. The ProbOS side was checked against `main` at `b773c662` on 2026-11-02 and re-checked at `f31afa56` on 2026-11-03.*
 
 ## Purpose
 
@@ -26,11 +26,11 @@ Much of the book's central idea, that how something is known matters as much as 
 
 **Prior art in ProbOS.** Page reads already do this. `PageReaderAgent` prints "characters {start} to {end} of {total}" and the next `offset=` (`agents/utility/web_agents.py:139-149`; the agent is defined at `:641`, and its `read_page` descriptor is at `:654`). The browser tool's page output ends with `[truncated: N characters elided ...]` (`agentic_dispatch.py:204`, applied by `_bound_browser_output` at `:404-435`). The builder marks `[lines X-Y omitted]` (`cognitive/builder.py:2296`, `:2301`), and AD-1240's pointer frame names the saved result.
 
-**Where ProbOS falls short.** The file and result tools have no such convention. A `read_file` call with `offset` and `limit` returns only the slice, with nothing saying how much of the file lies outside it (`cognitive/swe_harness/tools.py:483-488`). The same holds for the verified-read path and the workspace-slice path (`_workspace_slice_result`, `tools.py:379-393`). The total is already known and then dropped: `SourceRef.total_lines` (`execution/workspace_results.py:183`), and `len(lines)` on the sliced path. BF-946 (#1723) shows the cost: Forge's read-back of a saved result asked for a slice over the 6,000-character recovery bound named in #1723, which ended the turn. The Captain decided R-a on #1723 (2026-11-02): a promised read over the bound will return an error naming the bound. That fix is not on `main` yet.
+**Where ProbOS falls short.** The file and result tools have no such convention. A `read_file` call with `offset` and `limit` returns only the slice, with nothing saying how much of the file lies outside it (`cognitive/swe_harness/tools.py:483-488`). The same holds for the verified-read path and the workspace-slice path (`_workspace_slice_result`, `tools.py:379-393`). The total is already known and then dropped: `SourceRef.total_lines` (`execution/workspace_results.py:183`), and `len(lines)` on the sliced path. BF-946 (#1723) shows the cost: Forge's read-back of a saved result asked for a slice over the 6,000-character recovery bound named in #1723, which ended the turn. The Captain decided R-a on #1723 (2026-11-02): a promised read over the bound now returns an error naming the bound (`recovery_slice_too_large`), and the run goes on. It shipped with BF-946 in PR #1739 (merge `f31afa56`, 2026-11-03).
 
 **What to absorb.** Extend the page-read convention to every partial result: state the part shown and the whole it comes from ("lines 1–200 of 1,450", "40 of 190 rows", "the first 6,000 of 48,213 characters") and how to get the rest. The agent then plans its next read from facts, not from a guess. For `read_file` this is a rendering change, since the total is already computed.
 
-*Owner: a follow-up to BF-946 (#1723), starting with `read_file` and the read-only tools.*
+*Owner: a follow-up to BF-946 (#1723), starting with `read_file` and the read-only tools. Tracked as the first proposal on #1743.*
 
 ### 2. What the agent observed this turn outranks what it remembers
 
@@ -42,17 +42,17 @@ Much of the book's central idea, that how something is known matters as much as 
 - Mark this turn's tool observations as the top source, above `direct` memory, and tell the agent that a fresh observation overrides a conflicting recollection.
 - A question to check, not a finding: whether an agent's own conclusion from a turn can be stored as a `direct` episode. If it can, an inference later comes back as an experience. That is how a confabulation starts before it spreads, which AD-567f and AD-583 (wrong convergence) catch only later, once it has.
 
-*Owner: AD-1302 (#1355). Its S1 build prompt (PR #1735, open, not built) plans to record which Ship's Records entries an agent was shown, by revision. Observation in the current turn is the same kind of record, one step closer to the source.*
+*Owner: AD-1302 (#1355). Its S1 build prompt (PR #1735, open, not built) plans to record which Ship's Records entries an agent was shown, by revision. Observation in the current turn is the same kind of record, one step closer to the source. Tracked as a proposal on #1743.*
 
 ### 3. A tool becomes part of the body through use
 
 **The idea.** The book's example is a blind man's cane. With practice he stops attending to the cane and feels the pavement through its tip. A skill is a habit of the body, not a rule consulted each time.
 
-**Where ProbOS stands.** Every run presents each tool's full definition (AD-983a: the tool carries its manual). AD-1189 can withhold large definitions behind `load_tools` (`agentic_tools.deferred_tool_schema_threshold_bytes`, off by default), but it decides by size, and its decision record rejects per-tool keep lists "for lack of evidence" (`DECISIONS.md:11236`). The raw evidence exists. When an event log is wired, each tool call emits a durable `TOOL_INVOKED` event (`tools/executor.py:1182-1240`; durable at `event_persistence.py:86`, `:103`; capped at 500 per run, `executor.py:77`, AD-1224). The fallback record carries the raw agent id, tool id, `is_error` and `error_category` (`executor.py:981-1020`). Effect-governed calls carry digests of the agent and tool and a reason code instead (`_strict_tool_record`, `executor.py:1040-1098`). Skills have a per-agent count (`AgentSkillRecord.exercise_count`, `skill_framework.py:617-630`). What does not exist is an aggregate record of how well each agent uses each tool, and the Hebbian graph has no agent-to-tool edges (`tools/skill_tool_resolver.py:53-58`).
+**Where ProbOS stands.** Every run presents each tool's full definition (AD-983a: the tool carries its manual). AD-1189 can withhold large definitions behind `load_tools` (`agentic_tools.deferred_tool_schema_threshold_bytes`, off by default), but it decides by size, and its decision record rejects per-tool keep lists "for lack of evidence" (`DECISIONS.md:11248`). The raw evidence exists. When an event log is wired, each tool call emits a durable `TOOL_INVOKED` event (`tools/executor.py:1182-1240`; durable at `event_persistence.py:86`, `:103`; capped at 500 per run, `executor.py:77`, AD-1224). The fallback record carries the raw agent id and a projected tool identity (`executor.py:976-1007`), and the outcome fields `is_error` and `error_category` (`:1216-1221`). Effect-governed calls carry digests of the agent and tool and a reason code instead (`_strict_tool_record`, `executor.py:1040-1098`). Skills have a per-agent count (`AgentSkillRecord.exercise_count`, `skill_framework.py:617-630`). What does not exist is an aggregate record of how well each agent uses each tool, and the Hebbian graph has no agent-to-tool edges (`tools/skill_tool_resolver.py:53-58`).
 
-**What to absorb.** A tool counts as *incorporated* for an agent when that agent has used it correctly many times without an error caused by misuse. Misuse needs a mapping, since no single category names it; `invalid_params` and `ambiguous_tool` (`ERROR_CATEGORIES`, `executor.py:328-332`) are the obvious members. Aggregated from `TOOL_INVOKED` (digests are stable, so both record shapes aggregate), that is the evidence AD-1189 lacked. An incorporated tool's definition could then shrink to its one-line manifest entry for that agent, while an unfamiliar tool keeps its full manual. This is also earned agency at the level of tools, and it fits AD-1342 ("the harness is the body; ProbOS is the self"): what a crew member has learned to use belongs to the crew member, whatever body it uses.
+**What to absorb.** A tool counts as *incorporated* for an agent when that agent has used it correctly many times without an error caused by misuse. Misuse needs a mapping, since no single category names it; `invalid_params` and `ambiguous_tool` (`ERROR_CATEGORIES`, `executor.py:328-332`) are the obvious members. Aggregated from `TOOL_INVOKED`, that is the evidence AD-1189 lacked. The aggregate must normalise first: the two record shapes use different identifiers (raw ids in the fallback, domain-separated SHA-256 in the effect-governed record, `execution/effect_adapters.py:485-498`), and an unknown tool name gets a per-process keyed identity that changes on every restart (`executor.py:58`, `:195-203`, `:311-322`). An incorporated tool's definition could then shrink to its one-line manifest entry for that agent, while an unfamiliar tool keeps its full manual. This is also earned agency at the level of tools, and it fits AD-1342 ("the harness is the body; ProbOS is the self"): what a crew member has learned to use belongs to the crew member, whatever body it uses.
 
-*Owner: AD-1189, as evidence for a later per-agent policy. It needs an aggregate over the existing events, not a new store; today an offer is run-local and nothing persists. `TOOL_INVOKED` retention was not checked.*
+*Owner: AD-1189, as evidence for a later per-agent policy. It needs an aggregate over the existing events, not a new store; today an offer is run-local and nothing persists. `TOOL_INVOKED` retention was not checked. Tracked as a proposal on #1743.*
 
 ### 4. Not knowing is a legitimate state
 
@@ -60,7 +60,7 @@ Much of the book's central idea, that how something is known matters as much as 
 
 **What to absorb.** Treat *indeterminate* as an answer agents are expected to give, not a failure to avoid. AD-592's confabulation guard points this way, and AD-1302 S1's build prompt plans an `unknown` outcome (not built). An agent that says "I can't tell from what I have" should never score worse than one that fills the gap.
 
-*Owner: AD-1302, and the epistemic-degradation work generally.*
+*Owner: AD-1302, and the epistemic-degradation work generally. Tracked as a proposal on #1743.*
 
 ## A lens, not a build
 
