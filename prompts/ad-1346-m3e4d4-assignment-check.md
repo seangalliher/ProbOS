@@ -103,9 +103,9 @@
     2. `add_member` as a check presenting `agent_id`: D239 makes a row that names the agent it is about the ship's;
     3. the file kept pending: WC1 needs every scope of a scoped file to be a row.
 - **D307 The check** (question 2; D292's rule applied).
-  - **Placement.** The statement before `await self._db.execute(` of `INSERT INTO assignments`. Everything that raises before it (§1) is not counted. The Ward Room channel, when there is one, is created before the check (`:186-209`).
+  - **Placement.** The statement before `await self._db.execute(` of `INSERT INTO assignments`. The Ward Room channel, when there is one, is created before the check (`:186-209`).
   - **Presented id.** The parameter `created_by`.
-  - **Imports.** At module scope. `probos.admission` names no `assignment` (Absence 4), and the three imports of `probos.assignment` in `src` are under `TYPE_CHECKING` or inside a function (§11).
+  - **Imports.** At module scope.
   - **Thread.** `create_assignment` is a coroutine: its check runs on the thread of the loop that runs it, and on the service's loop `check_ticket` checks at once (`admission/service.py:248-250`).
   - **Behaviour.** `check_at` returns None (`admission/seam.py:56-60`), and no `Exception` leaves `check_ticket` (`admission/service.py:243-255`).
   - Placement, ranked:
@@ -1139,6 +1139,12 @@ HOLDS: yes
 - §11: the result of the record `Grep 'AD-1346 M3e4d3|AD-1346 M3e4d2|def test_.*import|importers' tests/test_ad1346_admission_service.py` is deleted (it listed the matching lines and left out `:664`, so the record now holds its command alone).
 - §13: the clause that the one row `docs/research/reference-projects.md:32` matches is about protected paths for runtime writers, and the claim that it is not this slice's subject, are deleted; the record says only that the row was not examined.
 - The orchestrator applied the 25 blocks of §7.1, the 9 of §7.2 and the 2 pairs of §8 by tool on `d3456aef`'s tree with 0 failures; the files they write are blob for blob the files the same blocks write on `1706b3e4`.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
+
+**Amendment 2 (2026-11-03, the orchestrator, after review round 1).** Three findings of that round, repaired by deletion or, for a commit message, by this note. Changed, against the contract as Amendment 1 left it:
+- §3 D307, Placement: the sentence that everything that raises before the check is not counted is deleted (`create_assignment` catches an exception that its Ward Room channel step raises, writes the assignment and counts one check: `assignment.py:216-217` and the check at `:230` on this head).
+- §3 D307, Imports: the sentences that `probos.admission` names no `assignment` and that `src` holds three imports of `probos.assignment` are deleted (on this head `src` holds four: `runtime.py:177` and `:3441`, `startup/communication.py:566` and `startup/results.py:23`, and the admission docstrings that M1-06 to M1-08 edit now name the assignment service).
+- The message of M3's commit `7edf57fd` says that the DECISIONS entry records D305 to D311; the entry records D305 to D308 as numbered bullets, and its tests, residual and reversal bullets carry no decision number. This is the correction; the message is not rewritten.
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
 ## For the register (#1604)
