@@ -505,8 +505,7 @@ AD-1346 M3e4c3e is the fifth part of M3e4c3. It moves the two file-write rows th
 M1 deletes the Lines of M3e4c3d's EM-2, EM-3 and EM-6, and the constant that EM-1's Mutate-to names. The docstrings M1 rewrites drop EM-2, EM-3, EM-6 and EM-1 from their kills lists. The campaign re-runs no earlier row.
 
 **Expected to survive, among them:**
-- `_AGENT_ATTRIBUTED_FILE`'s reason text changed;
-- the deletion of a `_persist_locked()` call in either `append`: that line occurs three times in each file, so no row mutates it, and WF8's last assertion is not held by a row.
+- `_AGENT_ATTRIBUTED_FILE`'s reason text changed.
 
 ## 11. Verified Against Codebase (2026-11-03, read on `cd0e84e5`)
 
@@ -520,10 +519,10 @@ Grep tests/fixtures/ad1346_effect_census.py -> SHIP :52; OUTSIDE_RUNTIME :56; Sy
 Read src/probos/avatars/proposal_history.py :1-207 (_history :43; _load_from_disk_locked :69-112; _persist_locked :115-155, payload :127-134, points :141 :143 :146; append :158-166, setdefault :161, _persist_locked() :165; clear :182-188; reset_all :191-195)
 Read src/probos/avatars/vision_proposal_history.py :1-125 (VisionProposalEntry :19-27, agent_id :22; _entries :30; configure :35-58, load :51; append :61-65; resolve :68-91; reset_all :100-104; _persist_locked :107-124, payload :113-116, points :117 :118)
 logs/ad1346/evidence-points-m3e4c3d-rows.txt :19-21 (proposal_history.py :141 fdopen, :143 replace, :146 unlink, scope _persist_locked), :28-29 (vision_proposal_history.py :117 write_text, :118 replace, scope _persist_locked)
-Read src/probos/routers/agents.py :600-680, :995-1144; Grep 'appearance/propose|vision-capability/propose' -A 3 -> :592-596, :1006-1012
+Read src/probos/routers/agents.py :600-680, :995-1144; Grep 'appearance/propose|vision-capability/propose' -A 3
 Read src/probos/execution/workspace_result_store.py :780-855 (write_new :800 :801 :817; publish_file :821; manifest :808-815; remove_file :849)
 Read prompts/ad-1346-m3e4c3d-file-write-classification.md :1-140, :270-583 (D268 to D272; §10 EM-1 to EM-8; register R136, R137)
-Grep '^\| EF-(7|8) ' prompts -> ad-1346-m3e4c3a-file-write-census.md:683 (EF-8 mutates src/probos/knowledge/records_store.py)
+Grep '^\| EF-8 ' prompts -> ad-1346-m3e4c3a-file-write-census.md:683 (EF-8 mutates src/probos/knowledge/records_store.py)
 grep -c -F for each of the seven src Lines of EN-4 to EN-10 -> 1 each
 Read PROGRESS.md head (M3e4c3d's head :3); Read DECISIONS.md :1253-1266 (M3e4c3d's entry :1255-1264; BF-946's heading :1266); Grep '^### BF-946 ' DECISIONS.md -> :1266 (one match)
 Read scripts/gen_ad_ledger.py :124-141
@@ -561,7 +560,6 @@ HOLDS: yes
 ## 12. Deterministic gate checks, resolved up front
 
 - `git diff --stat <base>..HEAD -- src` prints nothing after M1 and after M2.
-- `git diff --name-only <base>..HEAD` after M1 lists exactly `tests/fixtures/ad1346_file_write_census.py` and `tests/test_ad1346_admission_file_write_census.py`; after M2 also `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`. `<base>` is M3e4c3d's M2 commit.
 - The collect-only count for `tests/test_ad1346_admission_file_write_census.py` is 8.
 - For each §10 Line, `grep -c -F` prints 1. No Line contains `'`: `$pat = '<line>'; grep -c -F $pat <file>`.
 - M1 is 12 SEARCH/REPLACE blocks (M1-01 to M1-04 in the fixture, M1-05 to M1-12 in the test); M2 is 2.
@@ -598,6 +596,12 @@ HOLDS: yes
 **Amendment 1 (2026-11-03, the orchestrator, before the build).** The contract was read on `cd0e84e5`, which is the base of the build. Changed, against the contract as the Architect banked it:
 - "Which text describes the head": the bullet "The build" names the commits of M3e4c3c and M3e4c3d and no longer says what stage of review they have reached.
 Unchanged: every SEARCH text and every REPLACE text of §7 and §8 (the orchestrator applied the 12 M1 blocks and the 2 tracker pairs by tool on `cd0e84e5` with 0 failures: 4 files, +99 -35 before the AD ledger); every count and every row's type and key; every §10 row (each Line occurs once on the M1 tree: 10 rows, 0 problems); and every record of §11 and entry of Absence Verified.
+
+**Amendment 2 (2026-11-03, the orchestrator, after review round 1).** The review found three statements that were not true of the candidate, all in this contract; the first is the one that the reviews of M3e4c3c and M3e4c3d found in theirs. The orchestrator's sweep for their siblings found a fourth. Changed, against Amendment 1's contract:
+- §12: the bullet that gave the file inventory from the base to the head is deleted (`git diff --name-only cd0e84e5 5cae2859` and `git diff --name-only cd0e84e5 0ae53d21` list this contract as well: 3 and 7 files).
+- §10, "Expected to survive": the bullet on the deletion of a `_persist_locked()` call in either `append` is deleted (WF8 fails on that deletion, at its last assertion).
+- §11: the record of the `EF` rows names `EF-8` alone, which is what its recorded result is (the pattern `EF-(7|8)` also prints `EF-7`, at `:682`); the record of the two propose routes keeps its command and loses its result, which is not what `-A 3` prints.
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
 
 ## For the register (#1604)
 
