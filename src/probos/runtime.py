@@ -3440,6 +3440,7 @@ class ProbOSRuntime:
         HttpFetchAgent.set_admission(self.admission_service)  # AD-1346 M3e3b (D203): the http_fetch egress sink's service, class-level; shutdown sets it back to None
         from probos.cognitive.clinical_notes_store import ClinicalNotesStore
         from probos.cognitive.episodic import EpisodicMemory
+        from probos.persistent_tasks import PersistentTaskStore
         from probos.skill_request import SkillRequestStore
         from probos.ward_room import WardRoomService
 
@@ -3451,6 +3452,8 @@ class ProbOSRuntime:
             self.clinical_notes_store.set_admission(self.admission_service)
         if isinstance(self.skill_request_store, SkillRequestStore):  # AD-1346 M3e4d1 (D286): the skill request store's two checks; None checks nothing
             self.skill_request_store.set_admission(self.admission_service)
+        if isinstance(self.persistent_task_store, PersistentTaskStore):  # AD-1346 M3e4d2 (D293): the persistent task store's check; None checks nothing
+            self.persistent_task_store.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687

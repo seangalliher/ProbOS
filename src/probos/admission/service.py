@@ -35,6 +35,7 @@ AD-1346 M3e4b: ``check_at`` is also called with ``store_write`` at the Ward Room
 the episodic store.
 AD-1346 M3e4d1: and at the clinical notes store's ``write_note`` and the skill request store's ``file_request`` and
 ``decide``.
+AD-1346 M3e4d2: and at the persistent task store's ``create_task``.
 The service reads no configuration.
 """
 
@@ -231,7 +232,8 @@ class AdmissionService:
         subprocess sinks (seven from AD-1346 M3e2a, eight from AD-1346 M3e2b), and from AD-1346 M3e3b two egress sinks
         and the image endpoint, and from AD-1346 M3e3c the browser engine's start and its CDP connect, and from AD-1346
         M3e4b the Ward Room's four content-write entries and the episodic store, and from AD-1346 M3e4d1 the clinical
-        notes store's ``write_note`` and the skill request store's ``file_request`` and ``decide``. It reads the
+        notes store's ``write_note`` and the skill request store's ``file_request`` and ``decide``, and from AD-1346
+        M3e4d2 the persistent task store's ``create_task``. It reads the
         carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the
