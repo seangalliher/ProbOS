@@ -465,12 +465,12 @@ Reads (src/probos/): attachments/filesystem_store.py :1-120, :225-474; attachmen
   routers/agents.py :586-674, :712-757, :1000-1064; agents/utility/avatar_agents.py :118-153; cognitive/cognitive_agent.py :7043-7082;
   execution/workspace_result_store.py :796-821
 Grep '^class |^    [a-z_]+: ' infrastructure/snapshot_manifest.py
-Grep 'class CredentialScope' src -A 14 -> tools/browser/credentials.py :40-54 (allowed_agent_ids, allowed_domains, expires_at; permits_agent)
+Grep 'class CredentialScope' src -A 14
 Grep 'def (prune|_promote|_sweep_incomplete|_try_link|_backup_one|run_once|snapshot)\b|shutil\.|os\.(link|replace)' infrastructure/backup.py -> :244 :295 :400 :462 :502 :530 :540 :543 :598 :708 :740 :772 :799
 Grep '^def |^async def |^class |^    def |^    async def ' pidfile_guard.py
-Grep '_save_state\(|state\["' proactive.py -B 3 -> :488 :489 :490 :518 :519 :538
+Grep '_save_state\(|state\["' proactive.py -B 3
 Grep 'tmp_path|NamedTemporaryFile|mkstemp' warm_boot.py -> :143 :149 :153 :182 :563 :569 :572 :581
-Grep '\*\*D239|\*\*D218' prompts -> ad-1346-m3e4c-store-write-classification.md:84-90 (D239, its classes at :88); ad-1346-m3e4a-store-write-census.md:76-80 (D218)
+Grep '\*\*D239|\*\*D218' prompts
 Trackers and tools:
 Read PROGRESS.md :1-5 (M3e4c3c's head :3; S3 and S4's :5)
 Read DECISIONS.md :1244-1255 (M3e4c3c's entry :1244-1253; BF-946's heading :1255)
@@ -575,6 +575,12 @@ Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count 
 **Amendment 3 (2026-11-03, the orchestrator, after review round 2).** The review found three statements that were not true of the candidate. Changed, against Amendment 2's contract:
 - Amendment 2's last bullet no longer says that the pull request's description repeats the erratum: no pull request exists yet. The message of the commit that records Amendment 2 is repaired the same way.
 - §11: the record of the `^class |^    [a-z_]+: ` search of `infrastructure/snapshot_manifest.py` and the record of the definitions search of `pidfile_guard.py` keep their commands and lose their results, which were not the whole output of those commands (the first search also prints `:297`; the second prints 15 matches and the record named four).
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
+
+**Amendment 4 (2026-11-03, the orchestrator, after review round 3).** The review found two statements that were not true of the candidate, and the orchestrator's check of the same class found a third record that gives a range for a search with context lines. Changed, against Amendment 3's contract:
+- §11: the record of the `_save_state` search of `proactive.py` keeps its command (`-B 3`) and loses its result, which listed the six matches where the command also prints nine context lines.
+- §11: the record of the D239 and D218 search of `prompts` keeps its command and loses its result, which gave the ranges `:84-90` and `:76-80` and a line `:88` where the command printed `:84` and `:76` at the read commit.
+- §11: the record of the `class CredentialScope` search of `src` (`-A 14`) keeps its command and loses its result, the range `:40-54` and the names in it. That range is the span the command prints, so the record was not false; its result is deleted like the two above.
 Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
 
 ## For the register (#1604)
