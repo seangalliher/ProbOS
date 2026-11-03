@@ -1244,13 +1244,13 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
-- *Continuation.* A failed delivery ends the run unless its call is tier 1 by `is_tier_1_tool_call`; the native readers are not, so every failed recovery or source read still ends it, and R2-1's refusals are unchanged.
+- *Continuation.* A failed delivery ends the run unless its call is tier 1 by `is_tier_1_tool_call`, or it is a recovery read whose slice is over the bound (`recovery_slice_too_large`, the Captain's decision on #1723); every other failed recovery or source read still ends it, and R2-1's refusals are unchanged.
 - *Text.* The model is shown `retry_delivery_error`: `safe_delivery_error` and a request to ask for less, or `safe_delivery_error` alone when the bound is too small. A stopped run's reply is unchanged.
 - *Log.* One WARNING per typed delivery failure: code, tool, agent, raise site, and the measured length against the bound for a frame `_admit` refuses for size.
 - *Measured.* At the 6,000 bound a fresh pointer frame of a result that is not delegated is under 5,600 characters; the live failure was a promised read over the bound (`_prepare_result`'s recovery branch), shown on a read-only copy of `events.db`.
 - *Rejected.* Continuing after any producer's failed delivery (a state-changing call could run twice); truncating an oversized frame (AD-1240 never truncates a delivery); raising `tool_result_max_chars`.
-- *Residual.* Recorded limits L1 to L11 of the contract; the promised read over the bound is the Captain's decision on #1723.
-- *Reversal.* Revert the BF-946 commits.
+- *Residual.* Recorded limits L1 to L7 and L9 to L11 of the contract.
+- *Reversal.* Revert the BF-946 commits; reverting M5 alone restores the stop on a promised read over the bound.
 
 ### AD-1356 S1 -- Agent work stops filing what a rule can decide (2026-11-02, #1722)
 

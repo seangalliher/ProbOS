@@ -1248,14 +1248,16 @@ def _executed_outcomes(
     return [use for use, _ in pairs], [item for _, item in pairs]
 
 
-def _continues_after_failed_delivery(use: ToolUseBlock) -> bool:
+def _continues_after_failed_delivery(use: ToolUseBlock, code: str) -> bool:
     """BF-946: whether the run goes on past a failed delivery of ``use``'s result.
 
-    Only a read-only (tier-1) call does, as ``is_tier_1_tool_call`` judges it: its
-    result promised nothing, and asking again cannot repeat an effect. The native
-    readers are not tier 1, so a failed recovery or source read still ends the run.
+    A read-only (tier-1) call does, as ``is_tier_1_tool_call`` judges it: its result
+    promised nothing, and asking again cannot repeat an effect. So does a recovery read over the per-read bound
+    (``recovery_slice_too_large``): its promise, reader and artifact are unchanged,
+    and the same path read over a smaller range is served. The native readers are
+    not tier 1, so every other failed recovery or source read still ends the run.
     """
-    return is_tier_1_tool_call(use.tool_call.name, use.tool_call.arguments)
+    return code == "recovery_slice_too_large" or is_tier_1_tool_call(use.tool_call.name, use.tool_call.arguments)
 
 
 def _delivery_stop(
@@ -1276,7 +1278,7 @@ def _delivery_stop(
         delivery = result_delivery(item)
         if (
             delivery is not None and delivery.status == "failed"
-            and not _continues_after_failed_delivery(use)
+            and not _continues_after_failed_delivery(use, delivery.code)
         ):
             # ``ResultDelivery`` validates that a failed delivery carries its code.
             return delivery.code, delivery.presentation

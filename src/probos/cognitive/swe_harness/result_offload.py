@@ -465,15 +465,21 @@ _RETRY_GUIDANCE = (
 def retry_delivery_error(code: str, max_chars: int) -> str:
     """BF-946: the bounded text for a failed delivery the run went on past.
 
-    The loop goes on past a failed delivery only from a read-only call, whose result
-    promised nothing, so asking again for less is safe. The text is
-    ``safe_delivery_error`` and ``_RETRY_GUIDANCE``; a bound too small for both gives
+    The loop goes on past a failed delivery from a read-only call, whose result
+    promised nothing, and past a recovery read over the per-read bound
+    (``recovery_slice_too_large``), whose promise still holds; asking again for less
+    is safe in both. The text is ``safe_delivery_error`` and the guidance, which for
+    the recovery read names the bound; a bound too small for both gives
     ``safe_delivery_error`` alone.
     """
     base = safe_delivery_error(code, max_chars)
     if base == "!":
         return base
-    text = f"{base} {_RETRY_GUIDANCE}"
+    guidance = (
+        f"One read returns at most {max_chars} characters. Read the same path again over a smaller range."
+        if code == "recovery_slice_too_large" and max_chars > 0 else _RETRY_GUIDANCE
+    )
+    text = f"{base} {guidance}"
     return text if max_chars == 0 or len(text) <= max_chars else base
 
 
@@ -612,7 +618,10 @@ async def _prepare_result(captured: CapturedConversion, context: DeliveryContext
     if recovery:
         if context.remaining_iterations < 1:
             raise WorkspaceResultError("recovery_iterations_unavailable")
-        _admit(text, settings.max_chars)
+        if settings.max_chars > 0 and len(text) > settings.max_chars:
+            # BF-946: the slice is over the bound, not the promise, so the run goes on; when its
+            # text fits, ``retry_delivery_error`` names the bound and asks for a smaller range.
+            raise _OversizedFrame("recovery_slice_too_large", len(text), settings.max_chars)
         reference = raw.workspace_slice.reference if isinstance(raw, WorkspaceSliceToolResult) else raw.source_reference
         return with_result_delivery(producer, ResultDelivery("recovered", text, reference))
     if encoded_size <= TOOL_RESULT_THRESHOLD_BYTES:

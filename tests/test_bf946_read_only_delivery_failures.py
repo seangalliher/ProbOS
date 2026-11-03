@@ -197,35 +197,35 @@ async def test_a_failed_delivery_still_ends_the_run_for_a_producer_that_is_not_r
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("limit", "delivered"), [
-    pytest.param(6000, True, id="read-back-at-the-bound"),
-    pytest.param(6001, False, id="read-back-one-over-the-bound"),
+@pytest.mark.parametrize(("limits", "requests"), [
+    pytest.param([6000], 3, id="read-back-at-the-bound"),
+    pytest.param([6001, 6000], 4, id="read-back-one-over-then-at-the-bound"),
 ])
-async def test_a_recovery_read_over_the_bound_still_ends_the_run(
-    tmp_path: Path, limit: int, delivered: bool,
+async def test_a_recovery_read_over_the_bound_comes_back_naming_the_bound_and_a_smaller_read_is_served(
+    tmp_path: Path, limits: list[int], requests: int,
 ) -> None:
-    """A read of the offloaded result is a promised recovery; over the bound it still ends the run.
+    """The live failure's shape (2026-10-31): a promised read over the bound no longer ends the run.
 
-    This is the live failure of 2026-10-31.
+    The model is shown the bound, reads the same path again over a smaller range, and that read is served.
     """
     runtime, executor, context = _environment(tmp_path)
     producer = _RawTool(ToolResult(output="L" * 20000))
     producer.tool_id = "event_log_query"
     runtime.tool_registry.register(producer)
-    llm = _ReadBackLLM([limit])
+    llm = _ReadBackLLM(list(limits))
     async with _started(runtime):
         result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[], context=context)
-    assert result_delivery(result.tool_results[0]).status == "workspace" and producer.calls == 1
-    read = result_delivery(result.tool_results[-1])
-    assert result.tool_results[-1].output == "L" * limit
-    if delivered:
-        assert result.stopped_reason == "complete" and read.status == "recovered"
-        assert llm.frames[-1] == "L" * limit and len(llm.requests) == 3
-    else:
-        assert result.stopped_reason == "error" and result.error == "delivery_frame_too_large"
-        assert read.status == "failed" and read.code == "delivery_frame_too_large"
-        assert result.final_text == "Result delivery failed (delivery_frame_too_large)."
-        assert len(llm.requests) == 2
+    assert result.stopped_reason == "complete" and len(llm.requests) == requests and producer.calls == 1
+    assert result_delivery(result.tool_results[0]).status == "workspace"
+    assert result_delivery(result.tool_results[-1]).status == "recovered" and llm.frames[-1] == "L" * 6000
+    if len(limits) == 2:
+        refused = result_delivery(result.tool_results[1])
+        assert refused.status == "failed" and refused.code == "recovery_slice_too_large"
+        assert result.tool_results[1].output == "L" * 6001
+        assert llm.frames[1] == (
+            "Result delivery failed (recovery_slice_too_large). One read returns at most 6000 characters. "
+            "Read the same path again over a smaller range."
+        )
     assert _artifact_count(runtime) == 1
 
 
