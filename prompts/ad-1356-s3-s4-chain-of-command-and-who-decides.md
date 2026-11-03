@@ -1,8 +1,8 @@
 # AD-1356 S3 and S4 (#1722): the elevated tier goes to the chain of command, and the Captain sets who decides each tier
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02 (amendment A1: the count-keyed config golden, the replay's `--registered-ids`, the sentences that said every action is the Captain's, P1-2 re-anchored on S2's repaired head, the head-text sweep; amendment A2: P1-3 re-anchored on S2's frozen head `bfb6b72d`, the Status, Base and Re-run text brought up to date, and two sentences that called the confinement's set the tools that run with no approval; amendment A3: the contract's sentences audited before the build: BF-946's shared files, the L1 line number, §14's external claims rewritten against their sources, the absence records A2, A4, A5 and A8 widened to generic consumers, "read by no code", the universals in §15, §16 and the test texts (two test names), the replay's `mcp:` buckets, and P1-32 to P1-34 for three comments and a log message that said an admitted call ran under the Captain's approval (A12)); the orchestrator (Claude Sonnet 5.5), 2026-11-02, before the build: the Status line names BF-946's merge, section 12 records the oracle's re-run on A3, and record sentences are brought in line with the head and the sources (section 10's census sentence, L2's last sentence, section 14's CrewAI per-tool sentence, the AutoGen and CrewAI row texts, and section 16.4's flag-off sentence); no pair, block or SEARCH changed; the orchestrator again, 2026-11-03, after review round 1 (amendment R1: N2-1 exits 2 before anything is written when `--receipt` names the copy or one of its SQLite sidecars or when `--since` or `--until` is not finite, N2-2 gains R4, section 10 gains RY-21 to RY-25, P3-1 loses its clause on the tools a run calls directly and says which two fields `tier_decider` reads, and the other sentences the review found false are deleted: the Gravitee clause and the overdue-project bullet of section 14, the absence parenthetical of section 15 item 3, and "writes only the receipt" of item 10; no SEARCH and no other pair changed); the orchestrator once more, 2026-11-03, after review round 2 (amendment R2: N2-1 also compares a `--receipt` that exists with the copy and its sidecars by file identity, so a second hard-link name for the copy is refused; N2-2's R4 gains a hard link and a respelled sidecar; section 10 gains RY-26; and two sentences the review found false are deleted: the claim in section 14 that neither Gravitee source says who the approver should be, and the sentence in section 10 on what the census prints; no SEARCH and no other pair changed)
-**Status:** built on main after BF-946 merged (merge commit `f31afa56`, PR #1739); AD-1356 S1 and S2 merged as main `b773c662`, whose tree is S2's frozen head `bfb6b72d`'s. **Base:** drafted on S2's head `f0c935a1` (main `e9140fcb` + S1 + S2 M1, M2 and the campaign bullet); S2 is frozen at `bfb6b72d` (review round 3 READY). A1 re-anchored P1-2 on S2's repaired head `06dd7539`, and P1-2 applies on the frozen head; A2 re-anchors P1-3 on the frozen head, whose round-2 repair shortened `routine_tool_ids`'s docstring. **Dependencies:** AD-1356 S1 and S2 (#1722), BF-946 (#1723; it merges first, edits `DECISIONS.md` and `PROGRESS.md` above this contract's anchors, and regenerates `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`). **Tier:** M1 HIGH (changes who authorises an agent-work call), M2 STANDARD (a read-only script and its test), M3 STANDARD (trackers and ledger). **Estimated tests:** 3 new files (14 test functions, one parametrised ×3), 5 edited test files.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02 (amendment A1: the count-keyed config golden, the replay's `--registered-ids`, the sentences that said every action is the Captain's, P1-2 re-anchored on S2's repaired head, the head-text sweep; amendment A2: P1-3 re-anchored on S2's frozen head `bfb6b72d`, the Status, Base and Re-run text brought up to date, and two sentences that called the confinement's set the tools that run with no approval; amendment A3: the contract's sentences audited before the build: BF-946's shared files, the L1 line number, §14's external claims rewritten against their sources, the absence records A2, A4, A5 and A8 widened to generic consumers, "read by no code", the universals in §15, §16 and the test texts (two test names), the replay's `mcp:` buckets, and P1-32 to P1-34 for three comments and a log message that said an admitted call ran under the Captain's approval (A12)); the orchestrator (Claude Sonnet 5.5), 2026-11-02, before the build: the Status line names BF-946's merge, section 12 records the oracle's re-run on A3, and record sentences are brought in line with the head and the sources (section 10's census sentence, L2's last sentence, section 14's CrewAI per-tool sentence, the AutoGen and CrewAI row texts, and section 16.4's flag-off sentence); no pair, block or SEARCH changed; the orchestrator again, 2026-11-03, after review round 1 (amendment R1: N2-1 exits 2 before anything is written when `--receipt` names the copy or one of its SQLite sidecars or when `--since` or `--until` is not finite, N2-2 gains R4, section 10 gains RY-21 to RY-25, P3-1 loses its clause on the tools a run calls directly and says which two fields `tier_decider` reads, and the other sentences the review found false are deleted: the Gravitee clause and the overdue-project bullet of section 14, the absence parenthetical of section 15 item 3, and "writes only the receipt" of item 10; no SEARCH and no other pair changed); the orchestrator once more, 2026-11-03, after review round 2 (amendment R2: N2-1 also compares a `--receipt` that exists with the copy and its sidecars by file identity, so a second hard-link name for the copy is refused; N2-2's R4 gains a hard link and a respelled sidecar; section 10 gains RY-26; and two sentences the review found false are deleted: the claim in section 14 that neither Gravitee source says who the approver should be, and the sentence in section 10 on what the census prints; no SEARCH and no other pair changed); the orchestrator a third time, 2026-11-03, after review round 3 and the Architect's decision of that round's brake (amendment R3: `main` exits 2 with a message that says the check failed when the check that `--receipt` is not the copy raises an `OSError`, N2-2 gains R5 and `import pytest`, section 10 gains RY-27 and RY-28 and RY-21's Line cell follows `main`'s variable; no SEARCH and no block other than N2-1 and N2-2 changed)
+**Status:** built on main after BF-946 merged (merge commit `f31afa56`, PR #1739); AD-1356 S1 and S2 merged as main `b773c662`, whose tree is S2's frozen head `bfb6b72d`'s. **Base:** drafted on S2's head `f0c935a1` (main `e9140fcb` + S1 + S2 M1, M2 and the campaign bullet); S2 is frozen at `bfb6b72d` (review round 3 READY). A1 re-anchored P1-2 on S2's repaired head `06dd7539`, and P1-2 applies on the frozen head; A2 re-anchors P1-3 on the frozen head, whose round-2 repair shortened `routine_tool_ids`'s docstring. **Dependencies:** AD-1356 S1 and S2 (#1722), BF-946 (#1723; it merges first, edits `DECISIONS.md` and `PROGRESS.md` above this contract's anchors, and regenerates `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`). **Tier:** M1 HIGH (changes who authorises an agent-work call), M2 STANDARD (a read-only script and its test), M3 STANDARD (trackers and ledger). **Estimated tests:** 3 new files (15 test functions, one parametrised ×3), 5 edited test files.
 **AD number:** AD-1356, held by the title of #1722; `scripts/ad_ceiling.py` on 2026-11-02: ceiling AD-1356, next AD-1357. S3 and S4 are slices; no new number.
 
 **Which text describes the head.** §1 to §3 describe `f0c935a1`; line numbers are that commit's. The head is what §7 and §8's pairs and new-file blocks produce, applied in order on the merged base. **P1-1, P1-2, P1-3, P1-11, P1-15, P1-16, P1-18 and P1-33 quote text S1 or S2 wrote (P1-2 and P1-3 as of S2's frozen head `bfb6b72d`); N1-1 and N1-2 import S2's test helpers.** Every other SEARCH quotes text from before S1. A SEARCH that no longer matches goes back to the Architect and is not rebased by hand. Where prose differs from a block, the block wins. Head text means every docstring, comment, log message, error string, agent-facing string, config description and test docstring in those blocks, plus §8's tracker entries and §5's commit messages.
@@ -68,7 +68,7 @@ On `f0c935a1`:
 - Test CC6 covers the whole path, from the work item to the Captain's approval resuming it.
 
 **D4. The replay script.**
-1. **Chosen: M2 of this contract, after the classification it replays.** It opens a copy read-only with `?mode=ro` and hashes the database file before and after. It needs no registry and no ontology: which tool ids exist on the vessel is the operator's input, `--registered-ids` (A1). The test (R1 to R4) files a synthetic 28-row copy through the real `CapabilityRequestStore`.
+1. **Chosen: M2 of this contract, after the classification it replays.** It opens a copy read-only with `?mode=ro` and hashes the database file before and after. It needs no registry and no ontology: which tool ids exist on the vessel is the operator's input, `--registered-ids` (A1). The test (R1 to R5) files a synthetic 28-row copy through the real `CapabilityRequestStore`.
    - *Why `--registered-ids`.* S2's table lists no critical id (critical is the default), so offline the script cannot tell a registered unlisted tool (`run_python`: critical, the Captain's) from a nonexistent one (refused by S1.1 before the gate). `--registered-ids` is read only for a non-`mcp:` id the table does not list: in it, `critical_captain`; not in it, `unregistered`; with no argument, `unlisted`. An `mcp:` id is `critical_captain` offline. Rejected: building a `ToolRegistry` in the script (it needs the runtime, and `run_python` is registered lazily at `agentic_dispatch.py:3152-3158`, so no static list of registered ids exists); a hard-coded id list (it goes stale silently).
    - *Rollout:* the orchestrator copies `capability_requests.db`, plus its `-wal` and `-shm` files if present, out of `%LOCALAPPDATA%\ProbOS\data` while the vessel is stopped. It runs `python -P scripts/replay_approval_tiers.py --db <copy> --since <epoch 2026-10-31T22:10:00Z> --until <epoch 2026-11-01T04:30:00Z>`, establishes from the code which of the receipt's `unlisted_tool_ids` the vessel registers, reruns with `--registered-ids <those ids>`, and checks `requests == 28`, `captain_routed == 3` and `counts["unregistered"] == 3`.
    - *What the receipt can show offline:* the `unregistered` ids (as judged by the operator's `--registered-ids`) and the 9 `elevated_chief` requests (to be checked against who filed them; L7).
@@ -137,6 +137,7 @@ On `f0c935a1`:
 | R2 | replay_approval_tiers | `test_with_reads_unconfined_the_two_path_reads_go_to_the_captain_and_a_missing_copy_is_refused` | Acc. 1 |
 | R3 | replay_approval_tiers | `test_without_registered_ids_run_python_and_the_nonexistent_tools_stay_unlisted` | D4, no `--registered-ids` |
 | R4 | replay_approval_tiers | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` | Acc. 1; the replay's argument boundaries |
+| R5 | replay_approval_tiers | `test_a_rerun_over_an_existing_receipt_is_written_and_a_failing_identity_check_refuses` | Acc. 1; the second run; a failing lookup |
 
 **Edited test files:**
 - `tests/test_ad1347_s3_execution.py` (the empty-set pin, P1-21).
@@ -1335,8 +1336,8 @@ Offline limits: no tool registry, so a non-``mcp:`` id the table does not list i
 and an ``mcp:`` tool is critical; no ontology, so a ``*_chief`` request filed by a chief, or by crew with no
 same-department chief, goes live to the First Officer under a live delegation, else the Captain; the recovery-read test
 does not check the workspace root. Exit 0 with a receipt; 2, with no receipt written, when the copy is missing, an
-argument is invalid, an epoch is not finite, or ``--receipt`` names the copy or one of its SQLite sidecars. A copy that
-changes while it is read raises.
+argument is invalid, an epoch is not finite, ``--receipt`` names the copy or one of its SQLite sidecars, or the check
+that it does not fails with an ``OSError``. A copy that changes while it is read raises.
 """
 
 from __future__ import annotations
@@ -1458,7 +1459,7 @@ def replay(
 
 def _names_the_copy(receipt: Path, db: Path) -> bool:
     """True when ``receipt`` is the copy or one of its SQLite sidecars: by resolved path (case folded where the host
-    folds case) or, when both exist, by file identity (a hard link)."""
+    folds case) or, when both exist, by file identity (a hard link). Raises ``OSError`` when a lookup fails."""
     target = os.path.normcase(os.path.realpath(receipt))
     for suffix in ("", "-wal", "-shm", "-journal"):
         candidate = db.with_name(db.name + suffix)
@@ -1490,7 +1491,12 @@ def main(argv: list[str] | None = None) -> int:
     if not (math.isfinite(args.since) and math.isfinite(args.until)):
         print("replay_approval_tiers: --since and --until must be finite epoch seconds", file=sys.stderr)
         return 2
-    if _names_the_copy(args.receipt, args.db):
+    try:
+        names_the_copy = _names_the_copy(args.receipt, args.db)
+    except OSError as exc:
+        print(f"replay_approval_tiers: cannot verify --receipt is not the copy: {exc}", file=sys.stderr)
+        return 2
+    if names_the_copy:
         print(f"replay_approval_tiers: --receipt {args.receipt} is the copy or one of its sidecars", file=sys.stderr)
         return 2
     reads_confined = not args.reads_unconfined
@@ -1535,6 +1541,8 @@ import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+import pytest
 
 from probos.agent_work_runner import approval_payload
 from probos.capability_request import CapabilityRequestStore
@@ -1674,6 +1682,33 @@ async def test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_ep
     assert not refused.exists()
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
     assert sorted(path.name for path in db.parent.iterdir()) == listing
+
+
+# R5
+async def test_a_rerun_over_an_existing_receipt_is_written_and_a_failing_identity_check_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second run to the same receipt path exits 0 and writes the receipt again (the copy has no -journal file beside
+    it); when the check that --receipt is not the copy fails with an OSError, the run exits 2, writes nothing and
+    leaves the copy's bytes and the earlier receipt as they were."""
+    db = await _the_31st(tmp_path)
+    assert not db.with_name(db.name + "-journal").exists()
+    receipt = tmp_path / "gates" / "receipt.json"
+    argv = ["--db", str(db), "--since", "0", "--until", str(time.time() + 60), "--receipt", str(receipt)]
+    assert replay.main(argv) == 0
+    receipt.write_text("an earlier receipt", encoding="utf-8")
+    assert replay.main(argv) == 0
+    assert json.loads(receipt.read_text(encoding="utf-8"))["ad"] == "AD-1356"
+    receipt.write_text("an earlier receipt", encoding="utf-8")
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+
+    def denied(*_paths: object) -> bool:
+        raise PermissionError("stat denied")
+
+    monkeypatch.setattr(os.path, "samefile", denied)
+    assert replay.main(argv) == 2
+    assert receipt.read_text(encoding="utf-8") == "an earlier receipt"
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
 ```
 
 ## 8. Tracking (M3's commit)
@@ -1728,7 +1763,7 @@ Then regenerate the ledger (`python -P scripts/gen_ad_ledger.py`) and stage `doc
 - `security/file_access.py`, the swe_harness tools, the MCP invoke-time gates (`_McpTool.invoke`).
 - The live vessel's config and data.
 
-## 10. Mutation rows (one campaign of record: RY-1 to RY-15 on M1's head, RY-16 to RY-26 on the head that holds N2-1 and N2-2 as amended by review rounds 1 and 2)
+## 10. Mutation rows (one campaign of record: RY-1 to RY-15 on M1's head, RY-16 to RY-28 on the head that holds N2-1 and N2-2 as amended by review rounds 1 to 3)
 
 The Line cells hold the source line without its leading indentation. Prefix `RY` (scoped to this contract).
 
@@ -1754,14 +1789,16 @@ The Line cells hold the source line without its leading indentation. Prefix `RY`
 | RY-18 | `scripts/replay_approval_tiers.py` | `reads_confined = not args.reads_unconfined` | `reads_confined = True` | `test_with_reads_unconfined_the_two_path_reads_go_to_the_captain_and_a_missing_copy_is_refused` |
 | RY-19 | `scripts/replay_approval_tiers.py` | `if tool_id not in registered:` | `if False:` | `test_the_31st_replays_to_three_captain_decisions_and_the_copy_is_unchanged` |
 | RY-20 | `scripts/replay_approval_tiers.py` | `if registered is None:` | `if False:` | `test_without_registered_ids_run_python_and_the_nonexistent_tools_stay_unlisted` |
-| RY-21 | `scripts/replay_approval_tiers.py` | `if _names_the_copy(args.receipt, args.db):` | `if False:` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
+| RY-21 | `scripts/replay_approval_tiers.py` | `if names_the_copy:` | `if False:` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
 | RY-22 | `scripts/replay_approval_tiers.py` | `for suffix in ("", "-wal", "-shm", "-journal"):` | `for suffix in ("",):` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
 | RY-23 | `scripts/replay_approval_tiers.py` | `target = os.path.normcase(os.path.realpath(receipt))` | `target = str(receipt)` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
 | RY-24 | `scripts/replay_approval_tiers.py` | `if not (math.isfinite(args.since) and math.isfinite(args.until)):` | `if False:` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
 | RY-25 | `scripts/replay_approval_tiers.py` | `if not (math.isfinite(args.since) and math.isfinite(args.until)):` | `if not math.isfinite(args.since):` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
 | RY-26 | `scripts/replay_approval_tiers.py` | `if receipt.exists() and candidate.exists() and os.path.samefile(receipt, candidate):` | `if False:` | `test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write` |
+| RY-27 | `scripts/replay_approval_tiers.py` | `except OSError as exc:` | `except ZeroDivisionError as exc:` | `test_a_rerun_over_an_existing_receipt_is_written_and_a_failing_identity_check_refuses` |
+| RY-28 | `scripts/replay_approval_tiers.py` | `if receipt.exists() and candidate.exists() and os.path.samefile(receipt, candidate):` | `if receipt.exists() and os.path.samefile(receipt, candidate):` | `test_a_rerun_over_an_existing_receipt_is_written_and_a_failing_identity_check_refuses` |
 
-Each row is killed by the test in its last column. RY-1 to RY-20 were killed by their named killers on the oracle built on S2's frozen head (§12, third re-run), and again on A3's oracle (§12, fourth re-run; A3 renamed WD2, the killer of RY-5, RY-10 and RY-12). On the oracle of amendment R1 (§12, fifth re-run) RY-16 to RY-25 were each killed by their named killer, and on the oracle of amendment R2 (§12, sixth re-run) RY-16 to RY-26.
+Each row is killed by the test in its last column. RY-1 to RY-20 were killed by their named killers on the oracle built on S2's frozen head (§12, third re-run), and again on A3's oracle (§12, fourth re-run; A3 renamed WD2, the killer of RY-5, RY-10 and RY-12). On the oracle of amendment R1 (§12, fifth re-run) RY-16 to RY-25 were each killed by their named killer, on the oracle of amendment R2 (§12, sixth re-run) RY-16 to RY-26, and on the oracle of amendment R3 (§12, seventh re-run) RY-16 to RY-28.
 
 Not mutated: `filed_call_tier`'s guard (`registration is None ...`). CC5[reaped] reaches it. With the guard removed, the reaped id's `None` registration raises inside the `try` and the `except` answers critical too, so a mutant of either survives: the two fail closed together. The P1-19 rationale text is asserted by CC1 but not mutated, because RY-14 and RY-15 cover the text set.
 
@@ -1839,6 +1876,8 @@ Read DECISIONS.md :10992, :11460-11470; grep "^### (AD-1356 S[12]|BF-947)" -> 12
 **Re-run of amendment R1 (2026-11-03), the orchestrator's oracle.** On main `f31afa56` (the scratch base `6c52febd`): the 34 pairs, the four new files and the two regenerated files applied with 0 failures. Against the oracle of the contract as committed before R1, M1's stage differs only by this file (the M1 blobs are unchanged), M2's stage by this file, N2-1 and N2-2, and the tracker stage also by `PROGRESS.md` (P3-1). G2: 4 passed (R1 to R4). RY-16 to RY-25 were each killed by their named killer (baseline 4 passed); 0 census problems. A probe against the base script (M2 as first committed) and the repaired one: on the base script `--receipt` naming the copy overwrote it with the JSON receipt (exit 0, and the copy was then not a database) and `--since nan` wrote a receipt holding `NaN`, which a strict JSON parser rejects; the repaired script exits 2 for the first and for `nan` or `inf` in either epoch, and writes nothing. A copy whose rows hold a `created_at` of plus or minus infinity or of text is read through a finite window without selecting them, and the receipt parses strictly: the receipt holds no non-finite float once the epochs are finite, so a serialization guard (`allow_nan=False`) would be unreachable and is not added.
 
 **Re-run of amendment R2 (2026-11-03), the orchestrator's oracle.** On main `f31afa56` (the scratch base `795daffc`): the 34 pairs, the four new files and the two regenerated files applied with 0 failures. Against the oracle of amendment R1, M1's stage differs only by this file, and M2's stage and the tracker stage by this file, N2-1 and N2-2 (`PROGRESS.md` is unchanged). G2: 4 passed (R1 to R4). RY-16 to RY-26 were each killed by their named killer (baseline 4 passed); 0 census problems. A probe against the script of amendment R1 and the amended one: on the former a second hard-link name for the copy, given as `--receipt`, overwrote the copy (exit 0, and the copy was then not a database). The amended script exits 2 for that name, for a hard link in another directory and for relative spellings of the copy and the link, with the copy's bytes and its directory's listing unchanged; it still writes a receipt to an ordinary path and still overwrites an existing file that is not the copy.
+
+**Re-run of amendment R3 (2026-11-03), the orchestrator's oracle.** On main `f31afa56` (the scratch base `02079634`): the 34 pairs, the four new files and the two regenerated files applied with 0 failures. Against the oracle of amendment R2, M1's stage differs only by this file, and M2's stage and the tracker stage by this file, N2-1 and N2-2. G2: 5 passed (R1 to R5). RY-16 to RY-28 were each killed by their named killer (baseline 5 passed); 0 census problems.
 
 ## Absence Verified (2026-11-02, on `f0c935a1`)
 
@@ -1983,7 +2022,7 @@ A12 CLAIM: outside the contract's other pairs, the sentences that say an admitte
 7. `DelegatedApprovalService`'s body line count is unchanged; no class under `src/` gains a method.
 8. Every added or rewritten docstring, comment, config description, agent-facing text and test docstring is true of the head.
 9. The facade baseline diff touches only `ApprovalInboxConfig`'s three field rows, the `schema_sha256` of `ApprovalInboxConfig` and of `SystemConfig` (which nests it), `surface_counts` and `canonical_dump_sha256`.
-10. The replay opens the copy with `mode=ro`, reads `--registered-ids` only for an id the table does not list, exits 2 before writing when `--receipt` names the copy or one of its SQLite sidecars or when an epoch is not finite (R4), and the test never names `%LOCALAPPDATA%`.
+10. The replay opens the copy with `mode=ro`, reads `--registered-ids` only for an id the table does not list, exits 2 before writing when `--receipt` names the copy or one of its SQLite sidecars, when an epoch is not finite (R4) or when the check that `--receipt` is not the copy fails with an `OSError` (R5), and the test never names `%LOCALAPPDATA%`.
 11. CC1-CC6 and WD1-WD3 each start from a work item and end at the item finishing or waiting for the Captain.
 12. P1-25 to P1-34 change text only, and each changed sentence is true of the head.
 
@@ -1994,6 +2033,6 @@ A12 CLAIM: outside the contract's other pairs, the sentences that say an admitte
 3. CC3 and WD4: a critical or unlisted call is `CAPTAIN_RESERVED` under the most permissive settings, and no config value, through the model or `POST /api/config`, changes that (acc. 2).
 4. CC4, CC5, CC6: a filed path read stays with the Captain; MCP tiers follow AD-1019b; with the flag off a filed elevated call waits for the Captain.
 5. WD1-WD3: elevated `auto` runs `list_files` with nothing filed; routine and elevated `captain` (an empty direct set) leaves a filed routine call to the Captain; routine `chief` lets the chief decide a filed routine call.
-6. R1 to R3: the replay reports 28 requests, 3 Captain-routed with roots set and `run_python` registered, 3 unregistered, and leaves the copy unchanged (acc. 1); with no `--registered-ids` the 6 unlisted ids stay unlisted; at rollout the orchestrator runs it on a stopped-vessel copy (D4). R4: a receipt that names the copy or one of its sidecars, and a `--since` or `--until` that is not finite, exit 2 and write nothing.
+6. R1 to R3: the replay reports 28 requests, 3 Captain-routed with roots set and `run_python` registered, 3 unregistered, and leaves the copy unchanged (acc. 1); with no `--registered-ids` the 6 unlisted ids stay unlisted; at rollout the orchestrator runs it on a stopped-vessel copy (D4). R4: a receipt that names the copy or one of its sidecars, and a `--since` or `--until` that is not finite, exit 2 and write nothing. R5: a second run to the same receipt path writes the receipt again, and a failing identity check exits 2 and writes nothing.
 7. Every §10 mutant is killed; G1-G3 and the §13 checks pass; the broad gate's receipt is green.
 8. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

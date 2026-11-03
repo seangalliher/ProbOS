@@ -16,6 +16,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 from probos.agent_work_runner import approval_payload
 from probos.capability_request import CapabilityRequestStore
 
@@ -154,3 +156,30 @@ async def test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_ep
     assert not refused.exists()
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
     assert sorted(path.name for path in db.parent.iterdir()) == listing
+
+
+# R5
+async def test_a_rerun_over_an_existing_receipt_is_written_and_a_failing_identity_check_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second run to the same receipt path exits 0 and writes the receipt again (the copy has no -journal file beside
+    it); when the check that --receipt is not the copy fails with an OSError, the run exits 2, writes nothing and
+    leaves the copy's bytes and the earlier receipt as they were."""
+    db = await _the_31st(tmp_path)
+    assert not db.with_name(db.name + "-journal").exists()
+    receipt = tmp_path / "gates" / "receipt.json"
+    argv = ["--db", str(db), "--since", "0", "--until", str(time.time() + 60), "--receipt", str(receipt)]
+    assert replay.main(argv) == 0
+    receipt.write_text("an earlier receipt", encoding="utf-8")
+    assert replay.main(argv) == 0
+    assert json.loads(receipt.read_text(encoding="utf-8"))["ad"] == "AD-1356"
+    receipt.write_text("an earlier receipt", encoding="utf-8")
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+
+    def denied(*_paths: object) -> bool:
+        raise PermissionError("stat denied")
+
+    monkeypatch.setattr(os.path, "samefile", denied)
+    assert replay.main(argv) == 2
+    assert receipt.read_text(encoding="utf-8") == "an earlier receipt"
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before

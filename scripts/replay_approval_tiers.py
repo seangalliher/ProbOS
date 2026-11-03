@@ -20,8 +20,8 @@ Offline limits: no tool registry, so a non-``mcp:`` id the table does not list i
 and an ``mcp:`` tool is critical; no ontology, so a ``*_chief`` request filed by a chief, or by crew with no
 same-department chief, goes live to the First Officer under a live delegation, else the Captain; the recovery-read test
 does not check the workspace root. Exit 0 with a receipt; 2, with no receipt written, when the copy is missing, an
-argument is invalid, an epoch is not finite, or ``--receipt`` names the copy or one of its SQLite sidecars. A copy that
-changes while it is read raises.
+argument is invalid, an epoch is not finite, ``--receipt`` names the copy or one of its SQLite sidecars, or the check
+that it does not fails with an ``OSError``. A copy that changes while it is read raises.
 """
 
 from __future__ import annotations
@@ -143,7 +143,7 @@ def replay(
 
 def _names_the_copy(receipt: Path, db: Path) -> bool:
     """True when ``receipt`` is the copy or one of its SQLite sidecars: by resolved path (case folded where the host
-    folds case) or, when both exist, by file identity (a hard link)."""
+    folds case) or, when both exist, by file identity (a hard link). Raises ``OSError`` when a lookup fails."""
     target = os.path.normcase(os.path.realpath(receipt))
     for suffix in ("", "-wal", "-shm", "-journal"):
         candidate = db.with_name(db.name + suffix)
@@ -175,7 +175,12 @@ def main(argv: list[str] | None = None) -> int:
     if not (math.isfinite(args.since) and math.isfinite(args.until)):
         print("replay_approval_tiers: --since and --until must be finite epoch seconds", file=sys.stderr)
         return 2
-    if _names_the_copy(args.receipt, args.db):
+    try:
+        names_the_copy = _names_the_copy(args.receipt, args.db)
+    except OSError as exc:
+        print(f"replay_approval_tiers: cannot verify --receipt is not the copy: {exc}", file=sys.stderr)
+        return 2
+    if names_the_copy:
         print(f"replay_approval_tiers: --receipt {args.receipt} is the copy or one of its sidecars", file=sys.stderr)
         return 2
     reads_confined = not args.reads_unconfined
