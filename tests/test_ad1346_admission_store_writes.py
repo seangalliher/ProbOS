@@ -1,16 +1,19 @@
 """AD-1346 M3e4b (#1604): the store-write checks of the Ward Room and the episodic store, in shadow; AD-1346 M3e4d1:
-and of the clinical notes store and the skill request store; AD-1346 M3e4d2: and of the persistent task store.
+and of the clinical notes store and the skill request store; AD-1346 M3e4d2: and of the persistent task store;
+AD-1346 M3e4d3: and of the chat thread store.
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
 after its policy check, presenting the episode's one agent id or None. From AD-1346 M3e4d1
 ``ClinicalNotesStore.write_note``, ``SkillRequestStore.file_request`` and ``SkillRequestStore.decide`` call it as the
 statement before their ``if self._db:``, presenting ``author_agent_id``, ``agent_id`` and ``decided_by``, and from
-AD-1346 M3e4d2 ``PersistentTaskStore.create_task`` does, presenting ``created_by``.
+AD-1346 M3e4d2 ``PersistentTaskStore.create_task`` does, presenting ``created_by``. From AD-1346 M3e4d3
+``ChatThreadStore.create_thread`` and ``ChatThreadStore.append_message_once`` call it as the statement before their
+``with self._connect() as conn:``, presenting ``meta.get("created_by_agent")`` and ``author_id``.
 ``ProbOSRuntime.start`` hands the service through ``set_admission`` to the runtime's Ward Room when it is a
 ``WardRoomService``, to its episodic store when it is an ``EpisodicMemory``, to its clinical notes store when it is a
-``ClinicalNotesStore``, to its skill request store when it is a ``SkillRequestStore`` and to its persistent task store
-when it is a ``PersistentTaskStore``.
+``ClinicalNotesStore``, to its skill request store when it is a ``SkillRequestStore``, to its persistent task store
+when it is a ``PersistentTaskStore`` and to its chat thread store when it is a ``ChatThreadStore``.
 ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
@@ -30,8 +33,8 @@ when it is a ``PersistentTaskStore``.
        without it, with nothing carried, under a live ticket and after a Captain's stop.
 - WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room,
        skill requests and persistent tasks on, the runtime's Ward Room, episodic store, clinical notes store, skill
-       request store and persistent task store hold the runtime's service and their writes reach ``check_ticket`` with
-       the presented ids; with it false all five hold None.
+       request store, persistent task store and chat thread store hold the runtime's service and their writes reach
+       ``check_ticket`` with the presented ids; with it false all six hold None.
 - WM6  #1604 property 1 at the three AD-1346 M3e4d1 checks: three rounds of four writes (a note by each of two agents,
        a filing by the first and its decision by the second), outside a hold, inside the first agent's hold, and inside
        it after a Captain's stop, tally 4 ``ticket_missing``, 2 ``ticket_live``, 2 ``ticket_principal_mismatch`` and 4
@@ -43,10 +46,16 @@ when it is a ``PersistentTaskStore``.
        1 ``ticket_live``, 1 ``ticket_principal_mismatch`` and 2 ``ticket_revoked``.
 - WM9  #1604 property 12 at that check: two task stores, one with the service and one without, answer the same three
        rounds the same.
+- WM10 #1604 property 1 at the two AD-1346 M3e4d3 checks: three rounds of a thread the first agent creates, a message
+       by the second and a message by the first appended through ``asyncio.to_thread``, outside a hold, inside the first
+       agent's hold, and inside it after a Captain's stop, tally 3 ``ticket_missing``, 2 ``ticket_live``, 1
+       ``ticket_principal_mismatch`` and 3 ``ticket_revoked``, and the service counts 3 checks handed to its loop.
+- WM11 #1604 property 12 at those two checks: two chat thread stores, one with the service and one without, answer
+       the same three rounds the same.
 
 WM3 and WM4 use a real ``WardRoomService`` and ``EpisodicMemory``, WM6 and WM7 a real ``ClinicalNotesStore`` and
-``SkillRequestStore``, and WM8 and WM9 a real ``PersistentTaskStore``, over ``tmp_path``, with a service built with the
-test's loop. WM5 boots a real runtime under
+``SkillRequestStore``, WM8 and WM9 a real ``PersistentTaskStore``, and WM10 and WM11 a real ``ChatThreadStore`` with a
+fixed clock, over ``tmp_path``, with a service built with the test's loop. WM5 boots a real runtime under
 ``tmp_path`` and replaces ``AdmissionService.check_ticket``, as ``tests/test_ad1346_admission_egress_sinks.py``'s ES2
 does.
 """
@@ -78,6 +87,7 @@ from probos.persistent_tasks import PersistentTaskStore
 from probos.runtime import ProbOSRuntime
 from probos.skill_request import SkillRequestStore
 from probos.substrate.registry import AgentRegistry
+from probos.threads import ChatThreadStore
 from probos.types import Episode, EpisodeStoreOutcome
 from probos.ward_room import WardRoomService
 from tests.fixtures.ad1343_seam_census import calls, function
@@ -361,8 +371,8 @@ async def test_with_and_without_the_service_the_checked_writes_answer_identicall
 async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episodic_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; AD-1346 M3e4d2: D293; kills EV-7, EV-8, ED-5, ED-6,
-    EY-3)."""
+    """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; AD-1346 M3e4d2: D293; AD-1346 M3e4d3: D300; kills
+    EV-7, EV-8, ED-5, ED-6, EY-3, EU-5)."""
     memory = EpisodicMemory(db_path=str(tmp_path / "on" / "episodic" / "episodes.db"))
     runtime = ProbOSRuntime(
         config=_config(shadow_enabled=True), data_dir=tmp_path / "on" / "data", llm_client=MockLLMClient(),
@@ -401,6 +411,13 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         task_mark = len(seen)
         await tasks.create_task("ad1346 m3e4d2 yankee", execute_at=_LATER, created_by=AGENT_A)
         assert seen[task_mark] == (True, AGENT_A), (task_mark, seen)
+        chats = runtime.chat_thread_store  # AD-1346 M3e4d3
+        assert type(chats) is ChatThreadStore and vars(chats)["_admission"] is service, "the runtime built and handed it"
+        chat_marks = [len(seen)]
+        chat = chats.create_thread(title="ad1346 m3e4d3 juliett", participants=[AGENT_A], metadata={"created_by_agent": AGENT_A})
+        chat_marks.append(len(seen))
+        chats.append_message(chat.id, author_id=AGENT_B, role="agent", body="ad1346 m3e4d3 kilo")
+        assert [seen[mark] for mark in chat_marks] == [(True, AGENT_A), (True, AGENT_B)], (chat_marks, seen)
     finally:
         await asyncio.wait_for(runtime.stop(), timeout=600)
     off_memory = EpisodicMemory(db_path=str(tmp_path / "off" / "episodic" / "episodes.db"))
@@ -417,6 +434,8 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         assert vars(off_notes)["_admission"] is None and vars(off_skills)["_admission"] is None  # AD-1346 M3e4d1
         off_tasks = off.persistent_task_store  # AD-1346 M3e4d2
         assert type(off_tasks) is PersistentTaskStore and vars(off_tasks)["_admission"] is None, "built and handed None"
+        off_chats = off.chat_thread_store  # AD-1346 M3e4d3
+        assert type(off_chats) is ChatThreadStore and vars(off_chats)["_admission"] is None, "built and handed None"
     finally:
         await asyncio.wait_for(off.stop(), timeout=600)
 
@@ -567,4 +586,71 @@ async def test_with_and_without_the_service_the_task_creations_answer_identicall
         ("store_write", "ticket_missing"): 2, ("store_write", "ticket_live"): 1,
         ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 2,
     }
+    assert service.failures == 0
+
+
+async def _chat_round(store: ChatThreadStore, phase: int) -> list[object]:
+    """AD-1346 M3e4d3: one round of three checked writes: a thread ``AGENT_A`` creates, a message by ``AGENT_B``, and a
+    message by ``AGENT_A`` appended through ``asyncio.to_thread``. Returns each answer without the fields a fresh store
+    draws."""
+    thread = store.create_thread(
+        title=f"ad1346 m3e4d3 golf {phase}", participants=[AGENT_A, AGENT_B], metadata={"created_by_agent": AGENT_A},
+    )
+    first = store.append_message(thread.id, author_id=AGENT_B, role="agent", body=f"ad1346 m3e4d3 hotel {phase}")
+    second = await asyncio.to_thread(
+        store.append_message, thread.id, author_id=AGENT_A, role="agent", body=f"ad1346 m3e4d3 india {phase}",
+    )
+    for _ in range(3):
+        await asyncio.sleep(0)
+    return [_shape(thread), _shape(first), _shape(second)]
+
+
+async def test_the_thread_and_message_checks_count_missing_live_mismatch_and_revoked(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM10 (#1604 property 1 at the two AD-1346 M3e4d3 checks; D299, D301; kills EU-2, EU-4, EU-6)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    store = ChatThreadStore(tmp_path / "chat_threads.db", clock=_Clock())
+    store.set_admission(service)
+    await _chat_round(store, 1)
+    hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+    try:
+        await _chat_round(store, 2)
+        await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d3: the Captain stops the held work")
+        await _chat_round(store, 3)
+    finally:
+        hold.end()
+    assert tickets.tally() == {
+        ("issue", "ticket_issued"): 1,
+        ("store_write", "ticket_missing"): 3, ("store_write", "ticket_live"): 2,
+        ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 3,
+    }
+    assert service.off_loop_checks() == {"store_write": 3}
+    assert service.failures == 0
+
+
+async def test_with_and_without_the_service_the_thread_and_message_writes_answer_identically(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM11 (#1604 property 12 at the two AD-1346 M3e4d3 checks; D302)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    stores = [ChatThreadStore(tmp_path / f"chat_threads_{i}.db", clock=_Clock()) for i in (0, 1)]
+    for store, held in zip(stores, (service, None)):
+        store.set_admission(held)
+    first = [await _chat_round(store, 1) for store in stores]
+    hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+    try:
+        second = [await _chat_round(store, 2) for store in stores]
+        await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d3: the golden test's stop")
+        third = [await _chat_round(store, 3) for store in stores]
+    finally:
+        hold.end()
+    assert first[0] == first[1] and second[0] == second[1] and third[0] == third[1]
+    assert first[0][0]["metadata"] == {"created_by_agent": AGENT_A} and first[0][1]["author_id"] == AGENT_B, "premise: the answers' creator and author"
+    assert tickets.tally() == {
+        ("issue", "ticket_issued"): 1,
+        ("store_write", "ticket_missing"): 3, ("store_write", "ticket_live"): 2,
+        ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 3,
+    }
+    assert service.off_loop_checks() == {"store_write": 3}
     assert service.failures == 0
