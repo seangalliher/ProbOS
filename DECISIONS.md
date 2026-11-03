@@ -1252,6 +1252,17 @@ AD-1346 M3e4c3c is the third part of M3e4c3. It classifies the 19 file-write row
 - *Residual, accepted.* Register R134 and R135 of the contract.
 - *Reversal.* Revert the M3e4c3c commits.
 
+### AD-1346 M3e4c3d -- 29 more file-write rows classified as the ship's (2026-11-03, #1604)
+
+AD-1346 M3e4c3d is the fourth part of M3e4c3. It classifies 29 of the 31 file-write rows that M3e4c3c left as the ship's, and the other two as agent-attributed; nothing is checked, refused or charged, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3d-file-write-classification.md`.
+
+- *D268 (the cut).* The 29 rows that are the ship's now; the two avatar proposal histories carry the owner M3e4c3e (register R136). Rejected: all 31 now; a cut by directory.
+- *D269 (the classification).* The 29 files are `System` under the ship's principal, by D239 and D218. The two proposal histories are agent-attributed: each records a proposal with an agent id taken from an HTTP request's path. Rejected: the Blender renderer and the telemetry history pending for M3e4d (each is named by the id of the agent it is about); the migration file as outside the runtime; the appearance proposal history as the ship's.
+- *D270 (the guards).* `_CLASSIFIED` is deleted and WF6 becomes `test_the_ships_rows`: the `System` rows are every row but the Ship's Records', the command-line rows and the two of `_LEFT`. Rejected: `_CLASSIFIED` extended by 25 entries; a second guard beside WF6.
+- *Tests.* WF1's counts change; WF6 is rewritten and renamed.
+- *Residual, accepted.* Register R136 and R137 of the contract.
+- *Reversal.* Revert the M3e4c3d commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
