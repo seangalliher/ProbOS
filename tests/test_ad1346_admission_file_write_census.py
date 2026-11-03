@@ -5,16 +5,17 @@
 ``FILE_AGENT_ATTRIBUTED_STATE_SCOPES`` give scopes and an author name for the files whose rows are pending for AD-1346
 M3e4d.
 
-- WF1  every file the scan finds is a row of ``FILE_WRITE_FILES`` and every row is one: 72 files (3 pending for
-       AD-1346 M3e4d, 67 the ship's and 2 command-line), and 207 points counted by name.
+- WF1  every file the scan finds is a row of ``FILE_WRITE_FILES`` and every row is one: 73 files (3 pending for
+       AD-1346 M3e4d, 68 the ship's and 2 command-line), and 214 points counted by name.
 - WF2  the scan on a synthetic module: the seven methods of ``FILE_WRITE_METHODS``, the seven functions of
        ``MODULE_WRITES``, ``os.open`` with a write flag, ``open`` and ``fdopen`` with a mode that writes (by position
-       and by keyword), a ``Path`` replace and rename with one argument, a method handed to an executor and to
-       ``asyncio.to_thread``, a write in a lambda, one in a nested function and one at module level are points;
-       ``str.replace`` with two arguments or with a keyword, ``open`` with no mode, a read mode or a mode in a variable,
-       a file name that starts with a mode's letter, ``os.open`` with a read flag or with flags in a variable, a
-       handle's ``write``, ``json.dump``, a method reached through ``getattr`` and a string that holds a write's text
-       are not.
+       and by keyword), a ``Path`` replace and rename with one argument, the three methods of ``PINNED_WRITES``, a
+       method handed to an executor and to ``asyncio.to_thread``, ``remove_file`` handed to an executor, a write in a
+       lambda, one in a nested function and one at module level are points; ``str.replace`` with two arguments or
+       with a keyword, ``open`` with no mode, a read mode or a mode in a variable, a file name that starts with a
+       mode's letter, ``os.open`` with a read flag or with flags in a variable, a handle's ``write``, ``json.dump``,
+       ``make_directory``, ``remove_directory``, a method reached through ``getattr`` and a string that holds a
+       write's text are not.
 - WF3  the rows pending for AD-1346 M3e4d are the keys of the two tables, the Ship's Records' file is the one key of
        ``FILE_AGENT_ATTRIBUTED_SCOPES`` and its value is pinned; its scope holds a point the scan finds, its author
        name is a parameter (positional-only, positional or keyword-only) of the one function of that qualified name,
@@ -35,6 +36,10 @@ M3e4d.
        field, that parameter's annotation is a ``Name`` of a class at module level whose body annotates the field.
        That function passes the parameter as a positional argument to a method called on the module-level name, and
        calls a function by a ``Name`` equal to the writing scope.
+- WF9  ``PINNED_WRITES`` is pinned, and it is the set of methods of ``PinnedDirectory`` in ``security/file_access.py``
+       that hold a point the scan finds. In ``execution/workspace_result_store.py`` the scan finds ``remove_file`` in
+       ``GenerationReaper._reap_entry`` and ``ArtifactIO._drop_staged``, and ``write_new`` and ``publish_file`` in
+       ``ArtifactIO._publish_in``, and nothing else.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ from tests.fixtures.ad1346_file_write_census import (
     FILE_AGENT_ATTRIBUTED_SCOPES,
     FILE_AGENT_ATTRIBUTED_STATE_SCOPES,
     FILE_WRITE_FILES,
+    PINNED_WRITES,
     file_write_files,
     file_write_points,
     file_write_scan,
@@ -54,6 +60,8 @@ from tests.fixtures.ad1346_file_write_census import (
 
 _RECORDS = "src/probos/knowledge/records_store.py"
 _IDEAS = "src/probos/cognitive/ready_room/idea_store.py"
+_FILE_ACCESS = "src/probos/security/file_access.py"
+_RESULT_STORE = "src/probos/execution/workspace_result_store.py"
 
 _SYNTHETIC = '''\
 import asyncio
@@ -87,6 +95,12 @@ class Store:
         tmp.rename(path)
         loop.run_in_executor(None, path.unlink)
         asyncio.to_thread(os.replace, tmp, path)
+        path.write_new("a", data)
+        path.publish_file("a", "b")
+        path.remove_file("a")
+        loop.run_in_executor(None, path.remove_file, "a")
+        path.make_directory("a")
+        path.remove_directory("a")
         text.replace("a", "b")
         text.replace(old="a")
         open(path)
@@ -145,13 +159,14 @@ def _called(node: ast.Call) -> str:
 
 
 def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
-    """WF1 (D253, D254, D259, D264, D269, D275; kills EF-12): a file that gains its first file write fails here."""
+    """WF1 (D253, D254, D259, D264, D269, D275, D280; kills EF-12, EZ-3, EZ-4): a file that gains its first file write
+    fails here."""
     found = file_write_files()
     assert sorted(found - FILE_WRITE_FILES.keys()) == []
     assert sorted(FILE_WRITE_FILES.keys() - found) == []
-    assert len(found) == 72, len(found)
+    assert len(found) == 73, len(found)
     kinds = Counter(_kind(cover) for cover in FILE_WRITE_FILES.values())
-    assert kinds == {"Pending M3e4d": 3, "System": 67, "OutsideRuntime": 2}, kinds
+    assert kinds == {"Pending M3e4d": 3, "System": 68, "OutsideRuntime": 2}, kinds
     assert Counter(name for _path, _scope, _line, name in file_write_points()) == {
         "write_text": 59,
         "write_bytes": 7,
@@ -166,11 +181,14 @@ def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
         "fdopen": 10,
         "write": 2,
         "link": 4,
+        "write_new": 3,
+        "publish_file": 1,
+        "remove_file": 3,
     }
 
 
 def test_the_file_write_scan_on_a_synthetic_module() -> None:
-    """WF2 (D253; kills EF-1, EF-2, EF-3, EF-4, EF-6, EF-9, EF-13, EF-14, EF-15)."""
+    """WF2 (D253, D278; kills EF-1, EF-2, EF-3, EF-4, EF-6, EF-9, EF-13, EF-14, EF-15, EZ-2)."""
     assert file_write_scan(_SYNTHETIC) == [
         ("Store.write", 9, "write_text"),
         ("Store.write", 10, "write_bytes"),
@@ -195,9 +213,13 @@ def test_the_file_write_scan_on_a_synthetic_module() -> None:
         ("Store.write", 29, "rename"),
         ("Store.write", 30, "unlink"),
         ("Store.write", 31, "replace"),
-        ("Store.write", 45, "replace"),
-        ("Store.write.inner", 48, "write_text"),
-        ("<module>", 53, "rmtree"),
+        ("Store.write", 32, "write_new"),
+        ("Store.write", 33, "publish_file"),
+        ("Store.write", 34, "remove_file"),
+        ("Store.write", 35, "remove_file"),
+        ("Store.write", 51, "replace"),
+        ("Store.write.inner", 54, "write_text"),
+        ("<module>", 59, "rmtree"),
     ]
 
 
@@ -313,3 +335,16 @@ def test_the_agent_attributed_rows_that_hold_their_author_in_module_state() -> N
             for call in calls
         ), (path, scope, state)
         assert any(isinstance(call.func, ast.Name) and call.func.id == writer for call in calls), (path, scope, writer)
+
+
+def test_the_pinned_directory_writes_and_the_workspace_result_store() -> None:
+    """WF9 (D278, D279, D280; kills EZ-1, EZ-5, EZ-6, EZ-7, EZ-8)."""
+    assert PINNED_WRITES == {"write_new", "publish_file", "remove_file"}, PINNED_WRITES
+    methods = {scope.split(".")[1] for scope, _name in _found(_FILE_ACCESS) if scope.startswith("PinnedDirectory.")}
+    assert methods == PINNED_WRITES, methods
+    assert _found(_RESULT_STORE) == {
+        ("GenerationReaper._reap_entry", "remove_file"),
+        ("ArtifactIO._publish_in", "write_new"),
+        ("ArtifactIO._publish_in", "publish_file"),
+        ("ArtifactIO._drop_staged", "remove_file"),
+    }, _found(_RESULT_STORE)

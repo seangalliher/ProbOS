@@ -25,6 +25,8 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.events import EventType
 from probos.protocols import EventEmitterMixin
 
@@ -96,6 +98,12 @@ class SkillRequestStore(EventEmitterMixin):
     - start() loads all requests into cache; stop() closes the DB
     """
 
+    _admission: object = None  # AD-1346 M3e4d1 (D286, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d1 (D286): the service ``file_request`` and ``decide`` hand ``check_at``; None checks nothing."""
+        self._admission = service
+
     def __init__(
         self,
         db_path: str = "",
@@ -165,6 +173,7 @@ class SkillRequestStore(EventEmitterMixin):
             status="requested",
             created_at=time.time(),
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=agent_id)  # AD-1346 M3e4d1 (D285): the filing's store-write check, in shadow, before the write; it blocks nothing
         if self._db:
             await self._db.execute(
                 "INSERT INTO skill_requests "
@@ -225,6 +234,7 @@ class SkillRequestStore(EventEmitterMixin):
             decided_by=decided_by,
             decision_reason=reason,
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=decided_by)  # AD-1346 M3e4d1 (D285): the decision's store-write check, in shadow, before the write; it blocks nothing
         if self._db:
             await self._db.execute(
                 "UPDATE skill_requests SET status = ?, decided_at = ?, "

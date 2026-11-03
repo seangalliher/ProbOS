@@ -4,7 +4,9 @@
 docstring, or an f-string read with each placeholder as ``_``, whose text ``SQL_WRITE`` matches at its start after
 leading whitespace. A point is (enclosing scope, line), scoped as the egress scan scopes one. ``sql_write_files`` runs
 the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229) gives each (file, enclosing scope)
-that holds a point in the Ward Room's ``messages.py`` and ``threads.py`` and in ``cognitive/episodic.py`` a
+that holds a point in the Ward Room's ``messages.py`` and ``threads.py``, in ``cognitive/episodic.py`` and, from
+AD-1346 M3e4d1 (D284), in ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` and, from AD-1346 M3e4d2
+(D291), in ``persistent_tasks.py`` a
 ``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
 ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
 ``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
@@ -103,9 +105,6 @@ AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
     "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
     "src/probos/assignment.py": ("AssignmentService.create_assignment", "created_by"),
     "src/probos/capability_request.py": ("CapabilityRequestStore.file_request", "agent_id"),
-    "src/probos/cognitive/clinical_notes_store.py": ("ClinicalNotesStore.write_note", "author_agent_id"),
-    "src/probos/persistent_tasks.py": ("PersistentTaskStore.create_task", "created_by"),
-    "src/probos/skill_request.py": ("SkillRequestStore.file_request", "agent_id"),
     "src/probos/threads/__init__.py": ("ChatThreadStore.append_message_once", "author_id"),
     "src/probos/ward_room/channels.py": ("ChannelManager.create_channel", "created_by"),
     "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
@@ -118,9 +117,6 @@ STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
     "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
     "src/probos/assignment.py": _AGENT_ATTRIBUTED,
     "src/probos/capability_request.py": _AGENT_ATTRIBUTED,
-    "src/probos/cognitive/clinical_notes_store.py": _AGENT_ATTRIBUTED,
-    "src/probos/persistent_tasks.py": _AGENT_ATTRIBUTED,
-    "src/probos/skill_request.py": _AGENT_ATTRIBUTED,
     "src/probos/threads/__init__.py": _AGENT_ATTRIBUTED,
     "src/probos/ward_room/channels.py": _AGENT_ATTRIBUTED,
     "src/probos/workforce.py": _AGENT_ATTRIBUTED,
@@ -212,8 +208,12 @@ _WARD_ROOM: Final = "src/probos/ward_room/service.py"
 _MESSAGES: Final = "src/probos/ward_room/messages.py"
 _THREADS: Final = "src/probos/ward_room/threads.py"
 _EPISODIC: Final = "src/probos/cognitive/episodic.py"
+_NOTES: Final = "src/probos/cognitive/clinical_notes_store.py"
+_SKILLS: Final = "src/probos/skill_request.py"
+_TASKS: Final = "src/probos/persistent_tasks.py"
 
-#: AD-1346 M3e4b (D229): each (file, enclosing scope) of these three files that holds a SQL write statement -> its coverage.
+#: AD-1346 M3e4b (D229), M3e4d1 (D284) and M3e4d2 (D291): each (file, enclosing scope) of these six files that holds a
+#: SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -235,6 +235,20 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     (_EPISODIC, "EpisodicMemory._reconcile_fts_index"): System(SHIP, "the keyword index's start-up reconciliation"),
     (_EPISODIC, "EpisodicMemory.seed"): System(SHIP, "the bulk seed of warm boot and the memory probes"),
     (_EPISODIC, "EpisodicMemory._write_restore_sidecars"): System(SHIP, "an episode restore_from_archive copies back (D218)"),
+    # AD-1346 M3e4d1 (D284). Agent-attributed (D239): a note's body with author_agent_id, a filing's justification with
+    # agent_id and a decision's reason with decided_by; each check is its scope (D285).
+    (_NOTES, "ClinicalNotesStore.write_note"): StoreCheck((_NOTES, "ClinicalNotesStore.write_note"), "author_agent_id"),
+    (_SKILLS, "SkillRequestStore.file_request"): StoreCheck((_SKILLS, "SkillRequestStore.file_request"), "agent_id"),
+    (_SKILLS, "SkillRequestStore.decide"): StoreCheck((_SKILLS, "SkillRequestStore.decide"), "decided_by"),
+    # System (D239): a skill request's state, with no text.
+    (_SKILLS, "SkillRequestStore.begin_training"): System(SHIP, "a skill request's status and linked_simulation_id"),
+    (_SKILLS, "SkillRequestStore.complete_for_simulation"): System(SHIP, "a skill request's status and post_metric"),
+    # AD-1346 M3e4d2 (D291). Agent-attributed (D239): a task's intent_text with created_by; the check is its scope (D292).
+    (_TASKS, "PersistentTaskStore.create_task"): StoreCheck((_TASKS, "PersistentTaskStore.create_task"), "created_by"),
+    # System (D239): a scheduled task's state; these statements do not write created_by.
+    (_TASKS, "PersistentTaskStore.cancel_task"): System(SHIP, "a scheduled task's status and enabled"),
+    (_TASKS, "PersistentTaskStore.trigger_webhook"): System(SHIP, "a scheduled task's next_run_at"),
+    (_TASKS, "PersistentTaskStore._fire_task"): System(SHIP, "a scheduled task's status, last_result, last_run_at, run_count, next_run_at and enabled"),
 }
 
 

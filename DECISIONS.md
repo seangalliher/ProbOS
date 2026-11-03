@@ -1274,6 +1274,41 @@ AD-1346 M3e4c3e is the fifth part of M3e4c3. It moves the two file-write rows th
 - *Residual, accepted.* Register R138 and R139 of the contract.
 - *Reversal.* Revert the M3e4c3e commits.
 
+### AD-1346 M3e4c3f -- the file-write scan sees PinnedDirectory's writes (2026-11-03, #1604)
+
+AD-1346 M3e4c3f is the sixth part of M3e4c3. The file-write scan counts calls of `PinnedDirectory`'s `write_new`, `publish_file` and `remove_file`, a new test, WF9, holds that set to the class's methods that hold a point, and the one new row, `execution/workspace_result_store.py`, is the ship's. It adds no admission check, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3f-pinned-directory-writes.md`.
+
+- *D278 (the scan).* `PINNED_WRITES` names the three methods; a call of one on any receiver is a point. Rejected: the names added to `FILE_WRITE_METHODS` with no check against the class; a rule that types the receiver; no scan change.
+- *D279 (the classification).* The workspace result store is `System` under the ship's principal by D218: it writes a copy of a tool result's text, and its manifest names the agent's workspace and holds no author. Rejected: pending for M3e4d as the requester's record.
+- *D280 (the rows and the counters).* One new `System` row. WF1's counter becomes 3 / 68 / 2, and its counts by name gain `write_new` 3, `publish_file` 1 and `remove_file` 3 (214 points). WF2's synthetic module gains the three methods, one handed to an executor, and `make_directory` and `remove_directory`, which are not points.
+- *Tests.* WF1 and WF2 change; WF9 is new.
+- *Residual, accepted.* Register R140 of the contract.
+- *Reversal.* Revert the M3e4c3f commits.
+
+### AD-1346 M3e4d1 -- the clinical notes and skill request store-write checks (2026-11-03, #1604)
+
+AD-1346 M3e4d1 is the first part of M3e4d. `ClinicalNotesStore.write_note`, `SkillRequestStore.file_request` and `SkillRequestStore.decide` each call `check_at` with `store_write` as the statement before their `if self._db:`, presenting `author_agent_id`, `agent_id` and `decided_by`. `ProbOSRuntime.start` hands both stores the admission service, or None, through `set_admission`. The two files leave `STORE_WRITE_FILES` and are split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d1-note-and-skill-request-checks.md`.
+
+- *D283 (the cut).* These two files first: each check is its writing scope and presents a parameter of it, and each class stays under both review triggers with one more method. Rejected: all nine SQL files at once; one store; the file-write rows first; relabelling the rows left pending.
+- *D284 (the rows).* The note, the filing and the decision are checks; `begin_training` and `complete_for_simulation` are the ship's. `decide` is agent-attributed by D239: it records a reason with `decided_by`, and `DelegatedApprovalService.decide` passes the deciding agent's id there. Rejected: `decide` as the ship's.
+- *D285 (the checks).* Each is the statement before `if self._db:` and presents the scope's own parameter. Rejected: the body's first statement; inside the `if`; at the callers.
+- *D286 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D233 does. Rejected: a constructor keyword; a shared mixin.
+- *Tests.* WM1, WM3, WM4, WM5, WC1, WC3 and T16 change; WM6 and WM7 are new.
+- *Residual, accepted.* Registers R145 and R146 of the contract.
+- *Reversal.* Revert the M3e4d1 commits.
+
+### AD-1346 M3e4d2 -- the persistent task store's store-write check (2026-11-03, #1604)
+
+AD-1346 M3e4d2 is the second part of M3e4d. `PersistentTaskStore.create_task` calls `check_at` with `store_write` as the statement before its `if self._db:`, presenting `created_by`. When the runtime holds a `PersistentTaskStore`, `ProbOSRuntime.start` hands it the admission service, or None, through `set_admission`. `persistent_tasks.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d2-persistent-task-check.md`.
+
+- *D290 (the cut).* `persistent_tasks.py` alone: its four write scopes need one check and three rows of the ship's. Rejected: with `threads/__init__.py`, whose write scopes in two classes would each need a row; all three files; with the two 15-method stores.
+- *D291 (the rows).* `create_task` is a check; `cancel_task`, `trigger_webhook` and `_fire_task` are the ship's by D239: their statements do not write `created_by`. Rejected: `_fire_task` as agent-attributed; the file kept pending.
+- *D292 (the check).* The statement before `if self._db:`, presenting the parameter `created_by`. Rejected: the body's first statement; inside the `if`; at the callers; `task.created_by`.
+- *D293 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: a constructor keyword from `init_communication`; a shared mixin.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM8 and WM9 are new.
+- *Residual, accepted.* Registers R147 and R148 of the contract.
+- *Reversal.* Revert the M3e4d2 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
