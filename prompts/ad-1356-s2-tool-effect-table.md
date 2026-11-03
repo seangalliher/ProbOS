@@ -632,7 +632,7 @@ Each row is killed by the test in its last column.
 - **L4.** `list_files` is elevated until a BF puts it under the read policy. An absolute `path` bypasses both the floor and `read_roots`; its output and error text expose file names (not contents).
 - **L5.** `mcp:` tools are critical in S2. S3 adds the `McpToolRisk` mapping.
 - **L6.** `discover_work_items` is in plan mode's read set but not in the table, so it is critical and filed as before.
-- **L7.** `BLOCKED_REASON` and the filed rationale still say "outside the read-only set", although some filed calls are reads (`list_files`, the web reads, `find_mcp_tool`, and `read_file` with no roots). This predates S2 for the web reads. The text is pinned by `ui/e2e/fixtures/ad1347-agent-work-approvals.json` and `test_ad1347_s3_execution.py:657`.
+- **L7.** `BLOCKED_REASON` and the filed rationale still say "outside the read-only set", although some filed calls are reads (`list_files`, the web reads, `find_mcp_tool`, and `read_file` with no roots). This predates S2 for the web reads. The text is pinned by `ui/e2e/fixtures/ad1347-agent-work-approvals.json` and `test_ad1347_s3_execution.py`.
 - **L8.** `permitted_read_roots` logs one warning for each unusable configured entry. An all-unusable list still confines reads to the workspace root and counts as confined.
 - **L9.** `read_roots` confines the filesystem reads that resolve through `resolve_for_runtime` ship-wide (Q5), the Captain's DM reads included. S2 reads that policy and does not change it.
 - **L10.** Elevated has no decider other than the Captain until S3. S3 must also give a rule for a routine tool that is filed because reads are unconfined: `tool_tier` already calls it critical, so `CAPTAIN_RESERVED`.
