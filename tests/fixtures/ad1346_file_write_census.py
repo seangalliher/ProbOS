@@ -2,7 +2,8 @@
 
 ``file_write_scan`` parses one module and reports each file write in it (D253). A point is a call whose function is:
 
-- an attribute named in ``FILE_WRITE_METHODS``;
+- an attribute named in ``FILE_WRITE_METHODS`` or in ``PINNED_WRITES``, the methods of ``PinnedDirectory``
+  (``security/file_access.py``) that hold a point (D278);
 - ``os.<name>`` or ``shutil.<name>``, called on the module's name, for a name ``MODULE_WRITES`` gives that module;
 - ``os.open``, when one of its positional arguments holds an attribute named in ``WRITE_FLAGS``, and only then;
 - named in ``OPENS`` (a name or an attribute), when its ``mode`` keyword, or else one of its first two positional
@@ -19,9 +20,10 @@ gives a scope that writes a file D239 makes agent-attributed and the name in tha
 as the text's author (D255). The second gives a scope, the author (a parameter of that scope, or ``<parameter>.<field>``
 for a field of the class that annotates the parameter), a module-level name and the writing scope (D274).
 
-Among what the scan cannot see (register R129): a mode or a flag held in a variable, a write through a handle opened
-elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, the callers
-of a function that wraps a primitive, and a primitive reached through ``getattr``.
+Among what the scan cannot see (register R129, R140): a mode or a flag held in a variable, a write through a handle
+opened elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, the
+callers of a function that wraps a primitive other than the methods of ``PINNED_WRITES``, and a primitive reached
+through ``getattr``.
 ``tests/test_ad1346_admission_file_write_census.py`` checks the rows against the code.
 """
 
@@ -51,8 +53,11 @@ WRITE_MODE: Final = re.compile(r"[rwxabt+]{1,3}")
 WRITE_CHARS: Final = frozenset("wax+")
 #: ``Path`` moves: a point with one positional argument and no keyword (``str.replace`` takes two).
 PATH_MOVES: Final = frozenset({"replace", "rename"})
+#: AD-1346 M3e4c3f (D278): the methods of ``PinnedDirectory`` (``security/file_access.py``) that write, link or delete
+#: a file, a point on any receiver; WF9 holds them to the class's methods that hold a point.
+PINNED_WRITES: Final = frozenset({"write_new", "publish_file", "remove_file"})
 #: Methods that make a call a point when handed to it, uncalled, as a positional argument.
-HANDED: Final = FILE_WRITE_METHODS | PATH_MOVES
+HANDED: Final = FILE_WRITE_METHODS | PINNED_WRITES | PATH_MOVES
 
 #: (file, scope, line, the name).
 Point = tuple[str, str, int, str]
@@ -81,7 +86,7 @@ def _file_write(node: ast.Call) -> str:
     func = node.func
     name = func.id if isinstance(func, ast.Name) else _attribute(func)
     module = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
-    if isinstance(func, ast.Attribute) and name in FILE_WRITE_METHODS:
+    if isinstance(func, ast.Attribute) and name in FILE_WRITE_METHODS | PINNED_WRITES:
         return name
     if name in MODULE_WRITES.get(module, frozenset()):
         return name
@@ -229,4 +234,6 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     # Agent-attributed (D239, D269, D274): M3e4d's (register R113, R136).
     "src/probos/avatars/proposal_history.py": _AGENT_ATTRIBUTED_FILE,
     "src/probos/avatars/vision_proposal_history.py": _AGENT_ATTRIBUTED_FILE,
+    # AD-1346 M3e4c3f: the ship's (D218, D279).
+    "src/probos/execution/workspace_result_store.py": System(SHIP, "ArtifactIO._publish_in writes a copy of a tool result's text (D218), its outline and a manifest of its digests and sizes, under the agent's workspace key and a SHA-256 digest of the agent's id; GenerationReaper and _drop_staged delete files"),
 }
