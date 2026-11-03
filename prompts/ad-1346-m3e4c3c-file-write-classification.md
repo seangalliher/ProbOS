@@ -466,7 +466,7 @@ Reads (src/probos/cognitive/): agent_patcher.py :200-244; builder.py :113-125, :
   self_mod.py :590-614; session_manager.py :1-199; skill_catalog.py :645-845; skill_forge.py :1-60, :160-317; swe_harness/tools.py :205-243, :1015-1047, :1150-1171
 Grep '^def |^async def |^class |^    def |^    async def ' src/probos/cognitive/builder.py
 Grep 'captured_by\s*=' src -> idea_store.py :76 :125
-Grep '\.capture\(|IdeaCaptureStore|idea_store' src; Grep 'idea_capture_store' src -> finalize.py :4900 :4903 :4907 :4921 and the package's own lines
+Grep '\.capture\(|IdeaCaptureStore|idea_store' src; Grep 'idea_capture_store' src
 Grep 'AgentVersion\b' src; Grep '\bpromote\(|_persistence\b' src; Grep 'AgentVersion\(|designer=|agent_persistence|persistence\.promote|\.promote\(record' src
 Grep '\.record_observation\(' src -A 8 -> routers/thread_fanout.py:1447-1453 (author_id=thread_id); the others are working-memory and SPC objects
 Read src/probos/startup/finalize.py :4898-4911
@@ -579,6 +579,10 @@ Unchanged: every other SEARCH text and REPLACE text of §7 and §8; every count 
 - Absence Verified, the sixth entry: the last fragment of its FOUND line, the frontmatter keys, is deleted.
 - §12: the bullet that gave the file inventory from the base to the head is deleted.
 Unchanged: every SEARCH text; every other REPLACE text of §7 and §8; every count and every row's type and key; every §10 row.
+
+**Amendment 4 (2026-11-03, the orchestrator, after review round 2).** The review found one statement that was not true of the candidate. Changed, against Amendment 3's contract:
+- §11: the record of the two idea-store searches keeps its commands and loses its result, which named lines that the last command does not print (it prints `finalize.py:4907` and `:4921` alone; `:4900`, `:4903` and the package's own lines are the first command's).
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
 
 ## For the register (#1604)
 
