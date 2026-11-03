@@ -21,9 +21,8 @@ as the text's author (D255). The second gives a scope, the author (a parameter o
 for a field of the class that annotates the parameter), a module-level name and the writing scope (D274).
 
 Among what the scan cannot see (register R129, R140): a mode or a flag held in a variable, a write through a handle
-opened elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, the
-callers of a function that wraps a primitive other than the methods of ``PINNED_WRITES``, and a primitive reached
-through ``getattr``.
+opened elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, and a
+primitive reached through ``getattr``.
 ``tests/test_ad1346_admission_file_write_census.py`` checks the rows against the code.
 """
 

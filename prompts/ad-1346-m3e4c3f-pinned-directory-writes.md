@@ -144,9 +144,8 @@ of a function that wraps a primitive, and a primitive reached through ``getattr`
 REPLACE:
 ```
 Among what the scan cannot see (register R129, R140): a mode or a flag held in a variable, a write through a handle
-opened elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, the
-callers of a function that wraps a primitive other than the methods of ``PINNED_WRITES``, and a primitive reached
-through ``getattr``.
+opened elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, and a
+primitive reached through ``getattr``.
 ```
 
 **M1-03** (`tests/fixtures/ad1346_file_write_census.py`)
@@ -601,7 +600,7 @@ HOLDS: yes
 - Absence entry 5: its FOUND is completed to the whole output of its two commands.
 - §12: the bullet that listed the files that `git diff --name-only <base>..HEAD` prints is deleted.
 - The branch that this contract builds on is the commit `cb6d61ef`: the batch of M3e4c3c, M3e4c3d and M3e4c3e (`64eb39a7`, whose tree is the one that its broad gate ran on) and BF-951 (#1523), a test-only commit that widens two timing windows in `tests/test_issue1417_run_python_child_ownership.py` and adds one paragraph at the top of `PROGRESS.md`. M2-01's SEARCH and REPLACE (§8) anchor on that paragraph, so that this slice's paragraph is the newest; the header, §8's date rule and its list of where the entries land say so. Absence entry 1's first search is re-run on `cb6d61ef` and its FOUND is rewritten. `git diff -U0 0ae53d21 cb6d61ef -- src tests scripts PROGRESS.md DECISIONS.md` prints 9 hunks: four replace one line with one line (two row reasons of the fixture, one line of `PROGRESS.md`, one of `DECISIONS.md`), one inserts BF-951's paragraph and its blank line at `PROGRESS.md:3-4`, and four are in `tests/test_issue1417_run_python_child_ownership.py`. The insertion moves each `PROGRESS.md` line this contract names by two (M3e4c3e's paragraph from `:3` to `:5`); no line number this contract names in another file moves. Its other records keep the read commit `0ae53d21`.
-Unchanged: every SEARCH text and every REPLACE text of §7, every count and every row's type and key, and every §10 row.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7, every count and every row's type and key, and every §10 row.
 
 **Amendment 2 (2026-11-03, the orchestrator, after review round 1).** Changed, against the contract as Amendment 1 left it:
 - D278, in M2-02's REPLACE (§8) and in `DECISIONS.md`: the clause `, or one handed uncalled,` is deleted.
@@ -609,16 +608,20 @@ Unchanged: every SEARCH text and every REPLACE text of §7, every count and ever
 - Absence entry 3: the FOUND of its second run says that no key names `execution/workspace_result_store.py`; it said that no key names `execution/`.
 - §11: the results of three records are deleted (`git log --oneline -8`, `git ls-files --eol` and `scripts/ad_ceiling.py`); the records keep their commands.
 - Amendment 1: the clause `, which this contract does not name` is deleted from its last bullet, and ` and §8` from its `Unchanged:` line, because that bullet re-anchors M2-01 (§8) and this amendment changes M2-02's REPLACE (§8).
-Unchanged: every SEARCH text and every REPLACE text of §7, every count and every row's type and key, and every §10 row.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7, every count and every row's type and key, and every §10 row.
+
+**Amendment 3 (2026-11-03, the orchestrator, after review round 2).** Changed, against the contract as Amendment 2 left it:
+- M1-02's REPLACE (§7.1), and the fixture docstring it writes: the clause on the callers of a function that wraps a primitive (with its qualifier `other than the methods of PINNED_WRITES`) is deleted from the list of what the scan cannot see, and the list is re-wrapped. M1-02's SEARCH, which holds the older clause, is unchanged.
+- The register (here): R129's last clause (`; the callers of other wrappers are not`) and R140's bullet on a file that writes only through another file's wrapper function are deleted.
+Unchanged by this amendment: every other SEARCH text and every other REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
 
 - **R139:** closed. The scan sees the three methods (D278), and `execution/workspace_result_store.py` is the ship's (D279). After it: M3e4d (register R113), then M3e5.
 - **R137:** advanced. Its `PinnedDirectory` item is closed by D278 and D279; its other items are unchanged.
-- **R129:** advanced. Calls of `PinnedDirectory`'s three write methods are points (D278); the callers of other wrappers are not.
+- **R129:** advanced. Calls of `PinnedDirectory`'s three write methods are points (D278).
 - **R140:** what this slice does not see:
   - receivers: a call of a method named in `PINNED_WRITES` is a point on any object, and a `PinnedDirectory` method reached through `getattr` or a stored bound method is not;
   - `make_directory` and `remove_directory` (`file_access.py:759`, `:795`) are not points (directories, register R129), and WF9 reads only the class's methods that hold a point;
-  - a file that writes only through another file's wrapper function has no point and no row; none is enumerated here;
   - the row's reason holds for the code read on `0ae53d21`. `store_tool_result`'s one `src` caller is `_prepare_result` (`result_offload.py:666`). A new caller that passes text an agent authored is seen by none of WF1 to WF9;
   - a call inside a lambda is scoped to the enclosing function (`:663`, `:849`).
