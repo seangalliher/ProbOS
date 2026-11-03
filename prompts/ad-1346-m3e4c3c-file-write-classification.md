@@ -468,7 +468,7 @@ Grep '^def |^async def |^class |^    def |^    async def ' src/probos/cognitive/
 Grep 'captured_by\s*=' src -> idea_store.py :76 :125
 Grep '\.capture\(|IdeaCaptureStore|idea_store' src; Grep 'idea_capture_store' src
 Grep 'AgentVersion\b' src; Grep '\bpromote\(|_persistence\b' src; Grep 'AgentVersion\(|designer=|agent_persistence|persistence\.promote|\.promote\(record' src
-Grep '\.record_observation\(' src -A 8 -> routers/thread_fanout.py:1447-1453 (author_id=thread_id); the others are working-memory and SPC objects
+Grep '\.record_observation\(' src -A 8
 Read src/probos/startup/finalize.py :4898-4911
 grep -c -F "runtime.idea_capture_store = IdeaCaptureStore(" src/probos/startup/finalize.py -> 1
 grep -c -F "agent_persistence = LocalDiskPersistence(root_dir=cfg.persistence_root_dir)" src/probos/startup/finalize.py -> 1
@@ -582,6 +582,10 @@ Unchanged: every SEARCH text; every other REPLACE text of §7 and §8; every cou
 
 **Amendment 4 (2026-11-03, the orchestrator, after review round 2).** The review found one statement that was not true of the candidate. Changed, against Amendment 3's contract:
 - §11: the record of the two idea-store searches keeps its commands and loses its result, which named lines that the last command does not print (it prints `finalize.py:4907` and `:4921` alone; `:4900`, `:4903` and the package's own lines are the first command's).
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
+
+**Amendment 5 (2026-11-03, the orchestrator, after review round 3).** The review found one statement that was not true of the candidate. Changed, against Amendment 4's contract:
+- §11: the record of the `record_observation` search keeps its command and loses its result, which gave `routers/thread_fanout.py:1447-1453` where the command (`-A 8`) prints `:1447-1455`.
 Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
 
 ## For the register (#1604)
