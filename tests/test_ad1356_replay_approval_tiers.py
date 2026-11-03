@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -126,3 +127,30 @@ async def test_without_registered_ids_run_python_and_the_nonexistent_tools_stay_
     assert "critical_captain" not in got["counts"] and "unregistered" not in got["counts"]
     assert got["unlisted_tool_ids"] == sorted((*PLACEHOLDERS, "run_python"))
     assert got["unregistered_tool_ids"] == [] and got["registered_ids"] is None
+
+
+# R4
+async def test_a_receipt_that_names_the_copy_or_its_sidecars_and_a_non_finite_epoch_are_refused_before_a_write(
+    tmp_path: Path,
+) -> None:
+    """--receipt naming the copy or one of its SQLite sidecars (by another spelling of the path, or as a second
+    hard-link name for the copy), and a --since or --until that is not finite, exit 2 and write nothing: the copy's
+    bytes and its directory's listing do not change."""
+    db = await _the_31st(tmp_path)
+    linked = db.with_name("linked.db")
+    os.link(db, linked)
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    listing = sorted(path.name for path in db.parent.iterdir())
+    window = ["--since", "0", "--until", str(time.time() + 60)]
+    respelled = db.parent / ".." / db.parent.name / db.name
+    respelled_sidecar = db.parent / ".." / db.parent.name / (db.name + "-wal")
+    sidecars = [db.with_name(db.name + suffix) for suffix in ("-wal", "-shm", "-journal")]
+    for named in (db, respelled, linked, *sidecars, respelled_sidecar):
+        assert replay.main(["--db", str(db), *window, "--receipt", str(named)]) == 2, named
+    refused = tmp_path / "non-finite.json"
+    for since, until in (("nan", "1"), ("0", "nan"), ("inf", "1"), ("0", "inf")):
+        argv = ["--db", str(db), "--since", since, "--until", until, "--receipt", str(refused)]
+        assert replay.main(argv) == 2, (since, until)
+    assert not refused.exists()
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    assert sorted(path.name for path in db.parent.iterdir()) == listing

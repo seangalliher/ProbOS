@@ -19,8 +19,9 @@ not list: an id in it is critical, the Captain's. A listed id is taken as regist
 Offline limits: no tool registry, so a non-``mcp:`` id the table does not list is split only by ``--registered-ids``
 and an ``mcp:`` tool is critical; no ontology, so a ``*_chief`` request filed by a chief, or by crew with no
 same-department chief, goes live to the First Officer under a live delegation, else the Captain; the recovery-read test
-does not check the workspace root. Exit 0 with a receipt; 2 when the copy is missing or an argument is invalid. A copy
-that changes while it is read raises.
+does not check the workspace root. Exit 0 with a receipt; 2, with no receipt written, when the copy is missing, an
+argument is invalid, an epoch is not finite, or ``--receipt`` names the copy or one of its SQLite sidecars. A copy that
+changes while it is read raises.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
+import os
 import re
 import sqlite3
 import sys
@@ -138,6 +141,19 @@ def replay(
     }
 
 
+def _names_the_copy(receipt: Path, db: Path) -> bool:
+    """True when ``receipt`` is the copy or one of its SQLite sidecars: by resolved path (case folded where the host
+    folds case) or, when both exist, by file identity (a hard link)."""
+    target = os.path.normcase(os.path.realpath(receipt))
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        candidate = db.with_name(db.name + suffix)
+        if target == os.path.normcase(os.path.realpath(candidate)):
+            return True
+        if receipt.exists() and candidate.exists() and os.path.samefile(receipt, candidate):
+            return True
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     defaults = ApprovalInboxConfig()
     parser = argparse.ArgumentParser(description="AD-1356: replay filed agent-work approvals, read-only")
@@ -155,6 +171,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.db.is_file():
         print(f"replay_approval_tiers: no database at {args.db}", file=sys.stderr)
+        return 2
+    if not (math.isfinite(args.since) and math.isfinite(args.until)):
+        print("replay_approval_tiers: --since and --until must be finite epoch seconds", file=sys.stderr)
+        return 2
+    if _names_the_copy(args.receipt, args.db):
+        print(f"replay_approval_tiers: --receipt {args.receipt} is the copy or one of its sidecars", file=sys.stderr)
         return 2
     reads_confined = not args.reads_unconfined
     registered = (
