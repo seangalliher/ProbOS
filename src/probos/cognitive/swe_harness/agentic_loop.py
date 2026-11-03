@@ -40,6 +40,7 @@ from probos.cognitive.swe_harness.result_offload import (
     WorkspaceResultsSlot,
     delivery_trace,
     prepare_result,
+    retry_delivery_error,
     safe_delivery_error,
     seal_workspace_results,
 )
@@ -861,6 +862,11 @@ def format_tool_result_content(
 ) -> str:
     """Render the typed extension only at the message boundary, never in trace output."""
     delivery = result_delivery(result)
+    if delivery is not None and delivery.status == "failed":
+        # BF-946: in the loop a failed delivery reaches the message boundary only when
+        # the run went on past it (``_delivery_stop``). The model is shown the bounded
+        # code and, when the text fits ``max_chars``, a request to ask for less.
+        return retry_delivery_error(delivery.code, max_chars)
     if delivery is not None:
         # AD-1240: a delivery is a complete, already-admitted frame; it is never
         # truncated, so one that no longer fits is refused rather than clipped.
@@ -1242,20 +1248,37 @@ def _executed_outcomes(
     return [use for use, _ in pairs], [item for _, item in pairs]
 
 
+def _continues_after_failed_delivery(use: ToolUseBlock, code: str) -> bool:
+    """BF-946: whether the run goes on past a failed delivery of ``use``'s result.
+
+    A read-only (tier-1) call does, as ``is_tier_1_tool_call`` judges it: its result
+    promised nothing, and asking again cannot repeat an effect. So does a recovery read over the per-read bound
+    (``recovery_slice_too_large``): its promise, reader and artifact are unchanged,
+    and the same path read over a smaller range is served. The native readers are
+    not tier 1, so every other failed recovery or source read still ends the run.
+    """
+    return code == "recovery_slice_too_large" or is_tier_1_tool_call(use.tool_call.name, use.tool_call.arguments)
+
+
 def _delivery_stop(
-    results: list[ToolCallResult | InvocationRefusal], max_chars: int,
+    tool_uses: list[ToolUseBlock], results: list[ToolCallResult | InvocationRefusal], max_chars: int,
 ) -> tuple[str, str] | None:
     """AD-1240: the ``(code, text)`` that ends the run, or ``None`` to continue.
 
-    A refused request (R2-1) and a result whose delivery failed both end the run:
-    no further model request can honestly follow either. ``results`` is in request
-    order, so the failure that ends the run is the first one issued.
+    A refused request (R2-1) ends the run: no further model request can honestly
+    follow it. So does a result whose delivery failed, unless
+    ``_continues_after_failed_delivery`` lets the run go on (BF-946); the model is
+    then shown the failure and may ask again for less. ``results`` is aligned with
+    ``tool_uses`` and in request order.
     """
-    for item in results:
+    for use, item in zip(tool_uses, results, strict=True):
         if isinstance(item, InvocationRefusal):
             return item.code, safe_delivery_error(item.code, max_chars)
         delivery = result_delivery(item)
-        if delivery is not None and delivery.status == "failed":
+        if (
+            delivery is not None and delivery.status == "failed"
+            and not _continues_after_failed_delivery(use, delivery.code)
+        ):
             # ``ResultDelivery`` validates that a failed delivery carries its code.
             return delivery.code, delivery.presentation
     return None
@@ -2144,11 +2167,13 @@ class AgenticLoop:
             # is untouched by that path and does arrive whole.
             result.tool_results.extend(outcomes)
             # AD-1240: a refused request (R2-1) or a result whose delivery failed ends
-            # the run, selected by request order. The issued request stays in
-            # ``tool_calls``; ``tool_results`` holds genuine outcomes only. No further
-            # model request is made, and the model is told only a bounded code.
+            # the run, selected by request order, except a failed delivery that
+            # ``_continues_after_failed_delivery`` lets the run go on past (BF-946); the
+            # model is shown it. The issued request stays in ``tool_calls``;
+            # ``tool_results`` holds genuine outcomes only. When the run ends, no further
+            # model request is made and the reply is only the bounded code.
             if delivery_run is not None:
-                stop = _delivery_stop(tool_results, delivery_run.settings.max_chars)
+                stop = _delivery_stop(tool_uses, tool_results, delivery_run.settings.max_chars)
                 if stop is not None:
                     result.stopped_reason = "error"
                     result.error, result.final_text = stop
@@ -2222,9 +2247,10 @@ class AgenticLoop:
                         )
                     )
                     presentation_frames.append((dict(result_message), presentations))
-            # AD-1240: this group carries a delivered result's pointer or slice. It is
-            # kept whole for the rest of the run, so compaction cannot summarise away
-            # the path and offsets the model still has to read.
+            # AD-1240: this group carries a delivery: a pointer or slice, or (BF-946) a
+            # failed delivery's bounded text. It is kept whole for the rest of the run, so
+            # compaction cannot summarise away a path and offsets the model still has to
+            # read; a group whose only delivery failed holds none and is kept all the same.
             if delivery_run is not None and any(result_delivery(item) is not None for item in outcomes):
                 delivery_run.protected_groups.append(copy.deepcopy(messages[group_start:]))
 
@@ -2860,12 +2886,15 @@ class AgenticLoop:
             # AD-1240: delivery is deliberately outside the producer exception window.
             # Every observer has already seen the original outcome, and a delivery
             # failure is never reported as a producer error: ``prepare_result`` turns
-            # one into a typed refusal on the result, and the run stops on it.
+            # one into a typed refusal on the result. The run stops on it unless
+            # ``_continues_after_failed_delivery`` lets it go on (BF-946).
             captured = capture_tool_result(
                 use.tool_call.id, delivery_source, duration_ms,
                 max_chars=delivery_run.settings.max_chars,
             )
-            tcr = await prepare_result(captured, DeliveryContext(delivery_run, delivery_remaining))
+            tcr = await prepare_result(
+                captured, DeliveryContext(delivery_run, delivery_remaining, use.tool_call.name),
+            )
         if trace_correlation is not None:
             if strict and tcr.is_error:
                 tcr = replace(

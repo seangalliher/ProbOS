@@ -1,8 +1,8 @@
 {
   "git": {
-    "captured_at": "2026-11-02T22:53:00+00:00",
-    "head": "4d9a0f76",
-    "subject_count": 3746,
+    "captured_at": "2026-11-03T03:14:18+00:00",
+    "head": "ac591a7c",
+    "subject_count": 3759,
     "tokens": {
       "AD-1000": [
         "git AD-1000a",
@@ -3379,6 +3379,9 @@
       ],
       "BF-941": [
         "git BF-941"
+      ],
+      "BF-946": [
+        "git BF-946"
       ],
       "BF-947": [
         "git BF-947"

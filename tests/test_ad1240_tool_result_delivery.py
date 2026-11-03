@@ -2730,7 +2730,11 @@ async def test_owned_recovery_refuses_unconsumable_slice_without_recursive_offlo
                 assert name == "read_file"
                 self.arguments["limit"] = 13000 if case == "oversized_slice" else 1
                 return _turn(name, _call_id="read-2", **self.arguments)
-            assert case == "last_iteration" and number == 3
+            assert number == 3
+            if case == "oversized_slice":
+                # BF-946 M5: the slice over the bound came back as the bounded recovery_slice_too_large error.
+                assert _last_result(request).startswith("Result delivery failed (recovery_slice_too_large).")
+                return _done()
             assert _last_result(request) == body[:1]
             return _turn("read_file", _call_id="read-3", **self.arguments)
 
@@ -2742,13 +2746,17 @@ async def test_owned_recovery_refuses_unconsumable_slice_without_recursive_offlo
     )
     async with _started(runtime):
         result = await loop.run(system_prompt="", user_message="", tools=[], context=context)
-        expected = "delivery_frame_too_large" if case == "oversized_slice" else "recovery_iterations_unavailable"
-        assert result.stopped_reason == "error" and result.error == expected
+        expected = "recovery_slice_too_large" if case == "oversized_slice" else "recovery_iterations_unavailable"
         assert result_delivery(result.tool_results[-1]).code == expected
+        if case == "oversized_slice":
+            # BF-946 M5: the promise holds, so the run went on and ended when the model answered.
+            assert result.stopped_reason == "complete" and len(result.tool_calls) == len(llm.requests) - 1
+        else:
+            assert result.stopped_reason == "error" and result.error == expected
+            assert len(result.tool_calls) == len(llm.requests)
         assert all(not item.is_error for item in result.tool_results)
         assert result.tool_results[-1].output == body[:llm.arguments["limit"]]
-        assert len(llm.requests) == (2 if case == "oversized_slice" else 3)
-        assert len(result.tool_calls) == len(llm.requests) and raw.calls == 1
+        assert len(llm.requests) == 3 and raw.calls == 1
         assert _artifact_count(runtime) == 1
 
 

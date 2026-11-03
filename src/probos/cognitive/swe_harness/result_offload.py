@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import secrets
+import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -429,6 +430,8 @@ class DeliveryRun:
 class DeliveryContext:
     run: DeliveryRun
     remaining_iterations: int
+    # BF-946: the producing call's tool name, for the delivery-failure log only.
+    tool_name: str = ""
 
 
 def delivery_failure(captured: CapturedConversion, context: DeliveryContext, code: str) -> ToolCallResult:
@@ -452,9 +455,46 @@ def safe_delivery_error(code: str, max_chars: int) -> str:
     return text if len(text) <= min(128, max_chars if max_chars > 0 else 128) else "!"
 
 
+# BF-946: the guidance shown with a read-only call's failed delivery.
+_RETRY_GUIDANCE = (
+    "The call ran, but its result was not delivered. Ask for less "
+    "(for example a narrower window or a lower limit) and call again."
+)
+
+
+def retry_delivery_error(code: str, max_chars: int) -> str:
+    """BF-946: the bounded text for a failed delivery the run went on past.
+
+    The loop goes on past a failed delivery from a read-only call, whose result
+    promised nothing, and past a recovery read over the per-read bound
+    (``recovery_slice_too_large``), whose promise still holds; asking again for less
+    is safe in both. The text is ``safe_delivery_error`` and the guidance, which for
+    the recovery read names the bound; a bound too small for both gives
+    ``safe_delivery_error`` alone.
+    """
+    base = safe_delivery_error(code, max_chars)
+    if base == "!":
+        return base
+    guidance = (
+        f"One read returns at most {max_chars} characters. Read the same path again over a smaller range."
+        if code == "recovery_slice_too_large" and max_chars > 0 else _RETRY_GUIDANCE
+    )
+    text = f"{base} {guidance}"
+    return text if max_chars == 0 or len(text) <= max_chars else base
+
+
+class _OversizedFrame(WorkspaceResultError):
+    """A frame refused for its size, with the measured length and the bound, for BF-946's log only."""
+
+    def __init__(self, code: str, measured: int, bound: int) -> None:
+        super().__init__(code)
+        self.measured = measured
+        self.bound = bound
+
+
 def _admit(text: str, maximum: int) -> str:
     if maximum > 0 and len(text) > maximum:
-        raise WorkspaceResultError("delivery_frame_too_large")
+        raise _OversizedFrame("delivery_frame_too_large", len(text), maximum)
     return text
 
 
@@ -512,16 +552,36 @@ def _source_frame(reference: SourceRef, capture: CanonicalCapture, allowance: in
     )
 
 
+def _log_delivery_failure(exc: WorkspaceResultError, context: DeliveryContext) -> None:
+    """BF-946: one content-free WARNING per typed delivery failure.
+
+    It names the code, the tool, the agent, the raise site (the last two frames of
+    the refusal's traceback) and, for an ``_OversizedFrame``, the measured length
+    against the bound.
+    """
+    site = " > ".join(
+        f"{frame.name}:{frame.lineno}" for frame in traceback.extract_tb(exc.__traceback__)[-2:]
+    )
+    measured = f"{exc.measured} bound={exc.bound}" if isinstance(exc, _OversizedFrame) else "n/a"
+    logger.warning(
+        "BF-946: result delivery failed code=%s tool=%s agent=%s site=%s measured=%s; "
+        "the producer outcome is retained and is never retried by delivery",
+        exc.code, context.tool_name or "<unnamed>", context.run.agent_id[:12], site, measured,
+    )
+
+
 async def prepare_result(captured: CapturedConversion, context: DeliveryContext) -> ToolCallResult:
     """Prepare delivery without changing or retrying the producer's outcome."""
     try:
         return await _prepare_result(captured, context)
     except WorkspaceResultError as exc:
+        _log_delivery_failure(exc, context)
         return delivery_failure(captured, context, exc.code)
     except Exception:
         logger.error(
-            "Workspace result delivery preparation failed; the producer outcome is "
-            "retained and the loop will stop without retrying the producer",
+            "Workspace result delivery preparation failed (delivery_unavailable) tool=%s "
+            "agent=%s; the producer outcome is retained and is never retried by delivery",
+            context.tool_name or "<unnamed>", context.run.agent_id[:12],
         )
         return delivery_failure(captured, context, "delivery_unavailable")
 
@@ -558,7 +618,10 @@ async def _prepare_result(captured: CapturedConversion, context: DeliveryContext
     if recovery:
         if context.remaining_iterations < 1:
             raise WorkspaceResultError("recovery_iterations_unavailable")
-        _admit(text, settings.max_chars)
+        if settings.max_chars > 0 and len(text) > settings.max_chars:
+            # BF-946: the slice is over the bound, not the promise, so the run goes on; when its
+            # text fits, ``retry_delivery_error`` names the bound and asks for a smaller range.
+            raise _OversizedFrame("recovery_slice_too_large", len(text), settings.max_chars)
         reference = raw.workspace_slice.reference if isinstance(raw, WorkspaceSliceToolResult) else raw.source_reference
         return with_result_delivery(producer, ResultDelivery("recovered", text, reference))
     if encoded_size <= TOOL_RESULT_THRESHOLD_BYTES:
