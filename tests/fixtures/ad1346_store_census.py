@@ -6,7 +6,7 @@ leading whitespace. A point is (enclosing scope, line), scoped as the egress sca
 the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229) gives each (file, enclosing scope)
 that holds a point in the Ward Room's ``messages.py`` and ``threads.py``, in ``cognitive/episodic.py`` and, from
 AD-1346 M3e4d1 (D284), in ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` and, from AD-1346 M3e4d2
-(D291), in ``persistent_tasks.py`` a
+(D291), in ``persistent_tasks.py`` and, from AD-1346 M3e4d3 (D298), in ``threads/__init__.py`` a
 ``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
 ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
 ``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
@@ -105,7 +105,6 @@ AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
     "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
     "src/probos/assignment.py": ("AssignmentService.create_assignment", "created_by"),
     "src/probos/capability_request.py": ("CapabilityRequestStore.file_request", "agent_id"),
-    "src/probos/threads/__init__.py": ("ChatThreadStore.append_message_once", "author_id"),
     "src/probos/ward_room/channels.py": ("ChannelManager.create_channel", "created_by"),
     "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
 }
@@ -117,7 +116,6 @@ STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
     "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
     "src/probos/assignment.py": _AGENT_ATTRIBUTED,
     "src/probos/capability_request.py": _AGENT_ATTRIBUTED,
-    "src/probos/threads/__init__.py": _AGENT_ATTRIBUTED,
     "src/probos/ward_room/channels.py": _AGENT_ATTRIBUTED,
     "src/probos/workforce.py": _AGENT_ATTRIBUTED,
     # System (AD-1346 M3e4c, D239): each reason names what the file records.
@@ -211,9 +209,10 @@ _EPISODIC: Final = "src/probos/cognitive/episodic.py"
 _NOTES: Final = "src/probos/cognitive/clinical_notes_store.py"
 _SKILLS: Final = "src/probos/skill_request.py"
 _TASKS: Final = "src/probos/persistent_tasks.py"
+_CHATS: Final = "src/probos/threads/__init__.py"
 
-#: AD-1346 M3e4b (D229), M3e4d1 (D284) and M3e4d2 (D291): each (file, enclosing scope) of these six files that holds a
-#: SQL write statement -> its coverage.
+#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291) and M3e4d3 (D298): each (file, enclosing scope) of these seven
+#: files that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -249,6 +248,34 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     (_TASKS, "PersistentTaskStore.cancel_task"): System(SHIP, "a scheduled task's status and enabled"),
     (_TASKS, "PersistentTaskStore.trigger_webhook"): System(SHIP, "a scheduled task's next_run_at"),
     (_TASKS, "PersistentTaskStore._fire_task"): System(SHIP, "a scheduled task's status, last_result, last_run_at, run_count, next_run_at and enabled"),
+    # AD-1346 M3e4d3 (D298). Agent-attributed (D239): a thread's title with the created_by_agent of its metadata, which
+    # AgentGroupChatService.create_group_chat sets to the creating agent, and a message's body with author_id; each
+    # check is its scope (D299).
+    (_CHATS, "ChatThreadStore.create_thread"): StoreCheck((_CHATS, "ChatThreadStore.create_thread"), "meta.get('created_by_agent')"),
+    (_CHATS, "ChatThreadStore.append_message_once"): StoreCheck((_CHATS, "ChatThreadStore.append_message_once"), "author_id"),
+    # System (D239, D218): each reason names what its scope's statements write.
+    (_CHATS, "ChatThreadStore.update_thread"): System(SHIP, "a thread's title, pinned, archived, personality_override, workspace_root, project_id or task_id"),
+    (_CHATS, "ChatThreadStore.set_personality_override"): System(SHIP, "a thread's personality_override"),
+    (_CHATS, "ChatThreadStore.set_title"): System(SHIP, "a thread's title, and with lock its metadata's title_locked"),
+    (_CHATS, "ChatThreadStore.set_meeting_active"): System(SHIP, "a thread's metadata's meeting_active"),
+    (_CHATS, "ChatThreadStore.set_agent_mode"): System(SHIP, "a thread's agent-mode record: mode, revision, changed_at, changed_by, previous and agent_id, no text (D239)"),
+    (_CHATS, "ChatThreadStore.add_participant"): System(SHIP, "a thread's participants and last_active_at"),
+    (_CHATS, "ChatThreadStore.add_crew_session_participants"): System(SHIP, "a thread's participants and last_active_at"),
+    (_CHATS, "ChatThreadStore.compare_and_set_task_link"): System(SHIP, "a thread's task_id"),
+    (_CHATS, "ChatThreadStore.create_crew_session_thread"): System(SHIP, "a CrewSession room built from the provisioning marker its parent work item records (D218)"),
+    (_CHATS, "ChatThreadStore.delete_untouched_crew_session_thread"): System(SHIP, "the deletion of an untouched CrewSession room"),
+    (_CHATS, "ChatThreadStore.remove_participant"): System(SHIP, "a thread's participants and last_active_at"),
+    (_CHATS, "ChatThreadStore.delete_thread"): System(SHIP, "the deletion of a thread and its messages"),
+    (_CHATS, "ChatThreadStore.purge_thread"): System(SHIP, "a tombstone of a thread's title, participants and last_active_at, and the deletion of the thread and its messages"),
+    (_CHATS, "ChatThreadStore.create_default_for_agent"): System(SHIP, "an agent's default thread, whose participants are the agent"),
+    (_CHATS, "ChatThreadStore.get_or_create_default_for_agent"): System(SHIP, "an agent's default thread, whose participants are the agent"),
+    (_CHATS, "ChatThreadStore.get_or_create_system_thread"): System(SHIP, "a fixed-id system thread"),
+    (_CHATS, "ProjectStore.create_project"): System(SHIP, "a project's name, description and pinned_attachment_ids; projects have no author column (D239)"),
+    (_CHATS, "ProjectStore.update_project"): System(SHIP, "a project's name, description or archived"),
+    (_CHATS, "ProjectStore.delete_project"): System(SHIP, "the deletion of a project, with its threads and their messages or with its threads' project_id"),
+    (_CHATS, "ProjectStore.pin_attachment"): System(SHIP, "a project's pinned_attachment_ids"),
+    (_CHATS, "ProjectStore.unpin_attachment"): System(SHIP, "a project's pinned_attachment_ids"),
+    (_CHATS, "ProjectStore.touch"): System(SHIP, "a project's last_active_at"),
 }
 
 

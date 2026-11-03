@@ -3442,6 +3442,7 @@ class ProbOSRuntime:
         from probos.cognitive.episodic import EpisodicMemory
         from probos.persistent_tasks import PersistentTaskStore
         from probos.skill_request import SkillRequestStore
+        from probos.threads import ChatThreadStore
         from probos.ward_room import WardRoomService
 
         if isinstance(self.ward_room, WardRoomService):  # AD-1346 M3e4b (D233): the Ward Room's store-write checks; None checks nothing
@@ -3454,6 +3455,8 @@ class ProbOSRuntime:
             self.skill_request_store.set_admission(self.admission_service)
         if isinstance(self.persistent_task_store, PersistentTaskStore):  # AD-1346 M3e4d2 (D293): the persistent task store's check; None checks nothing
             self.persistent_task_store.set_admission(self.admission_service)
+        if isinstance(self.chat_thread_store, ChatThreadStore):  # AD-1346 M3e4d3 (D300): the chat thread store's two checks; None checks nothing
+            self.chat_thread_store.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687
