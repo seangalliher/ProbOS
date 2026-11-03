@@ -1,14 +1,16 @@
 """AD-1346 M3e4b (#1604): the store-write checks of the Ward Room and the episodic store, in shadow; AD-1346 M3e4d1:
-and of the clinical notes store and the skill request store.
+and of the clinical notes store and the skill request store; AD-1346 M3e4d2: and of the persistent task store.
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
 after its policy check, presenting the episode's one agent id or None. From AD-1346 M3e4d1
 ``ClinicalNotesStore.write_note``, ``SkillRequestStore.file_request`` and ``SkillRequestStore.decide`` call it as the
-statement before their ``if self._db:``, presenting ``author_agent_id``, ``agent_id`` and ``decided_by``.
+statement before their ``if self._db:``, presenting ``author_agent_id``, ``agent_id`` and ``decided_by``, and from
+AD-1346 M3e4d2 ``PersistentTaskStore.create_task`` does, presenting ``created_by``.
 ``ProbOSRuntime.start`` hands the service through ``set_admission`` to the runtime's Ward Room when it is a
 ``WardRoomService``, to its episodic store when it is an ``EpisodicMemory``, to its clinical notes store when it is a
-``ClinicalNotesStore`` and to its skill request store when it is a ``SkillRequestStore``.
+``ClinicalNotesStore``, to its skill request store when it is a ``SkillRequestStore`` and to its persistent task store
+when it is a ``PersistentTaskStore``.
 ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
@@ -26,19 +28,25 @@ statement before their ``if self._db:``, presenting ``author_agent_id``, ``agent
        stores as episodes each count a second check, their episode's store.
 - WM4  #1604 property 12 at those five checks: a Ward Room and an episodic store answer the same with the service and
        without it, with nothing carried, under a live ticket and after a Captain's stop.
-- WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room
-       and skill requests on, the runtime's Ward Room, episodic store, clinical notes store and skill request store hold
-       the runtime's service and their writes reach ``check_ticket`` with the presented ids; with it false all four
-       hold None.
+- WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room,
+       skill requests and persistent tasks on, the runtime's Ward Room, episodic store, clinical notes store, skill
+       request store and persistent task store hold the runtime's service and their writes reach ``check_ticket`` with
+       the presented ids; with it false all five hold None.
 - WM6  #1604 property 1 at the three AD-1346 M3e4d1 checks: three rounds of four writes (a note by each of two agents,
        a filing by the first and its decision by the second), outside a hold, inside the first agent's hold, and inside
        it after a Captain's stop, tally 4 ``ticket_missing``, 2 ``ticket_live``, 2 ``ticket_principal_mismatch`` and 4
        ``ticket_revoked``.
 - WM7  #1604 property 12 at those three checks: two pairs of stores, one with the service and one without, answer the
        same three rounds the same.
+- WM8  #1604 property 1 at the AD-1346 M3e4d2 check: three rounds of two task creations (one by each of two agents),
+       outside a hold, inside the first agent's hold, and inside it after a Captain's stop, tally 2 ``ticket_missing``,
+       1 ``ticket_live``, 1 ``ticket_principal_mismatch`` and 2 ``ticket_revoked``.
+- WM9  #1604 property 12 at that check: two task stores, one with the service and one without, answer the same three
+       rounds the same.
 
-WM3 and WM4 use a real ``WardRoomService`` and ``EpisodicMemory``, and WM6 and WM7 a real ``ClinicalNotesStore`` and
-``SkillRequestStore``, over ``tmp_path``, with a service built with the test's loop. WM5 boots a real runtime under
+WM3 and WM4 use a real ``WardRoomService`` and ``EpisodicMemory``, WM6 and WM7 a real ``ClinicalNotesStore`` and
+``SkillRequestStore``, and WM8 and WM9 a real ``PersistentTaskStore``, over ``tmp_path``, with a service built with the
+test's loop. WM5 boots a real runtime under
 ``tmp_path`` and replaces ``AdmissionService.check_ticket``, as ``tests/test_ad1346_admission_egress_sinks.py``'s ES2
 does.
 """
@@ -66,6 +74,7 @@ from probos.config import SystemConfig
 from probos.crew_profile import CallsignRegistry
 from probos.identity import AgentIdentityRegistry
 from probos.identity_service import IdentityService
+from probos.persistent_tasks import PersistentTaskStore
 from probos.runtime import ProbOSRuntime
 from probos.skill_request import SkillRequestStore
 from probos.substrate.registry import AgentRegistry
@@ -93,6 +102,9 @@ _CALLEE_MODULES: Final = {
 }
 #: The fields of an answer that a fresh store draws for itself (AD-1346 M3e4d1: and a skill request's ``decided_at``).
 _DRAWN: Final = frozenset({"id", "thread_id", "channel_id", "created_at", "last_activity", "edited_at", "decided_at"})
+#: AD-1346 M3e4d2: a one-shot task's ``execute_at``, 2100-01-01T00:00:00Z; ``_compute_next_run`` makes it the task's
+#: ``next_run_at``.
+_LATER: Final = 4_102_444_800.0
 
 
 class _Clock:
@@ -181,6 +193,7 @@ def _config(*, shadow_enabled: bool) -> SystemConfig:
     config.admission.shadow_enabled = shadow_enabled
     config.ward_room.enabled = True  # WardRoomConfig.enabled is off by default
     config.skill_requests.enabled = True  # AD-1346 M3e4d1: SkillRequestConfig.enabled is off by default
+    config.persistent_tasks.enabled = True  # AD-1346 M3e4d2: PersistentTasksConfig.enabled is off by default
     config.onboarding.naming_ceremony = False
     config.proactive_cognitive.enabled = False
     config.qa.enabled = False
@@ -348,7 +361,8 @@ async def test_with_and_without_the_service_the_checked_writes_answer_identicall
 async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episodic_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; kills EV-7, EV-8, ED-5, ED-6)."""
+    """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; AD-1346 M3e4d2: D293; kills EV-7, EV-8, ED-5, ED-6,
+    EY-3)."""
     memory = EpisodicMemory(db_path=str(tmp_path / "on" / "episodic" / "episodes.db"))
     runtime = ProbOSRuntime(
         config=_config(shadow_enabled=True), data_dir=tmp_path / "on" / "data", llm_client=MockLLMClient(),
@@ -382,6 +396,11 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         marks.append(len(seen))
         await skills.decide(filed.id, True, reason="ad1346 m3e4d1 xray", decided_by=AGENT_B)
         assert [seen[mark] for mark in marks] == [(True, AGENT_B), (True, AGENT_A), (True, AGENT_B)], (marks, seen)
+        tasks = runtime.persistent_task_store  # AD-1346 M3e4d2
+        assert type(tasks) is PersistentTaskStore and vars(tasks)["_admission"] is service, "the boot built and handed it"
+        task_mark = len(seen)
+        await tasks.create_task("ad1346 m3e4d2 yankee", execute_at=_LATER, created_by=AGENT_A)
+        assert seen[task_mark] == (True, AGENT_A), (task_mark, seen)
     finally:
         await asyncio.wait_for(runtime.stop(), timeout=600)
     off_memory = EpisodicMemory(db_path=str(tmp_path / "off" / "episodic" / "episodes.db"))
@@ -396,6 +415,8 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         off_notes, off_skills = off.clinical_notes_store, off.skill_request_store
         assert type(off_notes) is ClinicalNotesStore and type(off_skills) is SkillRequestStore, "premise: both stores built"
         assert vars(off_notes)["_admission"] is None and vars(off_skills)["_admission"] is None  # AD-1346 M3e4d1
+        off_tasks = off.persistent_task_store  # AD-1346 M3e4d2
+        assert type(off_tasks) is PersistentTaskStore and vars(off_tasks)["_admission"] is None, "built and handed None"
     finally:
         await asyncio.wait_for(off.stop(), timeout=600)
 
@@ -478,5 +499,72 @@ async def test_with_and_without_the_service_the_note_filing_and_decision_answer_
         ("issue", "ticket_issued"): 1,
         ("store_write", "ticket_missing"): 4, ("store_write", "ticket_live"): 2,
         ("store_write", "ticket_principal_mismatch"): 2, ("store_write", "ticket_revoked"): 4,
+    }
+    assert service.failures == 0
+
+
+async def _create_two_tasks(store: PersistentTaskStore, phase: int) -> list[object]:
+    """AD-1346 M3e4d2: one round of two checked writes: a task created by ``AGENT_A`` and one by ``AGENT_B``. Returns
+    each answer without the fields a fresh store draws."""
+    return [
+        _shape(await store.create_task(f"ad1346 m3e4d2 echo {phase}", execute_at=_LATER, created_by=AGENT_A)),
+        _shape(await store.create_task(f"ad1346 m3e4d2 foxtrot {phase}", execute_at=_LATER, created_by=AGENT_B)),
+    ]
+
+
+async def test_the_task_creation_check_counts_missing_live_mismatch_and_revoked(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM8 (#1604 property 1 at the AD-1346 M3e4d2 check; D292; kills EY-2, EY-4)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    store = PersistentTaskStore(db_path=str(tmp_path / "scheduled_tasks.db"))
+    await store.start()
+    store.set_admission(service)
+    try:
+        await _create_two_tasks(store, 1)
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            await _create_two_tasks(store, 2)
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d2: the Captain stops the held work")
+            await _create_two_tasks(store, 3)
+        finally:
+            hold.end()
+        assert tickets.tally() == {
+            ("issue", "ticket_issued"): 1,
+            ("store_write", "ticket_missing"): 2, ("store_write", "ticket_live"): 1,
+            ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 2,
+        }
+        assert service.failures == 0
+    finally:
+        await store.stop()
+
+
+async def test_with_and_without_the_service_the_task_creations_answer_identically(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM9 (#1604 property 12 at the AD-1346 M3e4d2 check; D294)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    stores = [PersistentTaskStore(db_path=str(tmp_path / f"scheduled_tasks_{i}.db")) for i in (0, 1)]
+    for store, held in zip(stores, (service, None)):
+        await store.start()
+        store.set_admission(held)
+    try:
+        first = [await _create_two_tasks(store, 1) for store in stores]
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            second = [await _create_two_tasks(store, 2) for store in stores]
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d2: the golden test's stop")
+            third = [await _create_two_tasks(store, 3) for store in stores]
+        finally:
+            hold.end()
+    finally:
+        for store in stores:
+            await store.stop()
+    assert first[0] == first[1] and second[0] == second[1] and third[0] == third[1]
+    assert first[0][0]["created_by"] == AGENT_A and first[0][0]["next_run_at"] == _LATER, "premise: the answer's creator and next run"
+    assert tickets.tally() == {
+        ("issue", "ticket_issued"): 1,
+        ("store_write", "ticket_missing"): 2, ("store_write", "ticket_live"): 1,
+        ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 2,
     }
     assert service.failures == 0
