@@ -572,7 +572,10 @@ async def test_a_failing_gate_refuses_and_every_refusal_is_a_never_ran_policy_ou
         assert text in agentic_dispatch._NEVER_RAN_REFUSALS
         assert not is_capability_gap(text)
         assert classify_tool_fault_error(text) == "permission_denied"
-    for tool_ids, gate in ((frozenset(), broken), ({"x"}, broken), (frozenset({"x"}), "not callable")):
+    # AD-1356 S4: an empty set is valid (the runner builds one when neither routine nor elevated is auto); a set that is
+    # not a frozenset of non-empty str, or a gate that is not callable, is not.
+    assert ToolCallConfinement(frozenset(), broken).tool_ids == frozenset()
+    for tool_ids, gate in (({"x"}, broken), (frozenset({""}), broken), (frozenset({"x"}), "not callable")):
         with pytest.raises(ValueError, match="tool_call_confinement_invalid"):
             ToolCallConfinement(tool_ids, gate)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="tool_call_confinement_invalid"):

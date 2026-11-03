@@ -9,10 +9,13 @@ A capability or skill request has three levels of authority:
   Captain's grace period has passed (zero while the Captain is marked
   unavailable).
 
-A floor stays with the Captain alone: every ``action`` request, every build
-whose design context carries ``requires_consensus``, a grant of the review tool
-itself, and anything that cannot be classified. No one decides a requisition
-they originated.
+A floor stays with the Captain alone: every ``action`` request but an
+agent-work call whose tier's decider is ``auto`` or ``chief`` (AD-1356 S3:
+``capability_request.agent_work_call``, classified by ``tools.effect_tiers``
+under the Captain's per-tier settings, where a critical tier's decider is the
+Captain), every build whose design context carries ``requires_consensus``, a
+grant of the review tool itself, and anything that cannot be classified. No
+one decides a requisition they originated.
 
 This part of the module is the pure eligibility core -- no I/O and no clocks of
 its own. Classification reuses the one definition of "destructive"
@@ -37,7 +40,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from probos.approval_authority import CAPTAIN_UNAVAILABLE, FIRST_OFFICER_DELEGATION, REVIEW_TOOL_ID
-from probos.capability_request import build_requires_consensus, validate_action_payload
+from probos.capability_request import agent_work_call, build_requires_consensus, validate_action_payload
 from probos.cognitive.capability_triage import derive_tool_permission, is_non_destructive
 from probos.decision_pre_clearance import (
     PRE_CLEARANCE_AUDIT_CATEGORY,
@@ -48,6 +51,7 @@ from probos.decision_pre_clearance import (
     make_offer,
     pre_clearance_key,
 )
+from probos.tools.effect_tiers import DECIDER_CAPTAIN, filed_call_tier, tier_decider
 
 if TYPE_CHECKING:
     from probos.ontology.models import Post
@@ -165,11 +169,24 @@ class ToolLookup(Protocol):
     def get(self, tool_id: str) -> Any: ...
 
 
-def classify_capability_request(req: Any, *, tool_registry: ToolLookup | None) -> RequestClass:
-    """Classify a capability request. Anything not positively recognised is unclassifiable."""
+def classify_capability_request(
+    req: Any, *, tool_registry: ToolLookup | None, routine_decider: object = None, elevated_decider: object = None,
+) -> RequestClass:
+    """Classify a capability request. Anything not positively recognised is unclassifiable.
+
+    AD-1356 S3: an agent-work call (``agent_work_call``) is classified by ``filed_call_tier`` and ``tier_decider``
+    (``tools.effect_tiers``), never by ``derive_tool_permission``, under the Captain's per-tier settings passed as
+    ``routine_decider`` and ``elevated_decider`` (``approval_inbox``). A decider of ``auto`` or ``chief`` is
+    non-destructive; ``captain``, a critical tier and a setting not passed are Captain-reserved.
+    """
     kind = getattr(req, "kind", None)
-    if kind == "action":  # Q1: every action, repair included
-        return RequestClass.CAPTAIN_RESERVED
+    if kind == "action":
+        call = agent_work_call(req)
+        if call is None:  # Q1: every other action, repair included, stays with the Captain
+            return RequestClass.CAPTAIN_RESERVED
+        tier = filed_call_tier(call["tool_id"], tool_registry=tool_registry)
+        decider = tier_decider(tier, routine=routine_decider, elevated=elevated_decider)
+        return RequestClass.CAPTAIN_RESERVED if decider == DECIDER_CAPTAIN else RequestClass.NON_DESTRUCTIVE
     if kind == _CONTINUE_KIND:
         payload = validate_action_payload(getattr(req, "payload", None))
         if (
@@ -202,6 +219,17 @@ def classify_capability_request(req: Any, *, tool_registry: ToolLookup | None) -
             else RequestClass.DESTRUCTIVE
         )
     return RequestClass.UNCLASSIFIABLE
+
+
+def _capability_class(req: Any, tool_registry: ToolLookup | None, settings: Any) -> RequestClass:
+    """``classify_capability_request`` under the live ``approval_inbox`` settings. AD-1356 S4: the per-tier deciders
+    are read only for an agent-work call, so a settings object without them still classifies every other request."""
+    if agent_work_call(req) is None:
+        return classify_capability_request(req, tool_registry=tool_registry)
+    return classify_capability_request(
+        req, tool_registry=tool_registry,
+        routine_decider=settings.agent_work_routine_decider, elevated_decider=settings.agent_work_elevated_decider,
+    )
 
 
 def classify_skill_request(req: Any) -> RequestClass:
@@ -791,7 +819,7 @@ class DelegatedApprovalService:
                 return
             try:
                 request_class = (
-                    classify_capability_request(decided, tool_registry=self._tool_registry)
+                    _capability_class(decided, self._tool_registry, self._settings())  # type: ignore[misc]
                     if queue == "capability" else classify_skill_request(decided)
                 )
             except Exception:  # recorded as unclassifiable in the entry itself
@@ -868,7 +896,7 @@ class DelegatedApprovalService:
             return Verdict(Refusal.NOT_ENABLED)
         own = bool(identity.names & origin)
         if queue == "capability":
-            request_class = classify_capability_request(req, tool_registry=self._tool_registry)
+            request_class = _capability_class(req, self._tool_registry, settings)
             chief_barred = False
         else:
             request_class = classify_skill_request(req)

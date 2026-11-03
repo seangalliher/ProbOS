@@ -107,8 +107,8 @@ logger = logging.getLogger(__name__)
 _STRICT_APPROVAL_DISPATCH: ContextVar[EffectDispatchContext | None] = ContextVar(
     "strict_approval_dispatch", default=None
 )
-# AD-1347 S3 A1 (F3): set for the one call a run's confinement admitted under the Captain's single-use approval of that
-# exact call, so AD-1154's inbox does not park it again. Credential entry (the inbox's step 3) is still refused.
+# AD-1347 S3 A1 (F3): set for the one call a run's confinement admitted (a single-use approval of that exact call, or
+# a workspace-result read, AD-1356 S1.3), so AD-1154's inbox does not park it again. Credential entry stays refused.
 _CONFINED_ADMISSION: ContextVar[bool] = ContextVar("confined_admission", default=False)
 _MAX_ARTIFACT_CANDIDATES_PER_RESULT = 64
 _MAX_ARTIFACT_REFS = 32
@@ -300,16 +300,17 @@ _PLAN_MODE_TOOL_REFUSAL: str = (
 )
 # AD-1347 S3 (#1627): agent-created work runs confined. AD-1356 S1.1: a call whose tool id the executor's registry does
 # not hold is refused before the run's set is consulted. Its other calls to the tools in the run's set run as usual; a
-# call to any other tool is put to the run's gate, which admits it, files it for the Captain's approval (an AD-1154
-# ``action``), answers it (BF-947) or refuses it. Error-shaped and final, in the AD-1154 voice; never defect evidence.
+# call to any other tool is put to the run's gate, which admits it, files it for approval (an AD-1154 ``action``, whose
+# decider follows its tier, AD-1356 S3 and S4), answers it (BF-947) or refuses it. Error-shaped and final, in the
+# AD-1154 voice; never defect evidence.
 CONFINED_CALL_FILED: str = (
-    "That call needs the Captain's approval before it runs. It was filed for review and did not run. Do not "
-    "repeat it: a repeat is folded into the same request. Finish what the read-only tools allow and report "
-    "what remains open."
+    "That call needs approval before it runs. It was filed for review and did not run. Do not repeat it: a "
+    "repeat is folded into the same request. Finish what the tools that run directly allow and report what "
+    "remains open."
 )
 CONFINED_CALL_NOT_FILED: str = (
-    "That call needs the Captain's approval before it runs, and it could not be filed for review, so it did "
-    "not run. Finish what the read-only tools allow and report what remains open."
+    "That call needs approval before it runs, and it could not be filed for review, so it did not run. Finish "
+    "what the tools that run directly allow and report what remains open."
 )
 # BF-947: the refusal for ``CONFINEMENT_ANSWERED``.
 CONFINED_CALL_ANSWERED: str = (
@@ -338,8 +339,8 @@ _NEVER_RAN_REFUSALS: frozenset[str] = frozenset({
 class ToolCallConfinement:
     """AD-1347 S3: the calls a run makes directly (``tool_ids``) and the gate for the run's other calls.
 
-    ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for the
-    Captain's approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
+    ``gate(agent_id, tool_id, params)`` answers ``CONFINEMENT_ADMIT`` (run it), ``CONFINEMENT_FILED`` (filed for
+    approval), ``CONFINEMENT_ANSWERED`` (BF-947: refused with ``CONFINED_CALL_ANSWERED``) or anything else
     (not filed). Enforced in the executor's invoke after AD-1356 S1.1's refusal of a tool id the registry does not
     hold, and before plan mode and the AD-1154 browser inbox, so the decision is made at the tool call, never by
     reading the plan. BF-947: ``record``, when set, is handed results of admitted calls (``record_admitted``).
@@ -350,8 +351,9 @@ class ToolCallConfinement:
     record: Callable[[str, Any, Any, ToolResult], None] | None = None
 
     def __post_init__(self) -> None:
+        # AD-1356 S4: ``tool_ids`` may be empty (it is when neither routine nor elevated is ``auto``).
         if (
-            type(self.tool_ids) is not frozenset or not self.tool_ids
+            type(self.tool_ids) is not frozenset
             or any(type(tool_id) is not str or not tool_id for tool_id in self.tool_ids)
             or not callable(self.gate)
             or (self.record is not None and not callable(self.record))
@@ -850,7 +852,7 @@ class _DispatchGuardMixin:
             if refusal is not None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(refusal, "confinement_refused")
-            # AD-1347 S3 A1 (F3): the gate admitted this call, under the Captain's approval of exactly this call, once,
+            # AD-1347 S3 A1 (F3): the gate admitted this call, under an approval of exactly this call, once,
             # or as a read of a workspace-result path, which needs none (AD-1356 S1.3). AD-1154's inbox below does not
             # park an admitted call (credential entry there stays refused).
             confined_admission = True
@@ -1263,9 +1265,9 @@ class _ApprovalGuardMixin:
             return ToolResult(error=_APPROVAL_CREDENTIAL_REFUSAL)
 
         if _CONFINED_ADMISSION.get():
-            # AD-1347 S3 A1 (F3): the run's confinement admitted this exact call under the Captain's single-use approval
-            # of it, so it is not parked again; credential entry (step 3, above) stays refused.
-            logger.info("AD-1347: %s.%s for agent %s runs under the Captain's approval of this call", tool_id, action, agent_id[:12])
+            # AD-1347 S3 A1 (F3): the run's confinement admitted this exact call under a single-use approval of it,
+            # so it is not parked again; credential entry (step 3, above) stays refused.
+            logger.info("AD-1347: %s.%s for agent %s runs under an approval of this call", tool_id, action, agent_id[:12])
             return None
 
         scope_key = self._resolve_scope_key(
