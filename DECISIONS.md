@@ -1309,6 +1309,19 @@ AD-1346 M3e4d2 is the second part of M3e4d. `PersistentTaskStore.create_task` ca
 - *Residual, accepted.* Registers R147 and R148 of the contract.
 - *Reversal.* Revert the M3e4d2 commits.
 
+### AD-1346 M3e4d3 -- the chat thread store's store-write checks (2026-11-03, #1604)
+
+AD-1346 M3e4d3 is the third part of M3e4d. `ChatThreadStore.create_thread` and `ChatThreadStore.append_message_once` call `check_at` with `store_write` as the statement before their `with self._connect() as conn:`, presenting `meta.get("created_by_agent")` and `author_id`; each imports `check_at` inside the method. `ProbOSRuntime.start` hands the runtime's `ChatThreadStore` the admission service, or None, through `set_admission`. `threads/__init__.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d3-chat-thread-checks.md`.
+
+- *D297 (the cut).* All of `threads/__init__.py`: 24 write scopes in two classes, two of them checks. Rejected: checking only the message write; one slice per class; `workforce.py` first.
+- *D298 (the rows).* `create_thread` and `append_message_once` are checks; the other 16 `ChatThreadStore` scopes and the 6 `ProjectStore` scopes are the ship's by D239, and `create_crew_session_thread` by D218. Rejected: `create_crew_session_thread` as a check; the file kept pending.
+- *D299 (the checks).* The statement before `with self._connect() as conn:`, with function-scope imports. Rejected: inside the transaction; after the write; at the callers; module-scope imports.
+- *D300 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: at the service's construction; a constructor keyword.
+- *D301 (off the loop).* A check in a worker thread reads the caller's ticket, which `asyncio.to_thread` carries, and `check_ticket` hands it to its loop.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM10 and WM11 are new.
+- *Residual, accepted.* Registers R149 and R150 of the contract.
+- *Reversal.* Revert the M3e4d3 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
