@@ -150,7 +150,6 @@
     3. no crossing test: the producer and the consumer would each be tested only in halves.
 - **D288 Cost** (question 4; D235's method).
   - Shadow off: one type comparison (`admission/seam.py:55`).
-  - Shadow on: D225's carrier read, principal resolve, registry check and recorder offer.
   - The callers read here are HTTP routes (`routers/counselor.py:273`, `routers/skill_requests.py:76`, `:147`) and `DelegatedApprovalService.decide` (`delegated_approvals.py:705`).
   - `admission.shadow_enabled` false gives the runtime no service (WM5 reads `admission_service` as None), and the stores are handed None.
   - No timing test. The volume is counted from `admission_shadow.db`: `SELECT day, SUM(findings) FROM ticket_findings WHERE operation = 'store_write' GROUP BY day`.
@@ -1301,6 +1300,9 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 Unchanged by this amendment: every other SEARCH text and every other REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 **Amendment 4 (2026-11-03, the orchestrator, after review round 2).** One finding, repaired by deletion. Changed, against the contract as Amendment 3 left it: Amendment 3's third bullet loses its location prefix, because the second string it names was in D288 and not in §5.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 5 (2026-11-03, the orchestrator, after review round 3, with the review of M3e4d2 round 1).** A sibling of a finding that review round 1 of M3e4d2 made against the same sentence: D288's bullet that lists the carrier read, the principal resolve, the registry check and the recorder offer as the work of a shadow-on check is deleted (the principal is resolved only for a non-empty string, and a recorder is optional).
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
