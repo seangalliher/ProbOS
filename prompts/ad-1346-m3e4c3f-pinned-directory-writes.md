@@ -109,7 +109,7 @@
 - **`HANDED`**: `_file_write` (`:95`).
 - **`_file_write`'s attribute rule**: `file_write_scan`, hence `file_write_points` and `file_write_files`. Read by WF1, WF2, WF3, WF5, WF8 and WF9.
 - **`FILE_WRITE_FILES`** (1 new key): WF1, WF3, WF4, WF6.
-- These names are used in Python only in the fixture and the file-write test (§11 Absence). `tests/fixtures/ad1346_effect_census.py:66` names `FILE_WRITE_FILES` in a string.
+- These names are used in Python in the fixture and the file-write test (§11 Absence). `tests/fixtures/ad1346_effect_census.py:66` names `FILE_WRITE_FILES` in a string.
 
 ## 6. Tests
 
@@ -455,7 +455,7 @@ REPLACE:
 
 AD-1346 M3e4c3f is the sixth part of M3e4c3. The file-write scan counts calls of `PinnedDirectory`'s `write_new`, `publish_file` and `remove_file`, a new test, WF9, holds that set to the class's methods that hold a point, and the one new row, `execution/workspace_result_store.py`, is the ship's. It adds no admission check, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3f-pinned-directory-writes.md`.
 
-- *D278 (the scan).* `PINNED_WRITES` names the three methods; a call of one on any receiver, or one handed uncalled, is a point. Rejected: the names added to `FILE_WRITE_METHODS` with no check against the class; a rule that types the receiver; no scan change.
+- *D278 (the scan).* `PINNED_WRITES` names the three methods; a call of one on any receiver is a point. Rejected: the names added to `FILE_WRITE_METHODS` with no check against the class; a rule that types the receiver; no scan change.
 - *D279 (the classification).* The workspace result store is `System` under the ship's principal by D218: it writes a copy of a tool result's text, and its manifest names the agent's workspace and holds no author. Rejected: pending for M3e4d as the requester's record.
 - *D280 (the rows and the counters).* One new `System` row. WF1's counter becomes 3 / 68 / 2, and its counts by name gain `write_new` 3, `publish_file` 1 and `remove_file` 3 (214 points). WF2's synthetic module gains the three methods, one handed to an executor, and `make_directory` and `remove_directory`, which are not points.
 - *Tests.* WF1 and WF2 change; WF9 is new.
@@ -501,8 +501,8 @@ AD-1346 M3e4c3f is the sixth part of M3e4c3. The file-write scan counts calls of
 ## 11. Verified Against Codebase (2026-11-03, read on `0ae53d21`)
 
 ```
-git log --oneline -8 -> 0ae53d21 (M3e4c3e M2), 5cae2859 (M3e4c3e M1), f6511ed5 (M3e4c3e contract), cd0e84e5, a3a0c72f, 5397c7fb (M3e4c3d), 3bd27ae2, 98ffd686 (M3e4c3c)
-git ls-files --eol DECISIONS.md PROGRESS.md src/probos/execution/workspace_result_store.py src/probos/security/file_access.py tests/fixtures/ad1346_file_write_census.py tests/test_ad1346_admission_file_write_census.py -> i/lf w/crlf for each
+git log --oneline -8
+git ls-files --eol DECISIONS.md PROGRESS.md src/probos/execution/workspace_result_store.py src/probos/security/file_access.py tests/fixtures/ad1346_file_write_census.py tests/test_ad1346_admission_file_write_census.py
 Read tests/fixtures/ad1346_file_write_census.py :1-232 (bullet :5; R129 sentence :22-24; FILE_WRITE_METHODS :38; PATH_MOVES :53; HANDED :55; _file_write :79-97, attribute rule :84-85; scan scopes :105-110; avatar rows and closing brace :229-232)
 Read tests/test_ad1346_admission_file_write_census.py :1-315 (docstring :8-17, :31-38; imports :46-53; _RECORDS :55; _IDEAS :56; _SYNTHETIC :58-112, Store.write :66, :88-90; _found :119-121; WF1 :147-169, :150, :152, :154, :166-169; WF2 :172-201, :173, :196-201; WF3 :204-222; WF8 :276-315)
 Read src/probos/security/file_access.py :636-860 (class :638; read_bytes :703-733, :713, :720; write_new :735-757, :749; make_directory :759; publish_file :767-783, :774, :776, :781; remove_file :785-793, :790, :792; remove_directory :795-803; open :805-838)
@@ -517,7 +517,7 @@ Grep 'D239|D218' DECISIONS.md
 grep -c -F for each of the four src Lines of EZ-5 to EZ-8 -> 1 each
 Read PROGRESS.md :1-3 (M3e4c3e's head :3); grep '^### AD-1346 M3e4c3[a-z] |^### BF-946 ' DECISIONS.md
 Read scripts/gen_ad_ledger.py :124-141
-d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py -> CEILING AD-1356 (git log --all subjects, GitHub issue titles, prompts/ad-*.md filenames)
+d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py
 ```
 
 ## Absence Verified (2026-11-03, run on `0ae53d21`)
@@ -541,10 +541,10 @@ CLAIM: execution/workspace_result_store.py holds no point of today's scan and is
 RUN:   Grep 'write_text|write_bytes|unlink|rmtree|copyfile|copy2|copytree|replace|rename|os\.remove|os\.link|os\.write|open\(|fdopen|shutil\.|run_in_executor|to_thread' src/probos/execution/workspace_result_store.py
 FOUND: :11, :743 (docstring text: "replace", "no-replacement")
 RUN:   Read tests/fixtures/ad1346_file_write_census.py :153-232
-FOUND: no key names execution/
+FOUND: no key names `execution/workspace_result_store.py`
 HOLDS: yes
 
-CLAIM: the fixture's names are used in Python only in the fixture and the file-write test
+CLAIM: the fixture's names are used in Python in the fixture and the file-write test
 RUN:   grep -r -n -E 'ad1346_file_write_census|FILE_WRITE_METHODS|HANDED|file_write_points|file_write_scan' --include=*.py tests src scripts
 FOUND: tests/fixtures/ad1346_file_write_census.py :3 :5 :12 :14 :38 :55 :84 :95 :119 :127 :129 :134; tests/test_ad1346_admission_file_write_census.py :3 :10 :46 :51 :52 :121 :155 :172 :174 :210 :282; tests/fixtures/ad1346_effect_census.py:66 (a string naming the fixture's path)
 HOLDS: yes
@@ -600,8 +600,16 @@ HOLDS: yes
 - §11: the results of four records are deleted (the `^class |^def ` search of `workspace_result_store.py`, the `key_for_agent` search with `-A 22`, the search of `DECISIONS.md` for D239 and D218, and the search of `DECISIONS.md` for the headings of M3e4c3 and BF-946); the records keep their commands.
 - Absence entry 5: its FOUND is completed to the whole output of its two commands.
 - §12: the bullet that listed the files that `git diff --name-only <base>..HEAD` prints is deleted.
-- The branch that this contract builds on is the commit `cb6d61ef`: the batch of M3e4c3c, M3e4c3d and M3e4c3e (`64eb39a7`, whose tree is the one that its broad gate ran on) and BF-951 (#1523), a test-only commit that widens two timing windows in `tests/test_issue1417_run_python_child_ownership.py` and adds one paragraph at the top of `PROGRESS.md`. M2-01's SEARCH and REPLACE (§8) anchor on that paragraph, so that this slice's paragraph is the newest; the header, §8's date rule and its list of where the entries land say so. Absence entry 1's first search is re-run on `cb6d61ef` and its FOUND is rewritten. `git diff -U0 0ae53d21 cb6d61ef -- src tests scripts PROGRESS.md DECISIONS.md` prints 9 hunks: four replace one line with one line (two row reasons of the fixture, one line of `PROGRESS.md`, one of `DECISIONS.md`), one inserts BF-951's paragraph and its blank line at `PROGRESS.md:3-4`, and four are in `tests/test_issue1417_run_python_child_ownership.py`, which this contract does not name. The insertion moves each `PROGRESS.md` line this contract names by two (M3e4c3e's paragraph from `:3` to `:5`); no line number this contract names in another file moves. Its other records keep the read commit `0ae53d21`.
-Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+- The branch that this contract builds on is the commit `cb6d61ef`: the batch of M3e4c3c, M3e4c3d and M3e4c3e (`64eb39a7`, whose tree is the one that its broad gate ran on) and BF-951 (#1523), a test-only commit that widens two timing windows in `tests/test_issue1417_run_python_child_ownership.py` and adds one paragraph at the top of `PROGRESS.md`. M2-01's SEARCH and REPLACE (§8) anchor on that paragraph, so that this slice's paragraph is the newest; the header, §8's date rule and its list of where the entries land say so. Absence entry 1's first search is re-run on `cb6d61ef` and its FOUND is rewritten. `git diff -U0 0ae53d21 cb6d61ef -- src tests scripts PROGRESS.md DECISIONS.md` prints 9 hunks: four replace one line with one line (two row reasons of the fixture, one line of `PROGRESS.md`, one of `DECISIONS.md`), one inserts BF-951's paragraph and its blank line at `PROGRESS.md:3-4`, and four are in `tests/test_issue1417_run_python_child_ownership.py`. The insertion moves each `PROGRESS.md` line this contract names by two (M3e4c3e's paragraph from `:3` to `:5`); no line number this contract names in another file moves. Its other records keep the read commit `0ae53d21`.
+Unchanged: every SEARCH text and every REPLACE text of §7, every count and every row's type and key, and every §10 row.
+
+**Amendment 2 (2026-11-03, the orchestrator, after review round 1).** Changed, against the contract as Amendment 1 left it:
+- D278, in M2-02's REPLACE (§8) and in `DECISIONS.md`: the clause `, or one handed uncalled,` is deleted.
+- §5 and the CLAIM of Absence entry 4: `only` is deleted from the sentence that says where the fixture's names are used in Python.
+- Absence entry 3: the FOUND of its second run says that no key names `execution/workspace_result_store.py`; it said that no key names `execution/`.
+- §11: the results of three records are deleted (`git log --oneline -8`, `git ls-files --eol` and `scripts/ad_ceiling.py`); the records keep their commands.
+- Amendment 1: the clause `, which this contract does not name` is deleted from its last bullet, and ` and §8` from its `Unchanged:` line, because that bullet re-anchors M2-01 (§8) and this amendment changes M2-02's REPLACE (§8).
+Unchanged: every SEARCH text and every REPLACE text of §7, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
 

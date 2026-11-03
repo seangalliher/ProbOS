@@ -1278,7 +1278,7 @@ AD-1346 M3e4c3e is the fifth part of M3e4c3. It moves the two file-write rows th
 
 AD-1346 M3e4c3f is the sixth part of M3e4c3. The file-write scan counts calls of `PinnedDirectory`'s `write_new`, `publish_file` and `remove_file`, a new test, WF9, holds that set to the class's methods that hold a point, and the one new row, `execution/workspace_result_store.py`, is the ship's. It adds no admission check, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3f-pinned-directory-writes.md`.
 
-- *D278 (the scan).* `PINNED_WRITES` names the three methods; a call of one on any receiver, or one handed uncalled, is a point. Rejected: the names added to `FILE_WRITE_METHODS` with no check against the class; a rule that types the receiver; no scan change.
+- *D278 (the scan).* `PINNED_WRITES` names the three methods; a call of one on any receiver is a point. Rejected: the names added to `FILE_WRITE_METHODS` with no check against the class; a rule that types the receiver; no scan change.
 - *D279 (the classification).* The workspace result store is `System` under the ship's principal by D218: it writes a copy of a tool result's text, and its manifest names the agent's workspace and holds no author. Rejected: pending for M3e4d as the requester's record.
 - *D280 (the rows and the counters).* One new `System` row. WF1's counter becomes 3 / 68 / 2, and its counts by name gain `write_new` 3, `publish_file` 1 and `remove_file` 3 (214 points). WF2's synthetic module gains the three methods, one handed to an executor, and `make_directory` and `remove_directory`, which are not points.
 - *Tests.* WF1 and WF2 change; WF9 is new.
