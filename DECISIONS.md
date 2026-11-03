@@ -1241,6 +1241,17 @@ AD-1346 M3e4c3b is the second part of M3e4c3. It classifies 19 of the 69 file-wr
 - *Mutation campaign of record (2026-11-01, win32).* 7 of 7 killed; none survived, was inert or invalid. Tree `2b9ac42e049958a1f4b569295b7f0d9413541c28` (commit `caabbf5c`) is M3e4c3b's head before its contract-only amendment A2 and before the docs commit that records this bullet, and the commit on which the census ran; that docs commit changes `DECISIONS.md` only (the AD ledger check passes on it unchanged). The runner ran the 7 rows of the contract's mutation table one at a time, each restored before the next, in one run (unmutated baseline over the test files the rows run: 6 passed); each row ran the test file that holds its named killer: EJ 7 rows (EJ-1 to EJ-7) against `tests/test_ad1346_admission_file_write_census.py`. The named killer failed in every row. Killers (with the `test_` prefix dropped): rows EJ-1, EJ-4, EJ-5, EJ-6 the_directories_m3e4c3b_classifies; row EJ-2 every_file_with_a_file_write_is_a_row_and_every_row_is_one; row EJ-3 the_agent_attributed_row_writes_and_records_its_author; row EJ-7 the_command_line_rows. sha256 of the working copies (CRLF) of the files the rows mutate: `tests/fixtures/ad1346_file_write_census.py` `7f2e2ccf66a980877d8d52ccf69f5771f97089b2588de2e3ec57c92cbc9f4446`.
 - *Reversal.* Revert the M3e4c3b commits.
 
+### AD-1346 M3e4c3c -- the file-write rows under cognitive/ classified (2026-11-03, #1604)
+
+AD-1346 M3e4c3c is the third part of M3e4c3. It classifies the 19 file-write rows under `cognitive/`, each as the ship's; nothing is checked, refused or charged, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3c-file-write-classification.md`.
+
+- *D263 (the cut).* The 19 rows under `cognitive/` now; M3e4c3d takes the other 31, whose owner becomes M3e4c3d. Rejected: all 50 now; a smaller group now.
+- *D264 (the classification).* The 19 files are `System` under the ship's principal, by D239. Rejected: the idea store and the agent versioning file pending for M3e4d (no `src` call outside the idea store passes `captured_by`, and none builds an `AgentVersion`: WF7); the evidence collector pending for M3e4d (its `author_id` names what it observes); the build and SWE-harness writes pending for M3e4d (no author id).
+- *D265 (the guards).* `cognitive/` joins WF6's directories and WF6 is renamed `test_the_classified_directories`; WF7 is new. Rejected: a second directory guard beside WF6; the 38 paths pinned; WF7 keyed on calls named `capture` and `promote`.
+- *Tests.* WF1's counts change; WF6 is renamed; WF7 is new.
+- *Residual, accepted.* Register R134 and R135 of the contract.
+- *Reversal.* Revert the M3e4c3c commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
