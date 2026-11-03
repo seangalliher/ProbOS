@@ -5,7 +5,7 @@
 an author name for each file whose row is pending for AD-1346 M3e4d.
 
 - WF1  every file the scan finds is a row of ``FILE_WRITE_FILES`` and every row is one: 72 files (1 pending for
-       AD-1346 M3e4d, 38 the ship's, 31 pending for AD-1346 M3e4c3d and 2 command-line), and 207 points counted
+       AD-1346 M3e4d, 67 the ship's, 2 pending for AD-1346 M3e4c3e and 2 command-line), and 207 points counted
        by name.
 - WF2  the scan on a synthetic module: the seven methods of ``FILE_WRITE_METHODS``, the seven functions of
        ``MODULE_WRITES``, ``os.open`` with a write flag, ``open`` and ``fdopen`` with a mode that writes (by position
@@ -24,8 +24,8 @@ an author name for each file whose row is pending for AD-1346 M3e4d.
 - WF5  in ``src`` the scan finds two methods handed to an executor (``cognitive/session_manager.py``), a ``Path``
        rename with one argument (``cognitive/dreaming.py``), and in ``task_sessions/browser.py`` one point, the file
        its rendered script is written to.
-- WF6  under the directories AD-1346 M3e4c3b and M3e4c3c classify, every row but the Ship's Records' is ``System``
-       under ``SHIP`` with a reason, and no ``System`` row lies elsewhere.
+- WF6  every row is ``System`` under ``SHIP`` with a reason but the Ship's Records', the command-line rows and the
+       rows of ``_LEFT``, which are the rows pending for AD-1346 M3e4c3e.
 - WF7  outside ``cognitive/ready_room/idea_store.py`` no ``src`` call passes a ``captured_by`` keyword, and no
        ``src`` call's function is named ``AgentVersion``.
 """
@@ -46,18 +46,10 @@ from tests.fixtures.ad1346_file_write_census import (
 
 _RECORDS = "src/probos/knowledge/records_store.py"
 _IDEAS = "src/probos/cognitive/ready_room/idea_store.py"
-#: AD-1346 M3e4c3b (D258) and M3e4c3c (D263): the directories they classify.
-_CLASSIFIED = (
-    "src/probos/agents/",
-    "src/probos/cognitive/",
-    "src/probos/consultation/",
-    "src/probos/execution/",
-    "src/probos/knowledge/",
-    "src/probos/naval/",
-    "src/probos/routers/",
-    "src/probos/task_sessions/",
-    "src/probos/tools/",
-    "src/probos/ward_room/",
+#: AD-1346 M3e4c3d (D268, D270): the rows pending for AD-1346 M3e4c3e, sorted.
+_LEFT = (
+    "src/probos/avatars/proposal_history.py",
+    "src/probos/avatars/vision_proposal_history.py",
 )
 
 _SYNTHETIC = '''\
@@ -150,13 +142,13 @@ def _called(node: ast.Call) -> str:
 
 
 def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
-    """WF1 (D253, D254, D259, D264; kills EF-12, EL-2): a file that gains its first file write fails here."""
+    """WF1 (D253, D254, D259, D264, D269; kills EF-12, EM-2): a file that gains its first file write fails here."""
     found = file_write_files()
     assert sorted(found - FILE_WRITE_FILES.keys()) == []
     assert sorted(FILE_WRITE_FILES.keys() - found) == []
     assert len(found) == 72, len(found)
     kinds = Counter(_kind(cover) for cover in FILE_WRITE_FILES.values())
-    assert kinds == {"Pending M3e4d": 1, "System": 38, "Pending M3e4c3d": 31, "OutsideRuntime": 2}, kinds
+    assert kinds == {"Pending M3e4d": 1, "System": 67, "Pending M3e4c3e": 2, "OutsideRuntime": 2}, kinds
     assert Counter(name for _path, _scope, _line, name in file_write_points()) == {
         "write_text": 59,
         "write_bytes": 7,
@@ -207,7 +199,7 @@ def test_the_file_write_scan_on_a_synthetic_module() -> None:
 
 
 def test_the_agent_attributed_row_writes_and_records_its_author() -> None:
-    """WF3 (D239, D255; kills EF-7, EF-8, EJ-3, EL-4)."""
+    """WF3 (D239, D255; kills EF-7, EF-8, EJ-3, EL-4, EM-7)."""
     pending = {path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, Pending) and cover.owner == "M3e4d"}
     assert pending == FILE_AGENT_ATTRIBUTED_SCOPES.keys() == {_RECORDS}, pending
     assert FILE_AGENT_ATTRIBUTED_SCOPES[_RECORDS] == ("RecordsStore.write_entry", "author")
@@ -227,7 +219,7 @@ def test_the_agent_attributed_row_writes_and_records_its_author() -> None:
 
 
 def test_the_command_line_rows() -> None:
-    """WF4 (D167; kills EF-11, EJ-7)."""
+    """WF4 (D167; kills EF-11, EJ-7, EM-8)."""
     outside = sorted(path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, OutsideRuntime))
     assert outside == ["src/probos/__main__.py", "src/probos/doctor/checks/data_dir_check.py"], outside
     assert all(path.startswith(OUTSIDE_RUNTIME) for path in outside), outside
@@ -248,12 +240,19 @@ def test_three_shapes_the_scan_finds_in_src() -> None:
     assert _found("src/probos/task_sessions/browser.py") == {("write_script", "write_text")}
 
 
-def test_the_classified_directories() -> None:
-    """WF6 (D258, D259, D260, D264, D265; kills EJ-1, EJ-4, EJ-5, EL-1, EL-3, EL-5): every row under ``_CLASSIFIED``
-    but the Ship's Records' is ``System`` under ``SHIP`` with a reason, and no ``System`` row lies elsewhere."""
-    inside = sorted(path for path in FILE_WRITE_FILES if path.startswith(_CLASSIFIED))
+def test_the_ships_rows() -> None:
+    """WF6 (D260, D265, D270; kills EM-1, EM-3, EM-4, EM-5, EM-6): every row is ``System`` under ``SHIP`` with a
+    reason but the Ship's Records', the command-line rows and the rows of ``_LEFT``, which are the rows pending for
+    AD-1346 M3e4c3e."""
+    left = sorted(path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, Pending) and cover.owner == "M3e4c3e")
+    assert left == list(_LEFT), left
+    rest = sorted(
+        path
+        for path, cover in FILE_WRITE_FILES.items()
+        if path != _RECORDS and path not in _LEFT and not isinstance(cover, OutsideRuntime)
+    )
     system = sorted(path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, System))
-    assert system == [path for path in inside if path != _RECORDS], system
+    assert system == rest, system
     assert all(cover.principal == SHIP and cover.reason for cover in FILE_WRITE_FILES.values() if isinstance(cover, System))
 
 
