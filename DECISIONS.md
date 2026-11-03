@@ -1317,7 +1317,7 @@ AD-1346 M3e4d3 is the third part of M3e4d. `ChatThreadStore.create_thread` and `
 - *D298 (the rows).* `create_thread` and `append_message_once` are checks; the other 16 `ChatThreadStore` scopes and the 6 `ProjectStore` scopes are the ship's by D239, and `create_crew_session_thread` by D218. Rejected: `create_crew_session_thread` as a check; the file kept pending.
 - *D299 (the checks).* The statement before `with self._connect() as conn:`, with function-scope imports. Rejected: inside the transaction; after the write; at the callers; module-scope imports.
 - *D300 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: at the service's construction; a constructor keyword.
-- *D301 (off the loop).* A check in a worker thread reads the caller's ticket, which `asyncio.to_thread` carries, and `check_ticket` hands it to its loop.
+- *D301 (off the loop).* A check in a worker thread reads the caller's ticket, which `asyncio.to_thread` carries.
 - *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM10 and WM11 are new.
 - *Residual, accepted.* Registers R149 and R150 of the contract.
 - *Reversal.* Revert the M3e4d3 commits.
