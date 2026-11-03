@@ -1294,11 +1294,14 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 **Amendment 3 (2026-11-03, the orchestrator, after review round 1).** The round's six findings, each repaired by deletion. Changed, against the contract as Amendment 2 left it:
 - §14 item 4: `admission_service` is deleted from the list of what the new `src` text holds none of (the runtime's hand-off holds it).
 - D285 and §5: the two sentences that said a store held by no runtime, or a store that a test builds directly, keeps the class default None are deleted, and so is the clause `or by a store the runtime does not hold` of register R146's bullet.
-- D285's placement ranking and §5: `three call sites instead of three scopes, ` and `two ` (before `HTTP routes`) are deleted.
+- `three call sites instead of three scopes, ` and `two ` (before `HTTP routes`) are deleted.
 - §9: `WM3's and WM4's bodies, ` is deleted from the list of what is not changed (M2 edits their docstrings).
 - §10: the sentence that no two rows share a line is deleted (ED-3 and ED-4 mutate the same line).
 - M1-02 (§7.1): the lines copied from the class docstring are deleted from the SEARCH and from the REPLACE, which keep the constructor's line as the anchor; the pair produces the same file.
 Unchanged by this amendment: every other SEARCH text and every other REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 4 (2026-11-03, the orchestrator, after review round 2).** One finding, repaired by deletion. Changed, against the contract as Amendment 3 left it: Amendment 3's third bullet loses its location prefix, because the second string it names was in D288 and not in §5.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
 
