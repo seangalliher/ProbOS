@@ -1,23 +1,23 @@
 """AD-1346 M3e4a (#1604): the census of #1604 property 1's store-write class, its SQL write statements.
 
 ``tests/fixtures/ad1346_store_census.py`` holds the census: ``sql_write_points`` scans ``src`` for SQL write
-statements; ``STORE_WRITE_SCOPES`` gives each scope that holds one in five files a coverage (AD-1346 M3e4b, M3e4d1);
-``STORE_WRITE_FILES`` gives each other file that holds one a coverage; ``AGENT_ATTRIBUTED_SCOPES`` gives a scope and an
-author name for each file whose row is pending for AD-1346 M3e4d (AD-1346 M3e4c).
+statements; ``STORE_WRITE_SCOPES`` gives each scope that holds one in six files a coverage (AD-1346 M3e4b, M3e4d1,
+M3e4d2); ``STORE_WRITE_FILES`` gives each other file that holds one a coverage; ``AGENT_ATTRIBUTED_SCOPES`` gives a
+scope and an author name for each file whose row is pending for AD-1346 M3e4d (AD-1346 M3e4c).
 
 - WC1  every file the scan finds is a row of ``STORE_WRITE_FILES`` or a file of ``STORE_WRITE_SCOPES``, not both, and
-       every row is one: 79 files, of which 5 are scoped and 74 are rows (7 pending for AD-1346 M3e4d, 66 system and 1
-       command-line); in the scoped files the scopes the scan finds are the rows of ``STORE_WRITE_SCOPES``: 8 checks
-       and 15 system rows under ``system:ship_computer``.
+       every row is one: 79 files, of which 6 are scoped and 73 are rows (6 pending for AD-1346 M3e4d, 66 system and 1
+       command-line); in the scoped files the scopes the scan finds are the rows of ``STORE_WRITE_SCOPES``: 9 checks
+       and 18 system rows under ``system:ship_computer``.
 - WC2  the scan on a synthetic module: a constant, an f-string whose table is a placeholder, a triple-quoted statement
        that starts on the line after its quotes, an implicit concatenation, the left operand of ``+``, a statement in a
        lambda, one in a nested function and a module-level constant are points; a module's, a class's and a
        function's docstring, a ``SELECT``, a ``CREATE TABLE``, prose with a write's words after its start, lower-case
        SQL, a bytes constant and a string inside an f-string's placeholder are not.
-- WC3  the pending rows are the seven files of ``AGENT_ATTRIBUTED_SCOPES``, each owned by AD-1346 M3e4d, and the table
+- WC3  the pending rows are the six files of ``AGENT_ATTRIBUTED_SCOPES``, each owned by AD-1346 M3e4d, and the table
        is pinned; ``admission/store.py`` and ``agent_stop.py`` are system rows; the checked scopes are the episodic
-       store's, the Ward Room's posts, edits, endorsements and threads, the clinical notes store's notes and the skill
-       request store's filings and decisions.
+       store's, the Ward Room's posts, edits, endorsements and threads, the clinical notes store's notes, the skill
+       request store's filings and decisions and the persistent task store's task creation.
 - WC4  the system rows' principal is ``system:ship_computer``, a member of ``SYSTEM_PRINCIPALS``; the command-line row
        is ``__main__.py``, under ``OUTSIDE_RUNTIME``; in ``src`` the scan finds the Ward Room's f-string whose table is a
        placeholder and a knowledge-edge statement that starts on the line after its quotes, each in its async method.
@@ -91,21 +91,21 @@ def _scopes(path: str, wanted: Callable[[list[str], int], bool]) -> set[str]:
 
 
 def test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one() -> None:
-    """WC1 (D219, D220, D221; AD-1346 M3e4b: D229; AD-1346 M3e4c: D240; AD-1346 M3e4d1: D284; kills EV-9, EA-2, EA-6,
-    ED-9): a file that gains its first SQL write statement, or a scope of a scoped file that gains its first, fails here
-    until it is classified."""
+    """WC1 (D219, D220, D221; AD-1346 M3e4b: D229; AD-1346 M3e4c: D240; AD-1346 M3e4d1: D284; AD-1346 M3e4d2: D291;
+    kills EV-9, EA-2, EA-6, ED-9, EY-5, EY-7): a file that gains its first SQL write statement, or a scope of a scoped
+    file that gains its first, fails here until it is classified."""
     found = sql_write_files()
     scoped = {path for path, _scope in STORE_WRITE_SCOPES}
     assert sorted(scoped & STORE_WRITE_FILES.keys()) == []
     assert sorted(found - STORE_WRITE_FILES.keys() - scoped) == []
     assert sorted((STORE_WRITE_FILES.keys() | scoped) - found) == []
     kinds = Counter(_kind(cover) for cover in STORE_WRITE_FILES.values())
-    assert kinds == {"Pending M3e4d": 7, "System": 66, "OutsideRuntime": 1}, kinds
-    assert len(found) == 79 and len(scoped) == 5, (len(found), sorted(scoped))
+    assert kinds == {"Pending M3e4d": 6, "System": 66, "OutsideRuntime": 1}, kinds
+    assert len(found) == 79 and len(scoped) == 6, (len(found), sorted(scoped))
     points = {(path, scope) for path, scope, _line in sql_write_points() if path in scoped}
     assert sorted(points - STORE_WRITE_SCOPES.keys()) == []
     assert sorted(STORE_WRITE_SCOPES.keys() - points) == []
-    assert Counter(type(cover).__name__ for cover in STORE_WRITE_SCOPES.values()) == {"StoreCheck": 8, "System": 15}
+    assert Counter(type(cover).__name__ for cover in STORE_WRITE_SCOPES.values()) == {"StoreCheck": 9, "System": 18}
     assert {cover.principal for cover in STORE_WRITE_SCOPES.values() if isinstance(cover, System)} == {SHIP}
 
 
@@ -124,14 +124,14 @@ def test_the_sql_write_scan_on_a_synthetic_module() -> None:
 
 
 def test_the_pending_rows_and_the_rows_of_the_services_that_check() -> None:
-    """WC3 (D218, D221; AD-1346 M3e4b: D229; AD-1346 M3e4c: D239, D240; AD-1346 M3e4d1: D284; kills EW-8, EA-1, EA-7)."""
+    """WC3 (D218, D221; AD-1346 M3e4b: D229; AD-1346 M3e4c: D239, D240; AD-1346 M3e4d1: D284; AD-1346 M3e4d2: D291;
+    kills EW-8, EA-1, EA-7)."""
     pending = {path: cover.owner for path, cover in STORE_WRITE_FILES.items() if isinstance(cover, Pending)}
     assert pending == dict.fromkeys(AGENT_ATTRIBUTED_SCOPES, "M3e4d"), pending
     assert sorted(AGENT_ATTRIBUTED_SCOPES.items()) == [
         ("src/probos/artifacts/__init__.py", ("ArtifactStore.add_version", "created_by")),
         ("src/probos/assignment.py", ("AssignmentService.create_assignment", "created_by")),
         ("src/probos/capability_request.py", ("CapabilityRequestStore.file_request", "agent_id")),
-        ("src/probos/persistent_tasks.py", ("PersistentTaskStore.create_task", "created_by")),
         ("src/probos/threads/__init__.py", ("ChatThreadStore.append_message_once", "author_id")),
         ("src/probos/ward_room/channels.py", ("ChannelManager.create_channel", "created_by")),
         ("src/probos/workforce.py", ("WorkItemStore._insert_work_item", "item.created_by")),
@@ -141,6 +141,7 @@ def test_the_pending_rows_and_the_rows_of_the_services_that_check() -> None:
     assert sorted(site for site, cover in STORE_WRITE_SCOPES.items() if isinstance(cover, StoreCheck)) == [
         ("src/probos/cognitive/clinical_notes_store.py", "ClinicalNotesStore.write_note"),
         ("src/probos/cognitive/episodic.py", "EpisodicMemory.store"),
+        ("src/probos/persistent_tasks.py", "PersistentTaskStore.create_task"),
         ("src/probos/skill_request.py", "SkillRequestStore.decide"),
         ("src/probos/skill_request.py", "SkillRequestStore.file_request"),
         ("src/probos/ward_room/messages.py", "MessageStore.create_post"),

@@ -1297,6 +1297,18 @@ AD-1346 M3e4d1 is the first part of M3e4d. `ClinicalNotesStore.write_note`, `Ski
 - *Residual, accepted.* Registers R145 and R146 of the contract.
 - *Reversal.* Revert the M3e4d1 commits.
 
+### AD-1346 M3e4d2 -- the persistent task store's store-write check (2026-11-03, #1604)
+
+AD-1346 M3e4d2 is the second part of M3e4d. `PersistentTaskStore.create_task` calls `check_at` with `store_write` as the statement before its `if self._db:`, presenting `created_by`. When the runtime holds a `PersistentTaskStore`, `ProbOSRuntime.start` hands it the admission service, or None, through `set_admission`. `persistent_tasks.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d2-persistent-task-check.md`.
+
+- *D290 (the cut).* `persistent_tasks.py` alone: its four write scopes need one check and three rows of the ship's. Rejected: with `threads/__init__.py`, whose write scopes in two classes would each need a row; all three files; with the two 15-method stores.
+- *D291 (the rows).* `create_task` is a check; `cancel_task`, `trigger_webhook` and `_fire_task` are the ship's by D239: their statements do not write `created_by`. Rejected: `_fire_task` as agent-attributed; the file kept pending.
+- *D292 (the check).* The statement before `if self._db:`, presenting the parameter `created_by`. Rejected: the body's first statement; inside the `if`; at the callers; `task.created_by`.
+- *D293 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: a constructor keyword from `init_communication`; a shared mixin.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM8 and WM9 are new.
+- *Residual, accepted.* Registers R147 and R148 of the contract.
+- *Reversal.* Revert the M3e4d2 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
