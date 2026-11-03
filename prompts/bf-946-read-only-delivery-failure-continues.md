@@ -1,7 +1,7 @@
 # BF-946 (#1723): a read-only call's failed delivery comes back to the agent as an error, and the run goes on
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-02
-**Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-02, before the build: this Status line records the Captain's decision R; the P2-5 and P5-3 docstrings no longer call `is_tier_1_tool_call` "the one existing classifier"; the reversal lines name the BF-946 commits instead of counting them; G1's expected count and the estimated test count are corrected to what the oracle measured (G1 on M1's stage: 5 passed and 7 xfailed, 12 cases; the new file holds 7 test functions in M1 and 8 after M2). Amendment A3 by `claude-architect` (Claude Code, Opus 5.5), 2026-11-02, before the build: sentences of the contract that were false of the head or went beyond their source are corrected or deleted (§1.2, §1.3, §2, §3, §5's M3 subject, §6, §7.5's R-b and R-c, §8's merge note, §9, §10's prefix note, §14, §15, §16, and absence records A1, A3, A4, A5 and A8), and so is the text inside N1-1, P2-4, P3-4, P4-1, P4-2, P5-1, P5-5 and P5-6 that said more than the code; no pair's behaviour or SEARCH changed.
+**Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-02, before the build: this Status line records the Captain's decision R; the P2-5 and P5-3 docstrings no longer call `is_tier_1_tool_call` "the one existing classifier"; the reversal lines name the BF-946 commits instead of counting them; G1's expected count and the estimated test count are corrected to what the oracle measured (G1 on M1's stage: 5 passed and 7 xfailed, 12 cases; the new file holds 7 test functions in M1 and 8 after M2). Amendment A3 by `claude-architect` (Claude Code, Opus 5.5), 2026-11-02, before the build: sentences of the contract that were false of the head or went beyond their source are corrected or deleted (§1.2, §1.3, §2, §3, §5's M3 subject, §6, §7.5's R-b and R-c, §8's merge note, §9, §10's prefix note, §14, §15, §16, and absence records A1, A3, A4, A5 and A8), and so is the text inside N1-1, P2-4, P3-4, P4-1, P4-2, P5-1, P5-5 and P5-6 that said more than the code; no pair's behaviour or SEARCH changed. Repair after review round 1 by the orchestrator (Claude Sonnet 5.5), 2026-11-02: the `_delivery_stop` docstring in P2-5's REPLACE no longer says the failure that ends the run is the first one issued; no behaviour and no SEARCH changed.
 **Status:** M1 to M5 ready to build as one batch: the Captain decided R-a on #1723 (2026-11-02, 22:57Z), so M5 is built with M1 to M4 (§3, §7.5). **Base:** drafted on `0ac7bdf3` (AD-1356 S1's head); built on main after AD-1356 S1 and S2 merge. **Dependencies:** none (independent of AD-1356). **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD, M4 STANDARD, M5 HIGH. **Estimated tests:** 1 new file (7 test functions in M1, 1 more in M2); M5 edits that file and `tests/test_ad1240_tool_result_delivery.py`.
 **BF number:** BF-946, held by the title of #1723 (`gh issue list --state all --search "BF-946 in:title"`: #1723 only; `git log --all -i --grep BF-946`: no commit). Nothing allocated.
 
@@ -598,8 +598,7 @@ def _delivery_stop(
     follow it. So does a result whose delivery failed, unless
     ``_continues_after_failed_delivery`` lets the run go on (BF-946); the model is
     then shown the failure and may ask again for less. ``results`` is aligned with
-    ``tool_uses`` and in request order, so the failure that ends the run is the
-    first one issued.
+    ``tool_uses`` and in request order.
     """
     for use, item in zip(tool_uses, results, strict=True):
         if isinstance(item, InvocationRefusal):

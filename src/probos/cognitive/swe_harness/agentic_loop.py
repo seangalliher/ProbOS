@@ -1269,8 +1269,7 @@ def _delivery_stop(
     follow it. So does a result whose delivery failed, unless
     ``_continues_after_failed_delivery`` lets the run go on (BF-946); the model is
     then shown the failure and may ask again for less. ``results`` is aligned with
-    ``tool_uses`` and in request order, so the failure that ends the run is the
-    first one issued.
+    ``tool_uses`` and in request order.
     """
     for use, item in zip(tool_uses, results, strict=True):
         if isinstance(item, InvocationRefusal):
