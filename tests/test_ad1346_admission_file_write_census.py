@@ -1,12 +1,12 @@
 """AD-1346 M3e4c3a (#1604): the census of #1604 property 1's store-write class, its file writes.
 
 ``tests/fixtures/ad1346_file_write_census.py`` holds the census: ``file_write_points`` scans ``src``;
-``FILE_WRITE_FILES`` gives each file that holds a point a coverage; ``FILE_AGENT_ATTRIBUTED_SCOPES`` gives a scope and
-an author name for each file whose row is pending for AD-1346 M3e4d.
+``FILE_WRITE_FILES`` gives each file that holds a point a coverage; ``FILE_AGENT_ATTRIBUTED_SCOPES`` and
+``FILE_AGENT_ATTRIBUTED_STATE_SCOPES`` give scopes and an author name for the files whose rows are pending for AD-1346
+M3e4d.
 
-- WF1  every file the scan finds is a row of ``FILE_WRITE_FILES`` and every row is one: 72 files (1 pending for
-       AD-1346 M3e4d, 67 the ship's, 2 pending for AD-1346 M3e4c3e and 2 command-line), and 207 points counted
-       by name.
+- WF1  every file the scan finds is a row of ``FILE_WRITE_FILES`` and every row is one: 72 files (3 pending for
+       AD-1346 M3e4d, 67 the ship's and 2 command-line), and 207 points counted by name.
 - WF2  the scan on a synthetic module: the seven methods of ``FILE_WRITE_METHODS``, the seven functions of
        ``MODULE_WRITES``, ``os.open`` with a write flag, ``open`` and ``fdopen`` with a mode that writes (by position
        and by keyword), a ``Path`` replace and rename with one argument, a method handed to an executor and to
@@ -15,19 +15,26 @@ an author name for each file whose row is pending for AD-1346 M3e4d.
        a file name that starts with a mode's letter, ``os.open`` with a read flag or with flags in a variable, a
        handle's ``write``, ``json.dump``, a method reached through ``getattr`` and a string that holds a write's text
        are not.
-- WF3  the one row pending for AD-1346 M3e4d is the Ship's Records' file and the table is pinned; its scope holds a
-       point the scan finds, its author name is a parameter (positional-only, positional or keyword-only) of the one
-       function of that qualified name, and a dict display in that function maps the ``str`` constant of that name
-       to that name.
+- WF3  the rows pending for AD-1346 M3e4d are the keys of the two tables, the Ship's Records' file is the one key of
+       ``FILE_AGENT_ATTRIBUTED_SCOPES`` and its value is pinned; its scope holds a point the scan finds, its author
+       name is a parameter (positional-only, positional or keyword-only) of the one function of that qualified name,
+       and a dict display in that function maps the ``str`` constant of that name to that name.
 - WF4  the command-line rows are ``__main__.py`` and the doctor's data-directory check, each under
        ``OUTSIDE_RUNTIME``, and no other row lies under it.
 - WF5  in ``src`` the scan finds two methods handed to an executor (``cognitive/session_manager.py``), a ``Path``
        rename with one argument (``cognitive/dreaming.py``), and in ``task_sessions/browser.py`` one point, the file
        its rendered script is written to.
-- WF6  every row is ``System`` under ``SHIP`` with a reason but the Ship's Records', the command-line rows and the
-       rows of ``_LEFT``, which are the rows pending for AD-1346 M3e4c3e.
+- WF6  every row is ``System`` under ``SHIP`` with a reason but the rows pending for AD-1346 M3e4d and the
+       ``OutsideRuntime`` rows.
 - WF7  outside ``cognitive/ready_room/idea_store.py`` no ``src`` call passes a ``captured_by`` keyword, and no
        ``src`` call's function is named ``AgentVersion``.
+- WF8  ``FILE_AGENT_ATTRIBUTED_STATE_SCOPES`` is pinned. For each row, its writing scope holds a point the scan finds;
+       an assignment at module level binds its module-level name, and the one function of the writing scope's
+       qualified name holds that name as a ``Name`` node. The author's parameter is a parameter (positional-only,
+       positional or keyword-only) of the one function of the first scope's qualified name; when the author names a
+       field, that parameter's annotation is a ``Name`` of a class at module level whose body annotates the field.
+       That function passes the parameter as a positional argument to a method called on the module-level name, and
+       calls a function by a ``Name`` equal to the writing scope.
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ from collections import Counter
 from tests.fixtures.ad1346_effect_census import OUTSIDE_RUNTIME, SHIP, OutsideRuntime, Pending, System, src_sources
 from tests.fixtures.ad1346_file_write_census import (
     FILE_AGENT_ATTRIBUTED_SCOPES,
+    FILE_AGENT_ATTRIBUTED_STATE_SCOPES,
     FILE_WRITE_FILES,
     file_write_files,
     file_write_points,
@@ -46,11 +54,6 @@ from tests.fixtures.ad1346_file_write_census import (
 
 _RECORDS = "src/probos/knowledge/records_store.py"
 _IDEAS = "src/probos/cognitive/ready_room/idea_store.py"
-#: AD-1346 M3e4c3d (D268, D270): the rows pending for AD-1346 M3e4c3e, sorted.
-_LEFT = (
-    "src/probos/avatars/proposal_history.py",
-    "src/probos/avatars/vision_proposal_history.py",
-)
 
 _SYNTHETIC = '''\
 import asyncio
@@ -142,13 +145,13 @@ def _called(node: ast.Call) -> str:
 
 
 def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
-    """WF1 (D253, D254, D259, D264, D269; kills EF-12, EM-2): a file that gains its first file write fails here."""
+    """WF1 (D253, D254, D259, D264, D269, D275; kills EF-12): a file that gains its first file write fails here."""
     found = file_write_files()
     assert sorted(found - FILE_WRITE_FILES.keys()) == []
     assert sorted(FILE_WRITE_FILES.keys() - found) == []
     assert len(found) == 72, len(found)
     kinds = Counter(_kind(cover) for cover in FILE_WRITE_FILES.values())
-    assert kinds == {"Pending M3e4d": 1, "System": 67, "Pending M3e4c3e": 2, "OutsideRuntime": 2}, kinds
+    assert kinds == {"Pending M3e4d": 3, "System": 67, "OutsideRuntime": 2}, kinds
     assert Counter(name for _path, _scope, _line, name in file_write_points()) == {
         "write_text": 59,
         "write_bytes": 7,
@@ -199,9 +202,10 @@ def test_the_file_write_scan_on_a_synthetic_module() -> None:
 
 
 def test_the_agent_attributed_row_writes_and_records_its_author() -> None:
-    """WF3 (D239, D255; kills EF-7, EF-8, EJ-3, EL-4, EM-7)."""
+    """WF3 (D239, D255, D274; kills EF-7, EF-8, EJ-3, EL-4, EM-7, EN-1)."""
     pending = {path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, Pending) and cover.owner == "M3e4d"}
-    assert pending == FILE_AGENT_ATTRIBUTED_SCOPES.keys() == {_RECORDS}, pending
+    assert pending == FILE_AGENT_ATTRIBUTED_SCOPES.keys() | FILE_AGENT_ATTRIBUTED_STATE_SCOPES.keys(), pending
+    assert FILE_AGENT_ATTRIBUTED_SCOPES.keys() == {_RECORDS}, FILE_AGENT_ATTRIBUTED_SCOPES.keys()
     assert FILE_AGENT_ATTRIBUTED_SCOPES[_RECORDS] == ("RecordsStore.write_entry", "author")
     points = {(path, scope) for path, scope, _line, _name in file_write_points()}
     for path, (scope, author) in FILE_AGENT_ATTRIBUTED_SCOPES.items():
@@ -241,15 +245,12 @@ def test_three_shapes_the_scan_finds_in_src() -> None:
 
 
 def test_the_ships_rows() -> None:
-    """WF6 (D260, D265, D270; kills EM-1, EM-3, EM-4, EM-5, EM-6): every row is ``System`` under ``SHIP`` with a
-    reason but the Ship's Records', the command-line rows and the rows of ``_LEFT``, which are the rows pending for
-    AD-1346 M3e4c3e."""
-    left = sorted(path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, Pending) and cover.owner == "M3e4c3e")
-    assert left == list(_LEFT), left
+    """WF6 (D260, D265, D270, D275; kills EM-4, EM-5, EN-2): every row is ``System`` under ``SHIP`` with a reason but
+    the rows pending for AD-1346 M3e4d and the ``OutsideRuntime`` rows."""
     rest = sorted(
         path
         for path, cover in FILE_WRITE_FILES.items()
-        if path != _RECORDS and path not in _LEFT and not isinstance(cover, OutsideRuntime)
+        if not (isinstance(cover, Pending) and cover.owner == "M3e4d") and not isinstance(cover, OutsideRuntime)
     )
     system = sorted(path for path, cover in FILE_WRITE_FILES.items() if isinstance(cover, System))
     assert system == rest, system
@@ -270,3 +271,45 @@ def test_no_src_call_sets_captured_by_or_builds_an_agent_version() -> None:
         )
     )
     assert found == [], found
+
+
+def test_the_agent_attributed_rows_that_hold_their_author_in_module_state() -> None:
+    """WF8 (D239, D274; kills EN-3, EN-4, EN-5, EN-6, EN-7, EN-8, EN-9, EN-10)."""
+    assert FILE_AGENT_ATTRIBUTED_STATE_SCOPES == {
+        "src/probos/avatars/proposal_history.py": ("append", "agent_id", "_history", "_persist_locked"),
+        "src/probos/avatars/vision_proposal_history.py": ("append", "entry.agent_id", "_entries", "_persist_locked"),
+    }, FILE_AGENT_ATTRIBUTED_STATE_SCOPES
+    points = {(path, scope) for path, scope, _line, _name in file_write_points()}
+    for path, (scope, author, state, writer) in FILE_AGENT_ATTRIBUTED_STATE_SCOPES.items():
+        assert (path, writer) in points, (path, writer)
+        module = ast.parse(src_sources()[path], filename=path).body
+        assert any(
+            isinstance(target, ast.Name) and target.id == state
+            for node in module
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+        ), (path, state)
+        assert any(isinstance(node, ast.Name) and node.id == state for node in ast.walk(_function(path, writer))), (path, writer)
+        function = _function(path, scope)
+        arguments = function.args
+        annotations = {arg.arg: arg.annotation for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)}
+        parameter, _dot, field = author.partition(".")
+        assert parameter in annotations, (path, scope, parameter)
+        if field:
+            annotation = annotations[parameter]
+            assert isinstance(annotation, ast.Name), (path, scope, parameter)
+            assert any(
+                isinstance(node, ast.ClassDef)
+                and node.name == annotation.id
+                and any(isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.target.id == field for item in node.body)
+                for node in module
+            ), (path, author)
+        calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+        assert any(
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == state
+            and any(isinstance(argument, ast.Name) and argument.id == parameter for argument in call.args)
+            for call in calls
+        ), (path, scope, state)
+        assert any(isinstance(call.func, ast.Name) and call.func.id == writer for call in calls), (path, scope, writer)

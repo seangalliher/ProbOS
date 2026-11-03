@@ -13,9 +13,11 @@ or, failing those, a call that passes as a positional argument an attribute name
 another function to call. A point is (enclosing scope, line, the name), scoped as ``sql_write_scan`` of
 ``tests/fixtures/ad1346_store_census.py`` scopes one. ``file_write_points`` runs the scan over every ``src`` module.
 ``FILE_WRITE_FILES`` gives each file that holds a point one coverage, a ``Pending``, ``System`` or ``OutsideRuntime`` of
-``tests/fixtures/ad1346_effect_census.py`` (D254); a row is a file and carries no count. ``FILE_AGENT_ATTRIBUTED_SCOPES``
-gives, for each file whose row is ``Pending("M3e4d")``, a scope that writes a file D239 makes agent-attributed and the
-name in that scope of the value the file records as the text's author (D255).
+``tests/fixtures/ad1346_effect_census.py`` (D254); a row is a file and carries no count. A file whose row is
+``Pending("M3e4d")`` is a key of ``FILE_AGENT_ATTRIBUTED_SCOPES`` or of ``FILE_AGENT_ATTRIBUTED_STATE_SCOPES``. The first
+gives a scope that writes a file D239 makes agent-attributed and the name in that scope of the value the file records
+as the text's author (D255). The second gives a scope, the author (a parameter of that scope, or ``<parameter>.<field>``
+for a field of the class that annotates the parameter), a module-level name and the writing scope (D274).
 
 Among what the scan cannot see (register R129): a mode or a flag held in a variable, a write through a handle opened
 elsewhere or through a library, a file a subprocess writes, a write inside a string another process runs, the callers
@@ -132,13 +134,19 @@ def file_write_files() -> frozenset[str]:
     return frozenset(path for path, _scope, _line, _name in file_write_points())
 
 
-_AGENT_ATTRIBUTED_FILE: Final = Pending("M3e4d", "agent-attributed (D239, D255): FILE_AGENT_ATTRIBUTED_SCOPES names a scope and its author (register R113)")
-_AWAITING_AUTHOR_CHECK: Final = Pending("M3e4c3e", "agent-attributed (D239, D269): its writing scope takes no parameter, so WF3 cannot check an author (register R136)")
+_AGENT_ATTRIBUTED_FILE: Final = Pending("M3e4d", "agent-attributed (D239, D255, D274): FILE_AGENT_ATTRIBUTED_SCOPES or FILE_AGENT_ATTRIBUTED_STATE_SCOPES names its writing scope and its author (register R113)")
 
-#: AD-1346 M3e4c3a (D254, D255): each file whose row is ``Pending("M3e4d")`` -> (a scope that writes a file D239 makes
+#: AD-1346 M3e4c3a (D254, D255): a file whose row is ``Pending("M3e4d")`` -> (a scope that writes a file D239 makes
 #: agent-attributed, the name in that scope of the value the file records as the text's author).
 FILE_AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
     "src/probos/knowledge/records_store.py": ("RecordsStore.write_entry", "author"),
+}
+#: AD-1346 M3e4c3e (D274): a file whose row is ``Pending("M3e4d")`` -> (a scope that takes the author, the author: a
+#: parameter of that scope, or ``<parameter>.<field>`` for a field of the class that annotates that parameter, a
+#: module-level name on which that scope calls a method with that parameter, the writing scope that scope calls).
+FILE_AGENT_ATTRIBUTED_STATE_SCOPES: Final[dict[str, tuple[str, str, str, str]]] = {
+    "src/probos/avatars/proposal_history.py": ("append", "agent_id", "_history", "_persist_locked"),
+    "src/probos/avatars/vision_proposal_history.py": ("append", "entry.agent_id", "_entries", "_persist_locked"),
 }
 
 #: AD-1346 M3e4c3a (D254): each ``src`` file that holds a file write -> its coverage.
@@ -218,7 +226,7 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     "src/probos/startup/shutdown.py": System(SHIP, "shutdown writes the session record: its id, start and shutdown times, uptime, crew count and shutdown reason, with no author id (D239)"),
     "src/probos/voice/wake_word_trainer.py": System(SHIP, "WakeWordTrainer.train deletes the positive training samples directory: no text"),
     "src/probos/warm_boot.py": System(SHIP, "WarmBootService.restore and _load_skill_handler delete the temporary file they loaded restored agent or skill source from: no text"),
-    # Agent-attributed (D239, D269), pending for M3e4c3e (register R136).
-    "src/probos/avatars/proposal_history.py": _AWAITING_AUTHOR_CHECK,
-    "src/probos/avatars/vision_proposal_history.py": _AWAITING_AUTHOR_CHECK,
+    # Agent-attributed (D239, D269, D274): M3e4d's (register R113, R136).
+    "src/probos/avatars/proposal_history.py": _AGENT_ATTRIBUTED_FILE,
+    "src/probos/avatars/vision_proposal_history.py": _AGENT_ATTRIBUTED_FILE,
 }
