@@ -112,14 +112,13 @@
     - The skill route passes the body's `agent_id` (`routers/skill_requests.py:76-77`).
   - **Behaviour.** `check_at` lets no `Exception` out (`admission/seam.py:22-23`; `admission/service.py:238`).
   - **Writes that check nothing:**
-    - a store held by no runtime (tests build them directly) keeps the class default None;
     - a write before the hand-off (§1: the stores are bound at `runtime.py:3425` and `:3430`) checks nothing;
     - after shutdown closes the service, a check counts nothing (`admission/service.py:260`).
   - Placement, ranked:
     1. this;
     2. the body's first statement: it counts `decide`'s unknown ids and a note whose `int(disclosure_level)` raises, and both write nothing;
     3. inside `if self._db:`: not a statement of the body, so WM1's rule changes;
-    4. at the callers: three call sites instead of three scopes, contrary to D222's choice of the writing entry.
+    4. at the callers: contrary to D222's choice of the writing entry.
   - Presented id, ranked:
     1. the parameter;
     2. None: no mismatch finding;
@@ -152,7 +151,7 @@
 - **D288 Cost** (question 4; D235's method).
   - Shadow off: one type comparison (`admission/seam.py:55`).
   - Shadow on: D225's carrier read, principal resolve, registry check and recorder offer.
-  - The callers read here are two HTTP routes (`routers/counselor.py:273`, `routers/skill_requests.py:76`, `:147`) and `DelegatedApprovalService.decide` (`delegated_approvals.py:705`).
+  - The callers read here are HTTP routes (`routers/counselor.py:273`, `routers/skill_requests.py:76`, `:147`) and `DelegatedApprovalService.decide` (`delegated_approvals.py:705`).
   - `admission.shadow_enabled` false gives the runtime no service (WM5 reads `admission_service` as None), and the stores are handed None.
   - No timing test. The volume is counted from `admission_shadow.db`: `SELECT day, SUM(findings) FROM ticket_findings WHERE operation = 'store_write' GROUP BY day`.
   - Ranked:
@@ -175,7 +174,6 @@
 
 - **`ClinicalNotesStore` and `SkillRequestStore`:** each gains `_admission` and `set_admission`.
   - `runtime.py` calls the method; WM5, WM6 and WM7 call it or read it.
-  - Tests that build a store directly keep the class default None, for which `check_at` does nothing. Examples: `tests/test_bf925_silent_guards.py:55`, and the AD-904, AD-906, AD-907, AD-908, BF-722 and AD-1213 tests.
 - **The functions that call `check_at`:** SK7, through `store_write_check_functions`.
 - **The `src` files that import `probos.admission`:** T16 (M1-24).
 - **`src` text.** The new text in the two store modules holds none of: `admission_service` (T16's `named`); `WorkTicket`, `TicketRegistry`, `admission.tickets` or `admission import tickets` (K15); `TestTicket` or `allow_test_tickets` (K5); `CURRENT_TICKET` (I11); `IdentityRef` (`tests/test_ad1346_identity_service.py`). `runtime.py` already holds `admission_service`.
@@ -215,16 +213,12 @@ from probos.mesh.disclosure import DisclosureLevel
 
 SEARCH:
 ```
-    every read/write honest-degrades to empty/None so tests and degraded boots
-    never leak across a missing store.
     """
 
     def __init__(
 ```
 REPLACE:
 ```
-    every read/write honest-degrades to empty/None so tests and degraded boots
-    never leak across a missing store.
     """
 
     _admission: object = None  # AD-1346 M3e4d1 (D286, set_admission): None checks nothing
@@ -1120,13 +1114,13 @@ AD-1346 M3e4d1 is the first part of M3e4d. `ClinicalNotesStore.write_note`, `Ski
 - The behaviour of `write_note`, `file_request` and `decide`: their answers, their writes and their events (WM7). The docstrings in `admission/seam.py` and `admission/service.py` change (M1-09 to M1-11).
 - `begin_training`, `complete_for_simulation` and the other methods of the two classes.
 - `tests/fixtures/ad1346_store_family_census.py`, `tests/fixtures/ad1346_file_write_census.py` and their tests; WF1 to WF9.
-- WM2's body, WM3's and WM4's bodies, WC2, WC4, WC5, SK7.
+- WM2's body, WC2, WC4, WC5, SK7.
 - `docs/development/architecture-baseline.yaml` and the store registry.
 - Not built here: the checks of the rows R145 orders, and the evidence slice (M3e5). Not built (the epic's list): enforcement, a store rekey to the sovereign id, domain SQL, storage registration.
 
 ## 10. Mutation rows (one campaign of record on the M2 tree, after an unmutated baseline passes)
 
-- `--tests`: every row runs against `tests/test_ad1346_admission_store_writes.py` and `tests/test_ad1346_admission_store_census.py`. No two rows share a line.
+- `--tests`: every row runs against `tests/test_ad1346_admission_store_writes.py` and `tests/test_ad1346_admission_store_census.py`.
 - Each Line is a stripped line that occurs once in its file on M2's tree. Builder: confirm with `grep -c -F`; a count other than 1 is a hard stop for the Architect.
 - ED-1 to ED-8 mutate a `src` file: restore it after each row. `git status --porcelain -- src` prints nothing after the campaign.
 
@@ -1269,7 +1263,7 @@ HOLDS: yes
 1. Each of the three new `check_at` calls is an expression statement of its function's body, directly before `if self._db:`. Its arguments are `self._admission`, `effect=EFFECT_STORE_WRITE` and the function's own parameter (`author_agent_id`, `agent_id`, `decided_by`). `decide`'s check follows the unknown-id `return None`.
 2. Nothing else in the two store modules changes but the two imports, `_admission` and `set_admission`. The writes, the events, the cache updates and the return values are as before.
 3. `ProbOSRuntime.start` hands `self.admission_service` to each store under `isinstance`, after the M3e4b hand-offs. No other runtime line changes.
-4. The new `src` text holds none of `admission_service`, `WorkTicket`, `TicketRegistry`, `admission.tickets`, `admission import tickets`, `TestTicket`, `allow_test_tickets`, `CURRENT_TICKET` or `IdentityRef` (§5).
+4. The new `src` text holds none of `WorkTicket`, `TicketRegistry`, `admission.tickets`, `admission import tickets`, `TestTicket`, `allow_test_tickets`, `CURRENT_TICKET` or `IdentityRef` (§5).
 5. `STORE_WRITE_SCOPES` gains exactly the five rows of M1-16. The two files leave `STORE_WRITE_FILES` and `AGENT_ATTRIBUTED_SCOPES`, and no other key or value of the three tables changes.
 6. Each row's reason and each changed docstring, comment and tracker sentence agree with the code. In particular: what `begin_training` and `complete_for_simulation` write (`skill_request.py:290-292`, `:338-339`); that `DelegatedApprovalService.decide` passes `decided_by=identity.agent_id` (`delegated_approvals.py:705-706`); and the counts of WC1 (79, 5, 74, 7, 66, 1, 8, 15).
 7. WM6's and WM7's expected tallies follow from `_note_file_decide`'s four writes per round, and the tests use real stores over `tmp_path`.
@@ -1292,10 +1286,19 @@ HOLDS: yes
 - "Which text describes the head": the bullet that cited a draft of M3e4c3f's contract outside the repository for M3-01's SEARCH cites `PROGRESS.md:3` on the build's base instead; the build's base is M3e4c3f's M2 commit, `76db0d52` (on `cb6d61ef`, the M3e4c3c to M3e4c3e batch with BF-951), and not `origin/main` after a merge; BF-946's heading is at `DECISIONS.md:1288` on that base.
 - §11: the results of five records of searches with context lines (`-A`, `-B`) are deleted, and Absence entry 3's parenthetical of counts for a second glob is deleted; the records keep their commands.
 - The orchestrator applied the 36 blocks of §7 and the 2 pairs of §8 by tool on `76db0d52`'s tree with 0 failures: M3-01's SEARCH is M3e4c3f's paragraph, at `PROGRESS.md:3` there.
-Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 **Amendment 2 (2026-11-03, the orchestrator, before the first review, after the build).** Changed, against Amendment 1's text: §11 loses the results of six records that did not give their command's whole output (`git log --oneline -8`; `git ls-files --eol`; `scripts/ad_ceiling.py`; `wc -l`; the search for `EFFECT_CLASSES`; the search for `calls("check_at")`); the records keep their commands.
-Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 3 (2026-11-03, the orchestrator, after review round 1).** The round's six findings, each repaired by deletion. Changed, against the contract as Amendment 2 left it:
+- §14 item 4: `admission_service` is deleted from the list of what the new `src` text holds none of (the runtime's hand-off holds it).
+- D285 and §5: the two sentences that said a store held by no runtime, or a store that a test builds directly, keeps the class default None are deleted, and so is the clause `or by a store the runtime does not hold` of register R146's bullet.
+- D285's placement ranking and §5: `three call sites instead of three scopes, ` and `two ` (before `HTTP routes`) are deleted.
+- §9: `WM3's and WM4's bodies, ` is deleted from the list of what is not changed (M2 edits their docstrings).
+- §10: the sentence that no two rows share a line is deleted (ED-3 and ED-4 mutate the same line).
+- M1-02 (§7.1): the lines copied from the class docstring are deleted from the SEARCH and from the REPLACE, which keep the constructor's line as the anchor; the pair produces the same file.
+Unchanged by this amendment: every other SEARCH text and every other REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
 
@@ -1311,6 +1314,6 @@ Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count 
   - the presented id is what the caller passes. `routers/counselor.py:275` passes `as_agent_id or "captain"` and `routers/skill_requests.py:76-77` the request body's `agent_id`; outside a hold these count `ticket_missing`;
   - `ticket_findings` is keyed by (day, operation, code, work_kind, off_loop) (`admission/store.py:163-170`), so a `store_write` finding does not say which store's check counted it;
   - skill requests are off by default (`config_models/crew.py:252`), so live volume at the two skill checks needs `skill_requests.enabled`. WM6 covers them;
-  - a store write before the hand-off (§1) or by a store the runtime does not hold checks nothing;
+  - a store write before the hand-off (§1) checks nothing;
   - WM1 finds the check by the name `check_at` (`calls("check_at")`); a call through another name is not seen;
   - a delegated decision is reached from `ReviewRequestsTool._decide` (`tools/review_requests_tool.py:234`), so its write is checked inside an agent's tool call. Which ticket that run carries is not tested here.
