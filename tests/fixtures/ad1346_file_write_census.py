@@ -133,7 +133,7 @@ def file_write_files() -> frozenset[str]:
 
 
 _AGENT_ATTRIBUTED_FILE: Final = Pending("M3e4d", "agent-attributed (D239, D255): FILE_AGENT_ATTRIBUTED_SCOPES names a scope and its author (register R113)")
-_UNCLASSIFIED: Final = Pending("M3e4c3c", "not yet classified under D239 and D218 (register R130)")
+_UNCLASSIFIED: Final = Pending("M3e4c3d", "not yet classified under D239 and D218 (register R130)")
 
 #: AD-1346 M3e4c3a (D254, D255): each file whose row is ``Pending("M3e4d")`` -> (a scope that writes a file D239 makes
 #: agent-attributed, the name in that scope of the value the file records as the text's author).
@@ -168,7 +168,27 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     "src/probos/tools/browser/recording_reaper.py": System(SHIP, "RecordingReaper._reap_sync deletes recordings past retention or over the size cap: no text"),
     "src/probos/tools/code_execution_tool.py": System(SHIP, "a code run's work directory: its sandbox helper, staged thread attachments and its removal"),
     "src/probos/ward_room/threads.py": System(SHIP, "the Ward Room JSONL archive: prune_old_threads appends copies of the thread and post rows it prunes (D218)"),
-    # Not yet classified: M3e4c3c's (register R130, R133).
+    # AD-1346 M3e4c3c: the ship's (D239, D264).
+    "src/probos/cognitive/agent_patcher.py": System(SHIP, "AgentPatcher._patch_skill deletes the temporary file it loaded the patched skill source from: no text"),
+    "src/probos/cognitive/builder.py": System(SHIP, "execute_approved_build writes the content of each file change, or its text after replacement, with no author id (D239); _restore_pre_build_files restores saved bytes and deletes created files"),
+    "src/probos/cognitive/chain_checkpoint.py": System(SHIP, "ChainCheckpointStore.save writes a ChainCheckpoint, which has no author field (D239); delete removes it"),
+    "src/probos/cognitive/checkpoint.py": System(SHIP, "write_checkpoint writes the source text, node states and serialized form of a DAG, with no author key (D239); delete_checkpoint removes it"),
+    "src/probos/cognitive/copilot_adapter.py": System(SHIP, "seed_session_directory writes the non-empty file contents it is passed into a build session directory, with no author id (D239)"),
+    "src/probos/cognitive/dm/artifact_extractor.py": System(SHIP, "_to_docx_libreoffice writes the text it is passed, wrapped as HTML, into a temporary directory for LibreOffice, with no author id (D239)"),
+    "src/probos/cognitive/dream_manifest.py": System(SHIP, "DreamManifest._save writes a timestamp for each episode id and step marked processed: no text"),
+    "src/probos/cognitive/dreaming.py": System(SHIP, "DreamingEngine.dream_cycle renames each non-primary entry of a consolidated cluster into an _archived directory beside it: no text"),
+    "src/probos/cognitive/evidence_collector.py": System(SHIP, "EvidenceCollector._persist writes behaviour codes, a confidence and reasoning, with the author_id it observes (D239)"),
+    "src/probos/cognitive/peer_observation_monitor.py": System(SHIP, "PeerObservationMonitor._save_state writes a count and a last tier for each detector and observer pair: no text"),
+    "src/probos/cognitive/ready_room/idea_store.py": System(SHIP, "IdeaCaptureStore._save writes the title, body and captured_by of each idea; WF7: no src call outside the file passes captured_by (D239)"),
+    "src/probos/cognitive/sandbox.py": System(SHIP, "SandboxRunner.test_agent deletes the temporary file it loaded the generated agent source from: no text"),
+    "src/probos/cognitive/scout.py": System(SHIP, "_save_seen writes the repositories seen and their dates, and _scout_step_persist_report a daily report of findings; ScoutFinding has no author field (D239)"),
+    "src/probos/cognitive/self_improvement/versioning.py": System(SHIP, "LocalDiskPersistence.promote writes agent source and a sidecar holding the designer of its version; WF7: no src call builds an AgentVersion (D239)"),
+    "src/probos/cognitive/self_mod.py": System(SHIP, "SelfModificationPipeline.handle_add_skill deletes the temporary file it loaded the skill source from: no text"),
+    "src/probos/cognitive/session_manager.py": System(SHIP, "SessionManager._write writes a Session, which has no author field (D239); close_session renames it into archive"),
+    "src/probos/cognitive/skill_catalog.py": System(SHIP, "import_skill copies a skill directory, _rewrite_frontmatter adds ProbOS metadata to a SKILL.md frontmatter and remove_skill deletes a skill directory; none sets an author id (D239)"),
+    "src/probos/cognitive/skill_forge.py": System(SHIP, "SkillForge._write_files writes the files a model call generated into a temporary staging directory, with no author id (D239); forge removes the directory"),
+    "src/probos/cognitive/swe_harness/tools.py": System(SHIP, "WriteFileTool.invoke and EditFileTool.invoke write the text they are passed or edit, with no author id (D239); _locked_native_target opens a target read-write"),
+    # Not yet classified: M3e4c3d's (register R130, R133, R135).
     "src/probos/attachments/filesystem_store.py": _UNCLASSIFIED,
     "src/probos/attachments/image_budget_store.py": _UNCLASSIFIED,
     "src/probos/audio/tts/resident.py": _UNCLASSIFIED,
@@ -178,25 +198,6 @@ FILE_WRITE_FILES: Final[dict[str, Pending | OutsideRuntime | System]] = {
     "src/probos/avatars/telemetry_history.py": _UNCLASSIFIED,
     "src/probos/avatars/vision_proposal_history.py": _UNCLASSIFIED,
     "src/probos/captain_card/card.py": _UNCLASSIFIED,
-    "src/probos/cognitive/agent_patcher.py": _UNCLASSIFIED,
-    "src/probos/cognitive/builder.py": _UNCLASSIFIED,
-    "src/probos/cognitive/chain_checkpoint.py": _UNCLASSIFIED,
-    "src/probos/cognitive/checkpoint.py": _UNCLASSIFIED,
-    "src/probos/cognitive/copilot_adapter.py": _UNCLASSIFIED,
-    "src/probos/cognitive/dm/artifact_extractor.py": _UNCLASSIFIED,
-    "src/probos/cognitive/dream_manifest.py": _UNCLASSIFIED,
-    "src/probos/cognitive/dreaming.py": _UNCLASSIFIED,
-    "src/probos/cognitive/evidence_collector.py": _UNCLASSIFIED,
-    "src/probos/cognitive/peer_observation_monitor.py": _UNCLASSIFIED,
-    "src/probos/cognitive/ready_room/idea_store.py": _UNCLASSIFIED,
-    "src/probos/cognitive/sandbox.py": _UNCLASSIFIED,
-    "src/probos/cognitive/scout.py": _UNCLASSIFIED,
-    "src/probos/cognitive/self_improvement/versioning.py": _UNCLASSIFIED,
-    "src/probos/cognitive/self_mod.py": _UNCLASSIFIED,
-    "src/probos/cognitive/session_manager.py": _UNCLASSIFIED,
-    "src/probos/cognitive/skill_catalog.py": _UNCLASSIFIED,
-    "src/probos/cognitive/skill_forge.py": _UNCLASSIFIED,
-    "src/probos/cognitive/swe_harness/tools.py": _UNCLASSIFIED,
     "src/probos/credential_store.py": _UNCLASSIFIED,
     "src/probos/episodic_health.py": _UNCLASSIFIED,
     "src/probos/experience/desktop/lifecycle.py": _UNCLASSIFIED,
