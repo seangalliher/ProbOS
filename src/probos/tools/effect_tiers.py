@@ -50,7 +50,7 @@ def tool_tier(tool_id: object, *, reads_confined: bool) -> str:
 
 
 def routine_tool_ids(*, reads_confined: bool) -> frozenset[str]:
-    """The tools an agent-work run calls with no approval: the members ``tool_tier`` holds routine."""
+    """The members ``tool_tier`` holds routine."""
     return frozenset(
         tool_id for tool_id in ROUTINE_TOOL_IDS if tool_tier(tool_id, reads_confined=reads_confined) == TIER_ROUTINE
     )

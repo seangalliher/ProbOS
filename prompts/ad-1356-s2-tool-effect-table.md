@@ -40,7 +40,6 @@ On `0ac7bdf3`:
 **D2. How `tool_ids` is computed at run start.**
 1. **Chosen: the table's routine set, under D3's read-policy condition, read once at the start of `_run`.**
    - Whether a tool is registered, and whether the agent holds it, stay decided at each call. S1.1 refuses a tool id the registry does not hold (`agentic_dispatch.py:843-847`). The registry's permission check denies a tool the agent does not hold, as in an unconfined run (`tools/executor.py:832-841`).
-   - A tool discovered mid-run is outside the frozenset, so it goes to the gate.
    - The routine set always has at least 11 members, so `ToolCallConfinement`'s non-empty invariant (`agentic_dispatch.py:354`) always holds. "An agent that holds none" therefore means an agent whose routine calls are each denied by the registry, as today.
    - No config field, so the AD-1152 golden does not move.
 2. Intersect with `self._tools.list_ids()` at run start. Rejected: `work_item_status` and several others are registered inside `executor.run` on first use (`agentic_dispatch.py:3205-3216`). On a fresh boot the first run would file them, a regression, and the intersection decides nothing the per-call checks don't.
@@ -49,7 +48,7 @@ On `0ac7bdf3`:
    - a routine tool the agent does not hold would be filed for an approval that cannot make it run, because the registry still denies it;
    - AD-1347 S3 D4 keeps the offer whole (`agentic_dispatch.py:3606`).
 
-**D3. The four newly routine tools before `security_infra.read_roots` is set.**
+**D3. `read_file`, `codebase_read_source`, `codebase_query` and `list_files` before `security_infra.read_roots` is set.**
 1. **Chosen: fail closed.**
    - `read_file` and `codebase_read_source` (`READ_POLICY_TOOL_IDS`) are routine only while `permitted_read_roots(runtime)` is non-empty, and critical otherwise. ET3 and ET4 pin both states through the whole path.
    - `codebase_query` is routine whatever the roots say: it reads only the `CodebaseIndex` built from the source root (`swe_harness/tools.py:597-601`, `cognitive/codebase_index.py:143-145`).
@@ -65,7 +64,6 @@ What an empty `read_roots` allows: `permitted_read_roots` returns `[]` (`file_ac
    - S2 lists the native elevated tools: `find_mcp_tool`; `web_search`, `read_page` and `http_fetch` (Q6); and `list_files`.
    - An `mcp:` id is not listed, so it is critical.
    - The AD-1019b mapping (OPEN → elevated; CONFIRM and CONSENSUS → critical) lands in S3 with its first consumer and a whole-path test. The risk is read from `_McpTool.effective_risk()` (`agentic_dispatch.py:1741-1760`) through the registry S3's classifier already takes.
-   - In S2, a call to an elevated or critical tool goes to the gate, which decides it exactly as today.
 2. Add an `mcp_risk` parameter now. Rejected: no S2 caller would pass it, so it would be built, tested and inert.
 3. Read the MCP `readOnlyHint` and `openWorldHint` annotations. Rejected: the MCP spec says clients MUST treat annotations as untrusted unless they come from trusted servers, and AD-1019b's operator-set risk is the decided source.
 
@@ -171,7 +169,7 @@ def tool_tier(tool_id: object, *, reads_confined: bool) -> str:
 
 
 def routine_tool_ids(*, reads_confined: bool) -> frozenset[str]:
-    """The tools an agent-work run calls with no approval: the members ``tool_tier`` holds routine."""
+    """The members ``tool_tier`` holds routine."""
     return frozenset(
         tool_id for tool_id in ROUTINE_TOOL_IDS if tool_tier(tool_id, reads_confined=reads_confined) == TIER_ROUTINE
     )
@@ -622,14 +620,7 @@ The Line cells hold the source line without its leading indentation. Prefix `RX`
 | RX-9 | `src/probos/agent_work_runner.py` | `routine_tool_ids(reads_confined=bool(permitted_read_roots(self._runtime))),` | `routine_tool_ids(reads_confined=False),` | `test_with_read_roots_set_a_file_read_runs_without_approval_and_list_files_is_still_filed` |
 | RX-10 | `src/probos/agent_work_runner.py` | `"Routine reads run directly. A call to another tool may be filed for approval instead of running; this work "` | `"Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "` | `test_with_read_roots_set_a_file_read_runs_without_approval_and_list_files_is_still_filed` |
 
-How each killer dies:
-- **ET4 (RX-1, RX-7, RX-8):** the read runs, so nothing is filed.
-- **ET3 (RX-2, RX-9):** `read_file` is filed, so there are two requests.
-- **ET3 (RX-4):** `list_files` runs, so nothing is filed.
-- **ET3 (RX-10):** `_seen(rig, "Routine reads run directly.")` is False.
-- **ET5 (RX-3):** `codebase_query` is filed, the item parks, and `index.asked` is `[]`.
-- **ET1 (RX-5):** the elevated loop fails.
-- **ET1 (RX-6):** `_Named("read_file")` is routine.
+Each row is killed by the test in its last column.
 
 **Campaign of record.** After an unmutated baseline of N1-2 and the edited `test_ad1347_s3_execution.py`, run each row against the file that holds its killer. Record the base tree and the sha256 of each mutated `src` file.
 
@@ -701,10 +692,6 @@ A3 CLAIM: list_files resolves its path without the read policy.
           lines :508, :568, :728; ListFilesTool's body (:531-565) calls _resolve_path (:542), which returns an absolute
           path unchanged (:245-248); other hits are in agents/*, copilot_adapter.py, repository_instructions.py
    HOLDS: yes
-A4 CLAIM: no test reads agent_work_runner.py's source.
-   RUN:   Grep "agent_work_runner.*(read_text|getsource)|(read_text|getsource).*agent_work_runner|agent_work_runner\.py" tests
-   FOUND: none
-   HOLDS: yes
 A5 CLAIM: "Read-only tools run directly" and "the read-only tools you hold" appear only in agent_work_runner.py;
           no test asserts "Tool named" or "run directly".
    RUN:   Grep "Read-only tools run directly|read-only tools you hold" !{logs,prompts}/**; Grep "Tool named|run directly" tests
@@ -754,12 +741,12 @@ A7 CLAIM: AD-1154's inbox parks no routine tool.
   - #1722 Q3, Q5 and Q6: applied.
 - **External:**
   - MCP tool annotations separate read-only from open-world. Adopted as the axes: read-only and closed-world is routine; read-only and open-world is elevated. Rejected trusting server-declared hints, which the spec says MUST be treated as untrusted unless the server is trusted ([MCP tools spec](https://modelcontextprotocol.io/specification/2025-06-18/server/tools), [annotation guide](https://www.mcpbundles.com/guides/tool-annotations)).
-  - Cursor's Auto-review runs allowlisted calls and sends the rest to a classifier or the user, and calls allowlists best-effort guardrails, not a boundary. Adapted: the routine tier is not the boundary here. The read policy, the registry's grant check and S1.1 stay beneath it, and the tier fails closed while the read policy is off ([Cursor run modes](https://cursor.com/docs/agent/run-modes), [Auto-review release](https://releases.sh/release/rel_CKUKVIG-gOOnIpjk0uC_x-cursor-introduces-auto-review-run-mode-for-safer-agent-execution)).
+  - Cursor's Auto-review runs allowlisted calls, runs calls that can be sandboxed in a sandbox, and sends all other calls to a classifier subagent; Cursor's docs say Auto-review is not a security boundary. Adapted: the routine tier is not the boundary here. The read policy, the registry's grant check and S1.1 stay beneath it, and the tier fails closed while the read policy is off ([Cursor run modes](https://cursor.com/docs/agent/run-modes), [Auto-review release](https://releases.sh/release/rel_CKUKVIG-gOOnIpjk0uC_x-cursor-introduces-auto-review-run-mode-for-safer-agent-execution)).
   - `docs/research/reference-projects.md`, judged on 2026-11-02:
     - Cursor was overdue (2026-06-13, 90-day interval) and was examined.
     - Considered, deferred: SWE-agent (2026-03-20; its sandboxing is not approval tiering), MCP Apps (2026-04-08; UI, not tool authority), AG-UI (never; not relevant).
 - **Blind spots found:**
-  1. `list_files` ignores the read policy (L4; a BF to file).
+  1. `list_files` ignores the read policy (L4).
   2. Tools are registered inside the run, so intersecting with the registry at run start would file them on a fresh boot (D2).
   3. #1722's "no registry" premise is wrong (§12).
   4. The task text claimed all read-only tools run directly (P1-5).
@@ -770,7 +757,7 @@ A7 CLAIM: AD-1154's inbox parks no routine tool.
 
 1. `routine_tool_ids(reads_confined=False)` is exactly the ten old tools plus `codebase_query`. `routine_tool_ids(reads_confined=True)` adds `read_file` and `codebase_read_source`.
 2. `tool_tier` answers `critical` for every id not in the routine or elevated sets, for every non-str id and for every str subclass.
-3. `_run` builds the confinement from `routine_tool_ids(reads_confined=bool(permitted_read_roots(self._runtime)))` once per run. Nothing else in the runner, the executor or the gate changes.
+3. `_run` builds the confinement from `routine_tool_ids(reads_confined=bool(permitted_read_roots(self._runtime)))` once per run.
 4. With `read_roots` empty, no call that was filed before S2 runs unfiled, except `codebase_query`.
 5. `AGENT_WORK_READ_TOOL_IDS` is gone from `src` and `tests`.
 6. `effect_tiers.py` imports only the stdlib, and no `src` file imports `governance.risk_tiers` for it.
