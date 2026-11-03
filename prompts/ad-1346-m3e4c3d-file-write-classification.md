@@ -13,7 +13,7 @@
 
 **Which text describes the head.**
 - **Records of the read commit `99992426`:** the Status and Anchors paragraphs, §1, §11 (Verified Against Codebase, Absence Verified), every line number cited in any section, and every SEARCH text in §7 and §8.
-- **The real build.** M3e4c3c is built on the AD-1356 S3 and S4 merge `693fef40` (PR #1744) as `a85f4dda` (its contract), `98ffd686` (M1') and `3bd27ae2` (M2'), and is not yet reviewed. `git diff --name-only 99992426 3bd27ae2` lists three files: M3e4c3c's contract and the two AD ledger files; no `src`, test or tracker file differs (§16, Amendment 1). A review round may move text in any of M3e4c3c's files.
+- **The real build.** M3e4c3c is built on the AD-1356 S3 and S4 merge `693fef40` (PR #1744) as `a85f4dda` (its contract), `98ffd686` (M1') and `3bd27ae2` (M2'). `git diff --name-only 99992426 3bd27ae2` lists three files: M3e4c3c's contract and the two AD ledger files; no `src`, test or tracker file differs (§16, Amendment 1). A review round may move text in any of M3e4c3c's files.
 - **Files M3e4c3c writes that this contract edits or cites:**
   - `tests/fixtures/ad1346_file_write_census.py`: M1-01 (`:135-136`), M1-02 (`:191-223`);
   - `tests/test_ad1346_admission_file_write_census.py`: M1-03 (`:7-9`), M1-04 (`:27-28`), M1-05 (`:47-61`), M1-06 (`:152-159`), M1-07 (`:209-210`), M1-08 (`:229-230`), M1-09 (`:251-257`);
@@ -123,7 +123,7 @@
 
 - **`FILE_WRITE_FILES`** (31 values): WF1, WF3, WF4, WF6. No other Python file reads it (§11 Absence).
 - **`_UNCLASSIFIED`** (deleted) and **`_AWAITING_AUTHOR_CHECK`** (new): the fixture's rows; WF1 and WF6 read their owner.
-- **`_CLASSIFIED`** (deleted): WF6 alone. **`_LEFT`** (new): WF6. **WF6's name:** `test_the_classified_directories` is named in Python only in the test file that defines it (§11 Absence).
+- **`_CLASSIFIED`** (deleted): WF6 alone. **`_LEFT`** (new): WF6.
 
 ## 6. Tests
 
@@ -526,7 +526,6 @@ HOLDS: yes
 ## 12. Deterministic gate checks, resolved up front
 
 - `git diff --stat <base>..HEAD -- src` prints nothing after M1 and after M2.
-- `git diff --name-only <base>..HEAD` after M1 lists exactly `tests/fixtures/ad1346_file_write_census.py` and `tests/test_ad1346_admission_file_write_census.py`; after M2 also `PROGRESS.md`, `DECISIONS.md`, `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`. `<base>` is M3e4c3c's M2 commit.
 - The collect-only count for `tests/test_ad1346_admission_file_write_census.py` is 7.
 - For each §10 Line, `grep -c -F` prints 1. No Line contains `'`: `$pat = '<line>'; grep -c -F $pat <file>`.
 - M1 is 9 SEARCH/REPLACE blocks (M1-01 and M1-02 in the fixture, M1-03 to M1-09 in the test); M2 is 2.
@@ -565,6 +564,13 @@ HOLDS: yes
 - Anchors and "Which text describes the head": the real build, the three files that differ between it and the read commit, and the by-tool application of the blocks.
 - Absence Verified, the first entry: a RE-RUN line.
 Unchanged: every SEARCH text and every REPLACE text of §7 and §8 (the orchestrator applied the 9 M1 blocks and the 2 tracker pairs by tool on `3bd27ae2` with 0 failures: 4 files, +70 -57 before the AD ledger); every count and every row's type and key; every §10 row (each Line occurs once on the M1 tree: 8 rows, 0 problems); and every other record of §11 and entry of Absence Verified (`git diff --name-only 99992426 3bd27ae2 -- src tests PROGRESS.md DECISIONS.md` prints nothing).
+
+**Amendment 2 (2026-11-03, the orchestrator, after review round 1).** The review found three statements that were not true of the candidate. Two were in this contract and are deleted; the third is in a commit message (below). Changed, against Amendment 1's contract:
+- Which text describes the head, "The real build": the clause that M3e4c3c "is not yet reviewed" is deleted (it was a statement about a point in time).
+- §5: the sentence on WF6's name, which said that `test_the_classified_directories` is named in Python only in the test file that defines it, is deleted (M1 renames that test `test_the_ships_rows`).
+- §12: the bullet that gave the file inventory from the base to the head is deleted (it left this contract out).
+- **The message of M1's commit** (`a3a0c72f`) says that WF1's docstring and WF3's and WF4's each name one more mutation row. WF1's docstring names EM-2 where it named EL-2, so the increase is WF3's and WF4's alone. The message is not rewritten, because the M3e4c3e contract cites the commits above it by their shas; the commit that records this amendment says so, and the pull request's description repeats it.
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every record of §11 and entry of Absence Verified.
 
 ## For the register (#1604)
 
