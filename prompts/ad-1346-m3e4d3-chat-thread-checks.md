@@ -1159,19 +1159,22 @@ HOLDS: yes
 ## 16. Amendments
 
 **Amendment 1 (2026-11-03, the orchestrator, before the build).** The orchestrator's audit of the Architect's contract against its own records changed the text. Changed, against the Architect's contract:
-- "Dependencies": the batch that carries M3e4c3f, M3e4d1 and M3e4d2 is the merge of their branches, `f8d8dd3d`, and that is the build's base; the contract was read on `b70498ac`, the branch of M3e4d2 before the merge.
+- "Dependencies": M3e4c3f, M3e4d1 and M3e4d2 are carried by the branch whose head is `f8d8dd3d` (the merge `56f60f2c` of their branches, then the repairs of review round 3), and that head is the build's base; the contract was read on `b70498ac`, the branch of M3e4d2 before the merge.
 - §1: the CrewSession room's title is said to be the marker's `goal` cut to 200 characters (`:4340`), and its `created_by` the marker's (`:4344`); the contract had said that both are the marker's.
 - §3 D303: the bullet that lists the carrier read, the principal resolve, the registry check and the recorder offer as the work of a shadow-on call is deleted (the principal is resolved only for a non-empty string, and a recorder is optional); the clause that the two imported modules are ones the process has already imported now says that `sys.modules` answers the imports once the modules have been imported; the sentence that `append_message_once` runs for every chat message now says that `append_message` calls it.
 - §5: the bullet that stores which tests or tools build directly keep the class default None is deleted (a store that a test builds and hands a service records findings, as WM10 and WM11 do), and so is the bullet that the structural protocols which name the store's methods gain nothing to match.
 - §11: the result of the record for `docs/development/architecture-baseline.yaml` is deleted (its pattern ends in `$`, which a CRLF checkout reads differently from the commit's LF blob), and six `Read` ranges that ended one line past the end of their file now end at its last line.
 - Register R150: the clause `or by a ChatThreadStore the runtime does not hold` and the sentence that `turn_promotion.py:1212-1214` retries the append, and each attempt counts once, are deleted.
 - The orchestrator applied the 25 blocks of §7.1, the 9 of §7.2 and the 2 pairs of §8 by tool on `f8d8dd3d`'s tree with 0 failures.
-Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
+
+**Amendment 2 (2026-11-03, the orchestrator, after the build and before the review).** Changed, against the contract as Amendment 1 left it: the register note R147 names ranked option 2 of M3e4d2's D290 (`prompts/ad-1346-m3e4d2-persistent-task-check.md:107`) with its item 1, as the premise Amendment 3 of that contract says this note corrects; it lists the six `to_thread` calls of `room_inputs.py` (it listed two); and it names the `append_message_once` call at `cognitive/turn_promotion.py:1419` as the write that runs in a worker thread. The closing sentence of Amendment 1 now claims only the SEARCH and REPLACE texts (it also claimed every count, every row's type and key and every §10 row), and its "Dependencies" bullet names `f8d8dd3d` as the head of the branch that carries the merge (it called `f8d8dd3d` the merge).
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
 ## For the register (#1604)
 
 - **R113:** advanced. Of the 11 rows pending for M3e4d after M3e4d2, this slice checks `threads/__init__.py` (two checks, D298). 10 remain: 5 SQL files, 2 JetStream scopes and 3 file-write rows.
-- **R147:** advanced. Its item 1 is this slice. R149 orders the rest in its place. Its item 1's `room_inputs.py` calls through `asyncio.to_thread` are reads (`room_inputs.py:100`, `:117`); the checked write that runs in a worker thread is `turn_promotion.py:1214`'s `_append_report_message` (`:1419`).
+- **R147:** advanced. Its item 1 is this slice. R149 orders the rest in its place. The premise of its item 1 and of ranked option 2 of M3e4d2's D290 (`prompts/ad-1346-m3e4d2-persistent-task-check.md:107`), that `room_inputs.py` calls a method of the chat thread store that writes through `asyncio.to_thread`, is corrected here: its calls at `room_inputs.py:100`, `:117`, `:205`, `:249`, `:267` and `:296` are `get_thread` and `list_messages`. The write that runs in a worker thread is the `append_message_once` call at `cognitive/turn_promotion.py:1419`, inside `_append_report_message`, which `:1214` hands to `asyncio.to_thread`.
 - **R149:** the order of the rest:
   1. `workforce.py`: register R147 item 2 (re-measure its lines at that slice).
   2. to 5.: register R145 items 2 to 5, in that order.
