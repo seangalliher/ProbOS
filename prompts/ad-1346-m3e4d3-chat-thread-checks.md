@@ -1171,7 +1171,7 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 
 **Amendment 3 (2026-11-03, the orchestrator, after review round 1).** Two findings of that round, repaired by deletion. Changed, against the contract as Amendment 2 left it:
 - §10: the sentence that M1 and M2 delete no earlier row's Line is deleted (the Line of EA-4, `prompts/ad-1346-m3e4c-store-write-classification.md:531`, is the `AGENT_ATTRIBUTED_SCOPES` row of `threads/__init__.py` that M1's fixture edit removes: it occurs once in `tests/fixtures/ad1346_store_census.py` at `f8d8dd3d` and not at this head).
-- §3 D301: the two bullets that said that a worker-thread `check_ticket` hands `_check_ticket` to the service's loop and that a handed check is counted in `off_loop_checks()` are deleted, and so is the clause `, and check_ticket hands it to its loop` in M3-02's REPLACE and in `DECISIONS.md` (a service built with no loop checks in the worker thread and counts nothing in `off_loop_checks()`, `admission/service.py:248`; WM10's service is built with the test's loop).
+- §3 D301: the two bullets that said that a worker-thread `check_ticket` hands `_check_ticket` to the service's loop and that a handed check is counted in `off_loop_checks()` are deleted, and so is the clause `, and check_ticket hands it to its loop` in M3-02's REPLACE and in `DECISIONS.md` (a service built with no loop checks in the worker thread and counts nothing in `off_loop_checks()`; WM10's service is built with the test's loop).
 Unchanged by this amendment: every SEARCH text of §7 and §8, and every REPLACE text of §7 and of §8 except M3-02's.
 
 ## For the register (#1604)
