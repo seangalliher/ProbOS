@@ -119,7 +119,6 @@
   - **Presented id.** The parameter `created_by`: the id the row records (`:218`, `:236`).
   - **Behaviour.** `check_at` returns None and lets no `Exception` out (`admission/seam.py:22-24`; `admission/service.py:240-241`).
   - **Writes that check nothing:**
-    - a store held by no runtime keeps the class default None;
     - a write between the store's start (`startup/communication.py:362`) and the hand-off;
     - after shutdown releases the service (`startup/shutdown.py:1514`) and before it stops the store (`:1750`), the store still holds the service, which counts nothing once closed (`admission/service.py:263`).
   - Placement, ranked:
@@ -153,7 +152,6 @@
     3. a new test file: it duplicates the fixtures and a runtime boot.
 - **D295 Cost** (question 4; D288's method).
   - Shadow off: one type comparison (`admission/seam.py:56`).
-  - Shadow on: D225's carrier read, principal resolve, registry check and recorder offer, once per `create_task`.
   - The callers are the five calls of §1. No statement of `_fire_task`, the store's tick-driven writer, gains a check.
   - `admission.shadow_enabled` false gives the runtime no service (WM5 reads `admission_service` as None), and the store is handed None.
   - No timing test. The volume is counted from `admission_shadow.db`: `SELECT day, SUM(findings) FROM ticket_findings WHERE operation = 'store_write' GROUP BY day`.
@@ -175,7 +173,6 @@
 
 - **`PersistentTaskStore`:** it gains `_admission` and `set_admission`.
   - `runtime.py` calls the method; WM5, WM8 and WM9 call it or read it.
-  - Tests that build a store directly keep the class default None, for which `check_at` does nothing. Examples: `tests/test_persistent_tasks.py:39`, `:57`; `tests/test_bf925_silent_guards.py:56`.
   - Tests that set `runtime.persistent_task_store` on a stand-in runtime (`tests/test_ad1133_live_crew_session_refresh.py:1608`, `tests/test_bf877_unapproved_design_is_refused.py:878`) do not run `ProbOSRuntime.start`.
 - **The functions that call `check_at`:** SK7, through `store_write_check_functions`.
 - **The calls to `set_admission` in `ProbOSRuntime.start`:** `tests/test_ad1346_admission_build_test_sink.py:217-218` and `tests/test_ad1346_admission_subprocess_plumbing.py:230-231` each assert that one other call is `in` the set (Absence 5).
@@ -1122,7 +1119,7 @@ RUN:   Read tests/fixtures/ad1346_store_census.py :1-252
 FOUND: _AGENT_ATTRIBUTED at :117-123 (seven rows)
 HOLDS: yes: 7 SQL, 2 JetStream, 3 file-write
 
-CLAIM: of the test files that name PersistentTaskStore or persistent_tasks, the six outside the store census, its fixture and file_durations.json read module source text at one line, which collects ProbOSShell calls
+CLAIM: of the test files that name PersistentTaskStore, the six outside the store census, its fixture and file_durations.json read module source text at one line, which collects ProbOSShell calls
 RUN:   Grep 'PersistentTaskStore|persistent_tasks\.py|probos\.persistent_tasks' tests (files)
 FOUND: tests/test_scheduler_heartbeat.py, tests/test_persistent_tasks.py, tests/test_database_hardening.py, tests/test_bf925_silent_guards.py, tests/test_bf877_unapproved_design_is_refused.py, tests/test_bf817_resume_redecomposes.py, tests/test_ad1346_admission_store_census.py, tests/fixtures/file_durations.json, tests/fixtures/ad1346_store_census.py
 RUN:   Grep 'getsource|read_text|persistent_tasks\.py|ast\.parse' tests (glob {test_scheduler_heartbeat.py,test_persistent_tasks.py,test_database_hardening.py,test_bf925_silent_guards.py,test_bf877_unapproved_design_is_refused.py,test_bf817_resume_redecomposes.py})
@@ -1181,7 +1178,13 @@ HOLDS: yes: :218 and :231 each assert that one other call is `in handed`.
 **Amendment 1 (2026-11-03, the orchestrator, before the build).** The orchestrator's audit of the Architect's contract against its own records changed the text. Changed, against the Architect's contract:
 - "Dependencies" and "Which text describes the head": the build's base is `36a41ba6`, the commit this contract was read on, and not the final commit of the M3e4c3f and M3e4d1 batch.
 - The orchestrator applied the 36 blocks of §7 and the 2 pairs of §8 by tool on `36a41ba6`'s tree with 0 failures.
-Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
+
+**Amendment 2 (2026-11-03, the orchestrator, after review round 1).** The round's three findings, each repaired by deletion. Changed, against the contract as Amendment 1 left it:
+- §3 D292 (the list of writes that check nothing), §5 and register R148: the bullet that a store held by no runtime keeps the class default None, the sentence of §5 that tests which build a store directly keep it, and the clause `or by a store the runtime does not hold` of R148's bullet are deleted (a store that a test builds and hands a service records findings, as WM8 and WM9 do).
+- §3 D295 (cost): the bullet that lists the carrier read, the principal resolve, the registry check and the recorder offer as the work of every `create_task` is deleted (the principal is resolved only for a non-empty string, and a recorder is optional).
+- Absence Verified, the CLAIM of the search for test files that name `PersistentTaskStore`: ` or persistent_tasks` is deleted (three test files name `persistent_tasks` without naming the class).
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8, every count and every row's type and key, and every §10 row.
 
 ## For the register (#1604)
 
@@ -1198,5 +1201,5 @@ Unchanged: every SEARCH text and every REPLACE text of §7 and §8, every count 
   - `routers/scheduled_tasks.py:86-91` writes the store's table through `persistent_task_store._db`. It is its own `System` row of `STORE_WRITE_FILES` and is not checked.
   - `ticket_findings`' key (D288) does not say which store's check counted a `store_write` finding.
   - Persistent tasks are off by default (`config_models/emergence.py:232`); the repository's `config/system.yaml:1126-1127` turns them on.
-  - A write between the store's start (`startup/communication.py:362`) and the hand-off, or by a store the runtime does not hold, checks nothing. After shutdown releases the service (`startup/shutdown.py:1514`), the store keeps it until it stops (`:1750`), and a closed service counts nothing (`admission/service.py:263`).
+  - A write between the store's start (`startup/communication.py:362`) and the hand-off checks nothing. After shutdown releases the service (`startup/shutdown.py:1514`), the store keeps it until it stops (`:1750`), and a closed service counts nothing (`admission/service.py:263`).
   - WM1 finds the check by the name `check_at` (`calls("check_at")`); a call through another name is not seen.
