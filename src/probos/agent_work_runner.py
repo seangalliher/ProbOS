@@ -10,10 +10,12 @@ events (one listener):
   same tool sink and also starts the run itself);
 - an item that ends has its live bookings closed and is reported, once per recipient, to its requester and watchers.
 
-Every run is confined (``ToolCallConfinement``): the tools in ``AGENT_WORK_READ_TOOL_IDS`` run as usual and a call to
-any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order), which may file it as an
-AD-1154 ``action`` request. A run that filed a call can park the item ``blocked`` on the first request its gate
-returned, through AD-855's ``block_on_request``; its approval fulfils it and AD-855 resumes the item through
+Every run is confined (``ToolCallConfinement``): the executor refuses a call whose tool id its registry does not hold
+(AD-1356 S1.1); the routine tools (``tools.effect_tiers.routine_tool_ids``, read once at the run's start, AD-1356 S2)
+run as usual; and a call to any other tool is put to the run's gate (``_gate_for``, whose docstring gives its order),
+which may file it as an AD-1154 ``action`` request. A run
+that filed a call can park the item ``blocked`` on the first request its gate returned, through AD-855's
+``block_on_request``; its approval fulfils it and AD-855 resumes the item through
 ``resume_agent_work``, and its denial cancels the item (AD-855). BF-947: before a run, the agent-work requests the
 item's assignee filed on it are read, oldest first. A denied one cancels the item; else a pending one, or an approved
 one not yet fulfilled, parks the item on it again; else the run goes ahead, and a fulfilled one may admit its call once
@@ -35,6 +37,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 from probos.agent_stop import AgentStopped
@@ -57,6 +60,7 @@ from probos.capability_request import (
     validate_action_payload,
 )
 from probos.events import EventType
+from probos.tools.effect_tiers import routine_tool_ids
 from probos.tools.protocol import ToolPermission, ToolResultPresentation
 from probos.workforce import AGENT_WORK_METADATA_KEY, WorkItem
 
@@ -65,14 +69,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The tools an agent-created work run calls directly: the plan-mode read set (``agent_mode.PLAN_MODE_TOOL_IDS``, each
-#: asserted read-only there) without the three that reach off the ship (web_search, read_page, http_fetch) and without
-#: discover_work_items. Every other call is filed for the Captain's approval: a new or renamed tool is filed until
-#: someone decides it only reads.
-AGENT_WORK_READ_TOOL_IDS: Final[frozenset[str]] = frozenset({
-    "event_log_query", "oracle_query", "self_query", "search_capabilities", "use_skill",
-    "work_item_status", "read_owned_steps", "recall_artifact", "message_receipts", "load_tools",
-})
 APPROVAL_ACTION: Final = AGENT_WORK_CALL_ACTION  # A1 (F1): one definition, shared with the fulfilment predicate
 APPROVAL_SCOPE_PREFIX: Final = AGENT_WORK_SCOPE_PREFIX
 #: A1 (F15): parameters an approval never records, as AD-1154's inbox strips them (``_APPROVAL_PARAM_STRIP_KEYS``): a
@@ -123,7 +119,8 @@ class CarriedResult:
 
 class CarriedResults:
     """BF-947 (M3): per item, the results of admitted calls that returned no error, in this process only: the newest
-    ``CARRIED_RESULTS_MAX`` per item, oldest first; an entry replaces one with the same call key."""
+    ``CARRIED_RESULTS_MAX`` per item, oldest first; an entry replaces one with the same call key. AD-1356 S1.3: a
+    ``WorkspaceSliceToolResult`` is not kept."""
 
     def __init__(self) -> None:
         self._by_item: dict[str, tuple[CarriedResult, ...]] = {}
@@ -138,6 +135,10 @@ class CarriedResults:
         def record(agent_id: str, tool_id: Any, params: Any, result: Any) -> None:
             payload = approval_payload(tool_id, params, work_item_id)
             if payload is None or getattr(result, "error", None) is not None:
+                return
+            from probos.cognitive.swe_harness.tools import WorkspaceSliceToolResult
+
+            if isinstance(result, WorkspaceSliceToolResult):  # AD-1356 S1.3: a read of a workspace result is not kept
                 return
             entry = CarriedResult(
                 agent_id=agent_id,
@@ -175,6 +176,21 @@ def approval_payload(tool_id: Any, params: Any, work_item_id: str) -> dict[str, 
     })
 
 
+def _recovery_read(tool_id: Any, params: Any, roots: list[Path]) -> bool:
+    """AD-1356 S1.3: a ``read_file`` call whose ``path`` is absolute, has no ``..`` part, has a part that
+    ``is_workspace_result_path`` recognises, and lies under one of ``roots``."""
+    raw = params.get("path") if tool_id == "read_file" and type(params) is dict else None
+    if type(raw) is not str:
+        return False
+    from probos.execution.workspace_results import is_workspace_result_path
+
+    path = Path(raw)
+    return (
+        path.is_absolute() and ".." not in path.parts and is_workspace_result_path(path)
+        and any(path.is_relative_to(root) for root in roots)
+    )
+
+
 def _provenance(item: WorkItem) -> dict[str, Any]:
     metadata = item.metadata if type(item.metadata) is dict else {}
     raw = metadata.get(AGENT_WORK_METADATA_KEY)
@@ -195,7 +211,7 @@ def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[Carr
     ``carried`` results (BF-947), and the confinement in plain words."""
     provenance = _provenance(item)
     reason = provenance.get("reason") if type(provenance.get("reason")) is str else ""
-    tool = provenance.get("tool_id") if type(provenance.get("tool_id")) is str else "the read-only tools you hold"
+    tool = provenance.get("tool_id") if type(provenance.get("tool_id")) is str else "the routine reads you hold"
     details = f"{item.description}\n\n" if item.description and item.description != item.title else ""
     stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
     earlier = "".join(f"- {entry.tool_id} {entry.params}: {entry.output}\n" for entry in carried)
@@ -209,7 +225,7 @@ def task_text(item: WorkItem, *, requester: str, now: float, carried: tuple[Carr
         f"Asked by {requester}. Reason: {reason}. Tool named: {tool}.\n\n"
         f"Current UTC time: {stamp}.\n\n"
         f"{earlier}"
-        "Read-only tools run directly. A call to another tool may be filed for approval instead of running; this work "
+        "Routine reads run directly. A call to another tool may be filed for approval instead of running; this work "
         "continues when no call you filed on it awaits a decision or its fulfilment, and ends if one of them is "
         "denied. Do the reading, then answer with what you found and the tool results you relied on. Your answer is "
         "posted where the work was asked for."
@@ -586,11 +602,15 @@ class AgentWorkRunner:
             if await _cancel_or_park(self._store, self._parking, item.id, linked):
                 return
             from probos.cognitive.agentic_dispatch import ToolCallConfinement
+            from probos.security.file_access import permitted_read_roots
 
             agent = self._agents.get(slot)
             filed: list[str] = []
+            # AD-1356 S2: the routine tools, read once here; the set does not change during the run. read_file and
+            # codebase_read_source are routine only while security_infra.read_roots confines reads.
             confinement = ToolCallConfinement(
-                AGENT_WORK_READ_TOOL_IDS, self._gate_for(item.id, _admissions(linked, slot, item.id), filed),
+                routine_tool_ids(reads_confined=bool(permitted_read_roots(self._runtime))),
+                self._gate_for(item.id, _admissions(linked, slot, item.id), filed),
                 record=self.carried.recorder(item.id),
             )
             try:
@@ -669,19 +689,29 @@ class AgentWorkRunner:
     def _gate_for(
         self, work_item_id: str, admissions: dict[str, list[str]], filed: list[str],
     ) -> Callable[[str, Any, Any], Awaitable[str]]:
-        """The run's confinement gate, in this order. A call that cannot be recorded is refused. A call whose result
-        this runner keeps on the item for the agent is answered and does not run (BF-947). A call a fulfilled request
-        in ``admissions`` covers is admitted, once per request; with each such request used, it goes on as any other
-        call. Any other call is refused when the agent has ``max_pending`` or more pending requests, else filed for
-        approval (refused when the filing returns no request)."""
+        """The run's confinement gate, in this order. A call ``_recovery_read`` accepts over ``workspace_exempt_roots``
+        is admitted; it uses no approval, is not filed, and ``read_file`` decides whether the agent may read the path
+        (AD-1356 S1.3). A call that cannot be recorded is refused. A call whose result this runner keeps on the item
+        for the agent is answered and does not run (BF-947). A call a fulfilled request in ``admissions`` covers is
+        admitted, once per request; with each such request used, it goes on as any other call. Any other call is
+        refused when the agent has ``max_pending`` or more pending requests, else filed for approval (refused when the
+        filing returns no request)."""
         from probos.cognitive.agentic_dispatch import (
             CONFINEMENT_ADMIT,
             CONFINEMENT_ANSWERED,
             CONFINEMENT_FILED,
             CONFINEMENT_REFUSED,
         )
+        from probos.security.file_access import workspace_exempt_roots
+
+        roots = workspace_exempt_roots(self._runtime)
 
         async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
+            if _recovery_read(tool_id, params, roots):
+                logger.info(
+                    "AD-1356: agent work %s admitted a read of a workspace-result path; nothing was filed", work_item_id[:8],
+                )
+                return CONFINEMENT_ADMIT
             payload = approval_payload(tool_id, params, work_item_id)
             if payload is None:
                 return CONFINEMENT_REFUSED

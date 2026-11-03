@@ -34,7 +34,7 @@ Projects appear here only as technical design references. Positioning against th
 | SWE-agent | 2026-03-20 | passing | AD-360 builder guardrails (container-scoped isolation) |
 | Aider | 2026-10-18 | checked | AD-360 (pre-edit dirty commit, edit-lint-test-reflect); AD-989 (lexical search); BF-904a (#1585) Prior Art, `prompts/bf-904a-native-build-git-hardening.md` (`--git-commit-verify` default False) |
 | Cline | 2026-10-16 | checked | command auto-approval for AD-1328 (#1530), `prompts/ad-1328-s1-command-policy-core.md` (model-flagged `requires_approval`, no fixed allowlist); AD-360 (shadow git checkpoints, workspace access tiers) |
-| Cursor | 2026-06-13 | passing | AD-989 (lexical search); also named as an AgentSkills.io adopter |
+| Cursor | 2026-11-02 | checked | AD-1356 S2 (#1722) Prior Art, `prompts/ad-1356-s2-tool-effect-table.md` (Auto-review: allowlisted calls run, calls that can be sandboxed run in a sandbox, all other calls go to a classifier subagent; its docs say Auto-review is not a security boundary); AD-989 (lexical search); also named as an AgentSkills.io adopter |
 | Goose | 2026-10-16 | checked | AD-1328 S2c (#1530) Prior Art, `prompts/ad-1328-s2c-command-escalation-resume.md` (interactive permission modes only, nothing new); `universal-agent-activation-research.md` (as an MCP Apps host) |
 | Darwin Gödel Machine (Sakana) | 2026-10-15 | absorption | `darwin-godel-machine-absorption.md`; drove BF-898 (#1563) and the AD-1336 (#1558) evidence amendment. Its follow-up is the HyperAgents row |
 

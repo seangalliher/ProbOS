@@ -468,7 +468,7 @@ async def test_refused_publication_is_not_a_new_current_invocation_finding(
     native = runtime.publisher.results[-1]
     assert type(native) is ToolResult
     if refusal == "write_failed":
-        assert native.error == "publish_finding_invalid:write_failed"
+        assert native.error == "publish_finding_failed:write_failed"  # AD-1356 S1.2: not the caller's input
         assert native.output is None and native.metadata == {}
     else:
         assert native.metadata["published"] is False

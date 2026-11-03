@@ -91,6 +91,21 @@ class ToolResult:
         return self.error is None
 
 
+#: AD-1356 S1.2: how a tool marks a caller error. A ``ToolResult.error`` that starts with the tool's own id and this
+#: mark (``event_log_query_invalid:window``) says the call's input was wrong. ``fault_report.detect_tool_defect`` and
+#: ``fault_detection.collect_tool_fault_batch`` skip such a result.
+CALLER_INPUT_ERROR_MARK: str = "_invalid:"
+
+
+def is_caller_input_error(tool_id: object, error: object) -> bool:
+    """AD-1356 S1.2: whether ``error`` is ``tool_id``'s mark of a caller error: both are str, ``tool_id`` is not empty,
+    and ``error`` starts with ``tool_id + CALLER_INPUT_ERROR_MARK`` (case-sensitive) and is longer than that prefix."""
+    if type(tool_id) is not str or not tool_id or type(error) is not str:
+        return False
+    prefix = tool_id + CALLER_INPUT_ERROR_MARK
+    return len(error) > len(prefix) and error.startswith(prefix)
+
+
 @runtime_checkable
 class Tool(Protocol):
     """Uniform interface for all ProbOS tools.

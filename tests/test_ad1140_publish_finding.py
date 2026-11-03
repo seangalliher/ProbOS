@@ -806,7 +806,7 @@ async def test_an_unsafe_callsign_is_refused_with_nothing_written(
     tool = _tool(records, mapping={"agent-a": (callsign, "science")})
     result = await tool.invoke(_params(), _ctx())
 
-    assert result.error == "publish_finding_invalid:author"
+    assert result.error == "publish_finding_failed:author"  # AD-1356 S1.2: not the caller's input
     assert _notebook_files(records) == []
     assert _CALLSIGN_RE.fullmatch(callsign) is None
 
@@ -816,10 +816,10 @@ async def test_a_missing_agent_id_is_refused(records) -> None:
     tool = _tool(records)
 
     assert (await tool.invoke(_params(), {})).error == (
-        "publish_finding_invalid:author"
+        "publish_finding_failed:author"  # AD-1356 S1.2: not the caller's input
     )
     assert (await tool.invoke(_params(), None)).error == (
-        "publish_finding_invalid:author"
+        "publish_finding_failed:author"
     )
     assert _notebook_files(records) == []
 
@@ -832,7 +832,7 @@ async def test_a_raising_identity_resolver_refuses_rather_than_guessing(
     with caplog.at_level("WARNING"):
         result = await tool.invoke(_params(), _ctx())
 
-    assert result.error == "publish_finding_invalid:author"
+    assert result.error == "publish_finding_failed:author"  # AD-1356 S1.2: not the caller's input
     assert _notebook_files(records) == []
     assert any("AD-1140" in r.message for r in caplog.records)
 
@@ -845,7 +845,7 @@ async def test_a_failed_records_write_is_reported_not_swallowed(records) -> None
     records.write_notebook = _boom  # type: ignore[method-assign]
     result = await _tool(records).invoke(_params(), _ctx())
 
-    assert result.error == "publish_finding_invalid:write_failed"
+    assert result.error == "publish_finding_failed:write_failed"  # AD-1356 S1.2: not the caller's input
 
 
 # ---------------------------------------------------------------------------
