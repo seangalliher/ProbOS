@@ -464,10 +464,10 @@ Reads (src/probos/): attachments/filesystem_store.py :1-120, :225-474; attachmen
   shutdown_integrity.py :60-184; startup/shutdown.py :965-1004; voice/wake_word_trainer.py :160-204; warm_boot.py :138-153, :555-582;
   routers/agents.py :586-674, :712-757, :1000-1064; agents/utility/avatar_agents.py :118-153; cognitive/cognitive_agent.py :7043-7082;
   execution/workspace_result_store.py :796-821
-Grep '^class |^    [a-z_]+: ' infrastructure/snapshot_manifest.py -> ManifestEntry :118 (label, tier, state, size_bytes, error); SnapshotManifest :181 (snapshot, created_at, entries, schema)
+Grep '^class |^    [a-z_]+: ' infrastructure/snapshot_manifest.py
 Grep 'class CredentialScope' src -A 14 -> tools/browser/credentials.py :40-54 (allowed_agent_ids, allowed_domains, expires_at; permits_agent)
 Grep 'def (prune|_promote|_sweep_incomplete|_try_link|_backup_one|run_once|snapshot)\b|shutil\.|os\.(link|replace)' infrastructure/backup.py -> :244 :295 :400 :462 :502 :530 :540 :543 :598 :708 :740 :772 :799
-Grep '^def |^async def |^class |^    def |^    async def ' pidfile_guard.py -> _try_atomic_create :124, _takeover_lock :200, acquire_pidfile :230, _acquire_unlocked :243
+Grep '^def |^async def |^class |^    def |^    async def ' pidfile_guard.py
 Grep '_save_state\(|state\["' proactive.py -B 3 -> :488 :489 :490 :518 :519 :538
 Grep 'tmp_path|NamedTemporaryFile|mkstemp' warm_boot.py -> :143 :149 :153 :182 :563 :569 :572 :581
 Grep '\*\*D239|\*\*D218' prompts -> ad-1346-m3e4c-store-write-classification.md:84-90 (D239, its classes at :88); ad-1346-m3e4a-store-write-census.md:76-80 (D218)
@@ -569,8 +569,13 @@ Unchanged: every SEARCH text and every REPLACE text of §7 and §8 (the orchestr
 - Which text describes the head, "The real build": the clause that M3e4c3c "is not yet reviewed" is deleted (it was a statement about a point in time).
 - §5: the sentence on WF6's name, which said that `test_the_classified_directories` is named in Python only in the test file that defines it, is deleted (M1 renames that test `test_the_ships_rows`).
 - §12: the bullet that gave the file inventory from the base to the head is deleted (it left this contract out).
-- **The message of M1's commit** (`a3a0c72f`) says that WF1's docstring and WF3's and WF4's each name one more mutation row. WF1's docstring names EM-2 where it named EL-2, so the increase is WF3's and WF4's alone. The message is not rewritten, because the M3e4c3e contract cites the commits above it by their shas; the commit that records this amendment says so, and the pull request's description repeats it.
+- **The message of M1's commit** (`a3a0c72f`) says that WF1's docstring and WF3's and WF4's each name one more mutation row. WF1's docstring names EM-2 where it named EL-2, so the increase is WF3's and WF4's alone. The message is not rewritten, because the M3e4c3e contract cites the commits above it by their shas; the commit that records this amendment says so.
 Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every record of §11 and entry of Absence Verified.
+
+**Amendment 3 (2026-11-03, the orchestrator, after review round 2).** The review found three statements that were not true of the candidate. Changed, against Amendment 2's contract:
+- Amendment 2's last bullet no longer says that the pull request's description repeats the erratum: no pull request exists yet. The message of the commit that records Amendment 2 is repaired the same way.
+- §11: the record of the `^class |^    [a-z_]+: ` search of `infrastructure/snapshot_manifest.py` and the record of the definitions search of `pidfile_guard.py` keep their commands and lose their results, which were not the whole output of those commands (the first search also prints `:297`; the second prints 15 matches and the record named four).
+Unchanged: every SEARCH text and every REPLACE text of §7 and §8; every count and every row's type and key; every §10 row; and every other record of §11 and entry of Absence Verified.
 
 ## For the register (#1604)
 
