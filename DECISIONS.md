@@ -1263,6 +1263,17 @@ AD-1346 M3e4c3d is the fourth part of M3e4c3. It classifies 29 of the 31 file-wr
 - *Residual, accepted.* Register R136 and R137 of the contract.
 - *Reversal.* Revert the M3e4c3d commits.
 
+### AD-1346 M3e4c3e -- the two avatar proposal histories pending for M3e4d (2026-11-03, #1604)
+
+AD-1346 M3e4c3e is the fifth part of M3e4c3. It moves the two file-write rows that M3e4c3d left for M3e4c3e to M3e4d, and a new test, WF8, checks the names a second table gives for each against the code; it adds no admission check, and no `src` file changes. The contract is `prompts/ad-1346-m3e4c3e-file-write-authors.md`.
+
+- *D273 (the cut).* The two rows alone. Rejected: the two rows with a scan of `PinnedDirectory`'s write methods (register R139).
+- *D274 (the guard).* `FILE_AGENT_ATTRIBUTED_STATE_SCOPES` names, for each file, a scope that takes the author, the author, a module-level name and the writing scope. Rejected: one table with four fields for every file; `FILE_AGENT_ATTRIBUTED_SCOPES` pointed at `append` with a second branch in WF3; a test pinned to the two files with no table.
+- *D275 (the rows and the counters).* Both rows are `Pending("M3e4d")`. WF3 holds the rows pending for M3e4d to the keys of the two tables; WF6 holds every other row but the `OutsideRuntime` rows to `System`; WF1's counter becomes 3 / 67 / 2.
+- *Tests.* WF1, WF3 and WF6 change; WF8 is new.
+- *Residual, accepted.* Register R138 and R139 of the contract.
+- *Reversal.* Revert the M3e4c3e commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
