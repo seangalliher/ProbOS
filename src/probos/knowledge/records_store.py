@@ -603,8 +603,10 @@ class RecordsStore:
             return []
 
         results = []
+        # BF-949 R1: bills_dir comes from _safe_path, which resolves, so its paths are taken against the resolved root
+        root = self._repo_path.resolve()
         for yaml_file in sorted(bills_dir.rglob("*.bill.yaml")):
-            rel_path = str(yaml_file.relative_to(self._repo_path)).replace("\\", "/")
+            rel_path = str(yaml_file.relative_to(root)).replace("\\", "/")
             # Extract bill_id from filename (e.g. "research-consultation.bill.yaml" → "research-consultation")
             bill_id = yaml_file.name.removesuffix(".bill.yaml")
             results.append({"path": rel_path, "bill_id": bill_id})
@@ -1021,12 +1023,14 @@ class RecordsStore:
         with no second look at whether it is still a file (A5).
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
+        # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
+        root = self._repo_path.resolve() if directory else self._repo_path
         results = []
         # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
         found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
 
         for md_file in sorted(found):
-            rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
+            rel_path = str(md_file.relative_to(root)).replace("\\", "/")
             # Skip archived
             if rel_path.startswith("_archived/"):
                 continue
@@ -1134,10 +1138,12 @@ class RecordsStore:
                 + ", ".join(_CLASSIFICATION_LEVELS)
             )
         search_path = self._safe_path(directory) if directory else self._repo_path
+        # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
+        root = self._repo_path.resolve() if directory else self._repo_path
         query_words = set(query.lower().split())
         results = []
         for md_file in sorted(search_path.rglob("*.md")):
-            rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
+            rel_path = str(md_file.relative_to(root)).replace("\\", "/")
             if rel_path.startswith("_archived/"):
                 continue
             try:

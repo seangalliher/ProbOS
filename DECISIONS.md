@@ -1348,13 +1348,14 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 
 ### BF-949 -- The self-monitoring notebook pull reads only the agent's own notebook, as the agent (2026-11-03, #1741)
 
-- *Scope.* `knowledge/records_store.py` (`RecordsStore.search`: `directory`, the scope check; `record_is_readable` docstring), `knowledge/semantic.py` (a comment), `proactive.py` (the pull), `routers/records.py` (`search_records`), `cognitive/dm_targeted_lookup.py` (`_knowledge_lookup_reader`, the knowledge branch), tests. Contract `prompts/bf-949-notebook-pull-reader-identity.md`.
+- *Scope.* `knowledge/records_store.py` (`RecordsStore.search`: `directory`, the scope check; `record_is_readable` docstring; R1: the walk root in `list_entries`, `search` and `list_bills`), `knowledge/semantic.py` (a comment), `proactive.py` (the pull), `routers/records.py` (`search_records`), `cognitive/dm_targeted_lookup.py` (`_knowledge_lookup_reader`, the knowledge branch), tests. Contract `prompts/bf-949-notebook-pull-reader-identity.md`.
 - *NR1 (the pull).* `directory=f"notebooks/{callsign}"`, `scope="ship"`, `reader_id=callsign`, `reader_department=dept`. Rejected: a filter applied to the result (the 20-hit cap drops the agent's own entry behind 20 readable matches); matching over `list_entries` in the proactive layer.
 - *NR2 (unknown scope).* `search` raises `ValueError`; the route answers 400. `record_is_readable` and `build_records_scope_filter` keep their level-2 default; no production caller reaches them with an unknown scope. Rejected: returning nothing; logging and widening; failing closed inside the two helpers.
 - *NR3 (the class).* `reader_id=None` stays "identity not specified"; a census test pins every `RecordsStore.search` caller in `src`, each passing `reader_id` or named as deliberately anonymous (none). Rejected: a required `reader_id`.
 - *NR4 (DM lookup).* Reads as the addressed agent, or as `("", "")` on every path that does not resolve.
 - *NR5 (the route).* Reads as `captain`, as its sibling `GET /documents/{path}` does by default. Rejected: a `reader` query parameter; the anonymous reader.
-- *Residual.* Recorded limits L1 to L9 of the contract.
+- *R1 (the walk root, review round 1).* `list_entries` and `search` with a `directory`, and `list_bills`, take their paths against `self._repo_path.resolve()`, the form `_safe_path` returns; a whole-repository walk keeps the configured root. Rejected: resolving the root once in `__init__` (it changes the public `repo_path`, the status output and the log lines for every root not spelled as it resolves).
+- *Residual.* Recorded limits L1 to L10 of the contract.
 - *Reversal.* Revert the BF-949 commits.
 
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
