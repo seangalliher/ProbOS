@@ -165,12 +165,20 @@ async def write_notebook_entry(callsign: str, request: Request, runtime: Any = D
 
 @router.get("/search")
 async def search_records(q: str = "", scope: str = "ship", runtime: Any = Depends(get_runtime)) -> Any:
-    """Search Ship's Records by keyword."""
+    """Search Ship's Records by keyword.
+
+    BF-949: the search reads as the Captain, the reader ``GET /documents/{path}``
+    defaults to, so the scope level alone bounds the results. A ``scope`` that is
+    not a classification label is HTTP 400.
+    """
     if not runtime._records_store:
         return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
     if not q:
         return JSONResponse({"error": "query parameter 'q' required"}, status_code=400)
-    results = await runtime._records_store.search(q, scope=scope)
+    try:
+        results = await runtime._records_store.search(q, scope=scope, reader_id="captain")
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     return {"query": q, "results": results, "count": len(results)}
 
 

@@ -81,11 +81,11 @@ async def _self_monitoring(store: RecordsStore, callsign: str) -> dict[str, Any]
 _PULL_FIXTURES = [
     pytest.param(
         "Anvil", "my own calibration log, nothing else", "", None,
-        id="own-note-lacks-the-word", marks=pytest.mark.xfail(strict=True, reason=_M2),
+        id="own-note-lacks-the-word",
     ),
     pytest.param(
         "Zephyr", "engineering notes of my own", "engineering", "own-topic",
-        id="agent-sorts-after-bravo", marks=pytest.mark.xfail(strict=True, reason=_M2),
+        id="agent-sorts-after-bravo",
     ),
     pytest.param(
         "Anvil", "engineering notes of my own", "engineering", "own-topic", id="agent-sorts-before-bravo",
@@ -116,7 +116,6 @@ async def test_another_agents_private_note_never_reaches_the_pull(
         assert own_body in result["notebook_content"]["snippet"]
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.asyncio
 async def test_a_department_colleagues_note_is_not_shown_as_the_agents_own(tmp_path: Path) -> None:
     """Bravo's ``department`` note is readable by an engineering reader; it is still not Zephyr's notebook."""
@@ -134,7 +133,6 @@ async def test_a_department_colleagues_note_is_not_shown_as_the_agents_own(tmp_p
     assert result["notebook_content"]["topic"] == "own-topic"
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.asyncio
 async def test_the_agents_own_entry_is_found_behind_twenty_readable_matches(tmp_path: Path) -> None:
     """``search`` keeps 20 hits, so a filter applied to its result would lose an entry that sorts 22nd."""
@@ -152,7 +150,6 @@ async def test_the_agents_own_entry_is_found_behind_twenty_readable_matches(tmp_
     assert result["notebook_content"]["topic"] == "own-topic"
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scope", [
     pytest.param("notebooks/Anvil", id="a-path"),
@@ -168,7 +165,6 @@ async def test_search_refuses_an_unknown_scope(tmp_path: Path, scope: Any) -> No
         await store.search("engineering", scope=scope)
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.asyncio
 async def test_search_walks_only_the_directory_it_is_given(tmp_path: Path) -> None:
     store = await _store(tmp_path)
@@ -241,7 +237,6 @@ async def test_the_records_search_route_still_returns_what_the_captain_may_read(
     assert [hit["path"] for hit in body["results"]] == [_BRAVO] and body["count"] == 1
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.asyncio
 async def test_the_records_search_route_answers_an_unknown_scope_with_400(tmp_path: Path) -> None:
     store = await _store(tmp_path)

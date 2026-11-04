@@ -653,8 +653,7 @@ class TestRecordIsReadable:
 
 class TestRecordsStoreSearch:
     async def test_default_call_is_unchanged_by_bf679(self, records) -> None:
-        """``/records/search`` and self-monitoring pass no reader; they keep
-        the level-only behaviour they have always had."""
+        """An unspecified reader (``reader_id=None``) keeps the level-only behaviour."""
         await _seed(records)
 
         rows = await records.search("reactor", scope="ship")

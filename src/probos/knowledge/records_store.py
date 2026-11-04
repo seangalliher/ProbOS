@@ -102,7 +102,7 @@ def record_is_readable(
     * **Scope level** (always applied) — a record is admissible when
       ``level(classification) <= level(scope)``. An unrecognised record
       classification defaults to level ``0`` and an unrecognised ``scope`` to
-      level ``2``, exactly as :meth:`RecordsStore.search` has always done.
+      level ``2``.
     * **Reader identity** — mirrors :meth:`RecordsStore.read_entry`:
       ``private`` needs authorship, ``department`` needs a matching department
       or authorship. Strictly stricter than the scope level, never looser.
@@ -111,9 +111,7 @@ def record_is_readable(
     and "an anonymous reader asked" are different questions:
 
     * ``None`` — **identity not specified**. Scope level only; the pre-BF-679
-      behaviour, kept so existing callers of :meth:`RecordsStore.search` (the
-      ``/records/search`` endpoint, self-monitoring's notebook pull) are
-      byte-identical.
+      behaviour.
     * ``""`` — **anonymous reader**. The identity layer runs with an empty
       author, so identity-gated classifications are withheld. This is the
       fail-closed state the Oracle uses for a caller it cannot identify.
@@ -1111,6 +1109,7 @@ class RecordsStore:
         *,
         reader_id: str | None = None,
         reader_department: str = "",
+        directory: str = "",
     ) -> list[dict]:
         """Keyword search across records.
 
@@ -1120,12 +1119,24 @@ class RecordsStore:
         :meth:`read_entry` applies, so a caller that knows who is asking no
         longer receives another crew member's ``private`` or out-of-department
         records. The default ``reader_id=None`` means *identity not specified*
-        and leaves the scope-level-only behaviour byte-identical; see
-        :func:`record_is_readable` for the full tri-state contract.
+        and applies the scope level only; see :func:`record_is_readable` for the
+        full tri-state contract.
+
+        BF-949: ``scope`` is one of the four classification labels; any other
+        value raises ``ValueError``. ``directory`` confines the walk to that
+        directory of the repository, validated as :meth:`list_entries` validates
+        it (a path that leaves the repository raises ``ValueError``); ``""`` walks
+        the whole repository.
         """
+        if type(scope) is not str or scope not in _CLASSIFICATION_LEVELS:
+            raise ValueError(
+                "Unknown records scope; expected one of: "
+                + ", ".join(_CLASSIFICATION_LEVELS)
+            )
+        search_path = self._safe_path(directory) if directory else self._repo_path
         query_words = set(query.lower().split())
         results = []
-        for md_file in sorted(self._repo_path.rglob("*.md")):
+        for md_file in sorted(search_path.rglob("*.md")):
             rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
             if rel_path.startswith("_archived/"):
                 continue

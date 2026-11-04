@@ -2828,11 +2828,18 @@ class ProactiveCognitiveLoop:
                         if warnings:
                             result["notebook_repetition_warnings"] = warnings
 
-                    # Semantic pull: search notebooks for content relevant to current think
+                    # Semantic pull: the agent's own notebook entries that contain its
+                    # department name (frontmatter included). BF-949: the walk is confined
+                    # to the agent's notebook directory and reads as the agent, so it sees
+                    # only entries under that directory, and of those only what it may read.
                     dept = getattr(agent, 'department', '')
                     if dept and entries:
                         search_results = await rt._records_store.search(
-                            dept, scope=f"notebooks/{callsign}",
+                            dept,
+                            scope="ship",
+                            reader_id=callsign,
+                            reader_department=dept,
+                            directory=f"notebooks/{callsign}",
                         )
                         if search_results:
                             top = search_results[0]
