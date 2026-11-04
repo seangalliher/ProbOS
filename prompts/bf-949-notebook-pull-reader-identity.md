@@ -1,7 +1,7 @@
 # BF-949 (#1741): the self-monitoring notebook pull reads only the agent's own notebook, as the agent
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-03
-**Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-03, before the build: NRM-1's Line cell names the occurrence in `search` (`list_entries` holds the same line); NR7 no longer says what rendering the repetition warning would change.
+**Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-03, before the build: NRM-1's Line cell names the occurrence in `search` (`list_entries` holds the same line); NR7 no longer says what rendering the repetition warning would change. After review round 2: the last sentence of L10, which promised an error for a root retargeted between the two resolutions, is deleted.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-03, after review round 1: R1 (§7.5) and the text it changes.
 **Status:** M1 to M4 built (`701cabcd`); R1, review round 1's repair, ready to build. **Base:** drafted on `317fcdc0` (tree `4ca36294`); R1 written on `701cabcd`. **Dependencies:** none. **Tier:** M1 STANDARD, M2 HIGH, M3 HIGH, M4 STANDARD, R1 HIGH. **Estimated tests:** 1 new file, `tests/test_bf949_notebook_reader_identity.py` (13 test functions, 27 cases); M2 edits `tests/test_self_monitoring.py` and `tests/test_bf679_oracle_records_reader_identity.py`.
 **BF number:** BF-949, held by the title of #1741 (`gh issue list --state all --search "BF-949 in:title"`: #1741 only; `git log --all -i --grep BF-949`: `079f4761`, a docs commit, no fix). Nothing allocated.
@@ -1236,7 +1236,7 @@ Line cells hold the source line without its leading indentation. Prefix `NRM` (a
 - **L7.** `GET /api/records/documents` and `/notebooks/{callsign}` list any notebook's frontmatter with no reader.
 - **L8.** AD-552's repetition warnings are still not rendered (NR7).
 - **L9.** Exposure before the fix is not measured (§12, the Captain's).
-- **L10.** R1 is run for a relative root and for an absolute root through `..` (T11, T12). A root through a link or junction, a Windows short name, and a root differing only in case were not run. By reading, `resolve()` gives each its final path, as `_safe_path` does; for the last, the head already returned the same tail. `_safe_path` and the walk resolve the root in two calls, so a root retargeted between them raises `ValueError`, as every such walk did on the head.
+- **L10.** R1 is run for a relative root and for an absolute root through `..` (T11, T12). A root through a link or junction, a Windows short name, and a root differing only in case were not run. By reading, `resolve()` gives each its final path, as `_safe_path` does; for the last, the head already returned the same tail.
 
 ## 12. The Captain's read-only tasks (the live vessel stays his)
 
