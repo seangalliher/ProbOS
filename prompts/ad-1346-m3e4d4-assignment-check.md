@@ -1064,7 +1064,7 @@ RUN:   Grep '\b(EO|ET|EI|EC|EE|ER)-[0-9]|\bWM1[2-9]\b|\bD30[5-9]\b|\bD31[0-9]\b|
 FOUND: logs/ad1346/ad-1346-m3e4d3-chat-thread-checks.a1.md:1094; logs/ad1346/answer-ad1346-m3e4d3.txt:1151; logs/ad1346/answer-ad1346-m3e4d2.txt:1130 (CLAIM lines naming "R147 to R159")
 HOLDS: yes
 
-CLAIM: the helper, the two new test names and the contract's strings are not used
+CLAIM: the helper and the two new test names are not used
 RUN:   Grep '_assignment_round|the_assignment_creation_check|the_assignment_creations_answer|ad-1346-m3e4d4|ad1346-m3e4d4|ad1346 m3e4d4' over . and over logs/ad1346
 FOUND: nothing
 HOLDS: yes
@@ -1148,6 +1148,9 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
 **Amendment 3 (2026-11-03, the orchestrator, after review round 1 of M3e4d5).** One sentence, repaired by deletion. Changed, against the contract as Amendment 2 left it: in the register note R152, the sentence that a creation whose INSERT fails after the check counts once and writes no row is deleted.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
+
+**Amendment 4 (2026-11-04, the orchestrator, after review round 2 of M3e4d5).** One clause, repaired by deletion. Changed, against the contract as Amendment 3 left it: in the section "Absence Verified", the second CLAIM no longer says "and the contract's strings" (the RUN under it does not search every string of the contract, so the clause was broader than the RUN; review round 1 of M3e4d5 found the same clause in Absence 2 of its contract).
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
 ## For the register (#1604)
