@@ -14,6 +14,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.events import EventType
 from probos.protocols import ConnectionFactory, DatabaseConnection, EventEmitterMixin
 
@@ -112,6 +114,12 @@ class AssignmentService(EventEmitterMixin):
     def set_birth_chamber(self, chamber: Any) -> None:
         """AD-486: Set the Birth Chamber for Ward Room subscription gating."""
         self._birth_chamber = chamber
+
+    _admission: object = None  # AD-1346 M3e4d4 (D308, set_admission): None checks nothing
+
+    def set_admission(self, service: object) -> None:
+        """AD-1346 M3e4d4 (D308): the service ``create_assignment`` hands ``check_at``; None checks nothing."""
+        self._admission = service
 
     # ------------------------------------------------------------------
     # Snapshot cache (sync access for build_state_snapshot)
@@ -219,6 +227,7 @@ class AssignmentService(EventEmitterMixin):
             ward_room_channel_id=ward_room_channel_id,
         )
 
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=created_by)  # AD-1346 M3e4d4 (D307): the assignment's store-write check, in shadow, before its row's INSERT; it blocks nothing
         await self._db.execute(
             "INSERT INTO assignments (id, name, assignment_type, created_by, created_at, "
             "mission, ward_room_channel_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

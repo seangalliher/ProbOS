@@ -603,6 +603,12 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
     ``set_admission``.
     From AD-1346 M3e4d2 ``persistent_tasks.py`` imports the package, and ``runtime.py`` hands ``PersistentTaskStore``
     the service through its own ``set_admission``.
+    From AD-1346 M3e4d3 ``threads/__init__.py`` imports the package inside two methods of ``ChatThreadStore``, and
+    ``runtime.py`` hands ``ChatThreadStore`` the service through its own ``set_admission``.
+    From AD-1346 M3e4d4 ``assignment.py`` imports the package, and ``runtime.py`` hands ``AssignmentService`` the
+    service through its own ``set_admission``.
+    From AD-1346 M3e4d5 ``ward_room/channels.py`` imports the package, and ``WardRoomService.set_admission`` hands
+    ``ChannelManager`` the service through its own ``set_admission``.
     The routers that name the service or import the package are the three whose routes M3c2 shadows and, from AD-1346
     M3e2b, ``routers/build.py``, and none of them is a module of #1604 property 11's routes, which are never
     admission-gated."""
@@ -657,6 +663,9 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/cognitive/episodic.py", "probos/ward_room/service.py",  # AD-1346 M3e4b
         "probos/cognitive/clinical_notes_store.py", "probos/skill_request.py",  # AD-1346 M3e4d1
         "probos/persistent_tasks.py",  # AD-1346 M3e4d2
+        "probos/threads/__init__.py",  # AD-1346 M3e4d3
+        "probos/assignment.py",  # AD-1346 M3e4d4
+        "probos/ward_room/channels.py",  # AD-1346 M3e4d5
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {

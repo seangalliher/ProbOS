@@ -1309,6 +1309,43 @@ AD-1346 M3e4d2 is the second part of M3e4d. `PersistentTaskStore.create_task` ca
 - *Residual, accepted.* Registers R147 and R148 of the contract.
 - *Reversal.* Revert the M3e4d2 commits.
 
+### AD-1346 M3e4d3 -- the chat thread store's store-write checks (2026-11-03, #1604)
+
+AD-1346 M3e4d3 is the third part of M3e4d. `ChatThreadStore.create_thread` and `ChatThreadStore.append_message_once` call `check_at` with `store_write` as the statement before their `with self._connect() as conn:`, presenting `meta.get("created_by_agent")` and `author_id`; each imports `check_at` inside the method. `ProbOSRuntime.start` hands the runtime's `ChatThreadStore` the admission service, or None, through `set_admission`. `threads/__init__.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d3-chat-thread-checks.md`.
+
+- *D297 (the cut).* All of `threads/__init__.py`: 24 write scopes in two classes, two of them checks. Rejected: checking only the message write; one slice per class; `workforce.py` first.
+- *D298 (the rows).* `create_thread` and `append_message_once` are checks; the other 16 `ChatThreadStore` scopes and the 6 `ProjectStore` scopes are the ship's by D239, and `create_crew_session_thread` by D218. Rejected: `create_crew_session_thread` as a check; the file kept pending.
+- *D299 (the checks).* The statement before `with self._connect() as conn:`, with function-scope imports. Rejected: inside the transaction; after the write; at the callers; module-scope imports.
+- *D300 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: at the service's construction; a constructor keyword.
+- *D301 (off the loop).* A check in a worker thread reads the caller's ticket, which `asyncio.to_thread` carries.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM10 and WM11 are new.
+- *Residual, accepted.* Registers R149 and R150 of the contract.
+- *Reversal.* Revert the M3e4d3 commits.
+
+### AD-1346 M3e4d4 -- the assignment service's store-write check (2026-11-03, #1604)
+
+AD-1346 M3e4d4 is the fourth part of M3e4d. `AssignmentService.create_assignment` calls `check_at` with `store_write`, presenting `created_by`, as the statement before the call that inserts the assignment's row. `ProbOSRuntime.start` hands the runtime's `AssignmentService` the admission service, or None, through `set_admission`. `assignment.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d4-assignment-check.md`.
+
+- *D305 (the cut).* All of `assignment.py`: 5 write scopes, one of them a check. Rejected: with `ward_room/channels.py`; the four small files; `workforce.py` first.
+- *D306 (the rows).* `create_assignment` is a check; `add_member`, `remove_member`, `complete_assignment` and `dissolve_assignment` are the ship's by D239. Rejected: `add_member` as a check; the file kept pending.
+- *D307 (the check).* The statement before the INSERT, with module-scope imports. Rejected: before the channel's creation; at the route; function-scope imports.
+- *D308 (the hand-off).* A class-level `_admission` and `set_admission`, called in `ProbOSRuntime.start` under `isinstance`, as D286 does. Rejected: a constructor keyword; an `is not None` guard; a shared mixin.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM12 and WM13 are new.
+- *Residual, accepted.* Registers R151 and R152 of the contract.
+- *Reversal.* Revert the M3e4d4 commits.
+
+### AD-1346 M3e4d5 -- the Ward Room channel manager's store-write checks (2026-11-03, #1604)
+
+AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `ChannelManager.get_or_create_dm_channel` call `check_at` with `store_write`, presenting `created_by` and `agent_a_id`, as the statement before the call that inserts the channel's row. `WardRoomService.set_admission` hands the service on to its channel manager when `start` has built one. `ward_room/channels.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d5-channel-checks.md`.
+
+- *D312 (the cut).* All of `ward_room/channels.py`: 4 write scopes of `ChannelManager`, two of them checks. Rejected: the `via` form at the Ward Room's entries; `capability_request.py` and `artifacts/__init__.py` first; `workforce.py` first.
+- *D313 (the rows).* `create_channel` and `get_or_create_dm_channel` are checks; `_ensure_default_channels` and `archive_channel` are the ship's by D239. Rejected: the DM channel as the ship's; the file kept pending.
+- *D314 (the checks).* The statement before each INSERT, with module-scope imports. Rejected: at the Ward Room's entries; at the callers; function-scope imports.
+- *D315 (the hand-off).* A class-level `_admission` and `set_admission` on `ChannelManager`, called by `WardRoomService.set_admission` when its channel manager exists. Rejected: a second hand-off in `start`, whose added line would take `WardRoomService`'s body over `SRP_MAX_BODY_LINES`; a constructor keyword; the runtime reaching the manager.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM14 and WM15 are new.
+- *Residual, accepted.* Registers R153 and R154 of the contract.
+- *Reversal.* Revert the M3e4d5 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.

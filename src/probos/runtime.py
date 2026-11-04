@@ -3438,10 +3438,12 @@ class ProbOSRuntime:
         if isinstance(self.llm_client, OpenAICompatibleClient):  # AD-1346 M3d3a (D127): the model gateway's sink check; None checks nothing
             self.llm_client.set_admission(self.admission_service)
         HttpFetchAgent.set_admission(self.admission_service)  # AD-1346 M3e3b (D203): the http_fetch egress sink's service, class-level; shutdown sets it back to None
+        from probos.assignment import AssignmentService
         from probos.cognitive.clinical_notes_store import ClinicalNotesStore
         from probos.cognitive.episodic import EpisodicMemory
         from probos.persistent_tasks import PersistentTaskStore
         from probos.skill_request import SkillRequestStore
+        from probos.threads import ChatThreadStore
         from probos.ward_room import WardRoomService
 
         if isinstance(self.ward_room, WardRoomService):  # AD-1346 M3e4b (D233): the Ward Room's store-write checks; None checks nothing
@@ -3454,6 +3456,10 @@ class ProbOSRuntime:
             self.skill_request_store.set_admission(self.admission_service)
         if isinstance(self.persistent_task_store, PersistentTaskStore):  # AD-1346 M3e4d2 (D293): the persistent task store's check; None checks nothing
             self.persistent_task_store.set_admission(self.admission_service)
+        if isinstance(self.chat_thread_store, ChatThreadStore):  # AD-1346 M3e4d3 (D300): the chat thread store's two checks; None checks nothing
+            self.chat_thread_store.set_admission(self.admission_service)
+        if isinstance(self.assignment_service, AssignmentService):  # AD-1346 M3e4d4 (D308): the assignment service's check; None checks nothing
+            self.assignment_service.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687
