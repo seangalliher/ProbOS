@@ -199,7 +199,6 @@ def _dm_runtime(store: RecordsStore, registry: str) -> SimpleNamespace:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_M3)
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("agent_id", "registry", "sees_own"), [
     pytest.param("id-Anvil", "crew", True, id="addressed-agent-resolves"),
@@ -295,7 +294,6 @@ def test_the_census_finds_the_four_records_search_callers() -> None:
     assert set(_DELIBERATELY_ANONYMOUS) <= set(found)  # no entry outlives its call
 
 
-@pytest.mark.xfail(strict=True, reason=_M3)
 def test_every_records_search_caller_in_src_passes_a_reader() -> None:
     """Acceptance 2: each caller passes ``reader_id`` or is named, with its reason, as deliberately anonymous."""
     for caller, calls in _records_search_calls().items():
