@@ -2,7 +2,8 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-03
 **Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-04, before the build: the two tracker heads of section 8 carry 2026-11-04, the local date of M3's commit, as section 8's Date rule requires; and the base of this build is `ca0ca20b` (BF-949's merge), which changes none of the files this contract touches (`git diff --stat 317fcdc0 ca0ca20b -- src/probos/cognitive/swe_harness/tools.py src/probos/tools/effect_tiers.py src/probos/security/file_access.py tests/test_ad1316_real_effect_routes.py` is empty).
-**Status:** M1 to M3 ready to build as one batch. **Base:** drafted on `317fcdc0` (tree `4ca36294`). **Dependencies:** none (BF-949 #1741 may merge first; §8 places this entry correctly either way). **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD. **Estimated tests:** 1 new file, `tests/test_bf948_list_files_read_policy.py` (9 test functions, 17 cases); M2 edits `tests/test_ad1316_real_effect_routes.py`.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-04, Amendment 1 after review round 1 (`logs/bf948/review-r1-report.md`): F2 becomes M4 (a refusal the policy decided is not a tool fault, and `read_file` answers "refused" only for the policy's refusal); F3 corrects two claims (§3 LF2, §12, §16 item 1). F1 is BF-953, its own bug and contract, built before M4 in this PR; it changes `security/file_access.py`, which BF-948 still does not touch. M4's line numbers are those of `9649df65`.
+**Status:** M1 to M3 built (`b70d8b14`, `60177ff7`, `5517cd34`). M4 to build after BF-953, in the same PR; round 2 reviews the whole candidate. **Base:** drafted on `317fcdc0` (tree `4ca36294`); M4 drafted on `9649df65`. **Dependencies:** BF-953 is built first (its own contract). **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD, M4 HIGH. **Estimated tests:** 1 new file, `tests/test_bf948_list_files_read_policy.py` (12 test functions, 30 cases after M4); M2 edits `tests/test_ad1316_real_effect_routes.py`.
 **BF number:** BF-948, held by the title of #1736 (`gh issue view 1736`: OPEN). `git log --all -i --grep BF-948` finds `2d925bf5` (AD-1356 S2's repair), which mentions it and does not fix it. Nothing allocated.
 **Priority:** the next queue item after BF-949. Low to medium: names and an existence oracle, never contents. Any crew agent holding the native SWE tools can reach it once an operator sets `security_infra.read_roots`.
 
@@ -27,6 +28,12 @@
    - `list_files("*", <allowed dir>)` failed the same way.
    - `list_files("../*", ".")` returned 44 names above `src/`.
    - In a strict context the reply was `list_files_failed`.
+6. **Found in review round 1 (F2), on `9649df65`: M2's refusals are tool faults to the fault detectors.**
+   - `is_caller_input_error` (`tools/protocol.py:100-106`) recognises only `<id>_invalid:`.
+   - `classify_tool_error` (`tools/executor.py:350-363`) finds no signature in `list_files refused: path is outside every readable root`. The result is `other`, which is not in `_NOISE` (`fault_detection.py:32-35`).
+   - `detect_tool_defect` (`fault_report.py:392-416`) never consults the classifier. It feeds the same-run lane (`fault_detection.py:266`) and the DM filer (`agentic_dispatch.py:4376`).
+   - So two identical refusals in one run are a `ToolDefect`, and the observer persists an open fault for `list_files` (measured by the reviewer with the production detectors and a real `FaultReportStore`).
+   - `read_file refused:` has the same shape on the base. And `read_file` answers *any* resolver exception that way: `tools.py:463-467` catches `Exception`, not `FileAccessDenied`.
 
 ## 2. Solution
 
@@ -40,6 +47,10 @@
 
   The false sentence about `list_files` in `effect_tiers.py` is corrected, and the AD-1316 strict-log test is rewritten for the new seam.
 - **M3:** trackers and the ledger.
+- **M4 (Amendment 1):** a refusal the policy decided is not a tool fault.
+  - `tools/protocol.py` adds `POLICY_REFUSAL_MARK` (`" refused: "` after the tool's own id) to `is_caller_input_error`, which both detectors already consult.
+  - `ReadFileTool.invoke` answers `read_file refused:` only for a `FileAccessDenied`. Any other resolver error goes to its failure path and still counts.
+  - Tests T10 to T12, and the tracker entries are amended.
 
 ## 3. Decisions
 
@@ -64,7 +75,7 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
   - **What `Path.glob` does.** On CPython 3.12 (`Lib/pathlib.py`) and 3.13 (`Lib/pathlib/_local.py`), an anchored pattern raises `NotImplementedError("Non-relative patterns are unsupported")`. On 3.12, `..` is a `_ParentSelector` (the probe's 44 names), a non-directory base selects nothing, and `**` walks with `follow_symlinks=False`. CI runs 3.12 on Ubuntu (`.github/workflows/ci.yml:17`, `:47`).
   - **The tool's own rule.** It does not rely on that behaviour. It refuses `type(pattern) is not str`, `Path(pattern).anchor` (a drive, a root or a UNC share on Windows; `/` on POSIX), and `".." in Path(pattern).parts`, with a fixed text that names nothing. The check uses the platform's flavour, which is the one `glob` parses with.
   - **The authority is the per-match check.** Each match is decided by `resolve_read_path(str(match), …)` (resolve, then containment, `file_access.py:130-162`). That catches a symlink or junction, a Windows case or 8.3 spelling (`resolve()` canonicalises an existing path), and any spelling the lexical rule misses (L1).
-  - **The reply for dropped matches.** Nothing: no name, no count. A count would itself be an existence oracle. The reply lists exactly what `read_file` could open.
+  - **The reply for dropped matches.** Nothing: no name, no count. A count would itself be an existence oracle. The reply lists exactly what the read policy admits. That is not a promise that every entry is readable: a directory entry is listed on purpose (T3), and `read_file` of a directory fails.
   - **The reply form.** A kept match under `_PROJECT_ROOT` is relative to it, as before. Any other is its absolute path, which `read_file` accepts as given (T3 reads one back).
   - Rejected:
     - (b) Allow `..` patterns and rely on the per-match check alone. It is correct and more compatible, but it makes the base check meaningless: the pattern then navigates. Safety ranks above compatibility.
@@ -107,7 +118,23 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
   - One agent-work run end to end on the AD-1347 rig (`tests/test_ad1347_s3_execution.py` `_rig`: the real `ToolRegistry`, `AgentWorkRunner` and `WorkItemAgenticExecutor`), with the native tools registered by `register_native_swe_tools` through `tests/test_ad1356_s2_tool_effect_table.py` `_native` and elevated calls decided `auto` (`tests/test_ad1356_s3_chain_of_command.py` `_chain`, as in S4's WD1): T9.
   - Rewritten, not deleted: `test_strict_list_files_logging_omits_raw_arguments` (`test_ad1316_real_effect_routes.py:1478-1495`) monkeypatches `tools._resolve_path`, which `list_files` no longer calls. P2-4 moves the patch to `tools.resolve_read_path`, and its assertions are unchanged.
   - Unchanged, and recorded: S4's WD1 (`test_ad1356_s4_who_decides.py:41-53`) and S3's `_seen(rig, "notes.txt")` assertions (`test_ad1356_s3_chain_of_command.py:150`, `:181`, `:283`) pass on the base **only through the defect's error text**, which names `notes.txt`. After M2 they pass through a successful listing whose absolute path contains it. T9 is the test that tells the two apart.
-- **Config:** none. **EventType:** none. **No class and no method** is added. `file_access.py` is unchanged. The tool's id, name, description, input schema and output schema are unchanged; two goldens pin the description (A5).
+- **LF7, the refusal is not a fault (D7, Amendment 1). Chosen (a): a second own-id mark in `is_caller_input_error`, and `read_file`'s refusal narrowed to the policy's refusal.**
+  - **What the count protects.** A fault report says a tool is broken. A refusal is the tool working: the policy decided, and the reply says why. Counting it files a fault the repair path cannot fix, and it hides nothing a fault report should carry.
+  - **The mark.** `POLICY_REFUSAL_MARK = " refused: "`. A result is marked when its error starts with the tool's own non-empty id, then the mark, then at least one more character (case-sensitive). This is the same rule as S1.2's `_invalid:` mark, applied in the same function.
+    - So `fault_report.py:401` and `fault_detection.py:296` are unchanged, and a marked refusal is neither fault nor success evidence on both lanes.
+    - `list_files` gives the mark for a `FileAccessDenied` (`tools.py:571-572`) and for its pattern rule (`:511`). `read_file` gives it only for a `FileAccessDenied`.
+  - **The narrowing.** `ReadFileTool.invoke` re-raises a resolver exception that is not a `FileAccessDenied`. It then reaches the existing outer handlers: `File not found: …` or `read_file failed: <exc>` (`tools.py:492-506`), and it still counts.
+    - `isinstance` is used so a future subclass stays a refusal.
+    - The `RecoverRead` branch is unchanged.
+    - This is the shape `codebase_read_source` already uses (`:805-808`).
+  - Rejected:
+    - (b) A separate `is_policy_refusal` called at both sites. It edits two lines AD-1356 S1's RX-6 and RX-7 pin verbatim, and it leaves a third consumer to drift. The two marks mean the same thing to every consumer.
+    - (c) Adding the refusal texts to `classify_tool_fault_error`. That is insufficient: `detect_tool_defect` (the same-run lane and the DM filer) never consults the classifier, and the reasons are dynamic texts.
+    - (d) Answering `list_files_invalid:<code>`. That loses the policy's reason, which the model needs, and breaks parity with `read_file refused:` (LF1).
+    - (e) Answering a refusal as a success. The model and `ToolResult.success` would read it as a listing.
+    - (f) Widening the mark without the narrowing. A defect in the policy layer would be answered "refused" and would stop being reported.
+  - Not a Captain condition: the read policy enforces exactly as before. Only its own answers stop counting as tool defects.
+- **Config:** none. **EventType:** none. **No class and no method** is added; M4 adds one module constant, `POLICY_REFUSAL_MARK`. `file_access.py` is unchanged by BF-948 (BF-953 changes it). The tool's id, name, description, input schema and output schema are unchanged; two goldens pin the description (A5).
 
 ## 4. Milestones and gates
 
@@ -116,6 +143,7 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
 | M1 | STANDARD | test only, no `src`. Its strength is held by the strict xfails failing on the base, the premise asserts, and §10 | N1-1 | G1 |
 | M2 | HIGH | an agent-reachable read path's admission decision (the security control itself), its reply and log text, and a sentence in the approval-tier table | P2-1 to P2-14 | G2 |
 | M3 | STANDARD | trackers | P3-1, P3-2, the ledger | G3 |
+| M4 | HIGH | a shared predicate consumed by both fault-detection lanes, the DM filer and a replay script, and `read_file`'s reply on an agent-reachable read path | P4-1 to P4-7, the ledger | G4 |
 
 - **G1:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py -q -n 0`. Expected: 1 passed (T7), 16 xfailed.
 - **G2:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py tests/test_ad1316_real_effect_routes.py tests/test_ad544_native_tools.py tests/test_ad1179_tool_schema_golden.py tests/test_ad1152_agentic_correlation.py tests/test_ad1356_s2_tool_effect_table.py tests/test_ad1356_s3_chain_of_command.py tests/test_ad1356_s4_who_decides.py tests/test_bf758_file_read_confinement.py tests/test_ad1344_constitution_write_refusal.py -q -n 0`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check`. Expected in the new file: 17 passed.
@@ -123,6 +151,23 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
   - `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`
   - `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check`
   - `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`
+- **G4, red first.**
+  - Apply P4-3 to P4-5 only (the test file), then run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py -q -n 0`.
+  - Expected on the BF-953 head: **5 failed, 25 passed**. The five are T10 `list-files-refusal`, `pattern-refusal` and `read-file-refusal`; T11 on `faults.list_open() == [] and events == []`; and T12 on `broken.error`.
+  - Any other count, or a failure on a line marked `# premise`, is a hard stop back to the Architect. If BF-953 added tests to this file, add its count.
+- **G4, green.**
+  - Apply P4-1 and P4-2, then rerun the file. Expected: **30 passed**.
+  - Then run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py tests/test_ad1356_s1_input_errors.py tests/test_ad1356_replay_approval_tiers.py tests/test_ad1205_fault_observer.py tests/test_ad1205_fault_paths.py tests/test_ad1169_fault_reports.py tests/test_ad1257_defect_follows_failure.py tests/test_ad1279_fault_finds_its_trace.py tests/test_ad1164_continue_or_ask.py tests/test_ad1189_deferred_tool_schemas.py tests/test_ad1156_plan_execute_mode.py tests/test_ad1240_tool_result_delivery.py tests/test_bf758_file_read_confinement.py tests/test_ad544_native_tools.py -q -n 0`. Expected: 0 failed; record each file's count.
+  - Then run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check`.
+  - After P4-6 and P4-7, run G3's three ledger commands.
+
+**Order in the PR.**
+1. M1 to M3 (committed).
+2. BF-953: its own contract and commits, built first.
+3. The orchestrator commits this amended contract.
+4. M4.
+
+F3 is text in this contract only. If BF-953 changed `tools.py:460-467` or the tail of this test file, so that a P4 SEARCH no longer matches, it goes back to the Architect and is not rebased by hand. The broad gate runs once for the whole batch, after round 2's repairs.
 
 The broad gate runs once for the batch (main session, `--receipt`).
 
@@ -131,6 +176,7 @@ The broad gate runs once for the batch (main session, `--receipt`).
 - M1: `BF-948 M1: real-tool reproductions of list_files outside the read policy`
 - M2: `BF-948 M2: list_files lists only what the read policy admits, and names nothing it refuses`
 - M3: `BF-948 M3: trackers and ledger`
+- M4: `BF-948 M4: a refusal the read policy decided is not a tool fault, and read_file says refused only for the policy's refusal`
 
 ## 6. Tests (`tests/test_bf948_list_files_read_policy.py`)
 
@@ -145,6 +191,9 @@ The broad gate runs once for the batch (main session, `--receipt`).
 | T7 | `test_in_tree_listing_is_unchanged` | compatibility | none |
 | T8 | `test_a_failure_reply_and_log_name_no_path` | LF3 | M2 |
 | T9 | `test_an_agent_work_run_lists_inside_the_roots_and_is_refused_outside_them` | LF6 whole path | M2 |
+| T10 | `test_a_tools_own_refusal_mark_is_not_a_tool_fault` (11) | LF7 the mark; S1.2's mark unchanged | red first in G4 (no xfail) |
+| T11 | `test_repeated_refusals_in_an_agent_work_run_file_no_fault` | LF7 whole path: real tools, real executor, both detectors, a real `FaultReportStore` | red first in G4 |
+| T12 | `test_read_file_answers_refused_only_for_the_policys_refusal` | LF7 narrowing; a resolver failure still counts beside two skipped refusals | red first in G4 |
 
 ## 7. The contract
 
@@ -755,6 +804,231 @@ async def test_an_agent_work_run_lists_inside_the_roots_and_is_refused_outside_t
 
 M3 changes no `src` or `tests` file. Its pairs are P3-1 and P3-2 (§8), plus the ledger.
 
+### 7.4 M4 (Amendment 1)
+
+The detector lines `fault_report.py:401` and `fault_detection.py:296` are **not edited**. AD-1356 S1's RX-6 and RX-7 pin them verbatim, and their comment ("the call's input was wrong") stays true: a refusal is the policy's answer to the call's input.
+
+**P4-1** `src/probos/tools/protocol.py`
+
+SEARCH:
+````python
+#: AD-1356 S1.2: how a tool marks a caller error. A ``ToolResult.error`` that starts with the tool's own id and this
+#: mark (``event_log_query_invalid:window``) says the call's input was wrong. ``fault_report.detect_tool_defect`` and
+#: ``fault_detection.collect_tool_fault_batch`` skip such a result.
+CALLER_INPUT_ERROR_MARK: str = "_invalid:"
+
+
+def is_caller_input_error(tool_id: object, error: object) -> bool:
+    """AD-1356 S1.2: whether ``error`` is ``tool_id``'s mark of a caller error: both are str, ``tool_id`` is not empty,
+    and ``error`` starts with ``tool_id + CALLER_INPUT_ERROR_MARK`` (case-sensitive) and is longer than that prefix."""
+    if type(tool_id) is not str or not tool_id or type(error) is not str:
+        return False
+    prefix = tool_id + CALLER_INPUT_ERROR_MARK
+    return len(error) > len(prefix) and error.startswith(prefix)
+````
+REPLACE:
+````python
+#: AD-1356 S1.2: how a tool marks a caller error. A ``ToolResult.error`` that starts with the tool's own id and this
+#: mark (``event_log_query_invalid:window``) says the call's input was wrong. ``fault_report.detect_tool_defect`` and
+#: ``fault_detection.collect_tool_fault_batch`` skip such a result.
+CALLER_INPUT_ERROR_MARK: str = "_invalid:"
+
+#: BF-948: how a tool marks its policy's refusal of what the call asked for. A ``ToolResult.error`` that starts with
+#: the tool's own id and this mark (``list_files refused: path is outside every readable root``) says the policy
+#: answered as designed, so the same two detectors skip it. A tool gives it for its policy's decision only, never for
+#: its own failure: ``read_file`` for a ``FileAccessDenied``, ``list_files`` for one and for its pattern rule.
+POLICY_REFUSAL_MARK: str = " refused: "
+
+
+def is_caller_input_error(tool_id: object, error: object) -> bool:
+    """AD-1356 S1.2, BF-948: whether ``error`` is ``tool_id``'s mark of a caller error or of its policy's refusal:
+    both are str, ``tool_id`` is not empty, and ``error`` starts with ``tool_id`` followed by
+    ``CALLER_INPUT_ERROR_MARK`` or ``POLICY_REFUSAL_MARK`` (case-sensitive) and is longer than that prefix."""
+    if type(tool_id) is not str or not tool_id or type(error) is not str:
+        return False
+    return any(
+        len(error) > len(prefix) and error.startswith(prefix)
+        for prefix in (tool_id + CALLER_INPUT_ERROR_MARK, tool_id + POLICY_REFUSAL_MARK)
+    )
+````
+
+**P4-2** `src/probos/cognitive/swe_harness/tools.py`
+
+SEARCH:
+````python
+            try:
+                target = self.resolve_source_path(str(path))
+            except Exception as exc:
+                if read is not None and type(read.directive) is RecoverRead:
+                    raise WorkspaceResultError("source_changed") from exc
+                return ToolResult(error=f"read_file refused: {exc}")
+````
+REPLACE:
+````python
+            try:
+                target = self.resolve_source_path(str(path))
+            except Exception as exc:
+                if read is not None and type(read.directive) is RecoverRead:
+                    raise WorkspaceResultError("source_changed") from exc
+                if not isinstance(exc, FileAccessDenied):
+                    raise  # BF-948: only the policy's refusal carries the refusal mark; any other error is a failure
+                return ToolResult(error=f"read_file refused: {exc}")
+````
+
+**P4-3** `tests/test_bf948_list_files_read_policy.py`
+
+SEARCH:
+````python
+agent-work run on the AD-1347 rig with the native tools registered. Nothing here replaces the read
+policy except T8, which makes it raise to reach the failure handler.
+"""
+````
+REPLACE:
+````python
+agent-work run on the AD-1347 rig with the native tools registered. Nothing here replaces the read
+policy except T8 and T12, which make it raise to reach a failure handler. M4 (T10 to T12): a refusal
+the policy decided is not a tool fault on either detector path, and only the policy's refusal is
+answered as refused.
+"""
+````
+
+**P4-4** `tests/test_bf948_list_files_read_policy.py`
+
+SEARCH:
+````python
+from probos.capability_request import requests_for_work_item
+from probos.cognitive.swe_harness import tools as swe_tools
+from probos.cognitive.swe_harness.tools import ListFilesTool, ReadFileTool
+from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _rig, _seen
+from tests.test_ad1356_s2_tool_effect_table import _native, _notes, _self_task
+from tests.test_ad1356_s3_chain_of_command import _chain, _finished
+````
+REPLACE:
+````python
+from probos.capability_request import requests_for_work_item
+from probos.cognitive.agentic_dispatch import classify_tool_fault_error
+from probos.cognitive.swe_harness import tools as swe_tools
+from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResult
+from probos.cognitive.swe_harness.tools import ListFilesTool, ReadFileTool
+from probos.fault_detection import collect_tool_fault_batch
+from probos.fault_report import detect_tool_defect
+from probos.tools.protocol import is_caller_input_error
+from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _rig, _seen, _watch_runs
+from tests.test_ad1356_s1_input_errors import _faults
+from tests.test_ad1356_s2_tool_effect_table import _native, _notes, _self_task
+from tests.test_ad1356_s3_chain_of_command import _chain, _finished
+````
+
+**P4-5** `tests/test_bf948_list_files_read_policy.py` (append T10 to T12)
+
+SEARCH:
+````python
+                assert _seen(rig, "outside every readable root") and _seen(rig, "notes.txt")
+                assert not _seen(rig, "list_files failed")
+        finally:
+            await store.stop()
+````
+REPLACE:
+````python
+                assert _seen(rig, "outside every readable root") and _seen(rig, "notes.txt")
+                assert not _seen(rig, "list_files failed")
+        finally:
+            await store.stop()
+
+
+# --- M4 (Amendment 1): a refusal the policy decided is not a tool fault ---------------------------------
+
+
+@pytest.mark.parametrize(("tool_id", "error", "marked"), [
+    pytest.param("list_files", _OUTSIDE, True, id="list-files-refusal"),
+    pytest.param("list_files", _PATTERN_REFUSAL, True, id="pattern-refusal"),
+    pytest.param(
+        "read_file", "read_file refused: path is protected: the runtime's data directory or a config file", True,
+        id="read-file-refusal",
+    ),
+    pytest.param("event_log_query", "event_log_query_invalid:filter_required", True, id="the-s1-mark-still-holds"),
+    pytest.param("list_files", "list_files refused: ", False, id="nothing-after-the-mark"),
+    pytest.param("list_files", "list_files refused:x", False, id="no-space-after-the-colon"),
+    pytest.param("list_files", "read_file refused: path is outside every readable root", False, id="another-tools-mark"),
+    pytest.param("list_files", "List_Files refused: path is outside every readable root", False, id="other-case"),
+    pytest.param("list_files", "list_files failed: RuntimeError", False, id="a-failure"),
+    pytest.param("list_files", "list_files_failed", False, id="the-strict-failure"),
+    pytest.param("", " refused: path is outside every readable root", False, id="no-tool-id"),
+])
+def test_a_tools_own_refusal_mark_is_not_a_tool_fault(tool_id: str, error: str, marked: bool) -> None:
+    """The refusal mark is the tool's own non-empty id, then `` refused: ``, then at least one more character,
+    case-sensitive. S1.2's ``_invalid:`` mark is unchanged, and a failure is never marked."""
+    assert is_caller_input_error(tool_id, error) is marked
+
+
+async def test_repeated_refusals_in_an_agent_work_run_file_no_fault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 1's F2 on the AD-1347 rig: two identical ``list_files`` refusals and two identical ``read_file``
+    refusals in one run leave the fault store empty, emit nothing, and give the run no tool defect."""
+    notes = _notes(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / SECRET_NAME).write_text("outside contents", encoding="utf-8")
+    listing = {"pattern": "*", "path": str(outside)}
+    reading = {"path": str(outside / SECRET_NAME)}
+    script = [
+        _call("list_files", listing, "c1"), _call("list_files", listing, "c2"),
+        _call("read_file", reading, "c3"), _call("read_file", reading, "c4"),
+        _final(ANSWER),
+    ]
+    runs = _watch_runs(monkeypatch)
+    async with _rig(tmp_path, script) as rig:
+        faults, events = _faults(rig)
+        store = await _native(rig, tmp_path, read_roots=[notes.parent])
+        try:
+            async with _chain(rig, agent_work_elevated_decider="auto"):
+                item_id = await _self_task(rig, "List the relay notes")
+                await _finished(rig, item_id)
+                assert requests_for_work_item(rig.requests, item_id) == []  # premise: all four calls ran directly
+                assert _seen(rig, _OUTSIDE)  # premise: the list_files refusals reached the model
+                assert _seen(rig, "read_file refused: path is outside every readable root")  # premise
+                assert faults.list_open() == [] and events == []
+                assert [run["outcome"].tool_defect for run in runs] == [None]
+        finally:
+            await store.stop()
+
+
+def _pairs(*results: Any) -> SimpleNamespace:
+    """The loop's pairs for ``read_file`` results, through the adapter it uses."""
+    calls = [ToolCallRequest(name="read_file", arguments={}, id=f"r{n}") for n in range(len(results))]
+    pairs = [ToolCallResult.from_tool_result(f"r{n}", result, 0.0) for n, result in enumerate(results)]
+    assert all(  # premise: the adapter carries each error verbatim as an error
+        pair.is_error is True and pair.output == result.error for pair, result in zip(pairs, results, strict=True)
+    )
+    return SimpleNamespace(tool_calls=calls, tool_results=pairs)
+
+
+async def test_read_file_answers_refused_only_for_the_policys_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolver error that is not the policy's refusal is answered ``read_file failed:`` and still counts: two of
+    them are the run's defect, and two real refusals beside them are neither fault nor success evidence."""
+    scene = _scene(tmp_path)
+    reader = ReadFileTool(_runtime(scene, read_roots=[scene.allowed]))
+    refused = await reader.invoke({"path": str(scene.outside / SECRET_NAME)})
+    assert refused.error == "read_file refused: path is outside every readable root"  # premise
+
+    def _broken(*_args: Any, **_kwargs: Any) -> Path:
+        raise RuntimeError("policy layer broke")
+
+    monkeypatch.setattr(swe_tools, "resolve_for_runtime", _broken)
+    broken = await reader.invoke({"path": str(scene.allowed / "ok.txt")})
+    assert broken.error == "read_file failed: policy layer broke"
+    outcome = _pairs(refused, refused, broken, broken)
+    defect = detect_tool_defect(outcome)
+    assert defect is not None
+    assert (defect.tool_id, defect.error_text, defect.count) == ("read_file", broken.error, 2)
+    [evidence] = collect_tool_fault_batch(outcome, classify_error=classify_tool_fault_error).tools
+    assert evidence.defect is not None and evidence.defect.error_text == broken.error
+    assert evidence.mixed is False and evidence.succeeded is False
+````
+
 ## 8. Tracking (M3's commit)
 
 **Head constraint:** neither head may carry a lifecycle keyword from `gen_ad_ledger.py` `_STATUS_PATTERNS` (`:126-132`) in its first 120 characters.
@@ -802,10 +1076,47 @@ If another entry was inserted directly above BF-946's heading before M3 (BF-949'
 
 Then regenerate the ledger (`python -P scripts/gen_ad_ledger.py`) and stage `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` as the tool writes them. **Not updated:** `docs/development/roadmap.md` (no BF-948 row; its Bug Tracker lists BFs filed and not fixed).
 
+**M4's tracker pairs (in M4's commit).** They amend the committed M3 text in place. The heads and their dates are unchanged, so the head constraint still holds. Regenerate the ledger afterwards and stage what it writes.
+
+**P4-6** `PROGRESS.md`
+
+SEARCH:
+````
+A failure is answered and logged with its exception class only. The tier table is unchanged: `list_files` stays elevated until the Captain decides its tier.
+````
+REPLACE:
+````
+A failure is answered and logged with its exception class only. A refusal is not a tool fault: `tools/protocol.py` adds `POLICY_REFUSAL_MARK` (the tool's own id, then `" refused: "`) to `is_caller_input_error`, which both fault detectors already consult. So a repeated `list_files refused: …` no longer files an open fault, and neither does `read_file refused: …`, which `read_file` now gives only for the policy's own refusal (any other resolver error is `read_file failed: …` and still counts). The tier table is unchanged: `list_files` stays elevated until the Captain decides its tier.
+````
+
+**P4-7** `DECISIONS.md` (two edits, each SEARCH unique)
+
+SEARCH:
+````
+- *Scope.* `cognitive/swe_harness/tools.py` (`ListFilesTool`, `_LIST_FILES_PATTERN_REFUSAL`), `tools/effect_tiers.py` (a comment), tests. Contract `prompts/bf-948-list-files-read-policy.md`.
+````
+REPLACE:
+````
+- *Scope.* `cognitive/swe_harness/tools.py` (`ListFilesTool`, `_LIST_FILES_PATTERN_REFUSAL`, `ReadFileTool`'s refusal handler), `tools/protocol.py` (`POLICY_REFUSAL_MARK`, `is_caller_input_error`), `tools/effect_tiers.py` (a comment), tests. Contract `prompts/bf-948-list-files-read-policy.md` (with Amendment 1).
+````
+
+SEARCH:
+````
+- *LF5 (the class).* `FileSearchAgent`'s caller pattern and `DirectoryListAgent`'s link entries go to BF-944 (#1717) as acceptance cases.
+- *Residual.* Recorded limits L1 to L10 of the contract.
+````
+REPLACE:
+````
+- *LF5 (the class).* `FileSearchAgent`'s caller pattern and `DirectoryListAgent`'s link entries go to BF-944 (#1717) as acceptance cases.
+- *LF7 (refusals are not faults).* A result whose error starts with the tool's own id and `" refused: "` is skipped by `detect_tool_defect` and `collect_tool_fault_batch`, as S1.2's `_invalid:` mark is; the detector lines are unchanged. `read_file` gives the mark only for a `FileAccessDenied`. Rejected: a separate predicate; the classifier (the same-run lane never consults it); an `_invalid:` text; answering a refusal as a success; the mark without the narrowing.
+- *Residual.* Recorded limits L1 to L15 of the contract. Path spellings the policy decides differently (review F1) are BF-953.
+````
+
 ## 9. What this does NOT change
 
 - `security/file_access.py` (the policy, its reasons, the floor).
-- `read_file`, `codebase_read_source`, the other native tools, and `register_native_swe_tools`'s permissions.
+- `codebase_read_source`, the other native tools, and `register_native_swe_tools`'s permissions. `read_file` changes in one place only (M4, P4-2): a resolver exception that is not a `FileAccessDenied` now reaches its existing failure handlers instead of being answered `read_file refused:`. Its refusals, the `RecoverRead` branch and every other reply are unchanged.
+- The detector lines `fault_report.py:401` and `fault_detection.py:296`, `classify_tool_fault_error`, `_NOISE`, and `scripts/replay_approval_tiers.py` (its regex yields only `_invalid:` strings, so its buckets are unchanged).
 - `list_files`'s id, name, description and schemas (the AD-1179 and AD-1152 goldens).
 - The tier table's sets, `tier_decider`, `direct_tool_ids` and `filed_call_tier`.
 - The pool agents (BF-944), the indexed readers (F-202), config, `EventType`, and the strict executor.
@@ -832,6 +1143,21 @@ Line cells hold the source line without its leading indentation. Prefix `LFM` (a
 
 **Campaign of record.** Run an unmutated baseline of the new file first, then each row against the new file. Record the base tree and the sha256 of `tools.py`. LFM-5 relies on pytest's working directory not being `src/`. LFM-3 is killed by a `TypeError` raised out of `invoke`, which counts as a failure.
 
+**M4 rows (campaign of record on M4's head).**
+- Prefix `RFM` is absent from `prompts/`, `DECISIONS.md` and `PROGRESS.md`.
+- Run an unmutated baseline of `tests/test_bf948_list_files_read_policy.py` first, then each row against it. RFM-2 also runs `tests/test_ad1356_s1_input_errors.py`.
+- Record the base tree and the sha256 of `src/probos/tools/protocol.py` and `src/probos/cognitive/swe_harness/tools.py`.
+
+| Id | File | Line | Mutate to | Killed by |
+|---|---|---|---|---|
+| RFM-1 | `tools/protocol.py` | `for prefix in (tool_id + CALLER_INPUT_ERROR_MARK, tool_id + POLICY_REFUSAL_MARK)` | `for prefix in (tool_id + CALLER_INPUT_ERROR_MARK,)` | T10, T11, T12 |
+| RFM-2 | `tools/protocol.py` | the same line | `for prefix in (tool_id + POLICY_REFUSAL_MARK,)` | T10 `the-s1-mark-still-holds`; IE4 |
+| RFM-3 | `tools/protocol.py` | `POLICY_REFUSAL_MARK: str = " refused: "` | `POLICY_REFUSAL_MARK: str = " refused:"` | T10 `no-space-after-the-colon` |
+| RFM-4 | `tools/protocol.py` | `len(error) > len(prefix) and error.startswith(prefix)` | `error.startswith(prefix)` | T10 `nothing-after-the-mark` |
+| RFM-5 | `tools/protocol.py` | `if type(tool_id) is not str or not tool_id or type(error) is not str:` | `if type(error) is not str:` | T10 `no-tool-id` |
+| RFM-6 | `cognitive/swe_harness/tools.py` | `if not isinstance(exc, FileAccessDenied):` | `if False:` | T12 |
+| RFM-7 | `cognitive/swe_harness/tools.py` | `return ToolResult(error=f"read_file refused: {exc}")` | `return ToolResult(error=f"read_file failed: {exc}")` | T11 |
+
 ## 11. Recorded limits
 
 - **L1.** The pattern rule is lexical, in the platform's path flavour. Anything a link, a Windows spelling or a component such as `.. ` reaches is decided by the per-match check, which is the authority.
@@ -844,12 +1170,20 @@ Line cells hold the source line without its leading indentation. Prefix `LFM` (a
 - **L8.** A base outside `src/`, including `path=".."`, now lists absolute paths. Before, it listed `..`-relative names or an error.
 - **L9.** The description is unchanged (two goldens). The model learns the pattern rule from the refusal text.
 - **L10.** There is no cap on the number of matches, as before. The cost is one `resolve_read_path` per match.
+- **L11.** The refusal mark is lexical and the tool's own. Any tool whose error starts with its id and `" refused: "` is skipped by both detectors. In `src` today only `read_file` and `list_files` emit it (Absence B1). An MCP server's error text could carry its own canonical id and the mark, the same exposure S1.2's `_invalid:` already has.
+- **L12.** A refusal is neither fault nor success evidence. A tool that only ever refuses leaves no health evidence, and an agent that keeps asking for a refused path shows in its transcript and trace (AD-1248), not as a fault.
+- **L13.** Other answers to the caller's input still count as tool faults. Not changed here; considered, deferred:
+  - `codebase_read_source` re-raises its refusal (`tools.py:805-808`);
+  - `write_file` and `edit_file` answer `Protected write refused (BF-911): …` (`file_access.py:255`, `:306`, `:311`);
+  - `list_files`' `pattern is required` (`tools.py:556`) is unmarked, as on the base.
+- **L14.** The policy decides a path by its spelling. In review F1, Windows extended-length and local UNC spellings of a protected path were admitted. BF-953 owns that in `security/file_access.py`, with its own issue, contract and tests over both `ListFilesTool` and `ReadFileTool`. It is built first in this PR, and `list_files` inherits whatever `resolve_read_path` decides.
+- **L15.** AD-1356 S1's RX-8 line (`return len(error) > len(prefix) and error.startswith(prefix)`) no longer exists after M4. RFM-4 restates it.
 
 ## 12. The Captain's items (the live vessel stays his)
 
 - **Decision (does not block BF-948; LF4).** Should `list_files` join `READ_POLICY_TOOL_IDS` and `ROUTINE_TOOL_IDS`?
   - That makes it routine while `read_roots` is set (run directly under the default `auto`) and critical while it is unset: the Captain, where today a chief decides.
-  - Recommended: yes, after BF-948 merges. It then lists only names `read_file` could open, and `read_file` is already routine under the same condition.
+  - Recommended: yes, after BF-948 (and BF-953) merge. It then lists only what the read policy admits, and `read_file` is already routine under the same condition.
   - Given up: the chief's review of listings on a confined vessel. Gained: the six `list_files` filings in the shape of 2026-10-31 stop parking work when confined.
   - It is a table change with its tests: ET1, ET3, and S3's CC tests, which file `list_files`.
 - **Live check after merge (reads only).** From a scratch directory outside the checkout, run with the vessel's interpreter and `-I` the following.
@@ -965,6 +1299,82 @@ A8 CLAIM: no census test pins the callers of resolve_read_path or resolve_for_ru
 - The cost of `list_files("**/*", ".")` before and after on the checkout. 1098 tracked files under `src`, plus `__pycache__`.
 - The live `read_roots`.
 
+## 13a. Verified for Amendment 1 (2026-11-04, on `9649df65`)
+
+```
+git log --oneline -6 -> 9649df65 head; 5517cd34 M3, 60177ff7 M2, b70d8b14 M1, 9d685dac contract; base ca0ca20b
+git diff ca0ca20b 9649df65 -- tools/protocol.py fault_report.py fault_detection.py security/file_access.py -> empty
+Read logs/bf948/review-r1-report.md (F1-F3)
+Read src/probos/tools/protocol.py :78-112 (94-97 mark, 100-106 is_caller_input_error)
+Read src/probos/fault_report.py :340-430 (401 the skip, 392-416 tally, no classifier), :448-465 (462 resolve_tool_defect)
+Read src/probos/fault_detection.py :1-60 (24 import, 32-35 _NOISE), :240-347 (266 same_run, 296-297 skip, 315 noise),
+  :455-492 (observe_completed_tool_run)
+Read src/probos/cognitive/agentic_dispatch.py :2145-2166 (classify_tool_fault_error: exact host refusals only),
+  :4366-4421 (4351 _defect_outcome, 4376 detect_tool_defect, 4415 observe_completed_tool_run)
+Read src/probos/tools/executor.py :326-364 (classify_tool_error: no signature matches the refusal texts -> "other")
+Read src/probos/cognitive/swe_harness/tools.py :440-506 (447-449, 460-467 any Exception -> "read_file refused",
+  490-506 outer handlers), :798-811 (805-808 codebase_read_source re-raises); grep -> 555-557, 571
+Read src/probos/security/file_access.py :76-162 (79-85; 134-161 every refusal raises FileAccessDenied)
+Read scripts/replay_approval_tiers.py :40-103 (55 import, 59 _INPUT_MARK, 100 call)
+Read tests/test_ad1356_s1_input_errors.py :1-163 (_faults 35-39, IE1 55-73, IE3 97-126, IE4 130-145, IE5 149-162)
+Read tests/test_ad1156_plan_execute_mode.py :826-843 (host refusals, another mechanism)
+grep tests/test_ad1347_s3_execution.py -> _call 102, _final 106, _rig 150, _seen 284, _watch_runs 311
+grep tests/test_ad1356_s2_tool_effect_table.py -> _native 56, _self_task 68, _notes 78; s3 -> _chain 64, _finished 110
+grep src/probos/cognitive/swe_harness/tool_call.py -> ToolCallRequest 670-676, ToolCallResult 680-692 (no name field),
+  from_tool_result 696-734
+Read tests/test_bf948_list_files_read_policy.py :1-34, :210-239; Read DECISIONS.md :1361-1371; grep PROGRESS.md :3
+grep prompts/ad-1356-s1-stop-filing-what-a-rule-decides.md -> RX-8 1198, RX-9 1199
+Glob tests/test_ad1356_replay_approval_tiers.py -> exists
+scripts/ad_ceiling.py -> CEILING AD-1358 (issue titles), NEXT AD-1359; nothing allocated here
+gh issue list --search "BF-953 in:title" -> []; Glob prompts/bf-95* -> none (BF-953 is drafted elsewhere)
+```
+
+## Absence Verified (Amendment 1, 2026-11-04, on `9649df65`)
+
+```
+B1 CLAIM: only read_file and list_files give a ToolResult error that starts with their own id and " refused: ".
+   RUN:   Grep 'refused: ' over src/probos; Grep 'ToolResult\(error=f?["'][a-z_]+ refused' over src/probos
+   FOUND: tools.py:467, 511, 572; the other hits are log lines, console prints, docstrings, route details
+          (approval_authority.py:46, decision_pre_clearances.py:52) and BF-911's "Protected write refused"
+          (file_access.py:255, 306, 311), none starting with a tool id
+   HOLDS: yes for literal and f-string spellings; an error built only from exception text was not enumerated
+B2 CLAIM: the consumers of is_caller_input_error are fault_report.py:401, fault_detection.py:296,
+          scripts/replay_approval_tiers.py:100 and tests/test_ad1356_s1_input_errors.py:145.
+   RUN:   Grep 'CALLER_INPUT_ERROR_MARK|is_caller_input_error' over the repo; over ui, scripts, docs, config
+   FOUND: those four, plus prompts and trackers
+   HOLDS: yes
+B3 CLAIM: the detectors' callers are agentic_dispatch.py:4376, :4415, fault_report.py:462, fault_detection.py:266, :467,
+          native_builder.py:181.
+   RUN:   Grep 'detect_tool_defect\(|collect_tool_fault_batch\(|observe_completed_tool_run\(' over src/probos
+   FOUND: those
+   HOLDS: yes
+B4 CLAIM: no test expects "read_file refused:" for a non-FileAccessDenied, and none pins an own-id refusal as a fault.
+   RUN:   Grep 'read_file refused|list_files refused| refused: ' over tests; Grep 'refused' over test_ad1164/1169/1189/
+          1205/1257/1279; Grep resolver raises in test_ad1240_tool_result_delivery.py
+   FOUND: bf948 :28-31, :107, :164 (FileAccessDenied); ad1189's _REFUSAL (a host refusal); ad1240's resolver
+          doubles raise FileAccessDenied (:1355, :3364, :3457), its other raises are in reads (:1236-1238, :3271-3273)
+   HOLDS: yes
+B5 CLAIM: no test reads the source lines M4 edits.
+   RUN:   Grep 'type\(read\.directive\) is RecoverRead|is_caller_input_error\(tool, raw_text\)|prefix = tool_id' over tests
+   FOUND: test_ad1240:953, 1335, 1396, 1417 (runtime asserts, not source scans)
+   HOLDS: yes
+B6 CLAIM: FileAccessDenied has no subclass in src.
+   RUN:   Grep 'class FileAccessDenied|\(FileAccessDenied\)' over src/probos
+   FOUND: file_access.py:79 only
+   HOLDS: yes
+B7 CLAIM: M4's names and prefix are free.
+   RUN:   Grep 'RFM-[0-9]|RFT[0-9]|POLICY_REFUSAL_MARK|is_policy_refusal|refusals_are_not|test_bf948_.*fault' over
+          prompts, DECISIONS.md, PROGRESS.md, src, tests, scripts
+   FOUND: tests/test_ad1156_plan_execute_mode.py:830 (another test's name) only
+   HOLDS: yes
+```
+
+**Not verified (the orchestrator measures):**
+- G4's counts, including the red step.
+- That T11 fails on the BF-953 head through the rig's real observer. The reviewer measured the fault with the production detectors and a real store, not on this rig.
+- BF-953's final diff.
+- `from_tool_result` carrying the error verbatim (T12 asserts it as a premise).
+
 ## 14. Deterministic gate checks, resolved up front
 
 - **`check_architecture_principles.py --check`:**
@@ -998,7 +1408,7 @@ A8 CLAIM: no census test pins the callers of resolve_read_path or resolve_for_ru
 
 ## 16. Diff Reviewer: properties to verify
 
-1. A pattern that is not an exact str, is anchored or has a `..` part is refused with the fixed text, before any filesystem call.
+1. A pattern that is not an exact str, is anchored or has a `..` part is refused before any filesystem call. It gets the fixed text, except that a falsy pattern of any type (`""`, `None`, `False`, `0`, `[]`, `{}`) is answered `pattern is required` by the check that precedes the pattern rule (`tools.py:555`).
 2. The base is decided by `resolve_read_path` with exactly the roots `resolve_for_runtime` composes (`file_access.py:405-411`) and `relative_base=_PROJECT_ROOT`. A refusal returns `list_files refused: ` plus the policy's reason, lists nothing and logs nothing.
 3. Every listed entry's resolved path is admitted by the same three root lists. A refused match leaves no name and no count in the reply or the log.
 4. A listed entry under `_PROJECT_ROOT` is relative to it; any other is absolute. In-tree output is unchanged.
@@ -1007,6 +1417,9 @@ A8 CLAIM: no census test pins the callers of resolve_read_path or resolve_for_ru
 7. No config field, `EventType`, persisted key, `src` class or method is added.
 8. Every new or rewritten docstring, comment, error string and test docstring is true of the head in the code's branch order.
 9. Each test whose xfail mark M2 removes failed on the base for the reason its marker names. T7 passes on the base.
+10. M4: `is_caller_input_error` marks exactly `<own non-empty id>` + `_invalid:` or `" refused: "` + at least one character, case-sensitive. The detector lines `fault_report.py:401` and `fault_detection.py:296` are byte-identical to the base, and a marked refusal is neither fault nor success evidence on both lanes.
+11. M4: `read_file` answers `read_file refused:` only for a `FileAccessDenied`. Any other resolver exception reaches the existing handlers (`File not found:` or `read_file failed:`). The `RecoverRead` branch still raises `source_changed`.
+12. M4: no tool other than `read_file` and `list_files` emits the mark, `scripts/replay_approval_tiers.py`'s buckets are unchanged, and T10 to T12 failed on the BF-953 head as G4's red step names.
 
 ## 17. Acceptance criteria
 
@@ -1014,5 +1427,6 @@ A8 CLAIM: no census test pins the callers of resolve_read_path or resolve_for_ru
 2. With `read_roots` empty, the floor and the credential-name rule apply (T6), and in-tree behaviour is unchanged (T7). A permitted root outside `src/` is listed (T3).
 3. A failure is answered and logged with its exception class only (T8). The AD-1316 strict-log test passes as rewritten.
 4. One agent-work run on the real executor lists inside the roots and is refused outside them (T9).
-5. Every §10 mutant is killed. G1 to G3 and the §14 checks pass, and the broad gate's receipt is green.
-6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+5. Repeated `list_files` and `read_file` refusals in one agent-work run file no fault and give no tool defect (T11). A resolver failure that is not the policy's refusal is answered `read_file failed:` and still counts beside skipped refusals (T12). The mark is the tool's own (T10).
+6. Every §10 mutant, LFM and RFM, is killed. G1 to G4 and the §14 checks pass, and the broad gate's receipt is green.
+7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
