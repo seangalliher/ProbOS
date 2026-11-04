@@ -60,6 +60,7 @@ from probos.security.file_access import (
     protected_write_refusal,
     read_verified_file,
     resolve_for_runtime,
+    resolve_read_path,
     workspace_exempt_roots,
 )
 from probos.tools.protocol import (
@@ -505,8 +506,24 @@ class ReadFileTool:
             return ToolResult(error=f"read_file failed: {exc}")
 
 
+# BF-948: the pattern selects below the base, and the base is where the read policy is asked first.
+_LIST_FILES_PATTERN_REFUSAL = (
+    "list_files refused: pattern must be a relative glob with no '..' part; "
+    "name the directory in path"
+)
+
+
 class ListFilesTool:
-    """AD-544: Glob-search files via FileSearchAgent semantics."""
+    """AD-544: Glob-search files via FileSearchAgent semantics.
+
+    BF-948: under the read policy ``read_file`` applies (``security.file_access``). A
+    pattern that is not a str, is anchored or has a ``..`` part is refused. The base
+    ``path`` is resolved and refused as ``read_file`` resolves and refuses its path.
+    Each match is resolved and listed only if the same policy admits it; a match the
+    policy refuses is left out, and nothing names it. A listed match under the project
+    tree is given relative to it, any other by its absolute path. Any other failure is
+    answered and logged with its exception class only.
+    """
 
     tool_id: str = "list_files"
     name: str = "List Files"
@@ -537,32 +554,51 @@ class ListFilesTool:
         pattern = params.get("pattern")
         if not pattern:
             return ToolResult(error="pattern is required")
+        if type(pattern) is not str or Path(pattern).anchor or ".." in Path(pattern).parts:
+            return ToolResult(error=_LIST_FILES_PATTERN_REFUSAL)
         path = params.get("path") or "."
         try:
-            base = _resolve_path(str(path))
-            matches = [str(p.relative_to(_PROJECT_ROOT)) for p in base.glob(pattern)]
-            return ToolResult(output={"files": matches})
-        except Exception as exc:
-            logger.warning(
-                (
-                    "Strict list-files operation failed reason_code=consumer_failed "
-                    "error_type=%s; returning a bounded error"
-                    if (context or {}).get("_effect_dispatch_context") is not None
-                    else "AD-544 ListFilesTool failed for pattern=%s path=%s: %s"
-                ),
-                *(
-                    (type(exc).__name__,)
-                    if (context or {}).get("_effect_dispatch_context") is not None
-                    else (pattern, path, exc)
-                ),
-            )
-            return ToolResult(
-                error=(
-                    "list_files_failed"
-                    if (context or {}).get("_effect_dispatch_context") is not None
-                    else f"list_files failed: {exc}"
+            # BF-948: the roots ``resolve_for_runtime`` composes, composed once per call so
+            # the base and every match are decided against the same policy.
+            protected = protected_read_roots(self._runtime)
+            exempt = workspace_exempt_roots(self._runtime)
+            permitted = permitted_read_roots(self._runtime) or None
+            try:
+                base = resolve_read_path(
+                    str(path), protected_roots=protected, exempt_roots=exempt,
+                    permitted_roots=permitted, relative_base=_PROJECT_ROOT,
                 )
+            except FileAccessDenied as exc:
+                return ToolResult(error=f"list_files refused: {exc}")
+            files: list[str] = []
+            for match in base.glob(pattern):
+                try:
+                    resolve_read_path(
+                        str(match), protected_roots=protected, exempt_roots=exempt,
+                        permitted_roots=permitted,
+                    )
+                except FileAccessDenied:
+                    continue  # BF-948: refused by the policy, so left out and not counted
+                files.append(
+                    str(match.relative_to(_PROJECT_ROOT))
+                    if match.is_relative_to(_PROJECT_ROOT) else str(match)
+                )
+            return ToolResult(output={"files": files})
+        except Exception as exc:
+            kind = type(exc).__name__
+            if (context or {}).get("_effect_dispatch_context") is not None:
+                logger.warning(
+                    "Strict list-files operation failed reason_code=consumer_failed "
+                    "error_type=%s; returning a bounded error",
+                    kind,
+                )
+                return ToolResult(error="list_files_failed")
+            logger.warning(
+                "AD-544 ListFilesTool failed for pattern=%r path=%r error_type=%s; "
+                "returning an error ToolResult",
+                pattern, path, kind,
             )
+            return ToolResult(error=f"list_files failed: {kind}")
 
 
 class CodebaseQueryTool:

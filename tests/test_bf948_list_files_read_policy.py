@@ -30,7 +30,6 @@ _PROTECTED = "list_files refused: path is protected: the runtime's data director
 _PATTERN_REFUSAL = (
     "list_files refused: pattern must be a relative glob with no '..' part; name the directory in path"
 )
-_M2 = "BF-948 M2: on the base list_files never asks the read policy"
 
 
 @dataclass(frozen=True)
@@ -95,7 +94,6 @@ def _unlink(link: Path) -> None:
         link.unlink()
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.parametrize("strict", [pytest.param(False, id="plain"), pytest.param(True, id="strict-dispatch")])
 @pytest.mark.parametrize("spelling", ["absolute", "dotdot", "other-case"])
 async def test_list_files_refuses_a_base_outside_every_readable_root(
@@ -117,7 +115,6 @@ async def test_list_files_refuses_a_base_outside_every_readable_root(
     assert result.error == _OUTSIDE and result.output is None
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 async def test_a_refusal_is_the_same_whether_the_path_exists(tmp_path: Path) -> None:
     scene = _scene(tmp_path)
     present = await _list(scene, [scene.allowed], "*", str(scene.outside))
@@ -125,7 +122,6 @@ async def test_a_refusal_is_the_same_whether_the_path_exists(tmp_path: Path) -> 
     assert present.error == absent.error == _OUTSIDE
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 async def test_list_files_lists_a_permitted_root_outside_the_project_tree(tmp_path: Path) -> None:
     """A match outside the project tree is listed by its absolute path, which ``read_file`` accepts as given."""
     scene = _scene(tmp_path)
@@ -142,7 +138,6 @@ async def test_list_files_lists_a_permitted_root_outside_the_project_tree(tmp_pa
     assert read.error is None
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 @pytest.mark.parametrize("pattern", [
     pytest.param("../*", id="climbs"),
     pytest.param("sub/../../*", id="climbs-after-a-step"),
@@ -158,7 +153,6 @@ async def test_a_pattern_that_climbs_or_is_anchored_is_refused(tmp_path: Path, p
     assert result.error == _PATTERN_REFUSAL and result.output is None
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 async def test_a_link_inside_a_permitted_root_to_outside_is_not_listed(tmp_path: Path) -> None:
     scene = _scene(tmp_path)
     door = scene.allowed / "door"
@@ -181,7 +175,6 @@ async def test_a_link_inside_a_permitted_root_to_outside_is_not_listed(tmp_path:
         _unlink(door)
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 async def test_the_floor_and_credential_names_are_dropped_with_no_read_roots(tmp_path: Path) -> None:
     """Reads unconfined: the data directory and a credential vault file name are not listed, the data
     directory is refused as a base, and the agent workspace under it is listed."""
@@ -202,7 +195,6 @@ async def test_in_tree_listing_is_unchanged(tmp_path: Path) -> None:
     assert default.output == {"files": [str(Path("probos", "__init__.py"))]}
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 async def test_a_failure_reply_and_log_name_no_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -213,15 +205,13 @@ async def test_a_failure_reply_and_log_name_no_path(
     def _fails(*_args: Any, **_kwargs: Any) -> Path:
         raise RuntimeError(f"SENTINEL {scene.outside / SECRET_NAME}")
 
-    # raising=False: on the base the module has no resolve_read_path, and the patch changes nothing.
-    monkeypatch.setattr(swe_tools, "resolve_read_path", _fails, raising=False)
+    monkeypatch.setattr(swe_tools, "resolve_read_path", _fails)
     result = await _list(scene, [], "*", str(scene.allowed))
     assert result.error == "list_files failed: RuntimeError"
     assert "SENTINEL" not in caplog.text and "secret-name-948" not in caplog.text
     assert "error_type=RuntimeError" in caplog.text
 
 
-@pytest.mark.xfail(strict=True, reason=_M2)
 async def test_an_agent_work_run_lists_inside_the_roots_and_is_refused_outside_them(tmp_path: Path) -> None:
     """The AD-1347 rig with the native tools, read_roots set to the notes' directory and elevated calls
     decided ``auto`` (as S4's WD1): one run lists outside the roots, then inside them."""
