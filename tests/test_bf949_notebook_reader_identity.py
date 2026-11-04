@@ -35,6 +35,7 @@ _SCOPE_ERROR = "Unknown records scope; expected one of: private, department, shi
 _SRC = Path(__file__).resolve().parents[1] / "src" / "probos"
 _M2 = "BF-949 M2: on the base the pull searches the whole repository with no reader"
 _M3 = "BF-949 M3: on the base the DM knowledge lookup searches with no reader"
+_R1 = "BF-949 R1: on the head a directory walk takes its resolved paths against the root as configured"
 
 # BF-949: every RecordsStore.search call under src/probos, by file and enclosing function.
 _RECORDS_SEARCH_CALLERS = frozenset({
@@ -50,6 +51,21 @@ _DELIBERATELY_ANONYMOUS: dict[tuple[str, str], str] = {}
 async def _store(root: Path) -> RecordsStore:
     store = RecordsStore(RecordsConfig(repo_path=str(root / "ship-records"), auto_commit=False))
     await store.initialize()
+    return store
+
+
+async def _store_spelled(root: Path, monkeypatch: pytest.MonkeyPatch, spelling: str) -> RecordsStore:
+    """A store whose configured root is not its resolved path: ``ship-records`` against the working directory, or an
+    absolute path through ``..``. Startup passes a non-empty ``records.repo_path`` to the store unchanged."""
+    monkeypatch.chdir(root)
+    if spelling == "relative":
+        configured = "ship-records"
+    else:
+        (root / "elsewhere").mkdir()
+        configured = str(root / "elsewhere" / ".." / "ship-records")
+    store = RecordsStore(RecordsConfig(repo_path=configured, auto_commit=False))
+    await store.initialize()
+    assert store.repo_path != store.repo_path.resolve()  # premise: the configured spelling is not the resolved one
     return store
 
 
@@ -177,6 +193,63 @@ async def test_search_walks_only_the_directory_it_is_given(tmp_path: Path) -> No
     assert await store.search("engineering", scope="ship", reader_id="captain", directory="notebooks/Nobody") == []
     with pytest.raises(ValueError, match="Path traversal denied"):
         await store.search("engineering", scope="ship", reader_id="captain", directory="../outside")
+
+
+@pytest.mark.xfail(strict=True, raises=ValueError, reason=_R1)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", ["relative", "through-dotdot"])
+@pytest.mark.parametrize("walk", ["list_entries", "search", "list_bills"])
+async def test_a_root_spelled_otherwise_walks_a_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, walk: str, spelling: str,
+) -> None:
+    """A directory walk returns repository paths when the configured root is relative or runs through ``..``."""
+    store = await _store_spelled(tmp_path, monkeypatch, spelling)
+    await store.write_notebook("Zephyr", "own-topic", "engineering notes of my own", department="engineering")
+    (store.repo_path / "bills" / "drill.bill.yaml").write_text("bill: drill\n", encoding="utf-8")
+    if walk == "list_bills":
+        assert await store.list_bills() == [{"path": "bills/drill.bill.yaml", "bill_id": "drill"}]
+        return
+    if walk == "list_entries":
+        whole = await store.list_entries()
+        walked = await store.list_entries("notebooks/Zephyr")
+    else:
+        reader: dict[str, Any] = {"scope": "ship", "reader_id": "Zephyr", "reader_department": "engineering"}
+        whole = await store.search("engineering", **reader)
+        walked = await store.search("engineering", **reader, directory="notebooks/Zephyr")
+    assert [item["path"] for item in whole] == [_ZEPHYR]  # premise: the whole-repository walk works with this root
+    assert walked == whole
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_R1)
+@pytest.mark.asyncio
+async def test_a_relative_root_keeps_the_notebook_pull(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``records.repo_path: ship-records``: the pull shows the agent its own note, and never Bravo's."""
+    store = await _store_spelled(tmp_path, monkeypatch, "relative")
+    await _write_bravo_secret(store)
+    await store.write_notebook("Zephyr", "own-topic", "engineering notes of my own", department="engineering")
+    result = await _self_monitoring(store, "Zephyr")
+    assert "notebook_index" in result  # premise: the notebook block ran
+    assert result["notebook_content"]["topic"] == "own-topic"
+    assert _SECRET not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_a_root_spelled_as_it_resolves_walks_as_before(tmp_path: Path) -> None:
+    """The control: for a root configured as it resolves, a directory walk returns what the whole walk returns."""
+    store = await _store(tmp_path)
+    assert store.repo_path == store.repo_path.resolve()  # premise: the configured spelling is the resolved one
+    await _write_bravo_secret(store)
+    await store.write_notebook("Zephyr", "own-topic", "engineering notes of my own", department="engineering")
+    (store.repo_path / "_archived" / "old.md").write_text("engineering, archived\n", encoding="utf-8")
+    (store.repo_path / "bills" / "drill.bill.yaml").write_text("bill: drill\n", encoding="utf-8")
+    whole = await store.list_entries()
+    assert [entry["path"] for entry in whole] == [_BRAVO, _ZEPHYR]
+    assert await store.list_entries("notebooks") == whole
+    assert await store.list_entries("_archived") == []
+    hits = await store.search("engineering", scope="ship", reader_id="captain")
+    assert [hit["path"] for hit in hits] == [_BRAVO, _ZEPHYR]
+    assert await store.search("engineering", scope="ship", reader_id="captain", directory="notebooks") == hits
+    assert await store.list_bills() == [{"path": "bills/drill.bill.yaml", "bill_id": "drill"}]
 
 
 class _RaisingRegistry:
