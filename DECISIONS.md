@@ -1358,6 +1358,17 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 - *Residual.* Recorded limits L1 to L10 of the contract.
 - *Reversal.* Revert the BF-949 commits.
 
+### BF-948 -- list_files lists only what the read policy admits (2026-11-04, #1736)
+
+- *Scope.* `cognitive/swe_harness/tools.py` (`ListFilesTool`, `_LIST_FILES_PATTERN_REFUSAL`), `tools/effect_tiers.py` (a comment), tests. Contract `prompts/bf-948-list-files-read-policy.md`.
+- *LF1 (the base).* The three root lists `resolve_for_runtime` composes, composed once per call; the base is decided by `resolve_read_path` with `relative_base=_PROJECT_ROOT` and refused with the policy's reason. Rejected: a fresh policy per match; reusing `code_search._ReadFloor`.
+- *LF2 (pattern and matches).* A pattern that is not a str, is anchored or has a `..` part is refused; each match is resolved and kept only if the same policy admits it; nothing names or counts a dropped match; a kept match is relative to `src/` when under it, otherwise absolute. Rejected: allowing `..` patterns; a withheld count; refusing the whole call.
+- *LF3 (reply and log).* No exception text and no match path in any reply or log line; the strict reply stays `list_files_failed`.
+- *LF4 (tier).* Unchanged; moving `list_files` to the read-policy routine set lowers who decides a call, so it is the Captain's decision.
+- *LF5 (the class).* `FileSearchAgent`'s caller pattern and `DirectoryListAgent`'s link entries go to BF-944 (#1717) as acceptance cases.
+- *Residual.* Recorded limits L1 to L10 of the contract.
+- *Reversal.* Revert the BF-948 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
