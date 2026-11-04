@@ -72,6 +72,7 @@ OWNERS: dict[str, Path] = {
     "Delegated AD Execution Mode (Standing Order)": ORCHESTRATOR,
     "Gate, Batch and Push (Standing Order)": ORCHESTRATOR,
     "Review Rounds and Progress (Standing Order)": ORCHESTRATOR,
+    "Session Log Trim (Standing Order)": ORCHESTRATOR,
     "SOLID Principles": ENGINEERING,
     "Testing Standards": ENGINEERING,
     "Architect: Review Checklist": STANDARDS,
@@ -120,6 +121,10 @@ PROCEDURE = (
     "on every Builder call",
     "whose `interactionType` is `conversation-agent`",
     "`firstDispatchedModel`",
+    "**Session log trim (Captain, 2026-11-04).**",
+    "d:/ProbOS/logs/session-log-status.json",
+    "d:/ProbOS/logs/trim-request.json",
+    "Stopped for log trim",
 )
 
 # Shared rules the constitution keeps.
