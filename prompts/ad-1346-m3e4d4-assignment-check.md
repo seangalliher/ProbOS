@@ -1147,6 +1147,9 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 - The message of M3's commit `7edf57fd` says that the DECISIONS entry records D305 to D311; the entry records D305 to D308 as numbered bullets, and its tests, residual and reversal bullets carry no decision number. This is the correction; the message is not rewritten.
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
+**Amendment 3 (2026-11-03, the orchestrator, after review round 1 of M3e4d5).** One sentence, repaired by deletion. Changed, against the contract as Amendment 2 left it: in the register note R152, the sentence that a creation whose INSERT fails after the check counts once and writes no row is deleted.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
+
 ## For the register (#1604)
 
 - **R113:** advanced. Of the 10 rows pending for M3e4d after M3e4d3, this slice checks `assignment.py` (one check, D306). 9 remain: 4 SQL files, 2 JetStream scopes and 3 file-write rows.
@@ -1168,7 +1171,7 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
   Then M3e5.
 - **R152:** what this slice does not see:
   - The presented id is what the caller passes: the assignments route passes the request's `created_by`, whose default is `"captain"` (`api_models.py:516`).
-  - A creation refused before the INSERT (§1) counts nothing. A creation whose INSERT fails after the check counts once and writes no row.
+  - A creation refused before the INSERT (§1) counts nothing.
   - The channel a creation makes (`assignment.py:186-209`) is `ward_room/channels.py`'s row, still pending (R151 item 1), and is created before the check.
   - `add_member` records the agent the caller names (`routers/assignments.py:61`) and is the ship's (D239).
   - `ProbOSRuntime.start` hands the service after `init_communication` has started the assignment service (`startup/communication.py:568-573`, `runtime.py:3422`). A creation by the runtime's assignment service before that hand-off checks nothing.

@@ -94,7 +94,7 @@
 - **D313 The rows** (question 2; D239's rule, D240's split).
   - **Checks:**
     - `create_channel` records a channel's name and description with `created_by`, which its callers pass from an agent's id or a request (§1).
-    - `get_or_create_dm_channel` records a DM channel's name and description with `agent_a_id` as its `created_by`. Its agent callers pass their own id there (§1).
+    - `get_or_create_dm_channel` records a DM channel's name and description with `agent_a_id` as its `created_by`.
     - D239 counts a creator's id, and it rejected channels as the ship's under an exception for composed or request-supplied text (`DECISIONS.md:1197`).
   - **`System`:**
     - `_ensure_default_channels` writes channels with `created_by` `"system"` (D239: an issuer recorded as a type).
@@ -143,7 +143,6 @@
 - **D317 Cost** (question 4; D310's method).
   - The imports run once, when the module is imported.
   - Per creation that reaches its INSERT, there is one call to `check_at`. With anything but an exact `AdmissionService`, `check_at` compares its first argument's type with `AdmissionService` and returns (`admission/seam.py:59-61`).
-  - The hand-on runs once per call to `WardRoomService.set_admission`.
   - With `admission.shadow_enabled` false the runtime has no service (WM5 reads `admission_service` as None), and the Ward Room and its manager are handed None.
   - No timing test. The volume is counted from `admission_shadow.db`: `SELECT day, SUM(findings) FROM ticket_findings WHERE operation = 'store_write' GROUP BY day` (`admission/store.py:163-171`).
   - Ranked:
@@ -1044,7 +1043,7 @@ FOUND: logs/ad1346/ad-1346-m3e4d3-chat-thread-checks.a1.md:1094; logs/ad1346/ans
 HOLDS: yes
 
 2.
-CLAIM: the helper, the two new test names and the contract's strings are not used
+CLAIM: the helper and the two new test names are not used
 RUN:   Grep '_channel_round|the_channel_creation_check|the_channel_creations_answer|ad1346 m3e4d5|ad1346-m3e4d5|peer[0-9]-ad1346' over . and over logs/ad1346
 FOUND: nothing
 HOLDS: yes
@@ -1145,11 +1144,18 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
 **Amendment 2 (2026-11-03, the orchestrator, after the build, with review round 1 of this slice still running).** One finding of the same kind that review round 1 of M3e4d3 made, repaired by deletion before this slice's verdict. Changed, against the contract as Amendment 1 left it: §10: the sentence that M1 and M2 delete no earlier row's Line is deleted (the Line of EA-7, `prompts/ad-1346-m3e4c-store-write-classification.md:534`, is the `STORE_WRITE_FILES` row of `ward_room/channels.py` that M1-11 removes: it occurs once in `tests/fixtures/ad1346_store_census.py` at `7edf57fd` and not at this head).
 Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
 
+**Amendment 3 (2026-11-03, the orchestrator, after review round 1).** Findings of that round, repaired by deletion. Changed, against the contract as Amendment 2 left it:
+- §3 D313: the sentence that the agent callers of `get_or_create_dm_channel` pass their own id is deleted.
+- §3 D317: the bullet that the hand-on runs once per call to `WardRoomService.set_admission` is deleted.
+- Absence 2: the CLAIM names the helper and the two new test names; it no longer names the contract's strings.
+- Register R152: the reference `(R154)` is deleted. Register R154: the sentence that a creation whose INSERT fails after the check counts once and writes no row, and the bullet that an assignment created with a Ward Room counts the channel's check, are deleted.
+Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and §8.
+
 ## For the register (#1604)
 
 - **R113:** advanced. Of the 9 rows pending for M3e4d after M3e4d4, this slice checks `ward_room/channels.py` (two checks, D313). 8 remain: 3 SQL files, 2 JetStream scopes and 3 file-write rows.
 - **R151:** advanced. Its item 1 is delivered (D312, in the form with the checks in the manager rather than the `via` form). R153 orders the rest in its place.
-- **R152:** advanced. Its bullet that an assignment's channel "is created before the check" now has a check of its own (R154).
+- **R152:** advanced. Its bullet that an assignment's channel "is created before the check" now has a check of its own.
 - **R153:** the order of the rest (read on `7edf57fd`; method counts by hand):
   1. `capability_request.py` and `artifacts/__init__.py` (register R151 item 2). Each class has 15 direct methods, and neither has an `srp-size` baseline row (Absence 6). That slice meets:
      - `CapabilityRequestStore`: a constructor keyword adds no direct method. The store is built in `init_communication` (`startup/communication.py:612`), which `ProbOSRuntime.start` calls (`runtime.py:3338`) after it builds the service (`:2966`), but `init_communication` takes no admission parameter today (Absence 8).
@@ -1164,8 +1170,7 @@ Unchanged by this amendment: every SEARCH text and every REPLACE text of §7 and
   - The presented id is what the caller passes.
     - The wardroom route passes its request's `created_by` (`routers/wardroom.py:259-262`).
     - The Captain's DM paths pass `"captain"` as the first id (`experience/commands/commands_procedure.py:363-366`, `routers/procedures.py:197-200`).
-  - A call that returns an existing DM channel counts nothing. So does a creation refused before its INSERT (§1). A creation whose INSERT fails after the check counts once and writes no row.
-  - An assignment created with a Ward Room now counts the channel's check, presenting the `created_by` it hands `create_channel` (`assignment.py:197-200`), before its own check (D307).
+  - A call that returns an existing DM channel counts nothing. So does a creation refused before its INSERT (§1).
   - The hand-on runs inside `WardRoomService.set_admission` when `self._channels is not None`; `start` hands nothing on.
     - A `set_admission` before `start` leaves the manager that `start` then builds with the class default None.
     - A later `start` builds a new manager with the class default.
