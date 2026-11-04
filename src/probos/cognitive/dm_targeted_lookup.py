@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
+from probos.cognitive.oracle_service import make_reader_identity_resolver
+
 if TYPE_CHECKING:
     from probos.config import DmTargetedLookupConfig
 
@@ -96,6 +98,30 @@ class RegexSubintentClassifier:
                 if pat.search(message):
                     return name, message  # type: ignore[return-value]
         return "none", ""
+
+
+def _knowledge_lookup_reader(runtime: Any, agent_id: str) -> tuple[str, str]:
+    """BF-949: the Ship's Records reader the knowledge lookup reads as.
+
+    The agent the DM is addressed to, resolved as the Oracle resolves its callers
+    (``make_reader_identity_resolver``): its callsign and its ontology department.
+    A runtime without a registry or an ontology, an agent id that is empty or not
+    a string, an agent the resolver does not find, and a resolver that raises all
+    give ``("", "")``, BF-679's anonymous reader (``record_is_readable``).
+    """
+    registry = getattr(runtime, "registry", None)
+    ontology = getattr(runtime, "ontology", None)
+    if registry is None or ontology is None or type(agent_id) is not str or not agent_id:
+        return "", ""
+    try:
+        return make_reader_identity_resolver(registry=registry, ontology=ontology)(agent_id)
+    except Exception:
+        logger.warning(
+            "BF-949: records reader resolution failed for agent=%s; the knowledge "
+            "lookup reads as the anonymous reader",
+            agent_id, exc_info=True,
+        )
+        return "", ""
 
 
 class LookupDispatcher:
@@ -233,7 +259,12 @@ class LookupDispatcher:
                     "AD-725: knowledge lookup unavailable (no runtime.records_store.search)",
                 )
                 return ""
-            res = rs.search(query)
+            # BF-949: the lookup's text reaches the addressed agent's prompt, so the
+            # records are read as that agent.
+            reader_id, reader_department = _knowledge_lookup_reader(self._runtime, agent_id)
+            res = rs.search(
+                query, reader_id=reader_id, reader_department=reader_department,
+            )
             if asyncio.iscoroutine(res):
                 res = await res
             return self._stringify(res)

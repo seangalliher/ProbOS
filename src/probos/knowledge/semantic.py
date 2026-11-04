@@ -32,7 +32,7 @@ _RECORD_FRONTMATTER_CHARS = 4000  # Cap on the serialised frontmatter sidecar.
 _RECORDS_BACKFILL_LIMIT = 500     # Bound on a single backfill pass.
 
 # AD-1138: level assumed when a scope label is unknown. Matches the
-# ``_CLASSIFICATION_LEVELS.get(scope, 2)`` default in RecordsStore.search.
+# ``_CLASSIFICATION_LEVELS.get(scope, 2)`` default in ``record_is_readable``.
 _DEFAULT_SCOPE = "ship"
 
 

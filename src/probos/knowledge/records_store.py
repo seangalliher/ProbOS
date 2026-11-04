@@ -102,7 +102,7 @@ def record_is_readable(
     * **Scope level** (always applied) — a record is admissible when
       ``level(classification) <= level(scope)``. An unrecognised record
       classification defaults to level ``0`` and an unrecognised ``scope`` to
-      level ``2``, exactly as :meth:`RecordsStore.search` has always done.
+      level ``2``.
     * **Reader identity** — mirrors :meth:`RecordsStore.read_entry`:
       ``private`` needs authorship, ``department`` needs a matching department
       or authorship. Strictly stricter than the scope level, never looser.
@@ -111,9 +111,7 @@ def record_is_readable(
     and "an anonymous reader asked" are different questions:
 
     * ``None`` — **identity not specified**. Scope level only; the pre-BF-679
-      behaviour, kept so existing callers of :meth:`RecordsStore.search` (the
-      ``/records/search`` endpoint, self-monitoring's notebook pull) are
-      byte-identical.
+      behaviour.
     * ``""`` — **anonymous reader**. The identity layer runs with an empty
       author, so identity-gated classifications are withheld. This is the
       fail-closed state the Oracle uses for a caller it cannot identify.
@@ -605,8 +603,10 @@ class RecordsStore:
             return []
 
         results = []
+        # BF-949 R1: bills_dir comes from _safe_path, which resolves, so its paths are taken against the resolved root
+        root = self._repo_path.resolve()
         for yaml_file in sorted(bills_dir.rglob("*.bill.yaml")):
-            rel_path = str(yaml_file.relative_to(self._repo_path)).replace("\\", "/")
+            rel_path = str(yaml_file.relative_to(root)).replace("\\", "/")
             # Extract bill_id from filename (e.g. "research-consultation.bill.yaml" → "research-consultation")
             bill_id = yaml_file.name.removesuffix(".bill.yaml")
             results.append({"path": rel_path, "bill_id": bill_id})
@@ -1023,12 +1023,14 @@ class RecordsStore:
         with no second look at whether it is still a file (A5).
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
+        # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
+        root = self._repo_path.resolve() if directory else self._repo_path
         results = []
         # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
         found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
 
         for md_file in sorted(found):
-            rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
+            rel_path = str(md_file.relative_to(root)).replace("\\", "/")
             # Skip archived
             if rel_path.startswith("_archived/"):
                 continue
@@ -1111,6 +1113,7 @@ class RecordsStore:
         *,
         reader_id: str | None = None,
         reader_department: str = "",
+        directory: str = "",
     ) -> list[dict]:
         """Keyword search across records.
 
@@ -1120,13 +1123,27 @@ class RecordsStore:
         :meth:`read_entry` applies, so a caller that knows who is asking no
         longer receives another crew member's ``private`` or out-of-department
         records. The default ``reader_id=None`` means *identity not specified*
-        and leaves the scope-level-only behaviour byte-identical; see
-        :func:`record_is_readable` for the full tri-state contract.
+        and applies the scope level only; see :func:`record_is_readable` for the
+        full tri-state contract.
+
+        BF-949: ``scope`` is one of the four classification labels; any other
+        value raises ``ValueError``. ``directory`` confines the walk to that
+        directory of the repository, validated as :meth:`list_entries` validates
+        it (a path that leaves the repository raises ``ValueError``); ``""`` walks
+        the whole repository.
         """
+        if type(scope) is not str or scope not in _CLASSIFICATION_LEVELS:
+            raise ValueError(
+                "Unknown records scope; expected one of: "
+                + ", ".join(_CLASSIFICATION_LEVELS)
+            )
+        search_path = self._safe_path(directory) if directory else self._repo_path
+        # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
+        root = self._repo_path.resolve() if directory else self._repo_path
         query_words = set(query.lower().split())
         results = []
-        for md_file in sorted(self._repo_path.rglob("*.md")):
-            rel_path = str(md_file.relative_to(self._repo_path)).replace("\\", "/")
+        for md_file in sorted(search_path.rglob("*.md")):
+            rel_path = str(md_file.relative_to(root)).replace("\\", "/")
             if rel_path.startswith("_archived/"):
                 continue
             try:
