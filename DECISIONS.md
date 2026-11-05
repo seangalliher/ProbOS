@@ -1378,7 +1378,7 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 
 ### BF-948 -- list_files lists only what the read policy admits (2026-11-04, #1736)
 
-- *Scope.* `cognitive/swe_harness/tools.py` (`ListFilesTool`, `_LIST_FILES_PATTERN_REFUSAL`, `ReadFileTool`'s refusal handler), `tools/protocol.py` (`POLICY_REFUSAL_MARK`, `is_caller_input_error`), `tools/effect_tiers.py` (a comment), tests. Contract `prompts/bf-948-list-files-read-policy.md` (with Amendments 1 to 4).
+- *Scope.* `cognitive/swe_harness/tools.py` (`ListFilesTool`, `_LIST_FILES_PATTERN_REFUSAL`, `ReadFileTool`'s refusal handler), `tools/protocol.py` (`POLICY_REFUSAL_MARK`, `is_caller_input_error`), `tools/effect_tiers.py` (a comment), tests. Contract `prompts/bf-948-list-files-read-policy.md` (with Amendments 1 to 5).
 - *LF1 (the base).* The three root lists `resolve_for_runtime` composes, composed once per call; the base is decided by `resolve_read_path` with `relative_base=_PROJECT_ROOT` and refused with the policy's reason. Rejected: a fresh policy per match; reusing `code_search._ReadFloor`.
 - *LF2 (pattern and matches).* A pattern that is not a str, is anchored or has a `..` part is refused; each match is resolved and kept only if the same policy admits it; nothing names or counts a dropped match; a kept match is relative to `src/` when under it, otherwise absolute, in either case without a Windows namespace prefix (LF8). Rejected: allowing `..` patterns; a withheld count; refusing the whole call.
 - *LF3 (reply and log).* No exception text and no match path in any reply or log line; the strict reply stays `list_files_failed`.

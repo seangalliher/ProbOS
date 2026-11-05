@@ -527,13 +527,18 @@ class ListFilesTool:
     the project tree is given relative to it, any other (a share spelling of a local directory
     too) by its absolute path, in either case without a Windows namespace prefix. A match is
     listed only where ``reader_spelling`` gives a spelling: one the verified reader's rules on
-    the text admit (strict UTF-8; no ``:`` after the drive and no character below 32; no
-    reserved device name as the final name; no backslash, trailing dot or trailing space in it)
-    and, on Windows, one that names in the ordinary namespace what it names in the extended one.
-    Any other match is left out like a refused one, so a name only the plain reader opens (on
-    POSIX a colon, a control character) is not listed. The spelling is decided on the text alone,
-    so a listed name does not say that it opens: a directory, a link or junction, a path past
-    the host's ordinary length and a file changed since the listing are decided when it is read.
+    the text admit, applied to the file and to the directory that holds it (strict UTF-8; no
+    ``:`` after the drive and no character below 32; no reserved device name as the final name
+    or as the name of that directory; no backslash, trailing dot or trailing space in the final
+    name) and, on Windows, one that names in the ordinary namespace what it names in the extended
+    one (there a reserved device name, a trailing dot or a trailing space in any directory leaves
+    a name out, which is wider than the reader's text path). Any other match is left out like a
+    refused one, so a name only the plain reader opens (on POSIX a colon, a control character, a
+    reserved device name as the direct parent) is not listed. The spelling is decided on the text
+    alone, so a listed name does not say that it opens: a directory, a link or junction, a path
+    past the host's ordinary length and a file changed since the listing are decided when it is
+    read, and off Windows a reserved device name above the direct parent is not looked at (the
+    reader opens the directories above its direct parent by name).
     Any other failure is answered and logged with its exception class only.
     """
 
