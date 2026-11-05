@@ -8,6 +8,7 @@
 **Revised by (Amendment 3):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-04, after review round 3 of the whole candidate (`34bd9153aca8d7e89cf4468cdb1704f77edf791c`, NOT READY). M6 (§7.6): `ListFilesTool` leaves out a match that no ordinary spelling names, by asking BF-953's `reader_spelling` instead of `plain_spelling` (review round 3's A3 and B1). BF-948 L16 stays scheduled. M6's line numbers are those of `34bd9153`.
 **Revised by (Amendment 4):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-05, after review round 4 of the whole candidate (`a0857b088a09f4f0b5f8c975c45bb7f973039050`, NOT READY on F1 and F2, both in BF-953's `reader_spelling`). M7: the `ListFilesTool` docstring and two comments say which reader's rules a listing follows (BF-953 D15: the verified reader's rules on the text, on every platform) and that a listed name does not say that it opens; no statement of the tool changes. LF8 says `admits` where it said `opens`; LF9 and L19 follow D15; §16 items 15 and 17 and §17 items 7 and 8 are bounded to their fixtures; R3N-1 and R3N-2 quote the two lines the comments changed. BF-948 L16 and L17 stay as they are.
 **Revised by (Amendment 5):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-05, after review round 5 of the whole candidate (`8c83093bd644be60d199c3f4cca1227f08472459`, NOT READY on A and B5-1, both in BF-953's `reader_spelling` and claims). M8: the `ListFilesTool` docstring names the direct parent's rule (BF-953 D15 as amended: the verified reader's location gate on the file and on the file's direct parent, on every platform); LF9 and L19 follow it; no statement of the tool changes, no test of this file changes, and R3N-1 to R3N-3 still quote the two comments, which are untouched. BF-948 L16 stays; L17 goes to its own BF (BF-953 Amendment 4's §3 D).
+**Revised by (Amendment 6):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-05, after review round 6 of the whole candidate (`bd67126a5e124cfe846c3008cad3dc1fc69f30dc`, NOT READY on F1, F3 and four claims; F1, F3 and the cost number are in BF-953's `reader_spelling`, B6-2 is in this contract). M9: the `ListFilesTool` docstring points to BF-953's D15 for which functions decide a listed text instead of listing classes (BF-953's Amendment 5: a path with no final name or with a `..` part has no spelling); LF9 and L19 follow it and lose their class lists; §17 item 6 names the gates this contract defines (B6-2: "G1 to G9", §13g K10); no statement of the tool changes, no test of this file changes, and R3N-1 to R3N-3 still quote the two comments, which are untouched. BF-948 L16 stays; L17 stays with its own follow-up BF.
 **Status:** M1 to M3 built (`b70d8b14`, `60177ff7`, `5517cd34`). M4 built (`d1aba238`). M5 built (`34bd9153`). M6 to build after BF-953's M5, in the same PR; review of M5 and M6 is of the delta and §16 items 16 to 18 (BF-953 §16: the orchestrator decides). **Base:** drafted on `317fcdc0` (tree `4ca36294`); M4 drafted on `9649df65`. **Dependencies:** BF-953 is built first (its own contract). **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD, M4 HIGH, M5 STANDARD, M6 STANDARD. **Estimated tests:** 1 new file, `tests/test_bf948_list_files_read_policy.py` (15 test functions, 34 cases after M6); M2 edits `tests/test_ad1316_real_effect_routes.py`.
 **BF number:** BF-948, held by the title of #1736 (`gh issue view 1736`: OPEN). `git log --all -i --grep BF-948` finds `2d925bf5` (AD-1356 S2's repair), which mentions it and does not fix it. Nothing allocated.
 **Priority:** the next queue item after BF-949. Low to medium: names and an existence oracle, never contents. Any crew agent holding the native SWE tools can reach it once an operator sets `security_infra.read_roots`.
@@ -62,6 +63,7 @@
 - **M6 (Amendment 3):** a match that no ordinary spelling names is left out. `ListFilesTool` lists each match through `file_access.reader_spelling` (BF-953's M5) instead of `plain_spelling`: a match whose spelling has a component that ends in a dot or a space, or has a part that is a reserved device name, gets none and is left out like a refused one, for an ordinary base and for a prefixed one. Test T15 lists a directory of such names from both bases and opens every name returned through the verified reader.
 - **M7 (Amendment 4):** which reader's rules a listing follows. BF-953's M6 makes `reader_spelling` give a spelling only where the verified reader's rules on the text admit it, on every platform (D15). `ListFilesTool`'s docstring and two comments say so, and say that a listed name does not say that it opens; nothing else of `tools.py` and no test of this file changes.
 - **M8 (Amendment 5):** the `ListFilesTool` docstring names the direct parent's rule: a file in a directory named as a reserved device is not listed on any platform (BF-953 M7, D15 as amended), a reserved device name above the direct parent is not looked at off Windows, and the Windows rule is wider than the reader's text path (BF-953 L21). Nothing else of `tools.py` and no test of this file changes.
+- **M9 (Amendment 6):** the `ListFilesTool` docstring says which functions decide a listed text (BF-953 D15: the verified reader's own functions, applied to the file and to its direct parent; a path with no final name or with a `..` part has no spelling) and points to BF-953 L18 and L22 instead of listing classes. LF9 and L19 lose their class lists, and §17 item 6 names the gates this contract defines. Nothing else of `tools.py` and no test of this file changes.
 
 ## 3. Decisions
 
@@ -146,7 +148,7 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
     - (e) Answering a refusal as a success. The model and `ToolResult.success` would read it as a listing.
     - (f) Widening the mark without the narrowing. A defect in the policy layer would be answered "refused" and would stop being reported.
   - Not a Captain condition: the read policy enforces exactly as before. Only its own answers stop counting as tool defects.
-- **LF9, a listing names only a match an ordinary spelling names (Amendment 3). Chosen: the producer asks `file_access.reader_spelling` and leaves the match out when it gives none.** The rule is BF-953's `reader_spelling` (D14 as amended by D15): the verified reader's rules on the text admit the spelling, on every platform (strict UTF-8; no colon after the drive and no character below 32; no reserved device name as the final name or as the name of the directory that holds the file; no backslash, trailing dot or trailing space in the final name: the reader gives the gate both the file and that directory) and, on Windows, no component after the anchor ends in a dot or a space and no part of the spelling is a reserved device name (wider than the reader's text path above the direct parent, BF-953 L21). A listed name does not say that it opens (BF-953 L18). A match left out is not listed, not counted and not named, as a match the policy refuses is not; the replies, the log lines and the strict reply are unchanged. It applies to every base, because a name of this kind exists under an ordinary base too. Rejected: an identity rule (BF-953 D14); failing the listing (one such name would hide every other match); listing the name with a warning (the reader opens another file).
+- **LF9, a listing names only a match an ordinary spelling names (Amendment 3). Chosen: the producer asks `file_access.reader_spelling` and leaves the match out when it gives none.** The rule is BF-953's `reader_spelling` (D14 as amended by D15): the verified reader's own functions admit its text, on every platform, as the reader applies them to the file and to its direct parent (BF-953 D15; a path with no final name or with a `..` part has none; what the armed reader answers for a refused text is BF-953 L22) and, on Windows, BF-953 D14's rule also applies (wider than the reader's text path above the direct parent, BF-953 L21). A listed name does not say that it opens (BF-953 L18). A match left out is not listed, not counted and not named, as a match the policy refuses is not; the replies, the log lines and the strict reply are unchanged. It applies to every base, because a name of this kind exists under an ordinary base too. Rejected: an identity rule (BF-953 D14); failing the listing (one such name would hide every other match); listing the name with a warning (the reader opens another file).
 - **Config:** none. **EventType:** none. **No class and no method** is added; M4 adds one module constant, `POLICY_REFUSAL_MARK`. `file_access.py` is unchanged by BF-948 (BF-953 changes it). The tool's id, name, description, input schema and output schema are unchanged; two goldens pin the description (A5).
 
 ## 4. Milestones and gates
@@ -161,6 +163,7 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
 | M6 | STANDARD | a display form again (no policy decision changes): a listing names only a match an ordinary spelling names | P6-1, P6-2, P7-1, P7-2, the ledger | G6 |
 | M7 | STANDARD | a docstring and two comments (no decision, test or behaviour changes): which reader's rules a listing follows | P8-1 | G7 |
 | M8 | STANDARD | a docstring (no decision, test or behaviour changes): the direct parent's rule | P9-1, P9-2 | G8 |
+| M9 | STANDARD | a docstring (no decision, test or behaviour changes): it points to the reader's functions instead of listing classes; LF9, L19 and §17 item 6 | P10-1, P10-2 | G9 |
 
 - **G1:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py -q -n 0`. Expected: 1 passed (T7), 16 xfailed.
 - **G2:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py tests/test_ad1316_real_effect_routes.py tests/test_ad544_native_tools.py tests/test_ad1179_tool_schema_golden.py tests/test_ad1152_agentic_correlation.py tests/test_ad1356_s2_tool_effect_table.py tests/test_ad1356_s3_chain_of_command.py tests/test_ad1356_s4_who_decides.py tests/test_bf758_file_read_confinement.py tests/test_ad1344_constitution_write_refusal.py -q -n 0`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check`. Expected in the new file: 17 passed.
@@ -192,6 +195,8 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
 
 - **G8 (M8).** After P9-1 (applied with BF-953's B10-1, B10-2, B11-1 and B11-2; `tools.py` changes in a docstring only, so no test of this file changes): `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py -q -n 0`, **34 passed**; then, one file at a time with `-n 0`, the 14 files of G4 (**1340 passed, 3 skipped** in all), `tests/test_bf953_read_floor_spellings.py` (**246 passed, 4 skipped**, BF-953's G8), `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` and `git diff --check`. R3N-1 to R3N-3 are unchanged: the two comments they quote are untouched, and this file's T15 kills them (2, 2 and 9 failed).
 
+- **G9 (M9).** After P10-1 (applied with BF-953's B12-1, B12-2, B13-1 and B13-2; `tools.py` changes in a docstring only, so no test of this file changes): `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf948_list_files_read_policy.py -q -n 0`, **34 passed**; then, one file at a time with `-n 0`, the 14 files of G4 (**1340 passed, 3 skipped** in all), `tests/test_bf953_read_floor_spellings.py` (**260 passed, 4 skipped**, BF-953's G9), `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` and `git diff --check`. R3N-1 to R3N-3 are unchanged: the two comments they quote are untouched, and this file's T15 kills them (§13g).
+
 **Order in the PR.**
 1. M1 to M4 (committed).
 2. BF-953's M4 (its Amendment 1).
@@ -200,6 +205,7 @@ Criteria order: correctness, safety, compatibility, architectural fit, reversibi
 5. BF-953's M5 (its Amendment 2), then the orchestrator commits the Amendment 2 and Amendment 3 contract texts, then M6.
 6. The orchestrator commits BF-953's Amendment 3 and this contract's Amendment 4 texts, then BF-953's M6, then this contract's M7.
 7. The orchestrator commits BF-953's Amendment 4 and this contract's Amendment 5 texts, then BF-953's M7, then this contract's M8.
+8. The orchestrator commits BF-953's Amendment 5 and this contract's Amendment 6 texts, then BF-953's M8, then this contract's M9.
 
 F3 is text in this contract only. If BF-953 changed `tools.py:460-467` or the tail of this test file, so that a P4 SEARCH no longer matches, it goes back to the Architect and is not rebased by hand. The broad gate runs once for the whole batch, after round 2's repairs.
 
@@ -218,6 +224,8 @@ The broad gate runs once for the batch (main session, `--receipt`).
 - M7: `BF-948 M7: ListFilesTool's docstring and comments say which reader's rules a listing follows`
 - Amendment 5 (the contract only): `BF-948 (#1736): Amendment 5 to the build contract after review round 5 (M8: the direct parent's rule in the docstring)`
 - M8: `BF-948 M8: ListFilesTool's docstring names the direct parent's rule`
+- Amendment 6 (the contract only): `BF-948 (#1736): Amendment 6 to the build contract after review round 6 (M9: the docstring, LF9 and L19 point to the reader's functions instead of listing classes; the gate list of §17)`
+- M9: `BF-948 M9: ListFilesTool's docstring points to the reader's functions instead of listing classes`
 
 ## 6. Tests (`tests/test_bf948_list_files_read_policy.py`)
 
@@ -1539,6 +1547,51 @@ REPLACE:
     tool_id: str = "list_files"
 ````
 
+### 7.9 M9 (Amendment 6)
+
+All blocks are against `bd67126a`. Applied with BF-953's M8 (B12-1, B12-2, B13-1, B13-2) in the same PR, after it. **No test of this file changes** (a docstring). P10-1 replaces the text of P9-1's docstring where it differs: §7.8 stays as the record of what M8 built, and its block is not applied again. The two comments P8-1 added are untouched.
+
+**P10-1** `src/probos/cognitive/swe_harness/tools.py` (`ListFilesTool`'s docstring)
+
+SEARCH:
+````
+    policy refuses is left out, and nothing names it. A listed match whose spelling is under
+    the project tree is given relative to it, any other (a share spelling of a local directory
+    too) by its absolute path, in either case without a Windows namespace prefix. A match is
+    listed only where ``reader_spelling`` gives a spelling: one the verified reader's rules on
+    the text admit, applied to the file and to the directory that holds it (strict UTF-8; no
+    ``:`` after the drive and no character below 32; no reserved device name as the final name
+    or as the name of that directory; no backslash, trailing dot or trailing space in the final
+    name) and, on Windows, one that names in the ordinary namespace what it names in the extended
+    one (there a reserved device name, a trailing dot or a trailing space in any directory leaves
+    a name out, which is wider than the reader's text path). Any other match is left out like a
+    refused one, so a name only the plain reader opens (on POSIX a colon, a control character, a
+    reserved device name as the direct parent) is not listed. The spelling is decided on the text
+    alone, so a listed name does not say that it opens: a directory, a link or junction, a path
+    past the host's ordinary length and a file changed since the listing are decided when it is
+    read, and off Windows a reserved device name above the direct parent is not looked at (the
+    reader opens the directories above its direct parent by name).
+    Any other failure is answered and logged with its exception class only.
+    """
+
+    tool_id: str = "list_files"
+````
+REPLACE:
+````
+    policy refuses is left out, and nothing names it. A listed match whose spelling is under
+    the project tree is given relative to it, any other (a share spelling of a local directory
+    too) by its absolute path, in either case without a Windows namespace prefix. A match is
+    listed only where ``reader_spelling`` gives a spelling: the verified reader's own functions
+    admit its text as that function applies them (BF-953 D15) and, on Windows, it names in the
+    ordinary namespace what it names in the extended one (BF-953 D14). Any other match is left
+    out like a refused one. The spelling is decided on the text alone, so a listed name does not
+    say that it opens (BF-953 L18).
+    Any other failure is answered and logged with its exception class only.
+    """
+
+    tool_id: str = "list_files"
+````
+
 ## 8. Tracking (M3's commit)
 
 **Head constraint:** neither head may carry a lifecycle keyword from `gen_ad_ledger.py` `_STATUS_PATTERNS` (`:126-132`) in its first 120 characters.
@@ -1678,6 +1731,28 @@ REPLACE:
 Contract `prompts/bf-948-list-files-read-policy.md` (with Amendments 1 to 5).
 ````
 
+**M9's tracker pair (in M9's commit; the BF-948 entry is amended in place, its head unchanged).**
+
+**P10-2** `DECISIONS.md` (BF-948: scope, LF9)
+
+SEARCH:
+````
+Contract `prompts/bf-948-list-files-read-policy.md` (with Amendments 1 to 5).
+````
+REPLACE:
+````
+Contract `prompts/bf-948-list-files-read-policy.md` (with Amendments 1 to 6).
+````
+
+SEARCH:
+````
+(BF-953 SP11 and SP12: the verified reader's rules on the text refuse it, or, on Windows, a component ends in a dot or a space or a part is a reserved device name)
+````
+REPLACE:
+````
+(BF-953 SP11 and SP12)
+````
+
 ## 9. What this does NOT change
 
 - `security/file_access.py` (the policy, its reasons, the floor). BF-953's M4 adds the public helper `plain_spelling` there and its M5 the public helper `reader_spelling`; BF-948's M5 imports the first and M6 the second.
@@ -1759,7 +1834,7 @@ Line cells hold the source line without its leading indentation. Prefix `LFM` (a
 - **L16.** (Review round 2, finding 6, and the second reviewer's R5; scheduled, not built here.) `fault_detection.py:284` cuts the canonical tool id to 128 characters before the own-id mark test at `:296`, while `fault_report.py:384,401` tests the full id. For an id longer than 128 characters a marked result is neutral in the same-run lane and not in the cross-turn lane. The second reviewer measured it: a 147-character canonical id with a 64-character provider alias gives a persisted `tool_id` of 128 characters and one open fault after three turns (I did not rerun it). The repair tests the full id and cuts afterwards; it changes the line AD-1356 S1's RX-7 pins verbatim, so it is its own BF with that row amended and a test in both lanes for a long id. No enumerated native producer has an id near that length (injected-only).
 - **L17.** (Review round 2, finding 4.) A path a caller types itself with an extended-length or device prefix is admitted by the policy (BF-953) and rejected by the armed reader's lexical check (`read_file failed: invalid path`); a repeat counts as a tool defect. `list_files` no longer hands such a spelling out (M5). Whether the reader's lexical rejection is answered as a caller-input error is the orchestrator's decision.
 - **L18.** (The second reviewer's R4.) A listing whose base is a share spelling of a local directory, also inside `src/`, names its matches by their absolute share spelling: the display form removes only the extended-length and device prefixes. The verified reader opens that spelling (T14). Relativising by file identity was rejected (more surface for one spelling).
-- **L19.** (Review round 3, A3 and B1; widened by round 4.) A match for which BF-953's `reader_spelling` gives no spelling is left out of a listing like a refused one: nothing names it and nothing counts it. Those are the names that no ordinary spelling names (a component that ends in a dot or a space, a reserved device name; on Windows they exist only through the extended namespace) and, on every platform, the names the verified reader's rules on the text refuse (strict UTF-8; a colon after the drive or a character below 32; a reserved device name as the final name or as the name of the directory that holds the file; a backslash, a trailing dot or a trailing space in the final name; BF-953 D15, as amended by Amendment 4). The rule is a rule on the text and calls no filesystem function, so it does not say that a kept name opens (BF-953 L18: a directory, a link or junction, a path beyond the system's ordinary length on a host without long-path support, a file changed since the listing). A name that only the plain reader opens is not listed (BF-953 L19). A reserved device name, a trailing dot or a trailing space above the direct parent is not looked at off Windows, because the reader opens those directories by name; on Windows the rule above is wider than the reader's text path there (BF-953 L21). A base spelled so that every match has such a component lists nothing and answers no error. It applies to an ordinary base as well as a prefixed one.
+- **L19.** (Review round 3, A3 and B1; widened by round 4; reduced by round 6.) A match for which BF-953's `reader_spelling` gives no spelling is left out of a listing like a refused one: nothing names it and nothing counts it. The rule is BF-953's D14 and D15 (which names get none: the case ids of its T29 and T30 and the corpus of its T34; what the armed reader answers for each class: its L22). It is a rule on the text and calls no filesystem function, so it does not say that a kept name opens (BF-953 L18). A name that only the plain reader opens is not listed (BF-953 L19). It applies to an ordinary base as well as a prefixed one.
 
 ## 12. The Captain's items (the live vessel stays his)
 
@@ -2008,6 +2083,19 @@ git grep -n -e "^class ListFilesTool" -e "shown = reader_spelling(match)" -e "th
 
 The two comments R3N-1 to R3N-3 quote are lines 594 and 596; P9-1 changes the docstring that starts at line 520 and nothing else of `tools.py`. Absence: the labels G2-, P9-, B10-, B11- and E2-, the heading `### 7.8 M` and the limit L21 are unused in this contract and in BF-953's at the head (BF-953 Amendment 4's Absence Verified runs the same search over both).
 
+## 13g. Verified for Amendment 6 (2026-11-05, on `bd67126a`)
+
+```
+git grep -n -E "^class ListFilesTool|shown = reader_spelling\(match\)|there is none, so it is left out like a refused match" bd67126a -- src/probos/cognitive/swe_harness/tools.py
+  519: class ListFilesTool:
+  599:                 shown = reader_spelling(match)  # BF-953: the spelling the verified reader's rules on the text admit
+  601:                     continue  # BF-953 (Amendments 2 and 3): there is none, so it is left out like a refused match
+git grep -n -o -E "^- \*\*G[0-9]+( \(M[0-9]+\))?[,.]?[^*]*\*\*" bd67126a -- prompts/bf-948-list-files-read-policy.md        (K10)
+  165: G1   166: G2   167: G3   171: G4, red first   175: G4, green   181: G5 (M5)   186: G6 (M6)   191: G7 (M7)   193: G8 (M8)
+```
+
+The two comments R3N-1 to R3N-3 quote are lines 599 and 601 at the head; P10-1 changes the docstring that starts at line 520 and nothing else of `tools.py`. The gates this contract defines are G1 to G8 (G4 has two parts) and, with this amendment, G9: §17 item 6 said "G1 to G4, G5, G6" and now says "G1 to G9". Absence: the labels G3-, P10-, B12- and B13-, the heading `### 7.9 M` and this heading are unused at the head in this contract and in BF-953's (BF-953 Amendment 5's §13f runs the same search over both).
+
 ## 14. Deterministic gate checks, resolved up front
 
 - **`check_architecture_principles.py --check`:**
@@ -2060,6 +2148,7 @@ The two comments R3N-1 to R3N-3 quote are lines 594 and 596; P9-1 changes the do
 17. M6: every file the listing of T15's directory returns, for an ordinary base and for an extended-prefix base, is opened by the verified reader with the bytes of the file it matched, read in the extended namespace; no name the listing withholds appears in the reply (T15, R3N-1 to R3N-3).
 18. M6: the amended tracker lines and the new limit L19 name no path, no count and no reason a listing withholds.
 19. M7 (Amendment 4): `tools.py` changes in the `ListFilesTool` docstring and two comments only (`git diff a0857b08 -- src/probos/cognitive/swe_harness/tools.py` has no changed line outside them); no test of this file changes; each sentence says which reader's rules a listing follows (BF-953 D15), and none says that a listed name opens.
+20. M9 (Amendment 6): `tools.py` changes in the `ListFilesTool` docstring only (`git diff bd67126a -- src/probos/cognitive/swe_harness/tools.py` has no changed line outside it); no test of this file changes; the docstring, LF9 and L19 name no class and point to BF-953's D15, L18 and L22; R3N-1 to R3N-3 are killed on the unchanged comments (§13g).
 
 ## 17. Acceptance criteria
 
@@ -2068,7 +2157,7 @@ The two comments R3N-1 to R3N-3 quote are lines 594 and 596; P9-1 changes the do
 3. A failure is answered and logged with its exception class only (T8). The AD-1316 strict-log test passes as rewritten.
 4. One agent-work run on the real executor lists inside the roots and is refused outside them (T9).
 5. Repeated `list_files` and `read_file` refusals in one agent-work run file no fault and give no tool defect (T11). A resolver failure that is not the policy's refusal reaches `read_file`'s existing handlers (a missing file as `File not found:`, any other failure as `read_file failed:`), carries no mark and still counts beside skipped refusals (T12). The mark is the tool's own (T10).
-6. Every §10 mutant, LFM, RFM and R3N, is killed. G1 to G4, G5, G6 and the §14 checks pass, and the broad gate's receipt is green.
+6. Every §10 mutant, LFM, RFM and R3N, is killed. G1 to G9 (§13g lists the gates this contract defines) and the §14 checks pass, and the broad gate's receipt is green.
 7. (M5) A listed path carries no namespace prefix, and the armed reader opens the string a listing gave (T13); the name T14's listing returns, for the ordinary, extended-prefix and local-share bases, is opened by the verified reader (T14).
 8. (M6, M7) A listing leaves out a match for which BF-953's `reader_spelling` gives no spelling (no ordinary spelling names it, or the verified reader's rules on the text refuse it), for an ordinary and an extended-prefix base, and every file T15's listing returns is opened by the verified reader with the bytes of the file it matched (T15; BF-953's T29 to T33 for the rules on the text); a listed name does not say that it opens (BF-953 L18).
 9. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
