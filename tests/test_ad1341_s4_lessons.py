@@ -506,9 +506,11 @@ def test_a_lesson_cites_at_most_the_bounded_number_of_episodes() -> None:
 
 
 #: The longest inheritance label S2 writes (a six-digit generation) and the longest provenance marker the Oracle tool
-#: puts before an archive entry it has just retrieved (relevance at most 1.00, retrieved under a minute ago).
+#: puts before an archive entry: relevance at most 1.00 and, from BF-950, the entry's own age (five digits of days
+#: covers every write time after 1970 until 2243) marked STALE. Before BF-950 it was "age:59s", the retrieval's age,
+#: which the tool measured in the same call that rendered it.
 _WORST_LABEL = "[Inherited from the crew of generation 999999: not your own memory]"
-_WORST_MARKER = "[source:archive relevance:1.00 age:59s]"
+_WORST_MARKER = "[source:archive relevance:1.00 age:99999d STALE]"
 
 
 async def test_a_whole_note_at_every_bound_reaches_a_later_crew_through_the_oracle_tool(tmp_path: Path) -> None:
