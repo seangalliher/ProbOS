@@ -33,7 +33,6 @@ from probos.knowledge.records_store import RecordsStore
 from probos.proactive import ProactiveCognitiveLoop
 from probos.tools.oracle_query_tool import _ORACLE_DISPOSITION, OracleQueryTool
 
-_UNTIL_M3 = pytest.mark.xfail(strict=True, reason="BF-950 M3: the preamble promises an age on every entry")
 _UNTIL_M4 = pytest.mark.xfail(strict=True, reason="BF-950 M4: the notebook read-back carries no date")
 
 _DAY = 86400.0
@@ -300,7 +299,6 @@ async def test_the_oracle_order_and_relevance_are_unchanged() -> None:
 # ── M3: the preamble and the description ──────────────────────────────
 
 
-@_UNTIL_M3
 def test_the_preamble_and_the_description_say_what_the_marker_carries() -> None:
     assert "where its store records when the entry was written" in _ORACLE_DISPOSITION
     assert "marked STALE past thirty days" in _ORACLE_DISPOSITION
