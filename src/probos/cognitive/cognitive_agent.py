@@ -1029,6 +1029,24 @@ def _conversational_thread_id(
     return resolved
 
 
+def _notebook_block_lines(nb_content: Mapping[str, Any]) -> list[str]:
+    """BF-950: the ``<notebook>`` block a self-monitoring context reads back.
+
+    The opening tag carries the entry's ``updated`` and ``revision`` when the
+    pull supplied them (``proactive._notebook_read_back`` normalises both), so
+    the read-back is dated as the index line beside it is. Both renderers of the
+    block use this, so the two prompts cannot drift apart.
+    """
+    attributes = f'topic="{nb_content["topic"]}"'
+    updated = nb_content.get("updated")
+    if updated:
+        attributes += f' updated="{updated}"'
+    revision = nb_content.get("revision")
+    if revision is not None:
+        attributes += f' revision="{revision}"'
+    return [f"<notebook {attributes}>", nb_content["snippet"], "</notebook>"]
+
+
 class CognitiveAgent(BaseAgent):
     # AD-647b v1: agents that own a registered ProcessChainDefinition set
     # this to the chain_id ("name" of the definition). When set, the
@@ -9414,9 +9432,7 @@ class CognitiveAgent(BaseAgent):
             )
         nb_content = self_mon.get("notebook_content")
         if nb_content:
-            sm_parts.append(f'<notebook topic="{nb_content["topic"]}">')
-            sm_parts.append(nb_content["snippet"])
-            sm_parts.append("</notebook>")
+            sm_parts.extend(_notebook_block_lines(nb_content))
         if not sm_parts:
             return ""
         return "\n".join(sm_parts)
@@ -11323,9 +11339,7 @@ class CognitiveAgent(BaseAgent):
                 # Notebook content (from semantic pull or explicit read)
                 nb_content = self_mon.get("notebook_content")
                 if nb_content:
-                    pt_parts.append(f'<notebook topic="{nb_content["topic"]}">')
-                    pt_parts.append(nb_content["snippet"])
-                    pt_parts.append("</notebook>")
+                    pt_parts.extend(_notebook_block_lines(nb_content))
 
                 pt_parts.append("</recent_activity>")
                 pt_parts.append("")

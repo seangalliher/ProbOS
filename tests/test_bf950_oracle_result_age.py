@@ -33,7 +33,6 @@ from probos.knowledge.records_store import RecordsStore
 from probos.proactive import ProactiveCognitiveLoop
 from probos.tools.oracle_query_tool import _ORACLE_DISPOSITION, OracleQueryTool
 
-_UNTIL_M4 = pytest.mark.xfail(strict=True, reason="BF-950 M4: the notebook read-back carries no date")
 
 _DAY = 86400.0
 _FORTY_DAYS_AGO = 40 * _DAY + 3600.0
@@ -314,7 +313,6 @@ def test_the_preamble_and_the_description_say_what_the_marker_carries() -> None:
 # ── M4: the notebook read-back ────────────────────────────────────────
 
 
-@_UNTIL_M4
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["semantic-pull", "pending-read"])
 async def test_the_notebook_read_back_carries_the_entrys_date_and_revision(tmp_path: Path, path: str) -> None:
@@ -350,7 +348,6 @@ async def test_a_read_back_with_nothing_that_parses_keeps_the_bare_tag(entry: di
     assert _notebook_tags(_sensorium_render(result)) == ['<notebook topic="my-topic">']
 
 
-@_UNTIL_M4
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("frontmatter", "expected"), [
     pytest.param(

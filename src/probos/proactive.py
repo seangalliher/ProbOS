@@ -42,6 +42,7 @@ from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proact
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
+from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
 
@@ -273,6 +274,26 @@ def _resolve_notebook_classification(
         ", ".join(sorted(_NOTEBOOK_CLASSIFICATIONS)),
     )
     return None
+
+
+def _notebook_read_back(topic: str, snippet: str, frontmatter: Any) -> dict[str, Any]:
+    """BF-950: the notebook entry self-monitoring reads back, with the entry's own date.
+
+    ``updated`` is when the entry was last written, as ISO-8601 UTC to the second
+    (its frontmatter's ``updated``, else ``created``; ``record_write_time``), or
+    ``""`` when neither parses. ``revision`` is the frontmatter's ``revision`` when
+    that is a positive int, else ``None``: a first write carries no ``revision``
+    key, and the read-back does not guess one.
+    """
+    fields = frontmatter if type(frontmatter) is dict else {}
+    written = record_write_time(fields)
+    revision = fields.get("revision")
+    return {
+        "topic": topic,
+        "snippet": snippet,
+        "updated": iso_utc(written) if written is not None else "",
+        "revision": revision if type(revision) is int and revision >= 1 else None,
+    }
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
@@ -2843,10 +2864,12 @@ class ProactiveCognitiveLoop:
                         )
                         if search_results:
                             top = search_results[0]
-                            result["notebook_content"] = {
-                                "topic": top.get("path", "").split("/")[-1].replace(".md", ""),
-                                "snippet": top.get("snippet", "")[:300],
-                            }
+                            # BF-950: dated, as the index line beside it is.
+                            result["notebook_content"] = _notebook_read_back(
+                                top.get("path", "").split("/")[-1].replace(".md", ""),
+                                top.get("snippet", "")[:300],
+                                top.get("frontmatter"),
+                            )
             except Exception:
                 logger.debug("Self-monitoring: notebook query failed for %s", callsign, exc_info=True)
 
@@ -2862,10 +2885,11 @@ class ProactiveCognitiveLoop:
                             reader_department=getattr(agent, 'department', ''),
                         )
                         if entry:
-                            result["notebook_content"] = {
-                                "topic": topic_slug,
-                                "snippet": entry.get("content", "")[:500],
-                            }
+                            result["notebook_content"] = _notebook_read_back(
+                                topic_slug,
+                                entry.get("content", "")[:500],
+                                entry.get("frontmatter"),
+                            )
                 except Exception:
                     logger.debug("Self-monitoring: notebook read failed for %s/%s", callsign, topic_slug, exc_info=True)
 
