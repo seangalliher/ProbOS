@@ -26,7 +26,9 @@ Ward Room's channel manager when ``start`` has built one.
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
        ``self._admission``, ``EFFECT_STORE_WRITE`` and the row's presented id; in the Ward Room it is the statement after
        BF-903's guard and before the ``return`` that calls the row's scope through the row's attribute; where the row's
-       check function is its scope, it is on a line before the scope's first SQL write statement.
+       check function is its scope, it is on a line before the scope's first SQL write statement; from AD-1346 M3e4d6,
+       where the row's scope is a module-level function of the check function's file, the check function calls it once,
+       on a line after the check, nothing else in that file names it and no other ``src`` file holds its name.
 - WM2  by AST over ``src``: each ``<x>.<attribute>.<method>`` reference of the four Ward Room rows is in the row's check
        function; ``MessageStore`` and ``ThreadManager`` appear as ``ast.Name`` nodes only in ``ward_room/service.py``;
        the calls, assignments and returns that pass on a ``_messages`` or ``_threads`` read from ``self`` in that
@@ -262,13 +264,13 @@ def _holder(node: object, rel: str) -> str | None:
 
 def test_each_store_write_check_is_one_statement_in_its_place() -> None:
     """WM1 (D229, D231, D232; AD-1346 M3e4d1: D285; AD-1346 M3e4d2: D292; AD-1346 M3e4d3: D299; AD-1346 M3e4d4: D307;
-    AD-1346 M3e4d5: D314; kills EV-2, EV-10, ED-1, ED-2, ED-3, ED-10, EY-1, EY-6, EU-1, EU-3, EU-8, EO-1, EO-7, ET-1,
-    ET-2, ET-9)."""
+    AD-1346 M3e4d5: D314; AD-1346 M3e4d6: D321; kills EV-2, EV-10, ED-1, ED-2, ED-3, ED-10, EY-1, EY-6, EU-1, EU-3,
+    EU-8, EO-1, EO-7, ET-1, ET-2, ET-9, RQ-1, RQ-2, RQ-8)."""
     lines: dict[tuple[str, str], list[int]] = {}
     for path, scope, line in sql_write_points():
         lines.setdefault((path, scope), []).append(line)
     checks = [(site, cover) for site, cover in STORE_WRITE_SCOPES.items() if isinstance(cover, StoreCheck)]
-    assert len(checks) == 14, checks
+    assert len(checks) == 17, checks
     for (path, scope), cover in checks:
         fn = function(*cover.check)
         found = [node for node in ast.walk(fn) if calls("check_at")(node)]
@@ -283,8 +285,14 @@ def test_each_store_write_check_is_one_statement_in_its_place() -> None:
             guard, after = ast.unparse(fn.body[index - 1]), ast.unparse(fn.body[index + 1])
             assert index == 1 and "self._require_visitor" in guard, (cover.check, guard)
             assert after.startswith(f"return await self.{cover.via}.{scope.rsplit('.', 1)[1]}("), (cover.check, after)
-        else:
-            assert cover.check == (path, scope) and call.lineno < min(lines[(path, scope)]), cover.check
+        elif cover.check == (path, scope):
+            assert call.lineno < min(lines[(path, scope)]), cover.check
+        else:  # AD-1346 M3e4d6 (D321): a module-level scope of the check function's file, reached only through it
+            assert cover.check[0] == path and "." not in scope, (cover.check, scope)
+            reached = [node for node in ast.walk(fn) if calls(scope)(node)]
+            assert len(reached) == 1 and call.lineno < reached[0].lineno, (cover.check, scope, len(reached))
+            assert references_outside(ast.parse(src_sources()[path], filename=path), scope, (cover.check[1],)) == [], (cover.check, scope)
+            assert [rel for rel, source in src_sources().items() if rel != path and scope in source] == [], scope
 
 
 def test_the_ward_rooms_write_methods_are_reached_only_through_their_checks() -> None:

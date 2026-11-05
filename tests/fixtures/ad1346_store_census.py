@@ -7,7 +7,8 @@ the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229)
 that holds a point in the Ward Room's ``messages.py`` and ``threads.py``, in ``cognitive/episodic.py`` and, from
 AD-1346 M3e4d1 (D284), in ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` and, from AD-1346 M3e4d2
 (D291), in ``persistent_tasks.py`` and, from AD-1346 M3e4d3 (D298), in ``threads/__init__.py`` and, from AD-1346
-M3e4d4 (D306), in ``assignment.py`` and, from AD-1346 M3e4d5 (D313), in ``ward_room/channels.py`` a
+M3e4d4 (D306), in ``assignment.py`` and, from AD-1346 M3e4d5 (D313), in ``ward_room/channels.py`` and, from AD-1346
+M3e4d6 (D320), in ``capability_request.py`` a
 ``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
 ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
 ``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
@@ -104,7 +105,6 @@ def sql_write_files() -> frozenset[str]:
 #: or requester).
 AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
     "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
-    "src/probos/capability_request.py": ("CapabilityRequestStore.file_request", "agent_id"),
     "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
 }
 
@@ -113,7 +113,6 @@ AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
 STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
     # Agent-attributed (AD-1346 M3e4c, D239, D240): M3e4d's (register R113).
     "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
-    "src/probos/capability_request.py": _AGENT_ATTRIBUTED,
     "src/probos/workforce.py": _AGENT_ATTRIBUTED,
     # System (AD-1346 M3e4c, D239): each reason names what the file records.
     "src/probos/cognitive/clinical_audit_store.py": System(SHIP, "the clinical audit log"),
@@ -191,8 +190,9 @@ STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
 @dataclass(frozen=True)
 class StoreCheck:
     """AD-1346 M3e4b (D229, D230): a scope whose SQL write statements the function ``check``, a (file, qualified
-    name) pair, checks with ``check_at``, presenting ``presented``. ``via`` is empty when ``check`` is the scope, else
-    the attribute of ``check``'s class through which ``check`` calls the scope."""
+    name) pair, checks with ``check_at``, presenting ``presented``. ``via`` is the attribute of ``check``'s class
+    through which ``check`` calls the scope, or empty when ``check`` is the scope or, from AD-1346 M3e4d6 (D321), when
+    the scope is a module-level function of ``check``'s file that ``check`` calls."""
 
     check: tuple[str, str]
     presented: str
@@ -209,9 +209,10 @@ _TASKS: Final = "src/probos/persistent_tasks.py"
 _CHATS: Final = "src/probos/threads/__init__.py"
 _ASSIGNMENTS: Final = "src/probos/assignment.py"
 _CHANNELS: Final = "src/probos/ward_room/channels.py"
+_REQUESTS: Final = "src/probos/capability_request.py"
 
-#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306) and M3e4d5 (D313): each (file,
-#: enclosing scope) of these nine files that holds a SQL write statement -> its coverage.
+#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313) and M3e4d6
+#: (D320): each (file, enclosing scope) of these ten files that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -290,6 +291,15 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # System (D239): the default channels, with created_by 'system', and a channel's archived flag.
     (_CHANNELS, "ChannelManager._ensure_default_channels"): System(SHIP, "the default channels, with created_by 'system'"),
     (_CHANNELS, "ChannelManager.archive_channel"): System(SHIP, "a channel's archived flag"),
+    # AD-1346 M3e4d6 (D320). Agent-attributed (D239): a filing's rationale with agent_id, and a decision's reason with
+    # decided_by, written by decide or, for a filing with a ladder record, by _decide_ladder_row, which decide calls;
+    # decide's one check comes before both (D321).
+    (_REQUESTS, "CapabilityRequestStore.file_request"): StoreCheck((_REQUESTS, "CapabilityRequestStore.file_request"), "agent_id"),
+    (_REQUESTS, "CapabilityRequestStore.decide"): StoreCheck((_REQUESTS, "CapabilityRequestStore.decide"), "decided_by"),
+    (_REQUESTS, "_decide_ladder_row"): StoreCheck((_REQUESTS, "CapabilityRequestStore.decide"), "decided_by"),
+    # System (D239): each takes only a request id.
+    (_REQUESTS, "CapabilityRequestStore.mark_fulfilled"): System(SHIP, "a request's status, fulfilled"),
+    (_REQUESTS, "CapabilityRequestStore.require_build_consensus"): System(SHIP, "a pending build's payload, with requires_consensus set"),
 }
 
 
