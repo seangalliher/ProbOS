@@ -1,7 +1,7 @@
 # AD-1346 M3e4d8 (#1604): the work item store's store-write check and the pending-scope row, in shadow
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05
-**Revised by:** the orchestrator (Copilot), 2026-11-05: two `Grep` records of §11 are corrected to the measured result on `b6f704eb` (a count of 18 lines for the `admission` keyword search of `tests`, and the line list of `triggers` in `scripts/check_architecture_principles.py`); no other change.
+**Revised by:** the orchestrator (Copilot), 2026-11-05: two `Grep` records of §11 are corrected to the measured result on `b6f704eb` (a count of 18 lines for the `admission` keyword search of `tests`, and the line list of `triggers` in `scripts/check_architecture_principles.py`); and §12's count of `check_at` lines in `workforce.py` is corrected after M1's build (the keyword's comment also names `check_at`, so the line count is three, not two) to a count of the one `check_at(self._admission` call; no other change.
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601). The eighth part of M3e4d (register R113): the first part of `workforce.py`. No new AD or BF number (`scripts/ad_ceiling.py`: CEILING AD-1358). **Tier:** HIGH (M1: `src` and the census guards that pin it), test (M2), docs (M3). Nothing parked.
 **Dependencies:** AD-1346 M3e4d6 and M3e4d7. The build's base is the final commit of the batch that carries them; the Architect sends an amendment for any SEARCH that differs there.
 **Anchors:** every SEARCH text in §7 and §8 was read on `b6f704eb` (`origin/main` `58235059` with the M1 and M2 pairs of M3e4d6's and M3e4d7's contracts applied by tool), except M3-01's SEARCH, which is the head paragraph M3e4d7's M3-01 inserts into `PROGRESS.md`. 40 SEARCH/REPLACE blocks (M1 27, M2 11, M3 2), no new file, 2 regenerated files (M3).
@@ -1245,7 +1245,7 @@ HOLDS: yes
 - The collect-only count for `tests/test_ad1346_admission_store_writes.py` is 21.
 - For each §10 Line, `grep -c -F` on M2's tree prints 1. A Line that contains `'` is matched with a double-quoted pattern, or with `grep -c -F -f <file holding the line>`.
 - `python -P scripts/check_architecture_principles.py --check` exits 0 after M1. `WorkItemStore` gains no method, and its baseline row already carries both triggers.
-- `grep -n "check_at" src/probos/workforce.py` prints two lines after M1: the import and the check.
+- `grep -c -F "check_at(self._admission" src/probos/workforce.py` prints 1 after M1: the check.
 - `python -P -c "import probos.workforce"` exits 0 after M1.
 - M1 is 27 SEARCH/REPLACE blocks:
   - M1-01 to M1-03 in `workforce.py`; M1-04 and M1-05 in `communication.py`; M1-06 in `runtime.py`; M1-07 to M1-09 in `admission`;
