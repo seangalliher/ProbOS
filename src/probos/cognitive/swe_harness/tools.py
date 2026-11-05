@@ -56,6 +56,7 @@ from probos.repository_instructions import (
 from probos.security.file_access import (
     FileAccessDenied,
     permitted_read_roots,
+    plain_spelling,
     protected_read_roots,
     protected_write_refusal,
     read_verified_file,
@@ -522,9 +523,11 @@ class ListFilesTool:
     pattern that is not a str, is anchored or has a ``..`` part is refused. The base
     ``path`` is resolved and refused as ``read_file`` resolves and refuses its path.
     Each match is resolved and listed only if the same policy admits it; a match the
-    policy refuses is left out, and nothing names it. A listed match under the project
-    tree is given relative to it, any other by its absolute path. Any other failure is
-    answered and logged with its exception class only.
+    policy refuses is left out, and nothing names it. A listed match whose spelling is under
+    the project tree is given relative to it, any other (a share spelling of a local directory
+    too) by its absolute path, in either case without a Windows namespace prefix (the spelling
+    the armed reader opens). Any other failure is answered and logged with its exception
+    class only.
     """
 
     tool_id: str = "list_files"
@@ -581,9 +584,10 @@ class ListFilesTool:
                     )
                 except FileAccessDenied:
                     continue  # BF-948: refused by the policy, so left out and not counted
+                shown = plain_spelling(match)  # BF-953: the spelling ``read_file`` opens, as the policy admitted it
                 files.append(
-                    str(match.relative_to(_PROJECT_ROOT))
-                    if match.is_relative_to(_PROJECT_ROOT) else str(match)
+                    str(shown.relative_to(_PROJECT_ROOT))
+                    if shown.is_relative_to(_PROJECT_ROOT) else str(shown)
                 )
             return ToolResult(output={"files": files})
         except Exception as exc:

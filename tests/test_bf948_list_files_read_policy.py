@@ -5,7 +5,7 @@ The real ``ListFilesTool`` and ``ReadFileTool`` over a runtime carrying what the
 agent-work run on the AD-1347 rig with the native tools registered. Nothing here replaces the read
 policy except T8 and T12, which make it raise to reach a failure handler. M4 (T10 to T12): a refusal
 the policy decided is not a tool fault on either detector path, and only the policy's refusal is
-answered as refused.
+answered as refused. M5 (T13, T14): what a listing names is what the verified reader opens.
 """
 
 from __future__ import annotations
@@ -26,6 +26,9 @@ from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResu
 from probos.cognitive.swe_harness.tools import ListFilesTool, ReadFileTool
 from probos.fault_detection import collect_tool_fault_batch
 from probos.fault_report import detect_tool_defect
+from probos.security.file_access import (
+    permitted_read_roots, protected_read_roots, read_verified_file, workspace_exempt_roots,
+)
 from probos.tools.protocol import is_caller_input_error
 from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _rig, _seen, _watch_runs
 from tests.test_ad1356_s1_input_errors import _faults
@@ -317,8 +320,10 @@ def _pairs(*results: Any) -> SimpleNamespace:
 async def test_read_file_answers_refused_only_for_the_policys_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A resolver error that is not the policy's refusal is answered ``read_file failed:`` and still counts: two of
-    them are the run's defect, and two real refusals beside them are neither fault nor success evidence."""
+    """A resolver failure that is not the policy's refusal reaches ``read_file``'s existing handlers, a missing file as
+    ``File not found:`` and any other failure as ``read_file failed:``; neither carries the refusal mark, so both still
+    count: two of the second are the run's defect, and two real refusals beside them are neither fault nor success
+    evidence."""
     scene = _scene(tmp_path)
     reader = ReadFileTool(_runtime(scene, read_roots=[scene.allowed]))
     refused = await reader.invoke({"path": str(scene.outside / SECRET_NAME)})
@@ -327,8 +332,15 @@ async def test_read_file_answers_refused_only_for_the_policys_refusal(
     def _broken(*_args: Any, **_kwargs: Any) -> Path:
         raise RuntimeError("policy layer broke")
 
+    def _gone(*_args: Any, **_kwargs: Any) -> Path:
+        raise FileNotFoundError("gone")
+
+    ok = str(scene.allowed / "ok.txt")
+    monkeypatch.setattr(swe_tools, "resolve_for_runtime", _gone)
+    gone = await reader.invoke({"path": ok})
+    assert gone.error == f"File not found: {ok}" and not is_caller_input_error("read_file", gone.error)
     monkeypatch.setattr(swe_tools, "resolve_for_runtime", _broken)
-    broken = await reader.invoke({"path": str(scene.allowed / "ok.txt")})
+    broken = await reader.invoke({"path": ok})
     assert broken.error == "read_file failed: policy layer broke"
     outcome = _pairs(refused, refused, broken, broken)
     defect = detect_tool_defect(outcome)
@@ -337,3 +349,64 @@ async def test_read_file_answers_refused_only_for_the_policys_refusal(
     [evidence] = collect_tool_fault_batch(outcome, classify_error=classify_tool_fault_error).tools
     assert evidence.defect is not None and evidence.defect.error_text == broken.error
     assert evidence.mixed is False and evidence.succeeded is False
+
+
+# --- M5 (Amendment 2): what a listing names is what the armed reader opens ------------------------------
+
+
+@pytest.mark.skipif(os.name != "nt", reason="BF-953: an extended-length prefix is a Windows path spelling")
+async def test_a_listed_path_is_one_the_armed_reader_opens(tmp_path: Path) -> None:
+    """Review round 2's finding 4, on the AD-1347 rig whose loop arms ``read_file`` with the workspace-result context:
+    ``list_files`` on an extended-prefix spelling of the permitted directory lists the plain spelling, and a
+    ``read_file`` of the very string it listed reads the file; neither answers a failure and no fault is filed."""
+    notes = _notes(tmp_path)
+    prefixed = {"pattern": "*.txt", "path": "\\\\?\\" + str(notes.parent)}
+    script: list[Any] = [_call("list_files", prefixed, "c1"), None, _final(ANSWER)]
+    async with _rig(tmp_path, script) as rig:
+        faults, events = _faults(rig)
+        store = await _native(rig, tmp_path, read_roots=[notes.parent])
+        try:
+            listing = await ListFilesTool(rig.runtime).invoke(prefixed)
+            assert listing.error is None and len(listing.output["files"]) == 1
+            [listed] = listing.output["files"]
+            assert not listed.startswith("\\\\") and Path(listed).resolve() == notes.resolve()  # the plain spelling
+            script[1] = _call("read_file", {"path": listed}, "c2")  # the string the listing gave, as it gave it
+            async with _chain(rig, agent_work_elevated_decider="auto"):
+                item_id = await _self_task(rig, "List the relay notes")
+                await _finished(rig, item_id)
+                assert requests_for_work_item(rig.requests, item_id) == []  # premise: both calls ran directly
+                assert _seen(rig, "Relay drift notes")  # the armed reader returned the file's text
+                assert not _seen(rig, "invalid path") and not _seen(rig, "read_file failed")
+                assert faults.list_open() == [] and events == []
+        finally:
+            await store.stop()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="BF-953: these are Windows path spellings")
+async def test_every_name_a_listing_returns_is_one_the_verified_reader_opens(tmp_path: Path) -> None:
+    """The second reviewer's R4: a listing of a directory of the project tree gives a project-relative name for the
+    ordinary spelling of it and for the extended-prefix spelling (the display form is applied before the relative test),
+    and every name returned, the one a local-share spelling returns too, is opened by the verified reader
+    (``resolve_source_path``, then ``read_verified_file``) with the bytes of the file."""
+    runtime = _runtime(_scene(tmp_path), read_roots=[])
+    reader = ReadFileTool(runtime)
+    target = swe_tools._PROJECT_ROOT / "probos" / "security"
+    drive, rest = os.path.splitdrive(str(target))
+    bases = {"ordinary": str(target), "extended prefix": "\\\\?\\" + str(target)}
+    share = f"\\\\localhost\\{drive[0]}${rest}"
+    try:
+        if os.path.samestat(os.stat(share), os.stat(target)):
+            bases["local share"] = share
+    except OSError:
+        pass  # a premise: this host does not serve the local share spelling
+    for name, base in bases.items():
+        listed = await ListFilesTool(runtime).invoke({"pattern": "file_access.py", "path": base})
+        assert listed.error is None, f"{name}: {listed.error}"
+        [entry] = listed.output["files"]
+        if name != "local share":
+            assert entry == str(Path("probos", "security", "file_access.py")), f"{name}: a project-relative name"
+        snapshot = read_verified_file(
+            reader.resolve_source_path(entry), protected_roots=protected_read_roots(runtime),
+            exempt_roots=workspace_exempt_roots(runtime), permitted_roots=permitted_read_roots(runtime) or None,
+        )
+        assert snapshot.data == (target / "file_access.py").read_bytes(), f"{name}: the verified reader opened {entry!r}"
