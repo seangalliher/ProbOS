@@ -426,3 +426,71 @@ async def test_one_hand_edited_entry_does_not_cost_the_read_back(tmp_path: Path,
     elif shape == "a-text-revision":
         warnings = result.get("notebook_repetition_warnings", [])
         assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
+
+
+_UNTIL_M11 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M11: an index topic that is not text ends the self-monitoring notebook block",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("topic", "updated"), [
+    pytest.param(17, None, id="a-number-topic"),
+    pytest.param(None, False, id="a-null-topic"),
+    pytest.param(["engines", "warp"], None, id="a-list-topic"),
+    pytest.param("", None, id="a-blank-topic"),
+])
+@_UNTIL_M11
+async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
+    tmp_path: Path, topic: Any, updated: Any,
+) -> None:
+    """Review round 2 (F3): an index entry with an empty ``updated`` is rendered by its bare topic.
+
+    So a topic edited outside the store into a number or a null raised in ``", ".join`` in both renderers,
+    and the sensorium dispatcher dropped the whole self-monitoring extension, read-back included. A list
+    topic ended the index at the topic count, and a blank one rendered as an empty item. The index now names
+    such an entry by its file. A real store, its file edited as a person would edit it.
+    """
+    store = await _records(tmp_path)
+    await store.write_notebook("Zephyr", "first-topic", "engineering notes, first", department="engineering")
+    await store.write_notebook("Zephyr", "second-topic", "engineering notes, second", department="engineering")
+    first, second = "notebooks/Zephyr/first-topic.md", "notebooks/Zephyr/second-topic.md"
+    edited = _rewrite_frontmatter(store, first, topic=topic, updated=updated)
+    assert edited["topic"] == topic and edited["updated"] is updated  # premise
+    second_updated = _rewrite_frontmatter(store, second)["updated"]
+    assert type(second_updated) is str  # premise: the store writes text
+
+    result = await _self_monitoring(store, "Zephyr")
+
+    expected_items = {"first-topic", f"second-topic (updated {second_updated})"}
+    for text in (_sensorium_render(result), await _proactive_render(result)):
+        lines = [line for line in text.splitlines() if line.startswith("Your notebooks: [")]
+        assert lines and len(set(lines)) == 1, text
+        assert set(lines[0][len("Your notebooks: ["):-1].split(", ")) == expected_items, lines[0]
+        assert any(tag.startswith('<notebook topic="') for tag in _notebook_tags(text)), text
+    assert result["notebook_summary"] == {"total_entries": 2, "total_topics": 2}
+    assert "engineering notes" in result["notebook_content"]["snippet"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_index_does_not_cost_the_read_back() -> None:
+    """§16 item 14 under mutation (NBM-12): the read-back runs whenever the listing returned entries.
+
+    Since Amendment 2 no frontmatter a real store lists is known to end the index (L15), so the failure is
+    injected: a listing entry without the ``path`` that ``RecordsStore.list_entries`` always sets.
+    Passes on M10 and after.
+    """
+    records = MagicMock()
+    records.list_entries = AsyncMock(return_value=[{"frontmatter": {"author": "Bones"}}])
+    records.search = AsyncMock(return_value=[{
+        "path": "notebooks/Bones/own-topic.md", "snippet": "engineering notes of my own",
+        "frontmatter": {"updated": "2026-05-03T10:00:00+00:00"},
+    }])
+
+    result = await _self_monitoring(records, "Bones")
+
+    assert "notebook_summary" not in result and "notebook_index" not in result  # premise: the enrichment raised
+    assert result["notebook_content"]["topic"] == "own-topic"
+    assert _notebook_tags(_sensorium_render(result)) == [
+        '<notebook topic="own-topic" updated="2026-05-03T10:00:00+00:00">',
+    ]
