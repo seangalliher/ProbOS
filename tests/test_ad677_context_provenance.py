@@ -9,6 +9,7 @@ import pytest
 from probos.cognitive.provenance import (
     ProvenanceEnvelope,
     ProvenanceTag,
+    STALE_AFTER_SECONDS,
     compute_content_hash,
     query_with_provenance,
 )
@@ -32,33 +33,50 @@ def test_provenance_tag_creation() -> None:
 
 
 def test_provenance_tag_age() -> None:
+    # BF-950: built from ``retrieval_timestamp`` and asserted its age, which was
+    # the defect: the retrieval is the call that renders the marker, so that age
+    # was always about zero. The age is the content's own write time now, and
+    # absent when the tier records none.
     tag = ProvenanceTag(
         source_tier="records",
-        retrieval_timestamp=time.time() - 1,
+        retrieval_timestamp=time.time(),
+        relevance=0.7,
+        content_hash="abcdef12",
+        content_timestamp=time.time() - 90,
+    )
+    untimed = ProvenanceTag(
+        source_tier="graph",
+        retrieval_timestamp=time.time() - 600,
         relevance=0.7,
         content_hash="abcdef12",
     )
 
-    assert tag.age_seconds > 0
+    assert tag.age_seconds >= 90
+    assert untimed.age_seconds is None
 
 
 def test_provenance_tag_staleness() -> None:
+    # BF-950: was STALE from a retrieval 600 s back (the 300 s threshold on the
+    # retrieval's clock). Staleness is the content's age past STALE_AFTER_SECONDS.
     tag = ProvenanceTag(
         source_tier="operational",
         retrieval_timestamp=time.time() - 600,
         relevance=0.7,
         content_hash="abcdef12",
+        content_timestamp=time.time() - STALE_AFTER_SECONDS - 60,
     )
 
     assert tag.is_stale is True
 
 
 def test_provenance_tag_format_inline() -> None:
+    # BF-950: the age comes from ``content_timestamp``; without one the marker has no age.
     tag = ProvenanceTag(
         source_tier="episodic",
         retrieval_timestamp=time.time(),
         relevance=0.82,
         content_hash="abcdef12",
+        content_timestamp=time.time(),
     )
 
     marker = tag.format_inline()
@@ -68,11 +86,13 @@ def test_provenance_tag_format_inline() -> None:
 
 
 def test_provenance_tag_stale_marker() -> None:
+    # BF-950: was STALE from a retrieval 600 s back; STALE is the content's age past STALE_AFTER_SECONDS.
     tag = ProvenanceTag(
         source_tier="episodic",
         retrieval_timestamp=time.time() - 600,
         relevance=0.82,
         content_hash="abcdef12",
+        content_timestamp=time.time() - STALE_AFTER_SECONDS - 60,
     )
 
     assert "STALE" in tag.format_inline()
@@ -99,6 +119,8 @@ def test_provenance_envelope_render() -> None:
             retrieval_timestamp=time.time(),
             relevance=0.91,
             content_hash="abcdef12",
+            # BF-950: the rendered age is the content's; without a write time there is none.
+            content_timestamp=time.time(),
         ),
     )
 

@@ -51,8 +51,10 @@ _ALL_DEPARTMENTS = (
 # AD-1294 (#1090): this said ``confidence`` until the score it renders was shown
 # to be a RETRIEVAL score -- how well the entry matched the query, not how firmly
 # anyone holds it. The old label taught agents to repeat the system's own error.
+# BF-950: the age is the content's own, so it appears only where the tier records a
+# write time, and in days for old content; the regex required ``age:`` on every entry.
 _PROVENANCE_MARKER_RE = re.compile(
-    r"^\[source:(\w+) relevance:\d\.\d{2} age:\d+[smh]( STALE)?\]$",
+    r"^\[source:(\w+) relevance:\d\.\d{2}(?: age:\d+[smhd]( STALE)?)?\]$",
     re.MULTILINE,
 )
 _OMISSION_NOTE_RE = re.compile(
@@ -391,8 +393,10 @@ async def test_output_carries_the_disposition_preamble_and_per_item_provenance()
     markers = _PROVENANCE_MARKER_RE.findall(output)
     assert len(markers) == 2
     assert {tier for tier, _stale in markers} == {"records", "graph"}
-    assert "[source:records relevance:0.82 age:0s]" in output
-    assert "[source:graph relevance:0.70 age:0s]" in output
+    # BF-950: asserted ``age:0s`` on both, the defect itself (an age measured from the
+    # retrieval in the same call). These results record no write time, so no age.
+    assert "[source:records relevance:0.82]" in output
+    assert "[source:graph relevance:0.70]" in output
 
 
 @pytest.mark.asyncio

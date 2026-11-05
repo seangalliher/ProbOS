@@ -33,7 +33,6 @@ from probos.knowledge.records_store import RecordsStore
 from probos.proactive import ProactiveCognitiveLoop
 from probos.tools.oracle_query_tool import _ORACLE_DISPOSITION, OracleQueryTool
 
-_UNTIL_M2 = pytest.mark.xfail(strict=True, reason="BF-950 M2: the marker's age is the retrieval's, always 0s")
 _UNTIL_M3 = pytest.mark.xfail(strict=True, reason="BF-950 M3: the preamble promises an age on every entry")
 _UNTIL_M4 = pytest.mark.xfail(strict=True, reason="BF-950 M4: the notebook read-back carries no date")
 
@@ -148,7 +147,6 @@ def _mock_records(entry: dict[str, Any]) -> MagicMock:
 # ── M2: the age is the content's own ──────────────────────────────────
 
 
-@_UNTIL_M2
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["hand-written-date", "store-written-iso"])
 async def test_an_old_record_reaches_the_agent_with_its_own_age_and_marked_stale(tmp_path: Path, shape: str) -> None:
@@ -205,14 +203,12 @@ _TIMESTAMPED = [
 ]
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize(("tier", "metadata"), _TIMESTAMPED)
 def test_each_tier_is_aged_by_its_own_write_time(tier: str, metadata: Any) -> None:
     written = time.time() - _FORTY_DAYS_AGO
     assert _marker(_result(tier, metadata(written))) == f"[source:{tier} relevance:0.50 age:40d STALE]"
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize(("tier", "metadata"), [
     pytest.param("graph", {"edge_id": "e1", "relation": "reports_to", "weight": 1.0}, id="graph"),
     pytest.param("health", {"metric": "pool", "pool": "builders", "current_size": 2}, id="health"),
@@ -223,7 +219,6 @@ def test_a_tier_that_records_no_write_time_shows_no_age(tier: str, metadata: dic
     assert envelope.tag.age_seconds is None and envelope.tag.is_stale is False
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize(("ago", "age", "stale"), [
     pytest.param(-3600.0, "0s", False, id="written-in-the-future"),
     pytest.param(5.0, "5s", False, id="seconds"),
@@ -258,7 +253,6 @@ _UNPARSEABLE = [
 ]
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize("frontmatter", _UNPARSEABLE)
 def test_a_write_time_that_does_not_parse_shows_no_age(frontmatter: Any) -> None:
     tag = ProvenanceEnvelope.from_oracle_result(
@@ -268,7 +262,6 @@ def test_a_write_time_that_does_not_parse_shows_no_age(frontmatter: Any) -> None
     assert tag.age_seconds is None and tag.is_stale is False
 
 
-@_UNTIL_M2
 @pytest.mark.asyncio
 async def test_one_bad_write_time_does_not_empty_the_result() -> None:
     """``query_with_provenance`` answers any exception with ``[]``, so a parser that raised would drop every entry."""
