@@ -22,6 +22,12 @@ Amendment 2 (review round 3, T23 to T28): a floor file root is compared by the f
 as a candidate is (T23, T24, T28), a workspace root that does not resolve stays in the read policy's roots as it was
 composed (T25), a listing shows a match only in a spelling that names it in the ordinary namespace (T26; BF-948's
 T15 through the verified reader), and what T16 shows about counts of parts is pinned where the count is used (T27).
+
+Amendment 3 (review round 4, T29 to T33): a listing shows a match only in a spelling the verified reader's rules on the
+text admit, on every platform (T29, T30: the reader's location gate and its final-name rule; T31: the pinned directory's
+own verdict), the function calls no filesystem function (T32), and a directory that holds names the reader's gate refuses
+is listed without them, from an ordinary and an extended-prefix base, with every name it lists opened by the verified
+reader (T33, Windows). None of these says that a listed name opens: BF-953 L18 lists what a listing cannot promise.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ import ctypes
 import os
 import shutil
 import tempfile
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
 
@@ -944,18 +950,16 @@ _READER_CASES = [
 ]
 
 
+@WINDOWS
 @pytest.mark.parametrize(("text", "expected"), _READER_CASES)
 def test_the_reader_spelling_is_one_that_names_the_file_in_the_ordinary_namespace(text: str, expected: str | None) -> None:
-    """T26 (review round 3, A3 and B1): on Windows a path is given to a reader that rejects the namespace prefix as
-    ``plain_spelling`` spells it, unless a component of that spelling names another file or none in the ordinary namespace: a
-    component that ends in a dot or a space (the system drops both), or a reserved device name, in the final component or in an
-    ancestor, has no such spelling and gives ``None``. A name that only starts or ends like a device name keeps its spelling.
-    Every other path, and every path on another platform, is returned as ``plain_spelling`` returns it."""
+    """T26 (review round 3, A3 and B1; Windows only since review round 4): a path is given to a reader that rejects the
+    namespace prefix as ``plain_spelling`` spells it, unless a component of that spelling names another file or none in the
+    ordinary namespace: a component that ends in a dot or a space (the system drops both), or a reserved device name, in the
+    final component or in an ancestor, has no such spelling and gives ``None``. A name that only starts or ends like a device
+    name keeps its spelling. The rules of the verified reader on the text, which apply on every platform, are T29 to T31."""
     got = file_access.reader_spelling(Path(text))
-    if os.name == "nt":
-        assert (None if got is None else str(got)) == expected
-    else:
-        assert got == Path(text)
+    assert (None if got is None else str(got)) == expected
 
 
 _STAND_CASES = [
@@ -1016,3 +1020,191 @@ async def test_a_configuration_loaded_as_a_stream_is_refused_for_every_spelling_
         assert read.error == _READ_PROTECTED and read.output is None, raw
     neighbour = await reader.invoke({"path": str(lay.neighbour) + ":settings"})
     assert neighbour.error is None and "stream fixture" in repr(neighbour.output)
+
+
+# --- M6 (Amendment 3, review round 4): a listing names only a spelling the verified reader's rules on the text admit ---
+
+
+def _listed(*parts: str) -> Path:
+    """An absolute path of this platform, ``C:\\data`` or ``/data`` joined with *parts*, built as text: nothing is created."""
+    return Path("C:\\data" if os.name == "nt" else "/data").joinpath(*parts)
+
+
+# (label, parts, given on Windows, given on another platform). A row whose two answers differ is a rule only Windows has:
+# the system drops a trailing dot or space from an ordinary path and opens a device for a reserved name, in an ancestor.
+_TEXT_CASES = [
+    ("an ordinary name", ("note.txt",), True, True),
+    ("a space inside a name", ("a b.txt",), True, True),
+    ("a non-ASCII name", ("caf\u00e9.txt",), True, True),
+    ("an astral name", ("music-\U0001d11e.txt",), True, True),
+    ("a name that only starts like a device name", ("console.txt",), True, True),
+    ("a lone high surrogate", ("\ud800.txt",), False, False),
+    ("a lone low surrogate inside a name", ("a\udcffb",), False, False),
+    ("a lone surrogate in an ancestor", ("d\ud800", "note.txt"), False, False),
+    ("a colon in the final name", ("run-12:30.txt",), False, False),
+    ("a colon in an ancestor", ("12:30", "note.txt"), False, False),
+    ("a newline in the final name", ("a\nb.txt",), False, False),
+    ("a character below 32 in an ancestor", ("d\x01", "note.txt"), False, False),
+    ("a reserved device stem as the final name", ("aux.py",), False, False),
+    ("a reserved device name in another case", ("Con",), False, False),
+    ("a trailing dot in the final name", ("note.txt.",), False, False),
+    ("a trailing space in the final name", ("note.txt ",), False, False),
+    ("a reserved device name as a directory", ("con", "g.txt"), False, True),
+    ("a trailing dot on an ancestor", ("dir.", "deep.txt"), False, True),
+    ("a trailing space on an ancestor", ("dir ", "deep.txt"), False, True),
+]
+
+
+@pytest.mark.parametrize(("label", "parts", "on_windows", "elsewhere"), _TEXT_CASES, ids=[row[0] for row in _TEXT_CASES])
+def test_the_reader_spelling_follows_the_verified_readers_rules_on_the_text(
+    label: str, parts: tuple[str, ...], on_windows: bool, elsewhere: bool,
+) -> None:
+    """T29 (review round 4, F1; any platform): ``reader_spelling`` gives a spelling only where the verified reader's rules on
+    the text admit it. Text that is not strict UTF-8 (a lone surrogate in the final name or an ancestor), a colon or a
+    character below 32 anywhere, a reserved device name as the final name, and a trailing dot or space in the final name give
+    none, on every platform; an ordinary, a non-ASCII and an astral name give the path itself. A reserved device name or a
+    trailing dot or space in an ancestor gives none on Windows only. Whatever the reader's own location gate refuses gives
+    none."""
+    path = _listed(*parts)
+    got = file_access.reader_spelling(path)
+    assert (got is not None) == (on_windows if os.name == "nt" else elsewhere), f"{label}: {got}"
+    if got is not None:
+        assert got == path
+    try:
+        file_access.validate_read_location(str(path))
+    except ValueError:
+        assert got is None, f"{label}: the reader's location gate refuses it, so there is no spelling"
+
+
+# (label, text, given). Windows-shaped texts are not used: with ``os.name`` set to ``posix`` a host takes the branch a POSIX host takes.
+_POSIX_CASES = [
+    ("an ordinary name", "/data/note.txt", True),
+    ("a reserved device name as a directory", "/data/con/g.txt", True),
+    ("a trailing dot on an ancestor", "/data/dir./deep.txt", True),
+    ("a trailing space on an ancestor", "/data/dir /deep.txt", True),
+    ("a colon in the final name", "/data/a:b.txt", False),
+    ("a timestamp in the final name", "/data/run-2026-11-04T16:20:00Z.log", False),
+    ("a newline in the final name", "/data/a\nb.txt", False),
+    ("a reserved device stem as the final name", "/data/aux.py", False),
+    ("a backslash in the final name", "/data/a\\b.txt", False),
+    ("a trailing dot in the final name", "/data/note.", False),
+    ("a trailing space in the final name", "/data/note ", False),
+    ("a name decoded with surrogateescape", "/data/\udcff.txt", False),
+    ("a relative spelling", "data/note.txt", False),
+]
+
+
+@pytest.mark.parametrize(("label", "text", "given"), _POSIX_CASES, ids=[row[0] for row in _POSIX_CASES])
+def test_the_reader_spelling_applies_the_readers_rules_off_windows_too(
+    monkeypatch: pytest.MonkeyPatch, label: str, text: str, given: bool,
+) -> None:
+    """T30 (review round 4, F1; any platform): with ``os.name`` set to ``posix`` for the one call (a no-op on a POSIX host),
+    the function takes the branch a POSIX host takes, and the reader's rules on the text still apply in it: a colon, a
+    newline, a reserved device stem, a backslash, a trailing dot or space in the final name, a name decoded with
+    ``surrogateescape`` and a relative spelling give none, and a reserved device name or a trailing dot or space in an
+    ancestor, which only Windows refuses, gives the path itself."""
+    path = PurePosixPath(text)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "name", "posix")
+        got = file_access.reader_spelling(path)  # type: ignore[arg-type]
+    assert (got is not None) == given, f"{label}: {got}"
+    if got is not None:
+        assert got == path
+
+
+@pytest.mark.parametrize("name", [
+    "note.txt", "a b.txt", "caf\u00e9", ".hidden", "x..y", "note.", "note ", "note. ", "...",
+    pytest.param("a\\b", marks=pytest.mark.skipif(os.name == "nt", reason="BF-953: on Windows a backslash separates components")),
+])
+def test_the_reader_spelling_agrees_with_the_pinned_directory_on_the_final_name(tmp_path: Path, name: str) -> None:
+    """T31 (review round 4, F1; any platform): for one final name, a real pinned directory's ``read_bytes`` and
+    ``reader_spelling`` agree. A name the pinned directory refuses as a child name (``invalid child name``) has no
+    spelling, and a name it admits (the read goes on to the file that is not there) has one, so the lister's restatement of
+    that rule is the reader's."""
+    root = tmp_path.resolve()
+    with file_access.pin_directory(root) as directory:
+        try:
+            directory.read_bytes(name)
+        except FileAccessDenied as refused:
+            assert refused.reason == "invalid child name", name
+            admitted = False
+        except FileNotFoundError:
+            admitted = True
+    assert (file_access.reader_spelling(root / name) is not None) == admitted, name
+
+
+def test_the_reader_spelling_calls_no_filesystem_function(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T32 (review round 4, F2; any platform): ``reader_spelling`` calls none of ``os.stat``, ``os.lstat``, ``os.scandir``,
+    ``os.listdir``, ``os.getcwd`` and ``open``, for a spelling it gives and for one it refuses, for an extended-prefix
+    spelling and for a relative one. It builds path objects and strings, which is work for each match and is not a
+    filesystem call (BF-953 L20)."""
+    inputs = [_listed(*parts) for _, parts, _, _ in _TEXT_CASES] + [Path("note.txt")]
+    if os.name == "nt":
+        inputs += [Path("\\\\?\\C:\\data\\note.txt"), Path("\\\\?\\UNC\\host\\share\\dir\\f.txt")]
+
+    def refused(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("reader_spelling called a filesystem function")
+
+    with monkeypatch.context() as patch:
+        for function in ("stat", "lstat", "scandir", "listdir", "getcwd"):
+            patch.setattr(os, function, refused)
+        patch.setattr("builtins.open", refused)
+        results = [file_access.reader_spelling(path) for path in inputs]
+    assert any(result is not None for result in results), "premise: some spellings were given"
+    assert any(result is None for result in results), "premise: some were refused"
+
+
+_CARRIED = {
+    "note.txt": b"ordinary file", "caf\u00e9.txt": b"non-ASCII file", "music-\U0001d11e.txt": b"astral file",
+    "ok\\inner.txt": b"file in an ordinary directory",
+}
+_UNCARRIED = {
+    "\ud800.txt": b"lone high surrogate", "a\udcffb.txt": b"lone low surrogate", "\ud800dir\\inner.txt": b"file in a surrogate directory",
+}
+
+
+@WINDOWS
+@pytest.mark.parametrize("spelling", ["ordinary base", "extended-prefix base"])
+async def test_a_listing_leaves_out_a_name_the_verified_reader_cannot_carry(
+    tmp_path: Path, request: pytest.FixtureRequest, spelling: str,
+) -> None:
+    """T33 (review round 4, F1; Windows): a directory holds names that the plain reader opens and the verified reader's
+    location gate refuses (an unpaired surrogate in a file's name, in another file's name and in a directory's name) beside an
+    ordinary, a non-ASCII and an astral name and a file in an ordinary directory. ``list_files`` of its ordinary and of its
+    extended-prefix spelling leaves the first kind out and lists the second, and every file it lists is opened by the verified
+    reader with the bytes of the file it matched. The plain reader reads the first kind: that is the cost of listing by the
+    verified reader's rules, and it is recorded (BF-953 L19)."""
+    root = tmp_path.resolve() / "d"
+    root.mkdir()
+    prefixed = "\\\\?\\" + str(root)
+    request.addfinalizer(lambda: shutil.rmtree(prefixed, ignore_errors=True))
+    for name, data in {**_CARRIED, **_UNCARRIED}.items():
+        target = prefixed + "\\" + name
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(data)
+    runtime = _runtime(_scene(tmp_path), read_roots=[])
+    reader = ReadFileTool(runtime)
+    roots: dict[str, Any] = {
+        "protected_roots": file_access.protected_read_roots(runtime), "exempt_roots": file_access.workspace_exempt_roots(runtime),
+        "permitted_roots": file_access.permitted_read_roots(runtime) or None,
+    }
+    for name, data in _UNCARRIED.items():  # premise: the verified reader's gate refuses each, and the plain reader reads each
+        with pytest.raises(ValueError):
+            file_access.read_verified_file(Path(str(root) + "\\" + name), **roots)
+        with open(prefixed + "\\" + name, "rb") as handle:
+            assert handle.read() == data, name
+    plain = await reader.invoke({"path": str(root) + "\\" + "\ud800.txt"})
+    assert plain.error is None and "lone high surrogate" in repr(plain.output), "premise: the unarmed read_file opens it"
+    listed = await ListFilesTool(runtime).invoke(
+        {"pattern": "**/*", "path": prefixed if spelling == "extended-prefix base" else str(root)},
+    )
+    assert listed.error is None and set(listed.output) == {"files"}, f"{spelling}: {listed.error}"
+    expected = sorted(str(root / name) for name in (*_CARRIED, "ok"))
+    assert sorted(listed.output["files"]) == expected, f"{spelling}: the names the verified reader's gate admits"
+    for name in expected:
+        if Path(name).is_dir():
+            continue
+        snapshot = file_access.read_verified_file(reader.resolve_source_path(name), **roots)
+        with open(prefixed + "\\" + str(Path(name).relative_to(root)), "rb") as source:
+            assert snapshot.data == source.read(), f"{spelling}: the verified reader opened {name!r}"

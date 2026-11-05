@@ -183,22 +183,38 @@ def plain_spelling(path: Path) -> Path:
     The extended-length and device prefixes of a drive path and the extended UNC prefix are removed
     (:func:`_namespace_free`); any other path, and every path on another platform, is returned as it is. Pure: it
     reads nothing. A component that ends in a dot or a space does not name the same file once the prefix is gone:
-    :func:`reader_spelling` says whether any ordinary spelling names the file.
+    :func:`reader_spelling` says whether a listing may name the file.
     """
     return Path(_namespace_free(str(path))) if os.name == "nt" else path
 
 
 def reader_spelling(path: Path) -> Path | None:
-    """BF-953 (Amendment 2): the spelling of *path* that a reader which rejects a Windows namespace prefix opens as the file
-    *path* names, or ``None`` when no ordinary spelling names it.
+    """BF-953 (Amendments 2 and 3): the spelling of *path* a listing may name, or ``None``.
 
-    On Windows it is :func:`plain_spelling` of *path* when every component of that spelling after its anchor names, as an
-    ordinary path, what it names in the extended namespace: none ends in a dot or a space (the system drops both from an
-    ordinary path, so such a name opens a neighbour or nothing), and no part of the spelling is a reserved device name (the
-    system opens the device, and the verified reader rejects the spelling). A path that never had a prefix is held to the
-    same test. Any other path, and every path on another platform, is returned as :func:`plain_spelling` returns it.
-    Pure: it reads nothing."""
+    It is :func:`plain_spelling` of *path* when the verified reader's rules on the text of a path admit that spelling and,
+    on Windows, every component of it after its anchor names, as an ordinary path, what it names in the extended namespace.
+
+    The verified reader applies two rules to the text alone, and they are applied here on every platform. Its location gate,
+    :func:`validate_read_location`, is called as it is: text that is not strict UTF-8, a ``:`` after the drive or a character
+    below 32 anywhere, a reserved device name as the final component, a namespace prefix that :func:`plain_spelling` does
+    not remove and a location that is not absolute have no spelling. Its child-name rule for the final component (a pinned
+    directory's ``_leaf``) is applied to the final name: a backslash, a trailing dot or a trailing space have none. So a name
+    only the plain reader opens (on POSIX a colon, a control character or a reserved device stem such as ``aux.py``) has no
+    spelling either. On Windows a component after the anchor that ends in a dot or a space has none (the system drops both
+    from an ordinary path, so such a name opens a neighbour or nothing), nor has a spelling with a reserved device name in
+    any part (the system opens the device).
+
+    Pure: it calls no filesystem function; it builds path objects and strings for each call (BF-953 L20). It does not say
+    that the file opens: a directory, a link or reparse point, a path past the host's ordinary length on a host without
+    long-path support and a file changed after the listing are decided when it is read (BF-953 L18)."""
     shown = plain_spelling(path)
+    try:
+        validate_read_location(str(shown))
+    except ValueError:  # the reader's own refusal of the text, whatever its class (UnicodeEncodeError is one): no spelling
+        return None
+    final = shown.name
+    if "\\" in final or final != final.rstrip(" ."):
+        return None
     if os.name != "nt":
         return shown
     ordinary = PureWindowsPath(str(shown))
