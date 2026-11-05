@@ -2413,7 +2413,7 @@ Then regenerate the ledger as G12 says.
 ### A2.8 Limits (L15 amended by P10-4; L18 and L19 added)
 
 - **L18.** The store creates every revision as an int and carries an existing one forward as `existing_rev + 1` (`records_store.py:322-323`), so a fractional revision an operator wrote stays fractional (3.5, then 4.5). The repetition check does not count such a history; M5's head counted it, but nothing renders the warnings. The read-back also shows no `revision` for it, since it shows only a positive int (§3). The store's next write drops a text, null or list revision (`:323` raises, `:333` catches).
-- **L19.** The records API passes a JSON `topic` to `write_notebook` unchecked (`routers/records.py:146-153`), so a non-text topic can be store-written. Its file is named `f"{topic}.md"` (`records_store.py:527`). Since Amendment 3 the index's fallback removes only that final `.md`, so the slug shows the topic's text, unless the text contains a `/` (the file then lies in a subdirectory, and the slug is its last component). Before Amendment 3 the fallback removed every `.md`, so a topic text containing `.md` lost it, and `notes.md` and `notes.md.md` both showed as `notes` (review round 3, F5). Validating the topic is recorded on #1754.
+- **L19.** The records API passes a JSON `topic` to `write_notebook` unchecked (`routers/records.py:146-153`), so a non-text topic can be store-written. Its file is named `f"{topic}.md"` (`records_store.py:527`). The index's fallback shows the file's last path component without its final `.md`, so a topic text without a `/` is shown as that text, a text containing a `/` (the file then lies in a subdirectory) as the part after its last `/`, and an empty topic (the file `.md`) as `.md`, never as an empty item. Before Amendment 3 the fallback removed every `.md`, so a topic text containing `.md` lost it, and `notes.md` and `notes.md.md` both showed as `notes` (review round 3, F5). Validating the topic is recorded on #1754.
 
 ### A2.9 Diff Reviewer properties (added to §16; item 13 amended by P10-5)
 
@@ -2507,7 +2507,7 @@ so a non-text topic can be store-written. Its file is named by the topic's text,
 ```
 REPLACE:
 ```
-so a non-text topic can be store-written. Its file is named `f"{topic}.md"` (`records_store.py:527`). Since Amendment 3 the index's fallback removes only that final `.md`, so the slug shows the topic's text, unless the text contains a `/` (the file then lies in a subdirectory, and the slug is its last component). Before Amendment 3 the fallback removed every `.md`, so a topic text containing `.md` lost it, and `notes.md` and `notes.md.md` both showed as `notes` (review round 3, F5). Validating the topic is recorded on #1754.
+so a non-text topic can be store-written. Its file is named `f"{topic}.md"` (`records_store.py:527`). The index's fallback shows the file's last path component without its final `.md`, so a topic text without a `/` is shown as that text, a text containing a `/` (the file then lies in a subdirectory) as the part after its last `/`, and an empty topic (the file `.md`) as `.md`, never as an empty item. Before Amendment 3 the fallback removed every `.md`, so a topic text containing `.md` lost it, and `notes.md` and `notes.md.md` both showed as `notes` (review round 3, F5). Validating the topic is recorded on #1754.
 ```
 
 **P13-2** `prompts/bf-950-oracle-result-age.md` (A2.11, third claim)
@@ -2541,7 +2541,7 @@ REPLACE:
   - **Reach.** An agent's `[NOTEBOOK slug]` is `[\w-]+`, so an agent cannot write a dot. The API can: a text topic `""` gives the file `.md`, and a topic containing `.md` gives an embedded one.
   - **Fix (M14).** Remove only the final `.md` (`str.removesuffix`). When that leaves nothing, show the whole file name. The count and the index keep the one helper.
   - **Rejected:**
-    - `Path(name).stem`: it also strips a final `.yaml` or `.txt` that `rglob("*.md")` never lists, and it diverges from the store's `f"{slug}.md"` naming.
+    - `Path(name).stem`: for every file `rglob("*.md")` lists it gives the same name as `removesuffix(".md")` (review round 4 compared them across the filename shapes); the explicit `removesuffix` is kept because it names the one suffix it removes.
     - Making names unique with a suffix: no consumer keys on uniqueness (search above).
     - Converting the read-back topic (`:2902`) and `notebook_quality.py` too: both were already like this at base and are outside the index (L20).
 
@@ -2694,15 +2694,18 @@ SEARCH:
 ```
 REPLACE:
 ```python
-    The frontmatter's ``topic`` when that is non-empty text, else the file's name
-    without its final ``.md``, or the whole name when that leaves nothing. The store
+    The frontmatter's ``topic`` when that is non-empty text, else the file's name (the
+    last component of its path) without its final ``.md``, or the whole name when
+    removing it leaves nothing: the file ``.md`` is shown as ``.md``. The store
     writes ``topic`` only from a non-empty argument (``write_entry``) and every agent
     writer passes the slug as text, so their index is unchanged. The records API can
-    store a non-text topic and names the file ``f"{topic}.md"``, so removing only the
-    final ``.md`` gives that text back (L19). A topic edited into a number, a null, a
-    list or a blank is named by its file: both renderers join the topic into one
-    line, and the topic count hashes it. Amendment 3: removing every ``.md`` showed
-    ``notes.md`` and ``notes.md.md`` as one name, and ``.md.md`` as an empty one.
+    store a non-text topic and names the file ``f"{topic}.md"``: a topic text without
+    a ``/`` is shown as that text, one containing a ``/`` as the part after its last
+    ``/`` (the file lies in a subdirectory), and an empty topic as ``.md`` (L19). A
+    topic edited into a number, a null, a list or a blank is named by its file: both
+    renderers join the topic into one line, and the topic count hashes it.
+    Amendment 3: removing every ``.md`` showed ``notes.md`` and ``notes.md.md`` as one
+    name, and ``.md.md`` as an empty one.
     """
     frontmatter = entry.get("frontmatter")
     topic = frontmatter.get("topic") if type(frontmatter) is dict else None
@@ -2794,7 +2797,7 @@ the warnings on the raw value.
 REPLACE:
 ```
 the warnings on the raw value.
-- *Amendment 3 (review round 3).* An index name taken from the file removes only the final `.md`, and shows the whole name when nothing is left. So `notes.md` and `notes.md.md` no longer collapse into one item and one topic, and the file `.md.md` is no longer shown as an empty item. Rejected: `Path.stem`, which diverges from the store's `f"{slug}.md"` naming; and converting the read-back topic and AD-551's quality scan, which were already like this at base and are outside the index (L20).
+- *Amendment 3 (review round 3).* An index name taken from the file removes only the final `.md`, and shows the whole name when nothing is left. So `notes.md` and `notes.md.md` no longer collapse into one item and one topic, and the file `.md.md` is no longer shown as an empty item. Rejected: converting the read-back topic and AD-551's quality scan, which were already like this at base and are outside the index (L20). `Path.stem` gives the same names for every file the store lists; `removesuffix` is kept because it names the one suffix it removes.
 - *Residual.* Recorded limits L1 to L20 of the contract.
 ```
 

@@ -299,15 +299,18 @@ def _notebook_read_back(topic: str, snippet: str, frontmatter: Any) -> dict[str,
 def _notebook_index_topic(entry: dict[str, Any]) -> str:
     """BF-950 Amendment 2: the topic an AD-550 index entry shows, always text.
 
-    The frontmatter's ``topic`` when that is non-empty text, else the file's name
-    without its final ``.md``, or the whole name when that leaves nothing. The store
+    The frontmatter's ``topic`` when that is non-empty text, else the file's name (the
+    last component of its path) without its final ``.md``, or the whole name when
+    removing it leaves nothing: the file ``.md`` is shown as ``.md``. The store
     writes ``topic`` only from a non-empty argument (``write_entry``) and every agent
     writer passes the slug as text, so their index is unchanged. The records API can
-    store a non-text topic and names the file ``f"{topic}.md"``, so removing only the
-    final ``.md`` gives that text back (L19). A topic edited into a number, a null, a
-    list or a blank is named by its file: both renderers join the topic into one
-    line, and the topic count hashes it. Amendment 3: removing every ``.md`` showed
-    ``notes.md`` and ``notes.md.md`` as one name, and ``.md.md`` as an empty one.
+    store a non-text topic and names the file ``f"{topic}.md"``: a topic text without
+    a ``/`` is shown as that text, one containing a ``/`` as the part after its last
+    ``/`` (the file lies in a subdirectory), and an empty topic as ``.md`` (L19). A
+    topic edited into a number, a null, a list or a blank is named by its file: both
+    renderers join the topic into one line, and the topic count hashes it.
+    Amendment 3: removing every ``.md`` showed ``notes.md`` and ``notes.md.md`` as one
+    name, and ``.md.md`` as an empty one.
     """
     frontmatter = entry.get("frontmatter")
     topic = frontmatter.get("topic") if type(frontmatter) is dict else None
