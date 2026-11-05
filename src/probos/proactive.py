@@ -299,19 +299,23 @@ def _notebook_read_back(topic: str, snippet: str, frontmatter: Any) -> dict[str,
 def _notebook_index_topic(entry: dict[str, Any]) -> str:
     """BF-950 Amendment 2: the topic an AD-550 index entry shows, always text.
 
-    The frontmatter's ``topic`` when that is non-empty text, else the file's slug.
-    The store writes ``topic`` only from a non-empty argument (``write_entry``) and
-    every agent writer passes the slug as text, so their index is unchanged. The
-    records API can store a non-text topic, but names the file by its text, so the
-    slug reads the same. A topic edited into a number, a null, a list or a blank is
-    named by its file: both renderers join the topic into one line, and the topic
-    count hashes it.
+    The frontmatter's ``topic`` when that is non-empty text, else the file's name
+    without its final ``.md``, or the whole name when that leaves nothing. The store
+    writes ``topic`` only from a non-empty argument (``write_entry``) and every agent
+    writer passes the slug as text, so their index is unchanged. The records API can
+    store a non-text topic and names the file ``f"{topic}.md"``, so removing only the
+    final ``.md`` gives that text back (L19). A topic edited into a number, a null, a
+    list or a blank is named by its file: both renderers join the topic into one
+    line, and the topic count hashes it. Amendment 3: removing every ``.md`` showed
+    ``notes.md`` and ``notes.md.md`` as one name, and ``.md.md`` as an empty one.
     """
     frontmatter = entry.get("frontmatter")
     topic = frontmatter.get("topic") if type(frontmatter) is dict else None
     if isinstance(topic, str) and topic:
         return topic
-    return entry["path"].split("/")[-1].replace(".md", "")
+    name = entry["path"].split("/")[-1]
+    slug = name.removesuffix(".md")
+    return slug or name
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:

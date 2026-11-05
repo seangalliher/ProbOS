@@ -466,13 +466,7 @@ async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
     assert "engineering notes" in result["notebook_content"]["snippet"]
 
 
-_UNTIL_M14 = pytest.mark.xfail(
-    strict=True, reason="BF-950 M14: the index's file-name fallback removes every .md, not only the final one",
-)
-
-
 @pytest.mark.asyncio
-@_UNTIL_M14
 async def test_two_files_named_by_their_files_stay_two_items(tmp_path: Path) -> None:
     """Review round 3 (F5): an index entry named by its file kept nothing of an embedded ``.md``.
 
@@ -499,9 +493,9 @@ async def test_two_files_named_by_their_files_stay_two_items(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("path", "frontmatter", "shown"), [
-    pytest.param("notebooks/Zephyr/notes.md.md", {"topic": 27}, "notes.md", id="an-embedded-md", marks=_UNTIL_M14),
-    pytest.param("notebooks/Zephyr/.md.md", {}, ".md", id="a-doubled-bare-md", marks=_UNTIL_M14),
-    pytest.param("notebooks/Zephyr/.md", {"topic": None}, ".md", id="a-bare-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/notes.md.md", {"topic": 27}, "notes.md", id="an-embedded-md"),
+    pytest.param("notebooks/Zephyr/.md.md", {}, ".md", id="a-doubled-bare-md"),
+    pytest.param("notebooks/Zephyr/.md", {"topic": None}, ".md", id="a-bare-md"),
     pytest.param("notebooks/Zephyr/notes.md", {"topic": 27}, "notes", id="a-plain-file"),
 ])
 async def test_an_index_name_from_the_file_keeps_all_but_its_final_md(
@@ -511,7 +505,7 @@ async def test_an_index_name_from_the_file_keeps_all_but_its_final_md(
 
     The records API names a file ``f"{topic}.md"`` from any JSON topic, so ``""`` gives ``.md`` and ``.md`` gives
     ``.md.md``; every-``.md`` removal showed both as an empty item. A listing as ``list_entries`` returns it, so no
-    dot-file listing rule is assumed. ``a-plain-file`` is the unchanged case and passes on M13.
+    dot-file listing rule is assumed. ``a-plain-file`` is the unchanged case; it passed on M13, before the fix.
     """
     records = MagicMock()
     records.list_entries = AsyncMock(return_value=[{"path": path, "frontmatter": frontmatter}])
