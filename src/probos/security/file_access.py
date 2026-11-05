@@ -92,18 +92,23 @@ class FileAccessDenied(Exception):
 # file (``_file_identity``), for a path or root that still names a share or a device: identity only ever adds a
 # refusal, and an exempt or permitted root is matched by text, so no spelling is admitted by one it does not
 # textually name (BF-953 Amendment 1). The floor's file roots and the credential names are decided on the file the
-# final component names (``_base_file``). Elsewhere containment is the textual test.
+# final component names (``_base_file``), a root's as well as a candidate's (BF-953 Amendment 2). That is a rule on
+# the text that only adds refusals, not a statement that the names are one file: in the extended namespace a name that
+# ends in a dot or a space is another file, and it is refused too. Elsewhere containment is the textual test.
 _NAMESPACE_PREFIXES = ("\\\\?\\", "\\\\.\\")
 _EXTENDED_UNC = "\\\\?\\UNC\\"
 _FLOOR_UNVERIFIED = "path cannot be verified against the protected roots"
 
 
 def _namespace_free(text: str) -> str:
-    r"""BF-953: *text*, a path as ``str(WindowsPath)`` spells it, without its Windows namespace prefix.
+    r"""BF-953: *text*, a path as ``str(WindowsPath)`` spells it, without its Windows namespace prefix: the form in which
+    a path and a root are compared as text.
 
-    ``\\?\UNC\host\share\x`` is ``\\host\share\x``; ``\\?\C:\x`` and ``\\.\C:\x`` are ``C:\x``. Any other
-    text (a volume or device name, a drive-relative form, a path of another platform) is returned as it is.
-    Pure: it reads nothing and does not depend on the platform it runs on.
+    ``\\?\UNC\host\share\x`` is ``\\host\share\x``; ``\\?\C:\x`` and ``\\.\C:\x`` are ``C:\x``, and the bare drive
+    ``\\?\C:`` is ``C:``. Any other text (a volume or device name, a drive-relative form with a path, a path of another
+    platform) is returned as it is. Pure: it reads nothing and does not depend on the platform it runs on. It is a form for
+    comparing text, not a statement about files: in the extended namespace a name that ends in a dot or a space is another
+    file than the one the ordinary spelling names (:func:`reader_spelling`).
     """
     if text[:8].upper() == _EXTENDED_UNC.upper():
         return "\\\\" + text[8:]
@@ -127,11 +132,25 @@ def _base_file(path: Path) -> Path:
     """BF-953 (Amendment 1): *path* with its final component reduced to the file it names (:func:`_base_name`), on Windows;
     any other path, and every path on another platform, as it is. The floor and the credential names are decided on it, so a
     stream, trailing-dot or trailing-space spelling of a floor file is decided as the file is, whether or not it is on disk;
-    an admitted read keeps the path as resolved. Pure: it reads nothing."""
+    an admitted read keeps the path as resolved. It is a rule on the text that only adds refusals (L14). Pure: it reads
+    nothing."""
     if os.name != "nt":
         return path
     base = _base_name(path.name)
     return path.with_name(base) if base != path.name else path
+
+
+def _floor_roots(roots: Sequence[Path]) -> list[Path]:
+    """BF-953 (Amendment 2): the floor roots *roots*, each root followed by the file its final component names where that is
+    another spelling (:func:`_base_file`).
+
+    A floor file root is compared by the file it names, as a candidate is, so a configuration loaded as
+    ``loaded.yaml:settings`` refuses a read of ``loaded.yaml:settings`` and of ``loaded.yaml``. Each root stays as it is
+    spelled, so no refusal a root made is lost: the result equals *roots* for every directory root a system resolves, for an
+    ordinary file root and on another platform. A root spelled in the extended namespace with a trailing dot or space adds
+    the directory or file its base names, a refusal only (L16). Pure: it reads nothing."""
+    named = [_base_file(root) for root in roots]
+    return [*roots, *(base for root, base in zip(roots, named) if base != root)]
 
 
 def _protected_leaf(path: Path) -> bool:
@@ -163,9 +182,32 @@ def plain_spelling(path: Path) -> Path:
 
     The extended-length and device prefixes of a drive path and the extended UNC prefix are removed
     (:func:`_namespace_free`); any other path, and every path on another platform, is returned as it is. Pure: it
-    reads nothing. A final component that ends in a dot or a space is not the same file once the prefix is gone.
+    reads nothing. A component that ends in a dot or a space does not name the same file once the prefix is gone:
+    :func:`reader_spelling` says whether any ordinary spelling names the file.
     """
     return Path(_namespace_free(str(path))) if os.name == "nt" else path
+
+
+def reader_spelling(path: Path) -> Path | None:
+    """BF-953 (Amendment 2): the spelling of *path* that a reader which rejects a Windows namespace prefix opens as the file
+    *path* names, or ``None`` when no ordinary spelling names it.
+
+    On Windows it is :func:`plain_spelling` of *path* when every component of that spelling after its anchor names, as an
+    ordinary path, what it names in the extended namespace: none ends in a dot or a space (the system drops both from an
+    ordinary path, so such a name opens a neighbour or nothing), and no part of the spelling is a reserved device name (the
+    system opens the device, and the verified reader rejects the spelling). A path that never had a prefix is held to the
+    same test. Any other path, and every path on another platform, is returned as :func:`plain_spelling` returns it.
+    Pure: it reads nothing."""
+    shown = plain_spelling(path)
+    if os.name != "nt":
+        return shown
+    ordinary = PureWindowsPath(str(shown))
+    names = ordinary.parts[1:] if ordinary.anchor else ordinary.parts
+    if any(name != name.rstrip(" .") for name in names):
+        return None
+    if any(part.is_reserved() for part in (ordinary, *ordinary.parents)):
+        return None
+    return shown
 
 
 class _OnDisk:
@@ -285,9 +327,11 @@ def resolve_read_path(
     for the final component (a stream suffix, trailing dots and spaces, another case: :func:`_base_file`), for a floor
     file root and a credential vault name, whether or not the file is on disk. Not covered: a share or device spelling of
     a floor file root that is not on disk (L2). An exempt or a permitted root admits a share or device spelling only if
-    its text names that root, and a floor that cannot be read for a share or device spelling refuses it. What is
-    returned is the resolved path itself, in the spelling it was resolved to, never a rewritten one: it names the file
-    the decision was made on (a named stream keeps its suffix).
+    its text names that root, and a floor that cannot be read for a share or device spelling refuses it. A floor file
+    root is compared by the file its own final component names, as the candidate is (:func:`_floor_roots`). What is
+    returned is the resolved path itself, as ``Path.resolve()`` spelled it, never a rewritten one: it names the file the
+    decision was made on (``resolve()`` keeps a named stream's suffix and drops a trailing dot or space and the default
+    stream's type from a file on disk).
     """
     if not raw or "\x00" in raw:
         raise FileAccessDenied(raw, "empty or malformed path")
@@ -309,7 +353,7 @@ def resolve_read_path(
 
     on_disk = _OnDisk(base_file)  # BF-953: read at most once, and only if the floor is compared by identity
     try:
-        protect = _match_position(base_file, protected_roots, on_disk, floor=True)
+        protect = _match_position(base_file, _floor_roots(protected_roots), on_disk, floor=True)
     except _Unverifiable as exc:
         logger.warning(
             "BF-953: the read floor could not be verified for a path (%s); the read is refused",
@@ -328,6 +372,29 @@ def resolve_read_path(
     if permitted_roots and _match_position(resolved, permitted_roots) is None:
         raise FileAccessDenied(raw, "path is outside every readable root")
     return resolved
+
+
+def _workspace_root(runtime: Any) -> Path | None:
+    """BF-758, BF-953 (Amendment 2): the agent workspace root *runtime* configures, or ``None`` when it cannot be composed.
+
+    It is resolved as a candidate is, so the root and a path under it are spelled alike (a configured 8.3 short path or an
+    unresolved data directory would otherwise name it as no candidate does). A root the system cannot resolve (a text with
+    a NUL, a link that does not end) is returned as it was composed, as before BF-953: no candidate is under it, so a
+    configured read policy still refuses every path outside its other roots and the exempt list lifts nothing."""
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    workspace = getattr(cfg, "workspace_root", "") or _DEFAULT_WORKSPACE_ROOT
+    try:
+        from probos.execution.workspace import _resolve_workspace_root
+
+        composed = _resolve_workspace_root(workspace)
+    except Exception:
+        logger.debug("BF-758: workspace root unresolved", exc_info=True)
+        return None
+    try:
+        return composed.resolve()
+    except (OSError, RuntimeError, ValueError):
+        logger.debug("BF-953: workspace root %r does not resolve; it is kept as composed", workspace, exc_info=True)
+        return composed
 
 
 def permitted_read_roots(runtime: Any) -> list[Path]:
@@ -351,16 +418,9 @@ def permitted_read_roots(runtime: Any) -> list[Path]:
                 "BF-758: configured read_roots entry %r is not a usable path; "
                 "ignoring it", entry,
             )
-    cfg = getattr(getattr(runtime, "config", None), "execution", None)
-    workspace = getattr(cfg, "workspace_root", "") or _DEFAULT_WORKSPACE_ROOT
-    try:
-        from probos.execution.workspace import _resolve_workspace_root
-
-        # BF-953 (Amendment 1): resolved as the candidate is, so the root and a path under it are spelled alike
-        # (a configured 8.3 short path or an unresolved data directory would otherwise name it as no candidate does).
-        roots.append(_resolve_workspace_root(workspace).resolve())
-    except Exception:
-        logger.debug("BF-758: workspace root unresolved", exc_info=True)
+    workspace = _workspace_root(runtime)
+    if workspace is not None:
+        roots.append(workspace)
     return roots
 
 
@@ -557,16 +617,8 @@ def _protected_data_dir(runtime: Any) -> list[Path]:
 
 def workspace_exempt_roots(runtime: Any) -> list[Path]:
     """The agent workspace tree, which lives under the data dir but is theirs."""
-    cfg = getattr(getattr(runtime, "config", None), "execution", None)
-    workspace = getattr(cfg, "workspace_root", "") or _DEFAULT_WORKSPACE_ROOT
-    try:
-        from probos.execution.workspace import _resolve_workspace_root
-
-        # BF-953 (Amendment 1): resolved as the candidate is (see ``permitted_read_roots``).
-        return [_resolve_workspace_root(workspace).resolve()]
-    except Exception:
-        logger.debug("BF-758: workspace root unresolved", exc_info=True)
-        return []
+    workspace = _workspace_root(runtime)
+    return [] if workspace is None else [workspace]
 
 
 def resolve_for_runtime(

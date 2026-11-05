@@ -13,8 +13,15 @@ that cannot be read refuses a share spelling (T12), an exemption stands where it
 and not where its root is spelled, and a floor file root outranks the workspace that encloses it (T13, T17), a
 configured workspace root is spelled as the path under it is (T14), the spelling ``list_files`` shows has no
 namespace prefix (T15 here; BF-948's T13 and T14 through the verified reader), and the final component is
-decided by the file it names: a stream suffix, trailing dots and spaces and another case do not make another
-file of a floor file root or a credential name, on or off disk (T18 to T21; on POSIX the names stay distinct: T22).
+decided by the file it names: a floor file root or a credential name is refused in every spelling of its final
+component that a stream suffix, trailing dots and spaces and (for a name) another case make, on or off disk
+(T18 to T21; on POSIX the names stay distinct: T22). That is a deny-side text rule, not a statement about files:
+in the extended namespace a name that ends in a dot or a space can be another file, and it is refused too (L14).
+
+Amendment 2 (review round 3, T23 to T28): a floor file root is compared by the file its own final component names,
+as a candidate is (T23, T24, T28), a workspace root that does not resolve stays in the read policy's roots as it was
+composed (T25), a listing shows a match only in a spelling that names it in the ordinary namespace (T26; BF-948's
+T15 through the verified reader), and what T16 shows about counts of parts is pinned where the count is used (T27).
 """
 
 from __future__ import annotations
@@ -30,9 +37,10 @@ from typing import Any
 import pytest
 
 from probos.cognitive.swe_harness.tools import ListFilesTool, ReadFileTool
+from probos.config import SystemConfig
 from probos.security import file_access
 from probos.security.file_access import FileAccessDenied, protected_write_refusal, resolve_read_path
-from tests.test_bf948_list_files_read_policy import _OUTSIDE, _PROTECTED, _link, _list, _runtime, _scene, _unlink
+from tests.test_bf948_list_files_read_policy import SECRET_NAME, _OUTSIDE, _PROTECTED, _link, _list, _runtime, _scene, _unlink
 
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="BF-953: these are Windows path spellings")
 _CONTENT = b"bf953 fixture"
@@ -339,7 +347,8 @@ _NAMESPACE_CASES = [
 @pytest.mark.parametrize(("text", "expected"), _NAMESPACE_CASES)
 def test_the_namespace_free_form(text: str, expected: str) -> None:
     """T5: pure text, the same on every platform: the extended and device prefixes of a drive path and the extended
-    UNC prefix go; a volume or device name, a drive-relative form and a path of another platform stay."""
+    UNC prefix go, and a bare drive after a prefix is the drive; a volume or device name, a drive-relative form with a
+    path and a path of another platform stay."""
     assert file_access._namespace_free(text) == expected
 
 
@@ -621,8 +630,9 @@ def test_the_plain_spelling_drops_the_namespace_prefix_on_windows_only(text: str
 
 @pytest.mark.parametrize("text", [case[0] for case in _NAMESPACE_CASES if case[0] and case[0] != case[1]])
 def test_a_namespace_free_root_stands_at_the_same_count_of_parts(text: str) -> None:
-    """T16: the position a root stands at in the path's own chain is its count of parts, and dropping a namespace prefix
-    changes no count: the exemption's rank does not depend on how its root is spelled."""
+    """T16: dropping a namespace prefix changes no count of parts, so a root that is matched as text stands at the same
+    count however its prefix is spelled. This is a property of the text alone: it shows that the root's own count and its
+    namespace-free count are the same number, and it kills no mutant of the match (T27 pins the use of the count)."""
     assert len(PureWindowsPath(text).parts) == len(PureWindowsPath(file_access._namespace_free(text)).parts)
 
 
@@ -725,7 +735,8 @@ def test_a_stream_or_trailing_dot_or_space_spelling_of_a_floor_file_is_decided_a
     """T19 (the second reviewer's R3): a named stream, a stream with its type, the default stream, trailing dots and trailing
     spaces on the final component of a floor file root, or of a credential vault name, are decided as the file is, with its
     reason, in the ordinary, extended-prefix and share spellings; a neighbour in the same directory with the same suffix is
-    admitted, and keeps the suffix it was given."""
+    admitted, and the path returned is the one ``Path.resolve()`` spells for it (a named stream's suffix is kept there, T20;
+    a trailing dot or space and the default stream's type are dropped by ``resolve()`` for a file on disk)."""
     lay = _fixture(tmp_path)
     vault = lay.outside / "credential_vault.json"
     vault.write_bytes(_CONTENT)
@@ -740,6 +751,7 @@ def test_a_stream_or_trailing_dot_or_space_spelling_of_a_floor_file_is_decided_a
             assert _decide(shared + suffix, protected=floor) == ordinary, f"share {target.name}{suffix!r}"
     admitted = _decide(str(lay.neighbour) + suffix, protected=floor)
     assert admitted[0] == "admitted", f"a neighbour with {suffix!r}: {admitted}"
+    assert admitted == ("admitted", str(Path(str(lay.neighbour) + suffix).resolve())), f"the path returned for {suffix!r}"
 
 
 @WINDOWS
@@ -766,6 +778,7 @@ async def test_a_named_stream_of_a_floor_file_is_refused_and_one_of_a_neighbour_
     assert protected_write_refusal(str(lay.config) + ":zz", runtime=runtime) is not None, "the write side refuses the name"
     neighbour_stream = await reader.invoke({"path": str(lay.neighbour) + ":zz"})
     assert neighbour_stream.error is None and "stream fixture" in repr(neighbour_stream.output)
+    assert str(file_access.resolve_for_runtime(str(lay.neighbour) + ":zz", runtime)).endswith(":zz"), "the stream name is kept"
 
 
 _ABSENT_SPELLINGS = [
@@ -828,3 +841,178 @@ def test_a_posix_name_that_differs_by_case_dot_space_or_colon_is_another_file_fo
     assert _decide(str(root / "vault" / vault_names[0])) == ("refused", _LEAF_REASON)
     for name in vault_names[1:]:
         assert _decide(str(root / "vault" / name))[0] == "admitted", name
+
+
+_ROOT_SUFFIXES = [":settings", ":settings:$DATA", ".", " "]
+
+
+@WINDOWS
+@pytest.mark.parametrize("suffix", _ROOT_SUFFIXES)
+def test_a_floor_file_root_spelled_with_a_suffix_is_decided_as_its_file_is(tmp_path: Path, suffix: str) -> None:
+    """T23 (review round 3, A1): a floor file root whose own final component carries a stream suffix (a configuration loaded
+    as ``loaded.yaml:settings``) or, spelled in the extended namespace, a trailing dot or space, is compared by the file it
+    names, as a candidate is. The root's own spelling and every other spelling of its file (the ordinary one, the default
+    stream, another stream, the extended prefix) are refused with the floor's reason, and a neighbour with the same suffix is
+    admitted."""
+    lay = _fixture(tmp_path)
+    spelled = "\\\\?\\" + str(lay.config) + suffix if suffix in (".", " ") else str(lay.config) + suffix
+    floor = [lay.data.resolve(), Path(spelled)]
+    for candidate in (
+        spelled, str(lay.config), "\\\\?\\" + str(lay.config), str(lay.config) + "::$DATA", str(lay.config) + ":other",
+        "\\\\?\\" + str(lay.config) + ".",
+    ):
+        assert _decide(candidate, protected=floor) == ("refused", _FLOOR_REASON), f"{candidate!r}"
+    assert _decide(str(lay.neighbour) + suffix, protected=floor)[0] == "admitted", "a neighbour with the same suffix"
+
+
+_FLOOR_ROOT_CASES = [
+    ("C:\\cfg\\loaded.yaml:settings", "C:\\cfg\\loaded.yaml"),
+    ("C:\\cfg\\loaded.yaml:settings:$DATA", "C:\\cfg\\loaded.yaml"),
+    ("\\\\?\\C:\\cfg\\old.yaml.", "\\\\?\\C:\\cfg\\old.yaml"),
+    ("\\\\?\\C:\\cfg\\old.yaml. ", "\\\\?\\C:\\cfg\\old.yaml"),
+]
+
+
+@pytest.mark.parametrize(("text", "base"), _FLOOR_ROOT_CASES)
+def test_the_floor_roots_include_the_file_each_final_component_names(text: str, base: str) -> None:
+    """T24 (review round 3, A1): each floor root stays in the list as it is spelled and, on Windows, the file its final
+    component names follows it when that is another spelling; a root that names itself (a directory root, an ordinary file
+    root) adds nothing, and on another platform nothing is added."""
+    directory, ordinary = Path("C:\\data"), Path("C:\\cfg\\loaded.yaml")
+    assert file_access._floor_roots([directory, ordinary]) == [directory, ordinary]
+    roots = [directory, Path(text), ordinary]
+    assert file_access._floor_roots(roots) == ([*roots, Path(base)] if os.name == "nt" else roots)
+
+
+async def test_a_workspace_root_that_does_not_resolve_stays_in_the_read_policy_as_it_was_composed(tmp_path: Path) -> None:
+    """T25 (review round 3, A2): a workspace root the configuration accepts and the system cannot resolve (a text with a NUL)
+    stays in both root builders as it was composed, so a configured read policy still confines reads, whether its own roots are
+    usable or not; the exempt list lifts nothing for it. Through ``resolve_for_runtime``, ``read_file`` and ``list_files``."""
+    scene = _scene(tmp_path)
+    broken = str(scene.workspace) + "\x00"
+
+    def runtime(read_roots: list[str], workspace: str) -> SimpleNamespace:
+        config = SystemConfig(security_infra={"read_roots": read_roots}, execution={"workspace_root": workspace})
+        return SimpleNamespace(data_dir=scene.data, config=config)
+
+    with pytest.raises(ValueError):
+        Path(broken).resolve()  # premise: the system refuses to resolve it
+    assert file_access.permitted_read_roots(runtime(["\x00unusable"], str(scene.workspace))) == [scene.workspace.resolve()]
+    assert file_access.permitted_read_roots(runtime(["\x00unusable"], broken)) == [Path(broken)]
+    assert file_access.permitted_read_roots(runtime([str(scene.allowed)], broken)) == [scene.allowed.resolve(), Path(broken)]
+    assert file_access.workspace_exempt_roots(runtime([], broken)) == [Path(broken)]
+    outside = str(scene.outside / SECRET_NAME)
+    for read_roots in (["\x00unusable"], [str(scene.allowed)]):
+        policy = runtime(read_roots, broken)
+        with pytest.raises(FileAccessDenied) as refused:
+            file_access.resolve_for_runtime(outside, policy)
+        assert refused.value.reason == _OUTSIDE_REASON, read_roots
+        read = await ReadFileTool(policy).invoke({"path": outside})
+        assert read.error == _READ_OUTSIDE and read.output is None, read_roots
+        listing = await ListFilesTool(policy).invoke({"pattern": "*", "path": str(scene.outside)})
+        assert listing.error == _OUTSIDE and listing.output is None, read_roots
+    inside = scene.allowed / "ok.txt"
+    assert file_access.resolve_for_runtime(str(inside), runtime([str(scene.allowed)], broken)) == inside.resolve()
+    with pytest.raises(FileAccessDenied):
+        file_access.resolve_for_runtime(str(scene.workspace / "scratch.txt"), runtime([], broken))
+
+
+_READER_CASES = [
+    ("C:\\data\\note.txt", "C:\\data\\note.txt"),
+    ("\\\\?\\C:\\data\\note.txt", "C:\\data\\note.txt"),
+    ("\\\\?\\UNC\\host\\share\\dir\\f.txt", "\\\\host\\share\\dir\\f.txt"),
+    ("\\\\host\\share\\dir\\f.txt", "\\\\host\\share\\dir\\f.txt"),
+    ("\\\\?\\C:\\data\\a b.txt", "C:\\data\\a b.txt"),
+    ("\\\\?\\C:\\data\\x..y.txt", "C:\\data\\x..y.txt"),
+    ("\\\\?\\C:\\data\\console.txt", "C:\\data\\console.txt"),
+    ("\\\\?\\C:\\data\\confidential\\nul0.txt", "C:\\data\\confidential\\nul0.txt"),
+    ("\\\\?\\C:\\data\\note.txt.", None),
+    ("\\\\?\\C:\\data\\note.txt ", None),
+    ("C:\\data\\note.txt. ", None),
+    ("\\\\?\\C:\\data\\dir.\\deep.txt", None),
+    ("\\\\?\\C:\\data\\dir \\deep.txt", None),
+    ("\\\\?\\C:\\data\\up.\\down\\leaf.txt", None),
+    ("\\\\?\\C:\\data\\...", None),
+    ("\\\\?\\UNC\\host\\share\\dir.\\f.txt", None),
+    ("\\\\?\\C:\\data\\NUL.txt", None),
+    ("C:\\data\\con", None),
+    ("C:\\data\\Aux.log", None),
+    ("C:\\data\\COM1", None),
+    ("C:\\data\\lpt9.txt", None),
+    ("\\\\?\\C:\\data\\con\\g.txt", None),
+    ("\\\\?\\C:\\data\\nul\\x\\y.txt", None),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), _READER_CASES)
+def test_the_reader_spelling_is_one_that_names_the_file_in_the_ordinary_namespace(text: str, expected: str | None) -> None:
+    """T26 (review round 3, A3 and B1): on Windows a path is given to a reader that rejects the namespace prefix as
+    ``plain_spelling`` spells it, unless a component of that spelling names another file or none in the ordinary namespace: a
+    component that ends in a dot or a space (the system drops both), or a reserved device name, in the final component or in an
+    ancestor, has no such spelling and gives ``None``. A name that only starts or ends like a device name keeps its spelling.
+    Every other path, and every path on another platform, is returned as ``plain_spelling`` returns it."""
+    got = file_access.reader_spelling(Path(text))
+    if os.name == "nt":
+        assert (None if got is None else str(got)) == expected
+    else:
+        assert got == Path(text)
+
+
+_STAND_CASES = [
+    ("\\\\?\\C:\\data\\work", "C:\\data\\work\\note.txt", 3),
+    ("\\\\.\\C:\\data", "C:\\data\\work\\note.txt", 2),
+    ("\\\\?\\UNC\\host\\share\\data", "\\\\host\\share\\data\\note.txt", 2),
+    ("C:\\data\\work", "\\\\?\\C:\\data\\work\\note.txt", 3),
+]
+
+
+@WINDOWS
+@pytest.mark.parametrize(("root", "candidate", "count"), _STAND_CASES)
+def test_a_text_match_stands_at_the_count_of_its_namespace_free_root(root: str, candidate: str, count: int) -> None:
+    """T27 (review round 3, T16 strengthened): a root that contains a path as text stands at its count of parts without a
+    namespace prefix, whichever of the two is spelled with one, and the deepest root wins whatever the order of the list."""
+    assert file_access._match_position(Path(candidate), [Path(root)]) == count
+    assert file_access._match_position(Path(candidate), [Path("C:\\"), Path(root)]) == count
+    assert file_access._match_position(Path(candidate), [Path(root), Path("C:\\")]) == count
+
+
+@WINDOWS
+def test_an_identity_match_stands_where_the_path_names_it_not_where_its_root_is_spelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T27 (review round 3, T16 strengthened): a floor root that is the same file as a part of the path's own chain stands at
+    that part's count of parts, never at the count of the root as it is spelled; an exempt or a permitted root is not matched
+    by identity."""
+    spelled = Path("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\floor\\a\\b\\c\\d\\e")
+    alias = Path("\\\\bf953-alias\\share\\floor")
+    candidate = alias / "sub" / "note.txt"
+    known = {spelled: (1, 1), alias: (1, 1)}
+    monkeypatch.setattr(file_access, "_file_identity", lambda path: known.get(path, (2, hash(path))))
+    assert len(spelled.parts) > len(alias.parts), "premise: the root is spelled with more parts than the part it names"
+    assert file_access._match_position(candidate, [spelled], floor=True) == len(alias.parts)
+    assert file_access._match_position(candidate, [spelled]) is None
+
+
+@WINDOWS
+async def test_a_configuration_loaded_as_a_stream_is_refused_for_every_spelling_of_its_file(tmp_path: Path) -> None:
+    """T28 (review round 3, A1): the configuration the vessel loaded is the stream ``loaded.yaml:settings`` of a file. The
+    floor lists it as spelled, and ``resolve_for_runtime`` and ``read_file`` refuse that spelling and the ordinary spelling of
+    the file with the floor's reason and give no content; a neighbour's stream is read."""
+    lay = _fixture(tmp_path)
+    spelled = str(lay.config) + ":settings"
+    try:
+        Path(spelled).write_bytes(b"stream fixture")
+        Path(str(lay.neighbour) + ":settings").write_bytes(b"stream fixture")
+    except OSError:
+        pytest.skip("BF-953 premise: this volume makes no named streams")
+    runtime = SimpleNamespace(config_path=spelled, data_dir=lay.data, config=SimpleNamespace(
+        security_infra=SimpleNamespace(read_roots=[]), execution=SimpleNamespace(workspace_root=str(lay.work)),
+    ))
+    assert any(str(root).endswith(":settings") for root in file_access.protected_config_files(runtime)), "premise: as loaded"
+    reader = ReadFileTool(runtime)
+    for raw in (spelled, str(lay.config)):
+        with pytest.raises(FileAccessDenied) as refused:
+            file_access.resolve_for_runtime(raw, runtime)
+        assert refused.value.reason == _FLOOR_REASON, raw
+        read = await reader.invoke({"path": raw})
+        assert read.error == _READ_PROTECTED and read.output is None, raw
+    neighbour = await reader.invoke({"path": str(lay.neighbour) + ":settings"})
+    assert neighbour.error is None and "stream fixture" in repr(neighbour.output)
