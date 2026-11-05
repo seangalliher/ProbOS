@@ -42,6 +42,7 @@ from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proact
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
+from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
 
@@ -273,6 +274,51 @@ def _resolve_notebook_classification(
         ", ".join(sorted(_NOTEBOOK_CLASSIFICATIONS)),
     )
     return None
+
+
+def _notebook_read_back(topic: str, snippet: str, frontmatter: Any) -> dict[str, Any]:
+    """BF-950: the notebook entry self-monitoring reads back, with the entry's own date.
+
+    ``updated`` is when the entry was last written, as ISO-8601 UTC to the second
+    (its frontmatter's ``updated``, else ``created``; ``record_write_time``), or
+    ``""`` when neither parses. ``revision`` is the frontmatter's ``revision`` when
+    that is a positive int, else ``None``: a first write carries no ``revision``
+    key, and the read-back does not guess one.
+    """
+    fields = frontmatter if type(frontmatter) is dict else {}
+    written = record_write_time(fields)
+    revision = fields.get("revision")
+    return {
+        "topic": topic,
+        "snippet": snippet,
+        "updated": iso_utc(written) if written is not None else "",
+        "revision": revision if type(revision) is int and revision >= 1 else None,
+    }
+
+
+def _notebook_index_topic(entry: dict[str, Any]) -> str:
+    """BF-950 Amendment 2: the topic an AD-550 index entry shows, always text.
+
+    The frontmatter's ``topic`` when that is non-empty text, else the file's name (the
+    last component of its path) without its final ``.md``, or the whole name when
+    removing it leaves nothing: the file ``.md`` is shown as ``.md``. The store
+    writes ``topic`` only from a non-empty argument (``write_entry``) and every agent
+    writer passes the slug as text, so their index is unchanged. The records API can
+    store a non-text topic and names the file ``f"{topic}.md"``: a topic text without
+    a ``/`` is shown as that text, one containing a ``/`` as the part after its last
+    ``/`` (the file lies in a subdirectory), and an empty topic as ``.md`` (L19). A
+    topic edited into a number, a null, a list or a blank is named by its file: both
+    renderers join the topic into one line, and the topic count hashes it.
+    Amendment 3: removing every ``.md`` showed ``notes.md`` and ``notes.md.md`` as one
+    name, and ``.md.md`` as an empty one.
+    """
+    frontmatter = entry.get("frontmatter")
+    topic = frontmatter.get("topic") if type(frontmatter) is dict else None
+    if isinstance(topic, str) and topic:
+        return topic
+    name = entry["path"].split("/")[-1]
+    slug = name.removesuffix(".md")
+    return slug or name
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
@@ -2737,6 +2783,9 @@ class ProactiveCognitiveLoop:
         # AD-567f: Cascade context delivered via Bridge Alerts + Counselor, not self-monitoring.
         # Verification context available as a tool agents invoke, not default injection.
         if tier["notebooks"]:
+            # BF-950 Amendment 1: bound before the listing, so the read-back below
+            # still runs when the index or repetition enrichment raises.
+            entries: list[dict] = []
             try:
                 if hasattr(rt, '_records_store') and rt._records_store:
                     entries = await rt._records_store.list_entries(
@@ -2745,9 +2794,13 @@ class ProactiveCognitiveLoop:
                     )
                     if entries:
                         # AD-550: Enhanced index with content previews + recency
+                        # BF-950 Amendment 1: ordered by record_write_time, which reads every
+                        # shape of ``updated`` (the store's text, a hand-written YAML date) as
+                        # one type; the raw sort raised on a date beside text. An entry with no
+                        # parseable write time sorts last, as an empty ``updated`` did.
                         sorted_entries = sorted(
                             entries,
-                            key=lambda e: e.get("frontmatter", {}).get("updated", ""),
+                            key=lambda e: record_write_time(e.get("frontmatter")) or 0.0,
                             reverse=True,
                         )
                         now_ts = time.time()
@@ -2755,17 +2808,15 @@ class ProactiveCognitiveLoop:
                         # Entry/topic counts
                         result["notebook_summary"] = {
                             "total_entries": len(entries),
-                            "total_topics": len(set(
-                                e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", ""))
-                                for e in entries
-                            )),
+                            # BF-950 Amendment 2: counted by the topic the index shows.
+                            "total_topics": len(set(_notebook_index_topic(e) for e in entries)),
                         }
 
                         top5 = sorted_entries[:5]
                         enriched_index = []
                         for e in top5:
                             fm = e.get("frontmatter", {})
-                            topic = fm.get("topic", e["path"].split("/")[-1].replace(".md", ""))
+                            topic = _notebook_index_topic(e)
                             updated_str = fm.get("updated", "")
 
                             # Human-readable recency
@@ -2815,7 +2866,11 @@ class ProactiveCognitiveLoop:
                         warnings = []
                         for ei in enriched_index:
                             rev = ei.get("revision", 1)
-                            if rev >= _rep_thresh and ei.get("updated"):
+                            # BF-950 Amendment 1: only an int revision is counted; a hand-written
+                            # text revision raised here. Amendment 2: the store creates every
+                            # revision as an int but carries an existing one forward as +1, so a
+                            # fractional history an operator started (3.5, 4.5) is not counted (L18).
+                            if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):
                                 try:
                                     _ei_ts = datetime.fromisoformat(ei["updated"]).timestamp()
                                     if (now_ts - _ei_ts) < (_rep_window_h * 3600):
@@ -2827,28 +2882,36 @@ class ProactiveCognitiveLoop:
                                     pass
                         if warnings:
                             result["notebook_repetition_warnings"] = warnings
-
-                    # Semantic pull: the agent's own notebook entries that contain its
-                    # department name (frontmatter included). BF-949: the walk is confined
-                    # to the agent's notebook directory and reads as the agent, so it sees
-                    # only entries under that directory, and of those only what it may read.
-                    dept = getattr(agent, 'department', '')
-                    if dept and entries:
-                        search_results = await rt._records_store.search(
-                            dept,
-                            scope="ship",
-                            reader_id=callsign,
-                            reader_department=dept,
-                            directory=f"notebooks/{callsign}",
-                        )
-                        if search_results:
-                            top = search_results[0]
-                            result["notebook_content"] = {
-                                "topic": top.get("path", "").split("/")[-1].replace(".md", ""),
-                                "snippet": top.get("snippet", "")[:300],
-                            }
             except Exception:
                 logger.debug("Self-monitoring: notebook query failed for %s", callsign, exc_info=True)
+
+            # Semantic pull: the agent's own notebook entries that contain its
+            # department name (frontmatter included). BF-949: the walk is confined
+            # to the agent's notebook directory and reads as the agent, so it sees
+            # only entries under that directory, and of those only what it may read.
+            # BF-950 Amendment 1: its own error boundary, so an index or repetition
+            # failure on one entry no longer skips the read-back. It still runs only
+            # when the listing above returned entries.
+            try:
+                dept = getattr(agent, 'department', '')
+                if dept and entries:
+                    search_results = await rt._records_store.search(
+                        dept,
+                        scope="ship",
+                        reader_id=callsign,
+                        reader_department=dept,
+                        directory=f"notebooks/{callsign}",
+                    )
+                    if search_results:
+                        top = search_results[0]
+                        # BF-950: dated, as the index line beside it is.
+                        result["notebook_content"] = _notebook_read_back(
+                            top.get("path", "").split("/")[-1].replace(".md", ""),
+                            top.get("snippet", "")[:300],
+                            top.get("frontmatter"),
+                        )
+            except Exception:
+                logger.debug("Self-monitoring: notebook read-back failed for %s", callsign, exc_info=True)
 
             # --- Pending notebook reads from previous cycle ---
             pending_key = agent.id
@@ -2862,10 +2925,11 @@ class ProactiveCognitiveLoop:
                             reader_department=getattr(agent, 'department', ''),
                         )
                         if entry:
-                            result["notebook_content"] = {
-                                "topic": topic_slug,
-                                "snippet": entry.get("content", "")[:500],
-                            }
+                            result["notebook_content"] = _notebook_read_back(
+                                topic_slug,
+                                entry.get("content", "")[:500],
+                                entry.get("frontmatter"),
+                            )
                 except Exception:
                     logger.debug("Self-monitoring: notebook read failed for %s/%s", callsign, topic_slug, exc_info=True)
 
