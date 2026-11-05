@@ -96,14 +96,23 @@ class ToolResult:
 #: ``fault_detection.collect_tool_fault_batch`` skip such a result.
 CALLER_INPUT_ERROR_MARK: str = "_invalid:"
 
+#: BF-948: how a tool marks its policy's refusal of what the call asked for. A ``ToolResult.error`` that starts with
+#: the tool's own id and this mark (``list_files refused: path is outside every readable root``) says the policy
+#: answered as designed, so the same two detectors skip it. A tool gives it for its policy's decision only, never for
+#: its own failure: ``read_file`` for a ``FileAccessDenied``, ``list_files`` for one and for its pattern rule.
+POLICY_REFUSAL_MARK: str = " refused: "
+
 
 def is_caller_input_error(tool_id: object, error: object) -> bool:
-    """AD-1356 S1.2: whether ``error`` is ``tool_id``'s mark of a caller error: both are str, ``tool_id`` is not empty,
-    and ``error`` starts with ``tool_id + CALLER_INPUT_ERROR_MARK`` (case-sensitive) and is longer than that prefix."""
+    """AD-1356 S1.2, BF-948: whether ``error`` is ``tool_id``'s mark of a caller error or of its policy's refusal:
+    both are str, ``tool_id`` is not empty, and ``error`` starts with ``tool_id`` followed by
+    ``CALLER_INPUT_ERROR_MARK`` or ``POLICY_REFUSAL_MARK`` (case-sensitive) and is longer than that prefix."""
     if type(tool_id) is not str or not tool_id or type(error) is not str:
         return False
-    prefix = tool_id + CALLER_INPUT_ERROR_MARK
-    return len(error) > len(prefix) and error.startswith(prefix)
+    return any(
+        len(error) > len(prefix) and error.startswith(prefix)
+        for prefix in (tool_id + CALLER_INPUT_ERROR_MARK, tool_id + POLICY_REFUSAL_MARK)
+    )
 
 
 @runtime_checkable

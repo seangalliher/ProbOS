@@ -3,7 +3,9 @@
 The real ``ListFilesTool`` and ``ReadFileTool`` over a runtime carrying what the read policy reads
 (``config.security_infra.read_roots``, ``config.execution.workspace_root`` and ``data_dir``), and one
 agent-work run on the AD-1347 rig with the native tools registered. Nothing here replaces the read
-policy except T8, which makes it raise to reach the failure handler.
+policy except T8 and T12, which make it raise to reach a failure handler. M4 (T10 to T12): a refusal
+the policy decided is not a tool fault on either detector path, and only the policy's refusal is
+answered as refused.
 """
 
 from __future__ import annotations
@@ -18,9 +20,15 @@ from typing import Any
 import pytest
 
 from probos.capability_request import requests_for_work_item
+from probos.cognitive.agentic_dispatch import classify_tool_fault_error
 from probos.cognitive.swe_harness import tools as swe_tools
+from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResult
 from probos.cognitive.swe_harness.tools import ListFilesTool, ReadFileTool
-from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _rig, _seen
+from probos.fault_detection import collect_tool_fault_batch
+from probos.fault_report import detect_tool_defect
+from probos.tools.protocol import is_caller_input_error
+from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _rig, _seen, _watch_runs
+from tests.test_ad1356_s1_input_errors import _faults
 from tests.test_ad1356_s2_tool_effect_table import _native, _notes, _self_task
 from tests.test_ad1356_s3_chain_of_command import _chain, _finished
 
@@ -236,3 +244,96 @@ async def test_an_agent_work_run_lists_inside_the_roots_and_is_refused_outside_t
                 assert not _seen(rig, "list_files failed")
         finally:
             await store.stop()
+
+
+# --- M4 (Amendment 1): a refusal the policy decided is not a tool fault ---------------------------------
+
+
+@pytest.mark.parametrize(("tool_id", "error", "marked"), [
+    pytest.param("list_files", _OUTSIDE, True, id="list-files-refusal"),
+    pytest.param("list_files", _PATTERN_REFUSAL, True, id="pattern-refusal"),
+    pytest.param(
+        "read_file", "read_file refused: path is protected: the runtime's data directory or a config file", True,
+        id="read-file-refusal",
+    ),
+    pytest.param("event_log_query", "event_log_query_invalid:filter_required", True, id="the-s1-mark-still-holds"),
+    pytest.param("list_files", "list_files refused: ", False, id="nothing-after-the-mark"),
+    pytest.param("list_files", "list_files refused:x", False, id="no-space-after-the-colon"),
+    pytest.param("list_files", "read_file refused: path is outside every readable root", False, id="another-tools-mark"),
+    pytest.param("list_files", "List_Files refused: path is outside every readable root", False, id="other-case"),
+    pytest.param("list_files", "list_files failed: RuntimeError", False, id="a-failure"),
+    pytest.param("list_files", "list_files_failed", False, id="the-strict-failure"),
+    pytest.param("", " refused: path is outside every readable root", False, id="no-tool-id"),
+])
+def test_a_tools_own_refusal_mark_is_not_a_tool_fault(tool_id: str, error: str, marked: bool) -> None:
+    """The refusal mark is the tool's own non-empty id, then `` refused: ``, then at least one more character,
+    case-sensitive. S1.2's ``_invalid:`` mark is unchanged, and a failure is never marked."""
+    assert is_caller_input_error(tool_id, error) is marked
+
+
+async def test_repeated_refusals_in_an_agent_work_run_file_no_fault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 1's F2 on the AD-1347 rig: two identical ``list_files`` refusals and two identical ``read_file``
+    refusals in one run leave the fault store empty, emit nothing, and give the run no tool defect."""
+    notes = _notes(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / SECRET_NAME).write_text("outside contents", encoding="utf-8")
+    listing = {"pattern": "*", "path": str(outside)}
+    reading = {"path": str(outside / SECRET_NAME)}
+    script = [
+        _call("list_files", listing, "c1"), _call("list_files", listing, "c2"),
+        _call("read_file", reading, "c3"), _call("read_file", reading, "c4"),
+        _final(ANSWER),
+    ]
+    runs = _watch_runs(monkeypatch)
+    async with _rig(tmp_path, script) as rig:
+        faults, events = _faults(rig)
+        store = await _native(rig, tmp_path, read_roots=[notes.parent])
+        try:
+            async with _chain(rig, agent_work_elevated_decider="auto"):
+                item_id = await _self_task(rig, "List the relay notes")
+                await _finished(rig, item_id)
+                assert requests_for_work_item(rig.requests, item_id) == []  # premise: all four calls ran directly
+                assert _seen(rig, _OUTSIDE)  # premise: the list_files refusals reached the model
+                assert _seen(rig, "read_file refused: path is outside every readable root")  # premise
+                assert faults.list_open() == [] and events == []
+                assert [run["outcome"].tool_defect for run in runs] == [None]
+        finally:
+            await store.stop()
+
+
+def _pairs(*results: Any) -> SimpleNamespace:
+    """The loop's pairs for ``read_file`` results, through the adapter it uses."""
+    calls = [ToolCallRequest(name="read_file", arguments={}, id=f"r{n}") for n in range(len(results))]
+    pairs = [ToolCallResult.from_tool_result(f"r{n}", result, 0.0) for n, result in enumerate(results)]
+    assert all(  # premise: the adapter carries each error verbatim as an error
+        pair.is_error is True and pair.output == result.error for pair, result in zip(pairs, results, strict=True)
+    )
+    return SimpleNamespace(tool_calls=calls, tool_results=pairs)
+
+
+async def test_read_file_answers_refused_only_for_the_policys_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resolver error that is not the policy's refusal is answered ``read_file failed:`` and still counts: two of
+    them are the run's defect, and two real refusals beside them are neither fault nor success evidence."""
+    scene = _scene(tmp_path)
+    reader = ReadFileTool(_runtime(scene, read_roots=[scene.allowed]))
+    refused = await reader.invoke({"path": str(scene.outside / SECRET_NAME)})
+    assert refused.error == "read_file refused: path is outside every readable root"  # premise
+
+    def _broken(*_args: Any, **_kwargs: Any) -> Path:
+        raise RuntimeError("policy layer broke")
+
+    monkeypatch.setattr(swe_tools, "resolve_for_runtime", _broken)
+    broken = await reader.invoke({"path": str(scene.allowed / "ok.txt")})
+    assert broken.error == "read_file failed: policy layer broke"
+    outcome = _pairs(refused, refused, broken, broken)
+    defect = detect_tool_defect(outcome)
+    assert defect is not None
+    assert (defect.tool_id, defect.error_text, defect.count) == ("read_file", broken.error, 2)
+    [evidence] = collect_tool_fault_batch(outcome, classify_error=classify_tool_fault_error).tools
+    assert evidence.defect is not None and evidence.defect.error_text == broken.error
+    assert evidence.mixed is False and evidence.succeeded is False

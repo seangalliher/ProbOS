@@ -464,6 +464,8 @@ class ReadFileTool:
             except Exception as exc:
                 if read is not None and type(read.directive) is RecoverRead:
                     raise WorkspaceResultError("source_changed") from exc
+                if not isinstance(exc, FileAccessDenied):
+                    raise  # BF-948: only the policy's refusal carries the refusal mark; any other error is a failure
                 return ToolResult(error=f"read_file refused: {exc}")
             if read is not None:
                 read.scope.validate(str(target), read.directive)
