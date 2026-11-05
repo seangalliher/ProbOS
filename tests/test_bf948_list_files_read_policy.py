@@ -5,13 +5,15 @@ The real ``ListFilesTool`` and ``ReadFileTool`` over a runtime carrying what the
 agent-work run on the AD-1347 rig with the native tools registered. Nothing here replaces the read
 policy except T8 and T12, which make it raise to reach a failure handler. M4 (T10 to T12): a refusal
 the policy decided is not a tool fault on either detector path, and only the policy's refusal is
-answered as refused. M5 (T13, T14): what a listing names is what the verified reader opens.
+answered as refused. M5 (T13, T14): what a listing names is what the verified reader opens. M6 (T15): a listing
+leaves out a match that no ordinary spelling names, and every file it lists opens as the file it matched.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -410,3 +412,52 @@ async def test_every_name_a_listing_returns_is_one_the_verified_reader_opens(tmp
             exempt_roots=workspace_exempt_roots(runtime), permitted_roots=permitted_read_roots(runtime) or None,
         )
         assert snapshot.data == (target / "file_access.py").read_bytes(), f"{name}: the verified reader opened {entry!r}"
+
+
+# --- M6 (Amendment 3): a listing names only what the verified reader opens as the file it matched ------------------
+
+
+_EXTENDED_ONLY = {
+    "note.txt": b"ordinary file", "note.txt.": b"dot file", "note.txt ": b"space file", "lonely.": b"dot file with no neighbour",
+    "NUL.txt": b"reserved name", "con\\g.txt": b"file in a reserved directory", "dir.\\deep.txt": b"file in a dot directory",
+    "dir \\deep2.txt": b"file in a space directory", "ok\\inner.txt": b"file in an ordinary directory",
+}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="BF-953: these are Windows path spellings")
+@pytest.mark.parametrize("spelling", ["ordinary base", "extended-prefix base"])
+async def test_a_listing_names_only_what_the_verified_reader_opens_as_the_file_it_matched(
+    tmp_path: Path, request: pytest.FixtureRequest, spelling: str,
+) -> None:
+    """Review round 3's A3 and B1: a directory holds distinct files that only the extended namespace can name: a trailing dot
+    or space (two have an ordinary neighbour of the same name without it), a reserved device name, and a directory component
+    of each kind. ``list_files`` of its ordinary spelling and of its extended-prefix spelling leaves those matches out and
+    names nothing about them, lists the ordinary ones, and every file it lists is opened by the verified reader
+    (``resolve_source_path``, then ``read_verified_file``) with the bytes of the file it matched, read in the extended namespace."""
+    root = tmp_path.resolve() / "d"
+    root.mkdir()
+    prefixed = "\\\\?\\" + str(root)
+    request.addfinalizer(lambda: shutil.rmtree(prefixed, ignore_errors=True))
+    for name, data in _EXTENDED_ONLY.items():
+        target = prefixed + "\\" + name
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as handle:
+            handle.write(data)
+    assert {"note.txt", "note.txt.", "note.txt ", "lonely.", "NUL.txt", "con", "dir.", "dir ", "ok"} <= set(os.listdir(prefixed))
+    runtime = _runtime(_scene(tmp_path), read_roots=[])
+    reader = ReadFileTool(runtime)
+    listed = await ListFilesTool(runtime).invoke(
+        {"pattern": "**/*", "path": prefixed if spelling == "extended-prefix base" else str(root)},
+    )
+    assert listed.error is None and set(listed.output) == {"files"}, f"{spelling}: {listed.error}"
+    expected = sorted(str(path) for path in (root / "note.txt", root / "ok", root / "ok" / "inner.txt"))
+    assert sorted(listed.output["files"]) == expected, f"{spelling}: only the names that have an ordinary spelling"
+    for name in expected:
+        if Path(name).is_dir():
+            continue
+        snapshot = read_verified_file(
+            reader.resolve_source_path(name), protected_roots=protected_read_roots(runtime),
+            exempt_roots=workspace_exempt_roots(runtime), permitted_roots=permitted_read_roots(runtime) or None,
+        )
+        with open(prefixed + "\\" + str(Path(name).relative_to(root)), "rb") as source:
+            assert snapshot.data == source.read(), f"{spelling}: the verified reader opened {name!r}"

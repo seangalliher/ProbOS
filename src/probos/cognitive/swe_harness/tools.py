@@ -56,10 +56,10 @@ from probos.repository_instructions import (
 from probos.security.file_access import (
     FileAccessDenied,
     permitted_read_roots,
-    plain_spelling,
     protected_read_roots,
     protected_write_refusal,
     read_verified_file,
+    reader_spelling,
     resolve_for_runtime,
     resolve_read_path,
     workspace_exempt_roots,
@@ -526,8 +526,9 @@ class ListFilesTool:
     policy refuses is left out, and nothing names it. A listed match whose spelling is under
     the project tree is given relative to it, any other (a share spelling of a local directory
     too) by its absolute path, in either case without a Windows namespace prefix (the spelling
-    the armed reader opens). Any other failure is answered and logged with its exception
-    class only.
+    the armed reader opens). A match that no ordinary spelling names (a component that ends in
+    a dot or a space, a reserved device name) is left out like a refused one. Any other failure
+    is answered and logged with its exception class only.
     """
 
     tool_id: str = "list_files"
@@ -584,7 +585,9 @@ class ListFilesTool:
                     )
                 except FileAccessDenied:
                     continue  # BF-948: refused by the policy, so left out and not counted
-                shown = plain_spelling(match)  # BF-953: the spelling ``read_file`` opens, as the policy admitted it
+                shown = reader_spelling(match)  # BF-953: the spelling ``read_file`` opens, as the policy admitted it
+                if shown is None:
+                    continue  # BF-953 (Amendment 2): no ordinary spelling names this file, so it is left out
                 files.append(
                     str(shown.relative_to(_PROJECT_ROOT))
                     if shown.is_relative_to(_PROJECT_ROOT) else str(shown)
