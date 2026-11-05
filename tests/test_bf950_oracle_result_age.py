@@ -397,14 +397,8 @@ async def test_a_read_back_keeps_what_parses_and_drops_what_does_not(
     assert _notebook_tags(_sensorium_render(result)) == [expected]
 
 
-_UNTIL_M7 = pytest.mark.xfail(
-    strict=True, reason="BF-950 M7: one hand-edited notebook entry ends the self-monitoring notebook block",
-)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("shape", ["a-yaml-date-beside-text", "a-text-revision", "a-list-topic"])
-@_UNTIL_M7
 async def test_one_hand_edited_entry_does_not_cost_the_read_back(tmp_path: Path, shape: str) -> None:
     """Review round 1 (F1): one notebook entry edited outside the store ended the whole block for the cycle.
 

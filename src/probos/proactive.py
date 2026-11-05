@@ -2758,6 +2758,9 @@ class ProactiveCognitiveLoop:
         # AD-567f: Cascade context delivered via Bridge Alerts + Counselor, not self-monitoring.
         # Verification context available as a tool agents invoke, not default injection.
         if tier["notebooks"]:
+            # BF-950 Amendment 1: bound before the listing, so the read-back below
+            # still runs when the index or repetition enrichment raises.
+            entries: list[dict] = []
             try:
                 if hasattr(rt, '_records_store') and rt._records_store:
                     entries = await rt._records_store.list_entries(
@@ -2766,9 +2769,13 @@ class ProactiveCognitiveLoop:
                     )
                     if entries:
                         # AD-550: Enhanced index with content previews + recency
+                        # BF-950 Amendment 1: ordered by record_write_time, which reads every
+                        # shape of ``updated`` (the store's text, a hand-written YAML date) as
+                        # one type; the raw sort raised on a date beside text. An entry with no
+                        # parseable write time sorts last, as an empty ``updated`` did.
                         sorted_entries = sorted(
                             entries,
-                            key=lambda e: e.get("frontmatter", {}).get("updated", ""),
+                            key=lambda e: record_write_time(e.get("frontmatter")) or 0.0,
                             reverse=True,
                         )
                         now_ts = time.time()
@@ -2836,7 +2843,9 @@ class ProactiveCognitiveLoop:
                         warnings = []
                         for ei in enriched_index:
                             rev = ei.get("revision", 1)
-                            if rev >= _rep_thresh and ei.get("updated"):
+                            # BF-950 Amendment 1: only an int revision is counted (the store
+                            # writes nothing else); a hand-written text revision raised here.
+                            if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):
                                 try:
                                     _ei_ts = datetime.fromisoformat(ei["updated"]).timestamp()
                                     if (now_ts - _ei_ts) < (_rep_window_h * 3600):
@@ -2848,30 +2857,36 @@ class ProactiveCognitiveLoop:
                                     pass
                         if warnings:
                             result["notebook_repetition_warnings"] = warnings
-
-                    # Semantic pull: the agent's own notebook entries that contain its
-                    # department name (frontmatter included). BF-949: the walk is confined
-                    # to the agent's notebook directory and reads as the agent, so it sees
-                    # only entries under that directory, and of those only what it may read.
-                    dept = getattr(agent, 'department', '')
-                    if dept and entries:
-                        search_results = await rt._records_store.search(
-                            dept,
-                            scope="ship",
-                            reader_id=callsign,
-                            reader_department=dept,
-                            directory=f"notebooks/{callsign}",
-                        )
-                        if search_results:
-                            top = search_results[0]
-                            # BF-950: dated, as the index line beside it is.
-                            result["notebook_content"] = _notebook_read_back(
-                                top.get("path", "").split("/")[-1].replace(".md", ""),
-                                top.get("snippet", "")[:300],
-                                top.get("frontmatter"),
-                            )
             except Exception:
                 logger.debug("Self-monitoring: notebook query failed for %s", callsign, exc_info=True)
+
+            # Semantic pull: the agent's own notebook entries that contain its
+            # department name (frontmatter included). BF-949: the walk is confined
+            # to the agent's notebook directory and reads as the agent, so it sees
+            # only entries under that directory, and of those only what it may read.
+            # BF-950 Amendment 1: its own error boundary, so an index or repetition
+            # failure on one entry no longer skips the read-back. It still runs only
+            # when the listing above returned entries.
+            try:
+                dept = getattr(agent, 'department', '')
+                if dept and entries:
+                    search_results = await rt._records_store.search(
+                        dept,
+                        scope="ship",
+                        reader_id=callsign,
+                        reader_department=dept,
+                        directory=f"notebooks/{callsign}",
+                    )
+                    if search_results:
+                        top = search_results[0]
+                        # BF-950: dated, as the index line beside it is.
+                        result["notebook_content"] = _notebook_read_back(
+                            top.get("path", "").split("/")[-1].replace(".md", ""),
+                            top.get("snippet", "")[:300],
+                            top.get("frontmatter"),
+                        )
+            except Exception:
+                logger.debug("Self-monitoring: notebook read-back failed for %s", callsign, exc_info=True)
 
             # --- Pending notebook reads from previous cycle ---
             pending_key = agent.id
