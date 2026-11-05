@@ -428,11 +428,6 @@ async def test_one_hand_edited_entry_does_not_cost_the_read_back(tmp_path: Path,
         assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
 
 
-_UNTIL_M11 = pytest.mark.xfail(
-    strict=True, reason="BF-950 M11: an index topic that is not text ends the self-monitoring notebook block",
-)
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("topic", "updated"), [
     pytest.param(17, None, id="a-number-topic"),
@@ -440,7 +435,6 @@ _UNTIL_M11 = pytest.mark.xfail(
     pytest.param(["engines", "warp"], None, id="a-list-topic"),
     pytest.param("", None, id="a-blank-topic"),
 ])
-@_UNTIL_M11
 async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
     tmp_path: Path, topic: Any, updated: Any,
 ) -> None:

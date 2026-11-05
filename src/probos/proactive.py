@@ -296,6 +296,24 @@ def _notebook_read_back(topic: str, snippet: str, frontmatter: Any) -> dict[str,
     }
 
 
+def _notebook_index_topic(entry: dict[str, Any]) -> str:
+    """BF-950 Amendment 2: the topic an AD-550 index entry shows, always text.
+
+    The frontmatter's ``topic`` when that is non-empty text, else the file's slug.
+    The store writes ``topic`` only from a non-empty argument (``write_entry``) and
+    every agent writer passes the slug as text, so their index is unchanged. The
+    records API can store a non-text topic, but names the file by its text, so the
+    slug reads the same. A topic edited into a number, a null, a list or a blank is
+    named by its file: both renderers join the topic into one line, and the topic
+    count hashes it.
+    """
+    frontmatter = entry.get("frontmatter")
+    topic = frontmatter.get("topic") if type(frontmatter) is dict else None
+    if isinstance(topic, str) and topic:
+        return topic
+    return entry["path"].split("/")[-1].replace(".md", "")
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     """Parse HH:MM into (hour, minute) for schedule threshold checks."""
     parts = value.split(":", 1)
@@ -2783,17 +2801,15 @@ class ProactiveCognitiveLoop:
                         # Entry/topic counts
                         result["notebook_summary"] = {
                             "total_entries": len(entries),
-                            "total_topics": len(set(
-                                e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", ""))
-                                for e in entries
-                            )),
+                            # BF-950 Amendment 2: counted by the topic the index shows.
+                            "total_topics": len(set(_notebook_index_topic(e) for e in entries)),
                         }
 
                         top5 = sorted_entries[:5]
                         enriched_index = []
                         for e in top5:
                             fm = e.get("frontmatter", {})
-                            topic = fm.get("topic", e["path"].split("/")[-1].replace(".md", ""))
+                            topic = _notebook_index_topic(e)
                             updated_str = fm.get("updated", "")
 
                             # Human-readable recency
@@ -2843,8 +2859,10 @@ class ProactiveCognitiveLoop:
                         warnings = []
                         for ei in enriched_index:
                             rev = ei.get("revision", 1)
-                            # BF-950 Amendment 1: only an int revision is counted (the store
-                            # writes nothing else); a hand-written text revision raised here.
+                            # BF-950 Amendment 1: only an int revision is counted; a hand-written
+                            # text revision raised here. Amendment 2: the store creates every
+                            # revision as an int but carries an existing one forward as +1, so a
+                            # fractional history an operator started (3.5, 4.5) is not counted (L18).
                             if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):
                                 try:
                                     _ei_ts = datetime.fromisoformat(ei["updated"]).timestamp()
