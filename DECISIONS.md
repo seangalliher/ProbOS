@@ -1417,6 +1417,18 @@ AD-1346 M3e4d6 is the sixth part of M3e4d. `CapabilityRequestStore.file_request`
 - *Residual, accepted.* Registers R155 and R156 of the contract.
 - *Reversal.* Revert the M3e4d6 commits.
 
+### AD-1346 M3e4d7 -- the artifact store's store-write checks (2026-11-05, #1604)
+
+AD-1346 M3e4d7 is the seventh part of M3e4d. `ArtifactStore.add_version` and `ArtifactStore.reconcile_exact_version` call `check_at` with `store_write`, presenting `created_by`, as the statement before their `with self._connect() as conn:`. `ProbOSRuntime.start` hands the store the service through `set_admission` when it is an `ArtifactStore`. `_notify_version_committed` moves out of the class, so the class keeps 15 direct methods. `artifacts/__init__.py` leaves `STORE_WRITE_FILES` and is split by scope in `STORE_WRITE_SCOPES`. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d7-artifact-store-checks.md`.
+
+- *D326 (the cut).* All of `artifacts/__init__.py`: 3 write scopes, 2 of them checked. Rejected: the file-write rows with it; `workforce.py` first; the JetStream rows first.
+- *D327 (the rows).* `add_version` and `reconcile_exact_version` are checks; `delete` is the ship's by D239. Rejected: `reconcile_exact_version` as the ship's; the file kept pending.
+- *D328 (the checks).* The statement before each scope's `with self._connect() as conn:`, with module-scope imports. Rejected: the first statement after the docstring; a check inside the transaction; function-scope imports.
+- *D329 (the hand-off).* `set_admission` and the `isinstance` hand-off in `start`, with `_notify_version_committed` moved to module level. Rejected: `set_admission` with the method kept, which takes the class to 16 direct methods; building the store in `start`; a getter passed to the constructor; the runtime setting a private attribute.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM18 and WM19 are new.
+- *Residual, accepted.* Registers R157 and R158 of the contract.
+- *Reversal.* Revert the M3e4d7 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
