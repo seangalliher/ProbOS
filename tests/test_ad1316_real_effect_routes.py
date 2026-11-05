@@ -1481,9 +1481,10 @@ async def test_strict_list_files_logging_omits_raw_arguments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tool = ListFilesTool(runtime=SimpleNamespace())
+    # BF-948: list_files decides its base through the read policy, so the failure is raised there.
     monkeypatch.setattr(
-        "probos.cognitive.swe_harness.tools._resolve_path",
-        lambda _: (_ for _ in ()).throw(RuntimeError("SENTINEL_EXCEPTION_PROSE")),
+        "probos.cognitive.swe_harness.tools.resolve_read_path",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("SENTINEL_EXCEPTION_PROSE")),
     )
     await tool.invoke(
         {"pattern": "**[", "path": "SENTINEL_PRIVATE_PATH"},

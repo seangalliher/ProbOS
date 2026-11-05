@@ -37,9 +37,8 @@ ROUTINE_TOOL_IDS: Final[frozenset[str]] = frozenset({
 #: With ``security_infra.read_roots`` unset that policy reaches outside the runtime's data directory and config
 #: files, so these are routine only while the roots are set, and critical otherwise.
 READ_POLICY_TOOL_IDS: Final[frozenset[str]] = frozenset({"codebase_read_source", "read_file"})
-#: Elevated: reads that reach past what the ship holds or past the read policy. find_mcp_tool discovers and offers new
-#: tools; web_search, read_page and http_fetch leave the ship (the Captain's Q6, 2026-10-31); list_files resolves its
-#: path without the read policy (``swe_harness.tools._resolve_path``).
+#: Elevated. find_mcp_tool discovers and offers new tools; web_search, read_page and http_fetch leave the ship (the
+#: Captain's Q6, 2026-10-31); list_files is held here until the Captain decides its tier (BF-948, LF4).
 ELEVATED_TOOL_IDS: Final[frozenset[str]] = frozenset({
     "find_mcp_tool", "http_fetch", "list_files", "read_page", "web_search",
 })
