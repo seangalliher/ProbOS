@@ -1,7 +1,7 @@
 """AD-1346 M3e4b (#1604): the store-write checks of the Ward Room and the episodic store, in shadow; AD-1346 M3e4d1:
 and of the clinical notes store and the skill request store; AD-1346 M3e4d2: and of the persistent task store;
 AD-1346 M3e4d3: and of the chat thread store; AD-1346 M3e4d4: and of the assignment service; AD-1346 M3e4d5: and of
-the Ward Room's channel manager.
+the Ward Room's channel manager; AD-1346 M3e4d6: and of the capability request store.
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
@@ -14,13 +14,17 @@ AD-1346 M3e4d2 ``PersistentTaskStore.create_task`` does, presenting ``created_by
 ``AssignmentService.create_assignment`` calls it as the statement before the call that inserts the assignment's row,
 presenting ``created_by``. From AD-1346 M3e4d5 ``ChannelManager.create_channel`` and
 ``ChannelManager.get_or_create_dm_channel`` call it as the statement before the call that inserts the channel's row,
-presenting ``created_by`` and ``agent_a_id``.
+presenting ``created_by`` and ``agent_a_id``. From AD-1346 M3e4d6 ``CapabilityRequestStore.file_request`` calls it as
+the statement before its ``if self._db:``, presenting ``agent_id``, and ``CapabilityRequestStore.decide`` as the first
+statement after its docstring, presenting ``decided_by``; that check comes before ``decide``'s own write and before
+its call to ``_decide_ladder_row``, which writes the decision of a filing with a ladder record.
 ``ProbOSRuntime.start`` hands the service through ``set_admission`` to the runtime's Ward Room when it is a
 ``WardRoomService``, to its episodic store when it is an ``EpisodicMemory``, to its clinical notes store when it is a
 ``ClinicalNotesStore``, to its skill request store when it is a ``SkillRequestStore``, to its persistent task store
 when it is a ``PersistentTaskStore``, to its chat thread store when it is a ``ChatThreadStore`` and to its assignment
 service when it is an ``AssignmentService``. From AD-1346 M3e4d5 ``WardRoomService.set_admission`` hands it on to the
-Ward Room's channel manager when ``start`` has built one.
+Ward Room's channel manager when ``start`` has built one. From AD-1346 M3e4d6 ``ProbOSRuntime.start`` passes it to
+``init_communication`` as ``admission``, which builds the capability request store with it.
 ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
@@ -43,9 +47,10 @@ Ward Room's channel manager when ``start`` has built one.
 - WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room,
        skill requests, persistent tasks and assignments on, the runtime's Ward Room, episodic store, clinical notes
        store, skill request store, persistent task store, chat thread store and assignment service, and from AD-1346
-       M3e4d5 the Ward Room's channel manager, hold the runtime's service and their writes reach ``check_ticket`` with
-       the presented ids; with it false and assignments off, the first six and the channel manager hold None and the
-       runtime has no assignment service.
+       M3e4d5 the Ward Room's channel manager and from AD-1346 M3e4d6 the capability request store, hold the runtime's
+       service and their writes reach ``check_ticket`` with the presented ids; with it false and assignments off, the
+       first six, the channel manager and the capability request store hold None and the runtime has no assignment
+       service.
 - WM6  #1604 property 1 at the three AD-1346 M3e4d1 checks: three rounds of four writes (a note by each of two agents,
        a filing by the first and its decision by the second), outside a hold, inside the first agent's hold, and inside
        it after a Captain's stop, tally 4 ``ticket_missing``, 2 ``ticket_live``, 2 ``ticket_principal_mismatch`` and 4
@@ -77,11 +82,19 @@ Ward Room's channel manager when ``start`` has built one.
        ``ticket_live``, 1 ``ticket_principal_mismatch`` and 3 ``ticket_revoked``.
 - WM15 #1604 property 12 at those two checks: two Ward Rooms, one handed the admission service and one handed None,
        answer the same three rounds the same.
+- WM16 #1604 property 1 at the two AD-1346 M3e4d6 checks: three rounds of a filing by the first agent that the second
+       decides, a filing with a ladder record by the second that the first decides through ``_decide_ladder_row``, and
+       an install filing with an invalid payload, which ``file_request`` refuses before its check, outside a hold,
+       inside the first agent's hold, and inside it after a Captain's stop; they tally 4 ``ticket_missing``, 2
+       ``ticket_live``, 2 ``ticket_principal_mismatch`` and 4 ``ticket_revoked``.
+- WM17 #1604 property 12 at those two checks: two capability request stores, one built with the admission service and
+       one built with None, answer the same three rounds the same.
 
 WM3 and WM4 use a real ``WardRoomService`` and ``EpisodicMemory``, WM6 and WM7 a real ``ClinicalNotesStore`` and
 ``SkillRequestStore``, WM8 and WM9 a real ``PersistentTaskStore``, WM10 and WM11 a real ``ChatThreadStore`` with a
-fixed clock, WM12 and WM13 a real ``AssignmentService`` with no Ward Room, and WM14 and WM15 a real
-``WardRoomService``, over ``tmp_path``, with a service built with the test's loop. WM5 boots a real runtime under
+fixed clock, WM12 and WM13 a real ``AssignmentService`` with no Ward Room, WM14 and WM15 a real ``WardRoomService``,
+and WM16 and WM17 a real ``CapabilityRequestStore`` with no event callback and no trust network, over ``tmp_path``,
+with a service built with the test's loop. WM5 boots a real runtime under
 ``tmp_path`` and replaces ``AdmissionService.check_ticket``, as ``tests/test_ad1346_admission_egress_sinks.py``'s ES2
 does.
 """
@@ -103,6 +116,7 @@ from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.admission.tickets import TicketRegistry
 from probos.agent_stop import AgentStopService
 from probos.assignment import AssignmentService
+from probos.capability_request import TRIAGE_RECORD_VERSION, TRIAGE_RUNGS, CapabilityRequestStore
 from probos.cognitive.clinical_notes_store import ClinicalNotesStore
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.llm_client import MockLLMClient
@@ -406,7 +420,8 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; AD-1346 M3e4d2: D293; AD-1346 M3e4d3: D300; AD-1346
-    M3e4d4: D308; AD-1346 M3e4d5: D315; kills EV-7, EV-8, ED-5, ED-6, EY-3, EU-5, EO-3, EO-5)."""
+    M3e4d4: D308; AD-1346 M3e4d5: D315; AD-1346 M3e4d6: D322; kills EV-7, EV-8, ED-5, ED-6, EY-3, EU-5, EO-3, EO-5,
+    RQ-6, RQ-7)."""
     memory = EpisodicMemory(db_path=str(tmp_path / "on" / "episodic" / "episodes.db"))
     config = _config(shadow_enabled=True)
     config.assignments.enabled = True  # AD-1346 M3e4d4: AssignmentConfig.enabled is off by default; the second runtime keeps it off
@@ -465,6 +480,13 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         channel_marks.append(len(seen))
         await room.get_or_create_dm_channel(AGENT_A, "peer9-ad1346-m3e4d5")
         assert [seen[mark] for mark in channel_marks] == [(True, AGENT_B), (True, AGENT_A)], (channel_marks, seen)
+        requests = runtime.capability_request_store  # AD-1346 M3e4d6
+        assert type(requests) is CapabilityRequestStore and vars(requests)["_admission"] is service, "the boot built it with the service"
+        request_marks = [len(seen)]
+        filed = await requests.file_request(AGENT_A, "grant", "ad1346-m3e4d6-hotel", rationale="ad1346 m3e4d6 india")
+        request_marks.append(len(seen))
+        await requests.decide(filed.id, False, reason="ad1346 m3e4d6 juliett", decided_by=AGENT_B)
+        assert [seen[mark] for mark in request_marks] == [(True, AGENT_A), (True, AGENT_B)], (request_marks, seen)
     finally:
         await asyncio.wait_for(runtime.stop(), timeout=600)
     off_memory = EpisodicMemory(db_path=str(tmp_path / "off" / "episodic" / "episodes.db"))
@@ -485,6 +507,8 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         assert type(off_chats) is ChatThreadStore and vars(off_chats)["_admission"] is None, "built and handed None"
         assert off.assignment_service is None, "premise: assignments off; the hand-off's isinstance passes over None"  # AD-1346 M3e4d4
         assert vars(off.ward_room._channels)["_admission"] is None, "AD-1346 M3e4d5: the Ward Room handed None on to its channel manager"
+        off_requests = off.capability_request_store  # AD-1346 M3e4d6
+        assert type(off_requests) is CapabilityRequestStore and vars(off_requests)["_admission"] is None, "built with None"
     finally:
         await asyncio.wait_for(off.stop(), timeout=600)
 
@@ -855,5 +879,95 @@ async def test_with_and_without_the_service_the_channel_creations_answer_identic
         ("issue", "ticket_issued"): 1,
         ("store_write", "ticket_missing"): 3, ("store_write", "ticket_live"): 2,
         ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 3,
+    }
+    assert service.failures == 0
+
+
+#: AD-1346 M3e4d6: a ladder record ``validate_triage_record`` accepts, selecting the grant rung; ``decide`` decides a
+#: filing that carries one through ``_decide_ladder_row``.
+_REQUEST_LADDER: Final = {
+    "version": TRIAGE_RECORD_VERSION, "gap_class": "tool", "selected": "grant",
+    "rungs": [
+        {"rung": rung, "outcome": "selected" if rung == "grant" else "not_run", "reason": "ad1346 m3e4d6", "candidates": []}
+        for rung in TRIAGE_RUNGS
+    ],
+}
+
+
+async def _capability_round(store: CapabilityRequestStore, phase: int) -> list[object]:
+    """AD-1346 M3e4d6: one round of four checked writes, a filing by ``AGENT_A`` that ``AGENT_B`` decides and a filing
+    with a ladder record by ``AGENT_B`` that ``AGENT_A`` decides, then an install filing with an invalid payload, which
+    ``file_request`` refuses before its check. Returns each answer without the fields a fresh store draws, and the
+    refusal's text."""
+    filed = await store.file_request(AGENT_A, "grant", f"ad1346-m3e4d6-alpha-{phase}", rationale=f"ad1346 m3e4d6 bravo {phase}")
+    decided = await store.decide(filed.id, True, reason=f"ad1346 m3e4d6 charlie {phase}", decided_by=AGENT_B)
+    ladder = await store.file_request(
+        AGENT_B, "grant", f"ad1346-m3e4d6-delta-{phase}", rationale=f"ad1346 m3e4d6 echo {phase}", triage=_REQUEST_LADDER,
+    )
+    settled = await store.decide(ladder.id, False, reason=f"ad1346 m3e4d6 foxtrot {phase}", decided_by=AGENT_A)
+    refused: list[str] = []
+    try:
+        await store.file_request(AGENT_A, "install", f"ad1346-m3e4d6-golf-{phase}", payload={})
+    except ValueError as exc:
+        refused.append(str(exc))
+    return [_shape(filed), _shape(decided), _shape(ladder), _shape(settled), refused]
+
+
+async def test_the_capability_request_checks_count_missing_live_mismatch_and_revoked(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM16 (#1604 property 1 at the two AD-1346 M3e4d6 checks; D321, D322; kills RQ-3, RQ-4, RQ-5)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    store = CapabilityRequestStore(db_path=str(tmp_path / "capability_requests.db"), admission=service)
+    await store.start()
+    try:
+        await _capability_round(store, 1)
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            await _capability_round(store, 2)
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d6: the Captain stops the held work")
+            await _capability_round(store, 3)
+        finally:
+            hold.end()
+        assert tickets.tally() == {
+            ("issue", "ticket_issued"): 1,
+            ("store_write", "ticket_missing"): 4, ("store_write", "ticket_live"): 2,
+            ("store_write", "ticket_principal_mismatch"): 2, ("store_write", "ticket_revoked"): 4,
+        }
+        assert service.failures == 0
+    finally:
+        await store.stop()
+
+
+async def test_with_and_without_the_service_the_capability_requests_answer_identically(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM17 (#1604 property 12 at the two AD-1346 M3e4d6 checks; D323)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    stores = [
+        CapabilityRequestStore(db_path=str(tmp_path / f"capability_requests_{i}.db"), admission=held)
+        for i, held in enumerate((service, None))
+    ]
+    for store in stores:
+        await store.start()
+    try:
+        first = [await _capability_round(store, 1) for store in stores]
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            second = [await _capability_round(store, 2) for store in stores]
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d6: the golden test's stop")
+            third = [await _capability_round(store, 3) for store in stores]
+        finally:
+            hold.end()
+    finally:
+        for store in stores:
+            await store.stop()
+    assert first[0] == first[1] and second[0] == second[1] and third[0] == third[1]
+    assert first[0][2]["triage"] == _REQUEST_LADDER and first[0][3]["decided_by"] == AGENT_A, "premise: the ladder filing and its decision"
+    assert first[0][4] == ["Invalid install request payload; request not filed"], "premise: the refusal"
+    assert tickets.tally() == {
+        ("issue", "ticket_issued"): 1,
+        ("store_write", "ticket_missing"): 4, ("store_write", "ticket_live"): 2,
+        ("store_write", "ticket_principal_mismatch"): 2, ("store_write", "ticket_revoked"): 4,
     }
     assert service.failures == 0
