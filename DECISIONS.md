@@ -1358,6 +1358,16 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 - *Residual.* Recorded limits L1 to L10 of the contract.
 - *Reversal.* Revert the BF-949 commits.
 
+### BF-953 -- The read floor decides every spelling of one file the same way (2026-11-04, #1752)
+
+- *Scope.* `security/file_access.py` (`_longest_match`, `_namespace_free`, `_file_identity`, `_OnDisk`; `resolve_read_path`'s docstring and its three calls), tests. Contract `prompts/bf-953-read-floor-spellings.md`.
+- *SP1 (the decision).* Containment is decided on the namespace-free text of the path and the root; a path or root that still names a share or device is also decided by file identity, read once per call and only for those spellings, on Windows only. Rejected: the textual key alone (it cannot name a machine's own names); the system's final path name (it reports what it was given); refusing every share path (it refuses a legitimate network path and needs an operator escape); identity for every path (a stat per ancestor on every read).
+- *SP2 (the return).* The resolved path, as before. It names the file the decision was made on. Rejected: returning the rewritten text (it can name another file).
+- *SP3 (no escape).* No config field and no operator escape: nothing admitted for a reason other than its spelling is refused.
+- *SP4 (other platforms).* The textual test is the whole decision wherever `os.name` is not `nt`.
+- *Residual.* Recorded limits L1 to L8 of the contract.
+- *Reversal.* Revert the BF-953 commits.
+
 ### BF-948 -- list_files lists only what the read policy admits (2026-11-04, #1736)
 
 - *Scope.* `cognitive/swe_harness/tools.py` (`ListFilesTool`, `_LIST_FILES_PATTERN_REFUSAL`), `tools/effect_tiers.py` (a comment), tests. Contract `prompts/bf-948-list-files-read-policy.md`.
