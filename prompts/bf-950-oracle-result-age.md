@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-04
 **Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-05, before the build: the two tracker heads of section 8 carry 2026-11-05, the local date of M5's commit, as section 8's Date rule requires; and the base of this build is `58235059` (BF-948 and BF-953's merge, PR #1753), which changes none of the nine files this contract anchors in (`git diff --stat 728e1fc2 58235059 -- <the nine files>` is empty, and so is the same diff over the thirteen test files and the two scripts the gates call), and whose only changes to the tracker files are the BF-948 and BF-953 entries the re-anchoring rule of section 8 expects (P5-1 and P5-2 each match exactly once there).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 1 (review round 1, F1 and F2) adds milestones M6 to M9, tests T11 and T12, mutation rows NBM-10 to NBM-12 and OAM-21 to OAM-22, limits L15 to L17 and §16 items 13 to 17; it is appended at the end of this file.
 **Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1). For every file this contract touches, `git diff --stat ca0ca20b 728e1fc2 -- <files>` is empty, so `origin/main` `ca0ca20b` gives the same anchors. **Dependencies:** none. It does not touch BF-948/BF-953 work (`list_files`, `security/file_access.py`, `tools/protocol.py`). **Tier:** M1 STANDARD; M2, M3 and M4 STANDARD with a shared contract each (§4); M5 STANDARD. **Estimated tests:** 1 new file, `tests/test_bf950_oracle_result_age.py`: 11 functions and 39 cases, a count derived by reading the file, not by running it. Edits: `tests/test_ad677_context_provenance.py` (5 functions), `tests/test_ad1139_oracle_query_tool.py` (the regex and 1 function), `tests/test_ad1341_s4_lessons.py` and `tests/test_ad1341_s6_nature_description.py` (one constant each), and `tests/fixtures/ad1179_tool_definition_golden.json` (one description).
 **BF number:** BF-950, held by the title of #1742 (OPEN). `git log --all -i --grep BF-950` finds `cb6d61ef` (BF-951) and `079f4761` (docs). Both mention the number and neither fixes it. Nothing is allocated.
 
@@ -1536,3 +1537,472 @@ Sources:
 - [HoH: A Dynamic Benchmark for Evaluating the Impact of Outdated Information on RAG (arXiv 2503.04800)](https://arxiv.org/pdf/2503.04800)
 - [It's About Time: Incorporating Temporality in Retrieval Augmented Language Models (arXiv 2401.13222)](https://arxiv.org/pdf/2401.13222)
 - [Solving Freshness in RAG: A Simple Recency Prior (arXiv 2509.19376)](https://arxiv.org/html/2509.19376v1)
+
+## Amendment 1 (review round 1: F1 and F2)
+
+**Ordering:** apply P6-0 to the contract first, then append this whole section verbatim to the end of `prompts/bf-950-oracle-result-age.md`, both in M6's commit. Every `src` and tracker SEARCH is anchored on `eed3a3ee`, because M6 is test-only. P7-5 and P8-2 remove markers that P6-1 and P6-2 add, so they are anchored on M6's tree; that is the only exception.
+
+**P6-0** `prompts/bf-950-oracle-result-age.md`
+
+SEARCH:
+```
+**Status:** ready to build. **Base:** drafted on `728e1fc2`
+```
+REPLACE:
+```
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 1 (review round 1, F1 and F2) adds milestones M6 to M9, tests T11 and T12, mutation rows NBM-10 to NBM-12 and OAM-21 to OAM-22, limits L15 to L17 and §16 items 13 to 17; it is appended at the end of this file.
+**Status:** ready to build. **Base:** drafted on `728e1fc2`
+```
+
+### A1.1 Findings and decisions
+
+- **F1 (P2, ordinary reach through an operator-edited file; not a regression).** In `_build_self_monitoring_context` the AD-550 index sorted the raw `updated`, the AD-552 repetition check compared the raw `revision`, and the topic count hashed the raw `topic`. All three sat inside the `try` that also held the BF-949/BF-950 semantic pull. So one hand-edited notebook entry (a YAML date beside the store's text, a text revision, a list topic) ended the read-back for the cycle. Store-written files never produce these shapes (`records_store.py:305`, `:323`, `:354`). This contract's §1.5 names the hand-written date as a supported shape. **Fix (M7):** the pull gets its own error boundary; the index orders by `record_write_time`; the repetition check counts only an int revision.
+- **F2 (P2, ordinary reach with `crew_sigma_context_enabled=True`; not a regression).** `crew_executor._COMMONS_DISPOSITION` promised every entry "an age" and told agents to weigh a "STALE" entry lightly. `_render_commons_entry` shows an age only for a numeric `metadata["timestamp"]` and never writes STALE. **Fix (M8):** text only, "sometimes an age", "old" instead of "STALE", +8 characters. The renderer is unchanged (L16).
+- **§9 note.** The index line still shows the raw `updated` (L14 holds). Its order is now that of the parsed write time, which equals the raw order for every store-written entry.
+
+### A1.2 Milestones and gates
+
+| M | Tier | Shared contract? | Pairs | Gate |
+|---|---|---|---|---|
+| M6 | STANDARD | test only (plus this contract) | P6-0, P6-1, P6-2 | G6 |
+| M7 | STANDARD | no (the dict's keys and shape are unchanged; only when `notebook_content` is produced changes) | P7-1 to P7-5 | G7 |
+| M8 | STANDARD | no (agent-visible text; no pinned test changes) | P8-1, P8-2 | G8 |
+| M9 | STANDARD | trackers | P9-1, P9-2, P9-3, ledger | G9 |
+
+Count notes: the new-file counts below come from reading the file (39 cases at HEAD, plus T11's 3 and T12's 1). Every count marked **measure** has to be measured on the oracle tree.
+
+- **G6:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf950_oracle_result_age.py -q -n 0`.
+  - Expected: **39 passed, 4 xfailed**.
+  - Then `... -m pytest tests/test_bf950_oracle_result_age.py -q -n 0 --runxfail -k "hand_edited or crew_consult"`. Expected: **4 failed**:
+    - three T11 cases with `KeyError: 'notebook_content'`;
+    - T12 at the line `assert ("STALE" in _COMMONS_DISPOSITION) == ("STALE" in rendered)`.
+  - Any failure on a `# premise` line is a hard stop.
+- **G7:** `... -m pytest tests/test_bf950_oracle_result_age.py tests/test_self_monitoring.py tests/test_bf949_notebook_reader_identity.py tests/test_ad550_notebook_dedup.py tests/test_ad552_notebook_self_repetition.py tests/test_proactive_quality.py -q -n 0`, then `... -P scripts/check_architecture_principles.py --check`.
+  - New file: **42 passed, 1 xfailed**.
+  - Others: 0 failed, counts equal to G4's (**measure**).
+- **G8:** `... -m pytest tests/test_bf950_oracle_result_age.py tests/test_ad1141_crew_loop_sigma.py tests/test_ad1294_read_provenance_rendering.py -q -n 0`, then `check_architecture_principles.py --check`.
+  - New file: **43 passed**.
+  - Others: 0 failed, counts equal to M5's head (**measure**). `test_char_budget_is_enforced_and_reports_the_elision` must pass; it fails if the +8 characters exceed the budget margin.
+- **G9:** `... -P scripts/gen_ad_ledger.py`; `... -P scripts/gen_ad_ledger.py --check` (exit 0); `... -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
+  - Expected: the same count as G5 (33).
+  - Stage the two ledger files as written (whether they change at all is **measure**).
+- **Mutation campaign of record, on M8's head.**
+  - Run an unmutated baseline of the new file first.
+  - Record the sha256 of `proactive.py` and `crew_executor.py`.
+  - Run NBM-10 to NBM-12 and OAM-21 to OAM-22.
+  - Rerun NBM-1 to NBM-5, because `proactive.py` differs from M4's campaign file (their lines are unchanged).
+- **Broad gate:** once, after round 2, as §4 says.
+
+### A1.3 Commit messages
+
+- M6: `BF-950 M6: reproductions of the notebook read-back lost to one hand-edited entry and of the crew-consult STALE promise`
+- M7: `BF-950 M7: one hand-edited notebook entry no longer ends the self-monitoring read-back`
+- M8: `BF-950 M8: the crew-consult preamble promises only what its entries carry`
+- M9: `BF-950 M9: trackers and ledger for Amendment 1`
+
+### A1.4 Tests
+
+| Id | Test | Cases | Covers | xfail until |
+|---|---|---|---|---|
+| T11 | `test_one_hand_edited_entry_does_not_cost_the_read_back` | 3 | F1, real store → pull → sensorium renderer | M7 |
+| T12 | `test_the_crew_consult_preamble_promises_only_what_its_entries_carry` | 1 | F2, preamble × renderer crossing | M8 |
+
+**P6-1** `tests/test_bf950_oracle_result_age.py`
+
+SEARCH:
+```python
+        assert _CAPABILITY_GAP_RE.search(text) is None
+```
+REPLACE:
+```python
+        assert _CAPABILITY_GAP_RE.search(text) is None
+
+
+_UNTIL_M8 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M8: the crew-consult preamble promises a STALE flag its entries never carry",
+)
+
+
+@_UNTIL_M8
+def test_the_crew_consult_preamble_promises_only_what_its_entries_carry() -> None:
+    """Review round 1 (F2): the crew consult's own preamble promised every entry an age and a STALE flag.
+
+    ``crew_executor._render_commons_entry`` dates an entry only from a numeric ``metadata["timestamp"]`` and
+    never writes ``STALE``, so a forty-day-old entry is rendered with an age and no flag. The preamble and the
+    renderer are held together here, as AD-1294's crossing test holds the other fields.
+    """
+    from probos.cognitive.crew_executor import _COMMONS_DISPOSITION, _render_commons_entry
+
+    rendered = _render_commons_entry(
+        _result("operational", {"timestamp": time.time() - _FORTY_DAYS_AGO}, score=0.71),
+    )
+    assert "40d ago" in rendered  # premise: an old entry with a numeric timestamp is dated
+    assert ("STALE" in _COMMONS_DISPOSITION) == ("STALE" in rendered)
+    assert "and sometimes an age, so weigh a weakly-matching or old entry lightly." in _COMMONS_DISPOSITION
+    assert _CAPABILITY_GAP_RE.search(_COMMONS_DISPOSITION) is None
+```
+
+**P6-2** `tests/test_bf950_oracle_result_age.py`
+
+SEARCH:
+```python
+    result = await _self_monitoring(
+        _mock_records({"content": "Notebook body", "frontmatter": frontmatter}), "Bones", pending="my-topic",
+    )
+    assert result["notebook_content"]["snippet"] == "Notebook body"  # premise
+    assert _notebook_tags(_sensorium_render(result)) == [expected]
+```
+REPLACE:
+```python
+    result = await _self_monitoring(
+        _mock_records({"content": "Notebook body", "frontmatter": frontmatter}), "Bones", pending="my-topic",
+    )
+    assert result["notebook_content"]["snippet"] == "Notebook body"  # premise
+    assert _notebook_tags(_sensorium_render(result)) == [expected]
+
+
+_UNTIL_M7 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M7: one hand-edited notebook entry ends the self-monitoring notebook block",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["a-yaml-date-beside-text", "a-text-revision", "a-list-topic"])
+@_UNTIL_M7
+async def test_one_hand_edited_entry_does_not_cost_the_read_back(tmp_path: Path, shape: str) -> None:
+    """Review round 1 (F1): one notebook entry edited outside the store ended the whole block for the cycle.
+
+    The index sorted the raw ``updated`` (a YAML date beside the store's text raised), the repetition check
+    compared the raw ``revision`` (text raised), and the topic count hashed the raw ``topic``; each sat inside
+    the error boundary of the read-back, so the agent lost the read-back with the index. A real store, its
+    files edited as a person would edit them.
+    """
+    store = await _records(tmp_path)
+    now = time.time()
+    await store.write_notebook("Zephyr", "first-topic", "engineering notes, first", department="engineering")
+    await store.write_notebook("Zephyr", "second-topic", "engineering notes, second", department="engineering")
+    first, second = "notebooks/Zephyr/first-topic.md", "notebooks/Zephyr/second-topic.md"
+    if shape == "a-yaml-date-beside-text":
+        assert type(_rewrite_frontmatter(store, first, updated=date(2026, 5, 3))["updated"]) is date  # premise
+        assert type(_rewrite_frontmatter(store, second)["updated"]) is str  # premise: the store writes text
+    elif shape == "a-text-revision":
+        assert type(_rewrite_frontmatter(store, first, updated=_iso(now), revision="4")["revision"]) is str  # premise
+        _rewrite_frontmatter(store, second, updated=_iso(now - 3600), revision=5)
+    else:
+        assert type(_rewrite_frontmatter(store, first, topic=["engines", "warp"])["topic"]) is list  # premise
+
+    result = await _self_monitoring(store, "Zephyr")
+
+    content = result["notebook_content"]
+    assert content["topic"] in {"first-topic", "second-topic"} and "engineering notes" in content["snippet"]
+    tags = _notebook_tags(_sensorium_render(result))
+    assert len(tags) == 1 and tags[0].startswith(f'<notebook topic="{content["topic"]}" updated="'), tags
+    if shape == "a-yaml-date-beside-text":
+        assert [entry["topic"] for entry in result["notebook_index"]] == ["second-topic", "first-topic"]
+    elif shape == "a-text-revision":
+        warnings = result.get("notebook_repetition_warnings", [])
+        assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
+```
+
+### A1.5 M7
+
+**P7-1** `src/probos/proactive.py`
+
+SEARCH:
+```python
+        if tier["notebooks"]:
+            try:
+                if hasattr(rt, '_records_store') and rt._records_store:
+                    entries = await rt._records_store.list_entries(
+```
+REPLACE:
+```python
+        if tier["notebooks"]:
+            # BF-950 Amendment 1: bound before the listing, so the read-back below
+            # still runs when the index or repetition enrichment raises.
+            entries: list[dict] = []
+            try:
+                if hasattr(rt, '_records_store') and rt._records_store:
+                    entries = await rt._records_store.list_entries(
+```
+
+**P7-2** `src/probos/proactive.py`
+
+SEARCH:
+```python
+                        # AD-550: Enhanced index with content previews + recency
+                        sorted_entries = sorted(
+                            entries,
+                            key=lambda e: e.get("frontmatter", {}).get("updated", ""),
+                            reverse=True,
+                        )
+```
+REPLACE:
+```python
+                        # AD-550: Enhanced index with content previews + recency
+                        # BF-950 Amendment 1: ordered by record_write_time, which reads every
+                        # shape of ``updated`` (the store's text, a hand-written YAML date) as
+                        # one type; the raw sort raised on a date beside text. An entry with no
+                        # parseable write time sorts last, as an empty ``updated`` did.
+                        sorted_entries = sorted(
+                            entries,
+                            key=lambda e: record_write_time(e.get("frontmatter")) or 0.0,
+                            reverse=True,
+                        )
+```
+
+**P7-3** `src/probos/proactive.py`
+
+SEARCH:
+```python
+                        for ei in enriched_index:
+                            rev = ei.get("revision", 1)
+                            if rev >= _rep_thresh and ei.get("updated"):
+```
+REPLACE:
+```python
+                        for ei in enriched_index:
+                            rev = ei.get("revision", 1)
+                            # BF-950 Amendment 1: only an int revision is counted (the store
+                            # writes nothing else); a hand-written text revision raised here.
+                            if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):
+```
+
+**P7-4** `src/probos/proactive.py`
+
+SEARCH:
+```python
+                        if warnings:
+                            result["notebook_repetition_warnings"] = warnings
+
+                    # Semantic pull: the agent's own notebook entries that contain its
+                    # department name (frontmatter included). BF-949: the walk is confined
+                    # to the agent's notebook directory and reads as the agent, so it sees
+                    # only entries under that directory, and of those only what it may read.
+                    dept = getattr(agent, 'department', '')
+                    if dept and entries:
+                        search_results = await rt._records_store.search(
+                            dept,
+                            scope="ship",
+                            reader_id=callsign,
+                            reader_department=dept,
+                            directory=f"notebooks/{callsign}",
+                        )
+                        if search_results:
+                            top = search_results[0]
+                            # BF-950: dated, as the index line beside it is.
+                            result["notebook_content"] = _notebook_read_back(
+                                top.get("path", "").split("/")[-1].replace(".md", ""),
+                                top.get("snippet", "")[:300],
+                                top.get("frontmatter"),
+                            )
+            except Exception:
+                logger.debug("Self-monitoring: notebook query failed for %s", callsign, exc_info=True)
+```
+REPLACE:
+```python
+                        if warnings:
+                            result["notebook_repetition_warnings"] = warnings
+            except Exception:
+                logger.debug("Self-monitoring: notebook query failed for %s", callsign, exc_info=True)
+
+            # Semantic pull: the agent's own notebook entries that contain its
+            # department name (frontmatter included). BF-949: the walk is confined
+            # to the agent's notebook directory and reads as the agent, so it sees
+            # only entries under that directory, and of those only what it may read.
+            # BF-950 Amendment 1: its own error boundary, so an index or repetition
+            # failure on one entry no longer skips the read-back. It still runs only
+            # when the listing above returned entries.
+            try:
+                dept = getattr(agent, 'department', '')
+                if dept and entries:
+                    search_results = await rt._records_store.search(
+                        dept,
+                        scope="ship",
+                        reader_id=callsign,
+                        reader_department=dept,
+                        directory=f"notebooks/{callsign}",
+                    )
+                    if search_results:
+                        top = search_results[0]
+                        # BF-950: dated, as the index line beside it is.
+                        result["notebook_content"] = _notebook_read_back(
+                            top.get("path", "").split("/")[-1].replace(".md", ""),
+                            top.get("snippet", "")[:300],
+                            top.get("frontmatter"),
+                        )
+            except Exception:
+                logger.debug("Self-monitoring: notebook read-back failed for %s", callsign, exc_info=True)
+```
+
+**P7-5** `tests/test_bf950_oracle_result_age.py`
+
+SEARCH:
+```python
+_UNTIL_M7 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M7: one hand-edited notebook entry ends the self-monitoring notebook block",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["a-yaml-date-beside-text", "a-text-revision", "a-list-topic"])
+@_UNTIL_M7
+```
+REPLACE:
+```python
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["a-yaml-date-beside-text", "a-text-revision", "a-list-topic"])
+```
+
+### A1.6 M8
+
+**P8-1** `src/probos/cognitive/crew_executor.py`
+
+SEARCH:
+```python
+_COMMONS_DISPOSITION: str = (
+```
+REPLACE:
+```python
+# BF-950 Amendment 1: name only what ``_render_commons_entry`` emits. It shows an
+# age only for a result whose ``metadata["timestamp"]`` is a number, and it never
+# writes STALE; a BF-950 test holds the two together.
+_COMMONS_DISPOSITION: str = (
+```
+
+SEARCH:
+```python
+    "tier, a retrieval relevance score, an author where one was recorded, and "
+    "an age, so weigh a weakly-matching or STALE entry lightly. Relevance is "
+```
+REPLACE:
+```python
+    "tier, a retrieval relevance score, an author where one was recorded, and "
+    "sometimes an age, so weigh a weakly-matching or old entry lightly. "
+    "Relevance is "
+```
+
+**P8-2** `tests/test_bf950_oracle_result_age.py`
+
+SEARCH:
+```python
+_UNTIL_M8 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M8: the crew-consult preamble promises a STALE flag its entries never carry",
+)
+
+
+@_UNTIL_M8
+def test_the_crew_consult_preamble_promises_only_what_its_entries_carry() -> None:
+```
+REPLACE:
+```python
+def test_the_crew_consult_preamble_promises_only_what_its_entries_carry() -> None:
+```
+
+### A1.7 M9 (trackers)
+
+These amend the already-committed P5-1 and P5-2 entries in place: the entry heads and their dates are unchanged, so §8's head constraint and date rule still hold. Stage explicit paths only.
+
+**P9-1** `PROGRESS.md`
+
+SEARCH:
+```
+Ranking and retrieval are unchanged. No config field. The contract is `prompts/bf-950-oracle-result-age.md`.
+```
+REPLACE:
+```
+Ranking and retrieval are unchanged. No config field. Review round 1 (Amendment 1): the read-back no longer depends on the notebook index and repetition check succeeding, which one hand-edited entry (a YAML date beside the store's text, a text revision) made raise; the index orders entries by their parsed write time; and the crew-consult preamble (`crew_executor._COMMONS_DISPOSITION`) no longer promises every entry an age and a STALE flag its renderer never emits. The contract is `prompts/bf-950-oracle-result-age.md`.
+```
+
+**P9-2** `DECISIONS.md`
+
+SEARCH:
+```
+`proactive.py` (`_notebook_read_back`), `cognitive/cognitive_agent.py`
+```
+REPLACE:
+```
+`proactive.py` (`_notebook_read_back`; Amendment 1: the notebook index's sort key, the repetition check's revision read and the read-back's own error boundary), `cognitive/crew_executor.py` (`_COMMONS_DISPOSITION`, Amendment 1), `cognitive/cognitive_agent.py`
+```
+
+**P9-3** `DECISIONS.md`
+
+SEARCH:
+```
+- *Residual.* Recorded limits L1 to L14 of the contract.
+```
+REPLACE:
+```
+- *Amendment 1 (review round 1).* The read-back has its own error boundary, and the index orders by parsed write time and counts only an int revision, so one hand-edited notebook entry no longer ends the read-back. The crew-consult preamble promises an age only "sometimes" and no STALE flag, as its renderer emits. Rejected: moving the crew renderer onto `entry_write_time` (a second agent-visible marker change; recorded on #1754).
+- *Residual.* Recorded limits L1 to L17 of the contract.
+```
+
+Then regenerate the ledger as G9 says.
+
+### A1.8 Mutation rows
+
+| Id | File | Line | Mutate to | Killed by |
+|---|---|---|---|---|
+| NBM-10 | proactive.py | `key=lambda e: record_write_time(e.get("frontmatter")) or 0.0,` | `key=lambda e: e.get("frontmatter", {}).get("updated", ""),` | T11 `a-yaml-date-beside-text` |
+| NBM-11 | proactive.py | `if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):` | `if rev >= _rep_thresh and ei.get("updated"):` | T11 `a-text-revision` |
+| NBM-12 | proactive.py | `if dept and entries:` | `if dept and entries and "notebook_summary" in result:` | T11 `a-list-topic` |
+| OAM-21 | crew_executor.py | `"sometimes an age, so weigh a weakly-matching or old entry lightly. "` | `"sometimes an age, so weigh a weakly-matching or STALE entry lightly. "` | T12 |
+| OAM-22 | crew_executor.py | the same line | `"an age, so weigh a weakly-matching or old entry lightly. "` | T12 |
+
+### A1.9 Limits (added; L1 to L14 unchanged; L14 still holds, see A1.1)
+
+- **L15.** Index and repetition enrichment can still fail for a cycle on other frontmatter written outside the store's path (for example a list `topic`, which `set()` cannot hash). Since Amendment 1 that no longer suppresses the read-back. The repetition check still skips an entry whose `updated` is a YAML date (it parses with `datetime.fromisoformat`). Recorded on #1754.
+- **L16.** The crew-consult renderer still dates an entry only from a numeric `metadata["timestamp"]` and never writes STALE, so records, archive and semantic entries show no age there. The preamble now says "sometimes an age". Moving the renderer onto `entry_write_time` is recorded on #1754.
+- **L17.** An entry with no parseable `updated` but a parseable `created` now sorts in the index by `created`. The store always writes `updated`, so no store-written entry is affected.
+
+### A1.10 Diff Reviewer properties (added to §16)
+
+13. A store-written notebook renders exactly as at M5's head: the index order, the index fields (raw `updated`; `revision` defaulting to 1), the repetition warnings and the read-back. The sort key orders every store-written `updated` as the raw text did, and the revision guard admits every revision the store writes.
+14. The semantic pull runs whenever `list_entries` returned entries, whatever the index or repetition enrichment raised. It does not run when the listing raised or was empty, or when the agent has no department. Its exception is logged at debug with the callsign and ends only the pull.
+15. The pending-read path, its order after the pull (it still overwrites `notebook_content`), and the set of keys `_build_self_monitoring_context` can return are unchanged.
+16. `_COMMONS_DISPOSITION` promises only what `_render_commons_entry` emits and contains no "STALE". It still contains "tier", "relevance", "author" and "age", and never "confidence". The DD-4 gap regex finds nothing in it. It grew by 8 characters, and `test_char_budget_is_enforced_and_reports_the_elision` still renders exactly one entry.
+17. In `crew_executor.py` only the constant and its comment change; `_render_commons_entry` and `_format_consult_age` are byte-identical. §16 item 12 extends to T11 and T12: each marker is removed only at its milestone, after G6 showed the named failure.
+
+### A1.11 Verified against codebase (2026-11-05, on `eed3a3ee`)
+
+```
+proactive.py:45      from probos.cognitive.provenance import iso_utc, record_write_time
+proactive.py:2760-63 if tier["notebooks"]: / try: / if hasattr(rt, '_records_store') ... / entries = await ...list_entries(
+proactive.py:2768-73 sorted(entries, key=lambda e: e.get("frontmatter", {}).get("updated", ""), reverse=True)
+proactive.py:2779    set(e.get("frontmatter", {}).get("topic", ...) for e in entries)
+proactive.py:2837-39 for ei in enriched_index: / rev = ei.get("revision", 1) / if rev >= _rep_thresh and ei.get("updated"):
+proactive.py:2849-74 warnings ... semantic pull ... except Exception: logger.debug("Self-monitoring: notebook query failed ...")
+proactive.py:2876-94 pending read, its own try, overwrites notebook_content
+provenance.py:81-90  record_write_time(frontmatter) -> float | None (positive or None)
+records_store.py:305,:323,:354  updated = now isoformat; revision = existing_rev + 1; yaml.dump
+records_store.py:1143-1176  search: keyword match over raw text, returns path/frontmatter/score/snippet
+crew_executor.py:132-141  _COMMONS_DISPOSITION ("an age, so weigh a weakly-matching or STALE entry lightly")
+crew_executor.py:678-694, :722-735  _format_consult_age(int|float only); marker never writes STALE
+crew_executor.py:785-804  block budget includes the disposition; _BUDGET_NOTE at :157-160
+tests/test_ad1294_read_provenance_rendering.py:141-164  words tier/relevance/author/age; no confidence
+tests/test_ad1141_crew_loop_sigma.py:805-812  max_chars=1200 renders exactly one 400-char entry
+tests/test_bf950_oracle_result_age.py:70-142  _records, _rewrite_frontmatter, _self_monitoring, _sensorium_render, _notebook_tags, _mock_records
+```
+
+### A1.12 Absence verified (2026-11-05)
+
+```
+CLAIM: no store-reachable writer puts a date-typed `updated` or a non-int `revision` in a notebook
+RUN:   Grep "records_store\.(write_entry|write_notebook|publish|write_workspace_file)" src/; Grep write_workspace_file\( src/
+FOUND: routers/records.py:151 (write_notebook); write_workspace_file only from consultation/workspace.py and consultation/delivery.py:983 (workspace YAML)
+HOLDS: yes; reaching the defect needs an edit outside the store
+
+CLAIM: notebook_repetition_warnings and notebook_summary are never consumed in src
+RUN:   Grep "repetition_warnings|notebook_summary" src/ and tests/
+FOUND: src: proactive.py:2777, :2850 (producers only); tests: test_ad550_notebook_dedup.py:555-557 (notebook_summary)
+HOLDS: yes (recorded on #1754)
+
+CLAIM: no test pins the moved notebook-block source text
+RUN:   Grep "notebook query failed|Semantic pull|get\(\"updated\", \"\"\)|rev >= _rep_thresh" tests/
+FOUND: nothing
+HOLDS: yes
+```
+
+### A1.13 For the Captain
+
+None. Both repairs correct a false or lost signal inside the BF-950 envelope and weaken no control.
