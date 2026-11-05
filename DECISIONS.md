@@ -1346,6 +1346,18 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 - *Residual, accepted.* Registers R153 and R154 of the contract.
 - *Reversal.* Revert the M3e4d5 commits.
 
+### BF-950 -- An oracle_query result is aged by its own write time, not by its retrieval (2026-11-05, #1742)
+
+- *Scope.* `cognitive/provenance.py` (`ProvenanceTag.content_timestamp`, `age_seconds`, `is_stale`, `format_inline`; `STALE_AFTER_SECONDS`, `entry_write_time`, `record_write_time`, `iso_utc`; docstrings), `tools/oracle_query_tool.py` (`_ORACLE_DISPOSITION`, the description, docstrings), `proactive.py` (`_notebook_read_back`), `cognitive/cognitive_agent.py` (`_notebook_block_lines`, both `<notebook>` renderers), the AD-1179 golden, tests. Contract `prompts/bf-950-oracle-result-age.md`.
+- *OA1 (the age).* The content's write time as its tier records it; graph and health record none and show none. Rejected: an absolute date in the marker (AD-1341's entry budget); a retrieval age under another name; dropping the age.
+- *OA2 (STALE).* Older than 30 days, a module constant. Rejected: 300 s on the content's age; AD-550's 72 h refresh window; a config field now.
+- *OA3 (the parser).* Total: a value that does not parse is no age, so one entry cannot empty the result.
+- *OA4 (the text).* The preamble and the description state an age only where the store records a write time; pinned tests updated with inline notes, none deleted.
+- *OA5 (the read-back).* `<notebook>` carries `updated` (ISO-8601 UTC) and `revision` when they parse.
+- *Not changed.* `oracle_service.py`, ranking and retrieval; `memory_transparency.py`; the "AD-1294 (#1090)" citation, which is correct (`a6516a8a` closes #1090).
+- *Residual.* Recorded limits L1 to L14 of the contract.
+- *Reversal.* Revert the BF-950 commits.
+
 ### BF-949 -- The self-monitoring notebook pull reads only the agent's own notebook, as the agent (2026-11-03, #1741)
 
 - *Scope.* `knowledge/records_store.py` (`RecordsStore.search`: `directory`, the scope check; `record_is_readable` docstring; R1: the walk root in `list_entries`, `search` and `list_bills`), `knowledge/semantic.py` (a comment), `proactive.py` (the pull), `routers/records.py` (`search_records`), `cognitive/dm_targeted_lookup.py` (`_knowledge_lookup_reader`, the knowledge branch), tests. Contract `prompts/bf-949-notebook-pull-reader-identity.md`.
