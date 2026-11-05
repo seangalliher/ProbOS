@@ -6,6 +6,7 @@
 **Revised by (Amendment 2):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-04, after review round 3 of the whole candidate (`34bd9153aca8d7e89cf4468cdb1704f77edf791c`, NOT READY). A floor file root is compared by the file its own final component names, as a candidate is (D12), the two read-policy root builders keep a workspace root the system cannot resolve as it was composed (D13), `reader_spelling` says whether a listing may name a match (D14; BF-948's M6 uses it), and the claims that overreached are corrected (§1 items 9 to 12, §6 T16, T19 and T20, §16 items 3 and 13). BF-948 L16 stays scheduled. M5's line numbers are those of `34bd9153`. Review scope for M5 and M6 (recommended; the orchestrator decides, §16): the delta and §16 items 18 to 22, with the three reproductions of §1 items 9 to 11.
 **Revised by (orchestrator, 2026-11-05, after Amendment 2):** section 10's rows DNY-11, DNY-12, DNY-16, DNY-19 and DNY-30 name lines that M5 and BF-948's M6 replaced (the two root builders now share `_workspace_root`, the floor call is `_floor_roots(protected_roots)`, and the listing's display form is `reader_spelling`): their anchors and mutants are the post-M6 text, because the census tool found the old anchors occurring 0 times on the built head; no code, count or other row changed.
 **Revised by (Amendment 3):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-05, after review round 4 of the whole candidate (`a0857b088a09f4f0b5f8c975c45bb7f973039050`, NOT READY on F1 and F2; every round-3 finding resolved, none regressed). `reader_spelling` gives a spelling only where the verified reader's own rules on the text admit it, on every platform (D15: its location gate `validate_read_location`, called as it is, and its child-name rule for the final name). That closes round 4's F1 (a name that is not strict UTF-8) and the other refusals of the same gate and rule, which the function applied on Windows only or not at all. The sentence that said a listing's cost per match is unchanged is corrected (F2): the function calls no filesystem function (T32) and adds string and path-object work (L20). L18 lists what a listing cannot promise, L19 what a listing leaves out that only the plain reader opens. Review scope for M6: round 5 reviews the delta (§16 item 27 lists what it verifies); whether the standing order's "adds behaviour the findings did not ask for" clause widens it to the whole candidate is the orchestrator's decision (Amendment 3's §0.2 recommends the delta). BF-948's M7 is a docstring and two comments.
+**Revised by (Amendment 4):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-05, after review round 5 of the whole candidate (`8c83093bd644be60d199c3f4cca1227f08472459`, NOT READY on A and B5-1; every round-4 finding resolved, none regressed). `reader_spelling` gives the verified reader's location gate the file's direct parent as well as the file (D15 as amended: the two texts `read_verified_file` gives it), on every platform, so a file whose directory is named as a reserved device (`con`, `aux`, `nul`, `prn`, `com1`, `lpt1`, or with such a stem, `aux.py`) has no spelling and is not listed (round 5's A: on POSIX such a name was offered and refused). Windows is unchanged: the chain rule of D14 already covered the direct parent. T29 and T30 pinned the wrong answer and are corrected; T34 (a generated differential against the reader's own gate and child-name rule) and T35 (real files, the real reader, the real tool) are new; L18 and L19 are amended, L20 has new numbers and L21 is new (the reader opens the directories above the direct parent without the gate, so the Windows rule is wider than the reader's text path). B5-1 corrects three claims of Amendment 3 (D15, SP12, L19): what refuses a name that is not strict UTF-8 is the reader's encoding of the path, and a refused name is answered `read_file failed` with the reader's own text, not always `invalid path`. Review scope for M7: round 6 reviews the delta (§16 items 28 to 32 list what it verifies). BF-948's M8 is a docstring.
 **Status:** M1 to M4 built (`c11a53dd`, `97101777`, `a7bd6372`, `f0f5f721`). M5 to build in the same PR, before BF-948's M6. **Base:** drafted on the BF-948 worktree head `728e1fc2d2f49fd04584adf2a41d1dfa68befcb5` (branch `fix/bf948-list-files-read-policy-20261104-ca0ca20b`, base `origin/main` `ca0ca20b9bfa80b4d2367bc61ab1f5d995969a38`). The orchestrator's brief named `9649df65`; `728e1fc2` adds only the amended BF-948 contract (`git diff --stat 9649df65 728e1fc2` is one file under `prompts/`), and every file this contract changes has the same blob at both (§13), so each pair applies to either. **Dependencies:** none; built first in the BF-948 PR (#1752 says so), before BF-948's M4. **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD, M4 HIGH, M5 HIGH. **Estimated tests:** 1 new file, `tests/test_bf953_read_floor_spellings.py` (29 test functions, 198 cases after M5; counts in §4).
 **BF number:** BF-953, held by the title of #1752 (`gh issue view 1752`: OPEN, "BF-953: resolve_read_path does not return one decision for every spelling of one file"). Current highest: **BF-953** (GitHub issue titles, all states, 1,507 fetched; the next BF-95x is BF-954). `git log --all` subjects stop at BF-951; `prompts/bf-95*` is empty; the roadmap's Bug Tracker has no BF-95x row (§Absence Verified).
 **Shared-contract change.** `resolve_read_path` is a public function every read path asks. This changes its decisions, so every consumer (§1, found by search) inherits it. **The Diff Reviewer therefore covers the whole candidate**, not the new lines: §16 lists the properties, and §3 D6 gives the compatibility story and §6 how it is tested.
@@ -54,6 +55,10 @@
    13. `reader_spelling` gave a spelling that the verified reader's location gate refuses: text that is not strict UTF-8 (a name with an unpaired UTF-16 surrogate on Windows, a name decoded with `surrogateescape` on POSIX). Listed from an ordinary and from an extended-prefix base, the name answered `read_file failed: ... surrogates not allowed` from the armed reader, and a repeat of the read counts as a tool defect (both reviewers; one measured `same_run_defect_count=2`, `persisted_faults=1`, `faults_after_sqlite_reload=1`). The function applied no other rule of the gate off Windows, so on POSIX it also gave a name with a colon or a character below 32, a reserved device stem as the final name (`aux.py`), and a base under a volume or device prefix that `plain_spelling` does not remove; and it applied the pinned directory's child-name rule (a backslash, a trailing dot or space in the final name) on Windows only, for the last two. The class is the one round 3's A3 and B1 belong to: a spelling a listing offers that the verified reader's rules on the text refuse.
    14. §16 item 20 said that `reader_spelling` reads nothing, so that a listing's cost per match is unchanged. It calls no filesystem function, and it builds path objects and strings for each match (10,000 calls on one path: 0.161 s on the head, 0.254 s after this amendment, 0.0066 s for `plain_spelling`).
 
+   **Found in review round 5 (Amendment 4), on `8c83093b`.** As properties of the head's decision:
+   15. `reader_spelling` applied the verified reader's location gate to the file's text only. `read_verified_file` also gives the gate the file's direct parent (`pin_directory(candidate.parent)` opens it through `PinnedDirectory.open`, whose first statement after the already-open check is `validate_read_location(path)`), and the gate's `PureWindowsPath(raw).is_reserved()` test looks at the final component of the text it is given. So on a POSIX host a file whose direct parent is a reserved device name (`con`, `aux`, `nul`, `prn`, `com1`, `lpt1`) or has such a stem (`aux.py`, `CON.txt`) was listed, and the armed reader answered `read_file failed: invalid path`; a repeat of the read counts as a tool defect (reviewer A; the orchestrator's probe: 31,941 of 292,464 POSIX-shaped texts, each with a reserved direct parent, 0 misses). It is on the base and not a regression. T29 and T30 pinned the wrong answer for it, and D15 stated it. On Windows the chain rule of D14 already withheld these names (0 of 43,380 generated inputs differ between the head and M7).
+   16. Three sentences of Amendment 3 overclaimed (reviewer B, B5-1; claims only): L19 said a name with an unpaired surrogate "cannot be carried as text in a result" (the delivery path escapes it; what refuses it is the reader's `raw.encode("utf-8", errors="strict")`, a `UnicodeEncodeError`), and D15 and SP12 said a name the reader refuses and the listing offers "is answered `invalid path`" (only the gate's refusals of a prefix, a drive or a device name answer that; a surrogate answers the codec's message and the child-name rule answers `invalid child name`).
+
 ## 2. Solution
 
 - **M1:** `tests/test_bf953_read_floor_spellings.py`, written first. Every spelling case the base decides differently, and every test that calls a helper M2 adds, is `xfail(strict=True)`: red on the base, for the reason its mark names.
@@ -62,6 +67,7 @@
 - **M4 (Amendment 1):** identity is a deny-only layer. The floor is decided by text, by the identity of the path's own chain, by the volumes the chain reaches through a link, and refuses when it cannot be read; an exempt or a permitted root is decided by text alone; precedence compares where a match stands in the path's own chain; the final component of a floor file root and of a credential name is compared by the file it names (D11); the two root builders resolve the workspace root; `plain_spelling` is the display form `list_files` uses (BF-948's M5). Tests T11 to T22, and T1 to T3, T7 and T10 change; the BF-953 tracker entries are amended in place.
 - **M5 (Amendment 2):** a floor file root is compared by the file its own final component names, as a candidate is, by adding that file to the floor's root list (`_floor_roots`, D12); both root builders keep a workspace root the system cannot resolve as it was composed, through one helper (`_workspace_root`, D13); `reader_spelling` gives the spelling a listing may name for a match, or none (D14), which BF-948's M6 uses. T16, T19 and T20 change, T23 to T28 are new, the claims are corrected, and the BF-953 tracker entries are amended in place.
 - **M6 (Amendment 3):** `reader_spelling` calls the verified reader's location gate and applies its child-name rule to the final name, before the Windows branch of D14, on every platform (D15); T29 to T33 are new and T26 is Windows-only; §16 item 20 and L18 are corrected, L19 and L20 are new, and the BF-953 tracker entries are amended in place. BF-948's M7 changes the `ListFilesTool` docstring and two comments.
+- **M7 (Amendment 4):** `reader_spelling` gives the verified reader's location gate the file's direct parent as well as the file (D15), on every platform; T29 and T30 are corrected, T34 and T35 are new; L18 and L19 are amended, L20 has new numbers and L21 is new; the three claims of B5-1 are corrected, and the BF-953 tracker entries are amended in place. BF-948's M8 changes the `ListFilesTool` docstring.
 
 ## 3. Decisions
 
@@ -102,8 +108,8 @@ Criteria order: correctness (every spelling of one file the floor refuses), safe
 - **D11, the final component names the file (Amendment 1; the second reviewer's R3 and R6). Chosen: compare the base file.** On Windows a final component that carries a stream (`name:stream`, `name:stream:$DATA`, `name::$DATA`) or ends in dots or spaces names the same file as its base `name`. A floor file root and a credential file name are therefore compared by the base file, by text, whether or not the file is on disk. `_base_name(name)` drops the text from the first colon and then the trailing dots and spaces (a name that would be empty stays as it is); `_base_file(path)` applies it to the final component; `_protected_leaf(path)` compares the credential names in the write side's canonical form (`_canonical_name`, case-folded, the key `_write_key` uses). The path an admitted read returns is the path as resolved, so a stream of an ordinary neighbour is read as named. It is applied once in `resolve_read_path`, before the identity step: the credential check, the on-disk chain and the floor comparison use the base file; the exempt and permitted comparisons use the path as resolved. It is pure text and adds no `os.stat` (T9). On another platform the names are compared as they are (T22). **Rejected:** refusing every name that carries a colon or ends in a dot or a space (a neighbour's stream is the caller's own file); looking the file up on disk and comparing identities (an absent file has no identity, so R6's absent file roots would stay open); changing `_write_key` (the write side's coverage is BF-911's; T20 pins that it refuses the same stream name). **Over-refusal:** L14. **Reach:** L15.
 - **D12, a floor file root is compared by the file it names (Amendment 2; round 3's A1). Chosen: add the base file of each root next to it.** `_floor_roots(roots)` returns the roots as they are spelled, each followed by `_base_file(root)` when that is another spelling; `resolve_read_path` compares the candidate's base file with that list. A root whose final component names itself (every directory root a system resolves, an ordinary file root, and every root on another platform) adds nothing, so every decision against an ordinary root list is the head's (T24). **Effects.** A configuration loaded as `loaded.yaml:settings` refuses its own spelling, the ordinary spelling of the file, its default stream and every other stream of it (T23, T28); a position count is the root's own count of parts, so no exemption's rank changes (T27); the identity step is handed the added root and reads at most one more `os.stat` for a share or device spelling (L4); a directory root spelled in the extended namespace with a trailing dot or space also refuses the directory its base names (L16). **Rejected:** replacing the root by its base file (a floor directory spelled `dir.` in the extended namespace would stop being refused: a new admission); reducing in `protected_config_files` (its result is the write side's list, and it would change BF-911's stat loop); reducing only the stream suffix (a trailing dot or space on a file root is the same class).
 - **D13, the workspace root as composed (Amendment 2; round 3's A2). Chosen: one helper.** `_workspace_root(runtime)` composes the root as the builders did and resolves it as a candidate is. When `resolve()` raises `OSError`, `RuntimeError` or `ValueError` it returns the root as composed; when the root cannot be composed it returns `None`. `permitted_read_roots` and `workspace_exempt_roots` use it, so a configured policy whose own roots are unusable still has the workspace root in its list, and the exempt list holds the same root, which no candidate is under (the base's two lists). **Recorded, not repaired (L17):** a configured policy whose every root is unusable and whose workspace root cannot be composed at all is `[]`, which every consumer reads as "no limit"; on the base the same two failures give the same list. A fail-closed form needs a root that matches nothing in a list whose emptiness now means "none configured" (seven call sites in five modules, and `reads_confined`): a change to that list's contract, not to this finding.
-- **D14, the spelling a listing may name (Amendment 2; round 3's A3 and B1). Chosen: a textual rule, `reader_spelling`.** `file_access.reader_spelling(path)` (public, pure) is `plain_spelling(path)` when the verified reader's rules on the text admit it (D15) and, on Windows, when every component of it after its anchor names, as an ordinary path, what it names in the extended namespace, and `None` otherwise. A component fails if it ends in a dot or a space (the system drops both from an ordinary path), or if any part of the spelling, the final component or an ancestor, is a reserved device name (`PureWindowsPath.is_reserved`, the test the verified reader applies). It applies to a path that never had a prefix too, so it holds for an ordinary base. It completes D10: `plain_spelling` stays the first step, and `ListFilesTool` lists the spelling only where `reader_spelling` gives one (BF-948's M6), leaving a match with none out like a match the policy refuses. **Rejected:** an identity rule (for an ordinary base the match string already is the ordinary alias, so the namespace-preserved identity needs the lister to build the extended spelling itself, at two `os.stat` per match; a volume that reports file index 0 would empty every listing); the verified reader's own `validate_read_location` as the only gate (it checks the final component only, so a file in a directory named `con` passes it and the reader still fails: the textual chain rule stays; Amendment 3 adopts the gate as the first step, D15). **Cost:** no filesystem call per match; the work D15 adds per match is path objects and strings (L20).
-- **D15, the verified reader's rules on the text (Amendment 3; round 4's F1). Chosen: `reader_spelling` calls the reader's own location gate and applies its child-name rule to the final name, on every platform, before the Windows rule of D14.** After `plain_spelling` the function calls `validate_read_location(str(shown))` and gives `None` when it raises `ValueError` (`UnicodeEncodeError` is one), then gives `None` for a final name with a backslash, a trailing dot or a trailing space (the rule of `PinnedDirectory._leaf`, the reader's second check on the text; a colon is the gate's). The gate is called, so a later change of it reaches the listing; the final-name rule is restated in one expression and T31 reads it back from a real pinned directory (R4M-13 drifts the reader's rule and T31 fails). **Effects.** A name that is not strict UTF-8 (an unpaired UTF-16 surrogate on Windows, a name decoded with `surrogateescape` on POSIX) is not listed from an ordinary or an extended-prefix base (T29, T30, T33). On a POSIX host a colon or a character below 32 anywhere, a reserved device stem as the final name (`aux.py`), and a backslash, a trailing dot or a trailing space in the final name are not listed; a reserved device name or a trailing dot or space in an ancestor still is, because the reader opens the directory by its name (T29, T30). A base under a prefix that `plain_spelling` does not remove (a volume-GUID or device path) lists nothing, because the gate refuses the prefix. **Whose rules.** A listing follows the verified reader's rules, not the plain reader's, because the lister cannot know which reader the next read uses: `ReadFileTool` and `CodebaseReadSourceTool` choose per call on `_read_context(context)` (`tools.py:292`), whose key `_workspace_read` the loop sets (`agentic_loop.py:2642`) from the run's delivery run for the two reader tools only (`result_offload.py:76`, `:305`); a `list_files` call is not one, and sharing the test would put the delivery state into a call to a tool that is not a reader (AD-1240's surface). A name the verified reader refuses and the listing offers is answered `invalid path` and counted as a tool defect when the read is repeated (BF-948 L17); a name left out is not, and the plain reader still opens it by its path (L19). The prefix and the reserved names already followed the verified reader's rules (D10, D14); D15 completes the rule instead of restating it class by class (A3, B1 and F1 were three members). **Rejected:** strict UTF-8 only (the reviewers' smallest fix: it closes the surrogate and leaves the gate's other refusals listed and refused); the gate alone (it leaves a backslash, a trailing dot and a trailing space listed on POSIX, which the pinned directory refuses); asking the loop (above); answering the reader's lexical refusal as a caller-input error instead (the orchestrator's open decision, BF-948 L17: it changes `ReadFileTool`'s classification, not the listing, and either can be done without the other).
+- **D14, the spelling a listing may name (Amendment 2; round 3's A3 and B1). Chosen: a textual rule, `reader_spelling`.** `file_access.reader_spelling(path)` (public, pure) is `plain_spelling(path)` when the verified reader's rules on the text admit it (D15) and, on Windows, when every component of it after its anchor names, as an ordinary path, what it names in the extended namespace, and `None` otherwise. A component fails if it ends in a dot or a space (the system drops both from an ordinary path), or if any part of the spelling, the final component or an ancestor, is a reserved device name (`PureWindowsPath.is_reserved`, the test the verified reader applies to the file and to the directory it pins: the rule here is wider than the reader's text path wherever a reserved name or a trailing dot or space stands above the direct parent, L21). It applies to a path that never had a prefix too, so it holds for an ordinary base. It completes D10: `plain_spelling` stays the first step, and `ListFilesTool` lists the spelling only where `reader_spelling` gives one (BF-948's M6), leaving a match with none out like a match the policy refuses. **Rejected:** an identity rule (for an ordinary base the match string already is the ordinary alias, so the namespace-preserved identity needs the lister to build the extended spelling itself, at two `os.stat` per match; a volume that reports file index 0 would empty every listing); the verified reader's own `validate_read_location` as the only gate (it checks the final component only, so a file in a directory named `con` passes it and the reader still fails: the textual chain rule stays; Amendment 3 adopts the gate as the first step, D15). **Cost:** no filesystem call per match; the work D15 adds per match is path objects and strings (L20).
+- **D15, the verified reader's rules on the text (Amendments 3 and 4; round 4's F1, round 5's A). Chosen: `reader_spelling` calls the reader's own location gate on the file and on the file's direct parent and applies its child-name rule to the final name, on every platform, before the Windows rule of D14.** After `plain_spelling` the function calls `validate_read_location(str(shown))` and `validate_read_location(str(shown.parent))` (the two texts `read_verified_file` gives the gate: the file, and the directory its `pin_directory` opens) and gives `None` when either raises `ValueError` (`UnicodeEncodeError` is one), then gives `None` for a final name with a backslash, a trailing dot or a trailing space (the rule of `PinnedDirectory._leaf`, the reader's second check on the text; a colon is the gate's). The gate is called, so a later change of it reaches the listing; the final-name rule is restated in one expression and T31 reads it back from a real pinned directory (R4M-13 drifts the reader's rule and T31 fails). **Effects.** A name that is not strict UTF-8 (an unpaired UTF-16 surrogate on Windows, a name decoded with `surrogateescape` on POSIX) is not listed from an ordinary or an extended-prefix base (T29, T30, T33). On a POSIX host a colon or a character below 32 anywhere, a reserved device name or stem as the final name or as the name of the directory that holds the file (`aux.py`, `con/`), and a backslash, a trailing dot or a trailing space in the final name are not listed; a reserved device name, a trailing dot or a trailing space in a directory above that one is listed, because the reader opens those directories by name without the gate (L21; the call list in §13e) (T29, T30, T34, T35). A base under a prefix that `plain_spelling` does not remove (a volume-GUID or device path) lists nothing, because the gate refuses the prefix. **Whose rules.** A listing follows the verified reader's rules, not the plain reader's, because the lister cannot know which reader the next read uses: `ReadFileTool` and `CodebaseReadSourceTool` choose per call on `_read_context(context)` (`tools.py:292`), whose key `_workspace_read` the loop sets (`agentic_loop.py:2642`) from the run's delivery run for the two reader tools only (`result_offload.py:76`, `:305`); a `list_files` call is not one, and sharing the test would put the delivery state into a call to a tool that is not a reader (AD-1240's surface). A name the verified reader rejects and the listing offers is answered `read_file failed` with the reader's own text (`invalid path` for the gate's refusals of a prefix, a drive or a device name; the codec's message for text that is not strict UTF-8; `invalid child name` for the child-name rule) and counted as a tool defect when the read is repeated (BF-948 L17); a name left out is not, and the plain reader still opens it by its path (L19). The prefix and the reserved names already followed the verified reader's rules (D10, D14); D15 completes the rule instead of restating it class by class (A3, B1 and F1 were three members). **Rejected:** strict UTF-8 only (the reviewers' smallest fix: it closes the surrogate and leaves the gate's other refusals listed and refused); the gate alone (it leaves a backslash, a trailing dot and a trailing space listed on POSIX, which the pinned directory refuses); asking the loop (above); answering the reader's lexical refusal as a caller-input error instead (the orchestrator's open decision, BF-948 L17: it changes `ReadFileTool`'s classification, not the listing, and either can be done without the other). **Amendment 4 (round 5's A): the direct parent, and the property as a test.** The reader's text path is three rules, found by running `read_verified_file` on real files and listing every call into the module (§13e): its location gate on the file; its location gate on the file's direct parent (`PinnedDirectory.open`, given the directory `pin_directory(candidate.parent)` pins); and its child-name rule for the final name, with the gate on the file again (`_leaf`). Amendment 3 restated the first and the third and missed the second. The directories above the direct parent are opened by name with no gate, so a reserved device name, a trailing dot or a trailing space there refuses nothing off Windows (L21). **Chosen:** one more call in the function, `validate_read_location(str(shown.parent))`, inside the same `try`; and a generated differential test (T34) that computes the reader's own functions over a corpus in the reader's order and compares them with the function, the POSIX shape on every platform and the Windows shape on Windows, plus a seam test with real files, the real reader and the real tool (T35). **Rejected:** a public function that the reader and the lister both call (it edits the armed reader, whose `read_verified_file`, `PinnedDirectory.open` and `_leaf` other callers use: `copilot_adapter.py:108`, `tools.py:339` and `:961`, `workspace_result_store.py`'s seven `pin_directory` calls, for a listing's display rule; T34 and the orchestrator's probe are the drift guard instead, and fail at once if the reader gives the gate a third text); a table of reserved names in the lister (a restatement the reader can drift from); gating every ancestor (the reader does not, and names it opens would be left out).
 
 ## 4. Milestones and gates
 
@@ -115,6 +121,7 @@ Criteria order: correctness (every spelling of one file the floor refuses), safe
 | M4 | HIGH | Amendment 1: the same public function's decisions for every consumer (identity deny-only, precedence, the root builders), its tests, and the in-place tracker amendments | B4-1, B4-2, B5-1, B5-2 | G5 |
 | M5 | HIGH | Amendment 2: the same public function's decisions for every consumer (a floor file root by its file), the root builders' fallback, a new public function the lister asks, its tests and the in-place tracker amendments | B6-1, B6-2, B7-1, B7-2 | G6 |
 | M6 | HIGH | Amendment 3: the decisions of the one public function the lister asks (the verified reader's rules on the text, on every platform), its tests, the in-place tracker amendments, and BF-948's M7 docstring (P8-1) | B8-1, B8-2, B9-1, B9-2 | G7 |
+| M7 | HIGH | Amendment 4: the decisions of the one public function the lister asks (the direct parent's gate, on every platform), its tests, the in-place tracker amendments, and BF-948's M8 docstring (P9-1) | B10-1, B10-2, B11-1, B11-2 | G8 |
 
 Run each gate command as one file at a time with `-n 0`.
 
@@ -128,6 +135,8 @@ Run each gate command as one file at a time with `-n 0`.
 
 - **G7 (M6).** Red first: apply B8-2 only (the test file), then `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf953_read_floor_spellings.py -q -n 0`. Expected on a Windows host (measured on this one, scratch copy of `a0857b08`, home-guarded): **18 failed, 221 passed, 4 skipped** (243 tests). The 18: T29 7 (the three surrogate rows, the two colon rows, the newline row, the character below 32 in an ancestor), T30 9 (colon, timestamp, newline, reserved stem, backslash, trailing dot, trailing space, `surrogateescape`, relative spelling), T33 2. T31 and T32 pass on the head: they pin the final-name rule against the pinned directory and the absence of a filesystem call, and R4M-13 and R4M-10 show they kill. Any other count is a hard stop back to the Architect. Green: apply B8-1 and P8-1, rerun: **239 passed, 4 skipped, 0 failed** (the 4: the default-stream premise, the two POSIX-only name tests, T31's backslash row). Then, one file at a time with `-n 0`, each unchanged by M6: `tests/test_bf758_file_read_confinement.py` (24 passed, 1 skipped), `tests/test_bf908_floor_and_children.py` (39 passed, 1 skipped), `tests/test_bf911_protected_config_write_refusal.py` (119 passed), `tests/test_ad1200_instruction_file_access.py` (40 passed), `tests/test_ad1200_repository_instructions.py` (98 passed), `tests/test_ad1316_real_effect_routes.py` (67 passed, 2 skipped), `tests/test_bf948_list_files_read_policy.py` (34 passed), and the 14 files of BF-948's G4 (**1340 passed, 3 skipped** in all). Then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` (expected `architecture fitness check passed (srp-size=92, layer-import=0, db-connect=30, unowned-task=13)`). After B9-1 and B9-2: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` (expected `AD/BF ledger is current`; do not regenerate: the heads are unchanged) and `tests/test_ad1184_ad_ledger.py` (33 passed). **Not run:** a POSIX host (no count is derived for it; T29, T30 and T31 run there, and T30's rows ran here with `os.name` set to `posix`).
 
+- **G8 (M7).** Red first: apply B10-2 only (the test file), then `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf953_read_floor_spellings.py -q -n 0`. Expected on a Windows host (measured on this one, scratch copy of `8c83093b`, home-guarded): **3 failed, 243 passed, 4 skipped** (250 tests). The 3: T30 2 (a reserved device name and a reserved device stem as the direct parent), T34 1 (the POSIX shape: 258 listed texts the reader's text path refuses). T29's new rows, T34's Windows shape and T35 pass on a Windows head: the chain rule of D14 already covers the direct parent there; they are checks of the seam, and R5M-1 to R5M-9 and R5M-T1 to R5M-T3 show what they kill. Any other count is a hard stop back to the Architect. Green: apply B10-1, rerun: **246 passed, 4 skipped, 0 failed** (the 4: the default-stream premise, the two POSIX-only name tests, T31's backslash row). Then, one file at a time with `-n 0`, each unchanged by M7: `tests/test_bf758_file_read_confinement.py` (24 passed, 1 skipped), `tests/test_bf908_floor_and_children.py` (39 passed, 1 skipped), `tests/test_bf911_protected_config_write_refusal.py` (119 passed), `tests/test_ad1200_instruction_file_access.py` (40 passed), `tests/test_ad1200_repository_instructions.py` (98 passed), `tests/test_ad1316_real_effect_routes.py` (67 passed, 2 skipped), `tests/test_bf948_list_files_read_policy.py` (34 passed), the 14 files of BF-948's G4 (**1340 passed, 3 skipped** in all) and `tests/test_ad1179_tool_schema_golden.py` (27 passed). Then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` (expected `architecture fitness check passed (srp-size=92, layer-import=0, db-connect=30, unowned-task=13)`). After B11-1 and B11-2: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` (expected `AD/BF ledger is current`; do not regenerate: the heads are unchanged) and `tests/test_ad1184_ad_ledger.py` (33 passed). **Not run:** a POSIX host (no count is derived for it; T29, T30, T31, T32, T34's POSIX shape and T35 run there; T35 is the first test of this contract to cross the seam natively on POSIX, and its first POSIX run is `ubuntu-latest`).
+
 The broad gate runs once for the batch (BF-948, BF-953), after the Diff Reviewer's repairs: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf948-bf953 --receipt logs/gates/bf948-bf953.receipt.json`. Not run here.
 
 ## 5. Commit messages
@@ -140,6 +149,8 @@ The broad gate runs once for the batch (BF-948, BF-953), after the Diff Reviewer
 - M5: `BF-953 M5: a floor file root is compared by the file it names, an unresolvable workspace root keeps the policy, and a listing spelling must name the file`
 - Amendment 3 (the contract only): `BF-953 (#1752): Amendment 3 to the build contract after review round 4 (M6: a listing follows the verified reader's rules on the text)`
 - M6: `BF-953 M6: a listing names only a spelling the verified reader's rules on the text admit`
+- Amendment 4 (the contract only): `BF-953 (#1752): Amendment 4 to the build contract after review round 5 (M7: the direct parent's gate)`
+- M7: `BF-953 M7: a listing names only a spelling the armed reader's text path admits`
 
 ## 6. Tests (`tests/test_bf953_read_floor_spellings.py`)
 
@@ -175,11 +186,13 @@ BF-953 owns every spelling test. A Windows-only case is skipped off Windows, and
 | T26 | `test_the_reader_spelling_is_one_that_names_the_file_in_the_ordinary_namespace` (23, Windows) | round 3's A3 and B1 (Windows only since round 4): `reader_spelling` gives the plain spelling, or none for a component that ends in a dot or a space or for a reserved device name in the final component or an ancestor; a name that only starts or ends like a device name keeps its spelling; the rules that apply on every platform are T29 to T31 | M5 (helper) |
 | T27 | `test_a_text_match_stands_at_the_count_of_its_namespace_free_root` (4, Windows) and `test_an_identity_match_stands_where_the_path_names_it_not_where_its_root_is_spelled` (Windows) | T16 strengthened: the position `_match_position` returns for a text match (either side spelled with a prefix, the deepest root first or last) and for an identity match (the count of the path's own chain, never the root's spelled count; an exempt or a permitted root is not matched by identity) | none: pass on the head (R3M-11, R3M-12) |
 | T28 | `test_a_configuration_loaded_as_a_stream_is_refused_for_every_spelling_of_its_file` (Windows, named streams) | round 3's A1 through the runtime: `protected_config_files` lists the stream as loaded; `resolve_for_runtime` and `read_file` refuse its spelling and the ordinary spelling of the file with the floor's reason and give no content; a neighbour's stream is read | M5 |
-| T29 | `test_the_reader_spelling_follows_the_verified_readers_rules_on_the_text` (19, any platform) | round 4's F1: a path built as text on this platform's base is given only where the verified reader's rules on the text admit it. A lone surrogate (final name, inside a name, in an ancestor), a colon or a character below 32 (final name, ancestor), a reserved device stem as the final name, and a trailing dot or space in the final name give none; an ordinary, a non-ASCII and an astral name give the path; a reserved device name or a trailing dot or space in an ancestor gives none on Windows only; whatever `validate_read_location` refuses gives none | M6 (7 rows red on the head) |
-| T30 | `test_the_reader_spelling_applies_the_readers_rules_off_windows_too` (13, any platform) | with `os.name` set to `posix` for the one call (a no-op on a POSIX host) and POSIX-shaped text: a colon, a timestamp, a newline, a reserved stem, a backslash, a trailing dot or space in the final name, a `surrogateescape` name and a relative spelling give none; an ordinary name and a reserved name or a trailing dot or space in an ancestor give the path | M6 (9 rows red on the head) |
+| T29 | `test_the_reader_spelling_follows_the_verified_readers_rules_on_the_text` (21, any platform) | round 4's F1, corrected by round 5's A: a path built as text on this platform's base is given only where the verified reader's rules on the text admit it. A lone surrogate (final name, inside a name, in an ancestor), a colon or a character below 32 (final name, ancestor), a reserved device name or stem as the final name or as the direct parent, and a trailing dot or space in the final name give none; an ordinary, a non-ASCII and an astral name give the path; a reserved device name above the direct parent or a trailing dot or space in an ancestor gives none on Windows only (L21); whatever `validate_read_location` refuses gives none | M6 (7 rows red on the head); M7 (the three direct-parent and above rows pass on a Windows head: its chain rule covers them) |
+| T30 | `test_the_reader_spelling_applies_the_readers_rules_off_windows_too` (15, any platform) | with `os.name` set to `posix` for the one call (a no-op on a POSIX host) and POSIX-shaped text: a colon, a timestamp, a newline, a reserved stem as the final name or as the direct parent, a backslash, a trailing dot or space in the final name, a `surrogateescape` name and a relative spelling give none; an ordinary name and a reserved name above the direct parent or a trailing dot or space in an ancestor give the path | M6 (9 rows red on the head); M7 (2 rows red on the head: a reserved device name and a reserved device stem as the direct parent) |
 | T31 | `test_the_reader_spelling_agrees_with_the_pinned_directory_on_the_final_name` (9, any platform; the backslash row off Windows only) | for one final name, a real pinned directory's `read_bytes` refuses it as `invalid child name` exactly when `reader_spelling` gives none, so the lister's restatement of the child-name rule is the reader's | none: passes on the head (R4M-11, R4M-12, R4M-13) |
 | T32 | `test_the_reader_spelling_calls_no_filesystem_function` (any platform) | `os.stat`, `os.lstat`, `os.scandir`, `os.listdir`, `os.getcwd` and `open` are replaced by functions that raise: no call happens for a spelling given, a spelling refused, an extended-prefix spelling or a relative one | none: passes on the head (R4M-10) |
 | T33 | `test_a_listing_leaves_out_a_name_the_verified_reader_cannot_carry` (2, Windows) | round 4's F1 through the real tool: a directory with names that the plain reader opens and the verified reader's gate refuses (an unpaired surrogate in two file names and a directory name) beside an ordinary, a non-ASCII and an astral name and a file in an ordinary directory is listed from an ordinary and an extended-prefix base without the first kind; every file listed is opened by the verified reader with its own bytes; the unarmed `read_file` opens a name left out (L19) | M6 |
+| T34 | `test_the_listing_admits_exactly_what_the_verified_readers_text_path_admits` (2: the POSIX shape on any platform, the Windows shape on Windows) | round 5's A as a property: over 4,000 generated file texts (a reserved device name, a trailing dot or space, a colon and an ordinary name as a directory zero to three deep, and as the final name, with a lone surrogate and a backslash among the final names), `reader_spelling` gives a spelling for no text the reader's text path refuses and for every text it admits, except on Windows one a directory of which the same-file rule withholds. The reader's text path is its own functions in its own order: `validate_read_location` on the file and on the file's direct parent and the real `PinnedDirectory._leaf` on a directory with no handle. Premises: at least 3,500 texts; the oracle admits between 5 % and 95 %; at least 100 texts only the parent's gate refuses | M7 (the POSIX shape red on the head: 258 holes); R5M-1, -2, -4, -5, -6, -7, R4M-1 to R4M-7, R5M-T1 to T3 |
+| T35 | `test_a_listing_and_the_verified_reader_agree_about_a_reserved_direct_parent` (any platform, real files) | round 5's A through the real reader and the real tool: `ok/g.txt`, `con/g.txt`, `aux.py/g.txt` and `con/sub/g.txt` are made (through the extended namespace on Windows); the real `read_verified_file` refuses the two with a reserved direct parent (`ValueError`) and reads the other two; `list_files` of the directory lists `ok/g.txt` and, off Windows, `con/sub/g.txt`; each file listed is read by the verified reader with its own bytes | M7 (passes on a Windows head; its POSIX run is `ubuntu-latest`); R3M-8 |
 
 ## 7. The contract
 
@@ -2750,6 +2763,427 @@ async def test_a_listing_leaves_out_a_name_the_verified_reader_cannot_carry(
             assert snapshot.data == source.read(), f"{spelling}: the verified reader opened {name!r}"
 ````
 
+### 7.7 M7 (Amendment 4)
+
+All blocks are against `8c83093b`. **Apply B10-2 first (red, G8), then B10-1.** Where prose differs from a block, the block wins. B10-1 and B10-2 replace the text of B8-1 and B8-2 where it differs (they apply to the head, which holds M6): §7.6 stays as the record of what M6 built, and its blocks are not applied again. `plain_spelling` stays public; `reader_spelling` calls `validate_read_location` as it is, on the file and on its direct parent. BF-948's M8 (P9-1: the `ListFilesTool` docstring) is built after M7 and its block stands in BF-948's contract, section 7.8.
+
+**B10-1** `src/probos/security/file_access.py` (`reader_spelling`: the direct parent's gate, and its docstring)
+
+SEARCH:
+````
+    """
+    return Path(_namespace_free(str(path))) if os.name == "nt" else path
+
+
+def reader_spelling(path: Path) -> Path | None:
+    """BF-953 (Amendments 2 and 3): the spelling of *path* a listing may name, or ``None``.
+
+    It is :func:`plain_spelling` of *path* when the verified reader's rules on the text of a path admit that spelling and,
+    on Windows, every component of it after its anchor names, as an ordinary path, what it names in the extended namespace.
+
+    The verified reader applies two rules to the text alone, and they are applied here on every platform. Its location gate,
+    :func:`validate_read_location`, is called as it is: text that is not strict UTF-8, a ``:`` after the drive or a character
+    below 32 anywhere, a reserved device name as the final component, a namespace prefix that :func:`plain_spelling` does
+    not remove and a location that is not absolute have no spelling. Its child-name rule for the final component (a pinned
+    directory's ``_leaf``) is applied to the final name: a backslash, a trailing dot or a trailing space have none. So a name
+    only the plain reader opens (on POSIX a colon, a control character or a reserved device stem such as ``aux.py``) has no
+    spelling either. On Windows a component after the anchor that ends in a dot or a space has none (the system drops both
+    from an ordinary path, so such a name opens a neighbour or nothing), nor has a spelling with a reserved device name in
+    any part (the system opens the device).
+
+    Pure: it calls no filesystem function; it builds path objects and strings for each call (BF-953 L20). It does not say
+    that the file opens: a directory, a link or reparse point, a path past the host's ordinary length on a host without
+    long-path support and a file changed after the listing are decided when it is read (BF-953 L18)."""
+````
+REPLACE:
+````
+    """
+    return Path(_namespace_free(str(path))) if os.name == "nt" else path
+
+
+def reader_spelling(path: Path) -> Path | None:
+    """BF-953 (Amendments 2 to 4): the spelling of *path* a listing may name, or ``None``.
+
+    It is :func:`plain_spelling` of *path* when the verified reader's rules on the text of a path admit that spelling and,
+    on Windows, every component of it after its anchor names, as an ordinary path, what it names in the extended namespace.
+
+    The verified reader applies three rules to the text alone, and they are applied here on every platform. Its location
+    gate, :func:`validate_read_location`, is called as it is, on the file and on the file's direct parent (``read_verified_file``
+    gives the file to the gate, and the directory it pins gives its path to the gate): text that is not strict UTF-8, a ``:``
+    after the drive or a character below 32 anywhere, a reserved device name as the final component of either, a namespace
+    prefix that :func:`plain_spelling` does not remove and a location that is not absolute have no spelling. Its child-name
+    rule for the final component (a pinned directory's ``_leaf``) is applied to the final name: a backslash, a trailing dot
+    or a trailing space have none. So a name only the plain reader opens (on POSIX a colon, a control character, or a
+    reserved device stem such as ``aux.py`` as the final name or as the direct parent's name) has no spelling either. The
+    reader opens the directories above the direct parent without the gate: a reserved device name, or a trailing dot or
+    space, there does not refuse a name off Windows (BF-953 L21). On Windows a component after the anchor that ends in a dot
+    or a space has none (the system drops both from an ordinary path, so such a name opens a neighbour or nothing), nor has
+    a spelling with a reserved device name in any part, which is wider than the reader's text path (BF-953 L21).
+
+    Pure: it calls no filesystem function; it builds path objects and strings for each call (BF-953 L20). It does not say
+    that the file opens: a directory, a link or reparse point, a path past the host's ordinary length on a host without
+    long-path support and a file changed after the listing are decided when it is read (BF-953 L18)."""
+````
+
+SEARCH:
+````
+    shown = plain_spelling(path)
+    try:
+        validate_read_location(str(shown))
+    except ValueError:  # the reader's own refusal of the text, whatever its class (UnicodeEncodeError is one): no spelling
+        return None
+    final = shown.name
+````
+REPLACE:
+````
+    shown = plain_spelling(path)
+    try:
+        validate_read_location(str(shown))
+        validate_read_location(str(shown.parent))  # the directory read_verified_file pins is given to the gate as well
+    except ValueError:  # the reader's own refusal of the text, whatever its class (UnicodeEncodeError is one): no spelling
+        return None
+    final = shown.name
+````
+
+**B10-2** `tests/test_bf953_read_floor_spellings.py` (the module docstring, the import, T29 and T30 corrected, T34 and T35)
+
+SEARCH:
+````
+own verdict), the function calls no filesystem function (T32), and a directory that holds names the reader's gate refuses
+is listed without them, from an ordinary and an extended-prefix base, with every name it lists opened by the verified
+reader (T33, Windows). None of these says that a listed name opens: BF-953 L18 lists what a listing cannot promise.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import os
+import shutil
+import tempfile
+````
+REPLACE:
+````
+own verdict), the function calls no filesystem function (T32), and a directory that holds names the reader's gate refuses
+is listed without them, from an ordinary and an extended-prefix base, with every name it lists opened by the verified
+reader (T33, Windows). None of these says that a listed name opens: BF-953 L18 lists what a listing cannot promise.
+
+Amendment 4 (review round 5, T34 and T35): the listing admits exactly what the verified reader's text path admits: its
+location gate on the file, its location gate on the file's direct parent (the directory the reader pins), and its
+child-name rule on the final name. T34 checks that as a property over a generated corpus against the reader's own gate and
+child-name rule (the POSIX shape on every platform, the Windows shape on Windows); T35 crosses the seam with real files and
+the real reader and tool (a reserved device name as the direct parent is neither listed nor read; one above it is read, and
+listed off Windows). T29 and T30 are corrected: only the direct parent is refused, not every ancestor.
+"""
+
+from __future__ import annotations
+
+import ctypes
+import itertools
+import os
+import shutil
+import tempfile
+````
+
+SEARCH:
+````
+    """An absolute path of this platform, ``C:\\data`` or ``/data`` joined with *parts*, built as text: nothing is created."""
+    return Path("C:\\data" if os.name == "nt" else "/data").joinpath(*parts)
+
+
+# (label, parts, given on Windows, given on another platform). A row whose two answers differ is a rule only Windows has:
+# the system drops a trailing dot or space from an ordinary path and opens a device for a reserved name, in an ancestor.
+_TEXT_CASES = [
+    ("an ordinary name", ("note.txt",), True, True),
+    ("a space inside a name", ("a b.txt",), True, True),
+````
+REPLACE:
+````
+    """An absolute path of this platform, ``C:\\data`` or ``/data`` joined with *parts*, built as text: nothing is created."""
+    return Path("C:\\data" if os.name == "nt" else "/data").joinpath(*parts)
+
+
+# (label, parts, given on Windows, given on another platform). A row whose two answers differ is a rule only Windows has:
+# its same-file rule withholds a trailing dot or space and a reserved device name in any ancestor, which is wider than the
+# reader's text path (BF-953 L21).
+_TEXT_CASES = [
+    ("an ordinary name", ("note.txt",), True, True),
+    ("a space inside a name", ("a b.txt",), True, True),
+````
+
+SEARCH:
+````
+    ("a reserved device name in another case", ("Con",), False, False),
+    ("a trailing dot in the final name", ("note.txt.",), False, False),
+    ("a trailing space in the final name", ("note.txt ",), False, False),
+    ("a reserved device name as a directory", ("con", "g.txt"), False, True),
+    ("a trailing dot on an ancestor", ("dir.", "deep.txt"), False, True),
+    ("a trailing space on an ancestor", ("dir ", "deep.txt"), False, True),
+]
+````
+REPLACE:
+````
+    ("a reserved device name in another case", ("Con",), False, False),
+    ("a trailing dot in the final name", ("note.txt.",), False, False),
+    ("a trailing space in the final name", ("note.txt ",), False, False),
+    ("a reserved device name as the direct parent", ("con", "g.txt"), False, False),
+    ("a reserved device stem as the direct parent", ("aux.py", "g.txt"), False, False),
+    ("a reserved device name above the direct parent", ("con", "sub", "g.txt"), False, True),
+    ("a trailing dot on an ancestor", ("dir.", "deep.txt"), False, True),
+    ("a trailing space on an ancestor", ("dir ", "deep.txt"), False, True),
+]
+````
+
+SEARCH:
+````
+def test_the_reader_spelling_follows_the_verified_readers_rules_on_the_text(
+    label: str, parts: tuple[str, ...], on_windows: bool, elsewhere: bool,
+) -> None:
+    """T29 (review round 4, F1; any platform): ``reader_spelling`` gives a spelling only where the verified reader's rules on
+    the text admit it. Text that is not strict UTF-8 (a lone surrogate in the final name or an ancestor), a colon or a
+    character below 32 anywhere, a reserved device name as the final name, and a trailing dot or space in the final name give
+    none, on every platform; an ordinary, a non-ASCII and an astral name give the path itself. A reserved device name or a
+    trailing dot or space in an ancestor gives none on Windows only. Whatever the reader's own location gate refuses gives
+    none."""
+    path = _listed(*parts)
+    got = file_access.reader_spelling(path)
+    assert (got is not None) == (on_windows if os.name == "nt" else elsewhere), f"{label}: {got}"
+````
+REPLACE:
+````
+def test_the_reader_spelling_follows_the_verified_readers_rules_on_the_text(
+    label: str, parts: tuple[str, ...], on_windows: bool, elsewhere: bool,
+) -> None:
+    """T29 (review round 4, F1; corrected by review round 5; any platform): ``reader_spelling`` gives a spelling only where
+    the verified reader's rules on the text admit it. Text that is not strict UTF-8 (a lone surrogate in the final name or an
+    ancestor), a colon or a character below 32 anywhere, a reserved device name as the final name or as the direct parent
+    (the reader gives both the file and the directory it pins to its location gate), and a trailing dot or space in the final
+    name give none, on every platform; an ordinary, a non-ASCII and an astral name give the path itself. A reserved device
+    name above the direct parent, or a trailing dot or space in an ancestor, gives none on Windows only: the reader opens
+    the directories above the direct parent without the gate (BF-953 L21). Whatever the reader's own location gate refuses
+    gives none."""
+    path = _listed(*parts)
+    got = file_access.reader_spelling(path)
+    assert (got is not None) == (on_windows if os.name == "nt" else elsewhere), f"{label}: {got}"
+````
+
+SEARCH:
+````
+# (label, text, given). Windows-shaped texts are not used: with ``os.name`` set to ``posix`` a host takes the branch a POSIX host takes.
+_POSIX_CASES = [
+    ("an ordinary name", "/data/note.txt", True),
+    ("a reserved device name as a directory", "/data/con/g.txt", True),
+    ("a trailing dot on an ancestor", "/data/dir./deep.txt", True),
+    ("a trailing space on an ancestor", "/data/dir /deep.txt", True),
+    ("a colon in the final name", "/data/a:b.txt", False),
+````
+REPLACE:
+````
+# (label, text, given). Windows-shaped texts are not used: with ``os.name`` set to ``posix`` a host takes the branch a POSIX host takes.
+_POSIX_CASES = [
+    ("an ordinary name", "/data/note.txt", True),
+    ("a reserved device name as the direct parent", "/data/con/g.txt", False),
+    ("a reserved device stem as the direct parent", "/data/aux.py/g.txt", False),
+    ("a reserved device name above the direct parent", "/data/con/sub/g.txt", True),
+    ("a trailing dot on an ancestor", "/data/dir./deep.txt", True),
+    ("a trailing space on an ancestor", "/data/dir /deep.txt", True),
+    ("a colon in the final name", "/data/a:b.txt", False),
+````
+
+SEARCH:
+````
+def test_the_reader_spelling_applies_the_readers_rules_off_windows_too(
+    monkeypatch: pytest.MonkeyPatch, label: str, text: str, given: bool,
+) -> None:
+    """T30 (review round 4, F1; any platform): with ``os.name`` set to ``posix`` for the one call (a no-op on a POSIX host),
+    the function takes the branch a POSIX host takes, and the reader's rules on the text still apply in it: a colon, a
+    newline, a reserved device stem, a backslash, a trailing dot or space in the final name, a name decoded with
+    ``surrogateescape`` and a relative spelling give none, and a reserved device name or a trailing dot or space in an
+    ancestor, which only Windows refuses, gives the path itself."""
+    path = PurePosixPath(text)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "name", "posix")
+````
+REPLACE:
+````
+def test_the_reader_spelling_applies_the_readers_rules_off_windows_too(
+    monkeypatch: pytest.MonkeyPatch, label: str, text: str, given: bool,
+) -> None:
+    """T30 (review round 4, F1; corrected by review round 5; any platform): with ``os.name`` set to ``posix`` for the one call
+    (a no-op on a POSIX host), the function takes the branch a POSIX host takes, and the reader's rules on the text still
+    apply in it: a colon, a newline, a reserved device stem as the final name or as the direct parent, a backslash, a
+    trailing dot or space in the final name, a name decoded with ``surrogateescape`` and a relative spelling give none, and
+    a reserved device name above the direct parent, or a trailing dot or space in an ancestor, which only Windows refuses,
+    gives the path itself."""
+    path = PurePosixPath(text)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "name", "posix")
+````
+
+SEARCH:
+````
+        snapshot = file_access.read_verified_file(reader.resolve_source_path(name), **roots)
+        with open(prefixed + "\\" + str(Path(name).relative_to(root)), "rb") as source:
+            assert snapshot.data == source.read(), f"{spelling}: the verified reader opened {name!r}"
+````
+REPLACE:
+````
+        snapshot = file_access.read_verified_file(reader.resolve_source_path(name), **roots)
+        with open(prefixed + "\\" + str(Path(name).relative_to(root)), "rb") as source:
+            assert snapshot.data == source.read(), f"{spelling}: the verified reader opened {name!r}"
+
+
+# --- M7 (Amendment 4, review round 5): the listing admits exactly what the verified reader's text path admits ---
+
+
+class _TextOnlyDirectory(file_access.PinnedDirectory):
+    """A pinned directory with no handle: ``verify`` does nothing, so the real ``_leaf`` runs on a text."""
+
+    def verify(self) -> None:
+        return None
+
+
+class _PosixParent(str):
+    """A parent text that joins a child name as a POSIX path does, so the real ``_leaf`` runs its location gate on a ``str``."""
+
+    def __truediv__(self, name: str) -> str:
+        return str(PurePosixPath(self) / name)
+
+
+class _WindowsParent(str):
+    """The same for a Windows path."""
+
+    def __truediv__(self, name: str) -> str:
+        return str(PureWindowsPath(self) / name)
+
+
+_TEXT_SHAPES = {"posix": (PurePosixPath, _PosixParent, "/data", "/"), "windows": (PureWindowsPath, _WindowsParent, "C:\\data", "\\")}
+
+# (component, withheld by Windows' same-file rule wherever it stands: a reserved device name, a trailing dot or a trailing space)
+_CORPUS_DIRS = [
+    ("src", False), ("x..y", False), ("a:b", False),
+    ("con", True), ("aux.py", True), ("dot.", True), ("space ", True),
+]
+_CORPUS_FILES = ["g.txt", "note", "x..y", "dot.", "space ", "a:b", "back\\slash", "aux.py", "con", "\ud800.txt"]
+
+
+def _corpus(base: str, sep: str) -> list[tuple[str, bool]]:
+    """Every file text from zero to three directories below *base*, each directory from ``_CORPUS_DIRS``, each final name
+    from ``_CORPUS_FILES``; with whether Windows' same-file rule withholds a directory of it."""
+    texts = []
+    for depth in range(4):
+        for dirs in itertools.product(_CORPUS_DIRS, repeat=depth):
+            prefix = base + "".join(sep + name for name, _ in dirs)
+            texts += [(f"{prefix}{sep}{name}", any(flag for _, flag in dirs)) for name in _CORPUS_FILES]
+    return texts
+
+
+def _reader_admits(text: str, shape: str, *, parent_gate: bool = True) -> bool:
+    """Whether the steps the armed reader takes on a text alone admit *text*, each one the reader's own call, in the order
+    ``read_verified_file`` takes them: its location gate on the file; its location gate on the file's direct parent, which
+    ``PinnedDirectory.open`` applies to the path ``pin_directory(candidate.parent)`` gives it; then the child-name rule and
+    the location gate of ``read_bytes``, run by the real ``PinnedDirectory._leaf`` on a directory with no handle. Nothing in
+    the reader reads the text again: the directories above the direct parent are opened by name."""
+    pure, parent_type, _, _ = _TEXT_SHAPES[shape]
+    parsed = pure(text)
+    directory = _TextOnlyDirectory()
+    directory._paths = [parent_type(str(parsed.parent))]  # type: ignore[list-item]
+    try:
+        file_access.validate_read_location(text)
+        if parent_gate:
+            file_access.validate_read_location(str(parsed.parent))
+        directory._leaf(parsed.name)
+    except (ValueError, FileAccessDenied):
+        return False
+    return True
+
+
+@pytest.mark.parametrize("shape", ["posix", pytest.param("windows", marks=WINDOWS)])
+def test_the_listing_admits_exactly_what_the_verified_readers_text_path_admits(
+    monkeypatch: pytest.MonkeyPatch, shape: str,
+) -> None:
+    """T34 (review round 5, A; the POSIX shape on any platform with ``os.name`` set to ``posix`` for the calls, the Windows
+    shape on Windows): over a generated corpus of file texts (a reserved device name, a trailing dot or space, a colon and an
+    ordinary name as a directory from zero to three deep, and as the final name, with a lone surrogate and a backslash among
+    the final names), ``reader_spelling``
+    gives a spelling for no text the verified reader's text path refuses, and for every text it admits, except on Windows
+    one that the same-file rule withholds (a reserved device name, a trailing dot or a trailing space in a directory). The
+    reader's text path is its own functions: ``validate_read_location`` on the file and on the file's direct parent, and the
+    real ``PinnedDirectory._leaf``. Premises: the corpus is large, the reader's text path admits and refuses a share of it,
+    and the corpus holds texts that only the parent's gate refuses."""
+    pure, _, base, sep = _TEXT_SHAPES[shape]
+    texts = _corpus(base, sep)
+    holes: list[str] = []
+    misses: list[str] = []
+    admitted_count = only_the_parent_gate_refuses = 0
+    with monkeypatch.context() as patch:
+        if shape == "posix":
+            patch.setattr(os, "name", "posix")
+        for text, same_file_withholds in texts:
+            admitted = _reader_admits(text, shape)
+            admitted_count += admitted
+            only_the_parent_gate_refuses += (not admitted) and _reader_admits(text, shape, parent_gate=False)
+            listed = file_access.reader_spelling(PurePosixPath(text) if shape == "posix" else Path(text)) is not None
+            if listed and not admitted:
+                holes.append(text)
+            if admitted and not listed and not (shape == "windows" and same_file_withholds):
+                misses.append(text)
+    assert len(texts) >= 3500, "premise: the corpus is large"
+    assert 0.05 * len(texts) < admitted_count < 0.95 * len(texts), "premise: the reader's text path admits and refuses a share"
+    assert only_the_parent_gate_refuses >= 100, "premise: the corpus holds texts only the parent's gate refuses"
+    assert not holes, f"{len(holes)} listed texts the reader's text path refuses, for example {holes[:3]!r}"
+    assert not misses, f"{len(misses)} texts the reader's text path admits and the listing withholds, for example {misses[:3]!r}"
+
+
+def _make_file(root: Path, rel: tuple[str, ...], data: bytes) -> None:
+    base = ("\\\\?\\" + str(root)) if os.name == "nt" else str(root)
+    target = base + os.sep + os.sep.join(rel)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as handle:
+        handle.write(data)
+
+
+async def test_a_listing_and_the_verified_reader_agree_about_a_reserved_direct_parent(
+    tmp_path: Path, request: pytest.FixtureRequest,
+) -> None:
+    """T35 (review round 5, A; any platform, real files): a directory named ``con`` and one named ``aux.py`` (made through the
+    extended namespace on Windows) each hold ``g.txt``, as does an ordinary directory and ``con/sub``. The real
+    ``read_verified_file`` refuses a file whose direct parent is a reserved device name before it reads the disk
+    (``ValueError``), and reads the ordinary one and the one a reserved name above its direct parent. ``list_files`` lists the
+    ordinary one and, off Windows, the one above, and each file it lists is read by the verified reader with its own bytes;
+    on Windows the same-file rule also withholds the one above (BF-953 L21)."""
+    root = tmp_path.resolve() / "d"
+    root.mkdir()
+    cleanup = ("\\\\?\\" + str(root)) if os.name == "nt" else str(root)
+    request.addfinalizer(lambda: shutil.rmtree(cleanup, ignore_errors=True))
+    files = {
+        ("ok", "g.txt"): b"ordinary", ("con", "g.txt"): b"under con", ("aux.py", "g.txt"): b"under aux.py",
+        ("con", "sub", "g.txt"): b"above the direct parent",
+    }
+    for rel, data in files.items():
+        _make_file(root, rel, data)
+    runtime = _runtime(_scene(tmp_path), read_roots=[])
+    reader = ReadFileTool(runtime)
+    roots: dict[str, Any] = {
+        "protected_roots": file_access.protected_read_roots(runtime), "exempt_roots": file_access.workspace_exempt_roots(runtime),
+        "permitted_roots": file_access.permitted_read_roots(runtime) or None,
+    }
+
+    def verified(name: str) -> bytes:
+        return file_access.read_verified_file(reader.resolve_source_path(name), **roots).data
+
+    for rel in (("con", "g.txt"), ("aux.py", "g.txt")):  # premise: the reader refuses a reserved direct parent as text
+        with pytest.raises(ValueError):
+            verified(str(root.joinpath(*rel)))
+    assert verified(str(root / "ok" / "g.txt")) == b"ordinary"
+    assert verified(str(root / "con" / "sub" / "g.txt")) == b"above the direct parent", "premise: a reserved name above is read"
+    listed = await ListFilesTool(runtime).invoke({"pattern": "**/g.txt", "path": str(root)})
+    assert listed.error is None and set(listed.output) == {"files"}, listed.error
+    expected = [("ok", "g.txt")] if os.name == "nt" else [("ok", "g.txt"), ("con", "sub", "g.txt")]
+    assert sorted(listed.output["files"]) == sorted(str(root.joinpath(*rel)) for rel in expected)
+    for name in listed.output["files"]:
+        assert verified(name) == files[Path(name).relative_to(root).parts], f"the verified reader opened {name!r}"
+````
+
 ## 8. Tracking (M3's commit)
 
 **Head constraint:** neither head may carry a lifecycle keyword from `gen_ad_ledger.py` `_STATUS_PATTERNS` (`:126-132`: retired, abandoned, withdrawn, superseded, deferred, postponed, closed, shipped, staged, landed, open) in its first 120 characters.
@@ -2940,7 +3374,7 @@ SEARCH:
 REPLACE:
 ````
 - *SP11 (the spelling a listing may name, Amendment 2).* `reader_spelling` is `plain_spelling` when the verified reader's rules on the text admit it (SP12) and, on Windows, every component after the anchor names, as an ordinary path, what it names in the extended namespace (none ends in a dot or a space; no part is a reserved device name), and none otherwise; textual, no filesystem call. Rejected: an identity rule (two `os.stat` per match, and a volume that reports file index 0 would empty every listing); the verified reader's own location check as the only gate (it checks the final component only; SP12 adopts it as the first step).
-- *SP12 (the verified reader's rules on the text, Amendment 3).* `reader_spelling` calls `validate_read_location` as it is and applies the pinned directory's child-name rule to the final name (a backslash, a trailing dot or a trailing space), on every platform, before SP11's Windows rule: a name that is not strict UTF-8, a colon or a character below 32, a reserved device stem as the final name and a prefix `plain_spelling` leaves are not listed. A listing follows the verified reader's rules because a `list_files` call cannot know whether the next read is armed (`_workspace_read` is set for the two reader tools only), and a name the reader refuses and the listing offers is answered `invalid path` and counted as a tool defect when read again; a name only the plain reader opens is not listed and is still opened by its path (L19). The function calls no filesystem function and says nothing about whether a name opens (L18, L20). Rejected: strict UTF-8 only (the gate's other refusals stay listed and refused); the gate alone (a backslash, a trailing dot or a trailing space stay listed on POSIX); asking the loop (AD-1240's surface); answering the reader's lexical refusal as a caller-input error instead (BF-948 L17, the orchestrator's decision: it changes the classification, not the listing).
+- *SP12 (the verified reader's rules on the text, Amendment 3).* `reader_spelling` calls `validate_read_location` as it is and applies the pinned directory's child-name rule to the final name (a backslash, a trailing dot or a trailing space), on every platform, before SP11's Windows rule: a name that is not strict UTF-8, a colon or a character below 32, a reserved device stem as the final name and a prefix `plain_spelling` leaves are not listed. A listing follows the verified reader's rules because a `list_files` call cannot know whether the next read is armed (`_workspace_read` is set for the two reader tools only), and a name the reader rejects and the listing offers is answered `read_file failed` with the reader's own text (`invalid path` for the gate's refusals of a prefix, a drive or a device name, the codec's message for text that is not strict UTF-8, `invalid child name` for the child-name rule) and counted as a tool defect when read again; a name only the plain reader opens is not listed and is still opened by its path (L19). The function calls no filesystem function and says nothing about whether a name opens (L18, L20). Rejected: strict UTF-8 only (the gate's other refusals stay listed and refused); the gate alone (a backslash, a trailing dot or a trailing space stay listed on POSIX); asking the loop (AD-1240's surface); answering the reader's lexical refusal as a caller-input error instead (BF-948 L17, the orchestrator's decision: it changes the classification, not the listing).
 ````
 
 SEARCH:
@@ -2979,6 +3413,66 @@ REPLACE:
 A match for which `reader_spelling` gives no spelling (BF-953 SP11 and SP12: the verified reader's rules on the text refuse it, or, on Windows, a component ends in a dot or a space or a part is a reserved device name) is left out, like a refused one, for every base; a listed name does not say that it opens (BF-953 L18).
 ````
 
+**M7's tracker pairs (in M7's commit; both entries are amended in place, their heads unchanged).**
+
+**B11-1** `PROGRESS.md` (the BF-953 entry)
+
+SEARCH:
+````
+the verified reader's rules on the text must admit the spelling, on every platform (strict UTF-8; no colon after the drive and no character below 32; no reserved device name as the final name; no backslash, trailing dot or trailing space in it) and, on Windows, every component must name in the ordinary namespace what it names in the extended one; it calls no filesystem function and does not say that the file opens.
+````
+REPLACE:
+````
+the verified reader's rules on the text must admit the spelling, on every platform, applied as the reader applies them to the file and to the directory that holds it (strict UTF-8; no colon after the drive and no character below 32; no reserved device name as the final name or as the name of that directory; no backslash, trailing dot or trailing space in the final name) and, on Windows, every component must name in the ordinary namespace what it names in the extended one; it calls no filesystem function and does not say that the file opens (a reserved device name above the directory that holds the file is not looked at off Windows, because the reader opens the directories above it by name).
+````
+
+**B11-2** `DECISIONS.md` (BF-953: scope, SP12, residual)
+
+SEARCH:
+````
+Contract `prompts/bf-953-read-floor-spellings.md` (with Amendments 1 to 3).
+````
+REPLACE:
+````
+Contract `prompts/bf-953-read-floor-spellings.md` (with Amendments 1 to 4).
+````
+
+SEARCH:
+````
+- *SP12 (the verified reader's rules on the text, Amendment 3).* `reader_spelling` calls `validate_read_location` as it is and applies the pinned directory's child-name rule to the final name (a backslash, a trailing dot or a trailing space), on every platform, before SP11's Windows rule: a name that is not strict UTF-8, a colon or a character below 32, a reserved device stem as the final name and a prefix `plain_spelling` leaves are not listed.
+````
+REPLACE:
+````
+- *SP12 (the verified reader's rules on the text, Amendments 3 and 4).* `reader_spelling` calls `validate_read_location` as it is, on the file and on the file's direct parent (the two texts `read_verified_file` gives it), and applies the pinned directory's child-name rule to the final name (a backslash, a trailing dot or a trailing space), on every platform, before SP11's Windows rule: a name that is not strict UTF-8, a colon or a character below 32, a reserved device name or stem as the final name or as the name of the directory that holds the file, and a prefix `plain_spelling` leaves are not listed; a reserved device name above that directory is listed off Windows, because the reader opens the directories above it by name (L21).
+````
+
+SEARCH:
+````
+and a name the reader refuses and the listing offers is answered `invalid path` and counted as a tool defect when read again;
+````
+REPLACE:
+````
+and a name the reader rejects and the listing offers is answered `read_file failed` with the reader's own text (`invalid path` for the gate's refusals of a prefix, a drive or a device name, the codec's message for text that is not strict UTF-8, `invalid child name` for the child-name rule) and counted as a tool defect when read again;
+````
+
+SEARCH:
+````
+Rejected: strict UTF-8 only (the gate's other refusals stay listed and refused); the gate alone (a backslash, a trailing dot or a trailing space stay listed on POSIX); asking the loop (AD-1240's surface);
+````
+REPLACE:
+````
+Rejected: strict UTF-8 only (the gate's other refusals stay listed and refused); the gate on the file alone (a backslash, a trailing dot or a trailing space stay listed on POSIX, and so does a file in a directory named as a device); a public function the reader and the lister share (it edits the armed reader, which other callers use; T34 and the orchestrator's probe are the drift guard); asking the loop (AD-1240's surface);
+````
+
+SEARCH:
+````
+- *Residual.* Recorded limits L1 to L20 of the contract.
+````
+REPLACE:
+````
+- *Residual.* Recorded limits L1 to L21 of the contract.
+````
+
 ## 9. What this does NOT change
 
 - `src/probos/cognitive/swe_harness/tools.py` and `tests/test_bf948_list_files_read_policy.py` (BF-948's M4 edited both by SEARCH, its M5 edited both again after BF-953's M4, and its M6 edits both after BF-953's M5); `ReadFileTool`, `ListFilesTool` and every other consumer.
@@ -2986,6 +3480,7 @@ A match for which `reader_spelling` gives no spelling (BF-953 SP11 and SP12: the
 - `protected_read_roots`, `protected_config_files` and `resolve_for_runtime`: the roots they build and how. `permitted_read_roots` and `workspace_exempt_roots` change in one place only (M4, D9; M5, D13): the workspace root is resolved, and kept as composed when it cannot be. `resolve_read_path`'s signature and its return value are unchanged; its reasons gain one (`path cannot be verified against the protected roots`).
 - (M5) No signature, return shape, config field, `EventType`, persisted format or gate changes: `reader_spelling` is added to `file_access` and has one caller; `_floor_roots` and `_workspace_root` are private; the decisions that change are those of a floor file root or candidate whose final component carries a stream suffix, a trailing dot or a trailing space (D12, refusals only) and of a configured policy whose workspace root does not resolve (D13, back to the base's list).
 - (M6) No signature, return shape, config field, `EventType`, persisted format or gate changes. `reader_spelling`'s body and docstring, `plain_spelling`'s docstring and `ListFilesTool`'s docstring and two comments change. `validate_read_location`, `PinnedDirectory`, `read_verified_file`, `resolve_read_path`, `ReadFileTool`, the fault classification and every other consumer are byte-identical to the head. The decisions that change are those of a listing: a name that the verified reader's rules on the text refuse is not listed (D15), on every platform.
+- (M7) No signature, return shape, config field, `EventType`, persisted format or gate changes. `reader_spelling`'s body (one call) and docstring change, and `ListFilesTool`'s docstring (BF-948's M8). `validate_read_location`, `PinnedDirectory`, `read_verified_file`, `resolve_read_path`, `ReadFileTool`, the fault classification and every other consumer are byte-identical to the head. The decisions that change are those of a listing on a POSIX host: a file whose direct parent is a reserved device name or stem is not listed (D15); on Windows nothing changes (0 of 43,380 generated inputs differ).
 - `read_verified_file` and `read_bounded_utf8`, `validate_read_location` and the pinned-directory code.
 - Config, `EventType`, the tier table, goldens, and any other platform's decisions.
 
@@ -3105,6 +3600,48 @@ R3M-2 is the row that keeps D12's "add, not replace": a root list reduced to bas
 
 R4M-3 is the row that separates the chosen design from the reviewers' fix: T29 and T30 fail it, T33 does not. R4M-4 is the row T30 exists for: with the checks after the platform branch, a Windows host passes T29 and fails T30. R4M-13 is the row T31 exists for: it mutates the reader, and the lister's restatement is then wrong. BF-948's R3N rows quote two lines that P8-1's comments change; they are re-pointed in G1-3.
 
+**M7's campaign of record (Amendment 4, 2026-11-05).** Run by the Architect on M7's head (the scratch tree with B10-2, B10-1 and P9-1 applied; each row applied to one place, the file run alone with `-n 0` under the home guard, the file restored after). The prefix `R5M-` is absent from `prompts/`, `PROGRESS.md`, `DECISIONS.md`, `src` and `tests` at `8c83093b` (`git grep -n -e "R5M-" 8c83093b -- prompts PROGRESS.md DECISIONS.md src tests` prints nothing, exit 1). The base tree of every row is `8c83093b` plus B10-2, B10-1 and P9-1, files as the working tree held them (CRLF, `core.autocrlf=true`), sha256: `src/probos/security/file_access.py` `9591d96d4c325677a1f21d9ddecfd3a4f58cf2bc7bc67d6feb4ff9911c2431ac` (LF: `c646bc026a6222838c6235c464fce3208a6d3c2aa4c03fde4df59f1a7f056171`); `src/probos/cognitive/swe_harness/tools.py` `206ee94a0d85df331dd8e85b5573e756fcf6b9fbf460e13c469305fc897c68dd` (LF: `d74970f8078c6af8210889c9b0def688cf027dc3efb884181ac09265d1d51f9d`); `tests/test_bf953_read_floor_spellings.py` `bb095d8071b343321dfa99a1466df4abc6e2d5c91ae3961e0b96c044fef9ae1c` (LF: `87fa5706f1286ffec7217cf6bfdcc3d8002e89fc0a25553a3026cb74d20c35b3`). Rerun a row only if a file differs. **This campaign reran every R4M, R3M-7 to R3M-10 and R3N row on the new hashes, because `file_access.py` changed; the counts below replace the M6 campaign's.**
+
+| Row | File | Line | Mutant | Killed by (this file alone) | The orchestrator's probe (holes / misses: Windows; POSIX shape) |
+|---|---|---|---|---|---|
+| R5M-1 | `file_access.py` | `        validate_read_location(str(shown.parent))  # the directory read_verified_file pins ...` | the line removed (the head's behaviour) | 3 failed: T30 (2), T34 (1: the POSIX shape) | 0/0; 31,941/0 |
+| R5M-2 | the same | the same | `validate_read_location(str(shown.parent.parent))` (the grandparent) | 4 failed: T30 (3), T34 (1) | 0/0; 18,900/18,837 |
+| R5M-3 | the same | the same | `validate_read_location(str(path.parent))` (before the prefix is removed) | 10 failed: T26 (6), the listing test of every spelling (3), T33 (1) | 0/0; 0/0 (no prefixed text in its pools) |
+| R5M-4 | the same | the same | the call under `if os.name == "nt":` | 3 failed: T30 (2), T34 (1) | 0/0; 31,941/0 |
+| R5M-5 | the same | the same | the call, then the same call on `shown.parent.parent` (over-withheld) | 2 failed: T30 (1: a reserved name above the direct parent), T34 (1) | 0/0; 0/18,837 |
+| R5M-6 | `file_access.py` | the final-name rule's `return None` | the rule, then `return None` for a direct parent that ends in a dot or a space (over-withheld) | 3 failed: T30 (2), T34 (1) | 0/0; 0/7,098 |
+| R5M-7 | `file_access.py` | `        validate_read_location(str(shown))` | the line removed | 13 failed: T29 (4), T30 (5), T33 (2), T34 (2) | 5,856/0 (then the probe's own assertion stops it); not reached |
+| R5M-8 | the same line of the parent call | the same | `validate_read_location(shown.parent.name)` (a relative text) | 48 failed: every test that gives a spelling | not run |
+| R5M-9 | `file_access.py` | the final-name rule's `return None` | the rule, then `return None` for a final name that starts like a device name (over-withheld) | 3 failed: T26 (2), T29 (1) | 0/0; 0/0 (no such name in its pools) |
+| R5M-T1 | the test file | `def _reader_admits(text: str, shape: str, *, parent_gate: bool = True)` | the default `False` (the oracle skips the parent's gate) | 2 failed: T34 (both shapes: the premise that the parent's gate refuses texts) | n/a |
+| R5M-T2 | the test file | `("con", True), ("aux.py", True), ("dot.", True), ("space ", True),` | the first two directories removed | 2 failed: T34 (the same premise) | n/a |
+| R5M-T3 | the test file | `        directory._leaf(parsed.name)` | `pass` | 2 failed: T34 (the child-name rule is the oracle's) | n/a |
+
+| Row (rerun on M7's head) | Mutant | Killed by |
+|---|---|---|
+| R4M-1 | the gate's `try` block replaced by `pass` | 19 failed: T29 (7), T30 (8), T33 (2), T34 (2) (M6: 15) |
+| R4M-2 | `except UnicodeEncodeError:` | 25 failed: T26 (6), T29 (8), T30 (7), T32 (1), T34 (2), T35 (1) (M6: 17) |
+| R4M-3 | `str(shown).encode("utf-8")` only (the reviewers' fix of round 4) | 13 failed: T29 (4), T30 (7), T34 (2) (M6: 9) |
+| R4M-4 | the gate block and the final-name rule after the platform return | 12 failed: T30 (11), T34 (1) (M6: 9) |
+| R4M-5 | the final-name rule removed | 4 failed: T30 (3), T34 (1) (M6: 3) |
+| R4M-6 | the rule is the backslash only | 3 failed: T30 (2), T34 (1) (M6: 2) |
+| R4M-7 | the rule is the trailing dot and space only | 2 failed: T30 (1), T34 (1) (M6: 1) |
+| R4M-8 | the file's gate given `str(path)` | 10 failed: T26 (6), the listing test of every spelling (3), T33 (1); BF-948's file alone: 3 failed, 31 passed (T13, T14, T15) |
+| **R4M-9** | the file's gate given the anchor and the final name only | **246 passed: survives, and is equivalent** from M7: the parent's call and this call together cover every character of the file's text and the reserved test of the final component in both; the probe finds 0/0 on 292,464 texts per shape. In M6 it was killed by 6 tests |
+| R4M-10 | `os.stat(shown.parent)` added | 1 failed: T32 |
+| R4M-11 | a name with a space inside withheld | 23 failed: the listing test of every spelling (20), T26, T29, T31 |
+| R4M-12 | a non-ASCII name withheld | 5 failed: T29 (2), T31, T33 (2) |
+| R4M-13 | `PinnedDirectory._leaf` refuses a leading dot (the reader drifts) | 1 failed: T31 |
+| R3M-7 | the dot and space rule off | 6 failed: T26 (4), T29 (2) |
+| R3M-8 | the reserved rule tests the final part only | 3 failed: T26, T29, T35 (before: T26, T29) |
+| R3M-9 | the dot and space rule tests the final component only | 6 failed: T26 (4), T29 (2) |
+| R3M-10 | the prefix is not removed | 10 failed: T26 (6), the listing test of every spelling (3), T33 |
+| R3N-1 | a match with no spelling is listed as it stands (`tools.py`) | BF-948's file alone: 2 failed (T15) |
+| R3N-2 | one such name fails the listing | 2 failed (T15) |
+| R3N-3 | the base is asked, not each match | 9 failed |
+
+R5M-3, R5M-9 and R3M-8 show why T26, T29, T33 and T35 stay beside T34: the probe's pools have no prefixed text, no name that only starts like a device name, and the chain rule above the direct parent is a Windows rule its oracle excuses. R4M-9 is the only survivor and it is an equivalent mutant, not a gap. R5M-7 and R4M-5 are the rows the probe's holes show most plainly (5,856 and 19,776).
+
 ## 11. Recorded limits
 
 - **L1.** Identity is `(volume, file index)` as `os.stat` reports it. Two files that report the same pair, such as a file and the same file on a bit-identical copy of its volume, are one identity to this function. Only share and device spellings are decided by identity, for the floor only, on Windows.
@@ -3124,9 +3661,10 @@ R4M-3 is the row that separates the chosen design from the reviewers' fix: T29 a
 - **L15.** (Second reviewer's R3.) The repair decides the name of a stream; it does not list, remove or create streams. **Reach:** a named stream of a floor file root or of a credential name is readable only if it already exists on that file (a stream is created by a write, and the write side refuses the same names: T20). A stream of a neighbour is read as named.
 - **L16.** (Review round 3, A1.) A floor root spelled in the extended namespace with a trailing dot or space (a configured directory or file whose own name ends so) also refuses the directory or file its base names: `_floor_roots` adds the base after the root and keeps the root, so a floor is never narrowed. The over-refusal is the neighbour of such a root, and only a configuration that names a floor in that spelling reaches it. A directory root a system resolves (an ordinary spelling) never has such a final component.
 - **L17.** (Review round 3, A2.) A configured read policy composes empty, which every consumer reads as "no limit", when every configured root is unusable (a text with a NUL, a failed resolution) and the workspace root cannot be composed at all (a relative workspace root whose platform data directory needs a home directory the system cannot name, or a value that is not a path). On the base the same two failures give the same list. **Reach:** the workspace root's own composition has to fail as well as every configured root; each unusable root is logged once (`BF-758: configured read_roots entry ... ignoring it`). Not repaired here: a fail-closed form needs a list entry that matches nothing, in a list whose emptiness means "none configured" (`resolve_for_runtime`, `CodeSearchAgent`, the copilot adapter, repository instructions, `ListFilesTool` and `reads_confined` read it so): a change of that list's contract.
-- **L18.** (Review round 3, A3 and B1; widened by round 4.) What a listing says, and what it cannot promise. `reader_spelling` is a rule on the text: it says that the verified reader's rules on the text admit the spelling and, on Windows, that every component names in the ordinary namespace what it names in the extended one. It does not say that the file opens. Decided when a name is read, not when it is listed: a path longer than the system's ordinary limit on a host without long-path support (listed, and the read answers a failure, never another file's content; this host has long paths enabled, `LongPathsEnabled` is 1, so the case could not be reproduced here); a directory (a match of a pattern; the verified reader reads regular files only); a link, junction or other reparse point on the way to the file or as the file (`read_verified_file` refuses an alias and an unsafe chain); a file removed, replaced or retargeted after the listing; and the policy's own refusals, which the lister applies to each match before the spelling. A later change of the reader's location gate reaches the lister through the call (D15); a later change of the child-name rule reaches it only through T31.
-- **L19.** (Review round 4, F1, and the orchestrator's reading of the gate.) A name that only the plain reader opens is not listed: the listing follows the verified reader's rules because a `list_files` call cannot know whether the next read of a name is armed (D15). On Windows that is a name with an unpaired surrogate (it cannot be carried as text in a result, and the plain reader opens it) and every name under a base spelled with a prefix that `plain_spelling` does not remove (a volume-GUID or device path: the list is empty and no error is answered); on a POSIX host it is a name with a colon or a character below 32, a reserved device stem as the final name (`aux.py`, `con.log`), a backslash in the final name, or a trailing dot or space in it. **Reach:** none of the 5,889 names this repository tracks (`git ls-tree -r --name-only a0857b08`) is in any of those classes; a workspace on a POSIX host that keeps timestamped names with a colon is. `read_file` still opens such a file given its path in the unarmed lane; in the armed lane the reader refuses it whatever the listing does. Whether the reader's lexical refusal is answered as a caller-input error (BF-948 L17) is the orchestrator's decision; it would make the refusal visible without hiding a name.
-- **L20.** (Review round 4, F2.) `reader_spelling` calls no filesystem function (T32), and it is not free: it builds path objects and strings for each match, the reader's location gate included. Measured on this host, 10,000 calls on one absolute path, best of five: `plain_spelling` 0.0066 s; `reader_spelling` 0.161 s on the head (16.1 µs a match) and 0.254 s after Amendment 3 (25.4 µs a match); the policy check each match already gets (`resolve_read_path` on an existing file with no roots, which touches the filesystem) 146.9 µs. A listing of N matches costs about 9 µs times N more than on the head.
+- **L18.** (Review round 3, A3 and B1; widened by round 4.) What a listing says, and what it cannot promise. `reader_spelling` is a rule on the text: it says that the verified reader's rules on the text admit the spelling and, on Windows, that every component names in the ordinary namespace what it names in the extended one. It does not say that the file opens. Decided when a name is read, not when it is listed: a path longer than the system's ordinary limit on a host without long-path support (listed, and the read answers a failure, never another file's content; this host has long paths enabled, `LongPathsEnabled` is 1, so the case could not be reproduced here); a directory (a match of a pattern; the verified reader reads regular files only); a link, junction or other reparse point on the way to the file or as the file (`read_verified_file` refuses an alias and an unsafe chain); a file removed, replaced or retargeted after the listing; the policy's own refusals, which the lister applies to each match before the spelling; and the tool's own two steps, which are not rules on a name's text: the run's scope check (a read the run has already referenced) and the routing of a path with a `.tool-results` component under a workspace root to the workspace-result reader (`read_file`, `tools.py` 452 to 509). A later change of the reader's location gate reaches the lister through the two calls (D15); a later change of the child-name rule reaches it through T31 and T34; a later change of *which* texts the reader gives the gate reaches it through T34 and the orchestrator's probe only (L21).
+- **L19.** (Review round 4, F1, and the orchestrator's reading of the gate.) A name that only the plain reader opens is not listed: the listing follows the verified reader's rules because a `list_files` call cannot know whether the next read of a name is armed (D15). On Windows that is a name with an unpaired surrogate (the verified reader's strict-UTF-8 encoding of the path raises `UnicodeEncodeError`, and the plain reader opens it) and every name under a base spelled with a prefix that `plain_spelling` does not remove (a volume-GUID or device path: the list is empty and no error is answered); on a POSIX host it is a name with a colon or a character below 32, a reserved device stem as the final name (`aux.py`, `con.log`), a backslash in the final name, or a trailing dot or space in it, and (Amendment 4) every file whose direct parent is a reserved device name or stem (`con/g.txt`, `aux.py/g.txt`): the reader gives its direct parent to the gate. **Reach:** none of the 5,889 names this repository tracks (`git ls-tree -r --name-only 8c83093b`, the direct-parent class included) is in any of those classes; a workspace on a POSIX host that keeps timestamped names with a colon, or keeps files in a directory named `con` or `aux`, is. **The price of the direct-parent rule:** such a file is no longer listed on a POSIX host, though the plain reader opens it by its path. `read_file` still opens such a file given its path in the unarmed lane; in the armed lane the reader refuses it whatever the listing does. Whether the reader's lexical refusal is answered as a caller-input error (BF-948 L17) is the orchestrator's decision; it would make the refusal visible without hiding a name.
+- **L20.** (Review round 4, F2.) `reader_spelling` calls no filesystem function (T32), and it is not free: it builds path objects and strings for each match, the reader's location gate included. Measured on this host, 10,000 calls on one absolute path, best of five: `plain_spelling` 0.0066 s; `reader_spelling` 0.161 s before Amendment 3 (16.1 µs a match), 0.255 s before Amendment 4 (25.5 µs) and 0.355 s after it (35.5 µs a match; the last two in one session); the policy check each match already gets (`resolve_read_path` on an existing file with no roots, which touches the filesystem) 139 to 150 µs. A listing of N matches costs about 10 µs times N more than before Amendment 4, about 19 µs times N more than before Amendment 3, and the audit of filesystem calls over 11 inputs finds none.
+- **L21.** (Review round 5, A.) The reader gives the gate the file and its direct parent only (the call list in §13e, by execution on real files on this host: `read_verified_file`, `PinnedDirectory.open`, `_leaf`); it opens the directories above the direct parent by name. So `reader_spelling` applies the gate to those two texts and to nothing above them. Two consequences. (1) Off Windows a reserved device name, a trailing dot or a trailing space in a directory above the direct parent refuses nothing in the reader, and the listing lists the name (T29, T30, T35). (2) On Windows the rule of D14 (a trailing dot or space, or a reserved device name, in any component after the anchor) is wider than the reader's text path: a name under `con\sub\` is left out although the verified reader reads it (measured on this host, Windows 10.0.26300, with real directories made through the extended namespace: `con\sub\g.txt` is read, `reader_spelling` gives `None`). That is deliberate and deny-only: in the extended namespace such a component can name another object than its ordinary spelling does, and a listing's spelling is the ordinary one (D10, D14); it costs a name a listing could have offered and never offers one the reader refuses (T34's Windows shape). The reader's behaviour for a device name above the direct parent is measured on this host only; no POSIX host was available.
 
 ## 12. For the Captain
 
@@ -3135,6 +3673,8 @@ You decide nothing for this build; Amendment 1 raises two items for the orchestr
 Amendment 2 raises two items for the orchestrator, neither blocking: whether round four reviews the delta (this amendment's §0 recommends it: no signature, return shape, config field, event, persisted format or gate changes) or the whole candidate again, and whether to accept L17 (a configured policy that composes empty when the workspace root cannot be composed at all, as on the base) or to make that list fail closed in its own BF.
 
 Amendment 3 raises two items for the orchestrator, neither blocking: whether round 5 reviews the delta or, under the standing order's "adds behaviour the findings did not ask for" clause, the whole candidate (this amendment's §0.2 recommends the delta), and whether the armed reader's lexical refusal is answered as a caller-input error (BF-948 L17), which D15 neither needs nor excludes.
+
+Amendment 4 raises two items for the orchestrator, neither blocking: that BF-948 L17 goes to its own BF now that the lister cannot offer a name the reader refuses (this amendment's §3 D: the three classes the reader answers are `invalid path`, the codec's message and `invalid child name`), and that round 6 reviews the delta with two reviewers (its §10). T35 is the first test of this contract to cross the seam natively on POSIX; its first POSIX run is the CI run.
 
 ## 13. Verified Against Codebase (2026-11-04, on `728e1fc2`)
 
@@ -3390,6 +3930,61 @@ FOUND: nothing (exit 1) for each pattern run on its own at the head
 HOLDS: yes
 ```
 
+## 13e. Verified for Amendment 4 (2026-11-05, on `8c83093b`)
+
+```
+git grep -n -e "def reader_spelling" -e "def validate_read_location" -e "def _leaf" -e 'raw.encode("utf-8", errors="strict")' -e "path = validate_read_location(path)" -e "candidate = validate_read_location(path)" -e "pin_directory(candidate.parent)" -e "return directory.read_bytes(candidate.name)" -e "def pin_directory" -e "def read_verified_file" 8c83093b -- src/probos/security/file_access.py
+  191: def reader_spelling(path: Path) -> Path | None:
+  706: def validate_read_location(raw: str | Path, *, relative_base: Path | None = None) -> Path:
+  715:     raw.encode("utf-8", errors="strict")
+  926:     def _leaf(self, name: str) -> Path:
+  1050:         path = validate_read_location(path)
+  1086: def pin_directory(
+  1102: def read_verified_file(
+  1107:     candidate = validate_read_location(path)
+  1114:     with pin_directory(candidate.parent) as directory:
+  1115:         return directory.read_bytes(candidate.name)
+git grep -n -e "shown = reader_spelling(match)" -e "read.scope.validate(str(target), read.directive)" -e "private_candidate = is_workspace_result_path(target)" 8c83093b -- src/probos/cognitive/swe_harness/tools.py
+  336:     read.scope.validate(str(target), read.directive)
+  472:                 read.scope.validate(str(target), read.directive)
+  475:             private_candidate = is_workspace_result_path(target) or is_workspace_result_path(Path(str(path)))
+  594:                 shown = reader_spelling(match)  # BF-953: the spelling the verified reader's rules on the text admit
+  825:                 read.scope.validate(str(target), read.directive)
+  826:             private_candidate = is_workspace_result_path(target) or is_workspace_result_path(Path(str(path)))
+git grep -n -e "def is_workspace_result_path" -e "RESULT_DIRECTORY =" 8c83093b -- src/probos/execution/workspace_results.py
+  27: RESULT_DIRECTORY = ".tool-results"
+  428: def is_workspace_result_path(path: Path) -> bool:
+git grep -n -e "read_verified_file(" 8c83093b -- src
+  src/probos/cognitive/copilot_adapter.py:108:        snapshot = read_verified_file(
+  src/probos/cognitive/swe_harness/tools.py:339:        snapshot = read_verified_file(
+  src/probos/cognitive/swe_harness/tools.py:961:            snapshot = read_verified_file(
+  src/probos/security/file_access.py:1102:def read_verified_file(
+```
+
+## Absence Verified (Amendment 4, 2026-11-05, on `8c83093b`)
+
+```
+CLAIM: no function the armed reader runs, other than the three rules, takes the file's or a directory's text and refuses it, and no directory above the direct parent is given to the gate
+RUN:   probe_gate_trace2.py (sys.setprofile over every call into file_access.py during the real read_verified_file on <root>\sub\g.txt, <root>\con\sub\g.txt and <root>\con\g.txt; files\evidence-r5-gate-trace.txt)
+FOUND: the calls taking a text are validate_read_location (file; then the direct parent inside open; then the file again inside _leaf), resolve_read_path (the policy), pin_directory, open, read_bytes, _leaf and _open_windows_instruction_path (a handle per ancestor, no gate); every other function that ran takes a stat result, a handle or a decided name; no gate call names <root>\con for <root>\con\sub\g.txt
+HOLDS: yes (this host, Windows; the POSIX branches differ only in how a descriptor is opened and verified: file_access.py 1066 to 1073 in open, 949 to 953 in read_bytes, 905 to 909 in verify, and one more refusal of a rooted path with no drive at 727 in the gate)
+
+CLAIM: nothing but ListFilesTool calls reader_spelling in src
+RUN:   git grep -n -e "reader_spelling(" 8c83093b -- src
+FOUND: file_access.py:191 (the definition), tools.py:594 (ListFilesTool)
+HOLDS: yes
+
+CLAIM: none of the names this repository tracks is given no spelling by the function, and none has a reserved direct parent
+RUN:   probe_reach.py (git ls-tree -r --name-only HEAD, each name under /w, os.name set to posix for the call) ; the direct parent tested with PureWindowsPath(...).parent.is_reserved()
+FOUND: 5,889 names, 0 given no spelling, 0 with a reserved direct parent
+HOLDS: yes
+
+CLAIM: R5M-, E2-, G2-, B10-, B11-, P9-, T34 and T35 (the BF-953 and BF-948 contracts and test files), L21, and the headings 7.7 (BF-953) and 7.8 (both contracts) are unused at the head
+RUN:   git grep -n -I -E -e "R5M-" -e "\*\*(E2|G2|B10|B11|P9)-[0-9]+\*\*" 8c83093b -- prompts/bf-953-read-floor-spellings.md prompts/bf-948-list-files-read-policy.md PROGRESS.md DECISIONS.md src tests ; the same for -e "\bT3[45]\b" over the two contracts and the two test files, -e "^- \*\*L21\." over the two contracts, -e "\bL21\b" over the two contracts, PROGRESS.md, src and the BF-953 test file, -e "^### 7\.8 M" over the two contracts and -e "^### 7\.7 M" over the BF-953 contract
+FOUND: nothing (exit 1) for each
+HOLDS: yes (T34 and T35 occur in other test files for other items, and "L21" in DECISIONS.md:633 for another item)
+```
+
 ## 14. Deterministic gate checks, resolved up front
 
 - **`check_architecture_principles.py --check`:** after Amendment 1, two private classes in `file_access.py` (`_OnDisk` with three methods, and the exception `_Unverifiable`), private helpers `_namespace_free`, `_file_identity`, `_identity_position`, `_match_position`, `_base_name`, `_base_file` and `_protected_leaf`, and one public helper, `plain_spelling` (the check passed with the same counts on the scratch tree: `srp-size=92, layer-import=0, db-connect=30, unowned-task=13`); no new module, no import (`os`, `PureWindowsPath` are already imported at `:45`, `:54`); only public names cross a module. The new test imports private names from the BF-948 test module and from `file_access`, as BF-911's tests do from `file_access` (`tests/test_bf911_protected_config_write_refusal.py:259`). G2 runs the check.
@@ -3436,24 +4031,32 @@ This is a shared-contract change: review the whole candidate, every consumer in 
 
 18. (M5) A floor file root is compared by the file its own final component names, as the candidate is: for a root spelled `loaded.yaml:settings`, `loaded.yaml.` or `loaded.yaml ` (the last two in the extended namespace) the root's own spelling, the ordinary spelling of the file, its default stream and every other stream of it are refused with the floor's reason, and a neighbour is admitted (T23, T28). For an ordinary root list `_floor_roots` equals the list, so every decision against it is the head's, and on another platform nothing is added (T24). A position count is the root's own count of parts (T27). A directory root spelled in the extended namespace with a trailing dot or space also refuses the directory its base names (L16).
 19. (M5) `permitted_read_roots` and `workspace_exempt_roots` return the workspace root as `Path.resolve()` spells it, and as composed when `resolve()` raises `OSError`, `RuntimeError` or `ValueError`; a configured policy whose roots are unusable and whose workspace root does not resolve still refuses every path outside its roots, through the policy, `read_file` and `list_files` (T25), as the base did. A policy whose every root is unusable and whose workspace root cannot be composed at all is `[]` (L17, as on the base). The consumers of `permitted_read_roots` and `workspace_exempt_roots` are those of §1 item 4 and `agent_work_runner.py`'s `reads_confined`.
-20. (M5, amended by M6) `reader_spelling` calls no filesystem function (T32). It gives `None` when the verified reader's location gate refuses `str(plain_spelling(path))` (any `ValueError`, a `UnicodeEncodeError` among them) or when the final name holds a backslash or ends in a dot or a space (T29, T30, T31), on every platform; on Windows also when a component after the anchor ends in a dot or a space or a part of the spelling is a reserved device name (T26, T29). Otherwise it gives `plain_spelling`'s result. It does not say that a name opens (L18), and it adds string and path-object work for each match (L20).
+20. (M5, amended by M6 and M7) `reader_spelling` calls no filesystem function (T32). It gives `None` when the verified reader's location gate refuses `str(plain_spelling(path))` or the text of that spelling's direct parent (any `ValueError`, a `UnicodeEncodeError` among them) or when the final name holds a backslash or ends in a dot or a space (T29, T30, T31), on every platform; on Windows also when a component after the anchor ends in a dot or a space or a part of the spelling is a reserved device name (T26, T29). Otherwise it gives `plain_spelling`'s result. It does not say that a name opens (L18), and it adds string and path-object work for each match (L20).
 21. (M5) No signature, return shape, config field, `EventType`, persisted format or gate changes (§9); the seven consumer files and the 14-file G4 list keep their counts (G6).
 22. (M5) Every new or rewritten docstring, comment, error string and test docstring is true of the head in the code's branch order: none says that a name with a stream suffix, a trailing dot or a trailing space "is the same file" or "does not make another file" (`_namespace_free`, the test module, `PROGRESS.md`, §16 item 3), and none says a bare drive is returned unchanged; no head text describes what can be read, from where or by whom.
 
 **M6 (Amendment 3): properties.**
 
-23. (M6) The function applies the verified reader's rules on the text on every platform: `validate_read_location` is called as it is, and the final-name rule is the pinned directory's (T31). Off Windows, a name that is not strict UTF-8, a colon or a character below 32 anywhere, a reserved device stem as the final name, and a backslash, a trailing dot or a trailing space in the final name are not listed; a reserved device name or a trailing dot or space in an ancestor is listed (T29, T30).
+23. (M6) The function applies the verified reader's rules on the text on every platform: `validate_read_location` is called as it is, and the final-name rule is the pinned directory's (T31). Off Windows, a name that is not strict UTF-8, a colon or a character below 32 anywhere, a reserved device stem as the final name, and a backslash, a trailing dot or a trailing space in the final name are not listed; a reserved device name or stem as the direct parent is not listed, and a reserved device name, a trailing dot or a trailing space above the direct parent is (T29, T30, T35; L21).
 24. (M6) A directory holding names that the verified reader's gate refuses is listed without them from an ordinary and an extended-prefix base, every file listed is opened by the verified reader with its own bytes, and the unarmed `read_file` opens a name left out (T33; the names probe: a 216-file fixture, 0 listed names the armed reader refuses and 0 names it opens that are not listed, from both bases and both patterns).
 25. (M6) No `reader_spelling` caller, signature, config field, `EventType`, persisted format or gate changes. `git diff a0857b08 -- src` names `file_access.py` and `tools.py` only; in `file_access.py` the diff is inside `plain_spelling`'s docstring and `reader_spelling`; `validate_read_location`, `PinnedDirectory` and `read_verified_file` are byte-identical to the head.
 26. (M6) Every new or rewritten docstring, comment, error string and test docstring is true of the head in the code's branch order, and none says that a listed name opens, that a listing reads nothing, or that its cost is unchanged; the claims audit of Amendment 3's §3 lists each sentence found and where it landed.
 27. (M6) Round 5 reviews the delta `a0857b08..HEAD` (M6, and M7's docstring and comments). The properties to verify, each with its probe or test, are Amendment 3's §11; the reviewer confirms each, traces `reader_spelling`'s one caller and the consumers of `list_files`' reply, and states what it did not check. The sha256 of the three code files is §10's; R4M-1 to R4M-13, R3M-7 to R3M-10 and R3N-1 to R3N-3 are killed on those hashes; the differential probe finds the new result `None` or the head's for every input, and the names probe finds 0 holes in both directions. A change to `validate_read_location`, `PinnedDirectory`, `ReadFileTool` or the fault classification is outside M6 and has its own review (BF-948 L17).
+
+**M7 (Amendment 4): properties.**
+
+28. (M7) The function applies the reader's three text rules on every platform: `validate_read_location` on `str(plain_spelling(path))` and on the text of its direct parent, as `read_verified_file` and `PinnedDirectory.open` give them to the gate, and the pinned directory's child-name rule for the final name (T31). The orchestrator's probe (`probe_lexical_oracle.py`) finds 0 holes and 0 misses over 292,464 texts per shape on M7's head (the head: 31,941 POSIX holes); T34 checks the same over its corpus; R5M-1, R5M-2, R5M-4, R5M-5, R5M-6 and R5M-7 are killed by T30 and T34 and are the probe's holes or misses (§13e; Amendment 4's §2).
+29. (M7) The reader's text path is exactly those three rules: the call list of `read_verified_file` on real files (`probe_gate_trace2.py`) shows no other function that takes the file's or a directory's text and refuses it, and no gate call on a directory above the direct parent; the reviewer re-runs the probe or reads `read_verified_file`, `PinnedDirectory.open` and `_leaf`, and states what the POSIX branches add (a descriptor opened by name; no text rule).
+30. (M7) The change is deny-only against the head, and on Windows no input changes: `probe_diff5.py` finds 0 differences over 43,380 Windows-shaped inputs, and on POSIX 124 newly denied of 7,536, each with a direct parent the gate refuses, 0 violations of P-A and P-B.
+31. (M7) A reserved device name, a trailing dot or a trailing space above the direct parent is listed off Windows and left out on Windows, and L21 says both and why; T35 reads a file below `con/sub` with the verified reader from a real directory and lists it off Windows only. T35 has not run on a POSIX host: the reviewer reads its expectations against the POSIX branches of the reader and says what it did not check.
+32. (M7) Every new or rewritten docstring, comment, error string, test docstring, contract sentence and tracker entry that says what a listing's names do, or what a refused name is answered, is true of the head: none says `invalid path` for a class other than a prefix, a drive or a device name; none says that a surrogate name "cannot be carried"; none says that an ancestor is listed without "above the direct parent"; the claims audit of Amendment 4's §4 lists each site and where it landed; R4M-9 is recorded as equivalent, not as a gap; the three files' sha256 are §10's. Round 6 reviews the delta `8c83093b..HEAD` (BF-953 M7, BF-948 M8); the properties to verify, each with its probe or test, are Amendment 4's §10. A change to `validate_read_location`, `PinnedDirectory`, `ReadFileTool` or the fault classification is outside M7 and has its own review (BF-948 L17).
 
 ## 17. Acceptance criteria
 
 1. Every spelling in `_FAMILIES` gets the ordinary spelling's decision from `resolve_read_path` for the floor, and a refusal where only an exempt or a permitted root admits the ordinary spelling and the spelling is a share (T1), through `ReadFileTool` (T2), through `ListFilesTool` (T3), and for the loaded config file the write side agrees (T4).
 2. The path returned is the resolved path and names the file (T1, T9). A drive-letter path costs no identity lookup (T9). A share path no root covers stays admitted (T10).
 3. The canonicaliser is pure and the same everywhere (T5, T6); the identity helper follows the zero-index rule (T7); POSIX names stay distinct (T8).
-4. Every §10 mutant is killed, SPM-1 to SPM-4 and SPM-16, DNY-1 to DNY-32 and R3M-1 to R3M-14. G1 to G3, G5, G6 and the §14 checks pass, and the broad gate's receipt is green for the batch.
+4. Every §10 mutant is killed, SPM-1 to SPM-4 and SPM-16, DNY-1 to DNY-32, R3M-1 to R3M-14, R4M-1 to R4M-13 and R5M-1 to R5M-9 and R5M-T1 to R5M-T3 (R4M-9 is an equivalent mutant from M7, §10). G1 to G3, G5 to G8 and the §14 checks pass, and the broad gate's receipt is green for the batch.
 5. (M4) A share spelling through a link to another volume is refused by a permitted root and by a floor root on that volume (T11); a floor that cannot be read refuses a share spelling (T12); an exemption is ranked by where it stands in the path, and a floor file root outranks the workspace that encloses it (T13, T17); a short-path workspace root is the root its long path is (T14); the display form of a listing has no namespace prefix (T15, BF-948 T13, T14); a stream, trailing-dot, trailing-space or case spelling of a floor file root or a credential name is decided as the file is, on disk or not (T19 to T21).
-6. (M5) A floor file root spelled with a stream suffix, a trailing dot or a trailing space is refused in its own spelling, in the ordinary spelling of its file and in every stream of it (T23, T24, T28); a workspace root the system cannot resolve stays in both root builders as composed, so a configured policy still confines (T25); (M6) `reader_spelling` returns a spelling only where the verified reader's rules on the text admit it, on every platform, and, on Windows, only if every component names the file in the ordinary namespace (T26, T29 to T31, T33), which BF-948's T15 reads back through the verified reader; it does not say that a name opens (L18); T27 pins the positions T16 only counts.
+6. (M5) A floor file root spelled with a stream suffix, a trailing dot or a trailing space is refused in its own spelling, in the ordinary spelling of its file and in every stream of it (T23, T24, T28); a workspace root the system cannot resolve stays in both root builders as composed, so a configured policy still confines (T25); (M6, M7) `reader_spelling` returns a spelling only where the verified reader's rules on the text admit it, applied to the file and to its direct parent, on every platform, and, on Windows, only if every component names the file in the ordinary namespace (T26, T29 to T31, T33 to T35), which BF-948's T15 reads back through the verified reader; it does not say that a name opens (L18); T27 pins the positions T16 only counts.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
