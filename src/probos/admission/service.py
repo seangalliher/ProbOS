@@ -40,6 +40,7 @@ AD-1346 M3e4d3: and at the chat thread store's ``create_thread`` and ``append_me
 AD-1346 M3e4d4: and at the assignment service's ``create_assignment``.
 AD-1346 M3e4d5: and at the Ward Room channel manager's ``create_channel`` and ``get_or_create_dm_channel``.
 AD-1346 M3e4d6: and at the capability request store's ``file_request`` and ``decide``.
+AD-1346 M3e4d7: and at the artifact store's ``add_version`` and ``reconcile_exact_version``.
 The service reads no configuration.
 """
 
@@ -241,7 +242,8 @@ class AdmissionService:
         ``create_thread`` and ``append_message_once``, and from AD-1346 M3e4d4 the assignment service's
         ``create_assignment``, and from AD-1346 M3e4d5 the Ward Room channel manager's ``create_channel`` and
         ``get_or_create_dm_channel``, and from AD-1346 M3e4d6 the capability request store's ``file_request`` and
-        ``decide``. It reads the
+        ``decide``, and from AD-1346 M3e4d7 the artifact store's ``add_version`` and
+        ``reconcile_exact_version``. It reads the
         carrier in the
         caller's context. On the loop the service was built with, or on any thread when it was built with none, it checks
         at once (``_check_ticket``). Anywhere else (another thread, or another thread's loop) it hands the check, with the

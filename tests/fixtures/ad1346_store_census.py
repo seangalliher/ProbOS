@@ -8,7 +8,7 @@ that holds a point in the Ward Room's ``messages.py`` and ``threads.py``, in ``c
 AD-1346 M3e4d1 (D284), in ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` and, from AD-1346 M3e4d2
 (D291), in ``persistent_tasks.py`` and, from AD-1346 M3e4d3 (D298), in ``threads/__init__.py`` and, from AD-1346
 M3e4d4 (D306), in ``assignment.py`` and, from AD-1346 M3e4d5 (D313), in ``ward_room/channels.py`` and, from AD-1346
-M3e4d6 (D320), in ``capability_request.py`` a
+M3e4d6 (D320), in ``capability_request.py`` and, from AD-1346 M3e4d7 (D327), in ``artifacts/__init__.py`` a
 ``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
 ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
 ``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
@@ -104,7 +104,6 @@ def sql_write_files() -> frozenset[str]:
 #: records a row D239 makes agent-attributed, the name in that scope of the id the row records as its author, creator
 #: or requester).
 AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
-    "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
     "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
 }
 
@@ -112,7 +111,6 @@ AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
 #: D229: the files of ``STORE_WRITE_SCOPES`` are not rows here).
 STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
     # Agent-attributed (AD-1346 M3e4c, D239, D240): M3e4d's (register R113).
-    "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
     "src/probos/workforce.py": _AGENT_ATTRIBUTED,
     # System (AD-1346 M3e4c, D239): each reason names what the file records.
     "src/probos/cognitive/clinical_audit_store.py": System(SHIP, "the clinical audit log"),
@@ -210,9 +208,10 @@ _CHATS: Final = "src/probos/threads/__init__.py"
 _ASSIGNMENTS: Final = "src/probos/assignment.py"
 _CHANNELS: Final = "src/probos/ward_room/channels.py"
 _REQUESTS: Final = "src/probos/capability_request.py"
+_ARTIFACTS: Final = "src/probos/artifacts/__init__.py"
 
-#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313) and M3e4d6
-#: (D320): each (file, enclosing scope) of these ten files that holds a SQL write statement -> its coverage.
+#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313), M3e4d6 (D320) and
+#: M3e4d7 (D327): each (file, enclosing scope) of these eleven files that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -300,6 +299,13 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # System (D239): each takes only a request id.
     (_REQUESTS, "CapabilityRequestStore.mark_fulfilled"): System(SHIP, "a request's status, fulfilled"),
     (_REQUESTS, "CapabilityRequestStore.require_build_consensus"): System(SHIP, "a pending build's payload, with requires_consensus set"),
+    # AD-1346 M3e4d7 (D327). Agent-attributed (D239): a work product's version, its name, content hash and MIME type,
+    # with created_by, written by add_version, and a chain's first version with created_by, written by
+    # reconcile_exact_version; each check is its scope (D328).
+    (_ARTIFACTS, "ArtifactStore.add_version"): StoreCheck((_ARTIFACTS, "ArtifactStore.add_version"), "created_by"),
+    (_ARTIFACTS, "ArtifactStore.reconcile_exact_version"): StoreCheck((_ARTIFACTS, "ArtifactStore.reconcile_exact_version"), "created_by"),
+    # System (D239): it takes only an artifact id.
+    (_ARTIFACTS, "ArtifactStore.delete"): System(SHIP, "the deletion of an artifact's row"),
 }
 
 

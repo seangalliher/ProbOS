@@ -278,13 +278,13 @@ def _holder(node: object, rel: str) -> str | None:
 
 def test_each_store_write_check_is_one_statement_in_its_place() -> None:
     """WM1 (D229, D231, D232; AD-1346 M3e4d1: D285; AD-1346 M3e4d2: D292; AD-1346 M3e4d3: D299; AD-1346 M3e4d4: D307;
-    AD-1346 M3e4d5: D314; AD-1346 M3e4d6: D321; kills EV-2, EV-10, ED-1, ED-2, ED-3, ED-10, EY-1, EY-6, EU-1, EU-3,
-    EU-8, EO-1, EO-7, ET-1, ET-2, ET-9, RQ-1, RQ-2, RQ-8)."""
+    AD-1346 M3e4d5: D314; AD-1346 M3e4d6: D321; AD-1346 M3e4d7: D328; kills EV-2, EV-10, ED-1, ED-2, ED-3, ED-10, EY-1,
+    EY-6, EU-1, EU-3, EU-8, EO-1, EO-7, ET-1, ET-2, ET-9, RQ-1, RQ-2, RQ-8, AV-1, AV-2)."""
     lines: dict[tuple[str, str], list[int]] = {}
     for path, scope, line in sql_write_points():
         lines.setdefault((path, scope), []).append(line)
     checks = [(site, cover) for site, cover in STORE_WRITE_SCOPES.items() if isinstance(cover, StoreCheck)]
-    assert len(checks) == 17, checks
+    assert len(checks) == 19, checks
     for (path, scope), cover in checks:
         fn = function(*cover.check)
         found = [node for node in ast.walk(fn) if calls("check_at")(node)]
