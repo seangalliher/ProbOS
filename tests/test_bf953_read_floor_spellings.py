@@ -29,19 +29,26 @@ own verdict), the function calls no filesystem function (T32), and a directory t
 is listed without them, from an ordinary and an extended-prefix base, with every name it lists opened by the verified
 reader (T33, Windows). None of these says that a listed name opens: BF-953 L18 lists what a listing cannot promise.
 
-Amendment 4 (review round 5, T34 and T35): the listing admits exactly what the verified reader's text path admits: its
-location gate on the file, its location gate on the file's direct parent (the directory the reader pins), and its
-child-name rule on the final name. T34 checks that as a property over a generated corpus against the reader's own gate and
-child-name rule (the POSIX shape on every platform, the Windows shape on Windows); T35 crosses the seam with real files and
-the real reader and tool (a reserved device name as the direct parent is neither listed nor read; one above it is read, and
-listed off Windows). T29 and T30 are corrected: only the direct parent is refused, not every ancestor.
+Amendment 4 (review round 5, T34 and T35): T34 compares ``reader_spelling`` with the verified reader's own functions over a
+generated corpus of file texts (the POSIX shape on every platform, the Windows shape on Windows); T35 reads and lists real
+files with the real reader and tool (a reserved device name as the direct parent is neither listed nor read; one above it
+is read, and listed off Windows). T29 and T30 are corrected: only the direct parent is refused, not every ancestor.
+
+Amendment 5 (review round 6, T36 to T38): a path with no final name (a root) has no spelling, and a real pinned directory
+refuses its empty name (T36; T38 lists a drive root through the real tool, Windows); a path with a ``..`` part has none (T29,
+T30, and T34's corpus holds both kinds of text). T34 takes the location gate from ``validate_read_location`` and the
+child-name verdict from a real pinned directory's public ``read_bytes``; it no longer reaches into the pinned directory. T37
+records the texts a real ``read_verified_file`` gives the location gate, and fails if they change: T34's oracle and the
+probes of the review encode that sequence by hand, and T37 is what ties it to the reader (BF-953 L18).
 """
 
 from __future__ import annotations
 
 import ctypes
 import itertools
+import ntpath
 import os
+import posixpath
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -1063,6 +1070,9 @@ _TEXT_CASES = [
     ("a reserved device name above the direct parent", ("con", "sub", "g.txt"), False, True),
     ("a trailing dot on an ancestor", ("dir.", "deep.txt"), False, True),
     ("a trailing space on an ancestor", ("dir ", "deep.txt"), False, True),
+    ("a '..' as the final name", ("sub", ".."), False, False),
+    ("a '..' that leaves a reserved device name as the direct parent", ("con", "sub", "..", "g.txt"), False, False),
+    ("a '..' that leaves an admitted name", ("src", "..", "g.txt"), False, False),
 ]
 
 
@@ -1070,14 +1080,10 @@ _TEXT_CASES = [
 def test_the_reader_spelling_follows_the_verified_readers_rules_on_the_text(
     label: str, parts: tuple[str, ...], on_windows: bool, elsewhere: bool,
 ) -> None:
-    """T29 (review round 4, F1; corrected by review round 5; any platform): ``reader_spelling`` gives a spelling only where
-    the verified reader's rules on the text admit it. Text that is not strict UTF-8 (a lone surrogate in the final name or an
-    ancestor), a colon or a character below 32 anywhere, a reserved device name as the final name or as the direct parent
-    (the reader gives both the file and the directory it pins to its location gate), and a trailing dot or space in the final
-    name give none, on every platform; an ordinary, a non-ASCII and an astral name give the path itself. A reserved device
-    name above the direct parent, or a trailing dot or space in an ancestor, gives none on Windows only: the reader opens
-    the directories above the direct parent without the gate (BF-953 L21). Whatever the reader's own location gate refuses
-    gives none."""
+    """T29 (review round 4, F1; corrected by rounds 5 and 6; any platform): ``reader_spelling`` of the path built from the
+    row's parts gives a spelling only where the verified reader's own functions admit its text, as the row's label says;
+    a row's two answers differ only where Windows' same-file rule is wider than the reader's text path (BF-953 L21). A path
+    whose text the reader's location gate refuses gives none, and an answer that is a spelling is the path itself."""
     path = _listed(*parts)
     got = file_access.reader_spelling(path)
     assert (got is not None) == (on_windows if os.name == "nt" else elsewhere), f"{label}: {got}"
@@ -1106,6 +1112,12 @@ _POSIX_CASES = [
     ("a trailing space in the final name", "/data/note ", False),
     ("a name decoded with surrogateescape", "/data/\udcff.txt", False),
     ("a relative spelling", "data/note.txt", False),
+    ("a filesystem root", "/", False),
+    ("a root with two leading separators", "//", False),
+    ("a '..' as the final name", "/data/src/..", False),
+    ("a '..' that leaves a reserved device name as the direct parent", "/data/con/sub/../g.txt", False),
+    ("a '..' that leaves a reserved device stem as the direct parent", "/data/aux.py/sub/../g.txt", False),
+    ("a '..' that leaves an admitted name", "/data/sub/../g.txt", False),
 ]
 
 
@@ -1113,12 +1125,10 @@ _POSIX_CASES = [
 def test_the_reader_spelling_applies_the_readers_rules_off_windows_too(
     monkeypatch: pytest.MonkeyPatch, label: str, text: str, given: bool,
 ) -> None:
-    """T30 (review round 4, F1; corrected by review round 5; any platform): with ``os.name`` set to ``posix`` for the one call
-    (a no-op on a POSIX host), the function takes the branch a POSIX host takes, and the reader's rules on the text still
-    apply in it: a colon, a newline, a reserved device stem as the final name or as the direct parent, a backslash, a
-    trailing dot or space in the final name, a name decoded with ``surrogateescape`` and a relative spelling give none, and
-    a reserved device name above the direct parent, or a trailing dot or space in an ancestor, which only Windows refuses,
-    gives the path itself."""
+    """T30 (review round 4, F1; corrected by rounds 5 and 6; any platform): with ``os.name`` set to ``posix`` for the one call
+    (a no-op on a POSIX host), the function takes the branch a POSIX host takes, and ``reader_spelling`` of the row's POSIX
+    text gives a spelling only where the verified reader's own functions admit it, as the row's label says; a rule only
+    Windows has gives the path itself here (BF-953 L21). An answer that is a spelling is the path itself."""
     path = PurePosixPath(text)
     with monkeypatch.context() as patch:
         patch.setattr(os, "name", "posix")
@@ -1226,106 +1236,115 @@ async def test_a_listing_leaves_out_a_name_the_verified_reader_cannot_carry(
             assert snapshot.data == source.read(), f"{spelling}: the verified reader opened {name!r}"
 
 
-# --- M7 (Amendment 4, review round 5): the listing admits exactly what the verified reader's text path admits ---
+# --- M7 and M8 (Amendments 4 and 5, review rounds 5 and 6): the listing is compared with the verified reader's own functions ---
 
 
-class _TextOnlyDirectory(file_access.PinnedDirectory):
-    """A pinned directory with no handle: ``verify`` does nothing, so the real ``_leaf`` runs on a text."""
-
-    def verify(self) -> None:
-        return None
-
-
-class _PosixParent(str):
-    """A parent text that joins a child name as a POSIX path does, so the real ``_leaf`` runs its location gate on a ``str``."""
-
-    def __truediv__(self, name: str) -> str:
-        return str(PurePosixPath(self) / name)
-
-
-class _WindowsParent(str):
-    """The same for a Windows path."""
-
-    def __truediv__(self, name: str) -> str:
-        return str(PureWindowsPath(self) / name)
-
-
-_TEXT_SHAPES = {"posix": (PurePosixPath, _PosixParent, "/data", "/"), "windows": (PureWindowsPath, _WindowsParent, "C:\\data", "\\")}
+_TEXT_SHAPES = {
+    "posix": (posixpath, PurePosixPath, "/data", "/"),
+    "windows": (ntpath, PureWindowsPath, "C:\\data", "C:\\"),
+}
 
 # (component, withheld by Windows' same-file rule wherever it stands: a reserved device name, a trailing dot or a trailing space)
 _CORPUS_DIRS = [
-    ("src", False), ("x..y", False), ("a:b", False),
+    ("src", False), ("x..y", False), ("a:b", False), ("..", False), (".hidden", False),
     ("con", True), ("aux.py", True), ("dot.", True), ("space ", True),
 ]
-_CORPUS_FILES = ["g.txt", "note", "x..y", "dot.", "space ", "a:b", "back\\slash", "aux.py", "con", "\ud800.txt"]
+_CORPUS_FILES = ["g.txt", "note", "x..y", "dot.", "space ", "a:b", "back\\slash", "aux.py", "con", "\ud800.txt", ".hidden"]
 
 
-def _corpus(base: str, sep: str) -> list[tuple[str, bool]]:
-    """Every file text from zero to three directories below *base*, each directory from ``_CORPUS_DIRS``, each final name
-    from ``_CORPUS_FILES``; with whether Windows' same-file rule withholds a directory of it."""
-    texts = []
+def _corpus(shape: str) -> list[tuple[str, bool]]:
+    """Every file text of the shape: the root itself, each final name of ``_CORPUS_FILES`` directly under the root, and each
+    final name from zero to three directories of ``_CORPUS_DIRS`` below the base; with whether Windows' same-file rule withholds a
+    directory of it. Each text is the text of a path object, as a listing gives it."""
+    _, pure, base, root = _TEXT_SHAPES[shape]
+    sep = root[-1]
+    texts = [(root, False)] + [(str(pure(root + name)), False) for name in _CORPUS_FILES]
     for depth in range(4):
         for dirs in itertools.product(_CORPUS_DIRS, repeat=depth):
             prefix = base + "".join(sep + name for name, _ in dirs)
-            texts += [(f"{prefix}{sep}{name}", any(flag for _, flag in dirs)) for name in _CORPUS_FILES]
+            texts += [(str(pure(f"{prefix}{sep}{name}")), any(flag for _, flag in dirs)) for name in _CORPUS_FILES]
     return texts
 
 
-def _reader_admits(text: str, shape: str, *, parent_gate: bool = True) -> bool:
-    """Whether the steps the armed reader takes on a text alone admit *text*, each one the reader's own call, in the order
-    ``read_verified_file`` takes them: its location gate on the file; its location gate on the file's direct parent, which
-    ``PinnedDirectory.open`` applies to the path ``pin_directory(candidate.parent)`` gives it; then the child-name rule and
-    the location gate of ``read_bytes``, run by the real ``PinnedDirectory._leaf`` on a directory with no handle. Nothing in
-    the reader reads the text again: the directories above the direct parent are opened by name."""
-    pure, parent_type, _, _ = _TEXT_SHAPES[shape]
-    parsed = pure(text)
-    directory = _TextOnlyDirectory()
-    directory._paths = [parent_type(str(parsed.parent))]  # type: ignore[list-item]
+def _name_refused(directory: file_access.PinnedDirectory, name: str) -> bool:
+    """Whether a real pinned directory refuses *name* as a child, through its public ``read_bytes``: by its own rule
+    (``FileAccessDenied``) or by its location gate (``ValueError``). A name both admit is read as far as the file that is not there."""
+    try:
+        directory.read_bytes(name)
+    except (FileAccessDenied, ValueError):
+        return True
+    except FileNotFoundError:
+        return False
+    raise AssertionError(f"premise: {name!r} is not a file of the pinned directory")
+
+
+def _reader_admits(
+    text: str, shape: str, refused_names: dict[str, bool], *, parent_gate: bool = True, normalise: bool = True,
+) -> bool:
+    """Whether the verified reader's text path admits *text*, as the reader's own functions answer, in the order
+    ``read_verified_file`` takes them, on the candidate ``validate_read_location`` returns for an absolute text (the normal
+    form of the shape, which is what ``os.path.abspath`` gives it): the location gate on the text; the location gate on the
+    candidate's direct parent (``PinnedDirectory.open``); and a real pinned directory's verdict on the candidate's final name
+    (``read_bytes``: its child-name rule and the gate it applies to the file; the verdicts are in *refused_names*). The sequence
+    is encoded here by hand: BF-953 T37 records it from the reader."""
+    pathmod = _TEXT_SHAPES[shape][0]
+    candidate = pathmod.normpath(text) if normalise else text
+    parent, name = pathmod.split(candidate)
     try:
         file_access.validate_read_location(text)
         if parent_gate:
-            file_access.validate_read_location(str(parsed.parent))
-        directory._leaf(parsed.name)
-    except (ValueError, FileAccessDenied):
+            file_access.validate_read_location(parent)
+    except ValueError:
         return False
-    return True
+    return not refused_names[name]
 
 
 @pytest.mark.parametrize("shape", ["posix", pytest.param("windows", marks=WINDOWS)])
-def test_the_listing_admits_exactly_what_the_verified_readers_text_path_admits(
-    monkeypatch: pytest.MonkeyPatch, shape: str,
+def test_the_listing_agrees_with_the_verified_readers_text_path_over_a_generated_corpus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, shape: str,
 ) -> None:
-    """T34 (review round 5, A; the POSIX shape on any platform with ``os.name`` set to ``posix`` for the calls, the Windows
-    shape on Windows): over a generated corpus of file texts (a reserved device name, a trailing dot or space, a colon and an
-    ordinary name as a directory from zero to three deep, and as the final name, with a lone surrogate and a backslash among
-    the final names), ``reader_spelling``
-    gives a spelling for no text the verified reader's text path refuses, and for every text it admits, except on Windows
-    one that the same-file rule withholds (a reserved device name, a trailing dot or a trailing space in a directory). The
-    reader's text path is its own functions: ``validate_read_location`` on the file and on the file's direct parent, and the
-    real ``PinnedDirectory._leaf``. Premises: the corpus is large, the reader's text path admits and refuses a share of it,
-    and the corpus holds texts that only the parent's gate refuses."""
-    pure, _, base, sep = _TEXT_SHAPES[shape]
-    texts = _corpus(base, sep)
+    """T34 (review round 5, A; review round 6, F1 to F3; the POSIX shape on any platform with ``os.name`` set to ``posix`` for
+    the calls, the Windows shape on Windows): over a generated corpus of file texts (each row of ``_CORPUS_DIRS`` and
+    ``_CORPUS_FILES`` from zero to three directories deep, the root itself and each final name directly under it),
+    ``reader_spelling`` gives a spelling for no text that the oracle refuses and for no text that is not its own normal
+    form, and withholds no text the oracle admits except one the same-file rule withholds (Windows) or one that is not its own
+    normal form (a ``..`` part). The oracle is the reader's own functions, from the public API only: ``validate_read_location``
+    and a real pinned directory's ``read_bytes`` (``_reader_admits``). Premises: the corpus is large; the oracle admits and
+    refuses a share of it; some texts are refused only by the parent's gate and some only by normalising; the corpus holds a
+    path with no final name and the oracle refuses it; some texts the oracle admits are not their own normal form."""
+    pathmod, _, _, root = _TEXT_SHAPES[shape]
+    texts = _corpus(shape)
+    with file_access.pin_directory(tmp_path.resolve()) as directory:  # the child verdicts, on the real platform
+        names = {pathmod.split(form)[1] for text, _ in texts for form in (text, pathmod.normpath(text))}
+        refused_names = {name: _name_refused(directory, name) for name in names}
     holes: list[str] = []
     misses: list[str] = []
-    admitted_count = only_the_parent_gate_refuses = 0
+    admitted_count = only_the_parent_gate_refuses = only_normalising_refuses = admitted_not_normal = 0
     with monkeypatch.context() as patch:
         if shape == "posix":
             patch.setattr(os, "name", "posix")
+        assert not _reader_admits(root, shape, refused_names), "premise: the oracle refuses a root"
         for text, same_file_withholds in texts:
-            admitted = _reader_admits(text, shape)
+            normal = pathmod.normpath(text) == text
+            admitted = _reader_admits(text, shape, refused_names)
             admitted_count += admitted
-            only_the_parent_gate_refuses += (not admitted) and _reader_admits(text, shape, parent_gate=False)
+            if not admitted:
+                only_the_parent_gate_refuses += _reader_admits(text, shape, refused_names, parent_gate=False)
+                only_normalising_refuses += _reader_admits(text, shape, refused_names, normalise=False)
+            admitted_not_normal += admitted and not normal
             listed = file_access.reader_spelling(PurePosixPath(text) if shape == "posix" else Path(text)) is not None
-            if listed and not admitted:
+            if listed and not (admitted and normal):
                 holes.append(text)
-            if admitted and not listed and not (shape == "windows" and same_file_withholds):
+            if admitted and not listed and normal and not (shape == "windows" and same_file_withholds):
                 misses.append(text)
-    assert len(texts) >= 3500, "premise: the corpus is large"
-    assert 0.05 * len(texts) < admitted_count < 0.95 * len(texts), "premise: the reader's text path admits and refuses a share"
+    assert len(texts) >= 6000, "premise: the corpus is large"
+    assert any(not pathmod.split(text)[1] for text, _ in texts), "premise: the corpus holds a path with no final name"
+    assert 0.05 * len(texts) < admitted_count < 0.95 * len(texts), "premise: the oracle admits and refuses a share"
     assert only_the_parent_gate_refuses >= 100, "premise: the corpus holds texts only the parent's gate refuses"
-    assert not holes, f"{len(holes)} listed texts the reader's text path refuses, for example {holes[:3]!r}"
-    assert not misses, f"{len(misses)} texts the reader's text path admits and the listing withholds, for example {misses[:3]!r}"
+    assert only_normalising_refuses >= 20, "premise: the corpus holds texts only normalising refuses"
+    assert admitted_not_normal >= 100, "premise: the corpus holds admitted texts that are not their own normal form"
+    assert not holes, f"{len(holes)} listed texts the oracle refuses or that are not their own normal form, for example {holes[:3]!r}"
+    assert not misses, f"{len(misses)} texts the oracle admits and the listing withholds, for example {misses[:3]!r}"
 
 
 def _make_file(root: Path, rel: tuple[str, ...], data: bytes) -> None:
@@ -1341,8 +1360,8 @@ async def test_a_listing_and_the_verified_reader_agree_about_a_reserved_direct_p
 ) -> None:
     """T35 (review round 5, A; any platform, real files): a directory named ``con`` and one named ``aux.py`` (made through the
     extended namespace on Windows) each hold ``g.txt``, as does an ordinary directory and ``con/sub``. The real
-    ``read_verified_file`` refuses a file whose direct parent is a reserved device name before it reads the disk
-    (``ValueError``), and reads the ordinary one and the one a reserved name above its direct parent. ``list_files`` lists the
+    ``read_verified_file`` refuses a file whose direct parent is a reserved device name (``ValueError``), and reads the ordinary
+    one and the one a reserved name above its direct parent. ``list_files`` lists the
     ordinary one and, off Windows, the one above, and each file it lists is read by the verified reader with its own bytes;
     on Windows the same-file rule also withholds the one above (BF-953 L21)."""
     root = tmp_path.resolve() / "d"
@@ -1376,3 +1395,66 @@ async def test_a_listing_and_the_verified_reader_agree_about_a_reserved_direct_p
     assert sorted(listed.output["files"]) == sorted(str(root.joinpath(*rel)) for rel in expected)
     for name in listed.output["files"]:
         assert verified(name) == files[Path(name).relative_to(root).parts], f"the verified reader opened {name!r}"
+
+
+@pytest.mark.parametrize("kind", ["the root of this platform's base", pytest.param("a share root", marks=WINDOWS)])
+def test_a_path_with_no_final_name_has_no_spelling_and_the_pinned_directory_refuses_its_empty_name(
+    tmp_path: Path, kind: str,
+) -> None:
+    """T36 (review round 6, F1; any platform): a root has no final name. A real pinned directory's ``read_bytes`` refuses the
+    empty name as a child name (``invalid child name``), and ``reader_spelling`` of the root gives none, so the lister's
+    restatement of that rule includes it. The root is the anchor of this platform's base, or (Windows) a share root."""
+    root = Path(_listed().anchor) if kind == "the root of this platform's base" else Path("\\\\host\\share\\")
+    assert root.name == "", "premise: the path has no final name"
+    with file_access.pin_directory(tmp_path.resolve()) as directory:
+        with pytest.raises(FileAccessDenied) as refused:
+            directory.read_bytes(root.name)
+    assert refused.value.reason == "invalid child name"
+    assert file_access.reader_spelling(root) is None
+
+
+@WINDOWS
+async def test_a_listing_whose_only_match_is_a_drive_root_lists_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """T38 (review round 6, F1; Windows): the real ``list_files`` of this platform's drive root, with ``Path.glob`` yielding only
+    the base (the pattern ``**`` yields the base first; a listing of a whole drive is not run), lists nothing. The read policy
+    admits the root, and the real verified reader refuses its empty name (``invalid child name``), so what leaves the root out
+    is ``reader_spelling`` (T36 is the same property on the function)."""
+    runtime = _runtime(_scene(tmp_path), read_roots=[])
+    root = Path(tmp_path.anchor)
+    roots: dict[str, Any] = {
+        "protected_roots": file_access.protected_read_roots(runtime), "exempt_roots": file_access.workspace_exempt_roots(runtime),
+        "permitted_roots": file_access.permitted_read_roots(runtime) or None,
+    }
+    file_access.resolve_read_path(str(root), **roots)  # premise: the policy admits the root (it raises FileAccessDenied otherwise)
+    with pytest.raises(FileAccessDenied) as refused:
+        file_access.read_verified_file(root, **roots)
+    assert refused.value.reason == "invalid child name"
+    monkeypatch.setattr(Path, "glob", lambda self, pattern, *args, **kwargs: iter([self]))
+    listed = await ListFilesTool(runtime).invoke({"pattern": "**", "path": str(root)})
+    assert listed.error is None and listed.output == {"files": []}, listed
+
+
+@pytest.mark.parametrize("text_kind", ["a canonical text", "a text with a '..' part"])
+def test_the_verified_reader_gives_its_location_gate_the_file_and_its_direct_parent_and_nothing_above(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text_kind: str,
+) -> None:
+    """T37 (review round 6, B6-3; any platform, a real file): the real ``read_verified_file`` of a file two directories deep
+    gives ``validate_read_location`` the file's text, then the direct parent of the candidate it returned, then the candidate
+    (``PinnedDirectory.open`` and ``_leaf``), in that order, and no directory above the direct parent; for a text with a
+    ``..`` part, the candidate is the text's normal form. T34's oracle and the probes of the review encode this sequence by
+    hand; this test records it from the reader, so a change of which texts the reader gives its gate fails here, and
+    ``reader_spelling``, T34's oracle and the probes must then be audited (BF-953 L18, L21)."""
+    target = tmp_path.resolve() / "a" / "b" / "g.txt"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(_CONTENT)
+    path = target if text_kind == "a canonical text" else target.parent / ".." / "b" / "g.txt"
+    seen: list[str] = []
+    real_gate = file_access.validate_read_location
+
+    def recording(raw: Any, **kwargs: Any) -> Path:
+        seen.append(str(raw))
+        return real_gate(raw, **kwargs)
+
+    monkeypatch.setattr(file_access, "validate_read_location", recording)
+    assert file_access.read_verified_file(path, protected_roots=[]).data == _CONTENT
+    assert seen == [str(path), str(target.parent), str(target)], seen
