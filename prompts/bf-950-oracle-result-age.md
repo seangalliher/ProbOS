@@ -4,6 +4,7 @@
 **Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-05, before the build: the two tracker heads of section 8 carry 2026-11-05, the local date of M5's commit, as section 8's Date rule requires; and the base of this build is `58235059` (BF-948 and BF-953's merge, PR #1753), which changes none of the nine files this contract anchors in (`git diff --stat 728e1fc2 58235059 -- <the nine files>` is empty, and so is the same diff over the thirteen test files and the two scripts the gates call), and whose only changes to the tracker files are the BF-948 and BF-953 entries the re-anchoring rule of section 8 expects (P5-1 and P5-2 each match exactly once there).
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 1 (review round 1, F1 and F2) adds milestones M6 to M9, tests T11 and T12, mutation rows NBM-10 to NBM-12 and OAM-21 to OAM-22, limits L15 to L17 and §16 items 13 to 17; it is appended at the end of this file.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 2 (review round 2, F3 and F4) adds milestones M10 to M12, tests T13 and T14, mutation rows NBM-13 to NBM-16, limits L18 and L19 and §16 items 18 to 21. It amends L15, NBM-12's killer and §16 item 13, and corrects the store-written claims of A1.1 and A1.12. It is appended at the end of this file.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 3 (review round 3, F5) adds milestones M13 to M15, tests T15 and T16, mutation rows NBM-17 to NBM-19, limit L20 and §16 items 22 to 24. It corrects L19, the third claim of A2.11 and the docstring P11-1 added. It is appended at the end of this file.
 **Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1). For every file this contract touches, `git diff --stat ca0ca20b 728e1fc2 -- <files>` is empty, so `origin/main` `ca0ca20b` gives the same anchors. **Dependencies:** none. It does not touch BF-948/BF-953 work (`list_files`, `security/file_access.py`, `tools/protocol.py`). **Tier:** M1 STANDARD; M2, M3 and M4 STANDARD with a shared contract each (§4); M5 STANDARD. **Estimated tests:** 1 new file, `tests/test_bf950_oracle_result_age.py`: 11 functions and 39 cases, a count derived by reading the file, not by running it. Edits: `tests/test_ad677_context_provenance.py` (5 functions), `tests/test_ad1139_oracle_query_tool.py` (the regex and 1 function), `tests/test_ad1341_s4_lessons.py` and `tests/test_ad1341_s6_nature_description.py` (one constant each), and `tests/fixtures/ad1179_tool_definition_golden.json` (one description).
 **BF number:** BF-950, held by the title of #1742 (OPEN). `git log --all -i --grep BF-950` finds `cb6d61ef` (BF-951) and `079f4761` (docs). Both mention the number and neither fixes it. Nothing is allocated.
 
@@ -2276,6 +2277,8 @@ def _notebook_index_topic(entry: dict[str, Any]) -> str:
 def _parse_hhmm(value: str) -> tuple[int, int]:
 ```
 
+> **Amendment 3 note.** The fallback P11-1 adds, `.replace(".md", "")`, removes every `.md`, not only the final one: `notes.md.md` showed as `notes`, and `.md.md` as an empty item. Its docstring's claim "so the slug reads the same" was false for a topic text containing `.md`. P14-1 corrects both. P11-1 stays as M11 applied it.
+
 **P11-2** `src/probos/proactive.py`
 
 SEARCH:
@@ -2410,7 +2413,7 @@ Then regenerate the ledger as G12 says.
 ### A2.8 Limits (L15 amended by P10-4; L18 and L19 added)
 
 - **L18.** The store creates every revision as an int and carries an existing one forward as `existing_rev + 1` (`records_store.py:322-323`), so a fractional revision an operator wrote stays fractional (3.5, then 4.5). The repetition check does not count such a history; M5's head counted it, but nothing renders the warnings. The read-back also shows no `revision` for it, since it shows only a positive int (§3). The store's next write drops a text, null or list revision (`:323` raises, `:333` catches).
-- **L19.** The records API passes a JSON `topic` to `write_notebook` unchecked (`routers/records.py:146-153`), so a non-text topic can be store-written. Its file is named by the topic's text, so the index's slug shows that same text. Validating it is recorded on #1754.
+- **L19.** The records API passes a JSON `topic` to `write_notebook` unchecked (`routers/records.py:146-153`), so a non-text topic can be store-written. Its file is named `f"{topic}.md"` (`records_store.py:527`). Since Amendment 3 the index's fallback removes only that final `.md`, so the slug shows the topic's text, unless the text contains a `/` (the file then lies in a subdirectory, and the slug is its last component). Before Amendment 3 the fallback removed every `.md`, so a topic text containing `.md` lost it, and `notes.md` and `notes.md.md` both showed as `notes` (review round 3, F5). Validating the topic is recorded on #1754.
 
 ### A2.9 Diff Reviewer properties (added to §16; item 13 amended by P10-5)
 
@@ -2461,7 +2464,7 @@ HOLDS: yes; that assertion holds after M11
 CLAIM: notebook topics come from text slugs on every agent path; only the records API can store a non-text one
 RUN:   Grep "\.write_notebook\(" src/ -A3; read records_store.py:338-339, routers/records.py:141-153
 FOUND: proactive.py:3341, :4405, tools/publish_finding_tool.py:693 (slug text); routers/records.py:151 (raw JSON topic)
-HOLDS: yes (L19); the API's file is named by the topic's text, so the slug reads the same
+HOLDS: in part (corrected by Amendment 3, review round 3 F5). The API names the file `f"{topic}.md"`, but M11's fallback `.replace(".md", "")` removed every `.md`, so the slug read the same only for a text without `.md` or `/`. Since M14 it removes only the final `.md` (L19)
 
 CLAIM: after M11, nothing in the index or repetition enrichment raises on frontmatter a real store lists, except naive out-of-range `.timestamp()`
 RUN:   read proactive.py:2776-2859 expression by expression
@@ -2474,3 +2477,385 @@ HOLDS: yes, with the L15 exception (by reading; not measured)
 ### A2.12 For the Captain
 
 None. Both repairs restore a lost signal or correct a false claim inside the BF-950 envelope and weaken no control.
+
+## Amendment 3 (review round 3: F5)
+
+**Ordering (M13):** take the contract as it stands at `d969ecd4` and apply P13-0 to P13-3. Each of their SEARCH strings occurs exactly once there before the append. Then append this whole section verbatim to the end of `prompts/bf-950-oracle-result-age.md`, then apply P13-4. All of this goes in M13's commit.
+- Every `src` SEARCH is anchored on `d969ecd4`, because M13 changes no `src`.
+- P14-2 to P14-4 remove the markers P13-4 adds, so they are anchored on M13's tree. That is the only exception.
+- P15 is anchored on `d969ecd4`'s trackers.
+
+**P13-0** `prompts/bf-950-oracle-result-age.md` (the header; the SEARCH ends partway through line 7)
+
+SEARCH:
+```
+and A1.12. It is appended at the end of this file.
+**Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1). For every file
+```
+REPLACE:
+```
+and A1.12. It is appended at the end of this file.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 3 (review round 3, F5) adds milestones M13 to M15, tests T15 and T16, mutation rows NBM-17 to NBM-19, limit L20 and §16 items 22 to 24. It corrects L19, the third claim of A2.11 and the docstring P11-1 added. It is appended at the end of this file.
+**Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1). For every file
+```
+
+**P13-1** `prompts/bf-950-oracle-result-age.md` (A2.8, L19)
+
+SEARCH:
+```
+so a non-text topic can be store-written. Its file is named by the topic's text, so the index's slug shows that same text. Validating it is recorded on #1754.
+```
+REPLACE:
+```
+so a non-text topic can be store-written. Its file is named `f"{topic}.md"` (`records_store.py:527`). Since Amendment 3 the index's fallback removes only that final `.md`, so the slug shows the topic's text, unless the text contains a `/` (the file then lies in a subdirectory, and the slug is its last component). Before Amendment 3 the fallback removed every `.md`, so a topic text containing `.md` lost it, and `notes.md` and `notes.md.md` both showed as `notes` (review round 3, F5). Validating the topic is recorded on #1754.
+```
+
+**P13-2** `prompts/bf-950-oracle-result-age.md` (A2.11, third claim)
+
+SEARCH:
+```
+HOLDS: yes (L19); the API's file is named by the topic's text, so the slug reads the same
+```
+REPLACE:
+```
+HOLDS: in part (corrected by Amendment 3, review round 3 F5). The API names the file `f"{topic}.md"`, but M11's fallback `.replace(".md", "")` removed every `.md`, so the slug read the same only for a text without `.md` or `/`. Since M14 it removes only the final `.md` (L19)
+```
+
+**P13-3** `prompts/bf-950-oracle-result-age.md` (A2.5, before P11-2)
+
+SEARCH:
+```
+**P11-2** `src/probos/proactive.py`
+```
+REPLACE:
+```
+> **Amendment 3 note.** The fallback P11-1 adds, `.replace(".md", "")`, removes every `.md`, not only the final one: `notes.md.md` showed as `notes`, and `.md.md` as an empty item. Its docstring's claim "so the slug reads the same" was false for a topic text containing `.md`. P14-1 corrects both. P11-1 stays as M11 applied it.
+
+**P11-2** `src/probos/proactive.py`
+```
+
+### A3.1 Findings and decisions
+
+- **F5 (P3; reach is ordinary through a file name written by an operator or by the API, never by an agent; a regression: Amendment 2 routed non-text topics through an inherited idiom).**
+  - **The defect.** `_notebook_index_topic` falls back to `entry["path"].split("/")[-1].replace(".md", "")` (`proactive.py:314`), which strips every `.md`. Take two files, `notes.md` and `notes.md.md`, whose topics an operator edited into numbers. At base they showed as `17 (updated …)` and `27 (updated …)`. Since M11 they show as `notes` and `notes`, and `total_topics` falls from 2 to 1. A file `.md.md` shows as an empty item. The read-back survives.
+  - **Reach.** An agent's `[NOTEBOOK slug]` is `[\w-]+`, so an agent cannot write a dot. The API can: a text topic `""` gives the file `.md`, and a topic containing `.md` gives an embedded one.
+  - **Fix (M14).** Remove only the final `.md` (`str.removesuffix`). When that leaves nothing, show the whole file name. The count and the index keep the one helper.
+  - **Rejected:**
+    - `Path(name).stem`: it also strips a final `.yaml` or `.txt` that `rglob("*.md")` never lists, and it diverges from the store's `f"{slug}.md"` naming.
+    - Making names unique with a suffix: no consumer keys on uniqueness (search above).
+    - Converting the read-back topic (`:2902`) and `notebook_quality.py` too: both were already like this at base and are outside the index (L20).
+
+### A3.2 Milestones and gates
+
+| M | Tier | Shared contract? | Pairs | Gate |
+|---|---|---|---|---|
+| M13 | STANDARD | test only (plus this contract) | P13-0 to P13-4 | G13 |
+| M14 | STANDARD | no (still a non-empty `str`; keys unchanged) | P14-1 to P14-4 | G14 |
+| M15 | STANDARD | trackers | P15-1 to P15-3, ledger | G15 |
+
+The new-file counts below come from reading the file: 48 cases at M12's head (A2.2), plus T15's 1 and T16's 4. Every count marked **measure** has to be measured on the oracle tree.
+
+- **G13:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf950_oracle_result_age.py -q -n 0`.
+  - Expected: **49 passed, 4 xfailed**. T16 `a-plain-file` passes on M13.
+  - Then `... -q -n 0 --runxfail -k "stay_two_items or keeps_all_but_its_final_md"`. Expected: **4 failed, 1 passed**:
+    - T15: `AssertionError` at `sorted(...) == ["notes", "notes.md"]`, showing `['notes', 'notes']`, in the first renderer;
+    - `an-embedded-md`: `AssertionError`, `['notes'] == ['notes.md']`;
+    - `a-doubled-bare-md` and `a-bare-md`: `AssertionError`, `[''] == ['.md']`.
+  - Any failure on a `# premise` line is a hard stop.
+- **G14:** G11's command, with the same six test files, then `... -P scripts/check_architecture_principles.py --check`.
+  - New file: **53 passed**.
+  - Others: 0 failed, counts equal to G11's (**measure**).
+- **G15:** `... -P scripts/gen_ad_ledger.py`; `... -P scripts/gen_ad_ledger.py --check` (exit 0); `... -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
+  - Expected: **33**, as G12.
+  - Stage the two ledger files as written.
+- **The 36-file focus run:** **1883 passed, 1 skipped** (1878 + 5, **measure**).
+- **Mutation campaign of record, on M14's head.**
+  - Run an unmutated baseline of the new file first.
+  - Record the sha256 of `proactive.py`.
+  - Run NBM-17 to NBM-19.
+  - Because `proactive.py` differs from M11's campaign file, rerun every `proactive.py` row: NBM-1 to NBM-5 and NBM-10 to NBM-16. NBM-15 and NBM-16 are still killed by T13 `a-number-topic` and `a-list-topic`.
+  - Expected inventory: **41 of 41 killed** (**measure**).
+- **Broad gate:** once, after round 4, as §4 says.
+
+### A3.3 Commit messages
+
+- Contract: `BF-950 (#1742): Amendment 3 to the build contract after review round 3 (M13 to M15: an index name taken from the file loses only its final .md)`
+- M13: `BF-950 M13: reproduction of two notebook files collapsing into one index item, and the corrected file-name claims`
+- M14: `BF-950 M14: an index name taken from the file loses only its final .md`
+- M15: `BF-950 M15: trackers and ledger for Amendment 3`
+
+### A3.4 Tests
+
+| Id | Test | Cases | Covers | xfail until |
+|---|---|---|---|---|
+| T15 | `test_two_files_named_by_their_files_stay_two_items` | 1 | F5, real store → pull → both renderers → summary | M14 |
+| T16 | `test_an_index_name_from_the_file_keeps_all_but_its_final_md` | 4 | the fallback's boundaries: an embedded `.md`, `.md.md`, the bare `.md`, a plain file (unchanged; no marker) | M14 (3 of 4) |
+
+**P13-4** `tests/test_bf950_oracle_result_age.py`
+
+SEARCH:
+```python
+    assert result["notebook_summary"] == {"total_entries": 2, "total_topics": 2}
+    assert "engineering notes" in result["notebook_content"]["snippet"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_index_does_not_cost_the_read_back() -> None:
+```
+REPLACE:
+```python
+    assert result["notebook_summary"] == {"total_entries": 2, "total_topics": 2}
+    assert "engineering notes" in result["notebook_content"]["snippet"]
+
+
+_UNTIL_M14 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M14: the index's file-name fallback removes every .md, not only the final one",
+)
+
+
+@pytest.mark.asyncio
+@_UNTIL_M14
+async def test_two_files_named_by_their_files_stay_two_items(tmp_path: Path) -> None:
+    """Review round 3 (F5): an index entry named by its file kept nothing of an embedded ``.md``.
+
+    Amendment 2 names an entry whose topic is not text by its file, and that fallback removed every ``.md``.
+    So ``notes.md`` and ``notes.md.md`` (the store names a file ``f"{slug}.md"``) both showed as ``notes``,
+    and the topic count fell from 2 to 1. A real store, both files edited as a person would edit them.
+    """
+    store = await _records(tmp_path)
+    await store.write_notebook("Zephyr", "notes", "engineering notes, first", department="engineering")
+    await store.write_notebook("Zephyr", "notes.md", "engineering notes, second", department="engineering")
+    for path, topic in (("notebooks/Zephyr/notes.md", 17), ("notebooks/Zephyr/notes.md.md", 27)):
+        edited = _rewrite_frontmatter(store, path, topic=topic, updated=None)
+        assert edited["topic"] == topic and edited["updated"] is None  # premise
+
+    result = await _self_monitoring(store, "Zephyr")
+
+    for text in (_sensorium_render(result), await _proactive_render(result)):
+        lines = [line for line in text.splitlines() if line.startswith("Your notebooks: [")]
+        assert lines and len(set(lines)) == 1, text
+        assert sorted(lines[0][len("Your notebooks: ["):-1].split(", ")) == ["notes", "notes.md"], lines[0]
+    assert result["notebook_summary"] == {"total_entries": 2, "total_topics": 2}
+    assert "engineering notes" in result["notebook_content"]["snippet"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "frontmatter", "shown"), [
+    pytest.param("notebooks/Zephyr/notes.md.md", {"topic": 27}, "notes.md", id="an-embedded-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/.md.md", {}, ".md", id="a-doubled-bare-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/.md", {"topic": None}, ".md", id="a-bare-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/notes.md", {"topic": 27}, "notes", id="a-plain-file"),
+])
+async def test_an_index_name_from_the_file_keeps_all_but_its_final_md(
+    path: str, frontmatter: dict[str, Any], shown: str,
+) -> None:
+    """Review round 3 (F5): the fallback removes only the final ``.md``, and shows the whole name when nothing is left.
+
+    The records API names a file ``f"{topic}.md"`` from any JSON topic, so ``""`` gives ``.md`` and ``.md`` gives
+    ``.md.md``; every-``.md`` removal showed both as an empty item. A listing as ``list_entries`` returns it, so no
+    dot-file listing rule is assumed. ``a-plain-file`` is the unchanged case and passes on M13.
+    """
+    records = MagicMock()
+    records.list_entries = AsyncMock(return_value=[{"path": path, "frontmatter": frontmatter}])
+    records.read_entry = AsyncMock(return_value=None)
+    records.search = AsyncMock(return_value=[])
+
+    result = await _self_monitoring(records, "Zephyr")
+
+    assert [entry["topic"] for entry in result["notebook_index"]] == [shown]
+    assert result["notebook_summary"] == {"total_entries": 1, "total_topics": 1}
+    for text in (_sensorium_render(result), await _proactive_render(result)):
+        assert f"Your notebooks: [{shown}]" in text.splitlines(), text
+
+
+@pytest.mark.asyncio
+async def test_a_failed_index_does_not_cost_the_read_back() -> None:
+```
+
+### A3.5 M14
+
+**P14-1** `src/probos/proactive.py` (anchored on `d969ecd4`)
+
+SEARCH:
+```python
+    The frontmatter's ``topic`` when that is non-empty text, else the file's slug.
+    The store writes ``topic`` only from a non-empty argument (``write_entry``) and
+    every agent writer passes the slug as text, so their index is unchanged. The
+    records API can store a non-text topic, but names the file by its text, so the
+    slug reads the same. A topic edited into a number, a null, a list or a blank is
+    named by its file: both renderers join the topic into one line, and the topic
+    count hashes it.
+    """
+    frontmatter = entry.get("frontmatter")
+    topic = frontmatter.get("topic") if type(frontmatter) is dict else None
+    if isinstance(topic, str) and topic:
+        return topic
+    return entry["path"].split("/")[-1].replace(".md", "")
+```
+REPLACE:
+```python
+    The frontmatter's ``topic`` when that is non-empty text, else the file's name
+    without its final ``.md``, or the whole name when that leaves nothing. The store
+    writes ``topic`` only from a non-empty argument (``write_entry``) and every agent
+    writer passes the slug as text, so their index is unchanged. The records API can
+    store a non-text topic and names the file ``f"{topic}.md"``, so removing only the
+    final ``.md`` gives that text back (L19). A topic edited into a number, a null, a
+    list or a blank is named by its file: both renderers join the topic into one
+    line, and the topic count hashes it. Amendment 3: removing every ``.md`` showed
+    ``notes.md`` and ``notes.md.md`` as one name, and ``.md.md`` as an empty one.
+    """
+    frontmatter = entry.get("frontmatter")
+    topic = frontmatter.get("topic") if type(frontmatter) is dict else None
+    if isinstance(topic, str) and topic:
+        return topic
+    name = entry["path"].split("/")[-1]
+    slug = name.removesuffix(".md")
+    return slug or name
+```
+
+**P14-2** `tests/test_bf950_oracle_result_age.py` (anchored on M13's tree)
+
+SEARCH:
+```python
+_UNTIL_M14 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M14: the index's file-name fallback removes every .md, not only the final one",
+)
+
+
+@pytest.mark.asyncio
+@_UNTIL_M14
+async def test_two_files_named_by_their_files_stay_two_items(tmp_path: Path) -> None:
+```
+REPLACE:
+```python
+@pytest.mark.asyncio
+async def test_two_files_named_by_their_files_stay_two_items(tmp_path: Path) -> None:
+```
+
+**P14-3** `tests/test_bf950_oracle_result_age.py` (anchored on M13's tree)
+
+SEARCH:
+```python
+    pytest.param("notebooks/Zephyr/notes.md.md", {"topic": 27}, "notes.md", id="an-embedded-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/.md.md", {}, ".md", id="a-doubled-bare-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/.md", {"topic": None}, ".md", id="a-bare-md", marks=_UNTIL_M14),
+```
+REPLACE:
+```python
+    pytest.param("notebooks/Zephyr/notes.md.md", {"topic": 27}, "notes.md", id="an-embedded-md"),
+    pytest.param("notebooks/Zephyr/.md.md", {}, ".md", id="a-doubled-bare-md"),
+    pytest.param("notebooks/Zephyr/.md", {"topic": None}, ".md", id="a-bare-md"),
+```
+
+**P14-4** `tests/test_bf950_oracle_result_age.py` (anchored on M13's tree; the T16 docstring's M13 sentence)
+
+SEARCH:
+```python
+    dot-file listing rule is assumed. ``a-plain-file`` is the unchanged case and passes on M13.
+```
+REPLACE:
+```python
+    dot-file listing rule is assumed. ``a-plain-file`` is the unchanged case; it passed on M13, before the fix.
+```
+
+### A3.6 M15 (trackers)
+
+These amend the entries already committed, in place. Entry heads and dates are unchanged. Stage explicit paths only.
+
+**P15-1** `PROGRESS.md`
+
+SEARCH:
+```
+It no longer ends the self-monitoring block in either renderer. The contract is `prompts/bf-950-oracle-result-age.md`.
+```
+REPLACE:
+```
+It no longer ends the self-monitoring block in either renderer. Review round 3 (Amendment 3): a name taken from the file loses only its final `.md`, so `notes.md` and `notes.md.md` stay two items. The contract is `prompts/bf-950-oracle-result-age.md`.
+```
+
+**P15-2** `DECISIONS.md`
+
+SEARCH:
+```
+Amendment 2: `_notebook_index_topic`, the index's topic)
+```
+REPLACE:
+```
+Amendment 2: `_notebook_index_topic`, the index's topic; Amendment 3: its file-name fallback)
+```
+
+**P15-3** `DECISIONS.md`
+
+SEARCH:
+```
+the warnings on the raw value.
+- *Residual.* Recorded limits L1 to L19 of the contract.
+```
+REPLACE:
+```
+the warnings on the raw value.
+- *Amendment 3 (review round 3).* An index name taken from the file removes only the final `.md`, and shows the whole name when nothing is left. So `notes.md` and `notes.md.md` no longer collapse into one item and one topic, and the file `.md.md` is no longer shown as an empty item. Rejected: `Path.stem`, which diverges from the store's `f"{slug}.md"` naming; and converting the read-back topic and AD-551's quality scan, which were already like this at base and are outside the index (L20).
+- *Residual.* Recorded limits L1 to L20 of the contract.
+```
+
+Then regenerate the ledger as G15 says.
+
+### A3.7 Mutation rows
+
+| Id | File | Line | Mutate to | Killed by |
+|---|---|---|---|---|
+| NBM-17 | proactive.py | `slug = name.removesuffix(".md")` | `slug = name.replace(".md", "")` | T15; T16 `an-embedded-md` |
+| NBM-18 | proactive.py | `return slug or name` | `return slug` | T16 `a-bare-md` |
+| NBM-19 | proactive.py | the same line | `return name` | T16 `a-plain-file`; T13 (every case) |
+
+### A3.8 Limits (L19 amended by P13-1; L20 added)
+
+- **L20.** Three places outside the index still remove every `.md`, as they did at base: the read-back topic (`proactive.py:2902`) and AD-551's quality scan (`notebook_quality.py:98`, `:230`). Only a file name an operator or the API wrote can contain an embedded `.md`. Recorded on #1754.
+
+### A3.9 Diff Reviewer properties (added to §16)
+
+22. `_notebook_index_topic` returns the frontmatter's `topic` when that is non-empty text. Otherwise it returns the file name without only its final `.md`, or the whole name when that leaves nothing. So for every path `list_entries` yields, it returns a non-empty `str`. `total_topics` and the index use this one helper.
+23. Two kinds of entry render exactly as at `d969ecd4` in the index, `notebook_summary`, the warnings and the read-back: an entry named by a text topic, and an entry named by a file with no embedded `.md` and not bare `.md`. Lines `proactive.py:2805` and `:2812`, the read-back line `:2902` (L20) and `cognitive_agent.py` are byte-identical.
+24. T15 crosses the real store, the pull, both renderers and the summary. The markers are removed only at M14, after G13 showed the four named failures. No test is deleted.
+
+### A3.10 Verified against codebase (2026-11-05, on `d969ecd4`)
+
+```
+proactive.py:299-314   _notebook_index_topic; :314 return entry["path"].split("/")[-1].replace(".md", "")
+proactive.py:2802-2806 notebook_summary {"total_entries", "total_topics": len(set(_notebook_index_topic(e) ...))}
+proactive.py:2812      topic = _notebook_index_topic(e)
+proactive.py:2843-2851 enriched_index {topic, updated, recency, preview, revision}; result["notebook_index"]
+proactive.py:2871      f"You've written about {ei['topic']} {rev} times recently. "
+proactive.py:2902      read-back topic: top.get("path", "").split("/")[-1].replace(".md", "")   (L20)
+proactive.py:3508      read_nb_pattern = r'\[READ_NOTEBOOK\s+([\w-]+)\]'
+cognitive_agent.py:9422-9432, :11327-11337  ", ".join(f"{e['topic']} (updated {e['updated']})" if e.get("updated") else e["topic"] ...)
+notebook_quality.py:98, :230  fm.get("topic", entry.get("path", "unknown").split("/")[-1].replace(".md", ""))   (L20)
+records_store.py:527-528  path = f"notebooks/{callsign}/{topic_slug}.md"; self._safe_path(path) (traversal check only, :1277-1288)
+records_store.py:1030  list_entries walks rglob("*.md")
+tests/test_bf950_oracle_result_age.py:70-106  _records, _rewrite_frontmatter, _self_monitoring
+tests/test_bf950_oracle_result_age.py:465-470  end of T13 and start of T14 (P13-4's anchor)
+builder.py:1641        str.removesuffix already used in src (Python >= 3.9)
+```
+
+### A3.11 Absence verified (2026-11-05)
+
+```
+CLAIM: nothing in src reads notebook_summary or notebook_repetition_warnings
+RUN:   Grep "notebook_repetition_warnings|notebook_summary" src
+FOUND: proactive.py:2802, :2877 (both producers)
+HOLDS: yes; the collapsed count reached no consumer, but property 22 keeps the count and the index on one helper
+
+CLAIM: no consumer of the index topic needs it unique
+RUN:   Grep "notebook_index|_notebook_index_topic" (all files except prompts/); Grep "READ_NOTEBOOK\s" src/probos
+FOUND: cognitive_agent.py:9422, :11327 (display join); proactive.py:3508 ([\w-]+, so a dotted name cannot be requested back)
+HOLDS: yes; display identity only
+
+CLAIM: no test pins the line M14 replaces
+RUN:   Grep 'replace\(\\?"\.md|removesuffix|_notebook_index_topic|slug reads the same' tests
+FOUND: test_ad1227_recent_outputs.py:416 (an unrelated string); others are removesuffix in unrelated tests
+HOLDS: yes
+```
+
+### A3.12 For the Captain
+
+None. The repair restores a lost distinction inside the BF-950 envelope and weakens no control.
