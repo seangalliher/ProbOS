@@ -3,6 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-04
 **Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-05, before the build: the two tracker heads of section 8 carry 2026-11-05, the local date of M5's commit, as section 8's Date rule requires; and the base of this build is `58235059` (BF-948 and BF-953's merge, PR #1753), which changes none of the nine files this contract anchors in (`git diff --stat 728e1fc2 58235059 -- <the nine files>` is empty, and so is the same diff over the thirteen test files and the two scripts the gates call), and whose only changes to the tracker files are the BF-948 and BF-953 entries the re-anchoring rule of section 8 expects (P5-1 and P5-2 each match exactly once there).
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 1 (review round 1, F1 and F2) adds milestones M6 to M9, tests T11 and T12, mutation rows NBM-10 to NBM-12 and OAM-21 to OAM-22, limits L15 to L17 and §16 items 13 to 17; it is appended at the end of this file.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 2 (review round 2, F3 and F4) adds milestones M10 to M12, tests T13 and T14, mutation rows NBM-13 to NBM-16, limits L18 and L19 and §16 items 18 to 21. It amends L15, NBM-12's killer and §16 item 13, and corrects the store-written claims of A1.1 and A1.12. It is appended at the end of this file.
 **Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1). For every file this contract touches, `git diff --stat ca0ca20b 728e1fc2 -- <files>` is empty, so `origin/main` `ca0ca20b` gives the same anchors. **Dependencies:** none. It does not touch BF-948/BF-953 work (`list_files`, `security/file_access.py`, `tools/protocol.py`). **Tier:** M1 STANDARD; M2, M3 and M4 STANDARD with a shared contract each (§4); M5 STANDARD. **Estimated tests:** 1 new file, `tests/test_bf950_oracle_result_age.py`: 11 functions and 39 cases, a count derived by reading the file, not by running it. Edits: `tests/test_ad677_context_provenance.py` (5 functions), `tests/test_ad1139_oracle_query_tool.py` (the regex and 1 function), `tests/test_ad1341_s4_lessons.py` and `tests/test_ad1341_s6_nature_description.py` (one constant each), and `tests/fixtures/ad1179_tool_definition_golden.json` (one description).
 **BF number:** BF-950, held by the title of #1742 (OPEN). `git log --all -i --grep BF-950` finds `cb6d61ef` (BF-951) and `079f4761` (docs). Both mention the number and neither fixes it. Nothing is allocated.
 
@@ -1556,7 +1557,7 @@ REPLACE:
 
 ### A1.1 Findings and decisions
 
-- **F1 (P2, ordinary reach through an operator-edited file; not a regression).** In `_build_self_monitoring_context` the AD-550 index sorted the raw `updated`, the AD-552 repetition check compared the raw `revision`, and the topic count hashed the raw `topic`. All three sat inside the `try` that also held the BF-949/BF-950 semantic pull. So one hand-edited notebook entry (a YAML date beside the store's text, a text revision, a list topic) ended the read-back for the cycle. Store-written files never produce these shapes (`records_store.py:305`, `:323`, `:354`). This contract's §1.5 names the hand-written date as a supported shape. **Fix (M7):** the pull gets its own error boundary; the index orders by `record_write_time`; the repetition check counts only an int revision.
+- **F1 (P2, ordinary reach through an operator-edited file; not a regression).** In `_build_self_monitoring_context` the AD-550 index sorted the raw `updated`, the AD-552 repetition check compared the raw `revision`, and the topic count hashed the raw `topic`. All three sat inside the `try` that also held the BF-949/BF-950 semantic pull. So one hand-edited notebook entry (a YAML date beside the store's text, a text revision, a list topic) ended the read-back for the cycle. Store-written files never produce the first two (`records_store.py:305`, `:323`, `:354`). The store rewrites `updated` as text. A text revision raises at `:323`, is caught at `:333`, and that update is written without one. A list topic can be store-written only through the records API, which passes a JSON `topic` through (`routers/records.py:146-153`; Amendment 2, L19). This contract's §1.5 names the hand-written date as a supported shape. **Fix (M7):** the pull gets its own error boundary; the index orders by `record_write_time`; the repetition check counts only an int revision.
 - **F2 (P2, ordinary reach with `crew_sigma_context_enabled=True`; not a regression).** `crew_executor._COMMONS_DISPOSITION` promised every entry "an age" and told agents to weigh a "STALE" entry lightly. `_render_commons_entry` shows an age only for a numeric `metadata["timestamp"]` and never writes STALE. **Fix (M8):** text only, "sometimes an age", "old" instead of "STALE", +8 characters. The renderer is unchanged (L16).
 - **§9 note.** The index line still shows the raw `updated` (L14 holds). Its order is now that of the parsed write time, which equals the raw order for every store-written entry.
 
@@ -1768,6 +1769,8 @@ REPLACE:
                             if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):
 ```
 
+> **Amendment 2 note.** The comment P7-3 adds says the store writes only an int revision. That is false: the store carries an existing revision forward as `existing_rev + 1` (`records_store.py:322-323`), so an operator's 3.5 becomes 4.5. P11-4 corrects the source. P7-3 stays as M7 applied it.
+
 **P7-4** `src/probos/proactive.py`
 
 SEARCH:
@@ -1945,19 +1948,19 @@ Then regenerate the ledger as G9 says.
 |---|---|---|---|---|
 | NBM-10 | proactive.py | `key=lambda e: record_write_time(e.get("frontmatter")) or 0.0,` | `key=lambda e: e.get("frontmatter", {}).get("updated", ""),` | T11 `a-yaml-date-beside-text` |
 | NBM-11 | proactive.py | `if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):` | `if rev >= _rep_thresh and ei.get("updated"):` | T11 `a-text-revision` |
-| NBM-12 | proactive.py | `if dept and entries:` | `if dept and entries and "notebook_summary" in result:` | T11 `a-list-topic` |
+| NBM-12 | proactive.py | `if dept and entries:` | `if dept and entries and "notebook_summary" in result:` | T11 `a-list-topic` (campaign on M8's head); from M10 on, T14 (Amendment 2: after M11 no real-store shape ends the enrichment before the summary) |
 | OAM-21 | crew_executor.py | `"sometimes an age, so weigh a weakly-matching or old entry lightly. "` | `"sometimes an age, so weigh a weakly-matching or STALE entry lightly. "` | T12 |
 | OAM-22 | crew_executor.py | the same line | `"an age, so weigh a weakly-matching or old entry lightly. "` | T12 |
 
 ### A1.9 Limits (added; L1 to L14 unchanged; L14 still holds, see A1.1)
 
-- **L15.** Index and repetition enrichment can still fail for a cycle on other frontmatter written outside the store's path (for example a list `topic`, which `set()` cannot hash). Since Amendment 1 that no longer suppresses the read-back. The repetition check still skips an entry whose `updated` is a YAML date (it parses with `datetime.fromisoformat`). Recorded on #1754.
+- **L15.** (Amended by Amendment 2.) Since M11, no frontmatter shape a real store lists is known to make the index or repetition enrichment raise (A2.11), with one exception. A naive text `updated` that local time cannot convert (for example `1900-01-01T00:00:00` on Windows) can make `.timestamp()` raise `OSError` or `OverflowError` past the `except (ValueError, TypeError)` at the index's recency and at the repetition check. This was found by reading and is not yet measured. Such a failure costs the index for that cycle, never the read-back (T14). The repetition check still skips an entry whose `updated` is a YAML date (it parses with `datetime.fromisoformat`). Recorded on #1754.
 - **L16.** The crew-consult renderer still dates an entry only from a numeric `metadata["timestamp"]` and never writes STALE, so records, archive and semantic entries show no age there. The preamble now says "sometimes an age". Moving the renderer onto `entry_write_time` is recorded on #1754.
 - **L17.** An entry with no parseable `updated` but a parseable `created` now sorts in the index by `created`. The store always writes `updated`, so no store-written entry is affected.
 
 ### A1.10 Diff Reviewer properties (added to §16)
 
-13. A store-written notebook renders exactly as at M5's head: the index order, the index fields (raw `updated`; `revision` defaulting to 1), the repetition warnings and the read-back. The sort key orders every store-written `updated` as the raw text did, and the revision guard admits every revision the store writes.
+13. (Amended by Amendment 2.) A notebook whose every write came through the store with a text topic renders exactly as at M5's head: the index order, the index fields (raw `updated`; `revision` defaulting to 1), the repetition warnings and the read-back. The sort key orders every store-written `updated` as the raw text did. The store creates every revision as an int, and the guard counts only an int. A fractional revision an operator wrote stays fractional when the store carries it forward (`existing_rev + 1`, `records_store.py:322-323`). Such a history gives no repetition warning where M5's head gave one; nothing renders the warnings (L18).
 14. The semantic pull runs whenever `list_entries` returned entries, whatever the index or repetition enrichment raised. It does not run when the listing raised or was empty, or when the agent has no department. Its exception is logged at debug with the callsign and ends only the pull.
 15. The pending-read path, its order after the pull (it still overwrites `notebook_content`), and the set of keys `_build_self_monitoring_context` can return are unchanged.
 16. `_COMMONS_DISPOSITION` promises only what `_render_commons_entry` emits and contains no "STALE". It still contains "tier", "relevance", "author" and "age", and never "confidence". The DD-4 gap regex finds nothing in it. It grew by 8 characters, and `test_char_budget_is_enforced_and_reports_the_elision` still renders exactly one entry.
@@ -1990,7 +1993,7 @@ tests/test_bf950_oracle_result_age.py:70-142  _records, _rewrite_frontmatter, _s
 CLAIM: no store-reachable writer puts a date-typed `updated` or a non-int `revision` in a notebook
 RUN:   Grep "records_store\.(write_entry|write_notebook|publish|write_workspace_file)" src/; Grep write_workspace_file\( src/
 FOUND: routers/records.py:151 (write_notebook); write_workspace_file only from consultation/workspace.py and consultation/delivery.py:983 (workspace YAML)
-HOLDS: yes; reaching the defect needs an edit outside the store
+HOLDS: in part (corrected by Amendment 2, review round 2 F4). No writer creates a date-typed `updated` or a non-int `revision`. But `write_entry` carries an existing revision forward as `existing_rev + 1` (`records_store.py:322-323`), so an operator-written float stays a float (3.5, then 4.5). A bool becomes an int (True + 1 = 2). A text, null or list revision raises there, is caught at `:333`, and that update is written without `revision`. Every non-int revision still starts with an edit outside the store.
 
 CLAIM: notebook_repetition_warnings and notebook_summary are never consumed in src
 RUN:   Grep "repetition_warnings|notebook_summary" src/ and tests/
@@ -2006,3 +2009,468 @@ HOLDS: yes
 ### A1.13 For the Captain
 
 None. Both repairs correct a false or lost signal inside the BF-950 envelope and weaken no control.
+
+## Amendment 2 (review round 2: F3 and F4)
+
+**Ordering (M10):** on the contract as it stands at `158418fc`, apply P10-0 to P10-6. Each of their SEARCH strings occurs exactly once there, before the append. Then append this whole section verbatim to the end of `prompts/bf-950-oracle-result-age.md`, then apply P10-7. All of this goes in M10's commit. Every `src` SEARCH is anchored on `158418fc`, because M10 changes no `src`. P11-5 and P11-6 remove the marker P10-7 adds, so they are anchored on M10's tree; that is the only exception. P12 is anchored on `158418fc`'s trackers.
+
+**P10-0** `prompts/bf-950-oracle-result-age.md` (the header; the SEARCH ends partway through line 6)
+
+SEARCH:
+```
+it is appended at the end of this file.
+**Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1).
+```
+REPLACE:
+```
+it is appended at the end of this file.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment 2 (review round 2, F3 and F4) adds milestones M10 to M12, tests T13 and T14, mutation rows NBM-13 to NBM-16, limits L18 and L19 and §16 items 18 to 21. It amends L15, NBM-12's killer and §16 item 13, and corrects the store-written claims of A1.1 and A1.12. It is appended at the end of this file.
+**Status:** ready to build. **Base:** drafted on `728e1fc2` (tree of BF-948 Amendment 1).
+```
+
+**P10-1** `prompts/bf-950-oracle-result-age.md` (A1.1, F1 bullet)
+
+SEARCH:
+```
+Store-written files never produce these shapes (`records_store.py:305`, `:323`, `:354`).
+```
+REPLACE:
+```
+Store-written files never produce the first two (`records_store.py:305`, `:323`, `:354`). The store rewrites `updated` as text. A text revision raises at `:323`, is caught at `:333`, and that update is written without one. A list topic can be store-written only through the records API, which passes a JSON `topic` through (`routers/records.py:146-153`; Amendment 2, L19).
+```
+
+**P10-2** `prompts/bf-950-oracle-result-age.md` (A1.5, before P7-4)
+
+SEARCH:
+```
+**P7-4** `src/probos/proactive.py`
+```
+REPLACE:
+```
+> **Amendment 2 note.** The comment P7-3 adds says the store writes only an int revision. That is false: the store carries an existing revision forward as `existing_rev + 1` (`records_store.py:322-323`), so an operator's 3.5 becomes 4.5. P11-4 corrects the source. P7-3 stays as M7 applied it.
+
+**P7-4** `src/probos/proactive.py`
+```
+
+**P10-3** `prompts/bf-950-oracle-result-age.md` (A1.8)
+
+SEARCH:
+```
+| NBM-12 | proactive.py | `if dept and entries:` | `if dept and entries and "notebook_summary" in result:` | T11 `a-list-topic` |
+```
+REPLACE:
+```
+| NBM-12 | proactive.py | `if dept and entries:` | `if dept and entries and "notebook_summary" in result:` | T11 `a-list-topic` (campaign on M8's head); from M10 on, T14 (Amendment 2: after M11 no real-store shape ends the enrichment before the summary) |
+```
+
+**P10-4** `prompts/bf-950-oracle-result-age.md` (A1.9)
+
+SEARCH:
+```
+- **L15.** Index and repetition enrichment can still fail for a cycle on other frontmatter written outside the store's path (for example a list `topic`, which `set()` cannot hash). Since Amendment 1 that no longer suppresses the read-back. The repetition check still skips an entry whose `updated` is a YAML date (it parses with `datetime.fromisoformat`). Recorded on #1754.
+```
+REPLACE:
+```
+- **L15.** (Amended by Amendment 2.) Since M11, no frontmatter shape a real store lists is known to make the index or repetition enrichment raise (A2.11), with one exception. A naive text `updated` that local time cannot convert (for example `1900-01-01T00:00:00` on Windows) can make `.timestamp()` raise `OSError` or `OverflowError` past the `except (ValueError, TypeError)` at the index's recency and at the repetition check. This was found by reading and is not yet measured. Such a failure costs the index for that cycle, never the read-back (T14). The repetition check still skips an entry whose `updated` is a YAML date (it parses with `datetime.fromisoformat`). Recorded on #1754.
+```
+
+**P10-5** `prompts/bf-950-oracle-result-age.md` (A1.10)
+
+SEARCH:
+```
+13. A store-written notebook renders exactly as at M5's head: the index order, the index fields (raw `updated`; `revision` defaulting to 1), the repetition warnings and the read-back. The sort key orders every store-written `updated` as the raw text did, and the revision guard admits every revision the store writes.
+```
+REPLACE:
+```
+13. (Amended by Amendment 2.) A notebook whose every write came through the store with a text topic renders exactly as at M5's head: the index order, the index fields (raw `updated`; `revision` defaulting to 1), the repetition warnings and the read-back. The sort key orders every store-written `updated` as the raw text did. The store creates every revision as an int, and the guard counts only an int. A fractional revision an operator wrote stays fractional when the store carries it forward (`existing_rev + 1`, `records_store.py:322-323`). Such a history gives no repetition warning where M5's head gave one; nothing renders the warnings (L18).
+```
+
+**P10-6** `prompts/bf-950-oracle-result-age.md` (A1.12)
+
+SEARCH:
+```
+HOLDS: yes; reaching the defect needs an edit outside the store
+```
+REPLACE:
+```
+HOLDS: in part (corrected by Amendment 2, review round 2 F4). No writer creates a date-typed `updated` or a non-int `revision`. But `write_entry` carries an existing revision forward as `existing_rev + 1` (`records_store.py:322-323`), so an operator-written float stays a float (3.5, then 4.5). A bool becomes an int (True + 1 = 2). A text, null or list revision raises there, is caught at `:333`, and that update is written without `revision`. Every non-int revision still starts with an edit outside the store.
+```
+
+### A2.1 Findings and decisions
+
+- **F3 (P2, ordinary reach through an operator-edited file; a regression that widened an older defect).**
+  - **The defect.** When an index entry's `updated` is empty, both renderers join its raw `topic` into one line (`cognitive_agent.py:9424-9426`, `:11329-11331`). A number or null topic raises `TypeError` there, and the sensorium dispatcher drops the whole self-monitoring extension, read-back included.
+  - **Before Amendment 1.** At `eed3a3ee` this was reachable when the edited entry's `updated` was missing or `""`; the raw sort compares `""` with text. That is AD-550's defect.
+  - **What M7 widened.** M7's total sort key let a null, false or non-text `updated` through as well.
+  - **Neighbouring shapes.** A list topic made the topic count raise and cost the index (old L15). A blank topic rendered as an empty item.
+  - **Fix (M11).** A new `_notebook_index_topic` returns the frontmatter's `topic` when it is non-empty text, otherwise the file's slug. The index and the topic count both use it. The renderers do not change.
+  - **Rejected:** casting in the two renderers. It would leave the topic count and the warnings on the raw value, and it would edit duplicated code twice.
+- **F4 (P3, ordinary reach: an update after an operator edit; a regression in the claims and in an output nothing reads).** The guard stays int-only. A fractional "times" count means nothing, and nothing renders `notebook_repetition_warnings`. The comment, A1.1, A1.12 and property 13 are corrected (P10-1, P10-5, P10-6, P11-4). P9-1 and P9-3 make no store claim and stay as written.
+
+### A2.2 Milestones and gates
+
+| M | Tier | Shared contract? | Pairs | Gate |
+|---|---|---|---|---|
+| M10 | STANDARD | test only (plus this contract) | P10-0 to P10-7 | G10 |
+| M11 | STANDARD | no (index keys and shape unchanged; `topic` narrows to the `str` both renderers already assume) | P11-1 to P11-6 | G11 |
+| M12 | STANDARD | trackers | P12-1 to P12-3, ledger | G12 |
+
+The new-file counts below come from reading the file: 43 cases at M9's head, plus T13's 4 and T14's 1. Every count marked **measure** has to be measured on the oracle tree.
+
+- **G10:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf950_oracle_result_age.py -q -n 0`.
+  - Expected: **44 passed, 4 xfailed**. T14 passes on M10.
+  - Then `... -q -n 0 --runxfail -k "index_topic"`. Expected: **4 failed**:
+    - `a-number-topic`: `TypeError: sequence item …: expected str instance, int found`;
+    - `a-null-topic`: the same, with `NoneType found`;
+    - `a-list-topic`: `AssertionError` at `assert lines and len(set(lines)) == 1`;
+    - `a-blank-topic`: `AssertionError` at the item-set assertion.
+  - Any failure on a `# premise` line is a hard stop.
+- **G11:** G7's command, with the same six test files, then `... -P scripts/check_architecture_principles.py --check`.
+  - New file: **48 passed**.
+  - Others: 0 failed, counts equal to G7's (**measure**).
+- **G12:** `... -P scripts/gen_ad_ledger.py`; `... -P scripts/gen_ad_ledger.py --check` (exit 0); `... -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
+  - Expected: **33**, as G9.
+  - Stage the two ledger files as written.
+- **The 36-file focus run:** **1878 passed, 1 skipped** if the new file is among the 36 (**measure**).
+- **Mutation campaign of record, on M11's head.**
+  - Run an unmutated baseline of the new file first.
+  - Record the sha256 of `proactive.py`.
+  - Run NBM-13 to NBM-16 and NBM-12 (new killer T14).
+  - Rerun NBM-1 to NBM-5, NBM-10 and NBM-11, because `proactive.py` differs from M8's campaign file (their lines are unchanged).
+  - Expected inventory: **38 of 38 killed** (**measure**).
+- **Optional measurement for L15:** `python -I -c "from datetime import datetime; datetime.fromisoformat('1900-01-01T00:00:00').timestamp()"`. Record whether it raises in the #1754 line. It changes nothing in this candidate.
+- **Broad gate:** once, after round 3, as §4 says.
+
+### A2.3 Commit messages
+
+- M10: `BF-950 M10: reproduction of an index topic that is not text ending the self-monitoring block, and the corrected store-written claims`
+- M11: `BF-950 M11: an index topic that is not text is named by its file`
+- M12: `BF-950 M12: trackers and ledger for Amendment 2`
+
+### A2.4 Tests
+
+| Id | Test | Cases | Covers | xfail until |
+|---|---|---|---|---|
+| T13 | `test_an_index_topic_that_is_not_text_does_not_end_the_block` | 4 | F3, real store → pull → both renderers | M11 |
+| T14 | `test_a_failed_index_does_not_cost_the_read_back` | 1 | §16 item 14 under mutation (NBM-12) | none: passes on M10 |
+
+**P10-7** `tests/test_bf950_oracle_result_age.py`
+
+SEARCH:
+```python
+    elif shape == "a-text-revision":
+        warnings = result.get("notebook_repetition_warnings", [])
+        assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
+```
+REPLACE:
+```python
+    elif shape == "a-text-revision":
+        warnings = result.get("notebook_repetition_warnings", [])
+        assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
+
+
+_UNTIL_M11 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M11: an index topic that is not text ends the self-monitoring notebook block",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("topic", "updated"), [
+    pytest.param(17, None, id="a-number-topic"),
+    pytest.param(None, False, id="a-null-topic"),
+    pytest.param(["engines", "warp"], None, id="a-list-topic"),
+    pytest.param("", None, id="a-blank-topic"),
+])
+@_UNTIL_M11
+async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
+    tmp_path: Path, topic: Any, updated: Any,
+) -> None:
+    """Review round 2 (F3): an index entry with an empty ``updated`` is rendered by its bare topic.
+
+    So a topic edited outside the store into a number or a null raised in ``", ".join`` in both renderers,
+    and the sensorium dispatcher dropped the whole self-monitoring extension, read-back included. A list
+    topic ended the index at the topic count, and a blank one rendered as an empty item. The index now names
+    such an entry by its file. A real store, its file edited as a person would edit it.
+    """
+    store = await _records(tmp_path)
+    await store.write_notebook("Zephyr", "first-topic", "engineering notes, first", department="engineering")
+    await store.write_notebook("Zephyr", "second-topic", "engineering notes, second", department="engineering")
+    first, second = "notebooks/Zephyr/first-topic.md", "notebooks/Zephyr/second-topic.md"
+    edited = _rewrite_frontmatter(store, first, topic=topic, updated=updated)
+    assert edited["topic"] == topic and edited["updated"] is updated  # premise
+    second_updated = _rewrite_frontmatter(store, second)["updated"]
+    assert type(second_updated) is str  # premise: the store writes text
+
+    result = await _self_monitoring(store, "Zephyr")
+
+    expected_items = {"first-topic", f"second-topic (updated {second_updated})"}
+    for text in (_sensorium_render(result), await _proactive_render(result)):
+        lines = [line for line in text.splitlines() if line.startswith("Your notebooks: [")]
+        assert lines and len(set(lines)) == 1, text
+        assert set(lines[0][len("Your notebooks: ["):-1].split(", ")) == expected_items, lines[0]
+        assert any(tag.startswith('<notebook topic="') for tag in _notebook_tags(text)), text
+    assert result["notebook_summary"] == {"total_entries": 2, "total_topics": 2}
+    assert "engineering notes" in result["notebook_content"]["snippet"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_index_does_not_cost_the_read_back() -> None:
+    """§16 item 14 under mutation (NBM-12): the read-back runs whenever the listing returned entries.
+
+    Since Amendment 2 no frontmatter a real store lists is known to end the index (L15), so the failure is
+    injected: a listing entry without the ``path`` that ``RecordsStore.list_entries`` always sets.
+    Passes on M10 and after.
+    """
+    records = MagicMock()
+    records.list_entries = AsyncMock(return_value=[{"frontmatter": {"author": "Bones"}}])
+    records.search = AsyncMock(return_value=[{
+        "path": "notebooks/Bones/own-topic.md", "snippet": "engineering notes of my own",
+        "frontmatter": {"updated": "2026-05-03T10:00:00+00:00"},
+    }])
+
+    result = await _self_monitoring(records, "Bones")
+
+    assert "notebook_summary" not in result and "notebook_index" not in result  # premise: the enrichment raised
+    assert result["notebook_content"]["topic"] == "own-topic"
+    assert _notebook_tags(_sensorium_render(result)) == [
+        '<notebook topic="own-topic" updated="2026-05-03T10:00:00+00:00">',
+    ]
+```
+
+### A2.5 M11
+
+**P11-1** `src/probos/proactive.py`
+
+SEARCH:
+```python
+        "revision": revision if type(revision) is int and revision >= 1 else None,
+    }
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+```
+REPLACE:
+```python
+        "revision": revision if type(revision) is int and revision >= 1 else None,
+    }
+
+
+def _notebook_index_topic(entry: dict[str, Any]) -> str:
+    """BF-950 Amendment 2: the topic an AD-550 index entry shows, always text.
+
+    The frontmatter's ``topic`` when that is non-empty text, else the file's slug.
+    The store writes ``topic`` only from a non-empty argument (``write_entry``) and
+    every agent writer passes the slug as text, so their index is unchanged. The
+    records API can store a non-text topic, but names the file by its text, so the
+    slug reads the same. A topic edited into a number, a null, a list or a blank is
+    named by its file: both renderers join the topic into one line, and the topic
+    count hashes it.
+    """
+    frontmatter = entry.get("frontmatter")
+    topic = frontmatter.get("topic") if type(frontmatter) is dict else None
+    if isinstance(topic, str) and topic:
+        return topic
+    return entry["path"].split("/")[-1].replace(".md", "")
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+```
+
+**P11-2** `src/probos/proactive.py`
+
+SEARCH:
+```python
+                            "total_topics": len(set(
+                                e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", ""))
+                                for e in entries
+                            )),
+```
+REPLACE:
+```python
+                            # BF-950 Amendment 2: counted by the topic the index shows.
+                            "total_topics": len(set(_notebook_index_topic(e) for e in entries)),
+```
+
+**P11-3** `src/probos/proactive.py`
+
+SEARCH:
+```python
+                            fm = e.get("frontmatter", {})
+                            topic = fm.get("topic", e["path"].split("/")[-1].replace(".md", ""))
+                            updated_str = fm.get("updated", "")
+```
+REPLACE:
+```python
+                            fm = e.get("frontmatter", {})
+                            topic = _notebook_index_topic(e)
+                            updated_str = fm.get("updated", "")
+```
+
+**P11-4** `src/probos/proactive.py`
+
+SEARCH:
+```python
+                            # BF-950 Amendment 1: only an int revision is counted (the store
+                            # writes nothing else); a hand-written text revision raised here.
+```
+REPLACE:
+```python
+                            # BF-950 Amendment 1: only an int revision is counted; a hand-written
+                            # text revision raised here. Amendment 2: the store creates every
+                            # revision as an int but carries an existing one forward as +1, so a
+                            # fractional history an operator started (3.5, 4.5) is not counted (L18).
+```
+
+**P11-5** `tests/test_bf950_oracle_result_age.py` (anchored on M10's tree)
+
+SEARCH:
+```python
+        assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
+
+
+_UNTIL_M11 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M11: an index topic that is not text ends the self-monitoring notebook block",
+)
+
+
+```
+REPLACE:
+```python
+        assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
+
+
+```
+
+**P11-6** `tests/test_bf950_oracle_result_age.py` (anchored on M10's tree)
+
+SEARCH:
+```python
+    pytest.param("", None, id="a-blank-topic"),
+])
+@_UNTIL_M11
+async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
+```
+REPLACE:
+```python
+    pytest.param("", None, id="a-blank-topic"),
+])
+async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
+```
+
+### A2.6 M12 (trackers)
+
+These amend the entries already committed in place. Entry heads and dates are unchanged. Stage explicit paths only.
+
+**P12-1** `PROGRESS.md`
+
+SEARCH:
+```
+a STALE flag its renderer never emits. The contract is `prompts/bf-950-oracle-result-age.md`.
+```
+REPLACE:
+```
+a STALE flag its renderer never emits. Review round 2 (Amendment 2): an index entry whose topic is not text (a number, a null, a list or a blank, edited into the file) is named by its file. It no longer ends the self-monitoring block in either renderer. The contract is `prompts/bf-950-oracle-result-age.md`.
+```
+
+**P12-2** `DECISIONS.md`
+
+SEARCH:
+```
+the repetition check's revision read and the read-back's own error boundary)
+```
+REPLACE:
+```
+the repetition check's revision read and the read-back's own error boundary; Amendment 2: `_notebook_index_topic`, the index's topic)
+```
+
+**P12-3** `DECISIONS.md`
+
+SEARCH:
+```
+- *Residual.* Recorded limits L1 to L17 of the contract.
+```
+REPLACE:
+```
+- *Amendment 2 (review round 2).* An index entry is named by its topic only when that is non-empty text, otherwise by its file. So a topic edited into a number, a null, a list or a blank no longer ends the self-monitoring block in either renderer. The repetition check still counts only an int revision. A fractional history the store carries forward after an operator edit is not counted (L18). Rejected: casting the topic in the two renderers, which would leave the topic count and the warnings on the raw value.
+- *Residual.* Recorded limits L1 to L19 of the contract.
+```
+
+Then regenerate the ledger as G12 says.
+
+### A2.7 Mutation rows
+
+| Id | File | Line | Mutate to | Killed by |
+|---|---|---|---|---|
+| NBM-13 | proactive.py | `if isinstance(topic, str) and topic:` | `if topic is not None:` | T13 `a-number-topic` |
+| NBM-14 | proactive.py | the same line | `if isinstance(topic, str):` | T13 `a-blank-topic` |
+| NBM-15 | proactive.py | `topic = _notebook_index_topic(e)` | `topic = fm.get("topic", e["path"].split("/")[-1].replace(".md", ""))` | T13 `a-number-topic` |
+| NBM-16 | proactive.py | `"total_topics": len(set(_notebook_index_topic(e) for e in entries)),` | `"total_topics": len(set(e.get("frontmatter", {}).get("topic", e["path"].split("/")[-1].replace(".md", "")) for e in entries)),` | T13 `a-list-topic` |
+| NBM-12 | (row amended by P10-3) | | | T14 |
+
+### A2.8 Limits (L15 amended by P10-4; L18 and L19 added)
+
+- **L18.** The store creates every revision as an int and carries an existing one forward as `existing_rev + 1` (`records_store.py:322-323`), so a fractional revision an operator wrote stays fractional (3.5, then 4.5). The repetition check does not count such a history; M5's head counted it, but nothing renders the warnings. The read-back also shows no `revision` for it, since it shows only a positive int (§3). The store's next write drops a text, null or list revision (`:323` raises, `:333` catches).
+- **L19.** The records API passes a JSON `topic` to `write_notebook` unchecked (`routers/records.py:146-153`), so a non-text topic can be store-written. Its file is named by the topic's text, so the index's slug shows that same text. Validating it is recorded on #1754.
+
+### A2.9 Diff Reviewer properties (added to §16; item 13 amended by P10-5)
+
+18. Every `notebook_index` entry's `topic` is a non-empty `str`: the frontmatter's `topic` when that is non-empty text, otherwise the file's slug (`_notebook_index_topic`). Both renderers render every entry, whatever its `updated`, and `cognitive_agent.py` is byte-identical.
+19. A notebook with text topics, as every agent write path produces, gives the same index, `notebook_summary`, repetition warnings and read-back as at M9's head. Only a hand-edited number, null, list or blank topic, or a non-text one the API wrote, changes: it is named by its file, and the topic count counts that name.
+20. The guard line `if type(rev) is int and rev >= _rep_thresh and ei.get("updated"):` is byte-identical. Only its comment and the contract prose change, to state what the store writes as A2.1 does.
+21. T13 crosses real store → pull → both renderers. T14 passes on M10 and after. §16 item 12 extends to T13: its marker is removed only at M11, after G10 showed the four named failures.
+
+### A2.10 Verified against codebase (2026-11-05, on `158418fc`)
+
+```
+proactive.py:279-296   _notebook_read_back: revision shown only when type(revision) is int and >= 1
+proactive.py:299       def _parse_hhmm (P11-1 anchor)
+proactive.py:2776-2780 sorted(..., key=lambda e: record_write_time(e.get("frontmatter")) or 0.0, reverse=True)
+proactive.py:2784-2790 notebook_summary: len(set(e.get("frontmatter", {}).get("topic", <slug>) for e in entries))
+proactive.py:2795-2797 fm = e.get("frontmatter", {}); topic = fm.get("topic", <slug>); updated_str = fm.get("updated", "")
+proactive.py:2801-2812 recency: datetime.fromisoformat(updated_str).timestamp() under except (ValueError, TypeError)
+proactive.py:2827-2835 enriched_index {topic, updated, recency, preview, revision}; result["notebook_index"]
+proactive.py:2846-2848 the Amendment 1 comment; if type(rev) is int and rev >= _rep_thresh and ei.get("updated")
+proactive.py:2850-2857 warnings: .timestamp() under except (ValueError, TypeError); f"...{ei['topic']} {rev} times..."
+proactive.py:2870-2889 semantic pull, its own try, `if dept and entries:`
+cognitive_agent.py:9422-9432, :11327-11337  ", ".join(f"{e['topic']} (updated {e['updated']})" if e.get("updated") else e["topic"] ...)
+provenance.py:52-90    _posix_seconds / record_write_time: "Nothing here raises"; non-dict frontmatter -> None
+records_store.py:311   "updated": now on every write; :320-323 created kept, revision = existing_rev + 1; :333 except; :338-339 topic only if truthy
+records_store.py:296-302 extra_frontmatter may not set store-owned keys (updated, revision, topic: :39-42)
+records_store.py:525-545 write_notebook: path f"notebooks/{callsign}/{topic_slug}.md", topic=topic_slug
+records_store.py:1050  list_entries: author filter fm.get("author"); every result is {"path", "frontmatter"}
+routers/records.py:146,151-153  topic = body.get("topic", "untitled") passed as topic_slug
+tests/test_bf950_oracle_result_age.py:70-135  _records, _rewrite_frontmatter, _self_monitoring, _sensorium_render, _proactive_render, _notebook_tags
+tests/test_bf950_oracle_result_age.py:394-428  T11 (its last three lines are P10-7's anchor)
+tests/test_ad550_notebook_dedup.py:535-557  total_topics == 3 over three text topics (unchanged by M11)
+```
+
+### A2.11 Absence verified (2026-11-05)
+
+```
+CLAIM: in src, notebook_index entries are read only by the two renderers, which read only `topic` and `updated`
+RUN:   Grep "notebook_index|notebook_summary|notebook_repetition_warnings" src/; Grep "\[.(recency|preview).\]|get\(.(recency|preview)." src/
+FOUND: cognitive_agent.py:9422, :11327 (consumers); proactive.py:2621 (docstring), :2784, :2835, :2859 (producers);
+       recency/preview only in unrelated factor dicts (chat_facilitator.py:302, episodic.py:3384, :4782, thread_priority/scorer.py:79)
+HOLDS: yes; `updated` is only truth-tested and f-string formatted, which cannot raise for any YAML type
+
+CLAIM: no test or source scan pins the lines M11 replaces
+RUN:   Grep "total_topics|e\[\"path\"\]\.split|_notebook_index_topic|writes nothing else" tests/
+FOUND: test_ad550_notebook_dedup.py:557 (total_topics == 3 over text topics)
+HOLDS: yes; that assertion holds after M11
+
+CLAIM: notebook topics come from text slugs on every agent path; only the records API can store a non-text one
+RUN:   Grep "\.write_notebook\(" src/ -A3; read records_store.py:338-339, routers/records.py:141-153
+FOUND: proactive.py:3341, :4405, tools/publish_finding_tool.py:693 (slug text); routers/records.py:151 (raw JSON topic)
+HOLDS: yes (L19); the API's file is named by the topic's text, so the slug reads the same
+
+CLAIM: after M11, nothing in the index or repetition enrichment raises on frontmatter a real store lists, except naive out-of-range `.timestamp()`
+RUN:   read proactive.py:2776-2859 expression by expression
+FOUND: record_write_time is total; _notebook_index_topic is total given list_entries' `path`; `fm` is a dict (the author filter at
+       records_store.py:1050 raises on any other type, so such a file never lists); fromisoformat(...) raises only ValueError/TypeError
+       (caught); the revision guard is a type check; the warning f-string formats any object; read_entry sits under its own except
+HOLDS: yes, with the L15 exception (by reading; not measured)
+```
+
+### A2.12 For the Captain
+
+None. Both repairs restore a lost signal or correct a false claim inside the BF-950 envelope and weaken no control.
