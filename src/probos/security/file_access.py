@@ -89,14 +89,80 @@ def _depth(root: Path) -> int:
     return len(root.parts)
 
 
-def _longest_match(resolved: Path, roots: Iterable[Path]) -> Path | None:
-    """The deepest root that contains *resolved*, or ``None``."""
+# BF-953: one decision for every spelling of one file. ``Path.resolve()`` keeps the Windows extended-length
+# prefix it is given and reports a share spelling of a local drive as the share path, so the textual test
+# below saw each as another place. On Windows the text is first reduced to its namespace-free form
+# (``_namespace_free``), and a path or root that still names a share or a device is also compared by the
+# identity the system gives the file (``_file_identity``). Elsewhere containment is the textual test.
+_NAMESPACE_PREFIXES = ("\\\\?\\", "\\\\.\\")
+_EXTENDED_UNC = "\\\\?\\UNC\\"
+
+
+def _namespace_free(text: str) -> str:
+    r"""BF-953: *text*, a path as ``str(WindowsPath)`` spells it, without its Windows namespace prefix.
+
+    ``\\?\UNC\host\share\x`` is ``\\host\share\x``; ``\\?\C:\x`` and ``\\.\C:\x`` are ``C:\x``. Any other
+    text (a volume or device name, a drive-relative form, a path of another platform) is returned as it is.
+    Pure: it reads nothing and does not depend on the platform it runs on.
+    """
+    if text[:8].upper() == _EXTENDED_UNC.upper():
+        return "\\\\" + text[8:]
+    if text[:4] in _NAMESPACE_PREFIXES and text[4:5].isascii() and text[4:5].isalpha() and text[5:6] == ":":
+        if text[6:7] in ("", "\\"):
+            return text[4:]
+    return text
+
+
+def _file_identity(path: Path) -> tuple[int, int] | None:
+    """BF-953: the identity the system gives the file *path* names, ``(volume, file index)``.
+
+    ``None`` when it is not on disk, cannot be read, or its filesystem reports no file index (zero).
+    """
+    try:
+        info = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (info.st_dev, info.st_ino) if info.st_ino else None
+
+
+class _OnDisk:
+    """BF-953: the identities of a path and of each ancestor of it that is on disk, read once and only when asked."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._found: frozenset[tuple[int, int]] | None = None
+
+    def holds(self, identity: tuple[int, int]) -> bool:
+        if self._found is None:
+            found = (_file_identity(part) for part in (self._path, *self._path.parents))
+            self._found = frozenset(ident for ident in found if ident is not None)
+        return identity in self._found
+
+
+def _longest_match(resolved: Path, roots: Iterable[Path], on_disk: _OnDisk | None = None) -> Path | None:
+    """The deepest root that contains *resolved*, or ``None``.
+
+    A root contains a path that is under it as spelled. On Windows (BF-953) it also contains a path that is
+    under it once both are without a namespace prefix, and a path or root that still names a share or a
+    device is contained when the path, or an ancestor of it, is the same file as the root
+    (:func:`_file_identity`). A root with no identity, because it is not on disk, is matched by spelling
+    only. *on_disk* lets the root lists of one decision read the path's identities once.
+    """
     best: Path | None = None
+    if on_disk is None:
+        on_disk = _OnDisk(resolved)
     for root in roots:
         try:
-            if resolved == root or resolved.is_relative_to(root):
-                if best is None or _depth(root) > _depth(best):
-                    best = root
+            inside = resolved == root or resolved.is_relative_to(root)
+            if not inside and os.name == "nt" and (str(resolved).startswith("\\\\") or str(root).startswith("\\\\")):
+                key = PureWindowsPath(_namespace_free(str(resolved)))
+                root_key = PureWindowsPath(_namespace_free(str(root)))
+                inside = key == root_key or key.is_relative_to(root_key)
+                if not inside and (key.drive.startswith("\\\\") or root_key.drive.startswith("\\\\")):
+                    root_id = _file_identity(root)
+                    inside = root_id is not None and on_disk.holds(root_id)
+            if inside and (best is None or _depth(root) > _depth(best)):
+                best = root
         except (OSError, ValueError):
             continue
     return best
@@ -130,6 +196,11 @@ def resolve_read_path(
     Resolution happens BEFORE containment, so a symlink pointing into the floor
     is caught -- the same ``resolve() + is_relative_to`` order
     ``WorkspaceManager.resolve_file`` uses.
+
+    BF-953: the decision is the same for every spelling of one file, for the floor, the
+    exempt roots and the permitted roots (:func:`_longest_match`). What is returned is the
+    resolved path itself, in the spelling it was resolved to, never a rewritten one: it
+    names the file the decision was made on.
     """
     if not raw or "\x00" in raw:
         raise FileAccessDenied(raw, "empty or malformed path")
@@ -148,16 +219,17 @@ def resolve_read_path(
     if resolved.name in PROTECTED_LEAF_NAMES:
         raise FileAccessDenied(raw, "that file holds credentials and is not readable")
 
-    protect = _longest_match(resolved, protected_roots)
+    on_disk = _OnDisk(resolved)  # BF-953: read at most once, and only if a root is compared by identity
+    protect = _longest_match(resolved, protected_roots, on_disk)
     if protect is not None:
-        exempt = _longest_match(resolved, exempt_roots)
+        exempt = _longest_match(resolved, exempt_roots, on_disk)
         # Longest prefix wins: a deeper exemption lifts a shallower floor.
         if exempt is None or _depth(exempt) <= _depth(protect):
             raise FileAccessDenied(
                 raw, "path is protected: the runtime's data directory or a config file"
             )
 
-    if permitted_roots and _longest_match(resolved, permitted_roots) is None:
+    if permitted_roots and _longest_match(resolved, permitted_roots, on_disk) is None:
         raise FileAccessDenied(raw, "path is outside every readable root")
     return resolved
 

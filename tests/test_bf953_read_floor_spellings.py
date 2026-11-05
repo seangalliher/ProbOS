@@ -35,16 +35,7 @@ _FAMILIES = [
     "UNC localhost admin share", "UNC 127.0.0.1 admin share", "UNC computer-name admin share",
     "UNC extended localhost", "UNC extended computer-name", "UNC localhost, dotdot",
 ]
-# The spellings the base decides differently from the ordinary one (measured on the committed head): the extended-length
-# and share spellings and, for a file that is not on disk only (T1), a trailing space (the resolved path of a missing
-# child of such a directory carries the extended-length prefix). M2 removes the marks.
-_DECIDED_DIFFERENTLY = frozenset(_FAMILIES[11:])
-_XFAIL = pytest.mark.xfail(strict=True, reason="BF-953: the base decides this spelling differently from the ordinary one")
-_PARAMS = [pytest.param(name, marks=_XFAIL) if name in _DECIDED_DIFFERENTLY else name for name in _FAMILIES]
-_PARAMS_T1 = [
-    pytest.param(name, marks=_XFAIL) if name in _DECIDED_DIFFERENTLY | {"trailing space"} else name for name in _FAMILIES
-]
-_BASE_LACKS_IT = pytest.mark.xfail(strict=True, raises=AttributeError, reason="BF-953: M2 adds the helper this test calls")
+_PARAMS = list(_FAMILIES)
 
 
 def _short(text: str) -> str | None:
@@ -149,7 +140,7 @@ def _decide(raw: str, *, protected: Any = (), exempt: Any = (), permitted: Any =
 
 
 @WINDOWS
-@pytest.mark.parametrize("family", _PARAMS_T1)
+@pytest.mark.parametrize("family", _PARAMS)
 def test_every_spelling_gets_the_decision_of_the_ordinary_spelling(tmp_path: Path, family: str) -> None:
     """T1: each spelling of a file is decided as its ordinary spelling is, against a directory root and a file root of
     the floor, an exempt root under the floor, and a permitted root; so is a file that is not on disk; and the path an
@@ -277,7 +268,6 @@ _NAMESPACE_CASES = [
 ]
 
 
-@_BASE_LACKS_IT
 @pytest.mark.parametrize(("text", "expected"), _NAMESPACE_CASES)
 def test_the_namespace_free_form(text: str, expected: str) -> None:
     """T5: pure text, the same on every platform: the extended and device prefixes of a drive path and the extended
@@ -285,7 +275,6 @@ def test_the_namespace_free_form(text: str, expected: str) -> None:
     assert file_access._namespace_free(text) == expected
 
 
-@_BASE_LACKS_IT
 @pytest.mark.parametrize("text", [case[0] for case in _NAMESPACE_CASES if case[0] and case[0] != case[1]])
 def test_the_namespace_free_form_agrees_with_the_write_sides_key(text: str) -> None:
     """T6: for every spelling the canonicaliser rewrites, the write side's key (BF-911) of the text and of the rewrite
@@ -293,7 +282,6 @@ def test_the_namespace_free_form_agrees_with_the_write_sides_key(text: str) -> N
     assert file_access._write_key(text) == file_access._write_key(file_access._namespace_free(text))
 
 
-@_BASE_LACKS_IT
 def test_file_identity_is_the_file_the_system_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """T7: one identity for every name of a file, none for a path that names nothing, and none when the filesystem
     reports no file index."""
@@ -333,7 +321,6 @@ def test_a_posix_name_keeps_what_a_permitted_root_admits(tmp_path: Path) -> None
 
 
 @WINDOWS
-@_BASE_LACKS_IT
 def test_a_drive_letter_path_costs_no_identity_lookup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """T9: a drive-letter path against drive-letter roots, and an extended-prefix local path (decided on its text),
     ask the system for no identity; the path returned is unchanged."""
@@ -348,7 +335,6 @@ def test_a_drive_letter_path_costs_no_identity_lookup(tmp_path: Path, monkeypatc
 
 
 @WINDOWS
-@_BASE_LACKS_IT
 def test_a_share_path_no_root_covers_stays_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """T10: containment of a share path is decided by identity. With the system's answers replaced (no host is
     contacted), a share path that is not the root and has no ancestor that is the root is not inside it, and one
