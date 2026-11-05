@@ -613,6 +613,8 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
     ``init_communication`` as ``admission``, which builds ``CapabilityRequestStore`` with it.
     From AD-1346 M3e4d7 ``artifacts/__init__.py`` imports the package, and ``runtime.py`` hands ``ArtifactStore`` the
     service through its own ``set_admission``.
+    From AD-1346 M3e4d8 ``workforce.py`` imports the package, and ``init_communication`` builds ``WorkItemStore`` with
+    the ``admission`` that ``runtime.py`` passes it.
     The routers that name the service or import the package are the three whose routes M3c2 shadows and, from AD-1346
     M3e2b, ``routers/build.py``, and none of them is a module of #1604 property 11's routes, which are never
     admission-gated."""
@@ -672,6 +674,7 @@ def test_only_the_wiring_the_shadowed_seams_and_the_sinks_name_the_service_or_im
         "probos/ward_room/channels.py",  # AD-1346 M3e4d5
         "probos/capability_request.py",  # AD-1346 M3e4d6
         "probos/artifacts/__init__.py",  # AD-1346 M3e4d7
+        "probos/workforce.py",  # AD-1346 M3e4d8
     }, sorted(importers)
     routes = {rel for rel in named | importers if rel.startswith("probos/routers/") or rel == "probos/api.py"}
     assert routes == {

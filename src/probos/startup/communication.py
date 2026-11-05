@@ -340,7 +340,7 @@ async def init_communication(
         [str, Literal["discover", "claim", "assign", "resume"], bool],
         BookableResource | None,
     ] | None = None,
-    admission: object = None,  # AD-1346 M3e4d6 (D322): the shadow admission service or None, handed to the capability request store
+    admission: object = None,  # AD-1346 M3e4d6 (D322): the shadow admission service or None, handed to the capability request store and, from AD-1346 M3e4d8 (D336), to the work item store
 ) -> CommunicationResult:
     """Start communication services, scheduling, and identity commissioning.
 
@@ -400,6 +400,7 @@ async def init_communication(
                 ),
             },
             pull_resource_resolver=pull_resource_resolver,
+            admission=admission,  # AD-1346 M3e4d8 (D336): the work item store's check; None checks nothing
         )
         await work_item_store.start()
         await register_workforce_resources_fn(work_item_store)

@@ -3355,7 +3355,7 @@ class ProbOSRuntime:
             records_store=self._records_store,  # AD-1140: commons-write tool
             notebook_quality_engine=self._notebook_quality_engine,  # AD-1140
             pull_resource_resolver=self.resolve_workforce_pull_resource,
-            admission=self.admission_service,  # AD-1346 M3e4d6 (D322): handed to the capability request store's constructor; None checks nothing
+            admission=self.admission_service,  # AD-1346 M3e4d6 (D322): handed to the capability request store's constructor and, from AD-1346 M3e4d8 (D336), the work item store's; None checks nothing
         )
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store

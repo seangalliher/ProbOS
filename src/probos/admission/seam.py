@@ -25,7 +25,7 @@ AD-1346 M3e4d2 the persistent task store's ``create_task`` (WM1), and from AD-13
 ``create_assignment`` (WM1), and from AD-1346 M3e4d5 the Ward Room channel manager's ``create_channel`` and
 ``get_or_create_dm_channel`` (WM1), and from AD-1346 M3e4d6 the capability request store's ``file_request`` and
 ``decide`` (WM1), and from AD-1346 M3e4d7 the artifact store's ``add_version`` and ``reconcile_exact_version``
-(WM1). It returns
+(WM1), and from AD-1346 M3e4d8 the work item store's ``_insert_work_item`` (WM1). It returns
 None, awaits nothing and raises only what ``check_ticket`` raises:
 ``check_ticket`` lets none out.
 """
