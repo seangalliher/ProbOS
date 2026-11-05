@@ -2,7 +2,7 @@
 and of the clinical notes store and the skill request store; AD-1346 M3e4d2: and of the persistent task store;
 AD-1346 M3e4d3: and of the chat thread store; AD-1346 M3e4d4: and of the assignment service; AD-1346 M3e4d5: and of
 the Ward Room's channel manager; AD-1346 M3e4d6: and of the capability request store; AD-1346 M3e4d7: and of the
-artifact store.
+artifact store; AD-1346 M3e4d8: and of the work item store.
 
 ``WardRoomService.create_thread``, ``create_post``, ``edit_post`` and ``endorse`` call ``check_at`` with
 ``EFFECT_STORE_WRITE`` after BF-903's guard, presenting the entry's author or voter id; ``EpisodicMemory.store`` calls it
@@ -20,7 +20,8 @@ the statement before its ``if self._db:``, presenting ``agent_id``, and ``Capabi
 statement after its docstring, presenting ``decided_by``; that check comes before ``decide``'s own write and before
 its call to ``_decide_ladder_row``, which writes the decision of a filing with a ladder record. From AD-1346 M3e4d7
 ``ArtifactStore.add_version`` and ``ArtifactStore.reconcile_exact_version`` call it as the statement before their
-``with self._connect() as conn:``, presenting ``created_by``.
+``with self._connect() as conn:``, presenting ``created_by``. From AD-1346 M3e4d8 ``WorkItemStore._insert_work_item``
+calls it as the statement before its ``if self._db:``, presenting ``item.created_by``.
 ``ProbOSRuntime.start`` hands the service through ``set_admission`` to the runtime's Ward Room when it is a
 ``WardRoomService``, to its episodic store when it is an ``EpisodicMemory``, to its clinical notes store when it is a
 ``ClinicalNotesStore``, to its skill request store when it is a ``SkillRequestStore``, to its persistent task store
@@ -29,7 +30,8 @@ service when it is an ``AssignmentService``. From AD-1346 M3e4d5 ``WardRoomServi
 Ward Room's channel manager when ``start`` has built one. From AD-1346 M3e4d6 ``ProbOSRuntime.start`` passes it to
 ``init_communication`` as ``admission``, which builds the capability request store with it. From AD-1346 M3e4d7
 ``ProbOSRuntime.start`` hands it through ``set_admission`` to the runtime's artifact store when it is an
-``ArtifactStore``.
+``ArtifactStore``. From AD-1346 M3e4d8 ``init_communication`` also builds the work item store with that ``admission``
+when the workforce is on.
 ``tests/fixtures/ad1346_store_census.py`` lists the checks (``STORE_WRITE_SCOPES``).
 
 - WM1  by AST: each ``StoreCheck`` row's check function holds one ``check_at`` call, a statement of its body, with
@@ -50,12 +52,13 @@ Ward Room's channel manager when ``start`` has built one. From AD-1346 M3e4d6 ``
 - WM4  #1604 property 12 at those five checks: a Ward Room and an episodic store answer the same with the service and
        without it, with nothing carried, under a live ticket and after a Captain's stop.
 - WM5  the production hand-off: after ``ProbOSRuntime.start`` with ``admission.shadow_enabled`` true and the Ward Room,
-       skill requests, persistent tasks and assignments on, the runtime's Ward Room, episodic store, clinical notes
-       store, skill request store, persistent task store, chat thread store and assignment service, and from AD-1346
-       M3e4d5 the Ward Room's channel manager, from AD-1346 M3e4d6 the capability request store and from AD-1346
-       M3e4d7 the artifact store, hold the runtime's service and their writes reach ``check_ticket`` with the presented
-       ids; with it false and assignments off, the first six, the channel manager, the capability request store and the
-       artifact store hold None and the runtime has no assignment service.
+       skill requests, persistent tasks, the workforce and assignments on, the runtime's Ward Room, episodic store,
+       clinical notes store, skill request store, persistent task store, chat thread store and assignment service, and
+       from AD-1346 M3e4d5 the Ward Room's channel manager, from AD-1346 M3e4d6 the capability request store, from
+       AD-1346 M3e4d7 the artifact store and from AD-1346 M3e4d8 the work item store, hold the runtime's service and
+       their writes reach ``check_ticket`` with the presented ids; with it false and assignments off, the first six,
+       the channel manager, the capability request store, the artifact store and the work item store hold None and the
+       runtime has no assignment service.
 - WM6  #1604 property 1 at the three AD-1346 M3e4d1 checks: three rounds of four writes (a note by each of two agents,
        a filing by the first and its decision by the second), outside a hold, inside the first agent's hold, and inside
        it after a Captain's stop, tally 4 ``ticket_missing``, 2 ``ticket_live``, 2 ``ticket_principal_mismatch`` and 4
@@ -102,12 +105,19 @@ Ward Room's channel manager when ``start`` has built one. From AD-1346 M3e4d6 ``
        ``ticket_principal_mismatch`` and 5 ``ticket_revoked``, and the service counts 6 checks handed to its loop.
 - WM19 #1604 property 12 at those two checks: two artifact stores, one handed the admission service and one handed
        None, answer the same three rounds the same and hand their callbacks the same nine committed versions.
+- WM20 #1604 property 1 at the AD-1346 M3e4d8 check: three rounds of a work item the first agent creates, one the
+       second creates, and a crew session item, which ``create_work_item`` refuses before its check, outside a hold,
+       inside the first agent's hold, and inside it after a Captain's stop, tally 2 ``ticket_missing``, 1
+       ``ticket_live``, 1 ``ticket_principal_mismatch`` and 2 ``ticket_revoked``.
+- WM21 #1604 property 12 at that check: two work item stores, one built with the admission service and one built
+       with None, answer the same three rounds the same.
 
 WM3 and WM4 use a real ``WardRoomService`` and ``EpisodicMemory``, WM6 and WM7 a real ``ClinicalNotesStore`` and
 ``SkillRequestStore``, WM8 and WM9 a real ``PersistentTaskStore``, WM10 and WM11 a real ``ChatThreadStore`` with a
 fixed clock, WM12 and WM13 a real ``AssignmentService`` with no Ward Room, WM14 and WM15 a real ``WardRoomService``,
-WM16 and WM17 a real ``CapabilityRequestStore`` with no event callback and no trust network, and WM18 and WM19 a real
-``ArtifactStore`` with a fixed clock, over ``tmp_path``, with a service built with the test's loop. WM5 boots a real
+WM16 and WM17 a real ``CapabilityRequestStore`` with no event callback and no trust network, WM18 and WM19 a real
+``ArtifactStore`` with a fixed clock, and WM20 and WM21 a real ``WorkItemStore`` with no event callback, over
+``tmp_path``, with a service built with the test's loop. WM5 boots a real
 runtime under
 ``tmp_path`` and replaces ``AdmissionService.check_ticket``, as ``tests/test_ad1346_admission_egress_sinks.py``'s ES2
 does.
@@ -146,6 +156,7 @@ from probos.substrate.registry import AgentRegistry
 from probos.threads import ChatThreadStore
 from probos.types import Episode, EpisodeStoreOutcome
 from probos.ward_room import WardRoomService
+from probos.workforce import WorkItemStore
 from tests.fixtures.ad1343_seam_census import calls, function
 from tests.fixtures.ad1346_effect_census import references_outside, src_sources
 from tests.fixtures.ad1346_store_census import STORE_WRITE_SCOPES, StoreCheck, sql_write_points
@@ -260,6 +271,7 @@ def _config(*, shadow_enabled: bool) -> SystemConfig:
     config.ward_room.enabled = True  # WardRoomConfig.enabled is off by default
     config.skill_requests.enabled = True  # AD-1346 M3e4d1: SkillRequestConfig.enabled is off by default
     config.persistent_tasks.enabled = True  # AD-1346 M3e4d2: PersistentTasksConfig.enabled is off by default
+    config.workforce.enabled = True  # AD-1346 M3e4d8: WorkforceConfig.enabled is off by default
     config.onboarding.naming_ceremony = False
     config.proactive_cognitive.enabled = False
     config.qa.enabled = False
@@ -435,8 +447,8 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """WM5 (D233: the production hand-off; AD-1346 M3e4d1: D286; AD-1346 M3e4d2: D293; AD-1346 M3e4d3: D300; AD-1346
-    M3e4d4: D308; AD-1346 M3e4d5: D315; AD-1346 M3e4d6: D322; AD-1346 M3e4d7: D329; kills EV-7, EV-8, ED-5, ED-6, EY-3,
-    EU-5, EO-3, EO-5, RQ-6, RQ-7, AV-6)."""
+    M3e4d4: D308; AD-1346 M3e4d5: D315; AD-1346 M3e4d6: D322; AD-1346 M3e4d7: D329; AD-1346 M3e4d8: D336; kills EV-7,
+    EV-8, ED-5, ED-6, EY-3, EU-5, EO-3, EO-5, RQ-6, RQ-7, AV-6, WF-4)."""
     memory = EpisodicMemory(db_path=str(tmp_path / "on" / "episodic" / "episodes.db"))
     config = _config(shadow_enabled=True)
     config.assignments.enabled = True  # AD-1346 M3e4d4: AssignmentConfig.enabled is off by default; the second runtime keeps it off
@@ -515,6 +527,11 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
             mime="text/plain", size_bytes=1, created_by=AGENT_B,
         )
         assert [seen[mark] for mark in artifact_marks] == [(True, AGENT_A), (True, AGENT_B)], (artifact_marks, seen)
+        work = runtime.work_item_store  # AD-1346 M3e4d8
+        assert type(work) is WorkItemStore and vars(work)["_admission"] is service, "the boot built it with the service"
+        work_mark = len(seen)
+        await work.create_work_item(title="ad1346 m3e4d8 oscar", created_by=AGENT_A)
+        assert seen[work_mark] == (True, AGENT_A), (work_mark, seen)
     finally:
         await asyncio.wait_for(runtime.stop(), timeout=600)
     off_memory = EpisodicMemory(db_path=str(tmp_path / "off" / "episodic" / "episodes.db"))
@@ -539,6 +556,8 @@ async def test_a_booted_runtime_hands_its_service_to_the_ward_room_and_the_episo
         assert type(off_requests) is CapabilityRequestStore and vars(off_requests)["_admission"] is None, "built with None"
         off_artifacts = off.artifact_store  # AD-1346 M3e4d7
         assert type(off_artifacts) is ArtifactStore and vars(off_artifacts)["_admission"] is None, "built and handed None"
+        off_work = off.work_item_store  # AD-1346 M3e4d8
+        assert type(off_work) is WorkItemStore and vars(off_work)["_admission"] is None, "built with None"
     finally:
         await asyncio.wait_for(off.stop(), timeout=600)
 
@@ -1092,4 +1111,83 @@ async def test_with_and_without_the_service_the_artifact_store_versions_answer_i
         ("store_write", "ticket_principal_mismatch"): 2, ("store_write", "ticket_revoked"): 5,
     }
     assert service.off_loop_checks() == {"store_write": 6}
+    assert service.failures == 0
+
+
+async def _work_item_round(store: WorkItemStore, phase: int) -> list[object]:
+    """AD-1346 M3e4d8: one round of two checks, presenting ``AGENT_A`` and ``AGENT_B``: a work item ``AGENT_A``
+    creates, one ``AGENT_B`` creates, and a crew session item, which ``create_work_item`` refuses before its check.
+    Returns each answer without the fields a fresh store draws, and the refusal's text."""
+    first = await store.create_work_item(
+        title=f"ad1346 m3e4d8 alpha {phase}", description="ad1346 m3e4d8 bravo", created_by=AGENT_A,
+        created_at=1_000.0, updated_at=1_000.0,
+    )
+    second = await store.create_work_item(
+        title=f"ad1346 m3e4d8 charlie {phase}", created_by=AGENT_B, created_at=1_000.0, updated_at=1_000.0,
+    )
+    refused: list[str] = []
+    try:
+        await store.create_work_item(title=f"ad1346 m3e4d8 delta {phase}", work_type="crew_session", created_by=AGENT_A)
+    except ValueError as exc:
+        refused.append(str(exc))
+    return [_shape(first), _shape(second), refused]
+
+
+async def test_the_work_item_creation_check_counts_missing_live_mismatch_and_revoked(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM20 (#1604 property 1 at the AD-1346 M3e4d8 check; D335, D336; kills WF-2, WF-3)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    store = WorkItemStore(db_path=str(tmp_path / "workforce.db"), tick_interval=1_000.0, admission=service)
+    await store.start()
+    try:
+        await _work_item_round(store, 1)
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            await _work_item_round(store, 2)
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d8: the Captain stops the held work")
+            await _work_item_round(store, 3)
+        finally:
+            hold.end()
+        assert tickets.tally() == {
+            ("issue", "ticket_issued"): 1,
+            ("store_write", "ticket_missing"): 2, ("store_write", "ticket_live"): 1,
+            ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 2,
+        }
+        assert service.failures == 0
+    finally:
+        await store.stop()
+
+
+async def test_with_and_without_the_service_the_work_item_creations_answer_identically(
+    tmp_path: Path, identities: IdentityService, stops: AgentStopService, tickets: TicketRegistry,
+) -> None:
+    """WM21 (#1604 property 12 at the AD-1346 M3e4d8 check; D337)."""
+    service = AdmissionService(identities, stops, tickets=tickets, loop=asyncio.get_running_loop())
+    stores = [
+        WorkItemStore(db_path=str(tmp_path / f"workforce_{i}.db"), tick_interval=1_000.0, admission=held)
+        for i, held in enumerate((service, None))
+    ]
+    for store in stores:
+        await store.start()
+    try:
+        first = [await _work_item_round(store, 1) for store in stores]
+        hold = service.hold(presented_id=AGENT_A, work_kind="agentic_run", seam="agentic_run", child=False)
+        try:
+            second = [await _work_item_round(store, 2) for store in stores]
+            await stops.issue_stop(AGENT_A, reason="ad1346-m3e4d8: the golden test's stop")
+            third = [await _work_item_round(store, 3) for store in stores]
+        finally:
+            hold.end()
+    finally:
+        for store in stores:
+            await store.stop()
+    assert first[0] == first[1] and second[0] == second[1] and third[0] == third[1]
+    assert first[0][0]["created_by"] == AGENT_A and first[0][1]["created_by"] == AGENT_B, "premise: each item's creator"
+    assert first[0][2] == ["crew_session_write_reserved"], "premise: the refusal"
+    assert tickets.tally() == {
+        ("issue", "ticket_issued"): 1,
+        ("store_write", "ticket_missing"): 2, ("store_write", "ticket_live"): 1,
+        ("store_write", "ticket_principal_mismatch"): 1, ("store_write", "ticket_revoked"): 2,
+    }
     assert service.failures == 0
