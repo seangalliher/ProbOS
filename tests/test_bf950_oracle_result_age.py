@@ -310,12 +310,6 @@ def test_the_preamble_and_the_description_say_what_the_marker_carries() -> None:
         assert _CAPABILITY_GAP_RE.search(text) is None
 
 
-_UNTIL_M8 = pytest.mark.xfail(
-    strict=True, reason="BF-950 M8: the crew-consult preamble promises a STALE flag its entries never carry",
-)
-
-
-@_UNTIL_M8
 def test_the_crew_consult_preamble_promises_only_what_its_entries_carry() -> None:
     """Review round 1 (F2): the crew consult's own preamble promised every entry an age and a STALE flag.
 
