@@ -310,6 +310,30 @@ def test_the_preamble_and_the_description_say_what_the_marker_carries() -> None:
         assert _CAPABILITY_GAP_RE.search(text) is None
 
 
+_UNTIL_M8 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M8: the crew-consult preamble promises a STALE flag its entries never carry",
+)
+
+
+@_UNTIL_M8
+def test_the_crew_consult_preamble_promises_only_what_its_entries_carry() -> None:
+    """Review round 1 (F2): the crew consult's own preamble promised every entry an age and a STALE flag.
+
+    ``crew_executor._render_commons_entry`` dates an entry only from a numeric ``metadata["timestamp"]`` and
+    never writes ``STALE``, so a forty-day-old entry is rendered with an age and no flag. The preamble and the
+    renderer are held together here, as AD-1294's crossing test holds the other fields.
+    """
+    from probos.cognitive.crew_executor import _COMMONS_DISPOSITION, _render_commons_entry
+
+    rendered = _render_commons_entry(
+        _result("operational", {"timestamp": time.time() - _FORTY_DAYS_AGO}, score=0.71),
+    )
+    assert "40d ago" in rendered  # premise: an old entry with a numeric timestamp is dated
+    assert ("STALE" in _COMMONS_DISPOSITION) == ("STALE" in rendered)
+    assert "and sometimes an age, so weigh a weakly-matching or old entry lightly." in _COMMONS_DISPOSITION
+    assert _CAPABILITY_GAP_RE.search(_COMMONS_DISPOSITION) is None
+
+
 # ── M4: the notebook read-back ────────────────────────────────────────
 
 
@@ -371,3 +395,46 @@ async def test_a_read_back_keeps_what_parses_and_drops_what_does_not(
     )
     assert result["notebook_content"]["snippet"] == "Notebook body"  # premise
     assert _notebook_tags(_sensorium_render(result)) == [expected]
+
+
+_UNTIL_M7 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M7: one hand-edited notebook entry ends the self-monitoring notebook block",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["a-yaml-date-beside-text", "a-text-revision", "a-list-topic"])
+@_UNTIL_M7
+async def test_one_hand_edited_entry_does_not_cost_the_read_back(tmp_path: Path, shape: str) -> None:
+    """Review round 1 (F1): one notebook entry edited outside the store ended the whole block for the cycle.
+
+    The index sorted the raw ``updated`` (a YAML date beside the store's text raised), the repetition check
+    compared the raw ``revision`` (text raised), and the topic count hashed the raw ``topic``; each sat inside
+    the error boundary of the read-back, so the agent lost the read-back with the index. A real store, its
+    files edited as a person would edit them.
+    """
+    store = await _records(tmp_path)
+    now = time.time()
+    await store.write_notebook("Zephyr", "first-topic", "engineering notes, first", department="engineering")
+    await store.write_notebook("Zephyr", "second-topic", "engineering notes, second", department="engineering")
+    first, second = "notebooks/Zephyr/first-topic.md", "notebooks/Zephyr/second-topic.md"
+    if shape == "a-yaml-date-beside-text":
+        assert type(_rewrite_frontmatter(store, first, updated=date(2026, 5, 3))["updated"]) is date  # premise
+        assert type(_rewrite_frontmatter(store, second)["updated"]) is str  # premise: the store writes text
+    elif shape == "a-text-revision":
+        assert type(_rewrite_frontmatter(store, first, updated=_iso(now), revision="4")["revision"]) is str  # premise
+        _rewrite_frontmatter(store, second, updated=_iso(now - 3600), revision=5)
+    else:
+        assert type(_rewrite_frontmatter(store, first, topic=["engines", "warp"])["topic"]) is list  # premise
+
+    result = await _self_monitoring(store, "Zephyr")
+
+    content = result["notebook_content"]
+    assert content["topic"] in {"first-topic", "second-topic"} and "engineering notes" in content["snippet"]
+    tags = _notebook_tags(_sensorium_render(result))
+    assert len(tags) == 1 and tags[0].startswith(f'<notebook topic="{content["topic"]}" updated="'), tags
+    if shape == "a-yaml-date-beside-text":
+        assert [entry["topic"] for entry in result["notebook_index"]] == ["second-topic", "first-topic"]
+    elif shape == "a-text-revision":
+        warnings = result.get("notebook_repetition_warnings", [])
+        assert len(warnings) == 1 and "second-topic 5 times" in warnings[0], warnings
