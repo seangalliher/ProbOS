@@ -466,6 +466,66 @@ async def test_an_index_topic_that_is_not_text_does_not_end_the_block(
     assert "engineering notes" in result["notebook_content"]["snippet"]
 
 
+_UNTIL_M14 = pytest.mark.xfail(
+    strict=True, reason="BF-950 M14: the index's file-name fallback removes every .md, not only the final one",
+)
+
+
+@pytest.mark.asyncio
+@_UNTIL_M14
+async def test_two_files_named_by_their_files_stay_two_items(tmp_path: Path) -> None:
+    """Review round 3 (F5): an index entry named by its file kept nothing of an embedded ``.md``.
+
+    Amendment 2 names an entry whose topic is not text by its file, and that fallback removed every ``.md``.
+    So ``notes.md`` and ``notes.md.md`` (the store names a file ``f"{slug}.md"``) both showed as ``notes``,
+    and the topic count fell from 2 to 1. A real store, both files edited as a person would edit them.
+    """
+    store = await _records(tmp_path)
+    await store.write_notebook("Zephyr", "notes", "engineering notes, first", department="engineering")
+    await store.write_notebook("Zephyr", "notes.md", "engineering notes, second", department="engineering")
+    for path, topic in (("notebooks/Zephyr/notes.md", 17), ("notebooks/Zephyr/notes.md.md", 27)):
+        edited = _rewrite_frontmatter(store, path, topic=topic, updated=None)
+        assert edited["topic"] == topic and edited["updated"] is None  # premise
+
+    result = await _self_monitoring(store, "Zephyr")
+
+    for text in (_sensorium_render(result), await _proactive_render(result)):
+        lines = [line for line in text.splitlines() if line.startswith("Your notebooks: [")]
+        assert lines and len(set(lines)) == 1, text
+        assert sorted(lines[0][len("Your notebooks: ["):-1].split(", ")) == ["notes", "notes.md"], lines[0]
+    assert result["notebook_summary"] == {"total_entries": 2, "total_topics": 2}
+    assert "engineering notes" in result["notebook_content"]["snippet"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "frontmatter", "shown"), [
+    pytest.param("notebooks/Zephyr/notes.md.md", {"topic": 27}, "notes.md", id="an-embedded-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/.md.md", {}, ".md", id="a-doubled-bare-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/.md", {"topic": None}, ".md", id="a-bare-md", marks=_UNTIL_M14),
+    pytest.param("notebooks/Zephyr/notes.md", {"topic": 27}, "notes", id="a-plain-file"),
+])
+async def test_an_index_name_from_the_file_keeps_all_but_its_final_md(
+    path: str, frontmatter: dict[str, Any], shown: str,
+) -> None:
+    """Review round 3 (F5): the fallback removes only the final ``.md``, and shows the whole name when nothing is left.
+
+    The records API names a file ``f"{topic}.md"`` from any JSON topic, so ``""`` gives ``.md`` and ``.md`` gives
+    ``.md.md``; every-``.md`` removal showed both as an empty item. A listing as ``list_entries`` returns it, so no
+    dot-file listing rule is assumed. ``a-plain-file`` is the unchanged case and passes on M13.
+    """
+    records = MagicMock()
+    records.list_entries = AsyncMock(return_value=[{"path": path, "frontmatter": frontmatter}])
+    records.read_entry = AsyncMock(return_value=None)
+    records.search = AsyncMock(return_value=[])
+
+    result = await _self_monitoring(records, "Zephyr")
+
+    assert [entry["topic"] for entry in result["notebook_index"]] == [shown]
+    assert result["notebook_summary"] == {"total_entries": 1, "total_topics": 1}
+    for text in (_sensorium_render(result), await _proactive_render(result)):
+        assert f"Your notebooks: [{shown}]" in text.splitlines(), text
+
+
 @pytest.mark.asyncio
 async def test_a_failed_index_does_not_cost_the_read_back() -> None:
     """§16 item 14 under mutation (NBM-12): the read-back runs whenever the listing returned entries.
