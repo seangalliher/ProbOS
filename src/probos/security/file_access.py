@@ -189,20 +189,23 @@ def plain_spelling(path: Path) -> Path:
 
 
 def reader_spelling(path: Path) -> Path | None:
-    """BF-953 (Amendments 2 and 3): the spelling of *path* a listing may name, or ``None``.
+    """BF-953 (Amendments 2 to 4): the spelling of *path* a listing may name, or ``None``.
 
     It is :func:`plain_spelling` of *path* when the verified reader's rules on the text of a path admit that spelling and,
     on Windows, every component of it after its anchor names, as an ordinary path, what it names in the extended namespace.
 
-    The verified reader applies two rules to the text alone, and they are applied here on every platform. Its location gate,
-    :func:`validate_read_location`, is called as it is: text that is not strict UTF-8, a ``:`` after the drive or a character
-    below 32 anywhere, a reserved device name as the final component, a namespace prefix that :func:`plain_spelling` does
-    not remove and a location that is not absolute have no spelling. Its child-name rule for the final component (a pinned
-    directory's ``_leaf``) is applied to the final name: a backslash, a trailing dot or a trailing space have none. So a name
-    only the plain reader opens (on POSIX a colon, a control character or a reserved device stem such as ``aux.py``) has no
-    spelling either. On Windows a component after the anchor that ends in a dot or a space has none (the system drops both
-    from an ordinary path, so such a name opens a neighbour or nothing), nor has a spelling with a reserved device name in
-    any part (the system opens the device).
+    The verified reader applies three rules to the text alone, and they are applied here on every platform. Its location
+    gate, :func:`validate_read_location`, is called as it is, on the file and on the file's direct parent (``read_verified_file``
+    gives the file to the gate, and the directory it pins gives its path to the gate): text that is not strict UTF-8, a ``:``
+    after the drive or a character below 32 anywhere, a reserved device name as the final component of either, a namespace
+    prefix that :func:`plain_spelling` does not remove and a location that is not absolute have no spelling. Its child-name
+    rule for the final component (a pinned directory's ``_leaf``) is applied to the final name: a backslash, a trailing dot
+    or a trailing space have none. So a name only the plain reader opens (on POSIX a colon, a control character, or a
+    reserved device stem such as ``aux.py`` as the final name or as the direct parent's name) has no spelling either. The
+    reader opens the directories above the direct parent without the gate: a reserved device name, or a trailing dot or
+    space, there does not refuse a name off Windows (BF-953 L21). On Windows a component after the anchor that ends in a dot
+    or a space has none (the system drops both from an ordinary path, so such a name opens a neighbour or nothing), nor has
+    a spelling with a reserved device name in any part, which is wider than the reader's text path (BF-953 L21).
 
     Pure: it calls no filesystem function; it builds path objects and strings for each call (BF-953 L20). It does not say
     that the file opens: a directory, a link or reparse point, a path past the host's ordinary length on a host without
@@ -210,6 +213,7 @@ def reader_spelling(path: Path) -> Path | None:
     shown = plain_spelling(path)
     try:
         validate_read_location(str(shown))
+        validate_read_location(str(shown.parent))  # the directory read_verified_file pins is given to the gate as well
     except ValueError:  # the reader's own refusal of the text, whatever its class (UnicodeEncodeError is one): no spelling
         return None
     final = shown.name
