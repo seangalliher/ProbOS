@@ -6,27 +6,42 @@ path, which names the file the decision was made on. The Windows spellings are b
 test creates. A spelling the host does not serve is skipped once its premise (it names the same file as the
 ordinary spelling) fails, so a skip is never a pass. The textual canonicaliser, the identity helper and the
 POSIX rule run on every platform.
+
+Amendment 1 (review round 2, T11 to T22): identity only ever adds a refusal at the floor. A share spelling is
+never admitted by an exempt or a permitted root its text does not name (T1 to T3 expect the refusal), a floor
+that cannot be read refuses a share spelling (T12), an exemption stands where its text puts it in the path
+and not where its root is spelled, and a floor file root outranks the workspace that encloses it (T13, T17), a
+configured workspace root is spelled as the path under it is (T14), the spelling ``list_files`` shows has no
+namespace prefix (T15 here; BF-948's T13 and T14 through the verified reader), and the final component is
+decided by the file it names: a stream suffix, trailing dots and spaces and another case do not make another
+file of a floor file root or a credential name, on or off disk (T18 to T21; on POSIX the names stay distinct: T22).
 """
 
 from __future__ import annotations
 
 import ctypes
 import os
-from pathlib import Path
+import shutil
+import tempfile
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from probos.cognitive.swe_harness.tools import ReadFileTool
+from probos.cognitive.swe_harness.tools import ListFilesTool, ReadFileTool
 from probos.security import file_access
 from probos.security.file_access import FileAccessDenied, protected_write_refusal, resolve_read_path
-from tests.test_bf948_list_files_read_policy import _OUTSIDE, _PROTECTED, _list, _runtime, _scene
+from tests.test_bf948_list_files_read_policy import _OUTSIDE, _PROTECTED, _link, _list, _runtime, _scene, _unlink
 
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="BF-953: these are Windows path spellings")
 _CONTENT = b"bf953 fixture"
 _READ_PROTECTED = "read_file refused: path is protected: the runtime's data directory or a config file"
 _READ_OUTSIDE = "read_file refused: path is outside every readable root"
+_FLOOR_REASON = "path is protected: the runtime's data directory or a config file"
+_OUTSIDE_REASON = "path is outside every readable root"
+_UNVERIFIED_REASON = "path cannot be verified against the protected roots"
+_LEAF_REASON = "that file holds credentials and is not readable"
 
 _FAMILIES = [
     "forward slashes", "doubled separator", "dot segment", "dotdot via sibling dir", "dotdot via missing dir",
@@ -35,6 +50,13 @@ _FAMILIES = [
     "UNC localhost admin share", "UNC 127.0.0.1 admin share", "UNC computer-name admin share",
     "UNC extended localhost", "UNC extended computer-name", "UNC localhost, dotdot",
 ]
+# Amendment 1: a spelling that still names a share after its namespace prefix is gone. The floor refuses it by the
+# identity of its own chain, and an exempt or a permitted root admits it only if the root's text names it, so where
+# the ordinary spelling is admitted by one of those roots these are refused.
+_SHARE_FAMILIES = frozenset({
+    "UNC localhost admin share", "UNC 127.0.0.1 admin share", "UNC computer-name admin share",
+    "UNC extended localhost", "UNC extended computer-name", "UNC localhost, dotdot",
+})
 _PARAMS = list(_FAMILIES)
 
 
@@ -139,51 +161,89 @@ def _decide(raw: str, *, protected: Any = (), exempt: Any = (), permitted: Any =
     return "admitted", str(resolved)
 
 
+def _other_volume_dir(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
+    """A new directory on a local fixed volume other than *tmp_path*'s, removed when the test ends; a skip when there is none."""
+    here = os.stat(tmp_path).st_dev
+    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = f"{letter}:\\"
+        if ctypes.windll.kernel32.GetDriveTypeW(root) != 3:  # type: ignore[attr-defined]  # DRIVE_FIXED
+            continue
+        try:
+            if os.stat(root).st_dev == here:
+                continue
+            made = Path(tempfile.mkdtemp(prefix="bf953-", dir=root)).resolve()
+        except OSError:
+            continue
+        request.addfinalizer(lambda made=made: shutil.rmtree(made, ignore_errors=True))
+        return made
+    pytest.skip("BF-953 premise: this host has no other local volume to write to")
+
+
 @WINDOWS
 @pytest.mark.parametrize("family", _PARAMS)
 def test_every_spelling_gets_the_decision_of_the_ordinary_spelling(tmp_path: Path, family: str) -> None:
     """T1: each spelling of a file is decided as its ordinary spelling is, against a directory root and a file root of
-    the floor, an exempt root under the floor, and a permitted root; so is a file that is not on disk; and the path an
-    admitted call returns is the resolved path and names the file."""
+    the floor, an exempt root under the floor, and a permitted root; so is a file that is not on disk (a missing child of
+    a directory, and a file root that is not on disk, whose share spellings are L2's); and the path an
+    admitted call returns is the resolved path and names the file. The one exception is the share spellings
+    (``_SHARE_FAMILIES``): only the floor decides them by identity, so where the ordinary spelling is admitted by an exempt
+    or a permitted root they are refused, with the reason that root's refusal gives."""
     lay = _fixture(tmp_path)
     floor = [lay.data.resolve(), lay.config.resolve()]
     exempt, permitted = [lay.work.resolve()], [lay.allowed.resolve()]
     cases = [
-        (lay.floor_note, {"protected": floor, "exempt": exempt}, "refused"),
-        (lay.config, {"protected": floor}, "refused"),
-        (lay.neighbour, {"protected": floor}, "admitted"),
-        (lay.work_note, {"protected": floor, "exempt": exempt}, "admitted"),
-        (lay.allowed_note, {"permitted": permitted}, "admitted"),
-        (lay.outside_note, {"permitted": permitted}, "refused"),
+        (lay.floor_note, {"protected": floor, "exempt": exempt}, "refused", None),
+        (lay.config, {"protected": floor}, "refused", None),
+        (lay.neighbour, {"protected": floor}, "admitted", None),
+        (lay.work_note, {"protected": floor, "exempt": exempt}, "admitted", _FLOOR_REASON),
+        (lay.allowed_note, {"permitted": permitted}, "admitted", _OUTSIDE_REASON),
+        (lay.outside_note, {"permitted": permitted}, "refused", None),
     ]
-    for target, roots, expected in cases:
+    for target, roots, expected, share_reason in cases:
         ordinary = _decide(str(target), **roots)
         assert ordinary[0] == expected, f"premise: the ordinary spelling of {target.name}: {ordinary}"
         spelled = _decide(_spelling(family, target), **roots)
+        if share_reason is not None and family in _SHARE_FAMILIES:
+            assert spelled == ("refused", share_reason), f"{family} of {target.name}: {spelled}"
+            continue
         assert spelled[0] == expected, f"{family} of {target.name}: {spelled}"
         if expected == "refused":
             assert spelled[1] == ordinary[1], f"{family} of {target.name}: another reason"
         else:
             assert Path(spelled[1]) == Path(spelled[1]).resolve(), "the path returned is a resolved path"
             assert os.path.samestat(os.stat(spelled[1]), os.stat(target)), "the path returned names the file"
+    absent_root = lay.config.parent / "absent config long name.yaml"
+    floor_absent = [*floor, absent_root.resolve()]
     missing = [
-        (lay.data, {"protected": floor}, "refused"),
-        (lay.work, {"protected": floor, "exempt": exempt}, "admitted"),
-        (lay.allowed, {"permitted": permitted}, "admitted"),
-        (lay.outside, {"permitted": permitted}, "refused"),
+        (lay.data, {"protected": floor}, "refused", None, "missing note long name.txt"),
+        (lay.work, {"protected": floor, "exempt": exempt}, "admitted", _FLOOR_REASON, "missing note long name.txt"),
+        (lay.allowed, {"permitted": permitted}, "admitted", _OUTSIDE_REASON, "missing note long name.txt"),
+        (lay.outside, {"permitted": permitted}, "refused", None, "missing note long name.txt"),
+        (lay.config.parent, {"protected": floor_absent}, "refused", "L2", absent_root.name),  # an absent file root
     ]
-    for directory, roots, expected in missing:
-        absent = "missing note long name.txt"
+    for directory, roots, expected, share_reason, absent in missing:
         assert _decide(str(directory / absent), **roots)[0] == expected, "premise: the ordinary spelling"
+        if family == "default stream suffix":
+            # The family is a stream of an existing file, so a directory has no spelling of it: the child's own suffix.
+            assert _decide(str(directory / absent) + "::$DATA", **roots)[0] == expected, f"{family}, not on disk"
+            continue
         spelling = _spelling_or_none(family, directory)
-        if spelling is not None:
-            assert _decide(spelling + "\\" + absent, **roots)[0] == expected, f"{family}, not on disk"
+        if spelling is None:  # a premise: this host does not serve the family for a directory
+            continue
+        spelled = _decide(spelling + "\\" + absent, **roots)
+        if share_reason == "L2" and family in _SHARE_FAMILIES:
+            continue  # L2: a share spelling of a file root that is not on disk has no identity to compare
+        if share_reason is not None and family in _SHARE_FAMILIES:
+            assert spelled == ("refused", share_reason), f"{family}, not on disk: {spelled}"
+        else:
+            assert spelled[0] == expected, f"{family}, not on disk"
 
 
 @WINDOWS
 @pytest.mark.parametrize("family", _PARAMS)
 async def test_read_file_decides_every_spelling_alike(tmp_path: Path, family: str) -> None:
-    """T2: ``ReadFileTool`` answers every spelling of a file as it answers the ordinary one."""
+    """T2: ``ReadFileTool`` answers every spelling of a file as it answers the ordinary one; a share spelling of a file a
+    permitted root admits is answered as outside every readable root."""
     scene = _scene(tmp_path)
     floor_note = scene.data / "floor note long name.txt"
     allowed_note = scene.allowed / "allowed note long name.txt"
@@ -200,9 +260,12 @@ async def test_read_file_decides_every_spelling_alike(tmp_path: Path, family: st
         ordinary = await tool.invoke({"path": str(note)})
         assert ordinary.error == refusal, f"premise: the ordinary spelling of {note.name}: {ordinary.error}"
         spelled = await tool.invoke({"path": _spelling(family, note)})
-        assert spelled.error == refusal, f"{family} of {note.name}: {spelled.error}"
-        if refusal is None:
+        want = _READ_OUTSIDE if refusal is None and family in _SHARE_FAMILIES else refusal
+        assert spelled.error == want, f"{family} of {note.name}: {spelled.error}"
+        if want is None:
             assert "bf953 fixture" in repr(spelled.output)
+        else:
+            assert spelled.output is None, family
 
 
 @WINDOWS
@@ -211,7 +274,8 @@ async def test_list_files_decides_every_spelling_of_a_directory_alike(tmp_path: 
     """T3: ``list_files`` asks the same function for its base and for each match, on BF-948's rig. The ordinary
     spellings are decided first (the premise); then a spelling of the floor directory is refused, a spelling of a
     directory outside the permitted root is refused, and a spelling of the permitted root and of the agent
-    workspace under the floor is listed."""
+    workspace under the floor is listed, except a share spelling of either, which is refused (the permitted root
+    and the exemption name it by their text only)."""
     scene = _scene(tmp_path)
     (scene.allowed / "allowed note long name.txt").write_bytes(_CONTENT)
     assert (await _list(scene, [], "*", str(scene.data))).error == _PROTECTED  # premise
@@ -226,9 +290,13 @@ async def test_list_files_decides_every_spelling_of_a_directory_alike(tmp_path: 
     refused_outside = await _list(scene, [scene.allowed], "*", _spelling(family, scene.outside))
     assert refused_outside.error == _OUTSIDE and refused_outside.output is None, family
     spelled = await _list(scene, [scene.allowed], "*", _spelling(family, scene.allowed))
+    workspace = await _list(scene, [], "*", _spelling(family, scene.workspace))
+    if family in _SHARE_FAMILIES:
+        assert spelled.error == _OUTSIDE and spelled.output is None, family
+        assert workspace.error == _PROTECTED and workspace.output is None, family
+        return
     assert spelled.error is None, f"{family}: {spelled.error}"
     assert {Path(n).name for n in spelled.output["files"]} == {"allowed note long name.txt", "ok.txt", "sub"}, family
-    workspace = await _list(scene, [], "*", _spelling(family, scene.workspace))
     assert workspace.error is None and [Path(n).name for n in workspace.output["files"]] == ["scratch.txt"], family
 
 
@@ -283,8 +351,8 @@ def test_the_namespace_free_form_agrees_with_the_write_sides_key(text: str) -> N
 
 
 def test_file_identity_is_the_file_the_system_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """T7: one identity for every name of a file, none for a path that names nothing, and none when the filesystem
-    reports no file index."""
+    """T7: one identity for every name of a file, none for a path that names nothing, and no answer (``_Unverifiable``,
+    never ``None``) when the system cannot say: a name it rejects, a read it refuses, or no file index (zero)."""
     note = tmp_path / "note.txt"
     note.write_bytes(_CONTENT)
     (tmp_path / "sub").mkdir()
@@ -295,10 +363,21 @@ def test_file_identity_is_the_file_the_system_names(tmp_path: Path, monkeypatch:
     assert file_access._file_identity(tmp_path / "sub" / ".." / "note.txt") == identity == file_access._file_identity(link)
     assert file_access._file_identity(tmp_path / "sub") != identity
     assert file_access._file_identity(tmp_path / "missing.txt") is None
-    assert file_access._file_identity(Path("bad\x00name")) is None
+    assert file_access._file_identity(note / "child.txt") is None  # under a file: nothing is there
+    with pytest.raises(file_access._Unverifiable):
+        file_access._file_identity(Path("bad\x00name"))
     with monkeypatch.context() as patched:
         patched.setattr(file_access.os, "stat", lambda _path: SimpleNamespace(st_dev=7, st_ino=0))
-        assert file_access._file_identity(note) is None
+        with pytest.raises(file_access._Unverifiable):
+            file_access._file_identity(note)
+
+    def refused(_path: Any) -> Any:
+        raise PermissionError(13, "refused")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(file_access.os, "stat", refused)
+        with pytest.raises(file_access._Unverifiable):
+            file_access._file_identity(note)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="BF-953: on Windows these names are one directory")
@@ -336,17 +415,416 @@ def test_a_drive_letter_path_costs_no_identity_lookup(tmp_path: Path, monkeypatc
 
 @WINDOWS
 def test_a_share_path_no_root_covers_stays_admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """T10: containment of a share path is decided by identity. With the system's answers replaced (no host is
-    contacted), a share path that is not the root and has no ancestor that is the root is not inside it, and one
-    that has is."""
+    """T10: containment of a share path by a floor root is decided by identity, and only for the floor. With the system's
+    answers replaced (no host is contacted): a share path that is not the root, has no ancestor that is the root and does
+    not reach the root's volume is not inside it; one that has is, standing at that ancestor's count of parts; one whose
+    chain is on the root's volume only through a link is inside at its own count; and a root that is not on disk contains
+    nothing. An exempt or a permitted root is never matched by identity."""
     root = _fixture(tmp_path).data.resolve()
     absent_root = root.parent / "no-such-root"
     same_as_root = Path("\\\\bf953-alias\\share\\floor")
-    known = {root: (1, 1), same_as_root: (1, 1), absent_root: None}
+    linked = Path("\\\\bf953-link\\share\\jx\\note.txt")
+    known = {root: (1, 1), same_as_root: (1, 1), absent_root: None, linked.parent: (1, 5), linked: (1, 6)}
     monkeypatch.setattr(file_access, "_file_identity", lambda path: known[path] if path in known else (2, hash(path)))
     elsewhere = Path("\\\\bf953-remote\\share\\dir\\note.txt")
     inside = same_as_root / "sub" / "note.txt"
-    assert file_access._longest_match(elsewhere, [root]) is None
-    assert file_access._longest_match(inside, [root]) == root
-    assert file_access._longest_match(same_as_root, [root]) == root
-    assert file_access._longest_match(inside, [absent_root]) is None
+    assert file_access._match_position(elsewhere, [root], floor=True) is None
+    assert file_access._match_position(inside, [root], floor=True) == len(same_as_root.parts)
+    assert file_access._match_position(same_as_root, [root], floor=True) == len(same_as_root.parts)
+    assert file_access._match_position(inside, [absent_root], floor=True) is None
+    assert file_access._match_position(inside, [root]) is None, "an exempt or a permitted root is matched by text only"
+    assert file_access._match_position(linked, [root], floor=True) == len(linked.parts)
+    known[root] = (3, 1)
+    assert file_access._match_position(linked, [root], floor=True) is None, "a root on a volume the chain never reaches"
+    known[root] = (2, 1)
+    assert file_access._match_position(elsewhere, [root], floor=True) is None, "a root on the volume of the chain's top"
+    twin = Path("\\\\bf953-twin\\share\\one\\two")
+    known.update({root: (1, 1), twin.parent: (1, 1), twin: (1, 1)})
+    assert file_access._match_position(twin, [root], floor=True) == len(twin.parts), "the deepest part with that identity"
+    deeper = same_as_root / "sub"
+    for roots in ([root, deeper], [deeper, root]):
+        assert file_access._match_position(inside, roots, floor=True) == len(deeper.parts), "the deepest root wins"
+
+
+@WINDOWS
+async def test_a_share_spelling_is_never_admitted_by_a_root_its_text_does_not_name(
+    tmp_path: Path, request: pytest.FixtureRequest,
+) -> None:
+    """T11 (Amendment 1, review finding 1 and the second reviewer's R2): a share spelling of a path through a link to another
+    volume, below a permitted root, is refused, as the ordinary spelling is: the share's text names the permitted root's
+    directory, the file is not in it. The same through the floor: a link into the interior of a floor root on that other
+    volume, through the policy and through ``read_file`` and ``list_files``. And a share spelling the floor cannot contain
+    (the floor is on the first volume) is still admitted."""
+    lay = _fixture(tmp_path)
+    other = _other_volume_dir(request, tmp_path)
+    (other / "target directory long name").mkdir()
+    (other / "target directory long name" / "target note long name.txt").write_bytes(_CONTENT)
+    (other / "floor tree long name" / "interior directory long name").mkdir(parents=True)
+    (other / "floor tree long name" / "interior directory long name" / "interior note long name.txt").write_bytes(_CONTENT)
+    outward = lay.allowed / "link to the other volume"
+    interior = lay.allowed / "link into the floor interior"
+    _link(outward, other / "target directory long name")
+    _link(interior, other / "floor tree long name" / "interior directory long name")
+    try:
+        note, deep = outward / "target note long name.txt", interior / "interior note long name.txt"
+        assert os.stat(note).st_dev != os.stat(lay.allowed).st_dev, "premise: the link leaves the volume"
+        permitted, floor = [lay.allowed.resolve()], [(other / "floor tree long name").resolve()]
+        for target in (note, deep):
+            spelled = _spelling_or_none("UNC localhost admin share", target)
+            if spelled is None:
+                pytest.skip("BF-953 premise: this host does not serve the local share spelling of the linked file")
+            assert _decide(str(target), permitted=permitted) == ("refused", _OUTSIDE_REASON), "premise: the ordinary spelling"
+            assert _decide(spelled, permitted=permitted) == ("refused", _OUTSIDE_REASON), target.name
+        assert _decide(str(deep), protected=floor) == ("refused", _FLOOR_REASON), "premise: the file is in the floor"
+        spelled = _spelling("UNC localhost admin share", deep)
+        assert _decide(spelled, protected=floor) == ("refused", _FLOOR_REASON), "the interior of the floor, through a link"
+        here = [lay.data.resolve()]
+        assert _decide(_spelling("UNC localhost admin share", note), protected=here)[0] == "admitted", "no floor root is there"
+        floor_runtime = SimpleNamespace(data_dir=other / "floor tree long name", config=SimpleNamespace(
+            security_infra=SimpleNamespace(read_roots=[]), execution=SimpleNamespace(workspace_root=str(lay.work)),
+        ))
+        read = await ReadFileTool(floor_runtime).invoke({"path": spelled})
+        assert read.error == _READ_PROTECTED and read.output is None, "read_file: the interior of the floor"
+        listing = await ListFilesTool(floor_runtime).invoke(
+            {"pattern": "*", "path": _spelling("UNC localhost admin share", interior)},
+        )
+        assert listing.error == _PROTECTED and listing.output is None, "list_files: the interior of the floor"
+        confined = SimpleNamespace(data_dir=lay.data, config=SimpleNamespace(
+            security_infra=SimpleNamespace(read_roots=[str(lay.allowed)]), execution=SimpleNamespace(workspace_root=str(lay.work)),
+        ))
+        read = await ReadFileTool(confined).invoke({"path": _spelling("UNC localhost admin share", note)})
+        assert read.output is None and read.error in (_READ_OUTSIDE, _READ_PROTECTED), "read_file: a permitted root"
+    finally:
+        _unlink(outward)
+        _unlink(interior)
+
+
+@WINDOWS
+@pytest.mark.parametrize("failure", ["a read the system refuses", "no file index"])
+async def test_a_floor_that_cannot_be_read_refuses_a_share_spelling_and_nothing_else(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    """T12 (Amendment 1, review finding 3): the floor root's identity cannot be read (or has no file index) while a
+    permitted root's can. A share spelling of a floor file is refused with the bounded reason, through the policy and
+    through ``read_file``, and gives no content; the ordinary spelling is refused as before; a drive-letter path outside
+    the floor asks for no identity and is admitted."""
+    scene = _scene(tmp_path)
+    note = scene.data / "floor note long name.txt"
+    note.write_bytes(_CONTENT)
+    (scene.allowed / "allowed note long name.txt").write_bytes(_CONTENT)
+    floor_text = os.path.normcase(str(scene.data))
+    real_stat = os.stat
+
+    def stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+        info = real_stat(path, *args, **kwargs)
+        if os.path.normcase(str(path)) != floor_text:
+            return info
+        if failure == "no file index":
+            return os.stat_result((info.st_mode, 0, info.st_dev, info.st_nlink, info.st_uid, info.st_gid, info.st_size,
+                                   int(info.st_atime), int(info.st_mtime), int(info.st_ctime)))
+        raise PermissionError(13, "refused")
+
+    roots = {"protected": [scene.data.resolve()], "permitted": [scene.root]}
+    shared = _spelling("UNC localhost admin share", note)
+    assert _decide(shared, **roots) == ("refused", _FLOOR_REASON), "premise: the floor is read"
+    monkeypatch.setattr(file_access.os, "stat", stat)
+    assert _decide(shared, **roots) == ("refused", _UNVERIFIED_REASON)
+    assert _decide(str(note), **roots) == ("refused", _FLOOR_REASON)
+    assert _decide(str(scene.allowed / "allowed note long name.txt"), **roots)[0] == "admitted"
+    reader = ReadFileTool(_runtime(scene, read_roots=[scene.root]))
+    answered = await reader.invoke({"path": shared})
+    assert answered.error == f"read_file refused: {_UNVERIFIED_REASON}" and answered.output is None
+
+
+def _device_spelling(target: Path) -> str | None:
+    """The ``\\\\?\\GLOBALROOT`` spelling of the existing *target*, or None when the system names no device for its drive."""
+    drive, rest = os.path.splitdrive(str(target))
+    buffer = ctypes.create_unicode_buffer(512)
+    if not ctypes.windll.kernel32.QueryDosDeviceW(drive, buffer, len(buffer)):  # type: ignore[attr-defined]
+        return None
+    return "\\\\?\\GLOBALROOT" + buffer.value.split("\0")[0] + rest
+
+
+@WINDOWS
+@pytest.mark.parametrize("kind", ["device", "extended prefix", "share", "extended UNC"])
+def test_an_exemption_stands_where_its_text_puts_it_in_the_path_not_where_its_root_is_spelled(
+    tmp_path: Path, kind: str,
+) -> None:
+    """T13 (Amendment 1, review finding 2): an exempt root that names the floor directory or its parent in another
+    spelling never lifts the floor, for the ordinary spelling of a floor file or a share spelling of it. The exemption of
+    the workspace under the floor lifts it, spelled with an extended prefix too; a root spelled so that its text does not
+    name the ordinary path lifts nothing."""
+    lay = _fixture(tmp_path)
+    floor = [lay.data.resolve()]
+    drive, rest = os.path.splitdrive(str(lay.data))
+    spellings = {
+        "device": _device_spelling(lay.data),
+        "extended prefix": "\\\\?\\" + str(lay.data),
+        "share": f"\\\\localhost\\{drive[0]}${rest}",
+        "extended UNC": f"\\\\?\\UNC\\localhost\\{drive[0]}${rest}",
+    }
+    if spellings[kind] is None:
+        pytest.skip(f"BF-953 premise: this host has no {kind} spelling")
+    assert _decide(str(lay.work_note), protected=floor, exempt=[lay.work.resolve()])[0] == "admitted", "premise"
+    for named in (Path(str(spellings[kind])), Path(str(spellings[kind])).parent):
+        assert _decide(str(lay.floor_note), protected=floor, exempt=[named])[0] == "refused", f"{kind}: {named}"
+        shared = _spelling_or_none("UNC localhost admin share", lay.floor_note)
+        if shared is not None:
+            assert _decide(shared, protected=floor, exempt=[named])[0] == "refused", f"{kind}, share candidate: {named}"
+    workspace = "\\\\?\\" + str(lay.work)
+    assert _decide(str(lay.work_note), protected=floor, exempt=[Path(workspace)])[0] == "admitted", "the prefix is only text"
+    configured = SimpleNamespace(data_dir=lay.data, config=SimpleNamespace(
+        security_infra=SimpleNamespace(read_roots=[]), execution=SimpleNamespace(workspace_root=spellings[kind]),
+    ))
+    with pytest.raises(FileAccessDenied):
+        file_access.resolve_for_runtime(str(lay.floor_note), configured)
+
+
+@WINDOWS
+def test_a_workspace_root_configured_as_a_short_path_is_spelled_as_its_candidates_are(tmp_path: Path) -> None:
+    """T14 (Amendment 1, review finding 5): a workspace root configured as an 8.3 short path is the exempt root and the
+    permitted root its long path is, so the workspace is readable and listed as the ordinary configuration reads it."""
+    lay = _fixture(tmp_path)
+    short = _short(str(lay.work))
+    if short is None:
+        pytest.skip("BF-953 premise: this volume gives the workspace directory no 8.3 name")
+    ordinary = SimpleNamespace(data_dir=lay.data, config=SimpleNamespace(
+        security_infra=SimpleNamespace(read_roots=[str(lay.allowed)]), execution=SimpleNamespace(workspace_root=str(lay.work)),
+    ))
+    configured = SimpleNamespace(data_dir=lay.data, config=SimpleNamespace(
+        security_infra=SimpleNamespace(read_roots=[str(lay.allowed)]), execution=SimpleNamespace(workspace_root=short),
+    ))
+    assert file_access.workspace_exempt_roots(configured) == file_access.workspace_exempt_roots(ordinary) == [lay.work.resolve()]
+    assert file_access.permitted_read_roots(configured)[-1] == lay.work.resolve()
+    assert file_access.resolve_for_runtime(str(lay.work_note), ordinary) == lay.work_note.resolve()
+    assert file_access.resolve_for_runtime(str(lay.work_note), configured) == lay.work_note.resolve()
+    with pytest.raises(FileAccessDenied):
+        file_access.resolve_for_runtime(str(lay.floor_note), configured)
+
+
+_PLAIN_CASES = [
+    ("\\\\?\\C:\\data\\note.txt", "C:\\data\\note.txt"),
+    ("\\\\.\\C:\\data", "C:\\data"),
+    ("\\\\?\\UNC\\host\\share\\dir\\f.txt", "\\\\host\\share\\dir\\f.txt"),
+    ("C:\\data\\note.txt", "C:\\data\\note.txt"),
+    ("\\\\host\\share\\dir", "\\\\host\\share\\dir"),
+    ("\\\\?\\Volume{4d83c44e-bb8a-4ae4-b23a-fe55aac6532d}\\data", "\\\\?\\Volume{4d83c44e-bb8a-4ae4-b23a-fe55aac6532d}\\data"),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), _PLAIN_CASES)
+def test_the_plain_spelling_drops_the_namespace_prefix_on_windows_only(text: str, expected: str) -> None:
+    """T15: the spelling a reader that rejects the prefix is given: the prefix of a drive path or an extended UNC path is
+    dropped on Windows; every other path, and every path on another platform, is returned as it is."""
+    assert str(file_access.plain_spelling(Path(text))) == (expected if os.name == "nt" else str(Path(text)))
+
+
+@pytest.mark.parametrize("text", [case[0] for case in _NAMESPACE_CASES if case[0] and case[0] != case[1]])
+def test_a_namespace_free_root_stands_at_the_same_count_of_parts(text: str) -> None:
+    """T16: the position a root stands at in the path's own chain is its count of parts, and dropping a namespace prefix
+    changes no count: the exemption's rank does not depend on how its root is spelled."""
+    assert len(PureWindowsPath(text).parts) == len(PureWindowsPath(file_access._namespace_free(text)).parts)
+
+
+@WINDOWS
+@pytest.mark.parametrize("kind", ["ordinary", "extended prefix", "device", "share", "extended UNC", "link to the floor"])
+def test_a_loaded_config_file_outranks_the_workspace_that_encloses_it(tmp_path: Path, kind: str) -> None:
+    """T17 (the second reviewer's R1): the loaded config file is a floor file root inside the exempt workspace, which is
+    inside the data directory. However the workspace root is configured (in another spelling, or as a link to the data
+    directory), the file is refused in its ordinary spelling and in the extended, device and share spellings of it: a file
+    root outranks the workspace that encloses it, and two roots that name one directory tie. Where the configured root is
+    the workspace itself, a workspace file beside the config file is still admitted; where it names the data directory it
+    is not."""
+    root = tmp_path.resolve()
+    data = root / "floor data directory"
+    workspace = data / "workspace directory long name"
+    workspace.mkdir(parents=True)
+    config, note = workspace / "loaded config long name.yaml", workspace / "workspace note long name.txt"
+    config.write_bytes(_CONTENT)
+    note.write_bytes(_CONTENT)
+    drive, rest = os.path.splitdrive(str(workspace))
+    link = root / "a link directory long name"
+    configured = {
+        "ordinary": str(workspace),
+        "extended prefix": "\\\\?\\" + str(workspace),
+        "device": _device_spelling(workspace),
+        "share": f"\\\\localhost\\{drive[0]}${rest}",
+        "extended UNC": f"\\\\?\\UNC\\localhost\\{drive[0]}${rest}",
+        "link to the floor": str(link),
+    }[kind]
+    if configured is None:
+        pytest.skip(f"BF-953 premise: this host has no {kind} spelling")
+
+    def runtime(workspace_root: str) -> SimpleNamespace:
+        return SimpleNamespace(data_dir=data, config_path=config, config=SimpleNamespace(
+            security_infra=SimpleNamespace(read_roots=[]), execution=SimpleNamespace(workspace_root=workspace_root),
+        ))
+
+    ordinary = runtime(str(workspace))
+    assert config.resolve() in file_access.protected_config_files(ordinary), "premise: the config file is a floor root"
+    assert file_access.resolve_for_runtime(str(note), ordinary) == note.resolve(), "premise: the workspace is lifted"
+    if kind == "link to the floor":
+        _link(link, data)
+    try:
+        candidates = {
+            "ordinary": str(config),
+            "extended prefix": "\\\\?\\" + str(config),
+            "device": _device_spelling(config),
+            "share": _spelling_or_none("UNC localhost admin share", config),
+        }
+        for name, candidate in candidates.items():
+            if candidate is None:
+                continue  # a premise: this host has no such spelling of the file
+            try:
+                file_access.resolve_for_runtime(candidate, runtime(configured))
+            except FileAccessDenied:
+                continue
+            pytest.fail(f"the {name} spelling of the loaded config file was admitted with the workspace root as {kind}")
+        configured_runtime = runtime(configured)
+        roots = {
+            "protected_roots": file_access.protected_read_roots(configured_runtime),
+            "exempt_roots": file_access.workspace_exempt_roots(configured_runtime),
+        }
+        with pytest.raises(FileAccessDenied):
+            file_access.read_verified_file(config, **roots)
+        bounded = file_access.read_bounded_utf8(str(config), authorized_root=workspace, **roots)
+        assert bounded.status is file_access.BoundedReadStatus.DENIED and bounded.text == ""
+        if kind in ("ordinary", "extended prefix", "device"):
+            assert file_access.resolve_for_runtime(str(note), runtime(configured)) == note.resolve()
+        if kind == "link to the floor":
+            with pytest.raises(FileAccessDenied):
+                file_access.resolve_for_runtime(str(note), runtime(configured))
+    finally:
+        if kind == "link to the floor":
+            _unlink(link)
+
+
+_FINAL_COMPONENT_SPELLINGS = [":zz", ":zz:$DATA", "::$DATA", ".", " ", ". "]
+
+
+@pytest.mark.parametrize(
+    ("name", "base"),
+    [
+        ("config.yaml", "config.yaml"), ("config.yaml:zz", "config.yaml"), ("config.yaml:zz:$DATA", "config.yaml"),
+        ("config.yaml::$DATA", "config.yaml"), ("config.yaml.", "config.yaml"), ("config.yaml ", "config.yaml"),
+        ("config.yaml. ", "config.yaml"), ("config.yaml:zz.", "config.yaml"), ("archive.tar.gz", "archive.tar.gz"),
+        (".hidden", ".hidden"), (":zz", ":zz"), ("...", "..."), ("", ""),
+    ],
+)
+def test_the_base_name_of_a_final_component(name: str, base: str) -> None:
+    """T18: the file a final component names on Windows (any platform runs the text): the text from the first colon, then
+    trailing dots and spaces, are dropped; a name that would be empty stays as it is."""
+    assert file_access._base_name(name) == base
+
+
+@WINDOWS
+@pytest.mark.parametrize("suffix", _FINAL_COMPONENT_SPELLINGS)
+def test_a_stream_or_trailing_dot_or_space_spelling_of_a_floor_file_is_decided_as_the_file_is(
+    tmp_path: Path, suffix: str,
+) -> None:
+    """T19 (the second reviewer's R3): a named stream, a stream with its type, the default stream, trailing dots and trailing
+    spaces on the final component of a floor file root, or of a credential vault name, are decided as the file is, with its
+    reason, in the ordinary, extended-prefix and share spellings; a neighbour in the same directory with the same suffix is
+    admitted, and keeps the suffix it was given."""
+    lay = _fixture(tmp_path)
+    vault = lay.outside / "credential_vault.json"
+    vault.write_bytes(_CONTENT)
+    floor = [lay.data.resolve(), lay.config.resolve()]
+    for target, reason in ((lay.config, _FLOOR_REASON), (vault, _LEAF_REASON)):
+        ordinary = _decide(str(target), protected=floor)
+        assert ordinary == ("refused", reason), f"premise: the ordinary spelling of {target.name}: {ordinary}"
+        assert _decide(str(target) + suffix, protected=floor) == ordinary, f"{target.name}{suffix!r}"
+        assert _decide("\\\\?\\" + str(target) + suffix, protected=floor) == ordinary, f"extended {target.name}{suffix!r}"
+        shared = _spelling_or_none("UNC localhost admin share", target)
+        if shared is not None:
+            assert _decide(shared + suffix, protected=floor) == ordinary, f"share {target.name}{suffix!r}"
+    admitted = _decide(str(lay.neighbour) + suffix, protected=floor)
+    assert admitted[0] == "admitted", f"a neighbour with {suffix!r}: {admitted}"
+
+
+@WINDOWS
+async def test_a_named_stream_of_a_floor_file_is_refused_and_one_of_a_neighbour_is_read(tmp_path: Path) -> None:
+    """T20 (the second reviewer's R3), through ``ReadFileTool`` with a real named stream: the loaded config file's stream
+    and a credential vault name's stream are refused with the file's own reason and give no content; the write side refuses
+    the same name; a neighbour's stream is read, by the path as it was given."""
+    lay = _fixture(tmp_path)
+    vault = lay.outside / "credential_vault.json"
+    vault.write_bytes(_CONTENT)
+    try:
+        for note in (lay.config, vault, lay.neighbour):
+            Path(str(note) + ":zz").write_bytes(b"stream fixture")
+    except OSError:
+        pytest.skip("BF-953 premise: this volume makes no named streams")
+    runtime = SimpleNamespace(config_path=lay.config, data_dir=lay.data, config=SimpleNamespace(
+        security_infra=SimpleNamespace(read_roots=[]), execution=SimpleNamespace(workspace_root=str(lay.work)),
+    ))
+    reader = ReadFileTool(runtime)
+    config_stream = await reader.invoke({"path": str(lay.config) + ":zz"})
+    assert config_stream.error == _READ_PROTECTED and config_stream.output is None
+    vault_stream = await reader.invoke({"path": str(vault) + ":zz"})
+    assert vault_stream.error == f"read_file refused: {_LEAF_REASON}" and vault_stream.output is None
+    assert protected_write_refusal(str(lay.config) + ":zz", runtime=runtime) is not None, "the write side refuses the name"
+    neighbour_stream = await reader.invoke({"path": str(lay.neighbour) + ":zz"})
+    assert neighbour_stream.error is None and "stream fixture" in repr(neighbour_stream.output)
+
+
+_ABSENT_SPELLINGS = [
+    "forward slashes", "swapped case", "trailing dot", "trailing space", "default stream", "named stream",
+    "extended prefix", "device prefix",
+]
+
+
+def _absent_spelling(kind: str, text: str) -> str:
+    return {
+        "forward slashes": text.replace("\\", "/"), "swapped case": text.swapcase(), "trailing dot": text + ".",
+        "trailing space": text + " ", "default stream": text + "::$DATA", "named stream": text + ":zz",
+        "extended prefix": "\\\\?\\" + text, "device prefix": "\\\\.\\" + text,
+    }[kind]
+
+
+@WINDOWS
+@pytest.mark.parametrize("kind", _ABSENT_SPELLINGS)
+def test_an_absent_file_root_and_an_absent_credential_name_are_decided_in_every_spelling_alike(
+    tmp_path: Path, kind: str,
+) -> None:
+    """T21 (the second reviewer's R6): a floor file root that is not on disk, and a credential vault name that is not on
+    disk, are refused in every spelling of the final component and of the path that this host serves (forward slashes,
+    another case, trailing dot or space, a stream suffix, the extended and device prefixes), with the ordinary spelling's
+    reason; an absent neighbour in the same spelling is admitted. The share spelling of an absent file root is not
+    decided here: a root that is not on disk has no identity to compare (L2)."""
+    lay = _fixture(tmp_path)
+    absent_root = lay.config.parent / "absent config long name.yaml"
+    absent_vault = lay.outside / "credential_vault.json"
+    absent_neighbour = lay.config.parent / "absent neighbour long name.yaml"
+    assert not any(path.exists() for path in (absent_root, absent_vault, absent_neighbour)), "premise: none is on disk"
+    floor = [lay.data.resolve(), lay.config.resolve(), absent_root.resolve()]
+    for target, reason in ((absent_root, _FLOOR_REASON), (absent_vault, _LEAF_REASON)):
+        assert _decide(str(target), protected=floor) == ("refused", reason), "premise: the ordinary spelling"
+        spelled = _decide(_absent_spelling(kind, str(target)), protected=floor)
+        assert spelled == ("refused", reason), f"{kind} of {target.name}: {spelled}"
+    assert _decide(str(absent_neighbour), protected=floor)[0] == "admitted", "premise"
+    spelled = _decide(_absent_spelling(kind, str(absent_neighbour)), protected=floor)
+    assert spelled[0] == "admitted", f"{kind} of a neighbour: {spelled}"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="BF-953: on Windows these names are one file")
+def test_a_posix_name_that_differs_by_case_dot_space_or_colon_is_another_file_for_the_floor(tmp_path: Path) -> None:
+    """T22: on POSIX the final component is compared as it is: another case, a trailing dot or space, or a colon suffix is
+    another file, so none of them is a floor file root or a credential vault name; the names themselves are."""
+    root = tmp_path.resolve()
+    (root / "vault").mkdir()
+    config_names = ["config.yaml", "Config.yaml", "config.yaml.", "config.yaml ", "config.yaml:zz"]
+    vault_names = ["credential_vault.json", "Credential_vault.json", "credential_vault.json.", "credential_vault.json ",
+                   "credential_vault.json:zz"]
+    for name in config_names:
+        (root / name).write_bytes(_CONTENT)
+    for name in vault_names:
+        (root / "vault" / name).write_bytes(_CONTENT)
+    if len(list(root.iterdir())) != len(config_names) + 1 or len(list((root / "vault").iterdir())) != len(vault_names):
+        pytest.skip("BF-953 premise: this filesystem folds case, so the names are not distinct files")
+    assert _decide(str(root / "config.yaml"), protected=[root / "config.yaml"])[0] == "refused"
+    for name in config_names[1:]:
+        assert _decide(str(root / name), protected=[root / "config.yaml"])[0] == "admitted", name
+    assert _decide(str(root / "vault" / vault_names[0])) == ("refused", _LEAF_REASON)
+    for name in vault_names[1:]:
+        assert _decide(str(root / "vault" / name))[0] == "admitted", name

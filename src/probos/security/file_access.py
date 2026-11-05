@@ -85,17 +85,17 @@ class FileAccessDenied(Exception):
         super().__init__(reason)
 
 
-def _depth(root: Path) -> int:
-    return len(root.parts)
-
-
-# BF-953: one decision for every spelling of one file. ``Path.resolve()`` keeps the Windows extended-length
-# prefix it is given and reports a share spelling of a local drive as the share path, so the textual test
-# below saw each as another place. On Windows the text is first reduced to its namespace-free form
-# (``_namespace_free``), and a path or root that still names a share or a device is also compared by the
-# identity the system gives the file (``_file_identity``). Elsewhere containment is the textual test.
+# BF-953: the floor decides each spelling of one file as its ordinary spelling is decided. ``Path.resolve()`` keeps the
+# Windows extended-length prefix it is given and reports a share spelling of a local drive as the share path, so the
+# textual test below saw each as another place. On Windows the text is first reduced to its namespace-free form
+# (``_namespace_free``) for every root list. The floor alone is also decided by the identity the system gives the
+# file (``_file_identity``), for a path or root that still names a share or a device: identity only ever adds a
+# refusal, and an exempt or permitted root is matched by text, so no spelling is admitted by one it does not
+# textually name (BF-953 Amendment 1). The floor's file roots and the credential names are decided on the file the
+# final component names (``_base_file``). Elsewhere containment is the textual test.
 _NAMESPACE_PREFIXES = ("\\\\?\\", "\\\\.\\")
 _EXTENDED_UNC = "\\\\?\\UNC\\"
+_FLOOR_UNVERIFIED = "path cannot be verified against the protected roots"
 
 
 def _namespace_free(text: str) -> str:
@@ -113,58 +113,141 @@ def _namespace_free(text: str) -> str:
     return text
 
 
+class _Unverifiable(Exception):
+    """BF-953 (Amendment 1): the system could not say which file a path names, so the floor cannot be checked."""
+
+
+def _base_name(name: str) -> str:
+    """BF-953 (Amendment 1): the name of the file the final component *name* names, on Windows: without a stream suffix (the
+    text from the first ``:``) and without trailing dots and spaces. A name that would be empty is returned as it is. Pure."""
+    return name.split(":", 1)[0].rstrip(" .") or name
+
+
+def _base_file(path: Path) -> Path:
+    """BF-953 (Amendment 1): *path* with its final component reduced to the file it names (:func:`_base_name`), on Windows;
+    any other path, and every path on another platform, as it is. The floor and the credential names are decided on it, so a
+    stream, trailing-dot or trailing-space spelling of a floor file is decided as the file is, whether or not it is on disk;
+    an admitted read keeps the path as resolved. Pure: it reads nothing."""
+    if os.name != "nt":
+        return path
+    base = _base_name(path.name)
+    return path.with_name(base) if base != path.name else path
+
+
+def _protected_leaf(path: Path) -> bool:
+    """Whether the final component of *path* is a credential vault file name: exactly as the base compared it
+    (``PROTECTED_LEAF_NAMES``), and on Windows (BF-953 Amendment 1) as the write side compares it, in the canonical form
+    (:func:`_canonical_name`), so another case is the same name."""
+    return _canonical_name(path.name) in _PROTECTED_LEAF_KEYS if os.name == "nt" else path.name in PROTECTED_LEAF_NAMES
+
+
 def _file_identity(path: Path) -> tuple[int, int] | None:
     """BF-953: the identity the system gives the file *path* names, ``(volume, file index)``.
 
-    ``None`` when it is not on disk, cannot be read, or its filesystem reports no file index (zero).
+    ``None`` when no such file is on disk (the system says there is none). Raises :class:`_Unverifiable` when the
+    system cannot say: the read fails for any other reason, or its filesystem reports no file index (zero).
     """
     try:
         info = os.stat(path)
-    except (OSError, ValueError):
+    except (FileNotFoundError, NotADirectoryError):
         return None
-    return (info.st_dev, info.st_ino) if info.st_ino else None
+    except (OSError, ValueError) as exc:
+        raise _Unverifiable from exc
+    if not info.st_ino:
+        raise _Unverifiable
+    return info.st_dev, info.st_ino
+
+
+def plain_spelling(path: Path) -> Path:
+    """BF-953 (Amendment 1): *path* without its Windows namespace prefix, as a reader that rejects the prefix is given it.
+
+    The extended-length and device prefixes of a drive path and the extended UNC prefix are removed
+    (:func:`_namespace_free`); any other path, and every path on another platform, is returned as it is. Pure: it
+    reads nothing. A final component that ends in a dot or a space is not the same file once the prefix is gone.
+    """
+    return Path(_namespace_free(str(path))) if os.name == "nt" else path
 
 
 class _OnDisk:
-    """BF-953: the identities of a path and of each ancestor of it that is on disk, read once and only when asked."""
+    """BF-953: the identities of a path and of each ancestor of it that is on disk, read once and only when asked.
+
+    ``position`` is the count of parts, without a namespace prefix, of the deepest part of the path's own chain that
+    has a given identity; ``reaches`` is whether the chain is on a volume other than the one its topmost part is on.
+    Reading a part the system cannot say anything about raises :class:`_Unverifiable`.
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
-        self._found: frozenset[tuple[int, int]] | None = None
+        self._places: dict[tuple[int, int], int] | None = None
+        self._crossed: frozenset[int] = frozenset()
 
-    def holds(self, identity: tuple[int, int]) -> bool:
-        if self._found is None:
-            found = (_file_identity(part) for part in (self._path, *self._path.parents))
-            self._found = frozenset(ident for ident in found if ident is not None)
-        return identity in self._found
+    def _read(self) -> dict[tuple[int, int], int]:
+        if self._places is None:
+            places: dict[tuple[int, int], int] = {}
+            volumes: list[int] = []
+            for part in (self._path, *self._path.parents):
+                identity = _file_identity(part)
+                if identity is not None:
+                    places.setdefault(identity, len(PureWindowsPath(_namespace_free(str(part))).parts))
+                    volumes.append(identity[0])
+            self._crossed = frozenset(volumes) - {volumes[-1]} if volumes else frozenset()
+            self._places = places
+        return self._places
+
+    def position(self, identity: tuple[int, int]) -> int | None:
+        return self._read().get(identity)
+
+    def reaches(self, volume: int) -> bool:
+        self._read()
+        return volume in self._crossed
 
 
-def _longest_match(resolved: Path, roots: Iterable[Path], on_disk: _OnDisk | None = None) -> Path | None:
-    """The deepest root that contains *resolved*, or ``None``.
+def _identity_position(root: Path, on_disk: _OnDisk, whole: int) -> int | None:
+    """BF-953 (Amendment 1): where in the path's own chain the floor root *root* is taken to contain it, or ``None``.
 
-    A root contains a path that is under it as spelled. On Windows (BF-953) it also contains a path that is
-    under it once both are without a namespace prefix, and a path or root that still names a share or a
-    device is contained when the path, or an ancestor of it, is the same file as the root
-    (:func:`_file_identity`). A root with no identity, because it is not on disk, is matched by spelling
-    only. *on_disk* lets the root lists of one decision read the path's identities once.
+    The root contains the path at the part of its chain that is the same file as the root. It also contains it, at
+    the path's own depth *whole*, when the chain is on the volume the root is on only through a link, because its
+    text then does not say where on that volume the file is. A root not on disk contains nothing. Raises
+    :class:`_Unverifiable` when the root or a part of the chain cannot be read.
     """
-    best: Path | None = None
+    identity = _file_identity(root)
+    if identity is None:
+        return None
+    place = on_disk.position(identity)
+    if place is None and on_disk.reaches(identity[0]):
+        return whole
+    return place
+
+
+def _match_position(
+    resolved: Path, roots: Iterable[Path], on_disk: _OnDisk | None = None, *, floor: bool = False,
+) -> int | None:
+    """Where in *resolved*'s own chain the deepest root that contains it stands (a count of parts), or ``None``.
+
+    A root contains a path that is under it as spelled; it stands at its own count of parts. On Windows (BF-953) it
+    also contains a path that is under it once both are without a namespace prefix, standing at the count of the
+    root's parts so reduced. For the floor only (*floor*), a path or root that still names a share or a device is also
+    compared by identity (:func:`_identity_position`); the exempt roots and the permitted roots never are, so a
+    spelling is admitted only by a root its text names. Raises :class:`_Unverifiable` for a floor that cannot be
+    read. *on_disk* lets the root lists of one decision read the path's identities once.
+    """
+    best: int | None = None
     if on_disk is None:
         on_disk = _OnDisk(resolved)
     for root in roots:
         try:
-            inside = resolved == root or resolved.is_relative_to(root)
-            if not inside and os.name == "nt" and (str(resolved).startswith("\\\\") or str(root).startswith("\\\\")):
+            at = len(root.parts) if resolved == root or resolved.is_relative_to(root) else None
+            if at is None and os.name == "nt" and (str(resolved).startswith("\\\\") or str(root).startswith("\\\\")):
                 key = PureWindowsPath(_namespace_free(str(resolved)))
                 root_key = PureWindowsPath(_namespace_free(str(root)))
-                inside = key == root_key or key.is_relative_to(root_key)
-                if not inside and (key.drive.startswith("\\\\") or root_key.drive.startswith("\\\\")):
-                    root_id = _file_identity(root)
-                    inside = root_id is not None and on_disk.holds(root_id)
-            if inside and (best is None or _depth(root) > _depth(best)):
-                best = root
+                if key == root_key or key.is_relative_to(root_key):
+                    at = len(root_key.parts)
+                elif floor and (key.drive.startswith("\\\\") or root_key.drive.startswith("\\\\")):
+                    at = _identity_position(root, on_disk, len(key.parts))
         except (OSError, ValueError):
             continue
+        if at is not None and (best is None or at > best):
+            best = at
     return best
 
 
@@ -197,10 +280,14 @@ def resolve_read_path(
     is caught -- the same ``resolve() + is_relative_to`` order
     ``WorkspaceManager.resolve_file`` uses.
 
-    BF-953: the decision is the same for every spelling of one file, for the floor, the
-    exempt roots and the permitted roots (:func:`_longest_match`). What is returned is the
-    resolved path itself, in the spelling it was resolved to, never a rewritten one: it
-    names the file the decision was made on.
+    BF-953: the floor decides one file in every spelling the system treats as that file: for a path that
+    :func:`_match_position` compares (a share or device spelling also by the identity of its own chain), and on Windows
+    for the final component (a stream suffix, trailing dots and spaces, another case: :func:`_base_file`), for a floor
+    file root and a credential vault name, whether or not the file is on disk. Not covered: a share or device spelling of
+    a floor file root that is not on disk (L2). An exempt or a permitted root admits a share or device spelling only if
+    its text names that root, and a floor that cannot be read for a share or device spelling refuses it. What is
+    returned is the resolved path itself, in the spelling it was resolved to, never a rewritten one: it names the file
+    the decision was made on (a named stream keeps its suffix).
     """
     if not raw or "\x00" in raw:
         raise FileAccessDenied(raw, "empty or malformed path")
@@ -216,20 +303,29 @@ def resolve_read_path(
     except (OSError, RuntimeError, ValueError) as exc:
         raise FileAccessDenied(raw, f"path could not be resolved: {exc}") from exc
 
-    if resolved.name in PROTECTED_LEAF_NAMES:
+    base_file = _base_file(resolved)  # BF-953 (Amendment 1): what the floor and the credential names are decided on
+    if _protected_leaf(base_file):
         raise FileAccessDenied(raw, "that file holds credentials and is not readable")
 
-    on_disk = _OnDisk(resolved)  # BF-953: read at most once, and only if a root is compared by identity
-    protect = _longest_match(resolved, protected_roots, on_disk)
+    on_disk = _OnDisk(base_file)  # BF-953: read at most once, and only if the floor is compared by identity
+    try:
+        protect = _match_position(base_file, protected_roots, on_disk, floor=True)
+    except _Unverifiable as exc:
+        logger.warning(
+            "BF-953: the read floor could not be verified for a path (%s); the read is refused",
+            type(exc.__cause__).__name__ if exc.__cause__ is not None else "no file index",
+        )
+        raise FileAccessDenied(raw, _FLOOR_UNVERIFIED) from None
     if protect is not None:
-        exempt = _longest_match(resolved, exempt_roots, on_disk)
-        # Longest prefix wins: a deeper exemption lifts a shallower floor.
-        if exempt is None or _depth(exempt) <= _depth(protect):
+        exempt = _match_position(resolved, exempt_roots)
+        # Longest prefix wins: a deeper exemption lifts a shallower floor. Both stand at a count of
+        # parts of this path's own chain, not of the spelling of the root.
+        if exempt is None or exempt <= protect:
             raise FileAccessDenied(
                 raw, "path is protected: the runtime's data directory or a config file"
             )
 
-    if permitted_roots and _longest_match(resolved, permitted_roots, on_disk) is None:
+    if permitted_roots and _match_position(resolved, permitted_roots) is None:
         raise FileAccessDenied(raw, "path is outside every readable root")
     return resolved
 
@@ -260,7 +356,9 @@ def permitted_read_roots(runtime: Any) -> list[Path]:
     try:
         from probos.execution.workspace import _resolve_workspace_root
 
-        roots.append(_resolve_workspace_root(workspace))
+        # BF-953 (Amendment 1): resolved as the candidate is, so the root and a path under it are spelled alike
+        # (a configured 8.3 short path or an unresolved data directory would otherwise name it as no candidate does).
+        roots.append(_resolve_workspace_root(workspace).resolve())
     except Exception:
         logger.debug("BF-758: workspace root unresolved", exc_info=True)
     return roots
@@ -464,7 +562,8 @@ def workspace_exempt_roots(runtime: Any) -> list[Path]:
     try:
         from probos.execution.workspace import _resolve_workspace_root
 
-        return [_resolve_workspace_root(workspace)]
+        # BF-953 (Amendment 1): resolved as the candidate is (see ``permitted_read_roots``).
+        return [_resolve_workspace_root(workspace).resolve()]
     except Exception:
         logger.debug("BF-758: workspace root unresolved", exc_info=True)
         return []
