@@ -525,10 +525,16 @@ class ListFilesTool:
     Each match is resolved and listed only if the same policy admits it; a match the
     policy refuses is left out, and nothing names it. A listed match whose spelling is under
     the project tree is given relative to it, any other (a share spelling of a local directory
-    too) by its absolute path, in either case without a Windows namespace prefix (the spelling
-    the armed reader opens). A match that no ordinary spelling names (a component that ends in
-    a dot or a space, a reserved device name) is left out like a refused one. Any other failure
-    is answered and logged with its exception class only.
+    too) by its absolute path, in either case without a Windows namespace prefix. A match is
+    listed only where ``reader_spelling`` gives a spelling: one the verified reader's rules on
+    the text admit (strict UTF-8; no ``:`` after the drive and no character below 32; no
+    reserved device name as the final name; no backslash, trailing dot or trailing space in it)
+    and, on Windows, one that names in the ordinary namespace what it names in the extended one.
+    Any other match is left out like a refused one, so a name only the plain reader opens (on
+    POSIX a colon, a control character) is not listed. The spelling is decided on the text alone,
+    so a listed name does not say that it opens: a directory, a link or junction, a path past
+    the host's ordinary length and a file changed since the listing are decided when it is read.
+    Any other failure is answered and logged with its exception class only.
     """
 
     tool_id: str = "list_files"
@@ -585,9 +591,9 @@ class ListFilesTool:
                     )
                 except FileAccessDenied:
                     continue  # BF-948: refused by the policy, so left out and not counted
-                shown = reader_spelling(match)  # BF-953: the spelling ``read_file`` opens, as the policy admitted it
+                shown = reader_spelling(match)  # BF-953: the spelling the verified reader's rules on the text admit
                 if shown is None:
-                    continue  # BF-953 (Amendment 2): no ordinary spelling names this file, so it is left out
+                    continue  # BF-953 (Amendments 2 and 3): there is none, so it is left out like a refused match
                 files.append(
                     str(shown.relative_to(_PROJECT_ROOT))
                     if shown.is_relative_to(_PROJECT_ROOT) else str(shown)
