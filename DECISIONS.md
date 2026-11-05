@@ -1429,6 +1429,18 @@ AD-1346 M3e4d7 is the seventh part of M3e4d. `ArtifactStore.add_version` and `Ar
 - *Residual, accepted.* Registers R157 and R158 of the contract.
 - *Reversal.* Revert the M3e4d7 commits.
 
+### AD-1346 M3e4d8 -- the work item store's store-write check (2026-11-05, #1604)
+
+AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `WorkItemStore._insert_work_item` calls `check_at` with `store_write`, presenting `item.created_by`, as the statement before its `if self._db:`. `init_communication` builds the store with the runtime's service through a new `admission` keyword. `STORE_WRITE_SCOPES` admits `Pending` rows, so `workforce.py` is split by scope with 45 scopes pending. Nothing is refused or charged. The contract is `prompts/ad-1346-m3e4d8-work-item-store-check.md`.
+
+- *D333 (the cut).* The pending-scope row, the one check D240's row names and the two module-level outbox scopes. Rejected: the pending-scope rows alone; all of `workforce.py` at once; the file-write rows first.
+- *D334 (the rows).* `Pending` as a value of `STORE_WRITE_SCOPES`, one row per scope; the outbox scopes are the ship's by D239 (no author column). Rejected: a new pending-scope type; a file both pending and partly scoped.
+- *D335 (the check).* The statement before `if self._db:`, with module-scope imports. Rejected: a check in `create_work_item`, which the crew session parent path does not reach; a check inside the transaction.
+- *D336 (the hand-off).* A constructor keyword passed by `init_communication`, as D322's. Rejected: a class-level default as well; `set_admission`; the runtime setting a private attribute.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM20 and WM21 are new.
+- *Residual, accepted.* Registers R160 and R161 of the contract.
+- *Reversal.* Revert the M3e4d8 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
