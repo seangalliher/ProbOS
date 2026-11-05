@@ -3,7 +3,9 @@
 **Drafted by:** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-04
 **Revised by:** the orchestrator (Claude Sonnet 5.5), 2026-11-04, before the build: §1 item 1 names the spelling probe as a session artifact that is not committed (it cited a file outside the repository); no block, count, hash or mutation row changed. The bridge's draft of this prompt (the Claude Code `claude-architect`, Opus 5.5) was stopped partway by a safety classifier, which is why the documented fallback drafted it.
 **Revised by (Amendment 1):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-04, after review round 2 of the whole candidate (`d1aba238d5b1658c772c59d3c6273b5e7899c68c`, NOT READY). Identity becomes a deny-only layer (§3 D8: findings 1 to 3), the read-policy root builders resolve the workspace root (D9: finding 5), `list_files` shows a match without its namespace prefix (D10: finding 4, built as BF-948's M5), and §3 D3 to D7, §6, §9, §11, §16 and §17 are corrected where they overclaimed (finding 7). Finding 6 is scheduled, not built (BF-948 L16). M4's line numbers are those of `d1aba238`. **Updated after a second round-2 reviewer's report (R1 to R6):** the final component of a floor file root and of a credential name names the file it names (D11: R3 and R6), a file root outranks the workspace that encloses it in every spelling of the workspace root (T17: R1), an absent floor file root and an absent credential name are decided like a present one (T21: R6), the display form is tested through the verified reader (BF-948 T14: R4), and the claims that overreached are scoped (R6).
-**Status:** M1 to M3 built (`c11a53dd`, `97101777`, `a7bd6372`). M4 to build in the same PR, before BF-948's M5. **Base:** drafted on the BF-948 worktree head `728e1fc2d2f49fd04584adf2a41d1dfa68befcb5` (branch `fix/bf948-list-files-read-policy-20261104-ca0ca20b`, base `origin/main` `ca0ca20b9bfa80b4d2367bc61ab1f5d995969a38`). The orchestrator's brief named `9649df65`; `728e1fc2` adds only the amended BF-948 contract (`git diff --stat 9649df65 728e1fc2` is one file under `prompts/`), and every file this contract changes has the same blob at both (§13), so each pair applies to either. **Dependencies:** none; built first in the BF-948 PR (#1752 says so), before BF-948's M4. **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD, M4 HIGH. **Estimated tests:** 1 new file, `tests/test_bf953_read_floor_spellings.py` (22 test functions, 160 cases after M4; counts in §4).
+**Revised by (Amendment 2):** the Copilot `Architect` (the Claude Code bridge's fallback), 2026-11-04, after review round 3 of the whole candidate (`34bd9153aca8d7e89cf4468cdb1704f77edf791c`, NOT READY). A floor file root is compared by the file its own final component names, as a candidate is (D12), the two read-policy root builders keep a workspace root the system cannot resolve as it was composed (D13), `reader_spelling` says whether a listing may name a match (D14; BF-948's M6 uses it), and the claims that overreached are corrected (§1 items 9 to 12, §6 T16, T19 and T20, §16 items 3 and 13). BF-948 L16 stays scheduled. M5's line numbers are those of `34bd9153`. Review scope for M5 and M6 (recommended; the orchestrator decides, §16): the delta and §16 items 18 to 22, with the three reproductions of §1 items 9 to 11.
+**Revised by (orchestrator, 2026-11-05, after Amendment 2):** section 10's rows DNY-11, DNY-12, DNY-16, DNY-19 and DNY-30 name lines that M5 and BF-948's M6 replaced (the two root builders now share `_workspace_root`, the floor call is `_floor_roots(protected_roots)`, and the listing's display form is `reader_spelling`): their anchors and mutants are the post-M6 text, because the census tool found the old anchors occurring 0 times on the built head; no code, count or other row changed.
+**Status:** M1 to M4 built (`c11a53dd`, `97101777`, `a7bd6372`, `f0f5f721`). M5 to build in the same PR, before BF-948's M6. **Base:** drafted on the BF-948 worktree head `728e1fc2d2f49fd04584adf2a41d1dfa68befcb5` (branch `fix/bf948-list-files-read-policy-20261104-ca0ca20b`, base `origin/main` `ca0ca20b9bfa80b4d2367bc61ab1f5d995969a38`). The orchestrator's brief named `9649df65`; `728e1fc2` adds only the amended BF-948 contract (`git diff --stat 9649df65 728e1fc2` is one file under `prompts/`), and every file this contract changes has the same blob at both (§13), so each pair applies to either. **Dependencies:** none; built first in the BF-948 PR (#1752 says so), before BF-948's M4. **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD, M4 HIGH, M5 HIGH. **Estimated tests:** 1 new file, `tests/test_bf953_read_floor_spellings.py` (29 test functions, 198 cases after M5; counts in §4).
 **BF number:** BF-953, held by the title of #1752 (`gh issue view 1752`: OPEN, "BF-953: resolve_read_path does not return one decision for every spelling of one file"). Current highest: **BF-953** (GitHub issue titles, all states, 1,507 fetched; the next BF-95x is BF-954). `git log --all` subjects stop at BF-951; `prompts/bf-95*` is empty; the roadmap's Bug Tracker has no BF-95x row (§Absence Verified).
 **Shared-contract change.** `resolve_read_path` is a public function every read path asks. This changes its decisions, so every consumer (§1, found by search) inherits it. **The Diff Reviewer therefore covers the whole candidate**, not the new lines: §16 lists the properties, and §3 D6 gives the compatibility story and §6 how it is tested.
 **Which text describes the head.** Line numbers are those of `728e1fc2`. Where prose differs from a REPLACE or new-file block, the block wins. "Head text" means every docstring, comment, error string and test docstring in those blocks, plus the tracker entries (§8) and the commit messages (§5).
@@ -41,12 +43,19 @@
    7. A loaded config file (a floor file root) inside an exempt workspace root was admitted in every spelling when the workspace root was configured as a device path: precedence ranked the exemption by how its root is spelled, not by where it stands in the path (the cause of 2, with a file for the floor root).
    8. The floor's file roots and the credential file names were compared by the text of the final component as given: a stream suffix, trailing dots or spaces, or (for a credential name) another case, named the same file and were admitted, for a stream that exists and for a file that is not on disk.
 
+   **Found in review round 3 (Amendment 2), on `34bd9153`.** As properties of the head's decision:
+   9. A floor file root whose own final component carries a stream suffix (a configuration loaded as `loaded.yaml:settings`) was compared as spelled, while the candidate's final component was reduced to the file it names. So the root's own spelling was admitted where the base refused it (Windows, an ordinary configuration; introduced by M4). The same holds for a root spelled in the extended namespace with a trailing dot or space.
+   10. `permitted_read_roots` resolved the workspace root inside the `try` that skips a failure. When every configured read root was unusable and the workspace root could not be resolved (a text with a NUL), the list was `[]`, which every consumer reads as "no limit"; the base kept the unresolved root and confined every read (introduced by M4). `workspace_exempt_roots` had the same failure point (its result there is the safe direction: no exemption).
+   11. `ListFilesTool` named a match in the spelling `plain_spelling` returns without asking whether that spelling names the same file. A name that ends in a dot or a space (made through the extended namespace) opens a neighbour or nothing, and a reserved device name opens the device and is rejected by the verified reader (introduced by M5 for a prefixed base; the same on the base for an ordinary one). `file_access` gives the lister the function it asks (`reader_spelling`, D14); the lister is BF-948's M6.
+   12. Claims: §16 item 3 said every drive-letter decision against drive-letter roots is the base's, which the final-component rule and the 8.3 workspace root disprove; T16 and §16 item 13 said T16 pins how an exemption is ranked, and it shows only that a text count is the same number; T19's docstring promised the suffix is kept and asserted admission only; the test module docstring, `PROGRESS.md` and `_namespace_free`'s docstring said such names "do not make another file" and that a bare drive is returned unchanged.
+
 ## 2. Solution
 
 - **M1:** `tests/test_bf953_read_floor_spellings.py`, written first. Every spelling case the base decides differently, and every test that calls a helper M2 adds, is `xfail(strict=True)`: red on the base, for the reason its mark names.
 - **M2:** `_longest_match` decides containment on the namespace-free text of both sides and, for a path or root that still names a share or device, on the identity the operating system gives the file. Windows only. `resolve_read_path` returns the resolved path exactly as before. The marks come off.
 - **M3:** trackers and the ledger. The tracker pairs only insert.
 - **M4 (Amendment 1):** identity is a deny-only layer. The floor is decided by text, by the identity of the path's own chain, by the volumes the chain reaches through a link, and refuses when it cannot be read; an exempt or a permitted root is decided by text alone; precedence compares where a match stands in the path's own chain; the final component of a floor file root and of a credential name is compared by the file it names (D11); the two root builders resolve the workspace root; `plain_spelling` is the display form `list_files` uses (BF-948's M5). Tests T11 to T22, and T1 to T3, T7 and T10 change; the BF-953 tracker entries are amended in place.
+- **M5 (Amendment 2):** a floor file root is compared by the file its own final component names, as a candidate is, by adding that file to the floor's root list (`_floor_roots`, D12); both root builders keep a workspace root the system cannot resolve as it was composed, through one helper (`_workspace_root`, D13); `reader_spelling` gives the spelling a listing may name for a match, or none (D14), which BF-948's M6 uses. T16, T19 and T20 change, T23 to T28 are new, the claims are corrected, and the BF-953 tracker entries are amended in place.
 
 ## 3. Decisions
 
@@ -85,6 +94,9 @@ Criteria order: correctness (every spelling of one file the floor refuses), safe
 - **D9, the roots the builders compose (Amendment 1; finding 5).** `permitted_read_roots` and `workspace_exempt_roots` return `_resolve_workspace_root(workspace).resolve()`, as the candidate is resolved, so a root configured as an 8.3 short path, an unresolved data directory or a mapped drive is spelled as the paths under it are. `WorkspaceManager`, `_resolve_workspace_root` and `tools.py`'s private-result detector (which keeps the lexical root beside the resolved one) are unchanged.
 - **D10, the display form of a listing (Amendment 1; finding 4 and the second reviewer's R4).** The policy admits an extended-prefix spelling and returns it as resolved (D2). The armed reader rejects that prefix lexically. `file_access.plain_spelling` (public, pure, Windows only) gives the spelling the armed reader opens, and `ListFilesTool` lists with it (BF-948's M5). **The display form is applied before the test against the project tree**, so a base inside `src/` lists project-relative names whether it is spelled ordinarily or with an extended prefix (BF-948 T14); a share spelling of a local directory is listed by its absolute share spelling, which the verified reader opens too (BF-948 L18). Rejected: widening the reader's validator (shared by instruction reads and the pinned-directory code); relativising by file identity (more surface for one spelling); a recorded limit with a test that pins the failure.
 - **D11, the final component names the file (Amendment 1; the second reviewer's R3 and R6). Chosen: compare the base file.** On Windows a final component that carries a stream (`name:stream`, `name:stream:$DATA`, `name::$DATA`) or ends in dots or spaces names the same file as its base `name`. A floor file root and a credential file name are therefore compared by the base file, by text, whether or not the file is on disk. `_base_name(name)` drops the text from the first colon and then the trailing dots and spaces (a name that would be empty stays as it is); `_base_file(path)` applies it to the final component; `_protected_leaf(path)` compares the credential names in the write side's canonical form (`_canonical_name`, case-folded, the key `_write_key` uses). The path an admitted read returns is the path as resolved, so a stream of an ordinary neighbour is read as named. It is applied once in `resolve_read_path`, before the identity step: the credential check, the on-disk chain and the floor comparison use the base file; the exempt and permitted comparisons use the path as resolved. It is pure text and adds no `os.stat` (T9). On another platform the names are compared as they are (T22). **Rejected:** refusing every name that carries a colon or ends in a dot or a space (a neighbour's stream is the caller's own file); looking the file up on disk and comparing identities (an absent file has no identity, so R6's absent file roots would stay open); changing `_write_key` (the write side's coverage is BF-911's; T20 pins that it refuses the same stream name). **Over-refusal:** L14. **Reach:** L15.
+- **D12, a floor file root is compared by the file it names (Amendment 2; round 3's A1). Chosen: add the base file of each root next to it.** `_floor_roots(roots)` returns the roots as they are spelled, each followed by `_base_file(root)` when that is another spelling; `resolve_read_path` compares the candidate's base file with that list. A root whose final component names itself (every directory root a system resolves, an ordinary file root, and every root on another platform) adds nothing, so every decision against an ordinary root list is the head's (T24). **Effects.** A configuration loaded as `loaded.yaml:settings` refuses its own spelling, the ordinary spelling of the file, its default stream and every other stream of it (T23, T28); a position count is the root's own count of parts, so no exemption's rank changes (T27); the identity step is handed the added root and reads at most one more `os.stat` for a share or device spelling (L4); a directory root spelled in the extended namespace with a trailing dot or space also refuses the directory its base names (L16). **Rejected:** replacing the root by its base file (a floor directory spelled `dir.` in the extended namespace would stop being refused: a new admission); reducing in `protected_config_files` (its result is the write side's list, and it would change BF-911's stat loop); reducing only the stream suffix (a trailing dot or space on a file root is the same class).
+- **D13, the workspace root as composed (Amendment 2; round 3's A2). Chosen: one helper.** `_workspace_root(runtime)` composes the root as the builders did and resolves it as a candidate is. When `resolve()` raises `OSError`, `RuntimeError` or `ValueError` it returns the root as composed; when the root cannot be composed it returns `None`. `permitted_read_roots` and `workspace_exempt_roots` use it, so a configured policy whose own roots are unusable still has the workspace root in its list, and the exempt list holds the same root, which no candidate is under (the base's two lists). **Recorded, not repaired (L17):** a configured policy whose every root is unusable and whose workspace root cannot be composed at all is `[]`, which every consumer reads as "no limit"; on the base the same two failures give the same list. A fail-closed form needs a root that matches nothing in a list whose emptiness now means "none configured" (seven call sites in five modules, and `reads_confined`): a change to that list's contract, not to this finding.
+- **D14, the spelling a listing may name (Amendment 2; round 3's A3 and B1). Chosen: a textual rule, `reader_spelling`.** `file_access.reader_spelling(path)` (public, pure) is `plain_spelling(path)` on Windows when every component of it after its anchor names, as an ordinary path, what it names in the extended namespace, and `None` otherwise. A component fails if it ends in a dot or a space (the system drops both from an ordinary path), or if any part of the spelling, the final component or an ancestor, is a reserved device name (`PureWindowsPath.is_reserved`, the test the verified reader applies). It applies to a path that never had a prefix too, so it holds for an ordinary base. It completes D10: `plain_spelling` stays the first step, and `ListFilesTool` lists the spelling only where `reader_spelling` gives one (BF-948's M6), leaving a match with none out like a match the policy refuses. **Rejected:** an identity rule (for an ordinary base the match string already is the ordinary alias, so the namespace-preserved identity needs the lister to build the extended spelling itself, at two `os.stat` per match; a volume that reports file index 0 would empty every listing); the verified reader's own `validate_read_location` as the gate (it checks the final component only, so a file in a directory named `con` passes it and the reader still fails; and it rejects spellings the unarmed reader opens). **Cost:** no system call per match.
 
 ## 4. Milestones and gates
 
@@ -94,6 +106,7 @@ Criteria order: correctness (every spelling of one file the floor refuses), safe
 | M2 | HIGH | a public function's decisions for every consumer (the read floor) | B2-1 to B2-11 | G2 |
 | M3 | STANDARD | trackers | B3-1, B3-2, the ledger | G3 |
 | M4 | HIGH | Amendment 1: the same public function's decisions for every consumer (identity deny-only, precedence, the root builders), its tests, and the in-place tracker amendments | B4-1, B4-2, B5-1, B5-2 | G5 |
+| M5 | HIGH | Amendment 2: the same public function's decisions for every consumer (a floor file root by its file), the root builders' fallback, a new public function the lister asks, its tests and the in-place tracker amendments | B6-1, B6-2, B7-1, B7-2 | G6 |
 
 Run each gate command as one file at a time with `-n 0`.
 
@@ -103,6 +116,8 @@ Run each gate command as one file at a time with `-n 0`.
 
 - **G5 (M4).** Red first: apply B4-2 only (the test file), then `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf953_read_floor_spellings.py -q -n 0`. Expected on a Windows host that serves every spelling and has a second local volume (measured on this one, scratch copy of `d1aba238`, home-guarded): **57 failed, 100 passed, 3 skipped** (160 tests). The 57: T1 7 (the six share families and `default stream suffix`), T2 6, T3 6, T7, T10, T11, T12 (2), T13 `device`, T14, T15 (6), T17 `device`, T18 (13), T19 (5: `:zz`, `:zz:$DATA`, `.`, a space, `. `), T20, T21 (5: `swapped case`, `trailing dot`, `trailing space`, `default stream`, `named stream`). Any other count is a hard stop back to the Architect. Green: apply B4-1, rerun: **157 passed, 3 skipped, 0 failed**. On the `ubuntu-latest` runner, derived from the file (not run: this host is Windows): **49 passed, 111 skipped** (T5, T6, T7, T8, T15, T16, T18 and T22 run; every other case is Windows-only). Then, one file at a time with `-n 0`, each unchanged by M4: `tests/test_bf758_file_read_confinement.py` (24 passed, 1 skipped), `tests/test_bf908_floor_and_children.py` (39 passed, 1 skipped), `tests/test_bf911_protected_config_write_refusal.py` (119 passed), `tests/test_ad1200_instruction_file_access.py` (40 passed), `tests/test_ad1200_repository_instructions.py` (98 passed), `tests/test_ad1316_real_effect_routes.py` (67 passed, 2 skipped), and `tests/test_bf948_list_files_read_policy.py` (30 passed before BF-948's M5, 32 after). Then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` (expected `architecture fitness check passed (srp-size=92, layer-import=0, db-connect=30, unowned-task=13)`). After B5-1 and B5-2, G3's three ledger commands.
 
+- **G6 (M5).** Red first: apply B6-2 only (the test file), then `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf953_read_floor_spellings.py -q -n 0`. Expected on a Windows host that makes named streams (measured on this one, scratch copy of `34bd9153`, home-guarded): **33 failed, 162 passed, 3 skipped** (198 tests). The 33: T23 4, T24 4, T25, T26 23, T28. T27 and the changed T16, T19 and T20 pass on the head: they pin what the head does, and §10's R3M rows show they kill. Any other count is a hard stop back to the Architect. Green: apply B6-1, rerun: **195 passed, 3 skipped, 0 failed**. On the `ubuntu-latest` runner, derived from the file (not run: this host is Windows): **77 passed, 121 skipped** (T5, T6, T7, T8, T15, T16, T18, T22, T24, T25 and T26 run; every other case is Windows-only). Then, one file at a time with `-n 0`, each unchanged by M5: `tests/test_bf758_file_read_confinement.py` (24 passed, 1 skipped), `tests/test_bf908_floor_and_children.py` (39 passed, 1 skipped), `tests/test_bf911_protected_config_write_refusal.py` (119 passed), `tests/test_ad1200_instruction_file_access.py` (40 passed), `tests/test_ad1200_repository_instructions.py` (98 passed), `tests/test_ad1316_real_effect_routes.py` (67 passed, 2 skipped), and `tests/test_bf948_list_files_read_policy.py` (32 passed before BF-948's M6, 34 after). Then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` (expected `architecture fitness check passed (srp-size=92, layer-import=0, db-connect=30, unowned-task=13)`, the same counts as G5). After B7-1 and B7-2: `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py --check` (expected `AD/BF ledger is current`; do not regenerate: the heads are unchanged, and a regeneration would only rewrite the captured git head and time) and `tests/test_ad1184_ad_ledger.py` (33 passed).
+
 The broad gate runs once for the batch (BF-948, BF-953), after the Diff Reviewer's repairs: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf948-bf953 --receipt logs/gates/bf948-bf953.receipt.json`. Not run here.
 
 ## 5. Commit messages
@@ -111,6 +126,8 @@ The broad gate runs once for the batch (BF-948, BF-953), after the Diff Reviewer
 - M2: `BF-953 M2: the read floor decides every spelling of one file the same way`
 - M3: `BF-953 M3: trackers and ledger`
 - M4: `BF-953 M4: identity only ever adds a refusal at the floor, and an exemption is ranked by where it stands in the path`
+- Amendment 2 (the contract only): `BF-953 (#1752): Amendment 2 to the build contract after review round 3 (M5: floor roots by their file, the workspace root as composed, the spelling a listing may name)`
+- M5: `BF-953 M5: a floor file root is compared by the file it names, an unresolvable workspace root keeps the policy, and a listing spelling must name the file`
 
 ## 6. Tests (`tests/test_bf953_read_floor_spellings.py`)
 
@@ -133,13 +150,19 @@ BF-953 owns every spelling test. A Windows-only case is skipped off Windows, and
 | T13 | `test_an_exemption_stands_where_its_text_puts_it_in_the_path_not_where_its_root_is_spelled` (4, Windows) | finding 2: an exempt root naming the floor directory or its parent as a device, extended-prefix, share or extended-UNC spelling lifts nothing, for an ordinary or a share candidate and through the configured workspace root; the workspace under the floor still lifts it, spelled with an extended prefix too | M4 |
 | T14 | `test_a_workspace_root_configured_as_a_short_path_is_spelled_as_its_candidates_are` (Windows) | finding 5: both builders return the long resolved path; the workspace is admitted | M4 |
 | T15 | `test_the_plain_spelling_drops_the_namespace_prefix_on_windows_only` (6, any platform) | `plain_spelling` | M4 |
-| T16 | `test_a_namespace_free_root_stands_at_the_same_count_of_parts` (6, any platform) | dropping a namespace prefix changes no count of parts, so a root's rank does not depend on how it is spelled | none: passes on the head (a pin on the invariant D8 relies on) |
+| T16 | `test_a_namespace_free_root_stands_at_the_same_count_of_parts` (6, any platform) | dropping a namespace prefix changes no count of parts: a property of the text alone, which shows that a text match's count is the same number however the prefix is spelled and kills no mutant of `_match_position` (T27 pins the use of the count) | none: passes on the head |
 | T17 | `test_a_loaded_config_file_outranks_the_workspace_that_encloses_it` (6, Windows) | the second reviewer's R1: the loaded config file inside the exempt workspace is refused in its ordinary, extended, device and share spellings however the workspace root is configured (ordinary, extended, device, share, extended UNC, a link to the data directory); `read_verified_file` and `read_bounded_utf8` refuse it too; a workspace file beside it is admitted unless the root names the data directory | M4 (red on the head for the device-spelled root) |
 | T18 | `test_the_base_name_of_a_final_component` (13, any platform) | `_base_name`: the text from the first colon, then trailing dots and spaces, are dropped; a name that would be empty stays | M4 (helper) |
-| T19 | `test_a_stream_or_trailing_dot_or_space_spelling_of_a_floor_file_is_decided_as_the_file_is` (6, Windows) | R3: a named stream, a stream with its type, the default stream, trailing dots and spaces of the config file and of a credential name are refused with the file's own reason in the ordinary, extended and share spellings; a neighbour with the same suffix is admitted | M4 |
-| T20 | `test_a_named_stream_of_a_floor_file_is_refused_and_one_of_a_neighbour_is_read` (Windows) | R3 through `ReadFileTool` with real streams: the config file's and a credential name's streams are refused and give no content; the write side refuses the same name; a neighbour's stream is read as named | M4 |
+| T19 | `test_a_stream_or_trailing_dot_or_space_spelling_of_a_floor_file_is_decided_as_the_file_is` (6, Windows) | R3: a named stream, a stream with its type, the default stream, trailing dots and spaces of the config file and of a credential name are refused with the file's own reason in the ordinary, extended and share spellings; a neighbour with the same suffix is admitted, and the path returned is the one `Path.resolve()` spells for it (Amendment 2: it asserted admission only) | M4 |
+| T20 | `test_a_named_stream_of_a_floor_file_is_refused_and_one_of_a_neighbour_is_read` (Windows) | R3 through `ReadFileTool` with real streams: the config file's and a credential name's streams are refused and give no content; the write side refuses the same name; a neighbour's stream is read as named, and `resolve_for_runtime` keeps the stream's name (Amendment 2) | M4 |
 | T21 | `test_an_absent_file_root_and_an_absent_credential_name_are_decided_in_every_spelling_alike` (8, Windows) | R6: an absent floor file root and an absent credential name are refused in each final-component spelling and in the extended and device prefixes (the share spelling of an absent file root is L2); an absent neighbour is admitted | M4 |
 | T22 | `test_a_posix_name_that_differs_by_case_dot_space_or_colon_is_another_file_for_the_floor` (POSIX only) | on POSIX the final component is compared as it is | M4 (derived, not run: this host is Windows) |
+| T23 | `test_a_floor_file_root_spelled_with_a_suffix_is_decided_as_its_file_is` (4, Windows) | round 3's A1: a floor file root with a stream suffix (a configuration loaded as a stream) or, in the extended namespace, a trailing dot or space refuses its own spelling, the ordinary spelling of its file, the default stream, another stream and the extended prefix with the floor's reason; a neighbour with the same suffix is admitted | M5 |
+| T24 | `test_the_floor_roots_include_the_file_each_final_component_names` (4, any platform) | `_floor_roots`: each root stays as spelled and its base file follows it where that is another spelling; an ordinary list is unchanged; on another platform nothing is added | M5 (helper) |
+| T25 | `test_a_workspace_root_that_does_not_resolve_stays_in_the_read_policy_as_it_was_composed` (any platform) | round 3's A2: the unresolvable workspace root stays in both builders as composed; a configured policy with usable or unusable own roots still refuses a path outside them through the policy, `read_file` and `list_files`; the exempt list lifts nothing for it | M5 |
+| T26 | `test_the_reader_spelling_is_one_that_names_the_file_in_the_ordinary_namespace` (23, any platform) | round 3's A3 and B1: `reader_spelling` gives the plain spelling, or none for a component that ends in a dot or a space or for a reserved device name in the final component or an ancestor; a name that only starts or ends like a device name keeps its spelling; off Windows the path is returned as `plain_spelling` returns it | M5 (helper) |
+| T27 | `test_a_text_match_stands_at_the_count_of_its_namespace_free_root` (4, Windows) and `test_an_identity_match_stands_where_the_path_names_it_not_where_its_root_is_spelled` (Windows) | T16 strengthened: the position `_match_position` returns for a text match (either side spelled with a prefix, the deepest root first or last) and for an identity match (the count of the path's own chain, never the root's spelled count; an exempt or a permitted root is not matched by identity) | none: pass on the head (R3M-11, R3M-12) |
+| T28 | `test_a_configuration_loaded_as_a_stream_is_refused_for_every_spelling_of_its_file` (Windows, named streams) | round 3's A1 through the runtime: `protected_config_files` lists the stream as loaded; `resolve_for_runtime` and `read_file` refuse its spelling and the ordinary spelling of the file with the floor's reason and give no content; a neighbour's stream is read | M5 |
 
 ## 7. The contract
 
@@ -1886,6 +1909,506 @@ def test_a_posix_name_that_differs_by_case_dot_space_or_colon_is_another_file_fo
         assert _decide(str(root / "vault" / name))[0] == "admitted", name
 ````
 
+### 7.5 M5 (Amendment 2)
+
+All blocks are against `34bd9153`. **Apply B6-2 first (red, G6), then B6-1.** Where prose differs from a block, the block wins. `plain_spelling` stays public (it is `reader_spelling`'s first step and T15's subject). B6-2 adds one import to the BF-948 test module's list (`SECRET_NAME`) and edits no BF-948 file.
+
+**B6-1** `src/probos/security/file_access.py`
+
+SEARCH:
+````
+# textually name (BF-953 Amendment 1). The floor's file roots and the credential names are decided on the file the
+# final component names (``_base_file``). Elsewhere containment is the textual test.
+````
+REPLACE:
+````
+# textually name (BF-953 Amendment 1). The floor's file roots and the credential names are decided on the file the
+# final component names (``_base_file``), a root's as well as a candidate's (BF-953 Amendment 2). That is a rule on
+# the text that only adds refusals, not a statement that the names are one file: in the extended namespace a name that
+# ends in a dot or a space is another file, and it is refused too. Elsewhere containment is the textual test.
+````
+
+SEARCH:
+````
+    r"""BF-953: *text*, a path as ``str(WindowsPath)`` spells it, without its Windows namespace prefix.
+
+    ``\\?\UNC\host\share\x`` is ``\\host\share\x``; ``\\?\C:\x`` and ``\\.\C:\x`` are ``C:\x``. Any other
+    text (a volume or device name, a drive-relative form, a path of another platform) is returned as it is.
+    Pure: it reads nothing and does not depend on the platform it runs on.
+    """
+````
+REPLACE:
+````
+    r"""BF-953: *text*, a path as ``str(WindowsPath)`` spells it, without its Windows namespace prefix: the form in which
+    a path and a root are compared as text.
+
+    ``\\?\UNC\host\share\x`` is ``\\host\share\x``; ``\\?\C:\x`` and ``\\.\C:\x`` are ``C:\x``, and the bare drive
+    ``\\?\C:`` is ``C:``. Any other text (a volume or device name, a drive-relative form with a path, a path of another
+    platform) is returned as it is. Pure: it reads nothing and does not depend on the platform it runs on. It is a form for
+    comparing text, not a statement about files: in the extended namespace a name that ends in a dot or a space is another
+    file than the one the ordinary spelling names (:func:`reader_spelling`).
+    """
+````
+
+SEARCH:
+````
+    an admitted read keeps the path as resolved. Pure: it reads nothing."""
+    if os.name != "nt":
+        return path
+    base = _base_name(path.name)
+    return path.with_name(base) if base != path.name else path
+
+
+def _protected_leaf(path: Path) -> bool:
+````
+REPLACE:
+````
+    an admitted read keeps the path as resolved. It is a rule on the text that only adds refusals (L14). Pure: it reads
+    nothing."""
+    if os.name != "nt":
+        return path
+    base = _base_name(path.name)
+    return path.with_name(base) if base != path.name else path
+
+
+def _floor_roots(roots: Sequence[Path]) -> list[Path]:
+    """BF-953 (Amendment 2): the floor roots *roots*, each root followed by the file its final component names where that is
+    another spelling (:func:`_base_file`).
+
+    A floor file root is compared by the file it names, as a candidate is, so a configuration loaded as
+    ``loaded.yaml:settings`` refuses a read of ``loaded.yaml:settings`` and of ``loaded.yaml``. Each root stays as it is
+    spelled, so no refusal a root made is lost: the result equals *roots* for every directory root a system resolves, for an
+    ordinary file root and on another platform. A root spelled in the extended namespace with a trailing dot or space adds
+    the directory or file its base names, a refusal only (L16). Pure: it reads nothing."""
+    named = [_base_file(root) for root in roots]
+    return [*roots, *(base for root, base in zip(roots, named) if base != root)]
+
+
+def _protected_leaf(path: Path) -> bool:
+````
+
+SEARCH:
+````
+    (:func:`_namespace_free`); any other path, and every path on another platform, is returned as it is. Pure: it
+    reads nothing. A final component that ends in a dot or a space is not the same file once the prefix is gone.
+    """
+    return Path(_namespace_free(str(path))) if os.name == "nt" else path
+````
+REPLACE:
+````
+    (:func:`_namespace_free`); any other path, and every path on another platform, is returned as it is. Pure: it
+    reads nothing. A component that ends in a dot or a space does not name the same file once the prefix is gone:
+    :func:`reader_spelling` says whether any ordinary spelling names the file.
+    """
+    return Path(_namespace_free(str(path))) if os.name == "nt" else path
+
+
+def reader_spelling(path: Path) -> Path | None:
+    """BF-953 (Amendment 2): the spelling of *path* that a reader which rejects a Windows namespace prefix opens as the file
+    *path* names, or ``None`` when no ordinary spelling names it.
+
+    On Windows it is :func:`plain_spelling` of *path* when every component of that spelling after its anchor names, as an
+    ordinary path, what it names in the extended namespace: none ends in a dot or a space (the system drops both from an
+    ordinary path, so such a name opens a neighbour or nothing), and no part of the spelling is a reserved device name (the
+    system opens the device, and the verified reader rejects the spelling). A path that never had a prefix is held to the
+    same test. Any other path, and every path on another platform, is returned as :func:`plain_spelling` returns it.
+    Pure: it reads nothing."""
+    shown = plain_spelling(path)
+    if os.name != "nt":
+        return shown
+    ordinary = PureWindowsPath(str(shown))
+    names = ordinary.parts[1:] if ordinary.anchor else ordinary.parts
+    if any(name != name.rstrip(" .") for name in names):
+        return None
+    if any(part.is_reserved() for part in (ordinary, *ordinary.parents)):
+        return None
+    return shown
+````
+
+SEARCH:
+````
+    its text names that root, and a floor that cannot be read for a share or device spelling refuses it. What is
+    returned is the resolved path itself, in the spelling it was resolved to, never a rewritten one: it names the file
+    the decision was made on (a named stream keeps its suffix).
+    """
+````
+REPLACE:
+````
+    its text names that root, and a floor that cannot be read for a share or device spelling refuses it. A floor file
+    root is compared by the file its own final component names, as the candidate is (:func:`_floor_roots`). What is
+    returned is the resolved path itself, as ``Path.resolve()`` spelled it, never a rewritten one: it names the file the
+    decision was made on (``resolve()`` keeps a named stream's suffix and drops a trailing dot or space and the default
+    stream's type from a file on disk).
+    """
+````
+
+SEARCH:
+````
+        protect = _match_position(base_file, protected_roots, on_disk, floor=True)
+````
+REPLACE:
+````
+        protect = _match_position(base_file, _floor_roots(protected_roots), on_disk, floor=True)
+````
+
+SEARCH:
+````
+def permitted_read_roots(runtime: Any) -> list[Path]:
+    """Operator POLICY: confine reads to these roots, or ``[]`` for no limit.
+````
+REPLACE:
+````
+def _workspace_root(runtime: Any) -> Path | None:
+    """BF-758, BF-953 (Amendment 2): the agent workspace root *runtime* configures, or ``None`` when it cannot be composed.
+
+    It is resolved as a candidate is, so the root and a path under it are spelled alike (a configured 8.3 short path or an
+    unresolved data directory would otherwise name it as no candidate does). A root the system cannot resolve (a text with
+    a NUL, a link that does not end) is returned as it was composed, as before BF-953: no candidate is under it, so a
+    configured read policy still refuses every path outside its other roots and the exempt list lifts nothing."""
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    workspace = getattr(cfg, "workspace_root", "") or _DEFAULT_WORKSPACE_ROOT
+    try:
+        from probos.execution.workspace import _resolve_workspace_root
+
+        composed = _resolve_workspace_root(workspace)
+    except Exception:
+        logger.debug("BF-758: workspace root unresolved", exc_info=True)
+        return None
+    try:
+        return composed.resolve()
+    except (OSError, RuntimeError, ValueError):
+        logger.debug("BF-953: workspace root %r does not resolve; it is kept as composed", workspace, exc_info=True)
+        return composed
+
+
+def permitted_read_roots(runtime: Any) -> list[Path]:
+    """Operator POLICY: confine reads to these roots, or ``[]`` for no limit.
+````
+
+SEARCH:
+````
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    workspace = getattr(cfg, "workspace_root", "") or _DEFAULT_WORKSPACE_ROOT
+    try:
+        from probos.execution.workspace import _resolve_workspace_root
+
+        # BF-953 (Amendment 1): resolved as the candidate is, so the root and a path under it are spelled alike
+        # (a configured 8.3 short path or an unresolved data directory would otherwise name it as no candidate does).
+        roots.append(_resolve_workspace_root(workspace).resolve())
+    except Exception:
+        logger.debug("BF-758: workspace root unresolved", exc_info=True)
+    return roots
+````
+REPLACE:
+````
+    workspace = _workspace_root(runtime)
+    if workspace is not None:
+        roots.append(workspace)
+    return roots
+````
+
+SEARCH:
+````
+    """The agent workspace tree, which lives under the data dir but is theirs."""
+    cfg = getattr(getattr(runtime, "config", None), "execution", None)
+    workspace = getattr(cfg, "workspace_root", "") or _DEFAULT_WORKSPACE_ROOT
+    try:
+        from probos.execution.workspace import _resolve_workspace_root
+
+        # BF-953 (Amendment 1): resolved as the candidate is (see ``permitted_read_roots``).
+        return [_resolve_workspace_root(workspace).resolve()]
+    except Exception:
+        logger.debug("BF-758: workspace root unresolved", exc_info=True)
+        return []
+````
+REPLACE:
+````
+    """The agent workspace tree, which lives under the data dir but is theirs."""
+    workspace = _workspace_root(runtime)
+    return [] if workspace is None else [workspace]
+````
+
+**B6-2** `tests/test_bf953_read_floor_spellings.py`
+
+SEARCH:
+````
+namespace prefix (T15 here; BF-948's T13 and T14 through the verified reader), and the final component is
+decided by the file it names: a stream suffix, trailing dots and spaces and another case do not make another
+file of a floor file root or a credential name, on or off disk (T18 to T21; on POSIX the names stay distinct: T22).
+"""
+````
+REPLACE:
+````
+namespace prefix (T15 here; BF-948's T13 and T14 through the verified reader), and the final component is
+decided by the file it names: a floor file root or a credential name is refused in every spelling of its final
+component that a stream suffix, trailing dots and spaces and (for a name) another case make, on or off disk
+(T18 to T21; on POSIX the names stay distinct: T22). That is a deny-side text rule, not a statement about files:
+in the extended namespace a name that ends in a dot or a space can be another file, and it is refused too (L14).
+
+Amendment 2 (review round 3, T23 to T28): a floor file root is compared by the file its own final component names,
+as a candidate is (T23, T24, T28), a workspace root that does not resolve stays in the read policy's roots as it was
+composed (T25), a listing shows a match only in a spelling that names it in the ordinary namespace (T26; BF-948's
+T15 through the verified reader), and what T16 shows about counts of parts is pinned where the count is used (T27).
+"""
+````
+
+SEARCH:
+````
+from tests.test_bf948_list_files_read_policy import _OUTSIDE, _PROTECTED, _link, _list, _runtime, _scene, _unlink
+````
+REPLACE:
+````
+from tests.test_bf948_list_files_read_policy import SECRET_NAME, _OUTSIDE, _PROTECTED, _link, _list, _runtime, _scene, _unlink
+````
+
+SEARCH:
+````
+from probos.security import file_access
+````
+REPLACE:
+````
+from probos.config import SystemConfig
+from probos.security import file_access
+````
+
+SEARCH:
+````
+    """T5: pure text, the same on every platform: the extended and device prefixes of a drive path and the extended
+    UNC prefix go; a volume or device name, a drive-relative form and a path of another platform stay."""
+````
+REPLACE:
+````
+    """T5: pure text, the same on every platform: the extended and device prefixes of a drive path and the extended
+    UNC prefix go, and a bare drive after a prefix is the drive; a volume or device name, a drive-relative form with a
+    path and a path of another platform stay."""
+````
+
+SEARCH:
+````
+    """T16: the position a root stands at in the path's own chain is its count of parts, and dropping a namespace prefix
+    changes no count: the exemption's rank does not depend on how its root is spelled."""
+````
+REPLACE:
+````
+    """T16: dropping a namespace prefix changes no count of parts, so a root that is matched as text stands at the same
+    count however its prefix is spelled. This is a property of the text alone: it shows that the root's own count and its
+    namespace-free count are the same number, and it kills no mutant of the match (T27 pins the use of the count)."""
+````
+
+SEARCH:
+````
+    admitted, and keeps the suffix it was given."""
+````
+REPLACE:
+````
+    admitted, and the path returned is the one ``Path.resolve()`` spells for it (a named stream's suffix is kept there, T20;
+    a trailing dot or space and the default stream's type are dropped by ``resolve()`` for a file on disk)."""
+````
+
+SEARCH:
+````
+    assert admitted[0] == "admitted", f"a neighbour with {suffix!r}: {admitted}"
+````
+REPLACE:
+````
+    assert admitted[0] == "admitted", f"a neighbour with {suffix!r}: {admitted}"
+    assert admitted == ("admitted", str(Path(str(lay.neighbour) + suffix).resolve())), f"the path returned for {suffix!r}"
+````
+
+SEARCH:
+````
+    assert neighbour_stream.error is None and "stream fixture" in repr(neighbour_stream.output)
+````
+REPLACE:
+````
+    assert neighbour_stream.error is None and "stream fixture" in repr(neighbour_stream.output)
+    assert str(file_access.resolve_for_runtime(str(lay.neighbour) + ":zz", runtime)).endswith(":zz"), "the stream name is kept"
+````
+
+SEARCH:
+````
+        assert _decide(str(root / "vault" / name))[0] == "admitted", name
+````
+REPLACE:
+````
+        assert _decide(str(root / "vault" / name))[0] == "admitted", name
+
+
+_ROOT_SUFFIXES = [":settings", ":settings:$DATA", ".", " "]
+
+
+@WINDOWS
+@pytest.mark.parametrize("suffix", _ROOT_SUFFIXES)
+def test_a_floor_file_root_spelled_with_a_suffix_is_decided_as_its_file_is(tmp_path: Path, suffix: str) -> None:
+    """T23 (review round 3, A1): a floor file root whose own final component carries a stream suffix (a configuration loaded
+    as ``loaded.yaml:settings``) or, spelled in the extended namespace, a trailing dot or space, is compared by the file it
+    names, as a candidate is. The root's own spelling and every other spelling of its file (the ordinary one, the default
+    stream, another stream, the extended prefix) are refused with the floor's reason, and a neighbour with the same suffix is
+    admitted."""
+    lay = _fixture(tmp_path)
+    spelled = "\\\\?\\" + str(lay.config) + suffix if suffix in (".", " ") else str(lay.config) + suffix
+    floor = [lay.data.resolve(), Path(spelled)]
+    for candidate in (
+        spelled, str(lay.config), "\\\\?\\" + str(lay.config), str(lay.config) + "::$DATA", str(lay.config) + ":other",
+        "\\\\?\\" + str(lay.config) + ".",
+    ):
+        assert _decide(candidate, protected=floor) == ("refused", _FLOOR_REASON), f"{candidate!r}"
+    assert _decide(str(lay.neighbour) + suffix, protected=floor)[0] == "admitted", "a neighbour with the same suffix"
+
+
+_FLOOR_ROOT_CASES = [
+    ("C:\\cfg\\loaded.yaml:settings", "C:\\cfg\\loaded.yaml"),
+    ("C:\\cfg\\loaded.yaml:settings:$DATA", "C:\\cfg\\loaded.yaml"),
+    ("\\\\?\\C:\\cfg\\old.yaml.", "\\\\?\\C:\\cfg\\old.yaml"),
+    ("\\\\?\\C:\\cfg\\old.yaml. ", "\\\\?\\C:\\cfg\\old.yaml"),
+]
+
+
+@pytest.mark.parametrize(("text", "base"), _FLOOR_ROOT_CASES)
+def test_the_floor_roots_include_the_file_each_final_component_names(text: str, base: str) -> None:
+    """T24 (review round 3, A1): each floor root stays in the list as it is spelled and, on Windows, the file its final
+    component names follows it when that is another spelling; a root that names itself (a directory root, an ordinary file
+    root) adds nothing, and on another platform nothing is added."""
+    directory, ordinary = Path("C:\\data"), Path("C:\\cfg\\loaded.yaml")
+    assert file_access._floor_roots([directory, ordinary]) == [directory, ordinary]
+    roots = [directory, Path(text), ordinary]
+    assert file_access._floor_roots(roots) == ([*roots, Path(base)] if os.name == "nt" else roots)
+
+
+async def test_a_workspace_root_that_does_not_resolve_stays_in_the_read_policy_as_it_was_composed(tmp_path: Path) -> None:
+    """T25 (review round 3, A2): a workspace root the configuration accepts and the system cannot resolve (a text with a NUL)
+    stays in both root builders as it was composed, so a configured read policy still confines reads, whether its own roots are
+    usable or not; the exempt list lifts nothing for it. Through ``resolve_for_runtime``, ``read_file`` and ``list_files``."""
+    scene = _scene(tmp_path)
+    broken = str(scene.workspace) + "\x00"
+
+    def runtime(read_roots: list[str], workspace: str) -> SimpleNamespace:
+        config = SystemConfig(security_infra={"read_roots": read_roots}, execution={"workspace_root": workspace})
+        return SimpleNamespace(data_dir=scene.data, config=config)
+
+    with pytest.raises(ValueError):
+        Path(broken).resolve()  # premise: the system refuses to resolve it
+    assert file_access.permitted_read_roots(runtime(["\x00unusable"], str(scene.workspace))) == [scene.workspace.resolve()]
+    assert file_access.permitted_read_roots(runtime(["\x00unusable"], broken)) == [Path(broken)]
+    assert file_access.permitted_read_roots(runtime([str(scene.allowed)], broken)) == [scene.allowed.resolve(), Path(broken)]
+    assert file_access.workspace_exempt_roots(runtime([], broken)) == [Path(broken)]
+    outside = str(scene.outside / SECRET_NAME)
+    for read_roots in (["\x00unusable"], [str(scene.allowed)]):
+        policy = runtime(read_roots, broken)
+        with pytest.raises(FileAccessDenied) as refused:
+            file_access.resolve_for_runtime(outside, policy)
+        assert refused.value.reason == _OUTSIDE_REASON, read_roots
+        read = await ReadFileTool(policy).invoke({"path": outside})
+        assert read.error == _READ_OUTSIDE and read.output is None, read_roots
+        listing = await ListFilesTool(policy).invoke({"pattern": "*", "path": str(scene.outside)})
+        assert listing.error == _OUTSIDE and listing.output is None, read_roots
+    inside = scene.allowed / "ok.txt"
+    assert file_access.resolve_for_runtime(str(inside), runtime([str(scene.allowed)], broken)) == inside.resolve()
+    with pytest.raises(FileAccessDenied):
+        file_access.resolve_for_runtime(str(scene.workspace / "scratch.txt"), runtime([], broken))
+
+
+_READER_CASES = [
+    ("C:\\data\\note.txt", "C:\\data\\note.txt"),
+    ("\\\\?\\C:\\data\\note.txt", "C:\\data\\note.txt"),
+    ("\\\\?\\UNC\\host\\share\\dir\\f.txt", "\\\\host\\share\\dir\\f.txt"),
+    ("\\\\host\\share\\dir\\f.txt", "\\\\host\\share\\dir\\f.txt"),
+    ("\\\\?\\C:\\data\\a b.txt", "C:\\data\\a b.txt"),
+    ("\\\\?\\C:\\data\\x..y.txt", "C:\\data\\x..y.txt"),
+    ("\\\\?\\C:\\data\\console.txt", "C:\\data\\console.txt"),
+    ("\\\\?\\C:\\data\\confidential\\nul0.txt", "C:\\data\\confidential\\nul0.txt"),
+    ("\\\\?\\C:\\data\\note.txt.", None),
+    ("\\\\?\\C:\\data\\note.txt ", None),
+    ("C:\\data\\note.txt. ", None),
+    ("\\\\?\\C:\\data\\dir.\\deep.txt", None),
+    ("\\\\?\\C:\\data\\dir \\deep.txt", None),
+    ("\\\\?\\C:\\data\\up.\\down\\leaf.txt", None),
+    ("\\\\?\\C:\\data\\...", None),
+    ("\\\\?\\UNC\\host\\share\\dir.\\f.txt", None),
+    ("\\\\?\\C:\\data\\NUL.txt", None),
+    ("C:\\data\\con", None),
+    ("C:\\data\\Aux.log", None),
+    ("C:\\data\\COM1", None),
+    ("C:\\data\\lpt9.txt", None),
+    ("\\\\?\\C:\\data\\con\\g.txt", None),
+    ("\\\\?\\C:\\data\\nul\\x\\y.txt", None),
+]
+
+
+@pytest.mark.parametrize(("text", "expected"), _READER_CASES)
+def test_the_reader_spelling_is_one_that_names_the_file_in_the_ordinary_namespace(text: str, expected: str | None) -> None:
+    """T26 (review round 3, A3 and B1): on Windows a path is given to a reader that rejects the namespace prefix as
+    ``plain_spelling`` spells it, unless a component of that spelling names another file or none in the ordinary namespace: a
+    component that ends in a dot or a space (the system drops both), or a reserved device name, in the final component or in an
+    ancestor, has no such spelling and gives ``None``. A name that only starts or ends like a device name keeps its spelling.
+    Every other path, and every path on another platform, is returned as ``plain_spelling`` returns it."""
+    got = file_access.reader_spelling(Path(text))
+    if os.name == "nt":
+        assert (None if got is None else str(got)) == expected
+    else:
+        assert got == Path(text)
+
+
+_STAND_CASES = [
+    ("\\\\?\\C:\\data\\work", "C:\\data\\work\\note.txt", 3),
+    ("\\\\.\\C:\\data", "C:\\data\\work\\note.txt", 2),
+    ("\\\\?\\UNC\\host\\share\\data", "\\\\host\\share\\data\\note.txt", 2),
+    ("C:\\data\\work", "\\\\?\\C:\\data\\work\\note.txt", 3),
+]
+
+
+@WINDOWS
+@pytest.mark.parametrize(("root", "candidate", "count"), _STAND_CASES)
+def test_a_text_match_stands_at_the_count_of_its_namespace_free_root(root: str, candidate: str, count: int) -> None:
+    """T27 (review round 3, T16 strengthened): a root that contains a path as text stands at its count of parts without a
+    namespace prefix, whichever of the two is spelled with one, and the deepest root wins whatever the order of the list."""
+    assert file_access._match_position(Path(candidate), [Path(root)]) == count
+    assert file_access._match_position(Path(candidate), [Path("C:\\"), Path(root)]) == count
+    assert file_access._match_position(Path(candidate), [Path(root), Path("C:\\")]) == count
+
+
+@WINDOWS
+def test_an_identity_match_stands_where_the_path_names_it_not_where_its_root_is_spelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T27 (review round 3, T16 strengthened): a floor root that is the same file as a part of the path's own chain stands at
+    that part's count of parts, never at the count of the root as it is spelled; an exempt or a permitted root is not matched
+    by identity."""
+    spelled = Path("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\floor\\a\\b\\c\\d\\e")
+    alias = Path("\\\\bf953-alias\\share\\floor")
+    candidate = alias / "sub" / "note.txt"
+    known = {spelled: (1, 1), alias: (1, 1)}
+    monkeypatch.setattr(file_access, "_file_identity", lambda path: known.get(path, (2, hash(path))))
+    assert len(spelled.parts) > len(alias.parts), "premise: the root is spelled with more parts than the part it names"
+    assert file_access._match_position(candidate, [spelled], floor=True) == len(alias.parts)
+    assert file_access._match_position(candidate, [spelled]) is None
+
+
+@WINDOWS
+async def test_a_configuration_loaded_as_a_stream_is_refused_for_every_spelling_of_its_file(tmp_path: Path) -> None:
+    """T28 (review round 3, A1): the configuration the vessel loaded is the stream ``loaded.yaml:settings`` of a file. The
+    floor lists it as spelled, and ``resolve_for_runtime`` and ``read_file`` refuse that spelling and the ordinary spelling of
+    the file with the floor's reason and give no content; a neighbour's stream is read."""
+    lay = _fixture(tmp_path)
+    spelled = str(lay.config) + ":settings"
+    try:
+        Path(spelled).write_bytes(b"stream fixture")
+        Path(str(lay.neighbour) + ":settings").write_bytes(b"stream fixture")
+    except OSError:
+        pytest.skip("BF-953 premise: this volume makes no named streams")
+    runtime = SimpleNamespace(config_path=spelled, data_dir=lay.data, config=SimpleNamespace(
+        security_infra=SimpleNamespace(read_roots=[]), execution=SimpleNamespace(workspace_root=str(lay.work)),
+    ))
+    assert any(str(root).endswith(":settings") for root in file_access.protected_config_files(runtime)), "premise: as loaded"
+    reader = ReadFileTool(runtime)
+    for raw in (spelled, str(lay.config)):
+        with pytest.raises(FileAccessDenied) as refused:
+            file_access.resolve_for_runtime(raw, runtime)
+        assert refused.value.reason == _FLOOR_REASON, raw
+        read = await reader.invoke({"path": raw})
+        assert read.error == _READ_PROTECTED and read.output is None, raw
+    neighbour = await reader.invoke({"path": str(lay.neighbour) + ":settings"})
+    assert neighbour.error is None and "stream fixture" in repr(neighbour.output)
+````
+
 ## 8. Tracking (M3's commit)
 
 **Head constraint:** neither head may carry a lifecycle keyword from `gen_ad_ledger.py` `_STATUS_PATTERNS` (`:126-132`: retired, abandoned, withdrawn, superseded, deferred, postponed, closed, shipped, staged, landed, open) in its first 120 characters.
@@ -1989,11 +2512,59 @@ REPLACE:
 - *Residual.* Recorded limits L1 to L15 of the contract.
 ````
 
+**M5's tracker pairs (in M5's commit).** They amend the committed text in place. The heads and their dates are unchanged, so the head constraint still holds, and the ledger needs no regeneration: `gen_ad_ledger.py --check` says it is current (measured), and a regeneration would only rewrite the captured git head and time.
+
+**B7-1** `PROGRESS.md`
+
+SEARCH:
+````
+The read-policy root builders resolve the workspace root as a candidate is resolved. On Windows the final component of a floor file root and of a credential name is compared by the file it names (a stream suffix, trailing dots or spaces, and for a credential name another case, do not make another file), whether or not the file is on disk; an admitted read keeps the path as resolved.
+````
+REPLACE:
+````
+The read-policy root builders resolve the workspace root as a candidate is resolved, and keep it as composed when the system cannot resolve it, so a configured read policy still confines reads. On Windows the final component of a floor file root and of a credential name is compared by the file it names, the root's as well as the candidate's: a stream suffix, trailing dots or spaces (and for a credential name another case) on either side are refused as the file is, whether or not the file is on disk. That is a deny-side text rule: in the extended namespace a name that ends in a dot or a space can be another file, and it is refused too. An admitted read keeps the path as `Path.resolve()` spelled it. `reader_spelling` says whether a listing may name a match (BF-948).
+````
+
+**B7-2** `DECISIONS.md` (three edits, each SEARCH unique)
+
+SEARCH:
+````
+- *Scope.* `security/file_access.py` (`_match_position`, `_identity_position`, `_namespace_free`, `_file_identity`, `_OnDisk`, `_Unverifiable`, `_base_name`, `_base_file`, `_protected_leaf`, `plain_spelling`; `resolve_read_path`'s docstring and its three calls; the workspace root in `permitted_read_roots` and `workspace_exempt_roots`), tests. Contract `prompts/bf-953-read-floor-spellings.md` (with Amendment 1).
+````
+REPLACE:
+````
+- *Scope.* `security/file_access.py` (`_match_position`, `_identity_position`, `_namespace_free`, `_file_identity`, `_OnDisk`, `_Unverifiable`, `_base_name`, `_base_file`, `_floor_roots`, `_protected_leaf`, `_workspace_root`, `plain_spelling`, `reader_spelling`; `resolve_read_path`'s docstring and its three calls; the workspace root in `permitted_read_roots` and `workspace_exempt_roots`), tests. Contract `prompts/bf-953-read-floor-spellings.md` (with Amendments 1 and 2).
+````
+
+SEARCH:
+````
+- *SP6 (the roots the builders compose).* `permitted_read_roots` and `workspace_exempt_roots` resolve the workspace root as a candidate is resolved.
+- *SP7 (the display form).* `plain_spelling` is the spelling `list_files` shows (BF-948's M5). Rejected: a reader change.
+````
+REPLACE:
+````
+- *SP6 (the roots the builders compose).* `permitted_read_roots` and `workspace_exempt_roots` resolve the workspace root as a candidate is resolved, through one helper (`_workspace_root`, SP10).
+- *SP7 (the display form).* `plain_spelling` is the spelling `list_files` shows (BF-948's M5), and only where `reader_spelling` gives one (SP11). Rejected: a reader change.
+````
+
+SEARCH:
+````
+- *Residual.* Recorded limits L1 to L15 of the contract.
+````
+REPLACE:
+````
+- *SP9 (a floor file root is compared by its file, Amendment 2).* `_floor_roots` adds the file each root's final component names after the root, so a root spelled as a stream, or with a trailing dot or space, refuses every spelling of its file, as a candidate's final component is reduced. A root that names itself adds nothing. Rejected: replacing the root by its file (it would stop refusing an extended-namespace directory spelled with a trailing dot or space); reducing in `protected_config_files` (the write side's list).
+- *SP10 (the workspace root as composed, Amendment 2).* `_workspace_root` resolves the configured workspace root and, when the system cannot resolve it, keeps it as composed, as before BF-953, so a configured read policy still confines reads. A policy whose every root is unusable and whose workspace root cannot be composed is `[]`, as on the base (L17). Rejected: a root that matches nothing, in a list whose emptiness means "none configured".
+- *SP11 (the spelling a listing may name, Amendment 2).* `reader_spelling` is `plain_spelling` when every component after the anchor names, as an ordinary path, what it names in the extended namespace (none ends in a dot or a space; no part is a reserved device name), and none otherwise; textual, no system call. Rejected: an identity rule (two `os.stat` per match, and a volume that reports file index 0 would empty every listing); the verified reader's own location check as the gate (it checks the final component only).
+- *Residual.* Recorded limits L1 to L18 of the contract.
+````
+
 ## 9. What this does NOT change
 
-- `src/probos/cognitive/swe_harness/tools.py` and `tests/test_bf948_list_files_read_policy.py` (BF-948's M4 edited both by SEARCH, and its M5 edits both again after BF-953's M4); `ReadFileTool`, `ListFilesTool` and every other consumer.
+- `src/probos/cognitive/swe_harness/tools.py` and `tests/test_bf948_list_files_read_policy.py` (BF-948's M4 edited both by SEARCH, its M5 edited both again after BF-953's M4, and its M6 edits both after BF-953's M5); `ReadFileTool`, `ListFilesTool` and every other consumer.
 - The write side: `protected_write_refusal`, `_write_key`, `_same_key`, `_canonical_name`, `_DEVICE_PREFIXES`, and BF-911's T19 parity (`_canonical_name`, `_SHORT_NAME`, `_HFS_IGNORABLE`).
-- `protected_read_roots`, `protected_config_files` and `resolve_for_runtime`: the roots they build and how. `permitted_read_roots` and `workspace_exempt_roots` change in one place only (M4, D9): the workspace root is resolved. `resolve_read_path`'s signature and its return value are unchanged; its reasons gain one (`path cannot be verified against the protected roots`).
+- `protected_read_roots`, `protected_config_files` and `resolve_for_runtime`: the roots they build and how. `permitted_read_roots` and `workspace_exempt_roots` change in one place only (M4, D9; M5, D13): the workspace root is resolved, and kept as composed when it cannot be. `resolve_read_path`'s signature and its return value are unchanged; its reasons gain one (`path cannot be verified against the protected roots`).
+- (M5) No signature, return shape, config field, `EventType`, persisted format or gate changes: `reader_spelling` is added to `file_access` and has one caller; `_floor_roots` and `_workspace_root` are private; the decisions that change are those of a floor file root or candidate whose final component carries a stream suffix, a trailing dot or a trailing space (D12, refusals only) and of a configured policy whose workspace root does not resolve (D13, back to the base's list).
 - `read_verified_file` and `read_bounded_utf8`, `validate_read_location` and the pinned-directory code.
 - Config, `EventType`, the tier table, goldens, and any other platform's decisions.
 
@@ -2040,15 +2611,15 @@ SPM-1 and SPM-16 are killed by T5 alone: an extended-UNC spelling that is not re
 | DNY-8 | `security/file_access.py` | `if exempt is None or exempt <= protect:` | `if exempt is None or exempt < protect:` | T13, T17 |
 | DNY-9 | `security/file_access.py` | `raise FileAccessDenied(raw, _FLOOR_UNVERIFIED) from None` | `protect = None` | T12 |
 | DNY-10 | `security/file_access.py` | `_FLOOR_UNVERIFIED = "path cannot be verified against the protected roots"` | `_FLOOR_UNVERIFIED = "path is protected"` | T12 |
-| DNY-11 | `security/file_access.py` | `return [_resolve_workspace_root(workspace).resolve()]` | `return [_resolve_workspace_root(workspace)]` | T14, T17 |
-| DNY-12 | `security/file_access.py` | `roots.append(_resolve_workspace_root(workspace).resolve())` | `roots.append(_resolve_workspace_root(workspace))` | T14 |
+| DNY-11 | `security/file_access.py` | `return composed.resolve()` | `return composed` | T14, T17 |
+| DNY-12 | `security/file_access.py` | the same line | `return composed` | T14 |
 | DNY-13 | `security/file_access.py` | `return Path(_namespace_free(str(path))) if os.name == "nt" else path` | `return path` | T15 |
 | DNY-14 | `security/file_access.py` | `if permitted_roots and _match_position(resolved, permitted_roots) is None:` | `if permitted_roots and _match_position(resolved, permitted_roots, floor=True) is None:` | T1, T2, T3, T11 |
 | DNY-15 | `security/file_access.py` | `exempt = _match_position(resolved, exempt_roots)` | `exempt = _match_position(resolved, exempt_roots, floor=True)` | T1, T3 |
-| DNY-16 | `security/file_access.py` | `protect = _match_position(base_file, protected_roots, on_disk, floor=True)` | `protect = _match_position(base_file, protected_roots, on_disk)` | T1, T2, T3, T4, T11, T12, T13, T17, T19 |
+| DNY-16 | `security/file_access.py` | `protect = _match_position(base_file, _floor_roots(protected_roots), on_disk, floor=True)` | `protect = _match_position(base_file, _floor_roots(protected_roots), on_disk)` | T1, T2, T3, T4, T11, T12, T13, T17, T19 |
 | DNY-17 | `security/file_access.py` | `if identity is None:` (in `_identity_position`, the only occurrence) | `if False:` | T1, T2, T3, T4, T10, T11, T17 |
 | DNY-18 | `security/file_access.py` | `volumes.append(identity[0])` | `pass` | T10, T11 |
-| DNY-19 | `cognitive/swe_harness/tools.py` | `shown = plain_spelling(match)` | `shown = match` | BF-948 T13, T14 |
+| DNY-19 | `cognitive/swe_harness/tools.py` | `shown = reader_spelling(match)` (the start of the whole line, which continues with a comment) | `shown = match` | BF-948 T13, T14, T15 |
 | DNY-20 | `security/file_access.py` | `at = _identity_position(root, on_disk, len(key.parts))` | `at = _identity_position(root, on_disk, 0)` | T10 |
 | DNY-21 | `security/file_access.py` | `if at is not None and (best is None or at > best):` | `if at is not None and (best is None or at < best):` | T10, T17 |
 | DNY-22 | `security/file_access.py` | `return name.split(":", 1)[0].rstrip(" .") or name` | `return name.split(":", 1)[0] or name` | T18, T19, T21 |
@@ -2059,11 +2630,32 @@ SPM-1 and SPM-16 are killed by T5 alone: an extended-UNC spelling that is not re
 | DNY-27 | `security/file_access.py` | `return _canonical_name(path.name) in _PROTECTED_LEAF_KEYS if os.name == "nt" else path.name in PROTECTED_LEAF_NAMES` | `return path.name in PROTECTED_LEAF_NAMES` | T21 |
 | DNY-28 | `security/file_access.py` | `base_file = _base_file(resolved)` | `base_file = resolved` | T1, T19, T20, T21 |
 | DNY-29 | `security/file_access.py` | `on_disk = _OnDisk(base_file)` | `on_disk = _OnDisk(resolved)` | T19 |
-| DNY-30 | `security/file_access.py` | `protect = _match_position(base_file, protected_roots, on_disk, floor=True)` | `protect = _match_position(resolved, protected_roots, on_disk, floor=True)` | T1, T19, T20, T21 |
+| DNY-30 | `security/file_access.py` | `protect = _match_position(base_file, _floor_roots(protected_roots), on_disk, floor=True)` | `protect = _match_position(resolved, _floor_roots(protected_roots), on_disk, floor=True)` | T1, T19, T20, T21 |
 | DNY-31 | `security/file_access.py` | `if _protected_leaf(base_file):` | `if _protected_leaf(resolved):` | T19, T20, T21 |
 | DNY-32 | `cognitive/swe_harness/tools.py` | `if shown.is_relative_to(_PROJECT_ROOT) else str(shown)` | `if match.is_relative_to(_PROJECT_ROOT) else str(shown)` | BF-948 T14 |
 
 DNY-7 is the cost row (a drive-letter spelling must read no identity: T9). DNY-17 is killed by a `TypeError` out of `None[0]`, which fails every test that asks about an absent root. Two mutants were considered and dropped as equivalent: using the root's raw count of parts where its namespace-free count is used (T16 shows the counts are equal for every spelling `_namespace_free` rewrites), and changing `whole` to a smaller count only where an exempt root's text names the same path (no spelling reaches it). DNY-19 and DNY-32 are the two display-form rows (BF-948 T13 and T14: DNY-32 moves the relative-to-`src/` test back before the display form).
+
+**M5's campaign of record (Amendment 2, 2026-11-04).** Run by the Architect on M5's head (the scratch tree with B6-2 and B6-1 applied; each row applied to one line, the file run alone with `-n 0` under the home guard, the line restored after). The prefix `R3M-` is absent from `prompts/`, `DECISIONS.md` and `PROGRESS.md` on `34bd9153` (`git grep -n -e "R3M-" -e "R3N-" 34bd9153 -- prompts DECISIONS.md PROGRESS.md` prints nothing, exit 1; the same for `tests` and `src`). The base tree of every row is `34bd9153` plus B6-2 and B6-1, files as the working tree held them (CRLF, `core.autocrlf=true`), sha256: `src/probos/security/file_access.py` `1aca272e59d7268f0adb4717a7e91c0584285de00498acf694c653a20d996e5c`; `tests/test_bf953_read_floor_spellings.py` `07004fd03d6d5d768fb6f3dacc6b986befbb7ffa1fdff9cacaa60106fb2da394`. Rows R3M-1 to R3M-3 and R3M-7 to R3M-14 ran on a test file that differed from this one only in T25's runtime fixture, T5's docstring and one import; R3M-4 to R3M-6, the rows T25 kills, were rerun on this hash. Rerun a row only if a file differs.
+
+| Row | File | Line | Mutant | Killed by (this file alone) |
+|---|---|---|---|---|
+| R3M-1 | `file_access.py` | `    return [*roots, *(base for root, base in zip(roots, named) if base != root)]` | `    return list(roots)` | 9 failed: T23 (4), T24 (4), T28 |
+| R3M-2 | `file_access.py` | the same line | `    return named` | 4 failed: T24 (the root is not kept) |
+| R3M-3 | `file_access.py` | `        protect = _match_position(base_file, _floor_roots(protected_roots), on_disk, floor=True)` | `        protect = _match_position(base_file, protected_roots, on_disk, floor=True)` | 5 failed: T23 (4), T28 |
+| R3M-4 | `file_access.py` | `        logger.debug("BF-953: workspace root %r does not resolve; it is kept as composed", workspace, exc_info=True)` | `        return None` (the head's list) | 1 failed: T25 |
+| R3M-5 | `file_access.py` | the same line | `        raise` | 1 failed: T25 |
+| R3M-6 | `file_access.py` | `    return [] if workspace is None else [workspace]` | `    return []` | 28 failed: T25 and every test that needs the workspace exemption |
+| R3M-7 | `file_access.py` | `    if any(name != name.rstrip(" .") for name in names):` | `    if False:` | 8 failed: T26's dot and space rows |
+| R3M-8 | `file_access.py` | `    if any(part.is_reserved() for part in (ordinary, *ordinary.parents)):` | `    if ordinary.is_reserved():` | 2 failed: T26's reserved-ancestor rows |
+| R3M-9 | `file_access.py` | `    names = ordinary.parts[1:] if ordinary.anchor else ordinary.parts` | `    names = ordinary.parts[-1:]` | 4 failed: T26's dot-directory rows |
+| R3M-10 | `file_access.py` | `    shown = plain_spelling(path)` | `    shown = path` | 9 failed: T26's prefixed rows |
+| R3M-11 | `file_access.py` | `                    at = len(root_key.parts)` | `                    at = len(key.parts)` | 14 failed, among them T27's four text cases; **T16 alone passes (6 passed)** |
+| R3M-12 | `file_access.py` | `                    at = _identity_position(root, on_disk, len(key.parts))` | `                    at = len(root.parts)` | 23 failed, among them T27's identity test (alone: 1 failed) |
+| R3M-13 | `file_access.py` | `    return resolved` | `    return base_file` | 4 failed: T19 (`:zz`, `:zz:$DATA`), T20, T28 (the path returned) |
+| R3M-14 | `file_access.py` | `        return composed.resolve()` | `        return composed` | 2 failed: T14 (the short-path workspace), T17 (device) |
+
+R3M-2 is the row that keeps D12's "add, not replace": a root list reduced to base files passes T23 and fails T24. R3M-11 is the row T16 could not kill. R3M-13 passed on the head's T19, which asserted admission only. BF-948's M6 rows are R3N-1 to R3N-3 (BF-948 §10). **DNY-19 after M6:** the line it mutates is now `shown = reader_spelling(match)  # BF-953: ...` and the mutant `shown = match` is killed by BF-948 T13, T14 and T15 (measured: 4 failed, 30 passed); DNY-32's line is unchanged and is killed by T14 (1 failed, 33 passed).
 
 ## 11. Recorded limits
 
@@ -2082,10 +2674,15 @@ DNY-7 is the cost row (a drive-letter spelling must read no identity: T9). DNY-1
 - **L13.** A path a caller spells with a namespace prefix, which the policy admits, is rejected by the armed reader's lexical check (`read_file failed: invalid path`), as it was for any admitted path outside the floor on the base; before BF-953 a permitted root refused it first. `list_files` no longer lists such a spelling (D10). See BF-948 L17.
 - **L14.** (Second reviewer's R3 and R6.) On Windows the final component of a floor file root and of a credential file name is compared by the file it names: the text from the first colon, then trailing dots and spaces, are dropped (`_base_name`), and the credential names are compared in the write side's canonical form (case-folded). In the extended namespace a name that ends in a dot or a space can be a different file than its base; it is refused when its base is a floor file root or a credential name, the safe direction. Only the final component is rewritten, and only for the floor's file roots and the credential names: a directory component is compared as `resolve()` leaves it. On another platform the names are compared as they are (T22).
 - **L15.** (Second reviewer's R3.) The repair decides the name of a stream; it does not list, remove or create streams. **Reach:** a named stream of a floor file root or of a credential name is readable only if it already exists on that file (a stream is created by a write, and the write side refuses the same names: T20). A stream of a neighbour is read as named.
+- **L16.** (Review round 3, A1.) A floor root spelled in the extended namespace with a trailing dot or space (a configured directory or file whose own name ends so) also refuses the directory or file its base names: `_floor_roots` adds the base after the root and keeps the root, so a floor is never narrowed. The over-refusal is the neighbour of such a root, and only a configuration that names a floor in that spelling reaches it. A directory root a system resolves (an ordinary spelling) never has such a final component.
+- **L17.** (Review round 3, A2.) A configured read policy composes empty, which every consumer reads as "no limit", when every configured root is unusable (a text with a NUL, a failed resolution) and the workspace root cannot be composed at all (a relative workspace root whose platform data directory needs a home directory the system cannot name, or a value that is not a path). On the base the same two failures give the same list. **Reach:** the workspace root's own composition has to fail as well as every configured root; each unusable root is logged once (`BF-758: configured read_roots entry ... ignoring it`). Not repaired here: a fail-closed form needs a list entry that matches nothing, in a list whose emptiness means "none configured" (`resolve_for_runtime`, `CodeSearchAgent`, the copilot adapter, repository instructions, `ListFilesTool` and `reads_confined` read it so): a change of that list's contract.
+- **L18.** (Review round 3, A3 and B1.) `reader_spelling` is a rule on the text: it does not prove, by file identity, that the spelling opens the file it names. A path longer than the system's ordinary limit, on a host without long-path support, is listed in a spelling the system cannot open, and the read answers a failure, never another file's content; this host has long paths enabled (`LongPathsEnabled` is 1), so the case could not be reproduced here. Reserved names are tested with `PureWindowsPath.is_reserved`, the test the verified reader applies; a later change of the reader's test reaches the lister only through T26.
 
 ## 12. For the Captain
 
 You decide nothing for this build; Amendment 1 raises two items for the orchestrator, neither blocking: a BF for review finding 6, and whether the armed reader's lexical rejection of a prefix a caller types itself should be answered as a caller-input error (BF-948 L16, L17). It adds no config field, no escape and no tier change. Whether to check past use of these spellings on the live vessel is your call; this contract gives no steps for it. It lands in the BF-948 PR as its own commits, before BF-948's M4 (the Architect's order for that PR, §4 of BF-948's amended contract).
+
+Amendment 2 raises two items for the orchestrator, neither blocking: whether round four reviews the delta (this amendment's §0 recommends it: no signature, return shape, config field, event, persisted format or gate changes) or the whole candidate again, and whether to accept L17 (a configured policy that composes empty when the workspace root cannot be composed at all, as on the base) or to make that list fail closed in its own BF.
 
 ## 13. Verified Against Codebase (2026-11-04, on `728e1fc2`)
 
@@ -2233,6 +2830,65 @@ A5  CLAIM: no other consumer needs the workspace root unresolved
     HOLDS: yes, by the runs (0 failed)
 ```
 
+## 13b. Verified for Amendment 2 (2026-11-04, on `34bd9153`)
+
+Run on a scratch worktree at `34bd9153` with M5 and M6 applied; each block is the command and what it printed (line numbers are that tree's).
+
+```
+rg -n "^def (_base_file|_floor_roots|plain_spelling|reader_spelling|_workspace_root|permitted_read_roots|workspace_exempt_roots|protected_config_files|protected_read_roots|resolve_read_path)" src/probos/security/file_access.py
+  131:def _base_file(path: Path) -> Path:
+  143:def _floor_roots(roots: Sequence[Path]) -> list[Path]:
+  180:def plain_spelling(path: Path) -> Path:
+  191:def reader_spelling(path: Path) -> Path | None:
+  296:def resolve_read_path(
+  377:def _workspace_root(runtime: Any) -> Path | None:
+  400:def permitted_read_roots(runtime: Any) -> list[Path]:
+  427:def protected_read_roots(runtime: Any) -> list[Path]:
+  439:def protected_config_files(runtime: Any, *, fail_closed: bool = False) -> list[Path]:
+  618:def workspace_exempt_roots(runtime: Any) -> list[Path]:
+
+rg -n "permitted_read_roots\(|workspace_exempt_roots\(" src --glob "!security/file_access.py"
+  agent_work_runner.py:617 reads_confined=bool(permitted_read_roots(self._runtime)), :714
+  agents/code_search.py:341-342; repository_instructions.py:63-64; cognitive/copilot_adapter.py:111-112
+  cognitive/swe_harness/tools.py:317, :341-342, :570-571, :958-959
+
+rg -n "is_reserved" src/probos/security/file_access.py
+  208:    if any(part.is_reserved() for part in (ordinary, *ordinary.parents)):      (reader_spelling)
+  707:        or PureWindowsPath(raw).is_reserved()                                  (validate_read_location)
+
+rg -n "reads_confined" src
+  agent_work_runner.py:617; tools/effect_tiers.py:47-61 (READ_POLICY_TOOL_IDS are routine only while reads_confined)
+
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled
+  LongPathsEnabled    REG_DWORD    0x1
+```
+
+## Absence Verified (Amendment 2, 2026-11-04, on `34bd9153`)
+
+```
+CLAIM: nothing in src calls reader_spelling except ListFilesTool, and plain_spelling has no caller but reader_spelling after M6
+RUN:   rg -n "reader_spelling\(|plain_spelling\(" src
+FOUND: file_access.py:180 (def plain_spelling), :191 (def reader_spelling), :201 (the call in reader_spelling); tools.py:588 (reader_spelling(match))
+HOLDS: yes (T15 of this contract calls plain_spelling directly)
+
+CLAIM: the floor roots are compared in one place, so _floor_roots is applied once
+RUN:   rg -n "protected_roots" src/probos/security/file_access.py
+FOUND: :299 (resolve_read_path's parameter), :356 (the comparison, through _floor_roots), :630 (resolve_for_runtime passes the list), :1087 and :1093 (read_verified_file passes it), :1129 and :1157 (read_bounded_utf8 passes it)
+HOLDS: yes
+
+CLAIM: an empty permitted-roots list is read as "no limit" by every consumer, so L17's list is "no limit" everywhere
+RUN:   rg -n "permitted_read_roots\(" src
+FOUND: `or None` at tools.py:342, :571, :959, code_search.py:342, copilot_adapter.py:112, file_access.py:632; `tuple(...) or None` at repository_instructions.py:64; `bool(...)` at agent_work_runner.py:617
+HOLDS: yes (seven call sites in five modules, and reads_confined)
+
+CLAIM: the prefixes R3M- and R3N- are unused
+RUN:   git grep -n -e "R3M-" -e "R3N-" 34bd9153 -- prompts DECISIONS.md PROGRESS.md tests src
+FOUND: nothing (exit 1)
+HOLDS: yes
+```
+
+What Amendment 2 ran: §7 of the amendment file (red and green counts, the seven consumer files, the 14-file G4 list, the 17 mutation rows, the architecture check, the ledger test). **Not run:** the Linux runner (counts derived), a remote share, Python 3.13, a host without long-path support, the broad gate, the live vessel.
+
 ## 14. Deterministic gate checks, resolved up front
 
 - **`check_architecture_principles.py --check`:** after Amendment 1, two private classes in `file_access.py` (`_OnDisk` with three methods, and the exception `_Unverifiable`), private helpers `_namespace_free`, `_file_identity`, `_identity_position`, `_match_position`, `_base_name`, `_base_file` and `_protected_leaf`, and one public helper, `plain_spelling` (the check passed with the same counts on the scratch tree: `srp-size=92, layer-import=0, db-connect=30, unowned-task=13`); no new module, no import (`os`, `PureWindowsPath` are already imported at `:45`, `:54`); only public names cross a module. The new test imports private names from the BF-948 test module and from `file_access`, as BF-911's tests do from `file_access` (`tests/test_bf911_protected_config_write_refusal.py:259`). G2 runs the check.
@@ -2241,6 +2897,7 @@ A5  CLAIM: no other consumer needs the workspace root unresolved
 - **`gen_ad_ledger.py --check`:** passes once M3 regenerates; the heads carry no status keyword in their first 120 characters.
 - **Collection:** one new test file; M1's strict xfails keep G1 green on the base.
 - **Exceptions (three-tier):** (Amendment 1) `_file_identity` returns `None` only for "no such file" and raises `_Unverifiable` for any other failure; the one boundary, `resolve_read_path`, logs the class of the cause and refuses with a bounded reason (propagate to the policy's refusal: a floor that cannot be verified is not a floor that decided); `_match_position` keeps its `OSError`/`ValueError` skip around the textual comparison only. Nothing is swallowed that the base propagated.
+- **After Amendment 2:** one more public helper, `reader_spelling`, and two private ones, `_floor_roots` and `_workspace_root`, in `file_access.py`; no new class, module or import (`PureWindowsPath`, `Sequence` and `os` are already imported); the check passed with `srp-size=92, layer-import=0, db-connect=30, unowned-task=13` (the same counts) on the scratch tree. `_workspace_root` catches `Exception` around the composition (as the two builders did, tier "log-and-degrade": the debug line is the base's) and `OSError`, `RuntimeError` and `ValueError` around `resolve()` (the three `resolve_read_path` already catches; the line says the root is kept).
 
 ## 15. Prior Art and Blind Spots
 
@@ -2258,7 +2915,7 @@ This is a shared-contract change: review the whole candidate, every consumer in 
 
 1. For every spelling in `_FAMILIES`, `resolve_read_path` returns the decision the ordinary spelling gets for the floor (directory root and file root), and the same refusal reason where the ordinary spelling is refused, whether or not the file exists, with these qualifications: (a) where the ordinary spelling is admitted by an exempt or a permitted root, a share spelling (`_SHARE_FAMILIES`) is refused with that root's reason (L9); (b) a share spelling of a path that is not on disk is decided by the existing ancestors of its chain, so beneath an existing floor directory it is refused where the base admitted it; (c) a share spelling of a missing **file** root is admitted while the ordinary spelling is refused (L2).
 2. An admitted call returns `Path(raw).resolve()` exactly as the base did, and that path names the file the decision was about.
-3. Every decision on a drive-letter path against drive-letter roots, on every platform, is the base's, and no `os.stat` is added for it. On a platform other than Windows nothing in `_longest_match` differs from the base in its result.
+3. Every decision on a drive-letter path against drive-letter roots is the base's, and no `os.stat` is added for it, with three stated exceptions: (a) on Windows the final component is decided by the file it names, the candidate's and a floor file root's, so a stream suffix, a trailing dot or space (and for a credential name another case) is refused as the file is where the base admitted it (D11, D12: a root named `ordinary-file-root`, a request for `loaded.yaml:settings`: the base admits, the head refuses; and the default stream of a root loaded as a stream is refused); (b) a workspace root configured as an 8.3 short path or on a mapped drive exempts the workspace it names, where the base's unresolved root exempted nothing (D9, the one intended admission); (c) a workspace root the system cannot resolve is kept as composed (D13), which is the base's list. On a platform other than Windows nothing in `_match_position` differs from the base in its result.
 4. At the floor, nothing that the base refused is admitted: the identity step and the final-component step only add refusals there. An exempt or a permitted root admits a spelling only if the ordinary spelling of the same file is admitted by that root (its namespace-free text names it), so the extended-prefix spelling of a path under a permitted root is admitted where the base refused it, and no share or device spelling is admitted by one. A path no floor root is, sits under or reaches by volume stays as it was.
 5. The exemption lifts the floor for a spelling that a floor root matches only where the exempt root's text, without a namespace prefix, contains the path and stands deeper in the path's own chain than the floor match (a count of the path's parts, never of the root as spelled); a file under the floor but outside the exempt root is refused, and so is a share or device spelling of an exempt file (L9).
 6. A root that is not on disk contains nothing by identity (the textual decision stands for it; L2). A floor root, or a part of a share or device spelling's own chain, that the system cannot answer for (a failed read other than "no such file", or a zero file index) refuses the call with `path cannot be verified against the protected roots`; no exception text reaches the reply, and the log carries the class of the cause only. A path that is not on disk is decided by the existing ancestors of its chain.
@@ -2268,17 +2925,26 @@ This is a shared-contract change: review the whole candidate, every consumer in 
 10. Each test whose xfail mark M2 removes failed on the base for the reason its mark names; T8 passes on the base.
 11. (M4) A drive-letter spelling against drive-letter roots reads no identity (T9) and costs the base's calls; an exempt or a permitted root is never compared by identity (DNY-6, DNY-14, DNY-15).
 12. (M4) The floor refuses a share or device spelling whose own chain names a floor root, and one whose chain reaches a floor root's volume through a link (T10, T11); a link on the root's own volume is followed by `Path.resolve()` and needs no rule (measured: `evidence-amend1-samevol-after`).
-13. (M4) An exemption stands at a count of the path's own parts: the same count for every spelling of its root (T13, T16).
+13. (M4) An exemption stands at a count of the path's own parts: the same count for every spelling of its root (T13, T17). T16 shows only that a text count is the same number however the prefix is spelled, and kills no mutant of `_match_position`; T27 pins the position it returns for a text match and for an identity match (R3M-11, R3M-12).
 14. (M4) Both root builders return the long resolved workspace root for a short-path configuration (T14); `WorkspaceManager` and `_resolve_workspace_root` are unchanged.
 15. (M4) Every new or rewritten docstring, comment, error string and test docstring is true of the head in the code's branch order; no head text describes what can be read, from where or by whom.
 16. (M4, update 2) On Windows the floor's file roots and the credential names are compared by the file the final component names (the text from the first colon, then trailing dots and spaces; for a credential name the write side's case-folded key), whether or not the file is on disk: a stream, trailing-dot, trailing-space or case spelling of one is refused with the file's own reason (T19 to T21; DNY-22 to DNY-31). The path an admitted read returns is the path as resolved, so a neighbour's stream is read as named. The share spelling of an absent file root is the one exception (L2). On another platform the names are compared as they are (T22).
 17. (M4, update 2) A loaded config file root outranks the workspace that encloses it however the workspace root is spelled, and the verified readers refuse it too (T17).
+
+**M5 (Amendment 2): review scope and properties.** The orchestrator decides whether round four reviews the whole candidate or the delta; this contract's recommendation is the delta `34bd9153..HEAD` with items 18 to 22, the three reproductions of §1 items 9 to 11 re-run, and every consumer of §1 whose result the delta can change (items 18 and 19 name them).
+
+18. (M5) A floor file root is compared by the file its own final component names, as the candidate is: for a root spelled `loaded.yaml:settings`, `loaded.yaml.` or `loaded.yaml ` (the last two in the extended namespace) the root's own spelling, the ordinary spelling of the file, its default stream and every other stream of it are refused with the floor's reason, and a neighbour is admitted (T23, T28). For an ordinary root list `_floor_roots` equals the list, so every decision against it is the head's, and on another platform nothing is added (T24). A position count is the root's own count of parts (T27). A directory root spelled in the extended namespace with a trailing dot or space also refuses the directory its base names (L16).
+19. (M5) `permitted_read_roots` and `workspace_exempt_roots` return the workspace root as `Path.resolve()` spells it, and as composed when `resolve()` raises `OSError`, `RuntimeError` or `ValueError`; a configured policy whose roots are unusable and whose workspace root does not resolve still refuses every path outside its roots, through the policy, `read_file` and `list_files` (T25), as the base did. A policy whose every root is unusable and whose workspace root cannot be composed at all is `[]` (L17, as on the base). The consumers of `permitted_read_roots` and `workspace_exempt_roots` are those of §1 item 4 and `agent_work_runner.py`'s `reads_confined`.
+20. (M5) `reader_spelling` is pure and returns `None` exactly when a component after the anchor ends in a dot or a space, or when the spelling or an ancestor of it is a reserved device name; otherwise, on Windows, `plain_spelling`'s result, and on another platform the path (T26). It reads nothing, so a listing's cost per match is unchanged.
+21. (M5) No signature, return shape, config field, `EventType`, persisted format or gate changes (§9); the seven consumer files and the 14-file G4 list keep their counts (G6).
+22. (M5) Every new or rewritten docstring, comment, error string and test docstring is true of the head in the code's branch order: none says that a name with a stream suffix, a trailing dot or a trailing space "is the same file" or "does not make another file" (`_namespace_free`, the test module, `PROGRESS.md`, §16 item 3), and none says a bare drive is returned unchanged; no head text describes what can be read, from where or by whom.
 
 ## 17. Acceptance criteria
 
 1. Every spelling in `_FAMILIES` gets the ordinary spelling's decision from `resolve_read_path` for the floor, and a refusal where only an exempt or a permitted root admits the ordinary spelling and the spelling is a share (T1), through `ReadFileTool` (T2), through `ListFilesTool` (T3), and for the loaded config file the write side agrees (T4).
 2. The path returned is the resolved path and names the file (T1, T9). A drive-letter path costs no identity lookup (T9). A share path no root covers stays admitted (T10).
 3. The canonicaliser is pure and the same everywhere (T5, T6); the identity helper follows the zero-index rule (T7); POSIX names stay distinct (T8).
-4. Every §10 mutant is killed, SPM-1 to SPM-4 and SPM-16 and DNY-1 to DNY-32. G1 to G3, G5 and the §14 checks pass, and the broad gate's receipt is green for the batch.
+4. Every §10 mutant is killed, SPM-1 to SPM-4 and SPM-16, DNY-1 to DNY-32 and R3M-1 to R3M-14. G1 to G3, G5, G6 and the §14 checks pass, and the broad gate's receipt is green for the batch.
 5. (M4) A share spelling through a link to another volume is refused by a permitted root and by a floor root on that volume (T11); a floor that cannot be read refuses a share spelling (T12); an exemption is ranked by where it stands in the path, and a floor file root outranks the workspace that encloses it (T13, T17); a short-path workspace root is the root its long path is (T14); the display form of a listing has no namespace prefix (T15, BF-948 T13, T14); a stream, trailing-dot, trailing-space or case spelling of a floor file root or a credential name is decided as the file is, on disk or not (T19 to T21).
-6. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+6. (M5) A floor file root spelled with a stream suffix, a trailing dot or a trailing space is refused in its own spelling, in the ordinary spelling of its file and in every stream of it (T23, T24, T28); a workspace root the system cannot resolve stays in both root builders as composed, so a configured policy still confines (T25); `reader_spelling` returns a spelling only if every component names the file in the ordinary namespace (T26), which BF-948's T15 reads back through the verified reader; T27 pins the positions T16 only counts.
+7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
