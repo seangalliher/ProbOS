@@ -1348,7 +1348,7 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 
 ### BF-950 -- An oracle_query result is aged by its own write time, not by its retrieval (2026-11-05, #1742)
 
-- *Scope.* `cognitive/provenance.py` (`ProvenanceTag.content_timestamp`, `age_seconds`, `is_stale`, `format_inline`; `STALE_AFTER_SECONDS`, `entry_write_time`, `record_write_time`, `iso_utc`; docstrings), `tools/oracle_query_tool.py` (`_ORACLE_DISPOSITION`, the description, docstrings), `proactive.py` (`_notebook_read_back`; Amendment 1: the notebook index's sort key, the repetition check's revision read and the read-back's own error boundary), `cognitive/crew_executor.py` (`_COMMONS_DISPOSITION`, Amendment 1), `cognitive/cognitive_agent.py` (`_notebook_block_lines`, both `<notebook>` renderers), the AD-1179 golden, tests. Contract `prompts/bf-950-oracle-result-age.md`.
+- *Scope.* `cognitive/provenance.py` (`ProvenanceTag.content_timestamp`, `age_seconds`, `is_stale`, `format_inline`; `STALE_AFTER_SECONDS`, `entry_write_time`, `record_write_time`, `iso_utc`; docstrings), `tools/oracle_query_tool.py` (`_ORACLE_DISPOSITION`, the description, docstrings), `proactive.py` (`_notebook_read_back`; Amendment 1: the notebook index's sort key, the repetition check's revision read and the read-back's own error boundary; Amendment 2: `_notebook_index_topic`, the index's topic), `cognitive/crew_executor.py` (`_COMMONS_DISPOSITION`, Amendment 1), `cognitive/cognitive_agent.py` (`_notebook_block_lines`, both `<notebook>` renderers), the AD-1179 golden, tests. Contract `prompts/bf-950-oracle-result-age.md`.
 - *OA1 (the age).* The content's write time as its tier records it; graph and health record none and show none. Rejected: an absolute date in the marker (AD-1341's entry budget); a retrieval age under another name; dropping the age.
 - *OA2 (STALE).* Older than 30 days, a module constant. Rejected: 300 s on the content's age; AD-550's 72 h refresh window; a config field now.
 - *OA3 (the parser).* Total: a value that does not parse is no age, so one entry cannot empty the result.
@@ -1356,7 +1356,8 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 - *OA5 (the read-back).* `<notebook>` carries `updated` (ISO-8601 UTC) and `revision` when they parse.
 - *Not changed.* `oracle_service.py`, ranking and retrieval; `memory_transparency.py`; the "AD-1294 (#1090)" citation, which is correct (`a6516a8a` closes #1090).
 - *Amendment 1 (review round 1).* The read-back has its own error boundary, and the index orders by parsed write time and counts only an int revision, so one hand-edited notebook entry no longer ends the read-back. The crew-consult preamble promises an age only "sometimes" and no STALE flag, as its renderer emits. Rejected: moving the crew renderer onto `entry_write_time` (a second agent-visible marker change; recorded on #1754).
-- *Residual.* Recorded limits L1 to L17 of the contract.
+- *Amendment 2 (review round 2).* An index entry is named by its topic only when that is non-empty text, otherwise by its file. So a topic edited into a number, a null, a list or a blank no longer ends the self-monitoring block in either renderer. The repetition check still counts only an int revision. A fractional history the store carries forward after an operator edit is not counted (L18). Rejected: casting the topic in the two renderers, which would leave the topic count and the warnings on the raw value.
+- *Residual.* Recorded limits L1 to L19 of the contract.
 - *Reversal.* Revert the BF-950 commits.
 
 ### BF-949 -- The self-monitoring notebook pull reads only the agent's own notebook, as the agent (2026-11-03, #1741)
