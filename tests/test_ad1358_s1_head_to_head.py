@@ -266,6 +266,7 @@ async def test_a_records_read_that_fails_adds_nothing_and_logs_a_warning(
     assert "head_to_head" not in _names(manifest)
     assert any(
         r.levelno == logging.WARNING and r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and str(r.exc_info[1]) == "the file is in use"  # A2: the traceback
         for r in caplog.records
     )
 
@@ -560,7 +561,8 @@ async def test_a_game_lookup_that_fails_for_the_tally_adds_nothing_and_logs_a_wa
     assert "head_to_head" not in _names(manifest)
     assert any(
         r.levelno == logging.WARNING and r.name == "probos.cognitive.cognitive_agent"
-        and "AD-1358" in r.getMessage() and r.exc_info is not None
+        and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and str(r.exc_info[1]) == "the game table is busy"  # A2: the traceback
         for r in caplog.records
     )
 
@@ -602,6 +604,7 @@ async def test_a_records_store_that_suspends_gives_no_tally_and_a_warning(
         store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
     ) is None
     assert any(
-        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage() and r.exc_info is not None
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and "suspended" in str(r.exc_info[1])  # A2: the traceback
         for r in caplog.records
     )

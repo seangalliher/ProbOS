@@ -364,6 +364,7 @@ async def test_a_records_read_that_fails_adds_nothing_and_logs_a_warning(
     assert "head_to_head" not in _names(manifest)
     assert any(
         r.levelno == logging.WARNING and r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and str(r.exc_info[1]) == "the file is in use"  # A2: the traceback
         for r in caplog.records
     )
 
@@ -1300,7 +1301,8 @@ async def test_a_game_lookup_that_fails_for_the_tally_adds_nothing_and_logs_a_wa
     assert "head_to_head" not in _names(manifest)
     assert any(
         r.levelno == logging.WARNING and r.name == "probos.cognitive.cognitive_agent"
-        and "AD-1358" in r.getMessage() and r.exc_info is not None
+        and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and str(r.exc_info[1]) == "the game table is busy"  # A2: the traceback
         for r in caplog.records
     )
 
@@ -1342,7 +1344,8 @@ async def test_a_records_store_that_suspends_gives_no_tally_and_a_warning(
         store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
     ) is None
     assert any(
-        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage() and r.exc_info is not None
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and "suspended" in str(r.exc_info[1])  # A2: the traceback
         for r in caplog.records
     )
 ```
@@ -1555,7 +1558,7 @@ REPLACE:
 
 ### 15.6 Mutation rows (A1). Each Line occurs once in its file on A1-M2's head
 
-HH-4, HH-5 and HH-11 are restated because their code moved into `_read_records`. HH-1 to HH-3, HH-6 to HH-10 and HH-12 to HH-17 are unchanged and still occur once. **Campaign of record:** run all rows, HH-1 to HH-22, on A1-M2's head. Record the sha256 of `history.py`, `cognitive_agent.py` and `oracle_service.py`; if a later repair changes a file, rerun only that file's rows.
+HH-4, HH-5 and HH-11 are restated because their code moved into `_read_records`. HH-1 to HH-3, HH-6 to HH-10 and HH-12 to HH-17 are unchanged and still occur once. **Campaign of record:** run all rows, HH-1 to HH-22, on A1-M2's head; A2 adds HH-23 and reruns HH-14, HH-20 and HH-22 (§16). Record the sha256 of `history.py`, `cognitive_agent.py` and `oracle_service.py`; if a later repair changes a file, rerun only that file's rows.
 
 | Id | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -1566,7 +1569,8 @@ HH-4, HH-5 and HH-11 are restated because their code moved into `_read_records`.
 | HH-19 | history.py | `    if len(list(islice(named, MAX_GAME_RECORDS + 1))) > MAX_GAME_RECORDS:` | `    if False:` | T6 above-cap (listing called) |
 | HH-20 | history.py | `    raise RuntimeError("AD-1358: a records store read suspended; the tally reads only stores that do not")` | `    return None` | T14 (no warning) |
 | HH-21 | history.py | `    except Exception:` | `    except BaseException:` | T11 |
-| HH-22 | cognitive_agent.py | `                callsign, exc_info=True,` | `                callsign, exc_info=False,` | T12 |
+| HH-22 | cognitive_agent.py | `                callsign, exc_info=True,` | `                callsign, exc_info=False,` | T12 (after A2) |
+| HH-23 (A2) | history.py | `            game_type, exc_info=True,` | `            game_type, exc_info=False,` | T14, T2b ×2 |
 
 ### 15.7 B: loop measurement (reported, not a test)
 
@@ -1751,3 +1755,15 @@ Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/ope
   - A concurrent writer (L13).
   - Files added between the count and the listing: the check after the listing stays.
 - External search was skipped: this is ProbOS-specific plumbing with an in-repo precedent.
+
+## 16. Amendment A2 (2026-11-06): the campaign survivor HH-22
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** `a283fb96`. Tests and contract text only; no source file changes.
+
+`logger.warning(..., exc_info=False)` stores `False` on the `LogRecord` (CPython `logging/__init__.py:1677-1683`, `:337`), so `r.exc_info is not None` cannot tell a traceback from none. T12, T14 and T2b now assert that `r.exc_info` is a tuple holding the exception the test raised: A2-T1 (T2b), A2-T2 (T12), A2-T3 (T14), with contract edits C2-01 to C2-05. Row HH-23 is added (§15.6). HH-14 and HH-20 are still killed, since their killers only got stricter.
+
+- **Counts:** 15 functions and 38 cases in the new file, unchanged.
+- **GA2a:** `PY -m pytest tests/test_ad1358_s1_head_to_head.py -q -n 0`. Expected: **38 passed.**
+- **GA2b:** G2's command. Expected: **810 passed**, 0 failed. Then `PY -P scripts/check_architecture_principles.py --check`, and `PY -P scripts/gen_ad_ledger.py --check`, which must be clean (no tracker changes).
+- **Campaign (A2):** the baseline (38 passed), then HH-14, HH-20, HH-22 and HH-23. Each must be killed: HH-22 by T12; HH-23 by T14 and T2b ×2; HH-14 by T2b ×2 (errors); HH-20 by T14. The source sha256 values equal A1's record (only the test file changed), so the other 19 rows stand. Record the test file's new sha256.
+- **Commit:** `AD-1358 S1 A2: the warning tests assert the traceback (#1750)`.
