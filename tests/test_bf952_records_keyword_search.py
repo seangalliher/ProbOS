@@ -284,7 +284,7 @@ _TAB_GRID_LINES = (
     pytest.param("---\n[]\n---\nbody", {}, "body", id="a-falsy-frontmatter-reads-as-empty"),
     pytest.param("---\nkey: [unclosed\n---\nbody", {}, "body", id="malformed-yaml"),
     pytest.param(
-        "---\nclassification:\tprivate\n---\nbody", {"classification": "private"} if _LIBYAML else {}, "body",
+        "---\nclassification:\tprivate\n---\nbody", {}, "body",
         id="a-tab-only-libyaml-accepts",
     ),
     pytest.param("no frontmatter at all", {}, "no frontmatter at all", id="no-frontmatter"),
@@ -305,13 +305,15 @@ _TAB_GRID_LINES = (
 def test_every_reader_frames_and_loads_a_document_alike(
     tmp_path: Path, raw: str, frontmatter: dict[str, Any], body: str,
 ) -> None:
-    """A1 (finding 6), A3: ``_read_document`` is the one parse, with the base's framing. A frontmatter block no
-    loader accepts reads as ``{}``, as on the base. A tab after a key is refused by PyYAML's scanner and accepted by
-    libyaml, so with libyaml installed every reader now reads it (RK8). A value holding ``---`` is BF-940's
-    (#1686), not this file's."""
+    """A1 (finding 6), A3, A5: every reader but the search reads with ``_read_document``, the base's framing and
+    load, and the search frames alike. A frontmatter block no loader accepts reads as ``{}``, as on the base. A tab
+    after a key is refused by PyYAML's scanner and accepted by libyaml, so with libyaml installed only the search
+    reads it (RK8, A5). A value holding ``---`` is BF-940's (#1686), not this file's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     assert records_store_module._read_document(raw) == (frontmatter, body)
     assert store._parse_document(raw) == (frontmatter, body)
+    searched = _rk8_read(raw) or (frontmatter, body)
+    assert records_store_module._search_read_document(raw)[:2] == searched
 
 
 @pytest.mark.asyncio
@@ -319,10 +321,10 @@ async def test_a_search_runs_off_the_event_loop(tmp_path: Path, monkeypatch: pyt
     """RK7: the walk, the reads, the parse and the ranking all run in a worker thread, so a search never blocks
     the event loop. The test records the thread of each step: ``rglob`` and ``read_text`` on the store's own path
     class, and the module functions the walk calls. On the base the whole walk ran on the loop's thread (and
-    ``_read_document`` does not exist there, so the test fails at setup)."""
+    ``_search_read_document`` does not exist there, so the test fails at setup)."""
     store = await _store(tmp_path)
     _write(store, "reports/entry.md", "warp core report")
-    seen: dict[str, list[int]] = {"rglob": [], "read_text": [], "parse": [], "count": [], "rank": []}
+    seen: dict[str, list[int]] = {"rglob": [], "read_text": [], "parse": [], "count": [], "rank": [], "admit": []}
     path_type = type(store.repo_path)
 
     def _recording(step: str, function: Any) -> Any:
@@ -333,7 +335,12 @@ async def test_a_search_runs_off_the_event_loop(tmp_path: Path, monkeypatch: pyt
 
     monkeypatch.setattr(path_type, "rglob", _recording("rglob", path_type.rglob))
     monkeypatch.setattr(path_type, "read_text", _recording("read_text", path_type.read_text))
-    monkeypatch.setattr(records_store_module, "_read_document", _recording("parse", records_store_module._read_document))
+    monkeypatch.setattr(
+        records_store_module, "_search_read_document", _recording("parse", records_store_module._search_read_document),
+    )
+    monkeypatch.setattr(
+        records_store_module, "_base_reading_admits", _recording("admit", records_store_module._base_reading_admits),
+    )
     monkeypatch.setattr(
         records_store_module, "_search_record_counts", _recording("count", records_store_module._search_record_counts),
     )
@@ -518,8 +525,8 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
     base's framing with a line framing (A1, A2) misread some shape: as ``{}``, as an unclassified prefix, as another
     author's, or as a constructor error for a valid store-written value. Every shape here, over the three rounds'
     lines, closing markers, bodies and both line endings, reads under ``_read_document`` and ``_parse_document``
-    exactly as the base read it, a constructor error included. No line holds a tab, so libyaml and PyYAML read each
-    alike; the tab shapes, RK8's and round 4's, are T23's."""
+    exactly as the base read it, a constructor error included, and the search reads it so too (A5): no line holds a
+    tab, so libyaml and PyYAML read each alike. The tab shapes, RK8's and round 4's, are T23's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     shapes = [
         "---\n" + "".join(f"{line}\n" for line in lines) + close + body
@@ -537,15 +544,21 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
         if (
             _read_or_error(records_store_module._read_document, shape) != expected
             or _read_or_error(store._parse_document, shape) != expected
+            or _read_or_error(_search_read, shape) != expected
         ):
             differ.append(shape)
     assert differ == [], (len(differ), differ[:5])
 
 
+def _search_read(raw: str) -> tuple[Any, str]:
+    """The search's reading of ``raw``: ``_search_read_document``'s frontmatter and body (A5)."""
+    return records_store_module._search_read_document(raw)[:2]
+
+
 def _rk8_read(raw: str) -> Any:
     """RK8's one admitted difference, computed here from the two loaders: where libyaml loads the base framing's
-    frontmatter and ``yaml.safe_load`` raises ``YAMLError``, every reader reads libyaml's value (``{}`` for a falsy
-    one). ``None`` for any other document, which reads as on the base."""
+    frontmatter and ``yaml.safe_load`` raises ``YAMLError``, the search reads libyaml's value (``{}`` for a falsy
+    one; A5: no other reader does). ``None`` for any other document, which the search reads as on the base."""
     if not _LIBYAML or not raw.startswith("---"):
         return None
     parts = raw.split("---", 2)
@@ -573,7 +586,8 @@ def test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base(tmp_path: Path) 
     the base ``yaml.safe_load`` raised ``ScannerError`` and every reader read ``{}``. Now a block libyaml cannot load,
     for any reason, is read as the base read it. Over tab and plain lines, one or two to a frontmatter and both line
     endings, every shape reads under ``_read_document`` and ``_parse_document`` as on the base, a constructor error
-    included, or, where libyaml loads it and PyYAML's scanner refuses it, as libyaml read it (RK8). T22 holds no tab."""
+    included (A5: RK8's shapes too), and under the search as on the base or, where libyaml loads it and PyYAML's
+    scanner refuses it, as libyaml read it (RK8). T22 holds no tab."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     shapes = [
         "---\n" + "".join(f"{line}\n" for line in lines) + "---\nwarp notes\n"
@@ -587,11 +601,12 @@ def test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base(tmp_path: Path) 
     for shape in shapes:
         base = _read_or_error(_base_read, shape)
         rk8 = _rk8_read(shape)
-        expected = base if rk8 is None else rk8
+        searched = base if rk8 is None else rk8
         admitted += rk8 is not None and rk8 != base
         if (
-            _read_or_error(records_store_module._read_document, shape) != expected
-            or _read_or_error(store._parse_document, shape) != expected
+            _read_or_error(records_store_module._read_document, shape) != base
+            or _read_or_error(store._parse_document, shape) != base
+            or _read_or_error(_search_read, shape) != searched
         ):
             differ.append(shape)
     assert differ == [], (len(differ), differ[:5])
@@ -631,3 +646,136 @@ async def test_a_record_libyaml_cannot_build_is_read_listed_and_found_as_on_the_
     }
     assert [(entry["path"], entry["frontmatter"]) for entry in await store.list_entries("notebooks")] == [(path, {})]
     assert await _paths(store, "warp", reader_id="captain") == [path]
+
+
+def _nested(depth: int, style: str) -> str:
+    """A5 (round 5, finding 1): a record whose frontmatter nests ``depth`` collections deep, its mapping included,
+    in flow (``[[...]]``) or block (``- - ... deep``) style."""
+    inner = depth - 1
+    nest = "[" * inner + "]" * inner if style == "flow" else "\n" + "- " * inner + "deep"
+    return f"---\nauthor: alice\nclassification: ship\nnest: {nest}\n---\n\nwarp core notes\n"
+
+
+@pytest.mark.parametrize(("depth", "style"), [
+    pytest.param(99, "flow", id="flow-just-below-the-search-limit"),
+    pytest.param(100, "flow", id="flow-at-the-search-limit"),
+    pytest.param(150, "flow", id="flow-below-the-base-limit"),
+    pytest.param(600, "flow", id="flow-past-the-base-limit"),
+    pytest.param(150, "block", id="block-below-the-base-limit"),
+    pytest.param(600, "block", id="block-past-the-base-limit"),
+])
+def test_a_deeply_nested_frontmatter_reads_as_on_the_base(tmp_path: Path, depth: int, style: str) -> None:
+    """A5 (round 5, finding 1): libyaml loads a frontmatter nesting about 330 collections deep or more, where the
+    base's ``yaml.safe_load`` raised ``RecursionError``, which is not a ``YAMLError``; through A4 every reader read
+    what the base raised on. Every reader but the search now reads with the base's call, and the search hands
+    libyaml only a block nesting fewer than 100 deep. Each shape reads under ``_read_document``,
+    ``_parse_document`` and the search as on the base, the ``RecursionError`` included."""
+    raw = _nested(depth, style)
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    expected = _read_or_error(_base_read, raw)
+    if depth >= 600:  # premise: the shape is the class round 5 found
+        assert expected == "RecursionError"
+        if _LIBYAML:
+            assert type(yaml.load(raw.split("---", 2)[1], Loader=yaml.CSafeLoader)) is dict
+    else:  # premise: PyYAML reads it
+        assert type(expected[0]) is dict and expected[0]["classification"] == "ship"
+    assert _read_or_error(records_store_module._read_document, raw) == expected
+    assert _read_or_error(store._parse_document, raw) == expected
+    assert _read_or_error(_search_read, raw) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depth", [
+    pytest.param(150, id="below-the-base-limit"),
+    pytest.param(600, id="past-the-base-limit"),
+])
+async def test_a_deeply_nested_record_is_read_listed_published_and_found_as_on_the_base(
+    tmp_path: Path, depth: int,
+) -> None:
+    """A5 (round 5, finding 1), through the real readers. Through A4 libyaml read a 600-level frontmatter for every
+    reader: ``read_entry`` returned it, ``list_entries`` listed it and update-in-place kept its ``created``. On the
+    base ``read_entry`` and ``publish`` raised ``RecursionError`` and ``list_entries`` skipped the record, and they
+    do again; the search withholds it. Below the base's limit every reader reads it, as on the base."""
+    raw = _nested(depth, "flow")
+    store = await _store(tmp_path)
+    path = "notebooks/alice/nested.md"
+    target = store.repo_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(raw, encoding="utf-8")
+    base = _read_or_error(_base_read, raw)
+    if depth >= 600:
+        assert base == "RecursionError"  # premise
+        with pytest.raises(RecursionError):
+            await store.read_entry(path, reader_id="captain")
+        with pytest.raises(RecursionError):
+            await store.publish(path, author="captain")
+        assert await store.list_entries("notebooks") == []
+        assert await _paths(store, "warp", reader_id="captain") == []
+    else:
+        frontmatter, body = base
+        assert await store.read_entry(path, reader_id="bob") == {
+            "frontmatter": frontmatter, "content": body, "path": path,
+        }
+        listed = [(entry["path"], entry["frontmatter"]) for entry in await store.list_entries("notebooks")]
+        assert listed == [(path, frontmatter)]
+        assert await _paths(store, "warp", reader_id="bob") == [path]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("frontmatter_line", "readers"), [
+    pytest.param(
+        "classification: private", {"alice": True, "bob": False, "captain": True}, id="the-base-reading-withholds",
+    ),
+    pytest.param(
+        "updated: 2026-13-05", {"alice": False, "bob": False, "captain": False}, id="the-base-reading-raises",
+    ),
+])
+async def test_the_search_returns_no_record_the_base_reading_withholds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frontmatter_line: str, readers: dict[str, bool],
+) -> None:
+    """A5 (round 5): the search returns a record only where the base's reading of it, ``read_entry``'s and the
+    semantic index's, admits the reader too. The search's own load is replaced here by one that reads every
+    frontmatter as a ``ship`` record, standing for any difference between libyaml's reading and the base's. The
+    record is still shown only to readers the base's reading admits, and a record ranked after it still fills
+    the list."""
+    store = await _store(tmp_path)
+    hidden = "notebooks/alice/hidden.md"
+    target = store.repo_path / hidden
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(f"---\nauthor: alice\n{frontmatter_line}\n---\n\nwarp warp core notes\n", encoding="utf-8")
+    _write(store, "reports/open.md", "warp report")
+    monkeypatch.setattr(
+        records_store_module, "_search_load_frontmatter", lambda block: {"author": "alice", "classification": "ship"},
+    )
+    for reader, shown in readers.items():
+        expected = sorted(([hidden] if shown else []) + ["reports/open.md"])
+        assert sorted(await _paths(store, "warp", reader_id=reader)) == expected, reader
+
+
+@pytest.mark.asyncio
+async def test_a_record_only_libyaml_reads_is_found_only_where_both_readings_admit_it(tmp_path: Path) -> None:
+    """A5 (RK8, L28): PyYAML's scanner refuses a tab after a key and libyaml reads it, so ``read_entry`` reads
+    alice's private note as ``{}`` (``ship``) for every reader, as on the base, while the search reads it as
+    private. The search shows it only where both readings admit the reader: to alice and the Captain, not to bob.
+    What ``read_entry`` shows bob is the base's and BF-940's (#1686)."""
+    store = await _store(tmp_path)
+    path = "notebooks/alice/tabbed-private.md"
+    target = store.repo_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("---\nauthor:\talice\nclassification:\tprivate\n---\n\nwarp core notes\n", encoding="utf-8")
+    assert (await store.read_entry(path, reader_id="bob"))["frontmatter"] == {}  # the base's reading
+    assert await _paths(store, "warp", reader_id="alice") == [path]
+    assert await _paths(store, "warp", reader_id="captain") == [path]
+    assert await _paths(store, "warp", reader_id="bob") == ([] if _LIBYAML else [path])
+
+
+def test_libyaml_is_given_only_a_block_nesting_fewer_than_the_limit_deep() -> None:
+    """A5: ``_nests_below`` counts open collections in the parser's event stream, so siblings add no depth, and a
+    block that does not parse is not below the limit (the base's call reads it)."""
+    limit = records_store_module._SEARCH_LIBYAML_DEPTH_LIMIT
+    assert limit == 100
+    nests_below = records_store_module._nests_below
+    assert nests_below("nest: " + "[" * 98 + "]" * 98, limit)  # 99 deep, the mapping included
+    assert not nests_below("nest: " + "[" * 99 + "]" * 99, limit)  # 100 deep
+    assert nests_below("tags: [" + ", ".join(["[warp]"] * 150) + "]", limit)  # 3 deep, 152 collections
+    assert not nests_below("broken: [unclosed", limit)

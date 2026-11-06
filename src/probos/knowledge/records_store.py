@@ -204,11 +204,16 @@ _SEARCH_FIELD_WEIGHTS: dict[str, float] = {
 _SEARCH_BM25_K1 = 1.5
 _SEARCH_BM25_B = 0.75
 _SEARCH_LIMIT = 20
-#: BF-952: every Ship's Records reader loads frontmatter with libyaml when it is installed (search
-#: parses every record on each call, and PyYAML's pure-Python scanner was about a third of that
-#: cost). libyaml uses PyYAML's own safe constructor; ``_load_frontmatter`` reads a frontmatter
-#: libyaml cannot load, for any reason, as the base did, with ``yaml.safe_load`` (A4, round 4).
+#: BF-952: the search loads frontmatter with libyaml when it is installed (it parses every record on
+#: each call, and PyYAML's pure-Python scanner was about a third of that cost). Every other reader
+#: loads as the base did, with ``yaml.safe_load`` (A5, round 5). ``_search_load_frontmatter`` reads as
+#: the base did a frontmatter libyaml cannot load, for any reason (A4), and one nesting
+#: ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep or more (A5).
 _RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
+#: BF-952 A5: the search hands libyaml only a block nesting fewer than this many collections deep. Below
+#: it PyYAML's pure-Python composer builds the block too; from about 330 levels it raises
+#: ``RecursionError`` (the base's reading), and a block that deep is read with the base's call.
+_SEARCH_LIBYAML_DEPTH_LIMIT = 100
 
 
 def _search_query_terms(query: str) -> list[str]:
@@ -238,48 +243,112 @@ def _search_field_text(value: Any) -> str:
     return ""
 
 
-def _load_frontmatter(block: str) -> Any:
-    """BF-952 A1, A4: a frontmatter block loaded by libyaml (``_RECORDS_YAML_LOADER``), else as the base loaded it.
+def _split_document(raw: str) -> tuple[str | None, str]:
+    """BF-952 A3, A5: a Ship's Records document framed exactly as the base framed it: frontmatter block and body.
 
-    A block libyaml loads is its value, ``{}`` for a falsy one. That differs from the base only where
-    PyYAML's scanner refuses the block (RK8: a tab after a key). A block libyaml cannot load, for any
-    reason, is read as the base read it (A4, round 4): ``yaml.safe_load``, ``None`` for a ``YAMLError``
-    (the reader's ``{}``), and an error of YAML's constructor (``updated: 2026-13-05`` raises
-    ``ValueError``) propagates. So a block that libyaml scans and cannot build, and that PyYAML's
-    scanner refuses (``updated:<TAB>2026-13-05``), reads as ``{}``, as on the base, instead of raising.
-    Nothing is swallowed: the fallback is the base's own call, which raises the base's own error.
-    """
-    try:
-        frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
-    except Exception:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it
-        try:
-            frontmatter = yaml.safe_load(block)
-        except yaml.YAMLError:  # A4 (round 4): the base's own catch; a constructor error propagates
-            return None  # A1: neither loader accepts the block
-    return frontmatter or {}
-
-
-def _read_document(raw: str) -> tuple[Any, str]:
-    """BF-952 A1, A3: a Ship's Records document's frontmatter and body, the one parse every reader uses.
-
-    ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
-
-    Framing (A3): exactly the base's. A document that starts with ``---`` has frontmatter up to
-    the next ``---`` wherever it stands, inside a value too, and its body is what follows,
-    stripped; one with no later ``---`` has no frontmatter (L18). That framing cuts a value
-    holding ``---``; BF-940 (#1686) owns changing it, for every reader at once (L25).
-
-    Loading (RK8): ``_load_frontmatter``, libyaml then ``yaml.safe_load``, so every reader reads a
-    frontmatter alike. A frontmatter neither loader accepts reads as ``{}``, as on the base. An
-    error of YAML's constructor (``updated: 2026-13-05``) propagates, as it did from
-    ``_parse_document`` on the base; the search withholds such a record.
+    A document that starts with ``---`` has frontmatter up to the next ``---`` wherever it stands, inside a value
+    too, and its body is what follows, stripped; one with no later ``---`` has no frontmatter (``None``) and its
+    body is the whole document (L18). That framing cuts a value holding ``---``; BF-940 (#1686) owns changing it,
+    for every reader at once (L25).
     """
     if raw.startswith("---"):
         parts = raw.split("---", 2)
         if len(parts) >= 3:
-            frontmatter = _load_frontmatter(parts[1])
-            return ({} if frontmatter is None else frontmatter), parts[2].strip()
-    return {}, raw
+            return parts[1], parts[2].strip()
+    return None, raw
+
+
+def _load_frontmatter(block: str) -> Any:
+    """BF-952 A5: a frontmatter block loaded exactly as the base loaded it, with ``yaml.safe_load``.
+
+    A falsy value or a ``YAMLError`` is ``{}``. Any other error propagates, as on the base: a constructor's
+    (``updated: 2026-13-05`` raises ``ValueError``) and PyYAML's ``RecursionError`` for a block nesting about 330
+    collections deep.
+    """
+    try:
+        return yaml.safe_load(block) or {}
+    except yaml.YAMLError:  # A5: the base's own catch; a constructor error or a RecursionError propagates
+        return {}
+
+
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1, A3, A5: a document's frontmatter and body, exactly as the base's ``_parse_document`` read them.
+
+    ``RecordsStore._parse_document`` and ``RecordsStore.read_entry`` call it, and so does every reader but the
+    search: ``list_entries``, ``publish``, update-in-place, the similarity and convergence scans and the semantic
+    backfill. It is the base's framing (:func:`_split_document`) and the base's load (:func:`_load_frontmatter`),
+    so it reads every document as the base did by construction (A5, round 5). The search reads with
+    :func:`_search_read_document`.
+    """
+    block, body = _split_document(raw)
+    return ({} if block is None else _load_frontmatter(block)), body
+
+
+def _nests_below(block: str, limit: int) -> bool:
+    """BF-952 A5: whether libyaml parses ``block`` and its collections nest fewer than ``limit`` deep.
+
+    It reads the loader's event stream, which the parser produces without recursing, and stops at ``limit``, so it
+    is safe however deep the block. Siblings add no depth. A block that does not parse is not below the limit.
+    """
+    depth = 0
+    try:
+        for event in yaml.parse(block, Loader=_RECORDS_YAML_LOADER):
+            if isinstance(event, yaml.CollectionStartEvent):
+                depth += 1
+                if depth >= limit:
+                    return False
+            elif isinstance(event, yaml.CollectionEndEvent):
+                depth -= 1
+    except Exception:  # A5: not a swallow; a block that does not parse is read with the base's call, which raises
+        return False
+    return True
+
+
+def _search_load_frontmatter(block: str) -> Any:
+    """BF-952 A1, A4, A5: a frontmatter block as the search loads it: libyaml where it is safe, else as the base did.
+
+    With libyaml installed and the block nesting fewer than ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep, the
+    block is libyaml's value, ``{}`` for a falsy one. That differs from the base where PyYAML's scanner refuses the
+    block (RK8: a tab after a key). A block libyaml cannot load, for any reason (A4), and one nesting deeper (A5),
+    is read by :func:`_load_frontmatter`, the base's call, which raises the base's own errors.
+    """
+    if _RECORDS_YAML_LOADER is yaml.SafeLoader or not _nests_below(block, _SEARCH_LIBYAML_DEPTH_LIMIT):
+        return _load_frontmatter(block)
+    try:
+        frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
+    except Exception:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it
+        return _load_frontmatter(block)
+    return frontmatter or {}
+
+
+def _search_read_document(raw: str) -> tuple[Any, str, str | None]:
+    """BF-952 A5: a document's frontmatter and body as the search reads them, and its frontmatter block.
+
+    The base's framing (:func:`_split_document`) and the search's load (:func:`_search_load_frontmatter`). The
+    block (``None`` for a document with no frontmatter) lets the search check a record it would return against
+    the base's reading (:func:`_base_reading_admits`).
+    """
+    block, body = _split_document(raw)
+    return ({} if block is None else _search_load_frontmatter(block)), body, block
+
+
+def _base_reading_admits(
+    block: str, *, scope: str, reader_id: str | None, reader_department: str,
+) -> bool:
+    """BF-952 A5: whether the base's reading of a frontmatter block admits this reader at ``scope``.
+
+    That reading is ``read_entry``'s and the semantic index's (:func:`_load_frontmatter`). The search returns a
+    record only where it admits the reader too, so no difference between libyaml's reading and the base's, known
+    (RK8) or not, can show a reader a record the base's reading withholds (RK15; BF-679).
+    """
+    try:
+        frontmatter = _load_frontmatter(block)
+    except Exception:  # A5: read_entry raises on this block (a constructor error, a RecursionError)
+        logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
+        return False  # A5: the search withholds what read_entry raises on
+    return type(frontmatter) is dict and record_is_readable(
+        frontmatter, scope=scope, reader_id=reader_id, reader_department=reader_department,
+    )
 
 
 def _search_record_counts(
@@ -331,7 +400,7 @@ def _search_records(
     event loop. Every record is parsed, not only those that match, because a term's rarity
     is counted over what this reader may read and over nothing else (A4).
     """
-    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int]] = []
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
     for md_file in sorted(search_path.rglob("*.md")):
         rel_path = str(md_file.relative_to(root)).replace("\\", "/")
         if rel_path.startswith("_archived/"):
@@ -342,11 +411,12 @@ def _search_records(
             logger.debug("Skipping unreadable file", exc_info=True)
             continue
         try:
-            frontmatter, content_text = _read_document(raw)
+            frontmatter, content_text, block = _search_read_document(raw)
         except Exception:
-            # A1: YAML accepted the frontmatter and its constructor raised (``updated: 2026-13-05``
-            # is a ``ValueError``, not a ``YAMLError``). ``read_entry`` raises for such a record;
-            # the search withholds it rather than end every search or read it as ``{}``.
+            # A1, A5: YAML accepted the frontmatter and its constructor raised (``updated: 2026-13-05``
+            # is a ``ValueError``, not a ``YAMLError``), or it nests too deep for PyYAML's composer
+            # (``RecursionError``). ``read_entry`` raises for such a record; the search withholds it
+            # rather than end every search or read it as ``{}``.
             logger.debug("BF-952: skipping %s, whose frontmatter cannot be constructed", rel_path, exc_info=True)
             continue
         if type(frontmatter) is not dict:
@@ -364,7 +434,7 @@ def _search_records(
         ):
             continue
         weights, length = _search_record_counts(frontmatter, content_text, terms)
-        readable.append((rel_path, frontmatter, content_text, weights, length))
+        readable.append((rel_path, frontmatter, content_text, weights, length, block))
     if not readable:
         return []
 
@@ -376,8 +446,8 @@ def _search_records(
         rarity[term] = math.log(1.0 + (count - holders + 0.5) / (holders + 0.5))
     total_rarity = sum(rarity[term] for term in terms)
 
-    ranked: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    for rel_path, frontmatter, content_text, weights, length in readable:
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None]] = []
+    for rel_path, frontmatter, content_text, weights, length, block in readable:
         matched = [term for term in terms if term in weights]
         if not matched:
             continue
@@ -395,9 +465,20 @@ def _search_records(
             "frontmatter": frontmatter,
             "score": coverage,
             "snippet": content_text[:200],
-        }))
+        }, block))
     ranked.sort(key=lambda pair: pair[0])
-    return [result for _, result in ranked[:_SEARCH_LIMIT]]
+    results: list[dict] = []
+    for _, result, block in ranked:
+        # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
+        # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        if block is not None and not _base_reading_admits(
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+        ):
+            continue
+        results.append(result)
+        if len(results) == _SEARCH_LIMIT:
+            break
+    return results
 
 
 def _markdown_files_or_raise(search_path: Path) -> list[Path]:
@@ -1506,8 +1587,8 @@ class RecordsStore:
     def _parse_document(self, raw: str) -> tuple[dict, str]:
         """Parse YAML frontmatter + content from a markdown document.
 
-        BF-952 A1, A3: :func:`_read_document` frames and loads it with the base's framing,
-        as it does for ``read_entry`` and the search.
+        BF-952 A1, A3, A5: :func:`_read_document`, the base's own framing and load, as for
+        ``read_entry``; the search reads with :func:`_search_read_document`.
         """
         return _read_document(raw)
 
