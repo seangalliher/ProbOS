@@ -2,11 +2,12 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A1 (§15), the repair of review round 1 (GPT-6.1 Sol, NOT READY): the reads run off the event loop and the cap is checked by name before any read (HH8); the tally's game lookup logs its failure; L4, L10 and HH5 corrected; L11 to L13 added; T10 to T14 added and T6 above-cap strengthened; rows HH-18 to HH-22 added and HH-4, HH-5, HH-11 restated.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3 (§17), the repair of review round 2 (GPT-6.1 Sol, NOT READY): the record of the game in progress is never counted (HH9); the count by name follows the store's strict walk and refuses a directory outside the records; the read bound is qualified (L4, L13); L10 corrected; L14 added; T15 to T18 added, T2 and T6 strengthened; rows HH-24 to HH-30 added and HH-18, HH-19 restated.
 **Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
 **Base:** `cognitive_agent.py`, `oracle_service.py`, `dm_targeted_lookup.py`, `DECISIONS.md` (the AD-1357 entry) as on `b3348e2a` (AD-1357 + A1). The records files as on `cf61c683` (BF-952 + A2); this slice edits neither `records_store.py` nor `routers/records.py`.
 **Dependencies:** AD-1357 (the DM bid ledger and manifest). Not BF-952: no keyword search is used.
 **Tier:** M1 STANDARD (tests only); M2 STANDARD with a shared contract (`records_reader_for`, BF-949's reader rule, now public); M3 STANDARD (trackers).
-**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases; after A1, 15 functions, 38 cases. Counted by reading, not by running. No existing test file is edited.
+**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases; after A1, 15 functions, 38 cases; after A3, 19 functions, 46 cases. Counted by reading, not by running. No existing test file is edited.
 **AD number:** AD-1358, held by #1750. Nothing new is allocated.
 
 **Which text describes the head.** Before building, run `git diff --stat b3348e2a HEAD -- src/probos/cognitive/cognitive_agent.py src/probos/cognitive/oracle_service.py src/probos/cognitive/dm_targeted_lookup.py src/probos/recreation/`. Any change other than BF-952's merge (which touches none of these files) is a hard stop: the SEARCH text goes back to the Architect. Working copies are CRLF and SEARCH text here is LF. Where prose and a block differ, the block wins.
@@ -1067,16 +1068,17 @@ No campaign of record yet; after A1, the campaign of record runs on A1-M2's head
 - **L1.** DM path only. The Ward Room chain and proactive game context are unchanged.
 - **L2.** Forfeits are not recorded by AD-526a (`forfeit_game`, `service.py:321-344`), so they are not counted.
 - **L3.** Players match by the exact callsign in the record. Games played before a callsign change are not matched.
-- **L4.** No cache. Each DM turn during a game counts the directory's `*.md` files by name (no read). At most 256, it lists them (each file read and parsed) and reads each again with `read_entry`: up to 512 file reads, in a worker thread, which the DM turn waits for (A1). Above 256 `*.md` files in the directory, game records or not, no tally is shown and none is read. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
+- **L4.** No cache. Each DM turn during a game counts by name the `*.md` entries the store's strict listing would return for the directory (no file opened; a directory is never counted; A3). At most 256, it lists them (each file read and parsed) and reads each again with `read_entry`: up to 512 file reads while the directory does not grow during the pass (L13), in a worker thread, which the DM turn waits for (A1). Above 256 such files, game records or not, no tally is shown and none is read. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
 - **L5.** Dates are UTC (`updated`, else `created`, by BF-950's `record_write_time`).
 - **L6.** Zero games gives no block. Stating the absence is S3's job.
 - **L7.** `read_entry`'s department rule (an empty department matches an empty one) is inherited, as for the agent's own reads.
 - **L8.** A document that does not match the AD-526a body form is not counted, and nothing is logged.
 - **L9.** `_build_head_to_head_context` repeats `_build_active_game_context`'s opponent expression (default `""` there, `"unknown"` in AD-572); AD-572 is not refactored.
-- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The tally counts every record the agent whose prompt it is may read (HH4), its own private records and its department's records included; `_record_game` writes ship-classified records, so another classification arises only when a record is rewritten through the store. The other participants see that agent's reply, so a count that includes such a record can reach them through it, as any other content of its prompt can. A group-turn restriction to ship-classified records would apply to every DM-side read; considered, deferred.
+- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The tally counts every record the agent whose prompt it is may read (HH4), its own private records and its department's records included. `_record_game` creates ship-classified records; any writer of Ship's Records can create or rewrite a record in the directory at another classification (`write_entry` takes it from its caller), and a file placed there directly is read as its frontmatter states. The other participants see that agent's reply, so a count that includes such a record can reach them through it, as any other content of its prompt can. A group-turn restriction to ship-classified records would apply to every DM-side read; considered, deferred.
 - **L11.** A file the store's strict listing skips is not counted, and AD-1358 logs nothing for it: bytes that are not UTF-8 (the store's rule, "a property of the file, not of the moment") and a frontmatter whose YAML constructor raises. A frontmatter YAML rejects reads as `{}` without the game tags, so it is not listed. A listed file that is gone, or that `read_entry` withholds, reads as `None` and is not counted. Only a listing or read that raises fails the tally.
 - **L12.** `HeadToHead` built directly is not validated; `MAX_BLOCK_CHARS` bounds only a tally `read_head_to_head` returns (at most 317 characters).
-- **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk.
+- **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk. Files created between the count and the listing are listed too: the store's `list_entries` has no limit and reads and parses every file present when it runs, so the pass's cost is bounded by the files present then, not by the count; `read_entry` still runs at most 256 times, and none above the cap (A3). A hard bound needs a limit on the store's listing, a shared contract; considered, deferred with L4's index.
+- **L14.** (A3) The count checks each directory with `_safe_path`'s rule before listing it, so a directory link that leads out of the records is refused and the store is not reached. A directory replaced by such a link between that check and its listing is still listed (names only, no file opened); the store's own listing has the same window. It needs a writer racing inside Ship's Records.
 
 ## 11. Verified Against Codebase (2026-11-06)
 
@@ -1099,6 +1101,8 @@ See the Verified block in the consult answer; it is copied here unchanged when t
 5. The listing is strict, covers one directory and is tag-filtered. There are at most `MAX_GAME_RECORDS` `read_entry` calls. Above the cap (counted by name), there is no listing and no `read_entry`.
 10. (A1) No `RecordsStore` file read or YAML parse of the tally runs on the event-loop thread; the store is reached only through `list_entries`, `read_entry` and the `repo_path` property.
 11. (A1) `RecordsStore.list_entries` and `read_entry`, run in a worker, touch no mutable store state; a store read that suspends fails closed (WARNING, no tally).
+12. (A3) The count lists no directory outside the resolved records repository, and for a directory that does not change during the pass it counts exactly the paths the store's strict walk lists (a directory named `*.md` is not counted); a directory cycle ends in `OSError`, as the store's walk does. Read and cost claims hold "while the directory does not grow" (L13).
+13. (A3) The record `<game_id>.md` of the game whose board the prompt shows is never read nor counted, however the read and the game's end interleave.
 6. The `head_to_head` bid is emitted only after an `active_game` bid and before `captain_message`. The manifest holds its name, length and kept flag only.
 7. `game_type` is validated before it forms a path.
 8. Failure is log-and-degrade (WARNING with `exc_info`). `CancelledError` is not swallowed.
@@ -1751,7 +1755,7 @@ Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/ope
 - Running a coroutine that never suspends with `send(None)` (no loop) instead of `asyncio.run` per call: adapted, with a fail-closed guard (T14).
 - **Blind spots handled:**
   - The GIL: the worker's pure-Python YAML still shares the GIL, but the loop regains it at each switch interval (§15.7 measures it).
-  - Cancellation cannot stop the worker. Its pass is bounded, and its result is dropped (T11).
+  - Cancellation cannot stop the worker. Its pass is bounded while the directory does not grow (L13, A3), and its result is dropped (T11).
   - A concurrent writer (L13).
   - Files added between the count and the listing: the check after the listing stays.
 - External search was skipped: this is ProbOS-specific plumbing with an in-repo precedent.
@@ -1767,3 +1771,794 @@ Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/ope
 - **GA2b:** G2's command. Expected: **810 passed**, 0 failed. Then `PY -P scripts/check_architecture_principles.py --check`, and `PY -P scripts/gen_ad_ledger.py --check`, which must be clean (no tracker changes).
 - **Campaign (A2):** the baseline (38 passed), then HH-14, HH-20, HH-22 and HH-23. Each must be killed: HH-22 by T12; HH-23 by T14 and T2b ×2; HH-14 by T2b ×2 (errors); HH-20 by T14. The source sha256 values equal A1's record (only the test file changed), so the other 19 rows stand. Record the test file's new sha256.
 - **Commit:** `AD-1358 S1 A2: the warning tests assert the traceback (#1750)`.
+
+## 17. Amendment A3 (2026-11-06): review round 2 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** candidate head `7a9a4709` (base `48ed13bf`). Every SEARCH below occurs exactly once in its file on `7a9a4709` (§17.9). Working copies are CRLF; SEARCH text is LF. Where §17 and §15 or §16 differ, §17 wins. §15.8's C-04 and C-05 REPLACE blocks record A1's edits as applied; C3-03 and C3-04 supersede the texts they quote.
+
+### 17.1 Findings and decisions
+
+| # | Finding | Decision |
+|---|---|---|
+| F1 | Since A1 the read runs in a worker, so the active game can finish and `_record_game` can write its record during the read; the tally then counts it "before this one" | **HH9:** `read_head_to_head(..., current_game_id=)`; the caller passes the shown game's id; an entry named `<game_id>.md` is skipped before `read_entry`. No timing dependence, no extra lookup |
+| F2 | `rglob("*.md")` counts a directory named `*.md`; the strict listing does not | The count uses the store's strict walk rule: descend `is_dir(follow_symlinks=False)`, count other entries matching `fnmatch(name, "*.md")`; a missing top directory counts 0 |
+| F3 | The count walks a directory link that leaves the repository before `_safe_path` refuses it | Each directory is resolved and checked with `_safe_path`'s rule (inside the resolved repository) before it is listed; else `ValueError`, which the existing handler logs (WARNING, traceback, no tally). The resolved top directory is listed; subdirectories are descended by their unresolved paths, as the store's walk descends them, so a directory cycle ends in the OS's refusal (`OSError`), not a loop (T18). The store has no public path check, so the two-line rule is duplicated, with T17 as its pin |
+| F4 | "At most 512 file reads" / "bounded pass" is false if files appear between the count and the listing | Claim qualified (L4, L13, docstrings, DECISIONS HH5, §15.11); a hard bound needs a limit on the store's listing, a shared contract, deferred with L4's index |
+| F5 | L10: "another classification arises only when a record is rewritten" is false | L10 corrected |
+
+**Rejected for F1:** revalidating the game after the read (drops the tally whenever the game ends mid-read; a third lookup); comparing revisions (drops it on every move). **Rejected for F4:** a bounded own walk plus `read_entry` per name (duplicates AD-1341's strict error rules; an undecodable record would hide the tally).
+
+### 17.2 Milestones and gates
+
+| M | Pairs | Gate |
+|---|---|---|
+| A3-M1 (tests) | A3-T1 to A3-T5 | GA3a on `7a9a4709` + A3-M1 |
+| A3-M2 (source) | A3-S1 to A3-S5 | GA3b, then the campaign (§17.6) |
+| A3-M3 (contract, trackers, ledger) | C3-01 to C3-07 (§17.7, applied before §17 is appended), A3-P1, A3-P2, ledger | G3 |
+
+Commit A3-M1 and A3-M2 as one commit (`AD-1358 S1 A3: the game in progress is not counted; the count follows the store's walk (#1750)`). Commit A3-M3 separately (`AD-1358 S1 A3: trackers, contract and ledger (#1750)`).
+
+- **GA3a** (A3-M1 applied, source at `7a9a4709`): `PY -m pytest tests/test_ad1358_s1_head_to_head.py -q -n 0`.
+  - Expected: **39 passed, 7 failed** (T18 passes on the head by design: `Path.rglob` ignores the refusal of the cycle's path, then the store's strict walk raises `OSError`): `test_the_read_is_bounded[directory-named-md]`, T15, T16[current], T16[none], T17[recreation], T17[games], T17[game-type], each at an `AssertionError`. No test waits on a bound on this head.
+  - If `_directory_link` raises, or T18 reaches its spy limit on the head, because the filesystem cannot hold a junction or symlink, that is a platform hard stop: report it; no skip marker.
+  - Any other count, or a failure at setup or collection, is a hard stop.
+- **GA3b** (after A3-M2): G2's command (§4) plus `tests/test_ad1184_ad_ledger.py`.
+  - Expected: **46 passed** in the new file; **851 passed** in total (843 on `7a9a4709` + 8), 0 failed.
+  - Then `PY -P scripts/check_architecture_principles.py --check`.
+  - Hard stop: `test_dm_golden_byte_identical` fails.
+- **G3** after A3-M3, as in §4.
+
+### 17.3 Tests (new file total: 19 functions, 46 cases)
+
+| Id | Test | Cases | Covers | On `7a9a4709` | A regression |
+|---|---|---|---|---|---|
+| T2 (changed) | also asserts no WARNING from `probos.recreation.history` | 0 new | a missing directory counts 0 | passes (guard) | HH-28 fails `[no-directory]` |
+| T6 (changed) | `[directory-named-md]`: 3 records, cap 3, plus an empty directory `notes.md` | 1 | F2 | fails: `tally` is None | HH-27 |
+| T15 | `test_the_game_in_progress_is_not_counted_when_it_finishes_while_the_records_are_read` | 1 | F1 at the prompt, structural | fails: the prompt says 2 | HH-24, HH-25, HH-29; HH-18 (the hold times out on the loop thread) |
+| T16 | `test_the_record_of_the_game_the_tally_is_shown_in_is_not_read` | 2 | F1 in the unit: skipped before `read_entry`; empty skips nothing | fails: no `current_game_id` parameter | HH-25, HH-29 |
+| T17 | `test_a_game_directory_that_leads_out_of_the_records_is_not_walked` | 3 | F3: a link at `recreation`, `recreation/games`, `recreation/games/tictactoe` | fails: the outside directory was listed | HH-26 |
+| T18 | `test_a_directory_cycle_under_the_game_directory_ends_the_walk` | 1 | a junction cycle (Windows) ends in `OSError`, a WARNING and no tally; on POSIX, no descent | passes (guard) | HH-30 (Windows) |
+
+T15 uses no wall clock: the worker's listing sets `listing_entered` and waits on `game_recorded`; a task on the loop waits for `listing_entered`, plays the winning move (the real `make_move` and `_record_game`), then sets `game_recorded`. If the read regressed onto the loop, the hold would block the loop, the wait would end at its bound, and the first assertion would fail. T17 and T18 make the link as AD-1200's tests do, and replace `os.scandir` with `_scandir_spy` (it counts every call, raises at the 2,000th, and records path arguments as strings, `bytes` included; a descriptor passes through unrecorded) (a junction through `_winapi.CreateJunction` on Windows, which needs no privilege; a symlink on POSIX). The link and its target both live in `tmp_path`.
+
+### 17.4 Pairs: A3-M1 (tests)
+
+**A3-T1** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+import asyncio
+import importlib
+import importlib.util
+import json
+import logging
+import threading
+```
+REPLACE:
+```
+import asyncio
+import importlib
+import importlib.util
+import inspect
+import json
+import logging
+import os
+import threading
+```
+
+**A3-T2** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+async def test_with_no_recorded_game_between_the_two_the_dm_prompt_is_unchanged(tmp_path: Path, case: str) -> None:
+    """Nothing to count adds nothing: the prompt equals one built with no records store, and the manifest
+    names no head-to-head section. Passes on the base by design (a guard, as AD-1357's T7b)."""
+    store = await _store(tmp_path)
+```
+REPLACE:
+```
+async def test_with_no_recorded_game_between_the_two_the_dm_prompt_is_unchanged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, case: str,
+) -> None:
+    """Nothing to count adds nothing: the prompt equals one built with no records store, the manifest
+    names no head-to-head section, and nothing is logged (A3: a missing directory counts 0). Passes on
+    the base by design (a guard, as AD-1357's T7b)."""
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    store = await _store(tmp_path)
+```
+
+**A3-T3** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+    finally:
+        await service.turns.stop()
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+
+
+@pytest.mark.parametrize("failing", ["list_entries", "read_entry"])
+```
+REPLACE:
+```
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+    finally:
+        await service.turns.stop()
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+    assert not [r for r in caplog.records if r.name == "probos.recreation.history"]
+
+
+@pytest.mark.parametrize("failing", ["list_entries", "read_entry"])
+```
+
+**A3-T4** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+@pytest.mark.parametrize("case", ["above-cap", "at-cap", "unsafe-game-type", "strict-listing", "long-name"])
+```
+REPLACE:
+```
+@pytest.mark.parametrize(
+    "case", ["above-cap", "at-cap", "directory-named-md", "unsafe-game-type", "strict-listing", "long-name"],
+)
+```
+
+**A3-T5** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+    if case in ("above-cap", "at-cap"):
+        monkeypatch.setattr(history, "MAX_GAME_RECORDS", 2 if case == "above-cap" else 3)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    tally = await read_head_to_head(
+        store, game_type="../notebooks" if case == "unsafe-game-type" else "tictactoe",
+        me="Ezri", opponent=opponent, reader_id="Ezri", reader_department="science",
+    )
+    if case == "above-cap":
+        assert tally is None and calls["read"] == 0
+        assert calls["list"] == []  # A1 (F1): counted by name above the cap; nothing is listed
+        assert any("AD-1358" in r.getMessage() for r in caplog.records)
+    elif case == "at-cap":
+        assert tally.total == 3 and calls["read"] == 3
+```
+REPLACE:
+```
+    if case == "directory-named-md":
+        (store.repo_path / GAMES / "notes.md").mkdir()  # A3 (F2): a directory is no record and is not counted
+    if case in ("above-cap", "at-cap", "directory-named-md"):
+        monkeypatch.setattr(history, "MAX_GAME_RECORDS", 2 if case == "above-cap" else 3)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    tally = await read_head_to_head(
+        store, game_type="../notebooks" if case == "unsafe-game-type" else "tictactoe",
+        me="Ezri", opponent=opponent, reader_id="Ezri", reader_department="science",
+    )
+    if case == "above-cap":
+        assert tally is None and calls["read"] == 0
+        assert calls["list"] == []  # A1 (F1): counted by name above the cap; nothing is listed
+        assert any("AD-1358" in r.getMessage() for r in caplog.records)
+    elif case in ("at-cap", "directory-named-md"):
+        assert tally is not None and tally.total == 3 and calls["read"] == 3
+```
+
+**A3-T6** `tests/test_ad1358_s1_head_to_head.py` (appends T15 to T18 after T14)
+
+SEARCH:
+```
+        and isinstance(r.exc_info, tuple) and "suspended" in str(r.exc_info[1])  # A2: the traceback
+        for r in caplog.records
+    )
+```
+REPLACE:
+```
+        and isinstance(r.exc_info, tuple) and "suspended" in str(r.exc_info[1])  # A2: the traceback
+        for r in caplog.records
+    )
+
+
+# ── T15 to T18: Amendment A3 ─────────────────────────────────────────
+
+
+async def test_the_game_in_progress_is_not_counted_when_it_finishes_while_the_records_are_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A3 (F1), structural, no timing: the worker's listing waits until the loop has played the
+    winning move and ``_record_game`` has written that game's record. The prompt shows the board
+    rendered before (four moves), and the finished game's record is not counted before itself."""
+    store = await _store(tmp_path)
+    service = _service(store)
+    listing_entered, game_recorded = threading.Event(), threading.Event()
+    seen: dict[str, Any] = {"recorded_first": None}
+    real_list = store.list_entries
+
+    async def held_list(*args: Any, **kwargs: Any) -> Any:
+        listing_entered.set()
+        seen["recorded_first"] = game_recorded.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    try:
+        before = await _play(service, "Captain", "Ezri", X_WINS)  # the one game truly before
+        active = await service.create_game("tictactoe", "Captain", "Ezri")
+        for index, position in enumerate(X_WINS[:-1]):
+            await service.make_move(active["game_id"], "Captain" if index % 2 == 0 else "Ezri", position)
+
+        async def finish_during_the_read() -> None:
+            assert await asyncio.to_thread(listing_entered.wait, 5.0)  # the worker is in the listing
+            await service.make_move(active["game_id"], "Captain", X_WINS[-1])  # Captain wins; recorded
+            game_recorded.set()
+
+        monkeypatch.setattr(store, "list_entries", held_list)
+        finisher = asyncio.create_task(finish_during_the_read())
+        try:
+            prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+        finally:
+            listing_entered.set()  # never leave the finisher waiting
+            finished = await asyncio.gather(finisher, return_exceptions=True)
+    finally:
+        await service.turns.stop()
+    assert finished == [None]
+    assert seen["recorded_first"] is True  # premise: the record was written while the worker read
+    assert active["result"]["status"] == "won"
+    assert (store.repo_path / GAMES / f"{active['game_id']}.md").is_file()
+    assert "Moves so far: 4." in prompt  # premise: the board was rendered before the game finished
+    first = await store.read_entry(f"{GAMES}/{before['game_id']}.md", "captain")
+    assert prompt.count(_block(1, "Captain", 1, 0, 0, str(first["frontmatter"]["updated"])[:10])) == 1
+
+
+@pytest.mark.parametrize(
+    ("current", "total"), [pytest.param("game-b", 2, id="current"), pytest.param("", 3, id="none")],
+)
+async def test_the_record_of_the_game_the_tally_is_shown_in_is_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, current: str, total: int,
+) -> None:
+    """A3 (F1): ``current_game_id`` names the game the tally is shown in; its record is skipped
+    before ``read_entry``. Empty, the default, skips nothing."""
+    read_head_to_head = _built("read_head_to_head")
+    assert "current_game_id" in inspect.signature(read_head_to_head).parameters, "A3 is not built"
+    store = await _store(tmp_path)
+    for name in ("game-a", "game-b", "game-c"):
+        await _record(store, name, x="Captain", o="Ezri", winner="Captain")
+    reads: list[str] = []
+    real_read = store.read_entry
+
+    async def read_spy(path: str, *args: Any, **kwargs: Any) -> Any:
+        reads.append(path)
+        return await real_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(store, "read_entry", read_spy)
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        current_game_id=current,
+    )
+    assert tally is not None and tally.total == total
+    assert len(reads) == total and (f"{GAMES}/game-b.md" in reads) is (current == "")
+
+
+def _directory_link(link: Path, target: Path) -> None:
+    """A directory link, as AD-1200's tests make one: a junction on Windows (no privilege), else a symlink."""
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+        assert link.is_junction()
+    else:
+        link.symlink_to(target, target_is_directory=True)
+        assert link.is_symlink()
+
+
+def _scandir_spy(monkeypatch: pytest.MonkeyPatch, listed: list[Path] | None, limit: int = 2000) -> dict[str, int]:
+    """Replace ``os.scandir`` for one test. Every call is counted, and the ``limit``-th raises, so a walk
+    that does not terminate fails fast instead of hanging the suite. With ``listed``, each path argument
+    is recorded resolved (``os.fsdecode``, so ``bytes`` too); a descriptor (``int``) names no path and
+    passes through unrecorded."""
+    real_scandir = os.scandir
+    calls = {"n": 0}
+
+    def spy(path: Any = ".") -> Any:
+        calls["n"] += 1
+        if calls["n"] >= limit:
+            raise AssertionError("the walk does not terminate")
+        if listed is not None and not isinstance(path, int):
+            listed.append(Path(os.fsdecode(path)).resolve())
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", spy)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "link", [pytest.param("recreation", id="recreation"), pytest.param("recreation/games", id="games"),
+             pytest.param(GAMES, id="game-type")],
+)
+async def test_a_game_directory_that_leads_out_of_the_records_is_not_walked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, link: str,
+) -> None:
+    """A3 (F3): a directory link at ``link`` leads out of the records. The count refuses it before
+    listing it, as ``RecordsStore._safe_path`` refuses it: nothing outside is listed, no tally is
+    shown, and a WARNING carries the refusal. The link and its target both live in ``tmp_path``."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    outside = tmp_path / "outside"
+    games = outside / Path(GAMES).relative_to(link)
+    games.mkdir(parents=True)
+    (games / "g0.md").write_text("**Players:** Captain (X) vs Ezri (O)\n**Result:** draw\n", encoding="utf-8")
+    (store.repo_path / link).parent.mkdir(parents=True, exist_ok=True)
+    _directory_link(store.repo_path / link, outside)
+    outside_resolved = outside.resolve()
+    listed: list[Path] = []
+    _scandir_spy(monkeypatch, listed)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert not [p for p in listed if p.is_relative_to(outside_resolved)], listed
+    assert tally is None
+    assert any(
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and isinstance(r.exc_info[1], ValueError)
+        and "traversal" in str(r.exc_info[1])
+        for r in caplog.records
+    )
+
+
+async def test_a_directory_cycle_under_the_game_directory_ends_the_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A3 revision, no wall clock, no thread of its own: ``loop`` links the game directory to itself.
+    On Windows a junction is a directory to ``is_dir(follow_symlinks=False)``; descended by its
+    growing path, it ends when the OS refuses the path (``OSError``): no tally and a WARNING, as the
+    store's strict listing fails. On POSIX a symlink is not descended: no tally, nothing logged. The
+    spy fails a walk that does not terminate at its 2,000th listing."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    loop = store.repo_path / GAMES / "loop"
+    loop.parent.mkdir(parents=True)
+    _directory_link(loop, loop.parent)
+    try:
+        calls = _scandir_spy(monkeypatch, None)
+        caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+        tally = await read_head_to_head(
+            store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        )
+    finally:
+        loop.rmdir() if os.name == "nt" else loop.unlink()  # the link only, as AD-1200's _unlink_junction
+    assert calls["n"] < 2000, "the walk does not terminate"
+    assert tally is None
+    warnings = [r for r in caplog.records if r.name == "probos.recreation.history"]
+    if os.name == "nt":
+        assert any(isinstance(r.exc_info, tuple) and isinstance(r.exc_info[1], OSError) for r in warnings)
+    else:
+        assert warnings == []
+```
+
+### 17.5 Pairs: A3-M2 (source)
+
+**A3-S1** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+read is not counted. The reads run in a worker thread, never on the event loop (A1). It returns
+``None`` when no game between the two players is recorded, when the directory holds more than
+:data:`MAX_GAME_RECORDS` ``*.md`` files (then none is read), and when a listing or read raises.
+"""
+```
+REPLACE:
+```
+read is not counted. The reads run in a worker thread, never on the event loop (A1). It returns
+``None`` when no game between the two players is recorded, when more than
+:data:`MAX_GAME_RECORDS` ``*.md`` files are counted by name in the directory (then none is read)
+or listed, when the directory leads out of the records, and when a listing or read raises. The
+record of the game the tally is shown in is never counted (A3).
+"""
+```
+
+**A3-S2** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+import asyncio
+import logging
+import re
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from itertools import islice
+from pathlib import Path
+```
+REPLACE:
+```
+import asyncio
+import fnmatch
+import logging
+import os
+import re
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from pathlib import Path
+```
+
+**A3-S3** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+async def _read_records(
+    records_store: Any, game_type: str, reader_id: str, reader_department: str,
+) -> list[dict[str, Any]] | None:
+    """The records of one game type that the reader may read, or ``None`` above the cap.
+
+    Run by :func:`_drive` in a worker thread. It reads files only through the store's own
+    ``list_entries`` and ``read_entry``, which touch no store state but the repository path, so
+    they are safe off the event loop, as BF-952's ``_search_records`` walk is. The directory's
+    ``*.md`` files are counted by name first, reading none, so a directory above the cap costs
+    one scan and no reads.
+    """
+    directory = f"recreation/games/{game_type}"
+    named = Path(records_store.repo_path, directory).rglob("*.md")
+    if len(list(islice(named, MAX_GAME_RECORDS + 1))) > MAX_GAME_RECORDS:
+```
+REPLACE:
+```
+def _count_record_names(repo_path: Path, directory: str, limit: int) -> int:
+    """A3 (F2, F3): the ``*.md`` names the store's strict listing would list under ``directory``, up to ``limit + 1``.
+
+    No file is opened. The walk is ``_markdown_files_or_raise``'s: the resolved ``directory`` is
+    listed; an entry that ``is_dir(follow_symlinks=False)`` is descended by its unresolved path,
+    never counted; any other entry matching ``*.md`` (``fnmatch``, the platform's case rule) is
+    counted; a missing ``directory`` counts 0 and any other ``OSError`` raises. A directory cycle (a
+    Windows junction to an ancestor) lengthens the path until the OS refuses it: ``OSError``, as in
+    the store's walk. Before each directory is listed, its resolved path must lie inside the resolved
+    repository (the rule of ``RecordsStore._safe_path``; the store has no public path check), else
+    ``ValueError``: nothing outside the records is listed, and a refusal never reaches the store. For
+    a directory that does not change during the pass, the count is the number of paths that walk lists.
+    """
+    root = Path(repo_path).resolve()
+    top = Path(repo_path, directory).resolve()
+    count = 0
+    pending = [top]
+    while pending:
+        current = pending.pop()
+        # The rule of RecordsStore._safe_path, applied to every directory before it is listed.
+        if not current.resolve().is_relative_to(root):
+            raise ValueError(f"AD-1358: path traversal denied: {directory!r}")
+        try:
+            listing = os.scandir(current)
+        except (FileNotFoundError, NotADirectoryError):
+            if current is not top:
+                raise  # as the store's walk: a directory a listing reported is never "no records"
+            return 0
+        with listing:
+            for entry in listing:
+                if entry.is_dir(follow_symlinks=False):
+                    # Unresolved, as the store descends: a cycle grows the path until the OS refuses it.
+                    pending.append(Path(current, entry.name))
+                elif fnmatch.fnmatch(entry.name, "*.md"):
+                    count += 1
+                    if count > limit:
+                        return count
+    return count
+
+
+async def _read_records(
+    records_store: Any, game_type: str, reader_id: str, reader_department: str, current_record: str,
+) -> list[dict[str, Any]] | None:
+    """The records of one game type that the reader may read, or ``None`` above the cap.
+
+    Run by :func:`_drive` in a worker thread. The directory's ``*.md`` names are counted first
+    (:func:`_count_record_names`, which opens no file and refuses a directory outside the records),
+    so a directory above the cap costs one scan and no reads. Files are then read only through the
+    store's own ``list_entries`` and ``read_entry``, which touch no store state but the repository
+    path, so they are safe off the event loop, as BF-952's ``_search_records`` walk is. The listing
+    reads every file present when it runs, including any created after the count (contract L13);
+    ``read_entry`` still runs at most :data:`MAX_GAME_RECORDS` times. The entry named
+    ``current_record``, the record of the game the tally is shown in, is not read (A3).
+    """
+    directory = f"recreation/games/{game_type}"
+    if _count_record_names(records_store.repo_path, directory, MAX_GAME_RECORDS) > MAX_GAME_RECORDS:
+```
+
+**A3-S4** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+    docs: list[dict[str, Any]] = []
+    for entry in listed:
+        doc = await records_store.read_entry(
+```
+REPLACE:
+```
+    docs: list[dict[str, Any]] = []
+    for entry in listed:
+        # A3 (F1): the game the tally is shown in may finish, and be recorded, during this pass.
+        if entry["path"].rpartition("/")[2] == current_record:
+            continue
+        doc = await records_store.read_entry(
+```
+
+**A3-S5** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+    reader_department: str,
+) -> HeadToHead | None:
+    """The recorded ``game_type`` games between ``me`` and ``opponent``, read as one reader.
+
+    A count by name of ``recreation/games/<game_type>/*.md``, then one strict listing, then at most
+    :data:`MAX_GAME_RECORDS` ``read_entry`` calls as ``reader_id``/``reader_department``, all in a
+    worker thread (:func:`_read_records`): a record that reader may not read is not counted. A
+    listing or read that raises gives ``None`` and a warning. A file the store's listing itself
+    skips (bytes that are not UTF-8, a frontmatter whose constructor raises) and a ``read_entry``
+    that returns ``None`` are not counted (contract L11). ``None`` when nothing is recorded and
+    above the cap. A cancelled caller gets ``CancelledError`` at once; the worker finishes its
+    bounded pass and its result is dropped.
+    """
+    if records_store is None or type(me) is not str or type(opponent) is not str:
+        return None
+    if not me or not opponent or me == opponent:
+        return None
+    if type(game_type) is not str or _GAME_TYPE.fullmatch(game_type) is None:
+        return None
+    me_won = opponent_won = drawn = 0
+    latest: float | None = None
+    try:
+        # A1 (F1): every file read and parse runs in a worker thread, never on the event loop.
+        docs = await asyncio.to_thread(_drive, _read_records, records_store, game_type, reader_id, reader_department)
+```
+REPLACE:
+```
+    reader_department: str,
+    current_game_id: str = "",
+) -> HeadToHead | None:
+    """The recorded ``game_type`` games between ``me`` and ``opponent``, read as one reader.
+
+    A count by name of ``recreation/games/<game_type>/*.md`` (refused when the directory leads out
+    of the records), then one strict listing, then at most :data:`MAX_GAME_RECORDS` ``read_entry``
+    calls as ``reader_id``/``reader_department``, all in a worker thread (:func:`_read_records`): a
+    record that reader may not read is not counted. The record ``<current_game_id>.md``, the game
+    the tally is shown in, is never counted (A3). A listing or read that raises gives ``None`` and a
+    warning. A file the store's listing itself skips (bytes that are not UTF-8, a frontmatter whose
+    constructor raises) and a ``read_entry`` that returns ``None`` are not counted (contract L11).
+    ``None`` when nothing is recorded and above the cap. While the directory does not grow during the
+    pass, it reads at most 2 × :data:`MAX_GAME_RECORDS` files; the listing also reads any file created
+    after the count (L13). A cancelled caller gets ``CancelledError`` at once; the worker finishes
+    its pass and its result is dropped.
+    """
+    if records_store is None or type(me) is not str or type(opponent) is not str:
+        return None
+    if not me or not opponent or me == opponent:
+        return None
+    if type(game_type) is not str or _GAME_TYPE.fullmatch(game_type) is None:
+        return None
+    current_record = f"{current_game_id}.md" if type(current_game_id) is str and current_game_id else ""
+    me_won = opponent_won = drawn = 0
+    latest: float | None = None
+    try:
+        # A1 (F1): every file read and parse runs in a worker thread, never on the event loop.
+        read_args = (_read_records, records_store, game_type, reader_id, reader_department, current_record)
+        docs = await asyncio.to_thread(_drive, *read_args)
+```
+
+**A3-S6** `src/probos/cognitive/cognitive_agent.py`
+
+SEARCH:
+```
+        reader_id, reader_department = records_reader_for(rt, self.id)
+        tally = await game_history.read_head_to_head(
+            store,
+            game_type=game.get("game_type", ""),
+            me=callsign,
+            opponent=opponent,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        )
+```
+REPLACE:
+```
+        reader_id, reader_department = records_reader_for(rt, self.id)
+        tally = await game_history.read_head_to_head(
+            store,
+            game_type=game.get("game_type", ""),
+            me=callsign,
+            opponent=opponent,
+            reader_id=reader_id,
+            reader_department=reader_department,
+            # A3 (F1): if this game finishes while the records are read, its own record is not counted
+            current_game_id=game.get("game_id", ""),
+        )
+```
+
+### 17.6 Mutation rows (A3). Each Line occurs once in its file on A3-M2's head
+
+HH-18 and HH-19 are restated because their lines changed. **Campaign of record (A3):** the baseline (45 passed), then HH-1 to HH-16 and HH-18 to HH-30 on A3-M2's head (HH-30 on Windows), because `history.py` and `cognitive_agent.py` changed. HH-17 stands from A1's campaign (`oracle_service.py` unchanged; confirm its sha256 equals A1's record). Record the sha256 of `history.py`, `cognitive_agent.py`, `oracle_service.py` and the test file. HH-4's killer is T6 at-cap; T6 directory-named-md is a second killer.
+
+| Id | File | Line | Mutate to | Killed by |
+|---|---|---|---|---|
+| HH-18 (A3) | history.py | `        docs = await asyncio.to_thread(_drive, *read_args)` | `        docs = _drive(*read_args)` | T10, T11, T15 |
+| HH-19 (A3) | history.py | `    if _count_record_names(records_store.repo_path, directory, MAX_GAME_RECORDS) > MAX_GAME_RECORDS:` | `    if False:` | T6 above-cap (listing called) |
+| HH-24 | cognitive_agent.py | `            current_game_id=game.get("game_id", ""),` | `            current_game_id="",` | T15 |
+| HH-25 | history.py | `        if entry["path"].rpartition("/")[2] == current_record:` | `        if False:` | T15, T16[current] |
+| HH-26 | history.py | `        if not current.resolve().is_relative_to(root):` | `        if False:` | T17 ×3 |
+| HH-27 | history.py | `                elif fnmatch.fnmatch(entry.name, "*.md"):` | `                if fnmatch.fnmatch(entry.name, "*.md"):` | T6[directory-named-md] |
+| HH-28 | history.py | `        except (FileNotFoundError, NotADirectoryError):` | `        except NotADirectoryError:` | T2[no-directory] (a WARNING is logged) |
+| HH-29 | history.py | `    current_record = f"{current_game_id}.md" if type(current_game_id) is str and current_game_id else ""` | `    current_record = ""` | T15, T16[current] |
+| HH-30 | history.py | `                    pending.append(Path(current, entry.name))` | `                    pending.append(Path(current, entry.name).resolve())` | T18 (Windows; on POSIX nothing is descended) |
+
+No row is written for three mutants, each equivalent in result. Removing the early return `if count > limit:` changes only the cost of naming entries. Walking `Path(repo_path, directory)` instead of `top` changes nothing while the directory is quiescent. The `raise` for a vanished subdirectory needs a concurrent deletion to observe.
+
+### 17.7 Contract text edits (apply before appending §17)
+
+**C3-01** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+**Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
+**Base:** `cognitive_agent.py`, `oracle_service.py`, `dm_targeted_lookup.py`, `DECISIONS.md` (the AD-1357 entry) as on `b3348e2a` (AD-1357 + A1). The records files as on `cf61c683` (BF-952 + A2); this slice edits neither `records_store.py` nor `routers/records.py`.
+```
+REPLACE:
+```
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3 (§17), the repair of review round 2 (GPT-6.1 Sol, NOT READY): the record of the game in progress is never counted (HH9); the count by name follows the store's strict walk and refuses a directory outside the records; the read bound is qualified (L4, L13); L10 corrected; L14 added; T15 to T18 added, T2 and T6 strengthened; rows HH-24 to HH-30 added and HH-18, HH-19 restated.
+**Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
+**Base:** `cognitive_agent.py`, `oracle_service.py`, `dm_targeted_lookup.py`, `DECISIONS.md` (the AD-1357 entry) as on `b3348e2a` (AD-1357 + A1). The records files as on `cf61c683` (BF-952 + A2); this slice edits neither `records_store.py` nor `routers/records.py`.
+```
+
+**C3-02** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases; after A1, 15 functions, 38 cases. Counted by reading, not by running. No existing test file is edited.
+**AD number:** AD-1358, held by #1750. Nothing new is allocated.
+```
+REPLACE:
+```
+**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases; after A1, 15 functions, 38 cases; after A3, 19 functions, 46 cases. Counted by reading, not by running. No existing test file is edited.
+**AD number:** AD-1358, held by #1750. Nothing new is allocated.
+```
+
+**C3-03** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+- **L3.** Players match by the exact callsign in the record. Games played before a callsign change are not matched.
+- **L4.** No cache. Each DM turn during a game counts the directory's `*.md` files by name (no read). At most 256, it lists them (each file read and parsed) and reads each again with `read_entry`: up to 512 file reads, in a worker thread, which the DM turn waits for (A1). Above 256 `*.md` files in the directory, game records or not, no tally is shown and none is read. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
+```
+REPLACE:
+```
+- **L3.** Players match by the exact callsign in the record. Games played before a callsign change are not matched.
+- **L4.** No cache. Each DM turn during a game counts by name the `*.md` entries the store's strict listing would return for the directory (no file opened; a directory is never counted; A3). At most 256, it lists them (each file read and parsed) and reads each again with `read_entry`: up to 512 file reads while the directory does not grow during the pass (L13), in a worker thread, which the DM turn waits for (A1). Above 256 such files, game records or not, no tally is shown and none is read. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
+```
+
+**C3-04** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+- **L9.** `_build_head_to_head_context` repeats `_build_active_game_context`'s opponent expression (default `""` there, `"unknown"` in AD-572); AD-572 is not refactored.
+- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The tally counts every record the agent whose prompt it is may read (HH4), its own private records and its department's records included; `_record_game` writes ship-classified records, so another classification arises only when a record is rewritten through the store. The other participants see that agent's reply, so a count that includes such a record can reach them through it, as any other content of its prompt can. A group-turn restriction to ship-classified records would apply to every DM-side read; considered, deferred.
+```
+REPLACE:
+```
+- **L9.** `_build_head_to_head_context` repeats `_build_active_game_context`'s opponent expression (default `""` there, `"unknown"` in AD-572); AD-572 is not refactored.
+- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The tally counts every record the agent whose prompt it is may read (HH4), its own private records and its department's records included. `_record_game` creates ship-classified records; any writer of Ship's Records can create or rewrite a record in the directory at another classification (`write_entry` takes it from its caller), and a file placed there directly is read as its frontmatter states. The other participants see that agent's reply, so a count that includes such a record can reach them through it, as any other content of its prompt can. A group-turn restriction to ship-classified records would apply to every DM-side read; considered, deferred.
+```
+
+**C3-05** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+- **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk.
+
+## 11. Verified Against Codebase (2026-11-06)
+```
+REPLACE:
+```
+- **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk. Files created between the count and the listing are listed too: the store's `list_entries` has no limit and reads and parses every file present when it runs, so the pass's cost is bounded by the files present then, not by the count; `read_entry` still runs at most 256 times, and none above the cap (A3). A hard bound needs a limit on the store's listing, a shared contract; considered, deferred with L4's index.
+- **L14.** (A3) The count checks each directory with `_safe_path`'s rule before listing it, so a directory link that leads out of the records is refused and the store is not reached. A directory replaced by such a link between that check and its listing is still listed (names only, no file opened); the store's own listing has the same window. It needs a writer racing inside Ship's Records.
+
+## 11. Verified Against Codebase (2026-11-06)
+```
+
+**C3-06** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+11. (A1) `RecordsStore.list_entries` and `read_entry`, run in a worker, touch no mutable store state; a store read that suspends fails closed (WARNING, no tally).
+6. The `head_to_head` bid is emitted only after an `active_game` bid and before `captain_message`. The manifest holds its name, length and kept flag only.
+```
+REPLACE:
+```
+11. (A1) `RecordsStore.list_entries` and `read_entry`, run in a worker, touch no mutable store state; a store read that suspends fails closed (WARNING, no tally).
+12. (A3) The count lists no directory outside the resolved records repository, and for a directory that does not change during the pass it counts exactly the paths the store's strict walk lists (a directory named `*.md` is not counted); a directory cycle ends in `OSError`, as the store's walk does. Read and cost claims hold "while the directory does not grow" (L13).
+13. (A3) The record `<game_id>.md` of the game whose board the prompt shows is never read nor counted, however the read and the game's end interleave.
+6. The `head_to_head` bid is emitted only after an `active_game` bid and before `captain_message`. The manifest holds its name, length and kept flag only.
+```
+
+**C3-07** `prompts/ad-1358-s1-head-to-head-tally.md`
+
+SEARCH:
+```
+  - Cancellation cannot stop the worker. Its pass is bounded, and its result is dropped (T11).
+```
+REPLACE:
+```
+  - Cancellation cannot stop the worker. Its pass is bounded while the directory does not grow (L13, A3), and its result is dropped (T11).
+```
+
+### 17.8 A3-M3 tracker pairs
+
+**A3-P1** `PROGRESS.md` (a passage of line 3; the line's first 120 characters are unchanged)
+
+SEARCH:
+```
+more than 256 records of the type (then none is read), or a game lookup, listing or read that raises (logged), nothing is added and the prompt is as before; a file the store's listing skips (bytes that are not UTF-8) is left out of the count. The AD-1357 manifest names the section `head_to_head` by its length only. No config field. The contract is `prompts/ad-1358-s1-head-to-head-tally.md`, with Amendment A1.
+```
+REPLACE:
+```
+more than 256 `*.md` files counted by name in the type's directory (then none is read), a directory that leads out of Ship's Records, or a game lookup, listing or read that raises (logged), nothing is added and the prompt is as before; a file the store's listing skips (bytes that are not UTF-8) is left out of the count. The game the turn is played in is never counted among the games before it, even when it finishes while the records are read. The AD-1357 manifest names the section `head_to_head` by its length only. No config field. The contract is `prompts/ad-1358-s1-head-to-head-tally.md`, with Amendments A1 to A3.
+```
+
+**A3-P2** `DECISIONS.md`
+
+SEARCH:
+```
+- *HH5 (cost).* A count of the directory's `*.md` files by name, then one listing plus at most 256 entry reads per DM turn during a game, all in a worker thread; above the cap, no listing, no read, no block and a warning.
+```
+REPLACE:
+```
+- *HH5 (cost).* A count by name of the `*.md` entries the store's strict listing would return (no file opened; a directory that leads out of Ship's Records is refused), then one listing plus at most 256 entry reads per DM turn during a game, all in a worker thread; above the cap, no listing, no read, no block and a warning. The listing reads every file present when it runs, so files created after the count add to its cost (L13).
+- *HH9 (A3, the game in progress).* The record `<game_id>.md` of the game the prompt shows is skipped before it is read, so a game that finishes while the records are read is not counted before itself. Rejected: revalidating the game after the read (drops the tally whenever the game ends mid-read; a third lookup); comparing revisions (drops it on every move).
+```
+
+Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` as written; then G3. `docs/development/roadmap.md` is not updated.
+
+### 17.9 Verified Against Codebase (2026-11-06, on `7a9a4709`)
+
+    history.py:129-130  named = Path(records_store.repo_path, directory).rglob("*.md") / islice count   (F2, F3)
+    history.py:136-139, 146-151, 185   list_entries; the read loop (no exclusion); to_thread
+    records_store.py:472-507  _markdown_files_or_raise: :496 (FileNotFoundError, NotADirectoryError) on the top only,
+      :503 entry.is_dir(follow_symlinks=False) descends, :505 fnmatch.fnmatch(entry.name, "*.md")
+    records_store.py:1337  search_path = self._safe_path(directory)   :1342 strict walk   :1344-1351 reads every file found
+    records_store.py:1587-1598  _safe_path: resolve; is_relative_to(repo resolved); ValueError("Path traversal denied")
+    records_store.py:23-33  _SUBDIRS has no "recreation" (T17 can place a link there)
+    service.py:171  game_id = f"game-{uuid.uuid4().hex[:12]}"     :376  path = f"recreation/games/{type}/{game_id}.md"
+    service.py:261  del self._active_games[game_id]  before  :278  await self._record_game(...)
+    service.py:162-163  only "Captain" is refused a second active game
+    service.py:309-319  get_game_by_player returns the live dict
+    cognitive_agent.py:10877-10882  no await between the two get_game_by_player calls
+    cognitive_agent.py:8656-8664  the read_head_to_head call (one caller)
+    CPython 3.12.13 pathlib.py:168 scandir = path_cls._scandir; :1063 return os.scandir(self)  (T17's spy sees the head's walk)
+    tests/test_ad1200_instruction_file_access.py:36-44  _junction: _winapi.CreateJunction on nt, symlink_to elsewhere
+    tests:19-24 imports (no os, no inspect); :226-227; :244-245; :350; :373-385; :606-610
+    SEARCH uniqueness on 7a9a4709: history.py :10-14, :19-25, :117-130, :145-147, :162-185 one hit each;
+      cognitive_agent.py :8656-8664 (records_reader_for(rt, self.id) once); PROGRESS.md line 3 only;
+      DECISIONS.md :1484 once; contract :5-6, :9-10, :1069-1070, :1075-1076, :1079-1081, :1101-1102, :1754.
+      The single lines repeated inside §15.8 (:1587, :1592, :1602, :1622, :1632, :1635, :1647) sit beside
+      fence lines, so each two-line SEARCH matches once.
+    New row Lines: current_game_id, _count_record_names, current_record, read_args have no hit in history.py or
+      cognitive_agent.py today (rg found current_game_id only in qual_skill_bridge.py).
+
+### Absence Verified (2026-11-06)
+
+    CLAIM: RecordsStore has no public path check
+    RUN:   rg "^    (async )?def [a-z]" records_store.py   FOUND: repo_path, initialize, write_entry, set_*, confirm/contradict_entry,
+           seed_manuals, append_captains_log, write_notebook, write_bill, list_bills, check_*, read_entry, list_entries,
+           get_history, publish, search, get_stats, *_workspace_file   HOLDS: yes
+    CLAIM: read_head_to_head has one production caller
+    RUN:   rg "read_head_to_head|recreation\.history" src tests scripts   FOUND: history.py, cognitive_agent.py, the test file   HOLDS: yes
+    CLAIM: no test reaches _read_records, rglob, islice, _drive or scandir
+    RUN:   rg "_read_records|rglob|islice|_drive|scandir" tests/test_ad1358_s1_head_to_head.py   FOUND: none   HOLDS: yes
+    CLAIM: the DM turn calls list_entries once (T15's hold holds only the tally)
+    RUN:   Read tests:257-264   FOUND: assert broken.await_count == 1 across _turn   HOLDS: yes
+
+**Measured by the orchestrator** (Windows, CPython 3.12.13, `probe_cycle.py`): a junction's entry has `is_dir(follow_symlinks=False)` True and `is_symlink()` False; on a junction cycle the store's strict walk ends in `OSError [WinError 1921]`, a resolved descent never ends, and an unresolved descent with a resolved check ends in the same `OSError`. A3 descends unresolved.
+
+### 17.10 Prior art and blind spots (A3)
+
+- Excluding the in-flight item by its identity, instead of revalidating a snapshot after the await: adopted (HH9). The general rule is to compare snapshot and read by a key that does not change.
+- **Blind spots handled:**
+  - a game that finishes during the read (T15);
+  - a directory named `*.md` (T6);
+  - links at three levels (T17); a directory cycle (T18);
+  - a missing directory (T2);
+  - files that appear between the count and the listing (L13);
+  - a link swapped in after the check (L14);
+  - concurrent games of one crew pair (counting them is true).
+- External search was skipped except one query on how Python 3.12 treats Windows junctions; it was inconclusive, and A3 does not depend on the answer (§17.9).
