@@ -287,8 +287,11 @@ def census_problems(found: dict[tuple[str, str], int], listed: dict[tuple[str, s
     return problems
 
 
-def references_outside(tree: ast.Module, name: str, allowed: tuple[str, ...]) -> list[tuple[str, int]]:
-    """(enclosing function, line) of each reference to ``name``, as an attribute or a bare name, outside ``allowed``."""
+def references_outside(
+    tree: ast.Module, name: str, allowed: tuple[str, ...], *, strings: bool = False,
+) -> list[tuple[str, int]]:
+    """(enclosing function, line) of each reference to ``name``, as an attribute or a bare name, outside ``allowed``;
+    with ``strings``, a string literal equal to ``name`` (``globals()["name"]``) is a reference too."""
     found: list[tuple[str, int]] = []
 
     def walk(node: ast.AST, scope: tuple[str, ...]) -> None:
@@ -298,6 +301,7 @@ def references_outside(tree: ast.Module, name: str, allowed: tuple[str, ...]) ->
                 continue
             qualname = ".".join(scope)
             named = (isinstance(child, ast.Attribute) and child.attr == name) or (isinstance(child, ast.Name) and child.id == name)
+            named = named or (strings and isinstance(child, ast.Constant) and child.value == name)
             if named and qualname not in allowed:
                 found.append((qualname or "<module>", child.lineno))
             walk(child, scope)

@@ -1,10 +1,10 @@
 # AD-1346 M3e4d6 (#1604): the capability request store's store-write checks, in shadow
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-03
-**Revised by:** the orchestrator (Copilot), 2026-11-05: M3-01's SEARCH is re-anchored on the head paragraph that `PROGRESS.md` holds on the build's base (BF-950's), with the §8 prose that describes it; §8's dates are 2026-11-05, the date of the build; and the Status line's ceiling record is re-measured (AD-1358); no other change.
+**Revised by:** the orchestrator (Copilot), 2026-11-05: M3-01's SEARCH is re-anchored on the head paragraph that `PROGRESS.md` holds on the build's base (BF-950's), with the §8 prose that describes it; §8's dates are 2026-11-05, the date of the build; and the Status line's ceiling record is re-measured (AD-1358). Amendment A1 (§16, review round 1): WM1's third branch also counts a reference to its scope by a string literal (R1-01 to R1-05, rows RQ-11 and RQ-12, §14's properties 8 and 12, register R156); no other change.
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601). The sixth part of M3e4d (register R113). No new AD or BF number (`scripts/ad_ceiling.py`: CEILING AD-1358 on 2026-11-05). **Tier:** HIGH (M1: `src` and the census guards that pin it), test (M2), docs (M3). Nothing parked.
 **Dependencies:** AD-1346 M3e4d3, M3e4d4 and M3e4d5, on `origin/main` at `44977f6e` (M3e4c3f, M3e4d1, M3e4d2). The build's base is the final commit of the batch that carries them; the Architect sends an amendment for any SEARCH that differs there.
-**Anchors:** every SEARCH text in §7 and §8 was read on `54be7ab2` (the M3e4d5 branch head). 42 SEARCH/REPLACE blocks (M1 30, M2 10, M3 2), no new file, 2 regenerated files (M3).
+**Anchors:** every SEARCH text in §7 and §8 was read on `54be7ab2` (the M3e4d5 branch head). 42 SEARCH/REPLACE blocks (M1 30, M2 10, M3 2), no new file, 2 regenerated files (M3). Amendment A1's 5 blocks (R1-01 to R1-05, §16) were read on `210302b8`, the head of the batch that carries this slice, M3e4d7 and M3e4d8; they touch no line that either of those changes, so they apply on this slice's own tree too: 47 blocks in all.
 **Contract file:** `prompts/ad-1346-m3e4d6-capability-request-checks.md`.
 
 **Identifiers.**
@@ -1078,7 +1078,7 @@ AD-1346 M3e4d6 is the sixth part of M3e4d. `CapabilityRequestStore.file_request`
 - *D320 (the rows).* `file_request`, `decide` and `_decide_ladder_row` are checks; `mark_fulfilled` and `require_build_consensus` are the ship's by D239. Rejected: `_decide_ladder_row` as the ship's; the file kept pending.
 - *D321 (the checks).* The statement before `file_request`'s `if self._db:`, and `decide`'s first statement, with module-scope imports. WM1 gains a branch for a module-level scope reached only through its check function. Rejected: a check inside the decision lock; a check in each writer; a check inside `_decide_ladder_row`.
 - *D322 (the hand-off).* Constructor injection through `init_communication`. Rejected: `set_admission` with the `isinstance` hand-off, which takes the class to 16 direct methods; moving `_find_pending_action` out to make room; the runtime setting a private attribute.
-- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM16 and WM17 are new.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM16 and WM17 are new. From review round 1 (A1), `references_outside` takes a `strings` option that WM1's third branch uses, and EC8 tests it.
 - *Residual, accepted.* Registers R155 and R156 of the contract.
 - *Reversal.* Revert the M3e4d6 commits.
 
@@ -1096,9 +1096,9 @@ AD-1346 M3e4d6 is the sixth part of M3e4d. `CapabilityRequestStore.file_request`
 
 ## 10. Mutation rows (one campaign of record on the M2 tree, after an unmutated baseline passes)
 
-- `--tests`: every row runs against `tests/test_ad1346_admission_store_writes.py` and `tests/test_ad1346_admission_store_census.py`.
+- `--tests`: every row runs against `tests/test_ad1346_admission_store_writes.py` and `tests/test_ad1346_admission_store_census.py`; from A1 (§16), also `tests/test_ad1346_admission_effect_census.py`.
 - Each Line is a stripped line that occurs once in its file on M2's tree. Builder: confirm with `grep -c -F`; a count other than 1 is a hard stop for the Architect.
-- RQ-1 to RQ-7 mutate a `src` file: restore it after each row. `git status --porcelain -- src` prints nothing after the campaign.
+- RQ-1 to RQ-7 and RQ-11 mutate a `src` file: restore it after each row. `git status --porcelain -- src` prints nothing after the campaign.
 
 | # | M | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|---|
@@ -1112,10 +1112,13 @@ AD-1346 M3e4d6 is the sixth part of M3e4d. `CapabilityRequestStore.file_request`
 | RQ-8 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_REQUESTS, "_decide_ladder_row"): StoreCheck((_REQUESTS, "CapabilityRequestStore.decide"), "decided_by"),` | `(_REQUESTS, "_decide_ladder_row"): StoreCheck((_REQUESTS, "CapabilityRequestStore.file_request"), "agent_id"),` | `test_each_store_write_check_is_one_statement_in_its_place` |
 | RQ-9 | M1 | `tests/fixtures/ad1346_store_census.py` | the RQ-8 line | `(_REQUESTS, "_decide_ladder_row"): System(SHIP, "a ladder decision"),` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
 | RQ-10 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_REQUESTS, "CapabilityRequestStore.mark_fulfilled"): System(SHIP, "a request's status, fulfilled"),` | `(_REQUESTS, "CapabilityRequestStore.get"): System(SHIP, "a request's status, fulfilled"),` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
+| RQ-11 | A1 | `src/probos/capability_request.py` | `return self._cache.get(request_id)` | `_ = globals()["_decide_ladder_row"]; return self._cache.get(request_id)` | `test_each_store_write_check_is_one_statement_in_its_place` |
+| RQ-12 | A1 | `tests/fixtures/ad1346_effect_census.py` | `named = named or (strings and isinstance(child, ast.Constant) and child.value == name)` | `pass` | `test_the_census_helpers_report_a_new_site_a_stale_row_a_count_a_reference_an_import_and_a_literal` |
 
 - RQ-3 mutates the RQ-1 line, RQ-4 the RQ-2 line and RQ-9 the RQ-8 line: run each after restoring the row it follows.
 - RQ-8 reaches WM1's third branch: `file_request` holds a check that presents `agent_id`, so it passes the keyword assertion and is caught by the branch's `len(reached) == 1`.
 - The campaign re-runs no earlier row.
+- RQ-11 and RQ-12 belong to A1 (§16) and run on the A1 tree, after an unmutated baseline. RQ-11 names `_decide_ladder_row` by a string key inside `CapabilityRequestStore.get`, which still returns what it returned: only WM1's third branch reads the file for it. RQ-12 turns off the helper's `strings` branch: only EC8 sees that, because `src` holds no literal equal to a scope's name.
 
 ## 11. Verified Against Codebase (2026-11-03, read on `54be7ab2`)
 
@@ -1273,7 +1276,7 @@ HOLDS: yes
 - The collect-only count for `tests/test_ad1346_admission_store_writes.py` is 17.
 - For each §10 Line, `grep -c -F` on M2's tree prints 1. A Line that contains `'` is matched with a double-quoted pattern, or with `grep -c -F -f <file holding the line>`.
 - `python -P scripts/check_architecture_principles.py --check` exits 0 after M1. By hand count, `CapabilityRequestStore`'s body goes from 494 to 498 lines, which is not more than `SRP_MAX_BODY_LINES`, and keeps 15 direct methods.
-- M1 is 30 SEARCH/REPLACE blocks: M1-01 to M1-04 in the capability request module, M1-05 and M1-06 in `startup/communication.py`, M1-07 in `runtime.py`, M1-08 to M1-10 in `admission`, M1-11 to M1-16 in the store census fixture, M1-17 to M1-23 in its test, M1-24 to M1-26 in the store-write test, M1-27 and M1-28 in T16's file, and M1-29 and M1-30 in the two census fixtures. M2 is 10 (M2-01 to M2-10) and M3 is 2: 42 blocks in all.
+- M1 is 30 SEARCH/REPLACE blocks: M1-01 to M1-04 in the capability request module, M1-05 and M1-06 in `startup/communication.py`, M1-07 in `runtime.py`, M1-08 to M1-10 in `admission`, M1-11 to M1-16 in the store census fixture, M1-17 to M1-23 in its test, M1-24 to M1-26 in the store-write test, M1-27 and M1-28 in T16's file, and M1-29 and M1-30 in the two census fixtures. M2 is 10 (M2-01 to M2-10) and M3 is 2: 42 blocks in all; A1 (§16) adds 5, which makes 47.
 - `python -P scripts/gen_ad_ledger.py --check` exits 0 after M3.
 
 ## 13. Prior Art and Blind Spots
@@ -1295,19 +1298,99 @@ HOLDS: yes
 5. `CapabilityRequestStore`'s body is not more than 500 lines, and it has no more than 15 direct methods (`check_architecture_principles.py --check`).
 6. The new text in `capability_request.py` and `startup/communication.py` holds none of the strings in §5's `src` text list.
 7. `STORE_WRITE_SCOPES` gains exactly the 5 rows of M1-16. `capability_request.py` leaves `STORE_WRITE_FILES` and `AGENT_ATTRIBUTED_SCOPES`, and no other key or value of the three tables changes.
-8. WM1's third branch requires all four of: a same-file module-level scope, one call to it after the check, no other reference to it in the file, and its name in no other `src` file. Its first two branches are unchanged in effect.
+8. WM1's third branch requires all four of: a same-file module-level scope, one call to it after the check, no other reference to it in the file (by name, by attribute and, from A1, by a string literal equal to it), and its name in no other `src` file. Its first two branches are unchanged in effect.
 9. Each row's reason and each changed docstring, comment and tracker sentence agrees with the code. In particular: each reason against its scope's statements (§1 table); the counts of WC1 (79, 10, 69, 2, 66, 1, 17, 48).
 10. WM16's and WM17's tallies follow from `_capability_round`'s four checked writes per round, presenting `AGENT_A`, `AGENT_B`, `AGENT_B` and `AGENT_A`. The second filing carries a record `validate_triage_record` accepts, so its decision goes through `_decide_ladder_row`. The install filing is refused before its check. The tests use real stores over `tmp_path`.
 11. WM5's first runtime records the filing's and the decision's checks by index; its second reads the store's `_admission` as None.
-12. Each §10 mutant fails its named test on the M2 tree, and `src` is restored after the campaign.
+12. Each §10 mutant fails its named test on the M2 tree (RQ-11 and RQ-12, A1's rows, on the A1 tree), and `src` is restored after the campaign.
 
 ## 15. Acceptance criteria
 
 - The M1, M2 and M3 focused gates pass as written in §4.
 - The §12 checks hold.
-- The §10 campaign of record kills RQ-1 to RQ-10, each by its named test, after an unmutated baseline passes.
+- The §10 campaign of record kills RQ-1 to RQ-10, each by its named test, after an unmutated baseline passes; A1's campaign kills RQ-11 and RQ-12 the same way.
 - The broad gate passes once for the batch that carries this slice, with its receipt.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 16. Amendment A1 (review round 1, 2026-11-05)
+
+Review round 1 of this slice, a Diff Reviewer pass (GPT-6.1 Sol) on the candidate `66058b63`, returned NOT READY on three findings, all P3. A1 answers the two that are repaired; the third is recorded.
+
+- **F1 (text).** The contract commit's message said "All 40 SEARCH/REPLACE pairs". §7 and §8 hold 42, as the header and §12 say. The commit message is corrected to 42; no file changes for it.
+- **F2 (injected-only; a gap in a new guard).** WM1's third branch looks for another reference to the scope in `capability_request.py` as an `ast.Name` or an `ast.Attribute` node only. A statement such as `_x = globals()["_decide_ladder_row"]` in that file passes it, although §14's property 8 says there is no other reference. The reviewer ran that statement, and `references_outside` returned `[]`.
+  - `references_outside` is shared: EC4 calls it along a subprocess sink's chain, ES1 along an egress sink's chain and WM2 for the Ward Room's routes. Its default is unchanged. It gains a keyword-only `strings`, False by default, and with it a string literal equal to the name counts as a reference (R1-01, R1-02). WM1's third branch passes `strings=True` (R1-03).
+  - EC8 tests the helper on synthetic input, so it gains the string case (R1-04) and says so (R1-05). RQ-11 and RQ-12 (§10) are A1's rows.
+  - The helper does not see a name assembled at run time; register R156 says so.
+- **F3 (text; recorded, not repaired).** `src/probos/admission/seam.py:28-29` says `check_ticket` "lets none out". A `BaseException` raised inside the seam (a cancellation, for one) propagates; an ordinary `Exception` does not. The sentence stands on the base too, and this slice does not change the seam. The wave follow-up (#1754) carries it.
+
+R1-01 to R1-05 apply, in order, after §7 and §8, on this slice's tree. None touches a line that M3e4d7's or M3e4d8's blocks change. Focused gate: M1's gate in §4, then the §10 campaign for RQ-11 and RQ-12 after an unmutated baseline.
+
+**R1-01** (`tests/fixtures/ad1346_effect_census.py`)
+
+SEARCH:
+```
+def references_outside(tree: ast.Module, name: str, allowed: tuple[str, ...]) -> list[tuple[str, int]]:
+    """(enclosing function, line) of each reference to ``name``, as an attribute or a bare name, outside ``allowed``."""
+    found: list[tuple[str, int]] = []
+```
+REPLACE:
+```
+def references_outside(
+    tree: ast.Module, name: str, allowed: tuple[str, ...], *, strings: bool = False,
+) -> list[tuple[str, int]]:
+    """(enclosing function, line) of each reference to ``name``, as an attribute or a bare name, outside ``allowed``;
+    with ``strings``, a string literal equal to ``name`` (``globals()["name"]``) is a reference too."""
+    found: list[tuple[str, int]] = []
+```
+
+**R1-02** (`tests/fixtures/ad1346_effect_census.py`)
+
+SEARCH:
+```
+            named = (isinstance(child, ast.Attribute) and child.attr == name) or (isinstance(child, ast.Name) and child.id == name)
+```
+REPLACE:
+```
+            named = (isinstance(child, ast.Attribute) and child.attr == name) or (isinstance(child, ast.Name) and child.id == name)
+            named = named or (strings and isinstance(child, ast.Constant) and child.value == name)
+```
+
+**R1-03** (`tests/test_ad1346_admission_store_writes.py`)
+
+SEARCH:
+```
+            assert references_outside(ast.parse(src_sources()[path], filename=path), scope, (cover.check[1],)) == [], (cover.check, scope)
+```
+REPLACE:
+```
+            assert references_outside(ast.parse(src_sources()[path], filename=path), scope, (cover.check[1],), strings=True) == [], (cover.check, scope)
+```
+
+**R1-04** (`tests/test_ad1346_admission_effect_census.py`)
+
+SEARCH:
+```
+    assert references_outside(ast.parse(source), "_go", ("A.run", "A._go")) == [("A.other", 5), ("<module>", 10)]
+```
+REPLACE:
+```
+    assert references_outside(ast.parse(source), "_go", ("A.run", "A._go")) == [("A.other", 5), ("<module>", 10)]
+    quoted = 'def run():\n    return _go()\n\n\ndef other():\n    return globals()["_go"]\n\n\nNAMES = ["_go"]\n'
+    assert references_outside(ast.parse(quoted), "_go", ("run",)) == []
+    assert references_outside(ast.parse(quoted), "_go", ("run",), strings=True) == [("other", 6), ("<module>", 9)]
+```
+
+**R1-05** (`tests/test_ad1346_admission_effect_census.py`)
+
+SEARCH:
+```
+    """EC8: the helpers on synthetic input, so a helper that reports nothing cannot pass EC2, EC4, EC5 or EC6 silently."""
+```
+REPLACE:
+```
+    """EC8: the helpers on synthetic input, so a helper that reports nothing cannot pass EC2, EC4, EC5 or EC6 silently;
+    from AD-1346 M3e4d6 (A1), its string case is what lets WM1's third branch see a quoted name."""
+```
 
 ## For the register (#1604)
 
@@ -1332,3 +1415,4 @@ HOLDS: yes
   - `mark_fulfilled` and `require_build_consensus` are `System` rows; a build's raised consensus requirement is not checked.
   - After M1, `CapabilityRequestStore`'s body is 498 lines (hand count). Three more lines in that class add `lines` to its `srp-size` triggers, and the class has no baseline row.
   - `ticket_findings`' key (D288) does not say which store's check counted a `store_write` finding (as R148).
+  - WM1's third branch sees a reference to the scope by name, by attribute and, from A1, by a string literal equal to it (`globals()["_decide_ladder_row"]`). A name assembled at run time (`globals()["_decide_" + "ladder_row"]`) is not seen, and neither is a reference from outside `src`.

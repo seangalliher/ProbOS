@@ -1413,7 +1413,7 @@ AD-1346 M3e4d6 is the sixth part of M3e4d. `CapabilityRequestStore.file_request`
 - *D320 (the rows).* `file_request`, `decide` and `_decide_ladder_row` are checks; `mark_fulfilled` and `require_build_consensus` are the ship's by D239. Rejected: `_decide_ladder_row` as the ship's; the file kept pending.
 - *D321 (the checks).* The statement before `file_request`'s `if self._db:`, and `decide`'s first statement, with module-scope imports. WM1 gains a branch for a module-level scope reached only through its check function. Rejected: a check inside the decision lock; a check in each writer; a check inside `_decide_ladder_row`.
 - *D322 (the hand-off).* Constructor injection through `init_communication`. Rejected: `set_admission` with the `isinstance` hand-off, which takes the class to 16 direct methods; moving `_find_pending_action` out to make room; the runtime setting a private attribute.
-- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM16 and WM17 are new.
+- *Tests.* WM1, WM5, WC1, WC3 and T16 change; WM16 and WM17 are new. From review round 1 (A1), `references_outside` takes a `strings` option that WM1's third branch uses, and EC8 tests it.
 - *Residual, accepted.* Registers R155 and R156 of the contract.
 - *Reversal.* Revert the M3e4d6 commits.
 

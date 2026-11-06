@@ -332,7 +332,7 @@ def test_each_store_write_check_is_one_statement_in_its_place() -> None:
             assert cover.check[0] == path and "." not in scope, (cover.check, scope)
             reached = [node for node in ast.walk(fn) if calls(scope)(node)]
             assert len(reached) == 1 and call.lineno < reached[0].lineno, (cover.check, scope, len(reached))
-            assert references_outside(ast.parse(src_sources()[path], filename=path), scope, (cover.check[1],)) == [], (cover.check, scope)
+            assert references_outside(ast.parse(src_sources()[path], filename=path), scope, (cover.check[1],), strings=True) == [], (cover.check, scope)
             assert [rel for rel, source in src_sources().items() if rel != path and scope in source] == [], scope
 
 
