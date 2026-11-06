@@ -9,6 +9,7 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A2, the repair of review round 2 (GPT-6.1 Sol, NOT READY). The line framing is read only where it keeps the classification the base read (RK13), and a rewrite that keeps a note's classification is indexed at it (RK14). T13 gains three cases; T20 and T21 are added. RKS-23 to RKS-26 are re-anchored and RKS-35 to RKS-40 added. L18 and L19 are revised and L24 added.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3, the round-three brake after review round 3 (GPT-6.1 Sol, NOT READY). **Split:** every reader reads with the base's framing again (RK15); RK9, RK10 and RK13 are withdrawn to BF-940 (#1686). T16 and T17 are retired, T13 loses two cases, T20 gains one and T22 is added. RKS-23 to RKS-25, RKS-31, RKS-32, RKS-35 to RKS-38 and RKS-40 are retired and RKS-41 to RKS-44 added. L18, L19 and L24 are revised, L21 is withdrawn and L25 is added.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A4, the repair of review round 4 (GPT-6.1 Sol, NOT READY, finding 1). A frontmatter that libyaml cannot load, for any reason, is read as the base read it, so RK8 is where libyaml's load returns and PyYAML's scanner refuses. T22's docstring changes; T23 and T24 are added. RKS-41 and RKS-44's cells are corrected (finding 3) and RKS-45 to RKS-47 added. L26 and L27 are added.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A5, the repair of review round 5 (GPT-6.1 Sol, NOT READY, finding 1). Every reader but the search reads with the base's own call; the search keeps libyaml below 100 levels of nesting and returns a record only where the base's reading admits the reader. RK8 and RK15 are restated; T13, T14, T22 and T23 change; T25 to T29 are added. RKS-42, 43, 46 and 47 are retired and RKS-48 to RKS-56 added. L26 is revised and L28 and L29 added.
 
 **Which text describes the head.** Line numbers are those of `1c01a5ee`. Before building, run `git diff --stat 1c01a5ee HEAD -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py`. If it is not empty, or any M1 or M2 SEARCH no longer matches, return to the Architect. Where prose and a block differ, the block wins. Files are LF in the index; SEARCH text is LF.
 
@@ -1069,8 +1070,10 @@ Not built. Each item is ready for #1754, without redoing the search:
 - **L23 (A1).** The route's `directory` is any directory inside the records repository (`_safe_path`). The route reads as the Captain, so a confined search shows nothing a whole-repository search could not.
 - **L24 (A2, A3).** `write_entry` writes frontmatter with `yaml.dump`, which tags a tuple or another Python object `!!python/`. No reader loads that tag, so the record reads as `{}` for every reader (L19). Normalizing or rejecting such a value before writing (AD-1140's fail-fast tier) is #1686's.
 - **L25 (A3).** The base's framing cuts a value holding `---`, for every reader, as on the base (BF-940, #1686). A store-written `author` holding `---` loses the keys after it (round 1, finding 1). A quoted value holding `---` and `: ` does not parse (L19). A value whose cut prefix is a bad timestamp (`2026-13-05---nominal`) raises from `read_entry`, while search withholds it (round 3, finding 3). A value whose prefix parses reads as that prefix (round 3, finding 1). None of these differs from the base. #1686's acceptance receives T16 and T17 as they stand at `cf61c683`, the round-3 reviewer's corpus and T22, rewritten to its rule.
-- **L26 (A4).** Where both libyaml and PyYAML load a frontmatter, they are taken to read it alike (one constructor, PyYAML's `SafeConstructor`). T22 and T23 check this on their grids, and §16's census on the records. A scanner difference other than a tab that both loaders accept is not otherwise proven.
+- **L26 (A4, A5).** Where both libyaml and PyYAML load a frontmatter, they are taken to read it alike. A5 relies on this for the search alone, and only for ranking and term statistics. Every other reader runs the base's call. The search's admission of a reader is bounded by the base's reading.
 - **L27 (A4, round 4, finding 2).** A numeric tag accepted by the API (`tags: [717]`) is written, found by keyword search, and never reaches the semantic index: `semantic.py:406` joins the tags as strings and raises `TypeError`, on write and on backfill. This is the same on `a745e447`. It goes to BF-940 (#1686), whose frontmatter-type policy (L24) normalizes or rejects such a value before writing.
+- **L28 (A5).** The keyword search may be stricter than `read_entry` and the semantic path, never looser. A frontmatter only libyaml reads (RK8: a tab after a key) reads as `{}` (`ship`) for `read_entry`, `list_entries` and the semantic index, as on the base. The search reads it as libyaml does, and shows the record only to readers both readings admit: alice's tabbed private note is shown to alice and the Captain and withheld from bob, to whom `read_entry` shows it. So BF-679's keyword/semantic parity holds as an inclusion for RK8 records, not as an equality. A record the base's reading refuses still counts in that call's term statistics; the top-20 list skips it and fills from below. Making the base's reading of a tabbed frontmatter match its author's intent is #1686's.
+- **L29 (A5).** libyaml's C composer gets only blocks that the event stream shows nesting fewer than 100 deep. A deeper block is read with the base's call; from about 330 levels that call raises `RecursionError`, and the search withholds the record. The bundled libyaml (0.2.5 in PyYAML 6.0.3's Windows wheel) carries no nesting-limit message. Whether its composer exhausts the C stack at extreme depth is measured by the A5.6 probe, not assumed. The event pass adds a second libyaml parse of every frontmatter, which B1 bounds.
 
 ## 12. Verified Against Codebase (2026-11-05, on `1c01a5ee`)
 
@@ -3331,3 +3334,167 @@ HOLDS: yes
 
 ### A4.8 Prior art
 No web search: A4 restores the base's reading for one class of documents. The difference is the known one between PyYAML's tab handling and libyaml's (RK8).
+
+## Amendment A5 (2026-11-06): review round 5 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** head `6e2a73dd`.
+
+### A5.1 Findings and decisions
+| Finding | Disposition |
+|---|---|
+| R5-F1 (P2, regression since A1) | Fixed: rank 4, plus the depth guard in `_search_load_frontmatter` and the admission guard `_base_reading_admits` (A5-01 to A5-08) |
+| R4-F2 | L27, unchanged |
+| T23 and T24 omit nesting | T25 and T26 |
+
+**Ranked options**
+
+| # | Option | Verdict |
+|---|---|---|
+| **1** | **A5:** rank 4, plus the depth guard in the search's loader, plus the admission guard on the records the search returns | **Chosen** |
+| 2 | Keep libyaml for every reader, with a recursion-safe nesting pre-check (your alternative) | Rejected. Every reader would still rely on "the two parsers read alike except RK8 and depth", which rounds 4 and 5 each broke. A sixth class would reach `read_entry`, `list_entries`, `publish` and the backfill again. |
+| 3 | Plain rank 4, no guards | Rejected. The search would show a 600-level record that `read_entry` raises on. libyaml's C composer would get unbounded depth: the wheel's libyaml 0.2.5 has no nesting-limit message (see Verified). |
+| 4 | No libyaml anywhere | Held as **A6**, the fallback after round 6 (§3). It costs about 0.8 s more per call (RK8 (A1)), so B1 is likely to fail. |
+
+**Both directions**
+
+| Case | Search reads | `read_entry` reads | Guard? |
+|---|---|---|---|
+| Tab shape (RK8): libyaml reads `private`, the base reads `{}` | libyaml's `private` | `{}` (`ship`), shown to everyone | **No guard needed.** The search is only stricter (fail-closed). It is not a disclosure, because `read_entry` already shows the record to everyone. Recorded as **L28**. |
+| Nesting of 100 levels or more | The base's call: same reading, or `RecursionError`, after which the search withholds the record | Same | **Depth guard.** It also keeps unbounded depth away from the C composer (**L29**). |
+| Any unknown difference between the two parsers | libyaml's reading, in the walk | The base's reading | **Admission guard.** No unknown difference can widen who sees a record; it can only change ranking statistics (L28). |
+
+- **Invariant.** Every reader but the search runs the base's own framing and `yaml.safe_load` call, so it reads every document exactly as `a745e447` did (value, body or exception type). The search reads as the base did except RK8, and never returns a record to a reader whom the base's reading withholds it from or raises on.
+- **RK8 (A5).** The search loads with libyaml when it is installed and the block nests fewer than `_SEARCH_LIBYAML_DEPTH_LIMIT` (100) collections deep. It loads with the base's call when the block nests deeper or libyaml raises anything. Every other reader loads with the base's call. The one admitted difference, and only for the search, is a frontmatter that libyaml's load returns and `yaml.safe_load` refuses with `YAMLError`. Rejected: libyaml for every reader (rounds 4 and 5 each found a new class where the two parsers differ).
+- **RK15 (A5).** Every reader but the search reads every document exactly as `a745e447`'s `_parse_document` did, by construction. The search reads as the base did except RK8. It withholds a record whose reading raises or is not a mapping, and returns a record only where the base's reading (`_base_reading_admits`) admits the reader.
+
+### A5.2 Gates
+Build now (the Builder runs no tests). Everything below waits until the host is free (after about 12:30Z).
+
+- **GA5** on A5-M1's head: GA1's command.
+  - New file: **78 passed (27 functions)**.
+  - Total: **849 passed, 1 skipped**.
+  - Then `scripts/check_architecture_principles.py --check`.
+- **Red check on `6e2a73dd`** (report, not gated): T25's two past-the-base-limit cases and T26's past-the-base-limit case must fail. Report every other count.
+- **Hard stops** (report, do not tune):
+  - any case of T22 to T29 fails;
+  - a T25 or T26 premise fails;
+  - T21 skips;
+  - the architecture check fails;
+  - B1 or B2 fails: report the six medians and the overshoot.
+- **B1 and B2:** rerun on A5-M1's head before round 6. Report `yaml.__with_libyaml__`.
+
+### A5.3 Mutation rows
+(run on A5-M1's head, along with the reruns listed below)
+
+| # | File | Line | Mutate to | Claimed failing test |
+|---|---|---|---|---|
+| RKS-48 | records_store.py | `    return ({} if block is None else _load_frontmatter(block)), body` | `    return ({} if block is None else _search_load_frontmatter(block)), body` | `test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base` (killed only with libyaml installed) |
+| RKS-49 | records_store.py | `            return parts[1], parts[2].strip()` | `            return parts[1], parts[2]` | `test_every_reader_frames_and_loads_a_document_alike` (the-store-shape) |
+| RKS-50 | records_store.py | `    except yaml.YAMLError:  # A5: the base's own catch; a constructor error or a RecursionError propagates` | `    except Exception:  # A5: the base's own catch; a constructor error or a RecursionError propagates` | `test_every_document_reads_as_on_the_base` |
+| RKS-51 | records_store.py | `    if _RECORDS_YAML_LOADER is yaml.SafeLoader or not _nests_below(block, _SEARCH_LIBYAML_DEPTH_LIMIT):` | `    if _RECORDS_YAML_LOADER is yaml.SafeLoader:` | `test_a_deeply_nested_frontmatter_reads_as_on_the_base` (killed only with libyaml installed) |
+| RKS-52 | records_store.py | `                if depth >= limit:` | `                if depth > limit:` | `test_libyaml_is_given_only_a_block_nesting_fewer_than_the_limit_deep` |
+| RKS-53 | records_store.py | `            elif isinstance(event, yaml.CollectionEndEvent):` | `            elif False:` | same test |
+| RKS-54 | records_store.py | `        if block is not None and not _base_reading_admits(` | `        if False and not _base_reading_admits(` | `test_the_search_returns_no_record_the_base_reading_withholds` (the-base-reading-withholds) |
+| RKS-55 | records_store.py | `        return False  # A5: the search withholds what read_entry raises on` | `        return True  # A5: the search withholds what read_entry raises on` | same test (the-base-reading-raises) |
+| RKS-56 | records_store.py | `        if len(results) == _SEARCH_LIMIT:` | `        if len(results) == _SEARCH_LIMIT + 1:` | `test_the_agents_own_entry_is_found_behind_twenty_readable_matches` (test_bf949) |
+
+- **Retired:** RKS-42, 43, 46 and 47 (their lines are gone).
+- **Reruns:** RKS-8 and RKS-15 (the admission loop now sits after them), and RKS-26, 27, 41, 44 and 45 (their claimed tests now reach them through the search). With RKS-48 to RKS-56, that is **16 rows** to run.
+- **Carried forward:** the other 24 active rows.
+- **40 rows are active.**
+- **Equivalent mutants, not rowed:**
+  - `_nests_below`'s `except Exception` → `yaml.YAMLError`: the parser raises only `YAMLError` subclasses on a `str`;
+  - `type(frontmatter) is dict and` in `_base_reading_admits`: no unpatched document is a mapping for libyaml and a non-mapping for the base;
+  - the `is yaml.SafeLoader` short-circuit, which saves only cost.
+
+### A5.4 Census
+(read-only clone, counts only, after 12:30Z):
+
+1. files;
+2. base `_parse_document` == head `_read_document` (expect every record);
+3. head `_search_read_document`'s reading ≠ the base's, with how many of those are RK8;
+4. blocks not nesting below 100.
+
+Stop and return to the Architect if (2) has any difference, or (3) holds a case that is not RK8.
+
+### A5.5 Round 6
+**Scope: the whole candidate.** A5 changes which loader every non-search reader uses, which is a shared contract. Reviewer: GPT-6.1 Sol, after the host is free (after about 12:30Z).
+
+**Properties to verify**
+- (a) Every non-search reader reads every document as `a745e447` did, and its code path is the base's code.
+- (b) The search returns no record to a reader whom the base's reading withholds it from or raises on.
+- (c) The search's reading equals the base's except RK8.
+- (d) The A5 delta.
+- (e) R4-F2 is base-equal.
+
+**Stop rule (exact):** "Round 6 is READY unless it finds (i) a document whose reading by any reader other than the search (`_read_document`, `_parse_document`, `read_entry`, `list_entries`, `publish`, update-in-place, the similarity and convergence scans, or the semantic backfill) differs in any way from `a745e447`'s (frontmatter, body, or the type of the exception raised); (ii) a record the search returns to a reader whom the base's reading of that record (`_read_document`) withholds it from, or for which that reading raises; (iii) an input on which any reader terminates or hangs the process where the base raised; or (iv) a Critical or High defect in the search itself. A difference in the search's ranking or term statistics that comes from libyaml's reading (L28), and a finding equal to the base, do not block; the latter goes to #1686. On (i), (ii) or (iii) the orchestrator makes no repair in this item and applies A6. On (iv) it returns to the Architect."
+
+**A6, decided now, no further brake.**
+- The search also reads with `_read_document`.
+- Delete `_RECORDS_YAML_LOADER`, `_SEARCH_LIBYAML_DEPTH_LIMIT`, `_nests_below`, `_search_load_frontmatter`, `_search_read_document`, `_base_reading_admits` and the admission loop.
+- RK8 is retired, and L15's behaviour becomes the norm.
+- Round 7 is a delta review of that removal only.
+- If B1 then fails, B1 becomes reported, not gated, and N1 (#1754) carries the remedy. This is inside the envelope: #1751's acceptance names no latency, and its "Also noted" calls the full parse "acceptable today". **B2 stays gated.**
+
+### A5.6 Probe
+(orchestrator; after 12:30Z; child process; run from a scratch directory; not a gate):
+
+```
+d:/ProbOS/.venv/Scripts/python.exe -I -c "import threading, yaml; n=100000; t=threading.Thread(target=lambda: yaml.load('x: '+'['*n+']'*n, Loader=yaml.CSafeLoader)); t.start(); t.join(); print('returned')"
+```
+- Repeat with `n=10000`.
+- Report the exit code and whether `returned` printed.
+- A crash would mean A1 to A4's heads could take the vessel down on one hand-made file; A5 removes that. Neither outcome changes code: record it in L29's wording and the issue comment, with neutral wording.
+
+### A5.7 Verified Against Codebase (2026-11-06, on `6e2a73dd`)
+- `records_store.py:211` `_RECORDS_YAML_LOADER`; `:241-259` `_load_frontmatter` (libyaml first); `:262-282` `_read_document`; `:345` the search calls `_read_document`; `:1228` `read_entry`; `:1282` `list_entries` (`except Exception` at `:1288`); `:1337` `publish`; `:1512` `_parse_document`.
+- `records_store.py:135` `record_is_readable` defaults to `"ship"`; `:1231-1240` `read_entry`'s gate (it has no scope).
+- Base `records_store.py:1265-1275`: `yaml.safe_load(parts[1]) or {}` / `except yaml.YAMLError`. Base `:1155-1159`: the search parsed only substring matches, so a raise ended the whole search.
+- `site-packages/yaml/__init__.py:40` `parse(stream, Loader=Loader)` uses `check_event`/`get_event`; `events.py:21,31` define `CollectionStartEvent` and `CollectionEndEvent`; `__init__.py:5` `from .events import *`; PyYAML 6.0.3.
+- Tests: `:313`, `:336`, `:538`, `:593` are the only test uses of `_read_document`. `:44` `_store`, `:50` `_write`, `:58` `_paths`.
+
+### Absence Verified, Amendment A5 (2026-11-06, on `6e2a73dd`)
+```
+CLAIM: nothing outside records_store.py calls _read_document, _load_frontmatter, _RECORDS_YAML_LOADER or _search_records
+RUN:   Grep "_read_document|_load_frontmatter|_RECORDS_YAML_LOADER|_search_records" src/
+FOUND: records_store.py:209,211,241,242,253,262,272,280,319,345,1228,1380,1410,1509,1512 only
+HOLDS: yes
+
+CLAIM: no test outside the BF-952 file uses these names
+RUN:   Grep the same pattern plus CSafeLoader in tests/
+FOUND: test_bf952_records_keyword_search.py only (test_capability.py:84 is an unrelated "read_document" name)
+HOLDS: yes
+
+CLAIM: the bundled libyaml has no nesting-limit message
+RUN:   Grep "[Nn]esting|depth|too deep" yaml/_yaml.cp312-win_amd64.pyd ; Grep "0\.2\.[0-9]"
+FOUND: none ; "0.2.5"
+HOLDS: yes, as string evidence only; how it behaves at depth is A5.6's measurement
+
+CLAIM: T25-T29, RKS-48..56, L28, L29 and GA5 are unused labels
+RUN:   Grep "\bT2[5-9]\b|RKS-4[89]|RKS-5\d|\bL2[89]\b|\bA5\b|\bGA5\b" in the contract
+FOUND: one local "A5 CLAIM" label at :1118 only
+HOLDS: yes
+
+CLAIM: #1751's acceptance names no latency
+RUN:   gh issue view 1751
+FOUND: five acceptance items, none a latency; "Also noted" says reading and parsing every file is "acceptable today"
+HOLDS: yes
+```
+
+### Not verified, Amendment A5
+The bridge does not let me run Python. These rest on reading and reasoning:
+- PyYAML's C composer recursing at extreme depth (A5.6 measures this);
+- the exact count for the red check (only the three F1 cases are gated);
+- the B1 cost of the event pass (B1 measures this).
+
+Each one has a gate or a report attached.
+
+### A5.8 Prior art
+- **Adopted:** CVE-2026-33532 (the JavaScript `yaml` package): its parse phase is iterative and its compose phase recursive, so a flow nesting of 2 bytes a level exhausts the stack, and the error is not the library's own type. That is the same split as here, so the depth check sits on the iterative event stream, before the composer.
+- **Considered, deferred:** libyaml's later scanner nesting limit of 1,000. Its test file shows it, but the bundled 0.2.5 carries no such message. Upgrading is out of scope (no new dependency).
+- **Reference projects:** none are overdue that are relevant; this is ProbOS plumbing.
+
+Sources:
+- [CVE-2026-33532 (OSV)](https://osv.dev/CVE-2026-33532)
+- [GitLab advisory CVE-2026-33532](https://advisories.gitlab.com/npm/yaml/CVE-2026-33532/)
+- [libyaml tests/test-nesting.c (mirror)](https://gitverse.ru/githubmirror/libyaml/content/master/tests/test-nesting.c)
