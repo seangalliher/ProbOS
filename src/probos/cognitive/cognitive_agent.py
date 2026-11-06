@@ -8661,6 +8661,8 @@ class CognitiveAgent(BaseAgent):
             opponent=opponent,
             reader_id=reader_id,
             reader_department=reader_department,
+            # A3 (F1): if this game finishes while the records are read, its own record is not counted
+            current_game_id=game.get("game_id", ""),
         )
         return tally.render() if tally is not None else None
 
