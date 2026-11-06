@@ -107,6 +107,23 @@ def _seq_clock():
     return _c
 
 
+def _pop_context_manifests(actual: dict) -> None:
+    """Remove the AD-1357 ``metadata.context_manifest`` from the four agent replies of
+    a two-agent room turn, after checking each is there.
+
+    The manifest measures the live prompt: its hash carries the wall-clock second, a
+    section's size the weekday's name, its system-prompt size every standing order. No
+    golden fixture can pin those, so the UI mock models a reply without it;
+    ``test_ad1357_context_manifest.py`` pins the manifest itself.
+    """
+    replies = [m for m in actual["history"]["messages"] if m["role"] == "agent"]
+    replies += [r["message"] for r in actual["response"]["per_agent_replies"]]
+    assert len(replies) == 4
+    for message in replies:
+        manifest = message["metadata"].pop("context_manifest")
+        assert manifest["path"] == "single_pass"
+
+
 def _make_recording_handler(received: dict, agent_id: str):
     async def _h(intent: IntentMessage) -> IntentResult:
         # Capture the full params dict so the vision_messages wire can be
@@ -1157,6 +1174,7 @@ async def test_group_csv_reaches_actual_cognitive_requests(
                 "rows": adapter.parsed_rows[0], "result": json.loads(adapter.responses[0].content),
             } for agent_id, adapter in adapters.items()],
         }
+        _pop_context_manifests(actual)
         fixture_path = Path(__file__).resolve().parents[1] / "ui/e2e/fixtures/room-attachments.json"
         if not fixture_path.is_file():
             pytest.fail("Actual attachment producer assertions passed; bank fixture scenario " + input_source + ":\n" + json.dumps(actual, indent=2), pytrace=False)

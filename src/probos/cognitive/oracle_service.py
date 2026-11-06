@@ -727,10 +727,15 @@ class OracleService:
         k_per_tier: int = 3,
         tiers: list[str] | None = None,
         max_chars: int = 4000,
+        sources_out: list[tuple[str, str]] | None = None,
     ) -> str:
         """Query and return formatted string with provenance tags.
 
         Budget enforcement: accumulates content lengths, stops at max_chars.
+
+        AD-1357: when ``sources_out`` is a list, the ``(source_tier, path)`` of each
+        rendered result is appended to it in rendered order (``path`` is ``""`` for
+        a result whose metadata has none). The returned text is the same either way.
         """
         results = await self.query(
             query_text, agent_id=agent_id, intent_type=intent_type,
@@ -775,6 +780,8 @@ class OracleService:
                 break
             lines.append(line)
             char_count += len(line) + 1
+            if sources_out is not None:
+                sources_out.append((r.source_tier, str(r.metadata.get("path") or "")))
 
         lines.append("=== END ORACLE RESULTS ===")
         return "\n".join(lines)

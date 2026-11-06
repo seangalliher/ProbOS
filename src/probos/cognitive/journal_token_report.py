@@ -13,7 +13,8 @@ Each row falls in exactly one bucket, tested in this order:
 * ``mock``: ``model = 'mock'``, the mock client's fixed counts, which BF-901 S2 records as measured.
 * ``measured`` and ``estimated``: the row's ``token_source``, as BF-901 S1's ``charge_completion`` set it.
 * ``uncharged``: an empty ``token_source``: no model call (a bypassed step, a timed-out attempt), a failed
-  call, or a row recorded before BF-901, which all read empty.
+  call, a row recorded before BF-901, or an agentic DM turn's own row (``dag_node_id`` dm-turn, AD-1357),
+  which succeeded but whose loop calls are not metered. All read empty.
 * ``other``: any other label. None is written today; it is counted apart so that a new label is never
   folded into another bucket.
 
@@ -21,7 +22,8 @@ Spend is measured plus estimated. The journal's empty source is not in ``crew_ex
 (measured, estimated, mixed), and nothing here passes a journal label to that module.
 
 Only journaled calls are covered: one-shot decisions and sub-task chain steps. The agentic loop and the
-other model calls that write no journal row (BF-901 S2, section 9) are not.
+other model calls that write no journal row (BF-901 S2, section 9) are not. An agentic DM turn adds one
+uncharged row for the whole turn (AD-1357), so its tokens are not counted either.
 """
 
 from __future__ import annotations

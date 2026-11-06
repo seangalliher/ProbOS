@@ -43,6 +43,7 @@ from probos.cognitive.introspective_telemetry import (
 )
 from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_DM_ROUTE, active_stop
+from probos.cognitive.context_manifest import context_manifest_metadata  # AD-1357
 from probos.crew_utils import is_crew_agent
 from probos.mesh.intent import IntentAuthorizationDenied
 from probos.cognitive.commands.personality_command import (
@@ -2869,6 +2870,9 @@ def _build_reply_metadata(
         emotion = ""
     if emotion:
         meta["emotion"] = emotion
+    # AD-1357 (#1749): what the reply was given, beside it. Absent when the agent
+    # recorded none, so such a turn's metadata is unchanged.
+    meta.update(context_manifest_metadata(result))
     return meta
 
 

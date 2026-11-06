@@ -232,36 +232,12 @@ _WORKFORCE_PENDING: Final = (
     "WorkItemStore.fail_crew_session_provisioning",
     "WorkItemStore.install_child_plan_with_parent_metadata",
     "WorkItemStore.adopt_child_plan_with_parent_metadata",
-    "WorkItemStore.compare_and_set_work_item_assignment",
     "WorkItemStore.update_work_item",
-    "WorkItemStore.confirm_value_context",
-    "WorkItemStore.merge_work_item_metadata",
-    "WorkItemStore.compare_and_set_work_item_verification",
-    "WorkItemStore.publish_work_item_metadata_with_child_barrier",
-    "WorkItemStore.transition_crew_session_terminal_with_trust",
-    "WorkItemStore.mark_crew_session_delivery_delivered",
-    "WorkItemStore.enqueue_promoted_report",
-    "WorkItemStore.mark_promoted_report_delivered",
-    "WorkItemStore.mark_promoted_report_undeliverable",
-    "WorkItemStore.mark_crew_trust_outcome_delivered",
-    "WorkItemStore.transition_work_item",
-    "WorkItemStore.delete_work_item",
-    "WorkItemStore.add_work_watcher",
-    "WorkItemStore.claim_work_notice",
-    "WorkItemStore._assign_work_item",
-    "WorkItemStore.unassign_work_item",
-    "WorkItemStore.start_booking",
-    "WorkItemStore.pause_booking",
-    "WorkItemStore.resume_booking",
-    "WorkItemStore.complete_booking",
-    "WorkItemStore._cancel_booking",
-    "WorkItemStore._generate_journal",
-    "WorkItemStore._record_timestamp",
 )
 
 #: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313), M3e4d6 (D320),
-#: M3e4d7 (D327) and M3e4d8 (D334): each (file, enclosing scope) of these twelve files that holds a SQL write statement
-#: -> its coverage.
+#: M3e4d7 (D327), M3e4d8 (D334), M3e4d9 (D341), M3e4d10 (D346) and M3e4d11 (D351): each (file, enclosing scope) of
+#: these twelve files that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -363,6 +339,41 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     # System (D239): an outbox table with no author column.
     (_WORKFORCE, "_insert_crew_trust_effects"): System(SHIP, "a crew session's trust outcomes in crew_trust_outbox, which has no author column"),
     (_WORKFORCE, "_insert_crew_session_delivery"): System(SHIP, "a crew session's delivery record in crew_delivery_outbox, which has no author column"),
+    # AD-1346 M3e4d9 (D341). System (D239, D218): a work item's lifecycle, its agent-work watchers and notice claims, its
+    # assignment, and its bookings with their timestamps and journal; each reason names what its scope's statements
+    # write (register R162).
+    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata: a ship's service's record, the agent work runner's with a copy of its executor's answer under the executor's callsign or slot id (D218)"),
+    (_WORKFORCE, "WorkItemStore.delete_work_item"): System(SHIP, "the deletion of a work item, its bookings with their timestamps and journals, and its resource requirements"),
+    (_WORKFORCE, "WorkItemStore.add_work_watcher"): System(SHIP, "an agent-work watcher row, which names the agent it is about (D239)"),
+    (_WORKFORCE, "WorkItemStore.claim_work_notice"): System(SHIP, "a notice claim: work_item_id, recipient, kind and claimed_at, no text (D239)"),
+    (_WORKFORCE, "WorkItemStore._assign_work_item"): System(SHIP, "a booking, its work item's assigned_to, status and updated_at, and a requirement's fulfilled; resource_id and assigned_to name the resource they are about (D239)"),
+    (_WORKFORCE, "WorkItemStore.unassign_work_item"): System(SHIP, "a work item's cleared assigned_to, status and updated_at; it does not write its reason"),
+    (_WORKFORCE, "WorkItemStore.start_booking"): System(SHIP, "a booking's status and actual_start, and its work item's status and updated_at"),
+    (_WORKFORCE, "WorkItemStore.pause_booking"): System(SHIP, "a booking's status"),
+    (_WORKFORCE, "WorkItemStore.resume_booking"): System(SHIP, "a booking's status"),
+    (_WORKFORCE, "WorkItemStore.complete_booking"): System(SHIP, "a booking's status, actual_end and total_tokens_consumed, and its work item's actual_tokens and updated_at"),
+    (_WORKFORCE, "WorkItemStore._cancel_booking"): System(SHIP, "a booking's status"),
+    (_WORKFORCE, "WorkItemStore._generate_journal"): System(SHIP, "a booking's journal segments, derived from its timestamps; booking_journals has no author column"),
+    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),
+    # AD-1346 M3e4d10 (D346). System (D239, D218): the four outbox marks take only a row's identity and write its
+    # delivered and delivered_at; a promoted report's pending row holds a copy of an agent's report (D218) or one of
+    # the ship's own status notices (D239), which the delivery service replays through
+    # ChatThreadStore.append_message_once (register R163).
+    (_WORKFORCE, "WorkItemStore.mark_crew_session_delivery_delivered"): System(SHIP, "a crew session delivery's delivered and delivered_at in crew_delivery_outbox, which has no author column"),
+    (_WORKFORCE, "WorkItemStore.enqueue_promoted_report"): System(SHIP, "a promoted report's pending row in promoted_report_outbox, with its agent_id and body: a copy of an agent's report (D218) or one of the ship's own status notices (D239), replayed through ChatThreadStore.append_message_once"),
+    (_WORKFORCE, "WorkItemStore.mark_promoted_report_delivered"): System(SHIP, "a pending report's delivered = 1 and delivered_at; it takes only a message_id"),
+    (_WORKFORCE, "WorkItemStore.mark_promoted_report_undeliverable"): System(SHIP, "a pending report's delivered = 2 and delivered_at; it takes only a message_id"),
+    (_WORKFORCE, "WorkItemStore.mark_crew_trust_outcome_delivered"): System(SHIP, "a trust outcome's delivered and delivered_at in crew_trust_outbox, which has no author column"),
+    # AD-1346 M3e4d11 (D351). System (D239, D218): no statement of these six scopes writes created_by and none takes an
+    # author id; a confirmation has no text, and each patch or record a production caller passes is one a ship's
+    # service composes, some with copies of agents' text under their ids (register R164). update_work_item stays
+    # pending: set_steps and update_step can pass it an agent's plan or rejection note with the agent's id (R165).
+    (_WORKFORCE, "WorkItemStore.compare_and_set_work_item_assignment"): System(SHIP, "a child's assigned_to, metadata and updated_at, written only when the row still has the caller's expected parent, status, assignee, dependencies and metadata; assigned_to names the agent it is about (D239), and no src module calls it"),
+    (_WORKFORCE, "WorkItemStore.confirm_value_context"): System(SHIP, "a pending value declaration's confirmed_by, confirmation_kind and confirmed_at in its provenance, and updated_at: a confirmation, with no text (D239)"),
+    (_WORKFORCE, "WorkItemStore.merge_work_item_metadata"): System(SHIP, "a work item's merged metadata and updated_at, with its status and actual_tokens when they change; each production caller's patch is a ship's service's record, the crew executor's with its assignee's id and a summary of its output (D218)"),
+    (_WORKFORCE, "WorkItemStore.compare_and_set_work_item_verification"): System(SHIP, "a child's verification record, merged metadata, actual_tokens and updated_at; the crew finalizer composes the record, with the producer's id, its result summaries and the verdicts' critiques (D218)"),
+    (_WORKFORCE, "WorkItemStore.publish_work_item_metadata_with_child_barrier"): System(SHIP, "a CrewSession's metadata, its contract, synthesis and recovery records, with status and updated_at; CrewSessionService composes them, the contract with its last_result_summary (D218)"),
+    (_WORKFORCE, "WorkItemStore.transition_crew_session_terminal_with_trust"): System(SHIP, "a failed CrewSession's contract in its metadata, with status and updated_at; CrewSessionService composes the contract (D218)"),
     # Pending (D334): a later part of M3e4d classifies each.
     **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
