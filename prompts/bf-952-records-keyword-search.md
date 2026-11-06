@@ -4,9 +4,10 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: cost amendment, after the orchestrator measured the draft at about 2.7 s per call that blocked the event loop. It adds RK7 and RK8, rewrites the search internals inside P1-2 and P1-3, adds tests T13 and T14 and one T4 case, re-anchors RKS-4, RKS-7 to RKS-13, RKS-16 and RKS-18, adds rows RKS-19 to RKS-22, adds bounds B1 and B2 (§4, §16), and revises L1 and adds L13 to L16.
 **Revised by:** the orchestrator (Copilot), 2026-11-06: P1-3's SEARCH, which the cost amendment wrote as a reference to the first draft, is the verbatim 68-line block of `records_store.py:1109-1176` (the script that restored it asserts that it equals the base file's text); and the base is the AD-1346 M3e4d6 to M3e4d8 batch's merge, so the batch's own `PROGRESS.md` and `DECISIONS.md` text is on it (P3-1's SEARCH is the title line and P3-2's the BF-950 heading, and both still occur once); the Status line names the batch's merge (`a745e447`) instead of its branch; no other change.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A1, the repair of review round 1 (GPT-6.1 Sol, NOT READY). It adds one framing and load for every Ship's Records reader (BF-940, #1686), fail-closed reads of an unparseable frontmatter, the search's per-record parse boundary, numeric field values, the route's `directory` and the HXI request. T13 and T14 are rewritten and T15 to T19 added. Rows RKS-21 and RKS-22 are retired and RKS-23 to RKS-34 added. L9 and L16 are revised and L17 to L23 added.
-**Status:** ready to build. **Base:** drafted on `1c01a5ee` (`origin/main`, the BF-950 merge). The AD-1346 M3e4d6–d8 batch merged first (`a745e447`, PR #1756) and changed none of the M1 or M2 files: `git diff --stat 1c01a5ee a745e447 -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py` is empty. **M3's SEARCH text was written against `1c01a5ee` and still occurs once on `a745e447`, so §8 needed no re-anchoring.** **Dependencies:** none. **Tier:** M1 STANDARD with a shared contract (the `search` result list, read by four production callers and the HXI); M2 STANDARD, test only; M3 STANDARD, trackers. **Estimated tests:** one new file, `tests/test_bf952_records_keyword_search.py`, with 14 functions and 42 cases (counted by reading); after Amendment A1, 19 functions and 58 cases (counted by reading); after Amendment A2, 21 functions and 68 cases (counted by reading). Edits: `tests/test_bf949_notebook_reader_identity.py` (one assertion) and `tests/test_layer_boundaries.py` (one allowlist entry).
+**Status:** ready to build. **Base:** drafted on `1c01a5ee` (`origin/main`, the BF-950 merge). The AD-1346 M3e4d6–d8 batch merged first (`a745e447`, PR #1756) and changed none of the M1 or M2 files: `git diff --stat 1c01a5ee a745e447 -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py` is empty. **M3's SEARCH text was written against `1c01a5ee` and still occurs once on `a745e447`, so §8 needed no re-anchoring.** **Dependencies:** none. **Tier:** M1 STANDARD with a shared contract (the `search` result list, read by four production callers and the HXI); M2 STANDARD, test only; M3 STANDARD, trackers. **Estimated tests:** one new file, `tests/test_bf952_records_keyword_search.py`, with 14 functions and 42 cases (counted by reading); after Amendment A1, 19 functions and 58 cases (counted by reading); after Amendment A2, 21 functions and 68 cases (counted by reading); after Amendment A3, 20 functions and 63 cases (counted by reading). Edits: `tests/test_bf949_notebook_reader_identity.py` (one assertion) and `tests/test_layer_boundaries.py` (one allowlist entry).
 **BF number:** BF-952, held by the title of #1751 (OPEN). Nothing is allocated, and no AD number is needed.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A2, the repair of review round 2 (GPT-6.1 Sol, NOT READY). The line framing is read only where it keeps the classification the base read (RK13), and a rewrite that keeps a note's classification is indexed at it (RK14). T13 gains three cases; T20 and T21 are added. RKS-23 to RKS-26 are re-anchored and RKS-35 to RKS-40 added. L18 and L19 are revised and L24 added.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3, the round-three brake after review round 3 (GPT-6.1 Sol, NOT READY). **Split:** every reader reads with the base's framing again (RK15); RK9, RK10 and RK13 are withdrawn to BF-940 (#1686). T16 and T17 are retired, T13 loses two cases, T20 gains one and T22 is added. RKS-23 to RKS-25, RKS-31, RKS-32, RKS-35 to RKS-38 and RKS-40 are retired and RKS-41 to RKS-44 added. L18, L19 and L24 are revised, L21 is withdrawn and L25 is added.
 
 **Which text describes the head.** Line numbers are those of `1c01a5ee`. Before building, run `git diff --stat 1c01a5ee HEAD -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py`. If it is not empty, or any M1 or M2 SEARCH no longer matches, return to the Architect. Where prose and a block differ, the block wins. Files are LF in the index; SEARCH text is LF.
 
@@ -1059,13 +1060,14 @@ Not built. Each item is ready for #1754, without redoing the search:
 - **L15.** Without libyaml, the search parse falls back to PyYAML. A call is then slower than B1 but still off the loop.
 - **L16.** The `safe_load` fallback for a frontmatter that libyaml refuses and PyYAML accepts is not pinned by a test. No such input is known; the reverse (a tab after a key) is T13's case.
 - **L17 (A1, finding 4).** AD-725's DM knowledge lookup (`dm_targeted_lookup.py:159-161`; `timeout_ms` 500, `config_models/agentic.py:178`; `enabled: false` in `config/system.yaml:1669`) now aborts at its deadline while the search's worker runs on. The reviewer measured `None` at 511 ms, with the worker finishing at 1,126 ms on 302 records. The base returned its result at 1,342 ms only because it blocked the loop past the deadline. With the lookup enabled, a knowledge lookup on such a corpus degrades to no recall block, AD-725's own degrade. The deadline is unchanged. The remedy is N1 (an index, or a parsed-record cache keyed by path, `mtime_ns` and size), recommended as #1754's next item.
-- **L18 (A1, A2).** A document that starts with `---` and has no later `---` at all has no frontmatter (`{}`, so the default level), as on the base. One whose frontmatter is closed only inside a line is framed as the base framed it (RK13). The store writes neither: `write_entry` (`:551-552`) and `publish` (`:1299-1300`) close with `---` on its own line, so only a hand-made, legacy or truncated file reaches either. Whether an opener with no closing marker should be the Captain's alone is BF-956's question: doing so would also hide a raw `.md` written by `write_workspace_file` (the consultation workspace) that opens with a rule.
-- **L19 (A1, A2).** `_parse_document`'s other callers still read a frontmatter that does not parse as `{}`, as on the base. `list_entries` lists it, the similarity and convergence scans read it, `write_entry`'s update-in-place loses `created` and restarts `revision`, and a Captain's `publish` rewrites it with only `status` and `updated`. The semantic backfill reads through `read_entry` as the Captain (`semantic.py:738-752`); `read_entry` turns the parse failure into `{}` for the Captain, so the backfill indexes such a record at `ship` with no author, and semantic search returns it to other readers that `read_entry` and keyword search withhold it from (round 2, finding 3; as on the base). It is reachable by a hand-made or legacy file, and by `write_entry` itself (L24). It is BF-956, which covers: carrying the parse failure across the `read_entry` boundary to the backfill and keeping such a record out of the index (or indexing it for the Captain alone); a policy for each `_parse_document` caller; L18's opener with no closing marker; L9's falsy frontmatter; and L24's writer. It must keep the Captain's unrestricted read, AD-1157a's preservation, AD-1140's reserved-key fail-fast and BF-679's parity between the keyword and semantic paths.
+- **L18 (A1, A2, A3).** A document that starts with `---` and has no later `---` at all has no frontmatter (`{}`, so the default level), as on the base. Every document is framed as the base framed it (RK15). The store's writer always closes with `---` on its own line, so only a hand-made, legacy or truncated file reaches this. Whether an opener with no closing marker should be the Captain's alone is #1686's question: doing so would also hide a raw `.md` written by `write_workspace_file` that opens with a rule.
+- **L19 (A1, A2, A3).** Every reader reads a frontmatter that does not parse as `{}`, as on the base: `read_entry`, search, `list_entries`, the similarity and convergence scans, update-in-place (which loses `created` and restarts `revision`), a Captain's `publish` (which rewrites it with only `status` and `updated`) and the semantic backfill. A3 withdraws RK10: under the base's framing a store-written quoted value holding `---` and `: ` does not parse, and RK10 would take the record from its owner. The keyword and semantic paths agree again (BF-679). The policy for each caller, and carrying a parse failure across `read_entry` to the backfill, are #1686's; BF-956 is not filed.
 - **L20 (A1).** The skill catalog's own three splits (`cognitive/skill_catalog.py:105`, `:179`, `:790`) keep the base framing. #1686 stays open for them.
-- **L21 (A1).** A record the semantic backfill indexed before A1 keeps the metadata of the base parse until it is indexed again. The 2026-10-26 census found no live record the base framing cuts; §16 step 2 counts them again on the clone.
+- **L21 (A1; withdrawn by A3).** Every reader frames as on the base, so the semantic index holds what the backfill read before BF-952.
 - **L22 (A1).** An error of YAML's constructor (`updated: 2026-13-05`) still raises from `_parse_document` and `read_entry`, as on the base, and `list_entries` skips such a record through its `except Exception`. Only search withholds it.
 - **L23 (A1).** The route's `directory` is any directory inside the records repository (`_safe_path`). The route reads as the Captain, so a confined search shows nothing a whole-repository search could not.
-- **L24 (A2, round 2 finding 4).** `write_entry` writes frontmatter with `yaml.dump`, which tags a tuple or another Python object `!!python/` (`extra_frontmatter={"aliases": ("a", "b")}` writes `!!python/tuple`). No reader loads that tag, so the record reads as a frontmatter that does not parse: the Captain's alone in `read_entry` and search (RK10), `{}` elsewhere (L19). The writer does not round-trip every value. No ordinary caller is known to pass such a value; §A2.4 counts the tag in the live corpus. Normalizing or rejecting such a value before writing (AD-1140's fail-fast tier) is BF-956's.
+- **L24 (A2, A3).** `write_entry` writes frontmatter with `yaml.dump`, which tags a tuple or another Python object `!!python/`. No reader loads that tag, so the record reads as `{}` for every reader (L19). Normalizing or rejecting such a value before writing (AD-1140's fail-fast tier) is #1686's.
+- **L25 (A3).** The base's framing cuts a value holding `---`, for every reader, as on the base (BF-940, #1686). A store-written `author` holding `---` loses the keys after it (round 1, finding 1). A quoted value holding `---` and `: ` does not parse (L19). A value whose cut prefix is a bad timestamp (`2026-13-05---nominal`) raises from `read_entry`, while search withholds it (round 3, finding 3). A value whose prefix parses reads as that prefix (round 3, finding 1). None of these differs from the base. #1686's acceptance receives T16 and T17 as they stand at `cf61c683`, the round-3 reviewer's corpus and T22, rewritten to its rule.
 
 ## 12. Verified Against Codebase (2026-11-05, on `1c01a5ee`)
 
@@ -2740,4 +2742,517 @@ No web search. This is ProbOS plumbing, python-frontmatter's delimiter rule is a
 
 ## For the Captain
 
-None to decide. The change is reversible, keeps every caller's contract, strengthens privacy (RK3, and A1's RK9 and RK10), and makes the loop more responsive than the base. The live-copy read in §16 is the step #1751's own acceptance names, done read-only on a clone; A1 adds the BF-940 census counts to it. For the Captain's information: #1686 is a P1, security-class defect (a private record readable by every reader), on the base since the store's first parser, with ordinary reach through the notebook write API. A1 closes it for Ship's Records; #1686 stays open for the skill catalog.
+None to decide. The change is reversible, keeps every caller's contract, strengthens privacy (RK3), and makes the loop more responsive than the base. For the Captain's information: #1686 is a P1, security-class defect on the base since the store's first parser, with ordinary reach through the notebook write API. A1 and A2 tried to close it for Ship's Records inside this BF; A3 withdraws that (§A3), and #1686 stays open for Ship's Records and the skill catalog with BF-952's findings attached.
+
+## Amendment A3 (2026-11-06): round-three brake after review round 3 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** head `cf61c683`.
+
+### A3.1 Decision: split
+| Finding | Disposition |
+|---|---|
+| R3-F1 (P1, A2) | Base-equal under RK15; moved to #1686 (L25) |
+| R3-F2 (P1, A1 regression) | Gone: the base reads the record as alice's (T20's new case) |
+| R3-F3 (P2, ordinary, A2) | Base-equal for `read_entry`, withheld by search; moved to #1686 (L25) |
+| R3-F3b (P2) | Gone: one frame |
+| R3-F4 (P3) | Fixed: the AD-1140 docstring names the 4,000-character cap |
+| Round 1 F1, round 2 F3/F4 (base) | Moved to #1686 (L19, L24, L25) |
+
+- **RK15 (A3).** Every reader reads every document as `a745e447`'s `_parse_document` did, constructor errors included, with two exceptions: a frontmatter only libyaml accepts (RK8), and search's withholding of a record whose parse raises or is not a mapping.
+- **RK9, RK10 and RK13 are withdrawn.**
+- **Rejected:** a third reconciliation in this BF. Requiring every authorization field to agree makes the owner of `author: Ezri---Prime` lose her note. A fail-closed sentinel is rewritten as `{}` by `publish` and update-in-place (§A2.1).
+- **#1751's acceptance needs no framing change.**
+
+### A3.2 Gates
+- **GA3 (A3-M1's head):** GA1's command (§A1.3).
+  - Expected in the new file: **63 passed (20 functions)**.
+  - Expected in total: **834 passed, 1 skipped** (GA2's 839 less 5).
+  - Then `scripts/check_architecture_principles.py --check`.
+  - No UI change.
+- **Hard stops:**
+  - T22 fails: report `len(differ)` and the first five shapes, and do not tune;
+  - any T20 or T13 case fails;
+  - T21 skips.
+- **B1/B2 not rerun:** one split and one load per record, never more work than A2.
+- **Mutation:** rerun RKS-13, 26, 27, 30 and 41–44 (8 rows) on A3-M1's head. The other 24 active rows carry forward from A2's campaign: neither their Line nor their claimed test changed.
+
+### A3.3 Mutation rows
+| # | File | Line | Mutate to | Claimed failing test |
+|---|---|---|---|---|
+| RKS-41 | records_store.py | `        parts = raw.split("---", 2)` | `        parts = [""] + raw[3:].split("\n---", 1)` | `test_every_document_reads_as_on_the_base` |
+| RKS-42 | records_store.py | `            return ({} if frontmatter is None else frontmatter), parts[2].strip()` | `            return frontmatter, parts[2].strip()` | `test_every_reader_frames_and_loads_a_document_alike` (malformed-yaml) |
+| RKS-43 | records_store.py | the RKS-42 line | `            return ({} if frontmatter is None else frontmatter), parts[2]` | same test (the-store-shape) |
+| RKS-44 | records_store.py | `        if len(parts) >= 3:` | `        if len(parts) >= 2:` | same test (never-closed-L18) |
+
+Retired: RKS-23, 24, 25 (now an equivalent mutant), 31, 32, 35, 36, 37, 38 and 40. **32 rows are active.**
+
+### A3.4 Orchestrator steps (§16 census, read-only clone, counts only)
+- Replace §A2.4 with these counts: files; base `_parse_document` equal to head `_read_document`; differing; differing where the base's `safe_load` raised `YAMLError` (RK8 only); frontmatters holding `---` before their closing line (#1686's live reach); `!!python/` count.
+- **Stop and return to the Architect** if any differing record is not an RK8 case.
+- Post the counts on #1686 too.
+
+### A3.5 Pairs
+**A3-01 — `src/probos/knowledge/records_store.py`** (`:257-303`; `def _line_framing_is_kept` occurs once)
+SEARCH:
+```python
+def _line_framing_is_kept(framed: Any, legacy: Any) -> bool:
+    """BF-952 A2: whether A1's line framing replaces the base's framing of a document.
+
+    It does when it loads as a mapping and, where the base's framing names a ``classification``,
+    names the same one. A frontmatter that a hand-made or legacy file closed inside a line would
+    otherwise take the body as YAML: the body may not load, or may give ``classification`` an
+    unknown or a repeated value, and the record would lose the level the base read for it.
+    """
+    if type(framed) is not dict:
+        return False
+    if type(legacy) is dict and "classification" in legacy:
+        return framed.get("classification") == legacy["classification"]
+    return True
+
+
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1, A2: a Ship's Records document's frontmatter and body, the one parse every reader uses.
+
+    ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
+
+    Framing. A document that starts with ``---`` has frontmatter up to the next ``---``, as the
+    base framed it (``raw.split("---", 2)``), and its body is what follows, stripped. When that
+    ``---`` is inside a line and a later line begins ``---``, the frontmatter may hold a
+    store-written value with ``---`` in it (BF-940, #1686: ``author: Ezri---Prime``,
+    ``topic: Inspection --- nominal``), which the base cut. It then runs to that line instead,
+    when ``_line_framing_is_kept`` accepts it (A1). It does not when that framing does not load
+    as a mapping or names a classification other than the base framing's (A2), so a hand-made
+    or legacy file whose frontmatter is closed inside a line reads as on the base, at the level
+    the base read. A document with no later ``---`` has no frontmatter, as on the base (L18).
+
+    Loading: ``_load_frontmatter``, so a frontmatter either loader accepts is read, and every
+    reader reads it alike. ``None`` means a frontmatter block is there and neither loader
+    accepts it. An error of YAML's constructor propagates, as it did from ``_parse_document``
+    on the base.
+    """
+    if not raw.startswith("---"):
+        return {}, raw
+    cut = raw.find("---", 3)
+    if cut < 0:
+        return {}, raw
+    legacy = _load_frontmatter(raw[3:cut]), raw[cut + 3:].strip()
+    close = raw.find("\n---", 3)
+    if close + 1 > cut:
+        framed = _load_frontmatter(raw[3:close + 1])
+        if _line_framing_is_kept(framed, legacy[0]):
+            return framed, raw[close + 4:].strip()
+    return legacy
+```
+REPLACE:
+```python
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1, A3: a Ship's Records document's frontmatter and body, the one parse every reader uses.
+
+    ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
+
+    Framing (A3): exactly the base's. A document that starts with ``---`` has frontmatter up to
+    the next ``---`` wherever it stands, inside a value too, and its body is what follows,
+    stripped; one with no later ``---`` has no frontmatter (L18). That framing cuts a value
+    holding ``---``; BF-940 (#1686) owns changing it, for every reader at once (L25).
+
+    Loading (RK8): ``_load_frontmatter``, libyaml then ``yaml.safe_load``, so every reader reads a
+    frontmatter alike. A frontmatter neither loader accepts reads as ``{}``, as on the base. An
+    error of YAML's constructor (``updated: 2026-13-05``) propagates, as it did from
+    ``_parse_document`` on the base; the search withholds such a record.
+    """
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = _load_frontmatter(parts[1])
+            return ({} if frontmatter is None else frontmatter), parts[2].strip()
+    return {}, raw
+```
+
+**A3-02 — `src/probos/knowledge/records_store.py`** (`:373-380`; unique by its `# A1: a frontmatter block no loader accepts` line)
+SEARCH:
+```python
+        if frontmatter is None:
+            # A1: a frontmatter block no loader accepts names no classification, so the record
+            # is shown to the Captain alone, as ``read_entry`` rules.
+            if reader_id != _UNRESTRICTED_READER:
+                logger.debug("BF-952: withholding %s, whose frontmatter does not parse", rel_path)
+                continue
+            frontmatter = {}
+        if type(frontmatter) is not dict:
+```
+REPLACE:
+```python
+        if type(frontmatter) is not dict:
+```
+(`_UNRESTRICTED_READER` is still used at `:85` and `:145`, so there is no unused-name lint.)
+
+**A3-03 — `src/probos/knowledge/records_store.py`** (`:1408-1409`)
+SEARCH:
+```
+        build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
+        parse is shown to the Captain alone, as :meth:`read_entry` rules (A1). A
+```
+REPLACE:
+```
+        build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
+        parse reads as ``{}``, as every reader reads it (A3; BF-940, #1686). A
+```
+
+**A3-04 — `src/probos/knowledge/records_store.py`** (`:534-541`, R3-F4)
+SEARCH:
+```
+        AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
+        the frontmatter **before** ``yaml.dump``, so they round-trip through
+        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
+        sidecar, when every value is one YAML's safe loader builds (a string,
+        number, boolean, date, or a list or mapping of them). BF-952 A2:
+        ``yaml.dump`` writes a tuple or another Python object with a
+        ``!!python/`` tag, which no reader loads (BF-952 L24). Any key in
+```
+REPLACE:
+```
+        AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
+        the frontmatter **before** ``yaml.dump``. They round-trip through
+        ``_parse_document`` when every value is one YAML's safe loader builds
+        (a string, number, boolean, date, or a list or mapping of them) and
+        holds no ``---``, which the reader's framing cuts (BF-940, #1686).
+        ``yaml.dump`` writes a tuple or another Python object with a
+        ``!!python/`` tag, which no reader loads (BF-952 L24). The AD-1138
+        ``frontmatter_json`` sidecar holds them whole only within
+        ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
+        past it the index stores ``{}``. Any key in
+```
+
+**A3-05 — `src/probos/knowledge/records_store.py`** (`:1253-1262`)
+SEARCH:
+```python
+        frontmatter, content = _read_document(raw)
+        if frontmatter is None:
+            # BF-952 A1: a frontmatter block that no loader accepts names no classification.
+            # The base read it as ``{}``, so as ``ship``, and showed it to every reader; now
+            # only the Captain, who reads every record, is shown it.
+            if reader_id != "captain":
+                return None
+            frontmatter = {}
+
+        # Classification check — Captain has unrestricted read access
+```
+REPLACE:
+```python
+        frontmatter, content = _read_document(raw)
+
+        # Classification check — Captain has unrestricted read access
+```
+
+**A3-06 — `src/probos/knowledge/records_store.py`** (`:1539-1546`)
+SEARCH:
+```python
+        """Parse YAML frontmatter + content from a markdown document.
+
+        BF-952 A1: :func:`_read_document` frames and loads it, as it does for ``read_entry``
+        and the search. A frontmatter block that no loader accepts reads as ``{}`` here, as
+        on the base; ``read_entry`` and the search show such a record to the Captain alone.
+        """
+        frontmatter, content = _read_document(raw)
+        return ({} if frontmatter is None else frontmatter), content
+```
+REPLACE:
+```python
+        """Parse YAML frontmatter + content from a markdown document.
+
+        BF-952 A1, A3: :func:`_read_document` frames and loads it with the base's framing,
+        as it does for ``read_entry`` and the search.
+        """
+        return _read_document(raw)
+```
+
+**A3-07 — `src/probos/knowledge/lessons.py`** (`:85-87`; this restores `a745e447:85-86` exactly, so the file leaves the diff)
+SEARCH:
+```
+# A4 (R2-F3): Ship's Records split a document's frontmatter at the first two "---" it found, inside a value too
+# (records_store._parse_document, register R25), so an envelope value holding one came back cut short. BF-952 A1
+# ends the frontmatter only at a "---" that begins a line; this rule still refuses "---" and is unchanged.
+```
+REPLACE:
+```
+# A4 (R2-F3): Ship's Records splits a document's frontmatter at the first two "---" it finds, inside a value too
+# (records_store._parse_document, register R25), so an envelope value holding one would come back cut short.
+```
+
+**A3-08 — `tests/test_ad1341_s4_lessons.py`** (`:646-648`; this restores the base text, so the file leaves the diff)
+SEARCH:
+```
+    """A4 (R2-F3): Ship's Records cut a document's frontmatter at the first two ``---`` it found, wherever they stood
+    (register R25; BF-952 A1 now ends it only at a ``---`` that begins a line), so a callsign such as
+    ``normal---value`` came back as ``normal``: the stand-down reported the
+```
+REPLACE:
+```
+    """A4 (R2-F3): Ship's Records cuts a document's frontmatter at the first two ``---`` it finds, wherever they stand
+    (register R25), so a callsign such as ``normal---value`` came back as ``normal``: the stand-down reported the
+```
+
+**A3-09 — `tests/test_bf952_records_keyword_search.py`** (`:13-15`)
+SEARCH:
+```
+from __future__ import annotations
+
+import threading
+```
+REPLACE:
+```
+from __future__ import annotations
+
+import itertools
+import threading
+```
+
+**A3-10 — `tests/test_bf952_records_keyword_search.py`** (`:269-279`; `id="a-value-holding-three-hyphens"` occurs once)
+SEARCH:
+```
+    pytest.param(
+        "---\ntopic: Inspection --- nominal\nclassification: private\n---\nbody",
+        {"topic": "Inspection --- nominal", "classification": "private"}, "body", id="a-value-holding-three-hyphens",
+    ),
+    pytest.param(
+        "---\ntopic: 'Inspection --- status: nominal'\nclassification: private\n---\nbody",
+        {"topic": "Inspection --- status: nominal", "classification": "private"}, "body",
+        id="a-quoted-value-holding-a-key",
+    ),
+    pytest.param(
+        "---\nauthor: bones\n---\nabove\n---\nbelow", {"author": "bones"}, "above\n---\nbelow",
+```
+REPLACE:
+```
+    pytest.param(
+        "---\nauthor: bones\n---\nabove\n---\nbelow", {"author": "bones"}, "above\n---\nbelow",
+```
+
+**A3-11 — `tests/test_bf952_records_keyword_search.py`** (`:286-290`)
+SEARCH:
+```
+    pytest.param("---\nkey: [unclosed\n---\nbody", None, "body", id="malformed-yaml"),
+    pytest.param(
+        "---\nclassification:\tprivate\n---\nbody", {"classification": "private"} if _LIBYAML else None, "body",
+        id="a-tab-only-libyaml-accepts",
+    ),
+```
+REPLACE:
+```
+    pytest.param("---\nkey: [unclosed\n---\nbody", {}, "body", id="malformed-yaml"),
+    pytest.param(
+        "---\nclassification:\tprivate\n---\nbody", {"classification": "private"} if _LIBYAML else {}, "body",
+        id="a-tab-only-libyaml-accepts",
+    ),
+```
+
+**A3-12 — `tests/test_bf952_records_keyword_search.py`** (`:306-315`)
+SEARCH:
+```python
+def test_every_reader_frames_and_loads_a_document_alike(
+    tmp_path: Path, raw: str, frontmatter: dict[str, Any] | None, body: str,
+) -> None:
+    """A1 (BF-940, #1686; finding 6): ``_read_document`` is the one parse. ``_parse_document`` reads ``None`` (a
+    frontmatter block no loader accepts) as ``{}``, as on the base. The base cut the second and third cases at the
+    ``---`` inside the topic, and the third then did not parse. A tab after a key is refused by PyYAML's scanner
+    and accepted by libyaml, so with libyaml installed every reader now reads it."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    assert records_store_module._read_document(raw) == (frontmatter, body)
+    assert store._parse_document(raw) == ({} if frontmatter is None else frontmatter, body)
+```
+REPLACE:
+```python
+def test_every_reader_frames_and_loads_a_document_alike(
+    tmp_path: Path, raw: str, frontmatter: dict[str, Any], body: str,
+) -> None:
+    """A1 (finding 6), A3: ``_read_document`` is the one parse, with the base's framing. A frontmatter block no
+    loader accepts reads as ``{}``, as on the base. A tab after a key is refused by PyYAML's scanner and accepted by
+    libyaml, so with libyaml installed every reader now reads it (RK8). A value holding ``---`` is BF-940's
+    (#1686), not this file's."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    assert records_store_module._read_document(raw) == (frontmatter, body)
+    assert store._parse_document(raw) == (frontmatter, body)
+```
+
+**A3-13 — `tests/test_bf952_records_keyword_search.py`** (`:368-423`: retires T16 and T17; T-labels are not reused)
+SEARCH:
+```python
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("author", "values"), [
+    pytest.param("Ezri---Prime", {}, id="an-author-holding-three-hyphens"),
+    pytest.param("Ezri", {"topic": "Inspection --- status: nominal"}, id="a-quoted-topic-holding-a-key"),
+    pytest.param("Ezri", {"topic": "first line\n---\nlast line"}, id="a-multi-line-topic-holding-a-rule"),
+    pytest.param("Ezri", {"tags": ["warp --- core"]}, id="a-tag-holding-three-hyphens"),
+])
+async def test_a_frontmatter_value_holding_three_hyphens_is_read_whole_and_stays_private(
+    tmp_path: Path, author: str, values: dict[str, Any],
+) -> None:
+    """Finding 1 and BF-940 (#1686), through ``write_entry``, ``read_entry``, ``search`` and update-in-place. The
+    base ended the frontmatter at the first ``---`` anywhere. The author's case kept only ``author``, and neither
+    topic case parsed, so each read as ``ship`` and another reader was shown the private record; the tag's case
+    kept its classification, and its body began with the rest of the tag. The multi-line case checks that
+    ``yaml.dump`` starts no line of a value with ``---``."""
+    store = await _store(tmp_path)
+    path = "notebooks/Ezri/inspection.md"
+    write: dict[str, Any] = {
+        "author": author, "path": path, "content": "PRIVATE_BODY_PROOF the coolant", "message": "probe",
+        "classification": "private", **values,
+    }
+    await store.write_entry(**write)
+    own = await store.read_entry(path, reader_id=author)
+    assert own is not None and own["frontmatter"]["classification"] == "private"
+    assert {key: own["frontmatter"][key] for key in values} == values
+    assert own["content"] == "PRIVATE_BODY_PROOF the coolant"
+    assert await store.read_entry(path, reader_id="alice") is None
+    assert await _paths(store, "coolant", reader_id="alice") == []
+    assert await _paths(store, "coolant", reader_id=author) == [path]
+    await store.write_entry(**write)  # update-in-place carries ``created`` forward and counts the revision
+    again = await store.read_entry(path, reader_id=author)
+    assert again is not None and again["frontmatter"]["revision"] == 2
+    assert again["frontmatter"]["created"] == own["frontmatter"]["created"]
+
+
+@pytest.mark.asyncio
+async def test_a_record_whose_frontmatter_does_not_parse_is_shown_to_the_captain_alone(tmp_path: Path) -> None:
+    """RK10 (finding 1's injected reach): such a record names no classification. The base read it as ``{}``, so as
+    ``ship``, and every reader was shown it. Now ``read_entry`` and ``search`` show it to the Captain alone; its
+    author is unknown, so the author is not shown it either."""
+    store = await _store(tmp_path)
+    _write(store, "reports/open.md", "warp core report")
+    (store.repo_path / "notebooks" / "Bravo").mkdir(parents=True, exist_ok=True)
+    (store.repo_path / "notebooks" / "Bravo" / "secret.md").write_text(
+        "---\nauthor: Bravo\nclassification: private\ntitle: [unclosed\n---\n\nwarp core secret\n", encoding="utf-8",
+    )
+    assert await store.read_entry("notebooks/Bravo/secret.md", reader_id="alice") is None
+    assert await store.read_entry("notebooks/Bravo/secret.md", reader_id="Bravo") is None
+    captain = await store.read_entry("notebooks/Bravo/secret.md", reader_id="captain")
+    assert captain is not None and captain["frontmatter"] == {} and captain["content"] == "warp core secret"
+    assert await _paths(store, "warp", reader_id="alice") == ["reports/open.md"]
+    assert set(await _paths(store, "warp", reader_id="captain")) == {"reports/open.md", "notebooks/Bravo/secret.md"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("updated", [
+```
+REPLACE:
+```python
+@pytest.mark.asyncio
+@pytest.mark.parametrize("updated", [
+```
+
+**A3-14 — `tests/test_bf952_records_keyword_search.py`** (`:477`; `id="closed-on-its-own-line"` occurs once)
+SEARCH:
+```
+    pytest.param("---\nauthor: alice\nclassification: private\n---\nwarp core notes\n", True, id="closed-on-its-own-line"),
+```
+REPLACE:
+```
+    pytest.param(
+        "---\nauthor: alice\nclassification: private --- legacy\nclassification: private\nauthor: bob\n---\n"
+        "warp core notes\n",
+        True, id="closed-inside-a-line-then-keys-naming-another-author-and-a-rule",
+    ),
+    pytest.param("---\nauthor: alice\nclassification: private\n---\nwarp core notes\n", True, id="closed-on-its-own-line"),
+```
+
+**A3-15 — `tests/test_bf952_records_keyword_search.py`** (`:486-488`)
+SEARCH:
+```
+    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. The
+    fifth is the store's own shape. The last has no closing marker and reads as on the base, with no frontmatter
+    (L18); BF-956 owns any change to it and updates this case."""
+```
+REPLACE:
+```
+    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. In the
+    fifth (round 3, finding 2) A1 and A2 read the repeated keys and gave the record to ``bob``; it is ``alice``'s, as
+    on the base (A3: the base's framing for every reader). The sixth is the store's own shape. The last has no
+    closing marker and reads as on the base, with no frontmatter (L18); BF-940 (#1686) owns any change to it and
+    updates this case."""
+```
+
+**A3-16 — `tests/test_bf952_records_keyword_search.py`** (`:526-528`; `await layer.stop()` occurs once). This appends T22.
+SEARCH:
+```python
+        assert [meta.get("classification") for meta in indexed if meta.get("path") == path] == ["ship"]
+    finally:
+        await layer.stop()
+```
+REPLACE:
+```python
+        assert [meta.get("classification") for meta in indexed if meta.get("path") == path] == ["ship"]
+    finally:
+        await layer.stop()
+
+
+def _base_read(raw: str) -> tuple[Any, str]:
+    """``RecordsStore._parse_document`` of the base (``a745e447``, ``records_store.py:1265-1275``), verbatim but for
+    ``self``: T22's oracle. It is a reference, not a statement that the base frames correctly: BF-940 (#1686) owns
+    the framing, replaces this oracle with its own rule and rewrites T22."""
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+            except yaml.YAMLError:
+                fm = {}
+            return fm, parts[2].strip()
+    return {}, raw
+
+
+def _read_or_error(read: Any, raw: str) -> Any:
+    """``read(raw)``, or the name of the exception it raised: a constructor error must be the same error."""
+    try:
+        return read(raw)
+    except Exception as exc:  # noqa: BLE001 -- compared, never swallowed: the test asserts on it
+        return type(exc).__name__
+
+
+_GRID_LINES = (
+    "author: alice", "author: alice --- legacy", "author: Ezri---Prime",
+    "classification: private", "classification: private --- legacy", "classification: ship",
+    "department: medical", "topic: Review --- nominal", "topic: 2026-13-05---nominal",
+    "topic: 'Inspection --- status: nominal'", "broken: [unclosed", "updated: 2026-13-05",
+)
+_GRID_CLOSES = ("---\n", "----\n", "")
+_GRID_BODIES = ("", "warp notes\n", "classification: ship\nauthor: bob\n", "---\nmore notes\n")
+
+
+def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
+    """A3 (round 3, findings 1 to 3): BF-952 changes no reader's reading of a document. Each reconciliation of the
+    base's framing with a line framing (A1, A2) misread some shape: as ``{}``, as an unclassified prefix, as another
+    author's, or as a constructor error for a valid store-written value. Every shape here, over the three rounds'
+    lines, closing markers, bodies and both line endings, reads under ``_read_document`` and ``_parse_document``
+    exactly as the base read it, a constructor error included. No line holds a tab, so libyaml and PyYAML read each
+    alike; RK8's one difference is T13's tab case."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    shapes = [
+        "---\n" + "".join(f"{line}\n" for line in lines) + close + body
+        for count in (1, 2)
+        for lines in itertools.product(_GRID_LINES, repeat=count)
+        for close in _GRID_CLOSES
+        for body in _GRID_BODIES
+    ]
+    shapes += [shape.replace("\n", "\r\n") for shape in shapes]
+    shapes += ["no frontmatter", "-- two hyphens\n---\nbody", "\n---\nauthor: alice\n---\nbody"]
+    assert len(shapes) == 3747  # premise: (12 + 144) line sequences x 3 closes x 4 bodies x 2 line endings, + 3
+    differ = []
+    for shape in shapes:
+        expected = _read_or_error(_base_read, shape)
+        if (
+            _read_or_error(records_store_module._read_document, shape) != expected
+            or _read_or_error(store._parse_document, shape) != expected
+        ):
+            differ.append(shape)
+    assert differ == [], (len(differ), differ[:5])
+```
+
+### A3.6 #1686 hand-off (one comment; no new issue)
+- The findings in A3.1.
+- RK10's design constraint: the sentinel must survive `_parse_document` (`publish` and update-in-place), and must not take a store-written record from its owner.
+- T16 and T17 at `cf61c683`, and the reviewer's corpus, as acceptance.
+- L19 and L24.
+- **BF-956 is not filed.**
+
+### A3.7 Prior art
+No web search: A3 is a revert to the base. The framing rule's prior art (§A1.8) belongs to #1686.
