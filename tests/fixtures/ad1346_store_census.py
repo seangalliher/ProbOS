@@ -239,16 +239,11 @@ _WORKFORCE_PENDING: Final = (
     "WorkItemStore.compare_and_set_work_item_verification",
     "WorkItemStore.publish_work_item_metadata_with_child_barrier",
     "WorkItemStore.transition_crew_session_terminal_with_trust",
-    "WorkItemStore.mark_crew_session_delivery_delivered",
-    "WorkItemStore.enqueue_promoted_report",
-    "WorkItemStore.mark_promoted_report_delivered",
-    "WorkItemStore.mark_promoted_report_undeliverable",
-    "WorkItemStore.mark_crew_trust_outcome_delivered",
 )
 
 #: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313), M3e4d6 (D320),
-#: M3e4d7 (D327), M3e4d8 (D334) and M3e4d9 (D341): each (file, enclosing scope) of these twelve files that holds a SQL
-#: write statement -> its coverage.
+#: M3e4d7 (D327), M3e4d8 (D334), M3e4d9 (D341) and M3e4d10 (D346): each (file, enclosing scope) of these twelve files
+#: that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -366,6 +361,14 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     (_WORKFORCE, "WorkItemStore._cancel_booking"): System(SHIP, "a booking's status"),
     (_WORKFORCE, "WorkItemStore._generate_journal"): System(SHIP, "a booking's journal segments, derived from its timestamps; booking_journals has no author column"),
     (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),
+    # AD-1346 M3e4d10 (D346). System (D239, D218): the four outbox marks take only a row's identity and write its
+    # delivered and delivered_at; a promoted report's pending row is the ship's copy of an agent's report, which the
+    # delivery service replays through ChatThreadStore.append_message_once (register R163).
+    (_WORKFORCE, "WorkItemStore.mark_crew_session_delivery_delivered"): System(SHIP, "a crew session delivery's delivered and delivered_at in crew_delivery_outbox, which has no author column"),
+    (_WORKFORCE, "WorkItemStore.enqueue_promoted_report"): System(SHIP, "a promoted report's pending row in promoted_report_outbox, with its agent_id and body: the ship's copy of an agent's report, replayed through ChatThreadStore.append_message_once (D218)"),
+    (_WORKFORCE, "WorkItemStore.mark_promoted_report_delivered"): System(SHIP, "a pending report's delivered = 1 and delivered_at; it takes only a message_id"),
+    (_WORKFORCE, "WorkItemStore.mark_promoted_report_undeliverable"): System(SHIP, "a pending report's delivered = 2 and delivered_at; it takes only a message_id"),
+    (_WORKFORCE, "WorkItemStore.mark_crew_trust_outcome_delivered"): System(SHIP, "a trust outcome's delivered and delivered_at in crew_trust_outbox, which has no author column"),
     # Pending (D334): a later part of M3e4d classifies each.
     **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
