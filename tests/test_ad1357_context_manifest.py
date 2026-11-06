@@ -344,6 +344,15 @@ async def test_the_manifest_holds_no_other_agents_text_and_no_camera_scene(case:
 # ── T4: bounds and storability ───────────────────────────────────────
 
 
+def _depth(value: Any) -> int:
+    """How deep ``value``'s dicts and lists nest, ``value`` itself counting as 1; 0 for a scalar."""
+    if isinstance(value, dict):
+        return 1 + max((_depth(child) for child in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_depth(child) for child in value), default=0)
+    return 0
+
+
 def _encoded_size(manifest: dict[str, Any]) -> int:
     """Bytes as ``ChatThreadStore.append_message_once`` encodes metadata."""
     return len(
@@ -382,6 +391,7 @@ def test_the_manifest_fits_its_bound_at_every_cap() -> None:
     assert len(worst["lookups"]["oracle"]["by_tier"]) == cm.MAX_TIERS
     assert len(worst["lookups"]["transcript_grounding"]["thread_ids"]) == cm.MAX_THREADS
     assert _encoded_size(worst) <= cm.MAX_MANIFEST_BYTES
+    assert _depth(worst) == 4  # A2: the deepest manifest the caps allow, half of MAX_MANIFEST_DEPTH
 
     live = cm.ContextLedger()
     for name in ("temporal", "working_memory", "dm_sensorium", "episodic", "recall_confidence", "oracle",
@@ -446,6 +456,49 @@ def test_a_manifest_the_store_would_refuse_is_replaced_by_a_stub_that_says_so(
     assert store.append_message(
         thread.id, author_id=AGENT_ID, role="agent", body="hi", metadata={"context_manifest": stub},
     ) is not None
+
+
+def _nested(depth: int, container: str = "list") -> dict[str, Any]:
+    """A manifest whose dicts, lists or tuples nest ``depth`` deep, the manifest itself counting as 1."""
+    wrap = {"dict": lambda inner: {"x": inner}, "list": lambda inner: [inner], "tuple": lambda inner: (inner,)}[container]
+    inner: Any = {"dict": {}, "list": [], "tuple": ()}[container]
+    for _ in range(depth - 2):
+        inner = wrap(inner)
+    return {"v": 1, "path": "single_pass", "x": inner}
+
+
+class _RaisingItems(dict):
+    """A producer's own mapping type whose ``items`` raises; ``json.dumps`` with ``sort_keys`` calls it."""
+
+    def items(self):  # type: ignore[override]
+        raise RuntimeError("a producer's mapping failed")
+
+
+@pytest.mark.parametrize(
+    ("manifest", "stored"),
+    [
+        pytest.param(_nested(8), True, id="list-at-the-bound"),
+        pytest.param(_nested(9), False, id="list-one-over"),
+        pytest.param(_nested(9, "dict"), False, id="dict-one-over"),
+        pytest.param(_nested(9, "tuple"), False, id="tuple-one-over"),
+        pytest.param(_nested(200), False, id="list-far-over"),
+        pytest.param({"v": 1, "path": "single_pass", "x": _RaisingItems(a=1)}, False, id="a-dict-whose-items-raise"),
+    ],
+)
+def test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub(
+    manifest: dict[str, Any], stored: bool,
+) -> None:
+    """Review round 2, finding 1: the store accepts nesting the HXI API's serializer cannot read back, so
+    ``storable`` bounds it at 8 (``build_manifest`` nests 4, T4a). An exception the value's own type raises while
+    it is encoded gives the stub as well, rather than leaving the helper and costing the reply its row."""
+    from probos.cognitive import context_manifest as cm
+
+    try:
+        outcome: Any = cm.storable(manifest, path="single_pass")
+    except Exception as exc:  # on the tip the raising mapping leaves storable; this makes that an assertion failure
+        outcome = type(exc).__name__
+    stub = {"v": cm.MANIFEST_VERSION, "path": "single_pass", "unrecorded": "unencodable"}
+    assert outcome == (manifest if stored else stub)
 
 
 # ── T5, T6: the journal row ──────────────────────────────────────────
@@ -589,9 +642,11 @@ def test_a_reply_without_a_manifest_keeps_its_metadata_unchanged(result: Any) ->
     assert _build_reply_metadata("intent-1", result, None) == {"intent_id": "intent-1"}
 
 
-async def _group_reply_rows(tmp_path: Path, scout_metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The real AD-914 fan-out over a real ``IntentBus`` and store (test_ad914's harness, restated): scout1
-    replies with ``scout_metadata`` and counselor1 with none. Each stored agent row's metadata, by author."""
+def _group_room(
+    tmp_path: Path, metadata_by_agent: dict[str, dict[str, Any]],
+) -> tuple[ChatThreadStore, SimpleNamespace, Any]:
+    """The real AD-914 fan-out's room over a real ``IntentBus`` and store (test_ad914's harness, restated): scout1
+    and counselor1 subscribed, each replying with its ``metadata_by_agent`` entry. The store, the runtime and the room."""
     store = _thread_store(tmp_path)
     bus = IntentBus(SignalManager(reap_interval=1.0))
     types = {"scout1": "scout", "counselor1": "counselor"}
@@ -609,9 +664,30 @@ async def _group_reply_rows(tmp_path: Path, scout_metadata: dict[str, Any]) -> d
             )
         return _handle
 
-    bus.subscribe("scout1", _handler("scout1", scout_metadata), intent_names=["direct_message"])
-    bus.subscribe("counselor1", _handler("counselor1", {}), intent_names=["direct_message"])
-    thread = store.create_thread(title="room", participants=["scout1", "counselor1"])
+    for agent_id, metadata in metadata_by_agent.items():
+        bus.subscribe(agent_id, _handler(agent_id, metadata), intent_names=["direct_message"])
+    return store, runtime, store.create_thread(title="room", participants=["scout1", "counselor1"])
+
+
+def _api_client(runtime: Any) -> Any:
+    """The HXI API's threads router over ``runtime`` (test_ad914's ``_rest_client``), answering a server error with
+    its 500 rather than raising it into the test, so a reply the API cannot serialize fails at a status assertion."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from probos.routers import threads as threads_router
+    from probos.routers.deps import get_runtime
+
+    app = FastAPI()
+    app.include_router(threads_router.router)
+    app.dependency_overrides[get_runtime] = lambda: runtime
+    return TestClient(app, raise_server_exceptions=False)
+
+
+async def _group_reply_rows(tmp_path: Path, scout_metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The real AD-914 fan-out in ``_group_room``: scout1 replies with ``scout_metadata`` and counselor1 with none.
+    Each stored agent row's metadata, by author."""
+    store, runtime, thread = _group_room(tmp_path, {"scout1": scout_metadata, "counselor1": {}})
     captain = store.append_message(thread.id, author_id="captain", role="captain", body="status?")
     await group_chat_fanout(runtime, thread.id, captain_body="status?", captain_msg=captain)
     return {m.author_id: m.metadata for m in store.list_messages(thread.id, limit=100) if m.role == "agent"}
@@ -658,7 +734,54 @@ def test_a_manifest_on_a_result_that_the_store_would_refuse_is_stored_as_a_stub(
     assert saved is not None and saved.metadata["context_manifest"] == stub
 
 
-def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first() -> None:
+@pytest.mark.parametrize(
+    ("route", "depth"),
+    [
+        pytest.param("one-to-one", 8, id="one-to-one-at-the-bound"),
+        pytest.param("one-to-one", 9, id="one-to-one-one-over"),
+        pytest.param("one-to-one", 200, id="one-to-one-far-over"),
+        pytest.param("group", 8, id="group-at-the-bound"),
+        pytest.param("group", 9, id="group-one-over"),
+        pytest.param("group", 200, id="group-far-over"),
+    ],
+)
+async def test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one(
+    tmp_path: Path, route: str, depth: int,
+) -> None:
+    """Review round 2, finding 1, across the HXI API's response boundary: a reply stored through either route reads
+    back through ``GET /api/threads/{id}/messages``, and the group POST answers. On the tip a manifest nested 200
+    deep is stored and then fails the response (500), and one nested 9 deep is stored as it came."""
+    from probos.cognitive import context_manifest as cm
+
+    manifest = _nested(depth)
+    stub = {"v": cm.MANIFEST_VERSION, "path": "single_pass", "unrecorded": "unencodable"}
+    expected = manifest if depth <= 8 else stub
+    if route == "one-to-one":
+        store = _thread_store(tmp_path)
+        runtime: Any = SimpleNamespace(chat_thread_store=store)
+        thread: Any = store.get_or_create_default_for_agent(AGENT_ID, "Ezri")
+        result = IntentResult(intent_id="i1", agent_id=AGENT_ID, success=True, metadata={"context_manifest": manifest})
+        assert store.append_message(
+            thread.id, author_id=AGENT_ID, role="agent", body="hi",
+            metadata=_build_reply_metadata("intent-1", result, None),
+        ) is not None
+        author = AGENT_ID
+    else:
+        store, runtime, thread = _group_room(tmp_path, {"scout1": {"context_manifest": manifest}, "counselor1": {}})
+        author = "scout1"
+    with _api_client(runtime) as client:
+        if route == "group":
+            posted = client.post(
+                f"/api/threads/{thread.id}/messages", json={"author_id": "captain", "role": "captain", "body": "status?"},
+            )
+            assert posted.status_code == 200
+        transcript = client.get(f"/api/threads/{thread.id}/messages")
+    assert transcript.status_code == 200
+    rows = {m["author_id"]: m["metadata"] for m in transcript.json()["messages"] if m["role"] == "agent"}
+    assert rows[author]["context_manifest"] == expected
+
+
+def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_considers_it_after_the_keys_above() -> None:
     from probos.cognitive import context_manifest as cm
 
     metadata = _build_result_metadata({}, {}, {"_tool_trace_ref": "a" * 64, cm.MANIFEST_KEY: {"v": 1}})

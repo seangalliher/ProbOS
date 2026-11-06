@@ -307,8 +307,10 @@ def _build_result_metadata(
             metadata["owned_steps_view_references"] = references[:8]
             break
     # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
-    # prune (``IntentBus._prune_metadata``, in iteration order) drops it before any
-    # key above when the reply would not fit the wire.
+    # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
+    # after every key above and it never takes the room of one of them. It is not
+    # dropped first: a larger key above that does not fit is dropped, and the
+    # manifest can still be kept.
     for source in sources:
         manifest = source.get(context_manifest.MANIFEST_KEY)
         if type(manifest) is dict and manifest:

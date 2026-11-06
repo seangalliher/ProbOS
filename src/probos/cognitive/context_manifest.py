@@ -58,6 +58,12 @@ MAX_RECORD_PATHS: Final = 12
 MAX_PATH_CHARS: Final = 200
 MAX_QUERY_CHARS: Final = 200
 MAX_MANIFEST_BYTES: Final = 16384
+#: How deep a stored manifest's dicts and lists may nest, the manifest itself
+#: counting as 1. ``build_manifest`` nests 4 deep (the manifest, ``recall``,
+#: ``episodes``, one episode). The chat store accepts far deeper, but the HXI
+#: API's serializer refuses reply metadata nested about a hundred deep, and the
+#: whole transcript read fails with it.
+MAX_MANIFEST_DEPTH: Final = 8
 
 #: The one Oracle tier whose results are identified, by path. Ship's Records are
 #: the shared record; another tier's ids can name another agent's episodes, so
@@ -288,14 +294,43 @@ def note_oracle(observation: Any, scope: str, sources: Iterable[tuple[str, str]]
     }
 
 
+def _nests_within(value: Any, limit: int) -> bool:
+    """Whether no dict, list or tuple in ``value`` nests deeper than ``limit``,
+    ``value`` itself counting as 1: the containers ``json.dumps`` writes.
+
+    Iterative, so a value nested past the interpreter's recursion limit is
+    measured rather than followed down the stack. ``storable`` calls it only on
+    a value ``json.dumps`` has just encoded, which therefore has no cycle.
+    """
+    pending: list[tuple[Any, int]] = [(value, 1)]
+    while pending:
+        node, depth = pending.pop()
+        if isinstance(node, dict):
+            children: Iterable[Any] = node.values()
+        elif isinstance(node, (list, tuple)):
+            children = node
+        else:
+            continue
+        if depth > limit:
+            return False
+        pending.extend((child, depth + 1) for child in children)
+    return True
+
+
 def storable(manifest: dict[str, Any], *, path: str) -> dict[str, Any]:
-    """``manifest`` when it encodes as the chat store encodes metadata and fits
-    ``MAX_MANIFEST_BYTES``; otherwise a stub that says why it was not recorded.
+    """``manifest`` when it encodes as the chat store encodes metadata, fits
+    ``MAX_MANIFEST_BYTES`` and nests at most ``MAX_MANIFEST_DEPTH`` deep; otherwise
+    a stub that says why it was not recorded.
 
     ``ChatThreadStore.append_message_once`` refuses metadata that ``json.dumps``
     rejects with ``allow_nan=False``, and the 1:1 route's append catches that
     refusal, so an unstorable manifest would cost the Captain the reply in the
-    transcript.
+    transcript. The store accepts nesting the HXI API's serializer cannot read
+    back, and one such reply fails every read of its transcript and the group
+    reply's response, so a manifest nested past the bound is ``unencodable`` too.
+    Any exception while encoding or measuring, including one the value's own type
+    raises, gives that stub, as BF-805's ``IntentBus._encoded`` treats it. The size
+    is checked before the walk, so the walk reads at most ``MAX_MANIFEST_BYTES``.
     """
     try:
         encoded = json.dumps(
@@ -305,10 +340,13 @@ def storable(manifest: dict[str, Any], *, path: str) -> dict[str, Any]:
             ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError, OverflowError, RecursionError):
+        if len(encoded) > MAX_MANIFEST_BYTES:
+            return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "oversize"}
+        nested_within = _nests_within(manifest, MAX_MANIFEST_DEPTH)
+    except Exception:  # A2: any failure to encode or measure, as BF-805's IntentBus._encoded
         return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "unencodable"}
-    if len(encoded) > MAX_MANIFEST_BYTES:
-        return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "oversize"}
+    if not nested_within:
+        return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "unencodable"}
     return manifest
 
 
@@ -392,7 +430,8 @@ def context_manifest_metadata(result: Any) -> dict[str, Any]:
 
     Both chat routers store what this returns, and a result's metadata can come
     from any agent, so the dict goes through ``storable`` here as well: one the
-    store would refuse is replaced by the stub and cannot cost the reply its row.
+    store would refuse, or the HXI API could not read back, is replaced by the
+    stub and cannot cost the reply its row or the transcript its read.
     The stub names the dict's ``path`` only when it is one of ``_PATHS``.
     """
     try:
