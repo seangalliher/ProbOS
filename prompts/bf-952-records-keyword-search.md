@@ -4,8 +4,9 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: cost amendment, after the orchestrator measured the draft at about 2.7 s per call that blocked the event loop. It adds RK7 and RK8, rewrites the search internals inside P1-2 and P1-3, adds tests T13 and T14 and one T4 case, re-anchors RKS-4, RKS-7 to RKS-13, RKS-16 and RKS-18, adds rows RKS-19 to RKS-22, adds bounds B1 and B2 (§4, §16), and revises L1 and adds L13 to L16.
 **Revised by:** the orchestrator (Copilot), 2026-11-06: P1-3's SEARCH, which the cost amendment wrote as a reference to the first draft, is the verbatim 68-line block of `records_store.py:1109-1176` (the script that restored it asserts that it equals the base file's text); and the base is the AD-1346 M3e4d6 to M3e4d8 batch's merge, so the batch's own `PROGRESS.md` and `DECISIONS.md` text is on it (P3-1's SEARCH is the title line and P3-2's the BF-950 heading, and both still occur once); the Status line names the batch's merge (`a745e447`) instead of its branch; no other change.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A1, the repair of review round 1 (GPT-6.1 Sol, NOT READY). It adds one framing and load for every Ship's Records reader (BF-940, #1686), fail-closed reads of an unparseable frontmatter, the search's per-record parse boundary, numeric field values, the route's `directory` and the HXI request. T13 and T14 are rewritten and T15 to T19 added. Rows RKS-21 and RKS-22 are retired and RKS-23 to RKS-34 added. L9 and L16 are revised and L17 to L23 added.
-**Status:** ready to build. **Base:** drafted on `1c01a5ee` (`origin/main`, the BF-950 merge). The AD-1346 M3e4d6–d8 batch merged first (`a745e447`, PR #1756) and changed none of the M1 or M2 files: `git diff --stat 1c01a5ee a745e447 -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py` is empty. **M3's SEARCH text was written against `1c01a5ee` and still occurs once on `a745e447`, so §8 needed no re-anchoring.** **Dependencies:** none. **Tier:** M1 STANDARD with a shared contract (the `search` result list, read by four production callers and the HXI); M2 STANDARD, test only; M3 STANDARD, trackers. **Estimated tests:** one new file, `tests/test_bf952_records_keyword_search.py`, with 14 functions and 42 cases (counted by reading); after Amendment A1, 19 functions and 58 cases (counted by reading). Edits: `tests/test_bf949_notebook_reader_identity.py` (one assertion) and `tests/test_layer_boundaries.py` (one allowlist entry).
+**Status:** ready to build. **Base:** drafted on `1c01a5ee` (`origin/main`, the BF-950 merge). The AD-1346 M3e4d6–d8 batch merged first (`a745e447`, PR #1756) and changed none of the M1 or M2 files: `git diff --stat 1c01a5ee a745e447 -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py` is empty. **M3's SEARCH text was written against `1c01a5ee` and still occurs once on `a745e447`, so §8 needed no re-anchoring.** **Dependencies:** none. **Tier:** M1 STANDARD with a shared contract (the `search` result list, read by four production callers and the HXI); M2 STANDARD, test only; M3 STANDARD, trackers. **Estimated tests:** one new file, `tests/test_bf952_records_keyword_search.py`, with 14 functions and 42 cases (counted by reading); after Amendment A1, 19 functions and 58 cases (counted by reading); after Amendment A2, 21 functions and 68 cases (counted by reading). Edits: `tests/test_bf949_notebook_reader_identity.py` (one assertion) and `tests/test_layer_boundaries.py` (one allowlist entry).
 **BF number:** BF-952, held by the title of #1751 (OPEN). Nothing is allocated, and no AD number is needed.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A2, the repair of review round 2 (GPT-6.1 Sol, NOT READY). The line framing is read only where it keeps the classification the base read (RK13), and a rewrite that keeps a note's classification is indexed at it (RK14). T13 gains three cases; T20 and T21 are added. RKS-23 to RKS-26 are re-anchored and RKS-35 to RKS-40 added. L18 and L19 are revised and L24 added.
 
 **Which text describes the head.** Line numbers are those of `1c01a5ee`. Before building, run `git diff --stat 1c01a5ee HEAD -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py`. If it is not empty, or any M1 or M2 SEARCH no longer matches, return to the Architect. Where prose and a block differ, the block wins. Files are LF in the index; SEARCH text is LF.
 
@@ -117,6 +118,12 @@
 
 **RK12, the DM lookup (A1, finding 4).** Unchanged; recorded as L17. The base met no deadline: it blocked the loop past it. Rejected: raising `timeout_ms` (every lookup type, no validated value); a knowledge-only bound; awaiting past the abort.
 
+**RK13, which framing is read (A2, round 2 finding 1).**
+- The base's framing (the first later `---` anywhere) is the reading. A1's line framing replaces it only where a `---` inside a line comes before the first later line beginning `---`, and only if it loads as a mapping that, where the base's framing names a classification, names the same one (`_line_framing_is_kept`). A frontmatter that a hand-made or legacy file closed inside a line reads as on the base, at the level the base read. Every store-written value holding `---` still reads whole (T16).
+- Rejected: failing closed when no line begins `---` (the owner loses the record, and a Captain's `publish` or an update-in-place, which read `{}` for it, would rewrite it without its classification); failing closed only for an inline close (the same); the line framing alone (A1: such a record read with no classification, or took its body as YAML; T20).
+
+**RK14, the indexed classification (A2, round 2 finding 2; AD-1157a).** `write_entry` hands the semantic index the classification it writes, not the call's argument, so a notebook rewrite that keeps a note's classification indexes it at that level. A base defect with ordinary reach, fixed here because the convergence rule fixes ordinary-reach findings in the item.
+
 ## 4. Milestones and gates
 
 | M | Tier | Shared contract? | Pairs | Gate |
@@ -126,6 +133,9 @@
 | M3 | STANDARD | trackers | P3-1, P3-2 (2), ledger | G3 |
 | A1-M1 | STANDARD, security-relevant (access control) | **yes**: every Ship's Records reader's parse, `read_entry`'s admission, the search route, the HXI request | A1-01 to A1-18 (18) | GA1, then B1 and B2, then the §10 campaign |
 | A1-M2 | STANDARD | trackers | A1-19 to A1-21 (3), ledger | G3 |
+| A2-M0 | STANDARD | contract text | A2-08 to A2-16 (9) | none |
+| A2-M1 | STANDARD, security-relevant (access control) | **yes**: every Ship's Records reader's framing; the classification the semantic index receives | A2-01 to A2-07 (7) | GA2 (§A2.3), then the §10 campaign |
+| A2-M2 | STANDARD | trackers | A2-17 to A2-22 (6), ledger | G3 |
 
 - **M0:** on the base, record the collected count of every existing file named in G1.
 - **G1:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_bf679_oracle_records_reader_identity.py tests/test_bf684_records_index_coverage.py tests/test_ad1138_records_semantic_index.py tests/test_ad725_dm_targeted_lookup.py tests/test_ad1139_oracle_query_tool.py tests/test_ad1140_publish_finding.py tests/test_ad1141_crew_loop_sigma.py tests/test_bf950_oracle_result_age.py tests/test_self_monitoring.py tests/test_proactive_quality.py tests/test_path_traversal.py tests/test_layer_boundaries.py tests/test_ad1346_admission_file_write_census.py tests/test_ad1346_admission_effect_census.py tests/test_ad1346_admission_store_family_census.py tests/test_ad1341_s6_records_snapshot.py -q -n 0`, then `... -P scripts/check_architecture_principles.py --check`.
@@ -162,13 +172,15 @@
 | T10 | `test_the_notebook_pull_finds_a_note_whose_department_is_only_in_its_frontmatter` | 1 | seam: proactive pull | no (guard) |
 | T11 | `test_a_record_whose_frontmatter_is_not_a_mapping_is_skipped_not_raised` | 2 | RK5 | yes |
 | T12 | `test_a_query_with_no_words_finds_nothing` | 3 | RK4 | 1 of 3 |
-| T13 | `test_every_reader_frames_and_loads_a_document_alike` (A1; was `test_search_reads_a_document_as_the_store_reads_it`, 7 cases) | 11 | RK8, RK9; findings 1 and 6 | n/a (new helper) |
+| T13 | `test_every_reader_frames_and_loads_a_document_alike` (A1; was `test_search_reads_a_document_as_the_store_reads_it`, 7 cases; A2 adds 3) | 14 | RK8, RK9, RK13; findings 1 and 6; round 2 finding 1 | n/a (new helper) |
 | T14 | `test_a_search_runs_off_the_event_loop` (A1: the walk, reads, parse and ranking) | 1 | RK7 option 3; V1 | yes (setup) |
 | T15 | `test_a_numeric_frontmatter_value_is_scored_and_a_boolean_is_not` | 3 | finding 2 | 1 of 3 (the boolean) |
 | T16 | `test_a_frontmatter_value_holding_three_hyphens_is_read_whole_and_stays_private` | 4 | RK9; finding 1; #1686 | yes |
 | T17 | `test_a_record_whose_frontmatter_does_not_parse_is_shown_to_the_captain_alone` | 1 | RK10 | yes |
 | T18 | `test_a_record_whose_frontmatter_cannot_be_constructed_is_withheld_not_raised` | 3 | RK10; finding 5 | yes |
 | T19 | `test_the_records_search_route_confines_a_search_to_a_directory` | 1 | RK11; finding 3 | yes |
+| T20 | `test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_base_read` (A2) | 6 | RK13; round 2 finding 1 | no: a regression guard (4 of 6 fail on A1-M1's head) |
+| T21 | `test_a_rewritten_note_is_indexed_at_the_classification_it_keeps` (A2) | 1 | RK14; round 2 finding 2 (real Chroma) | yes |
 
 Nothing is marked xfail. The new file is created at M2.
 
@@ -950,7 +962,7 @@ Then regenerate the ledger (`python -P scripts/gen_ad_ledger.py`) on the real ba
 
 ## 9. What this does NOT change, and what is not built
 
-Not changed: `oracle_service.py` (the `/10`, fusion, `query`, `query_formatted`), `proactive.py`, `dm_targeted_lookup.py`, `semantic.py`, `record_is_readable`, the skill catalog's parser (`skill_catalog.py:105`, `:179`, `:790`), the cap of 20, config, `EventType`, persisted shapes, the default executor. Changed by Amendment A1 beyond `search`: `_parse_document` (it delegates to `_read_document`), `read_entry` (an unparseable frontmatter is the Captain's alone), `routers/records.py` (`directory`), `ui/src/store/useStore.ts` (the notebook search's request) and a comment in `knowledge/lessons.py`; §A1.2 lists the effect on each caller. No method is added to `RecordsStore`; its SRP row (`architecture-baseline.yaml:751-757`) is keyed by trigger.
+Not changed: `oracle_service.py` (the `/10`, fusion, `query`, `query_formatted`), `proactive.py`, `dm_targeted_lookup.py`, `semantic.py`, `record_is_readable`, the skill catalog's parser (`skill_catalog.py:105`, `:179`, `:790`), the cap of 20, config, `EventType`, persisted shapes, the default executor. Changed by Amendment A1 beyond `search`: `_parse_document` (it delegates to `_read_document`), `read_entry` (an unparseable frontmatter is the Captain's alone), `routers/records.py` (`directory`), `ui/src/store/useStore.ts` (the notebook search's request) and a comment in `knowledge/lessons.py`; §A1.2 lists the effect on each caller. No method is added to `RecordsStore`; its SRP row (`architecture-baseline.yaml:751-757`) is keyed by trigger. Changed by Amendment A2: `_read_document` reads the base's framing wherever A1's line framing would change the classification the base read, through two module functions (`_load_frontmatter`, `_line_framing_is_kept`); `write_entry` hands the semantic index the classification it writes, and its AD-1140 docstring's round-trip sentence is qualified (L24). `semantic.py` is still unchanged.
 
 Not built. Each item is ready for #1754, without redoing the search:
 
@@ -1010,6 +1022,23 @@ Not built. Each item is ready for #1754, without redoing the search:
 | RKS-32 | records_store.py | `            if reader_id != "captain":` (12 spaces; the 8-space line at `:1185` is a different line) | `            if False:` | `read_entry` shows an unparseable record to every reader | `test_a_record_whose_frontmatter_does_not_parse_is_shown_to_the_captain_alone` |
 | RKS-33 | records_store.py | `        terms = _search_query_terms(query)` | `        terms = _search_query_terms(query); [path.read_text(encoding="utf-8") for path in search_path.rglob("*.md")]` | a synchronous walk and read run on the event loop | `test_a_search_runs_off_the_event_loop` |
 | RKS-34 | routers/records.py | `        results = await runtime._records_store.search(q, scope=scope, reader_id="captain", directory=directory)` | `        results = await runtime._records_store.search(q, scope=scope, reader_id="captain")` | the route ignores `directory`, and the cap cuts the HXI's note again | `test_the_records_search_route_confines_a_search_to_a_directory` |
+| RKS-35 | records_store.py | `    if close + 1 > cut:` | `    if close + 1 != cut:` | a frontmatter closed inside a line with no later line beginning `---` loses its keys | `test_every_reader_frames_and_loads_a_document_alike` |
+| RKS-36 | records_store.py | `        return framed.get("classification") == legacy["classification"]` | `        return True` | the line framing's unknown or repeated classification is read, and another reader is shown a private record | `test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_base_read` |
+| RKS-37 | records_store.py | `    if type(framed) is not dict:` | `    if False:` | a line framing no loader accepts is not set aside, and the read raises | `test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_base_read` |
+| RKS-38 | records_store.py | `            return framed, raw[close + 4:].strip()` | `            return framed, raw[cut + 3:].strip()` | a record read through the line framing starts its body inside its frontmatter | `test_a_frontmatter_value_holding_three_hyphens_is_read_whole_and_stays_private` |
+| RKS-39 | records_store.py | `                    classification=frontmatter["classification"],` | `                    classification=classification,` | a rewrite that keeps a note's classification is indexed at the caller's default | `test_a_rewritten_note_is_indexed_at_the_classification_it_keeps` |
+| RKS-40 | records_store.py | `    if cut < 0:` | `    if False:` | a document with no later `---` is framed inside its body | `test_every_reader_frames_and_loads_a_document_alike` |
+
+**A2 re-anchors.** These rows replace the Line and Mutate-to of the rows above with the same id.
+
+| Row | File | Line | Mutate to | Expected effect | Killing test |
+|---|---|---|---|---|---|
+| RKS-23 | records_store.py | `    close = raw.find("\n---", 3)` | `    close = raw.find("---", 3) - 1` | the line framing is never read; a store-written author holding `---` reads as `ship` | `test_a_frontmatter_value_holding_three_hyphens_is_read_whole_and_stays_private` |
+| RKS-24 | records_store.py | `    legacy = _load_frontmatter(raw[3:cut]), raw[cut + 3:].strip()` | `    legacy = _load_frontmatter(raw[3:cut]), raw[cut + 3:]` | the body keeps the blank line after the frontmatter | `test_every_reader_frames_and_loads_a_document_alike` |
+| RKS-25 | records_store.py | `            return None  # A1: neither loader accepts the block` | `            return {}  # A1: neither loader accepts the block` | a frontmatter that does not parse reads as `ship` for every reader | `test_a_record_whose_frontmatter_does_not_parse_is_shown_to_the_captain_alone` |
+| RKS-26 | records_store.py | `    return frontmatter or {}` | `    return frontmatter` | an empty frontmatter reads as unparseable | `test_every_reader_frames_and_loads_a_document_alike` |
+
+- **A2: the campaign of record moves to A2-M1's head.** `records_store.py` changed, so rerun every active row: RKS-1 to RKS-20 and RKS-23 to RKS-40 (38 rows), with RKS-23 to RKS-26 at their A2 lines. Record the sha256 of `records_store.py`, `routers/records.py` and the new test file.
 
 ## 11. Recorded limits
 
@@ -1030,12 +1059,13 @@ Not built. Each item is ready for #1754, without redoing the search:
 - **L15.** Without libyaml, the search parse falls back to PyYAML. A call is then slower than B1 but still off the loop.
 - **L16.** The `safe_load` fallback for a frontmatter that libyaml refuses and PyYAML accepts is not pinned by a test. No such input is known; the reverse (a tab after a key) is T13's case.
 - **L17 (A1, finding 4).** AD-725's DM knowledge lookup (`dm_targeted_lookup.py:159-161`; `timeout_ms` 500, `config_models/agentic.py:178`; `enabled: false` in `config/system.yaml:1669`) now aborts at its deadline while the search's worker runs on. The reviewer measured `None` at 511 ms, with the worker finishing at 1,126 ms on 302 records. The base returned its result at 1,342 ms only because it blocked the loop past the deadline. With the lookup enabled, a knowledge lookup on such a corpus degrades to no recall block, AD-725's own degrade. The deadline is unchanged. The remedy is N1 (an index, or a parsed-record cache keyed by path, `mtime_ns` and size), recommended as #1754's next item.
-- **L18 (A1).** A document whose frontmatter has no closing line beginning `---` has no frontmatter (`{}`, so the default level), where the base closed it at a `---` inside a line. The store never writes one: `write_entry` (`:551-552`) and `publish` (`:1299-1300`) close with `---` on its own line. Hand edits only.
-- **L19 (A1).** `_parse_document`'s other callers still read a frontmatter that does not parse as `{}`, as on the base. `list_entries` lists it, the similarity and convergence scans read it, `write_entry`'s update-in-place loses `created` and restarts `revision`, and a Captain's `publish` rewrites it with only `status` and `updated`. The semantic indexer reads through `read_entry` as the Captain (`semantic.py:738`), so it indexes such a record with `{}`. After A1's framing this is reachable by hand edits only. It is a follow-up BF.
+- **L18 (A1, A2).** A document that starts with `---` and has no later `---` at all has no frontmatter (`{}`, so the default level), as on the base. One whose frontmatter is closed only inside a line is framed as the base framed it (RK13). The store writes neither: `write_entry` (`:551-552`) and `publish` (`:1299-1300`) close with `---` on its own line, so only a hand-made, legacy or truncated file reaches either. Whether an opener with no closing marker should be the Captain's alone is BF-956's question: doing so would also hide a raw `.md` written by `write_workspace_file` (the consultation workspace) that opens with a rule.
+- **L19 (A1, A2).** `_parse_document`'s other callers still read a frontmatter that does not parse as `{}`, as on the base. `list_entries` lists it, the similarity and convergence scans read it, `write_entry`'s update-in-place loses `created` and restarts `revision`, and a Captain's `publish` rewrites it with only `status` and `updated`. The semantic backfill reads through `read_entry` as the Captain (`semantic.py:738-752`); `read_entry` turns the parse failure into `{}` for the Captain, so the backfill indexes such a record at `ship` with no author, and semantic search returns it to other readers that `read_entry` and keyword search withhold it from (round 2, finding 3; as on the base). It is reachable by a hand-made or legacy file, and by `write_entry` itself (L24). It is BF-956, which covers: carrying the parse failure across the `read_entry` boundary to the backfill and keeping such a record out of the index (or indexing it for the Captain alone); a policy for each `_parse_document` caller; L18's opener with no closing marker; L9's falsy frontmatter; and L24's writer. It must keep the Captain's unrestricted read, AD-1157a's preservation, AD-1140's reserved-key fail-fast and BF-679's parity between the keyword and semantic paths.
 - **L20 (A1).** The skill catalog's own three splits (`cognitive/skill_catalog.py:105`, `:179`, `:790`) keep the base framing. #1686 stays open for them.
 - **L21 (A1).** A record the semantic backfill indexed before A1 keeps the metadata of the base parse until it is indexed again. The 2026-10-26 census found no live record the base framing cuts; §16 step 2 counts them again on the clone.
 - **L22 (A1).** An error of YAML's constructor (`updated: 2026-13-05`) still raises from `_parse_document` and `read_entry`, as on the base, and `list_entries` skips such a record through its `except Exception`. Only search withholds it.
 - **L23 (A1).** The route's `directory` is any directory inside the records repository (`_safe_path`). The route reads as the Captain, so a confined search shows nothing a whole-repository search could not.
+- **L24 (A2, round 2 finding 4).** `write_entry` writes frontmatter with `yaml.dump`, which tags a tuple or another Python object `!!python/` (`extra_frontmatter={"aliases": ("a", "b")}` writes `!!python/tuple`). No reader loads that tag, so the record reads as a frontmatter that does not parse: the Captain's alone in `read_entry` and search (RK10), `{}` elsewhere (L19). The writer does not round-trip every value. No ordinary caller is known to pass such a value; §A2.4 counts the tag in the live corpus. Normalizing or rejecting such a value before writing (AD-1140's fail-fast tier) is BF-956's.
 
 ## 12. Verified Against Codebase (2026-11-05, on `1c01a5ee`)
 
@@ -2345,6 +2375,368 @@ REPLACE:
   - A Captain's `publish` of an unparseable record rewrites its frontmatter (L19).
   - A record's own author loses it when its frontmatter does not parse (T17).
   - A docstring in another contract described the defect (A1-18) and needed correcting.
+
+## Amendment A2 (2026-11-05): review round 2 (GPT-6.1 Sol, NOT READY)
+
+### A2.1 Findings and decisions
+
+| # | Verdict (lines read) | Decision |
+|---|---|---|
+| 1 (P1, A1 regression) | **Confirmed.** `records_store.py:262-275` returns `{}, raw` when no line begins `---`. The guards at `:345` and `:1222` test only for `None`. The base (`a745e447:1265-1275`) used `raw.split("---", 2)`, which honoured row 1. | **Option (b+), "base framing unless the line framing provably agrees".** The base framing is the default reading. A1's line framing replaces it only when a `---` inside a line comes before the first line that begins `---`, **and** the line-framed block loads as a mapping, **and**, if the base framing names a `classification`, the line framing names the same one (`_line_framing_is_kept`). A document with no later `---` at all reads `{}`, as on the base (L18). |
+| 2 (P2, ordinary, base) | **Confirmed.** `:568` keeps the stored class, but `:614` passes the call's own argument. The only caller that sets `preserve_classification_on_update` is `write_notebook:775`, and its default is `private` (`:770-775`). So the index always holds `private` on a preserved rewrite: stricter than the disk, never looser. | **Fold, as RK14.** `:614` and the log at `:628` use `frontmatter["classification"]`. T21 tests it through real Chroma and `build_records_scope_filter`. |
+| 3 (P2, base) | **Confirmed.** `semantic.py:738` reads as `_UNRESTRICTED_READER`. `records_store.py:1226-1228` turns `None` into `{}` for the Captain, and `semantic.py:746` then defaults the level to `ship`. Not a regression: the base read `{}` for every reader. | **Record, not fix.** L19 is revised to name `semantic.py:738-752`. BF-956's scope is in L19 (A2-15). |
+| 4 (P2, base, injected) | **Confirmed by reading.** `:590` uses `yaml.dump` with the default Dumper, which tags a tuple `!!python/tuple`; the safe loaders refuse that tag, so `_load_frontmatter` returns `None`. The reviewer ran this; I did not. | **Correct the claims now.** Wrong today: the AD-1140 docstring at `:506-508` ("round-trip through `_parse_document`", unqualified), L19's "After A1's framing this is reachable by hand edits only", and L18's "Hand edits only". No test name or docstring makes the claim (grep: no hit for "round" or "hand" except `:345`). The codec repair is recorded in **BF-956** (new L24), not #1754: it is the same "frontmatter no reader loads" seam, and #1754 is about search cost. |
+| 5 (test discrimination) | **Partly.** T14's "yes (setup)" is already disclosed in §6 and in its docstring. T13 is marked "n/a (new helper)". T15's boolean case is in the table as the one case that fails on the base, which it does; it passes on round 1 because round 1 dropped every non-string value. | **Accepted, no rename.** For a new function, discrimination is judged by mutants (RKS-23 to RKS-40), not by failing on the base. The black-box guards are T16 to T21. |
+| 6 (round 3) | — | **Whole candidate.** A2 changes `_read_document`'s return for one shape, so it changes what every reader sees (§A1.2 already lists this as a shared contract). It also changes what the semantic index receives, which Oracle Tier 2 and BF-679 parity consume. This is round 3; a fourth round needs a new decision from me. |
+
+Why not the other options for decision 1:
+- **(a) Fail closed when no line begins `---`.** Row 1's owner would lose the record. Worse, `_parse_document` maps `None` to `{}`, so a Captain's `publish` (`:1337-1346`) or an update-in-place (`:555-568`) would rewrite the file **without its `private`**. The base honours `private` there.
+- **(c) Fail closed only for an inline close.** Same problem.
+- **Fail closed for row 2 (no marker at all).** Rejected here because it would also hide raw `.md` files written by `write_workspace_file` (`:1455`, `consultation/workspace.py:164,176`) that open with a horizontal rule. The privacy gain is injected-only (a truncated or hand-made file), so the change belongs to BF-956.
+
+**What A2 does to each consumer.** Only documents with a `---` inside a frontmatter line are affected.
+- **`list_entries`, `publish`, update-in-place, similarity and the semantic indexer** read row 1 and the hidden-regression shapes as the base did. A Captain's `publish` keeps `private`, update-in-place keeps `created`, `revision` and `classification`, and the backfill indexes the record at `private`.
+- **T16 (all four cases), T13's A1 cases, T17, T18 and T14** are unchanged. I traced each against the new code; T16's tag case keeps the line framing because both framings name `private`.
+- **RKS-23 to RKS-26** are re-anchored. **RKS-27 to RKS-34** are unchanged.
+
+### A2.2 Pairs: A2-M1 (code and tests)
+
+**A2-01** `src/probos/knowledge/records_store.py`
+SEARCH:
+```python
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1: a Ship's Records document's frontmatter and body, the one parse every reader uses.
+
+    ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
+
+    Framing (BF-940, #1686): a document that starts with ``---`` has frontmatter up to the
+    first later ``---`` that begins a line, and its body is what follows that ``---``,
+    stripped. The base ended the frontmatter at the first ``---`` anywhere, so a value
+    holding one inside a line (``topic: Inspection --- nominal``) was cut, the keys after
+    it were lost or the YAML stopped parsing, and the record read with no classification.
+    A store-written value holding ``---`` now stays whole (T16 writes four through
+    ``write_entry``). A document whose frontmatter is not closed by a line beginning
+    ``---`` has no frontmatter here.
+
+    Loading: libyaml (``_RECORDS_YAML_LOADER``) when installed, then ``yaml.safe_load``
+    when libyaml refuses the text, so a frontmatter either loader accepts is read, and
+    every reader reads it alike. An empty or falsy frontmatter is ``{}``. ``None`` means a
+    frontmatter block is there and neither loader accepts it. An error of YAML's
+    constructor (``updated: 2026-13-05`` raises ``ValueError``) propagates, as it did from
+    ``_parse_document`` on the base.
+    """
+    if raw.startswith("---"):
+        close = raw.find("\n---", 3)
+        if close >= 0:
+            block = raw[3:close + 1]
+            body = raw[close + 4:].strip()
+            try:
+                frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
+            except yaml.YAMLError:
+                try:
+                    frontmatter = yaml.safe_load(block)
+                except yaml.YAMLError:
+                    return None, body
+            return frontmatter or {}, body
+    return {}, raw
+```
+REPLACE:
+```python
+def _load_frontmatter(block: str) -> Any:
+    """BF-952 A1: a frontmatter block loaded by libyaml (``_RECORDS_YAML_LOADER``), then ``yaml.safe_load``.
+
+    ``None`` when neither loader accepts it; ``{}`` for an empty or falsy one. An error of YAML's
+    constructor (``updated: 2026-13-05`` raises ``ValueError``) propagates.
+    """
+    try:
+        frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
+    except yaml.YAMLError:
+        try:
+            frontmatter = yaml.safe_load(block)
+        except yaml.YAMLError:
+            return None  # A1: neither loader accepts the block
+    return frontmatter or {}
+
+
+def _line_framing_is_kept(framed: Any, legacy: Any) -> bool:
+    """BF-952 A2: whether A1's line framing replaces the base's framing of a document.
+
+    It does when it loads as a mapping and, where the base's framing names a ``classification``,
+    names the same one. A frontmatter that a hand-made or legacy file closed inside a line would
+    otherwise take the body as YAML: the body may not load, or may give ``classification`` an
+    unknown or a repeated value, and the record would lose the level the base read for it.
+    """
+    if type(framed) is not dict:
+        return False
+    if type(legacy) is dict and "classification" in legacy:
+        return framed.get("classification") == legacy["classification"]
+    return True
+
+
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1, A2: a Ship's Records document's frontmatter and body, the one parse every reader uses.
+
+    ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
+
+    Framing. A document that starts with ``---`` has frontmatter up to the next ``---``, as the
+    base framed it (``raw.split("---", 2)``), and its body is what follows, stripped. When that
+    ``---`` is inside a line and a later line begins ``---``, the frontmatter may hold a
+    store-written value with ``---`` in it (BF-940, #1686: ``author: Ezri---Prime``,
+    ``topic: Inspection --- nominal``), which the base cut. It then runs to that line instead,
+    when ``_line_framing_is_kept`` accepts it (A1). It does not when that framing does not load
+    as a mapping or names a classification other than the base framing's (A2), so a hand-made
+    or legacy file whose frontmatter is closed inside a line reads as on the base, at the level
+    the base read. A document with no later ``---`` has no frontmatter, as on the base (L18).
+
+    Loading: ``_load_frontmatter``, so a frontmatter either loader accepts is read, and every
+    reader reads it alike. ``None`` means a frontmatter block is there and neither loader
+    accepts it. An error of YAML's constructor propagates, as it did from ``_parse_document``
+    on the base.
+    """
+    if not raw.startswith("---"):
+        return {}, raw
+    cut = raw.find("---", 3)
+    if cut < 0:
+        return {}, raw
+    legacy = _load_frontmatter(raw[3:cut]), raw[cut + 3:].strip()
+    close = raw.find("\n---", 3)
+    if close + 1 > cut:
+        framed = _load_frontmatter(raw[3:close + 1])
+        if _line_framing_is_kept(framed, legacy[0]):
+            return framed, raw[close + 4:].strip()
+    return legacy
+```
+
+**A2-02** `src/probos/knowledge/records_store.py`
+SEARCH:
+```python
+                await self._semantic_indexer.index_record(
+                    path=path,
+                    content=content,
+                    classification=classification,
+                    author=author,
+```
+REPLACE:
+```python
+                await self._semantic_indexer.index_record(
+                    path=path,
+                    content=content,
+                    classification=frontmatter["classification"],
+                    author=author,
+```
+
+**A2-03** `src/probos/knowledge/records_store.py`
+SEARCH:
+```python
+        logger.info("Record written: %s by %s (%s)", path, author, classification)
+```
+REPLACE:
+```python
+        logger.info("Record written: %s by %s (%s)", path, author, frontmatter["classification"])
+```
+
+**A2-04** `src/probos/knowledge/records_store.py`
+SEARCH:
+```text
+        the frontmatter **before** ``yaml.dump``, so they round-trip through
+        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
+        sidecar. Any key in :data:`_RESERVED_FRONTMATTER_KEYS` raises
+```
+REPLACE:
+```text
+        the frontmatter **before** ``yaml.dump``, so they round-trip through
+        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
+        sidecar, when every value is one YAML's safe loader builds (a string,
+        number, boolean, date, or a list or mapping of them). BF-952 A2:
+        ``yaml.dump`` writes a tuple or another Python object with a
+        ``!!python/`` tag, which no reader loads (BF-952 L24). Any key in
+        :data:`_RESERVED_FRONTMATTER_KEYS` raises
+```
+
+**A2-05** `tests/test_bf952_records_keyword_search.py`
+SEARCH:
+```python
+from probos.knowledge.records_store import RecordsStore
+from probos.routers.records import search_records
+```
+REPLACE:
+```python
+from probos.knowledge.records_store import RecordsStore
+from probos.knowledge.semantic import SemanticKnowledgeLayer
+from probos.routers.records import search_records
+```
+
+**A2-06** `tests/test_bf952_records_keyword_search.py` (T13: 11 → 14 cases)
+SEARCH:
+```python
+    pytest.param("no frontmatter at all", {}, "no frontmatter at all", id="no-frontmatter"),
+])
+```
+REPLACE:
+```python
+    pytest.param("no frontmatter at all", {}, "no frontmatter at all", id="no-frontmatter"),
+    pytest.param(
+        "---\nauthor: alice\nclassification: private --- the closing marker is inline\nbody",
+        {"author": "alice", "classification": "private"}, "the closing marker is inline\nbody",
+        id="closed-inside-a-line-as-the-base-framed-it",
+    ),
+    pytest.param(
+        "---\nauthor: bones --- warp notes\n", {"author": "bones"}, "warp notes",
+        id="closed-inside-a-line-naming-no-classification",
+    ),
+    pytest.param(
+        "---\nauthor: alice\nclassification: private\nbody", {}, "---\nauthor: alice\nclassification: private\nbody",
+        id="never-closed-has-no-frontmatter-L18",
+    ),
+])
+```
+
+**A2-07** `tests/test_bf952_records_keyword_search.py` (adds T20 with 6 cases and T21 with 1)
+SEARCH:
+```python
+    outside = await search_records(q="reactor", scope="ship", directory="../outside", runtime=runtime)
+    assert isinstance(outside, JSONResponse) and outside.status_code == 400
+```
+REPLACE:
+```python
+    outside = await search_records(q="reactor", scope="ship", directory="../outside", runtime=runtime)
+    assert isinstance(outside, JSONResponse) and outside.status_code == 400
+
+
+_INLINE_CLOSE = "---\nauthor: alice\nclassification: private --- the closing marker is inline\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("raw", "kept"), [
+    pytest.param(_INLINE_CLOSE + "warp core notes\n", True, id="closed-inside-a-line"),
+    pytest.param(
+        _INLINE_CLOSE + "status: nominal\n---\nwarp core notes\n", True, id="closed-inside-a-line-then-a-key-and-a-rule",
+    ),
+    pytest.param(
+        _INLINE_CLOSE + "Warp core notes, in prose.\n---\nmore warp notes\n", True,
+        id="closed-inside-a-line-then-prose-and-a-rule",
+    ),
+    pytest.param(
+        _INLINE_CLOSE + "classification: ship\n---\nwarp core notes\n", True,
+        id="closed-inside-a-line-then-a-repeated-key-and-a-rule",
+    ),
+    pytest.param("---\nauthor: alice\nclassification: private\n---\nwarp core notes\n", True, id="closed-on-its-own-line"),
+    pytest.param("---\nauthor: alice\nclassification: private\nwarp core notes\n", False, id="never-closed-L18"),
+])
+async def test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_base_read(
+    tmp_path: Path, raw: str, kept: bool,
+) -> None:
+    """A2 (round 2, finding 1), through ``read_entry`` and ``search``. A1 ended a frontmatter only at a line
+    beginning ``---``, so a hand-made or legacy file closed inside a line read as ``{}`` (the first case) or took
+    its body as YAML: the second case then read an unknown classification, the third did not parse (its author
+    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. The
+    fifth is the store's own shape. The last has no closing marker and reads as on the base, with no frontmatter
+    (L18); BF-956 owns any change to it and updates this case."""
+    store = await _store(tmp_path)
+    path = "notebooks/alice/framing.md"
+    target = store.repo_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(raw, encoding="utf-8")
+    own = await store.read_entry(path, reader_id="alice")
+    assert own is not None and "warp" in own["content"].lower()
+    assert await _paths(store, "warp", reader_id="alice") == [path]
+    other = await store.read_entry(path, reader_id="bob")
+    if kept:
+        assert own["frontmatter"]["classification"] == "private"
+        assert other is None
+        assert await _paths(store, "warp", reader_id="bob") == []
+    else:
+        assert own["frontmatter"] == {} and other is not None
+        assert await _paths(store, "warp", reader_id="bob") == [path]
+
+
+@pytest.mark.asyncio
+async def test_a_rewritten_note_is_indexed_at_the_classification_it_keeps(tmp_path: Path) -> None:
+    """A2 (round 2, finding 2; AD-1157a): a notebook rewrite that names no classification keeps the note's own, and
+    ``write_entry`` handed the semantic index the caller's default (``private``) instead, so a note that reads as
+    ``ship`` on disk was missing from another reader's semantic results (on the base too). Real
+    ``SemanticKnowledgeLayer`` and Chroma, as in ``test_ad1138_records_semantic_index.py``."""
+    store = await _store(tmp_path)
+    layer = SemanticKnowledgeLayer(db_path=tmp_path / "semantic", episodic_memory=None)
+    await layer.start()
+    try:
+        store.set_semantic_indexer(layer)
+        path = await store.write_notebook("Ezri", "coolant", "reactor coolant log", classification="ship")
+        await store.write_notebook("Ezri", "coolant", "reactor coolant log, revised")
+        on_disk = await store.read_entry(path, reader_id="alice")
+        assert on_disk is not None and on_disk["frontmatter"]["classification"] == "ship"  # premise: AD-1157a kept it
+        rows = await layer.search(
+            "reactor coolant", types=["records"], limit=20, records_scope="ship", reader_id="alice",
+        )
+        indexed = [row.get("metadata") or {} for row in rows]
+        assert [meta.get("classification") for meta in indexed if meta.get("path") == path] == ["ship"]
+    finally:
+        await layer.stop()
+```
+
+### A2.3 Gates
+
+- **GA2 (A2-M1's head):** GA1's command (§A1.3), unchanged.
+  - Expected in the new file: **68 passed (21 functions)**, counted by reading. Every other file: 0 failed, with counts equal to GA1's.
+  - Then `scripts/check_architecture_principles.py --check`.
+- **Hard stop, back to me:**
+  - any T16 case fails (it tests the premise that every store-written value holding `---` keeps the line framing);
+  - T21 skips or errors on Chroma;
+  - any T20 case fails.
+- **B1 and B2 are not rerun.** A record with no `---` inside its frontmatter does one more `str.find` and the same single load. Rerun B1 only if the synthetic corpus generator writes `---` inside a frontmatter value.
+- **Mutation campaign:** 38 rows, on A2-M1's head.
+
+### A2.4 Orchestrator steps (§16, read-only clone, counts only)
+
+Add three counts to the census:
+1. Records whose frontmatter is closed inside a line, with no later line beginning `---`.
+2. Records where `_line_framing_is_kept` returns False with a later line beginning `---` (they fall back to the base framing).
+3. Frontmatters containing `!!python/` (L24's reach).
+
+If count 3 is greater than 0, stop and bring it back to me. RK10 then makes such records the Captain's alone at ordinary reach, which needs a decision before landing.
+
+### A2.5 Verified Against Codebase (2026-11-05, on `ed86ae83`)
+
+```
+Read records_store.py:241-275    A1 _read_document; :275 "return {}, raw" when no "\n---"
+Read :337-357                    search: None withheld for non-Captain (:345-351)
+Read :1206-1242                  read_entry: None -> Captain only (:1222-1228); only private/department restrict (:1236-1239)
+Read :135-157                    record_is_readable: unlabelled class -> level 0, not gated (:147)
+Read :1506-1514                  _parse_document maps None -> {}
+git show a745e447:…records_store.py  _parse_document :1265-1275 raw.split("---", 2); read_entry :970-999
+Read :552-568, :590-591, :611-628   preserve at :565-568; yaml.dump :590; index_record classification=classification :614; log :628
+Read :765-775                    write_notebook: default NOTEBOOK_DEFAULT_CLASSIFICATION, preserve=(classification is None)
+Read :1330-1346                  publish: {} -> only the Captain; rewrites with the parsed fm
+Read semantic.py:736-752         backfill read_entry(_UNRESTRICTED_READER); classification default "ship" :746
+Read tests/test_ad1138_records_semantic_index.py:42-60, :273-289   real SemanticKnowledgeLayer fixture; layer.search(..., reader_id=)
+git ls-files --eol               i/lf w/crlf for all five edited files
+```
+
+```
+### Absence Verified, Amendment A2 (2026-11-05, on `ed86ae83`)
+CLAIM: write_notebook is the only caller that sets preserve_classification_on_update
+RUN:   Grep "preserve_classification_on_update" src
+FOUND: records_store.py:499, :514, :565 (definition, docstring, use), :775 (the one caller)   HOLDS: yes
+CLAIM: new mutation lines are unique (substring)
+RUN:   Grep "^ {12,}return None\s*$|if cut < 0|close \+ 1 > cut|return framed" records_store.py
+FOUND: 12-space "return None" at :1218, :1485 (so RKS-25's line carries a comment); the others absent   HOLDS: yes
+CLAIM: no test name or docstring claims an unrestricted round trip
+RUN:   Grep "(?i)round|hand" tests/test_bf952_records_keyword_search.py
+FOUND: :345 only ("hands its JSON")   HOLDS: yes
+CLAIM: each SEARCH occurs once
+RUN:   grep -c / grep -n on each anchor
+FOUND: records_store.py :507, :614, :628 once each; DECISIONS.md scope :1351, RK12 :1362, Residual :1364 once each;
+       tests: "outside.status_code == 400", "no frontmatter at all" param, the RecordsStore import, once each;
+       PROGRESS.md framing phrase once; contract: "## 4. Milestones" :120, "- **M0:**" :130, "Not built. Each item" :955,
+       "## 11. Recorded limits" :1014, "## 12. Verified" :1040, "**BF number:** BF-952" :8, "## For the Captain" :2349, once each.
+       Duplicates avoided by the headings: the RK12, A1-M2, T19, L18-L23 and "Status" lines also occur in §A1.7.   HOLDS: yes
+```
+
+Not checked by execution (read-only bridge): the behaviour of YAML on T20's prose case (a column-0 line without `:` after a mapping raises "could not find expected ':'"), and duplicate-key last-wins in `CSafeLoader`. If either does not hold, GA2 fails at T20, which is a hard stop.
+
+### A2.6 Prior art
+
+No web search. This is ProbOS plumbing, python-frontmatter's delimiter rule is already cited in §A1.8, and no `reference-projects.md` row was examined.
 
 ## For the Captain
 
