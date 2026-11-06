@@ -50,6 +50,8 @@ import uuid
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from probos.admission.seam import check_at
+from probos.admission.taxonomy import EFFECT_STORE_WRITE
 from probos.events import EventType
 from probos.protocols import EventEmitterMixin
 
@@ -689,6 +691,7 @@ class CapabilityRequestStore(EventEmitterMixin):
         connection_factory: "ConnectionFactory | None" = None,
         emit_event: Callable[..., Any] | None = None,
         trust_network: "TrustNetworkProtocol | None" = None,
+        admission: object = None,  # AD-1346 M3e4d6 (D322): the service file_request and decide hand check_at; None checks nothing
     ) -> None:
         self.db_path = db_path
         self._connection_factory = connection_factory
@@ -697,6 +700,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             self._connection_factory = default_factory
         self._emit_event = emit_event
         self._trust_network = trust_network
+        self._admission = admission  # AD-1346 M3e4d6 (D322): constructor-injected; no set_admission, so the class keeps 15 direct methods
         self._db: Any = None
         # In-memory cache: request_id -> CapabilityRequest
         self._cache: dict[str, CapabilityRequest] = {}
@@ -778,6 +782,7 @@ class CapabilityRequestStore(EventEmitterMixin):
             payload=payload,
             triage=triage,
         )
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=agent_id)  # AD-1346 M3e4d6 (D321): the filing's store-write check, in shadow, before its row's INSERT; it blocks nothing
         if self._db:
             await self._db.execute(
                 "INSERT INTO capability_requests "
@@ -999,6 +1004,7 @@ class CapabilityRequestStore(EventEmitterMixin):
         request filed through the ladder is decided on its committed row
         (:func:`_decide_ladder_row`); ``None`` then also means that row refused it.
         """
+        check_at(self._admission, effect=EFFECT_STORE_WRITE, presented_id=decided_by)  # AD-1346 M3e4d6 (D321): the decision's store-write check, in shadow, before either writer; it blocks nothing
         async with self._decision_lock:
             req = await self.get(request_id)
             if req is None:

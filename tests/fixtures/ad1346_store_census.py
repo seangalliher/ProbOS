@@ -7,12 +7,15 @@ the scan over every ``src`` module. ``STORE_WRITE_SCOPES`` (AD-1346 M3e4b, D229)
 that holds a point in the Ward Room's ``messages.py`` and ``threads.py``, in ``cognitive/episodic.py`` and, from
 AD-1346 M3e4d1 (D284), in ``cognitive/clinical_notes_store.py`` and ``skill_request.py`` and, from AD-1346 M3e4d2
 (D291), in ``persistent_tasks.py`` and, from AD-1346 M3e4d3 (D298), in ``threads/__init__.py`` and, from AD-1346
-M3e4d4 (D306), in ``assignment.py`` and, from AD-1346 M3e4d5 (D313), in ``ward_room/channels.py`` a
-``StoreCheck`` or a ``System``, and ``STORE_WRITE_FILES`` gives each other file that holds a point one coverage, a
-``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
+M3e4d4 (D306), in ``assignment.py`` and, from AD-1346 M3e4d5 (D313), in ``ward_room/channels.py`` and, from AD-1346
+M3e4d6 (D320), in ``capability_request.py`` and, from AD-1346 M3e4d7 (D327), in ``artifacts/__init__.py`` a
+``StoreCheck`` or a ``System`` and, from AD-1346 M3e4d8 (D334), in ``workforce.py`` a ``StoreCheck``, a ``System`` or
+a ``Pending`` that a later part of M3e4d classifies; ``STORE_WRITE_FILES`` gives each other file that holds a point
+one coverage, a ``Pending``, ``System`` or ``OutsideRuntime`` of ``tests/fixtures/ad1346_effect_census.py``. A row of
 ``STORE_WRITE_FILES`` is a file and carries no count (D220). ``AGENT_ATTRIBUTED_SCOPES`` (AD-1346 M3e4c, D240)
 gives, for each file whose row is ``Pending("M3e4d")``, a scope whose SQL write statement records a row D239 makes
-agent-attributed, and the name in that scope of the id the row records as its author, creator or requester.
+agent-attributed, and the name in that scope of the id the row records as its author, creator or requester; from
+AD-1346 M3e4d8 (D334) no file's row is, and the table is empty.
 
 Among what the scan cannot see: a statement whose text starts in a part that is not a constant (a name, a call, a
 placeholder), SQL not in upper case, a string inside an f-string's placeholder, and the other store-write primitives,
@@ -40,7 +43,8 @@ SQL_WRITE_STARTS: Final = (
 #: Matched at the start of a string's text, after leading whitespace.
 SQL_WRITE: Final = re.compile(r"\s*(?:" + "|".join(SQL_WRITE_STARTS) + r")(?:\s|$)")
 
-_AGENT_ATTRIBUTED: Final = Pending("M3e4d", "agent-attributed (D239): AGENT_ATTRIBUTED_SCOPES names a scope and its author (register R113)")
+#: AD-1346 M3e4d8 (D334): the coverage of a scope of a scoped file that a later part of M3e4d classifies.
+_SCOPE_PENDING: Final = Pending("M3e4d", "a write scope of a scoped file that a later part of M3e4d classifies (register R160)")
 
 
 def _docstrings(tree: ast.Module) -> set[int]:
@@ -102,19 +106,11 @@ def sql_write_files() -> frozenset[str]:
 #: AD-1346 M3e4c (D239, D240): each file whose row is ``Pending("M3e4d")`` -> (a scope whose SQL write statement
 #: records a row D239 makes agent-attributed, the name in that scope of the id the row records as its author, creator
 #: or requester).
-AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {
-    "src/probos/artifacts/__init__.py": ("ArtifactStore.add_version", "created_by"),
-    "src/probos/capability_request.py": ("CapabilityRequestStore.file_request", "agent_id"),
-    "src/probos/workforce.py": ("WorkItemStore._insert_work_item", "item.created_by"),
-}
+AGENT_ATTRIBUTED_SCOPES: Final[dict[str, tuple[str, str]]] = {}  # AD-1346 M3e4d8 (D334): workforce.py, its last file, is split by scope
 
 #: AD-1346 M3e4a (D220, D221): each other ``src`` file that holds a SQL write statement -> its coverage (AD-1346 M3e4b,
 #: D229: the files of ``STORE_WRITE_SCOPES`` are not rows here).
 STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
-    # Agent-attributed (AD-1346 M3e4c, D239, D240): M3e4d's (register R113).
-    "src/probos/artifacts/__init__.py": _AGENT_ATTRIBUTED,
-    "src/probos/capability_request.py": _AGENT_ATTRIBUTED,
-    "src/probos/workforce.py": _AGENT_ATTRIBUTED,
     # System (AD-1346 M3e4c, D239): each reason names what the file records.
     "src/probos/cognitive/clinical_audit_store.py": System(SHIP, "the clinical audit log"),
     "src/probos/cognitive/counselor.py": System(SHIP, "cognitive profiles and assessments, keyed by the agent assessed (D239)"),
@@ -191,8 +187,9 @@ STORE_WRITE_FILES: Final[dict[str, Pending | System | OutsideRuntime]] = {
 @dataclass(frozen=True)
 class StoreCheck:
     """AD-1346 M3e4b (D229, D230): a scope whose SQL write statements the function ``check``, a (file, qualified
-    name) pair, checks with ``check_at``, presenting ``presented``. ``via`` is empty when ``check`` is the scope, else
-    the attribute of ``check``'s class through which ``check`` calls the scope."""
+    name) pair, checks with ``check_at``, presenting ``presented``. ``via`` is the attribute of ``check``'s class
+    through which ``check`` calls the scope, or empty when ``check`` is the scope or, from AD-1346 M3e4d6 (D321), when
+    the scope is a module-level function of ``check``'s file that ``check`` calls."""
 
     check: tuple[str, str]
     presented: str
@@ -209,10 +206,63 @@ _TASKS: Final = "src/probos/persistent_tasks.py"
 _CHATS: Final = "src/probos/threads/__init__.py"
 _ASSIGNMENTS: Final = "src/probos/assignment.py"
 _CHANNELS: Final = "src/probos/ward_room/channels.py"
+_REQUESTS: Final = "src/probos/capability_request.py"
+_ARTIFACTS: Final = "src/probos/artifacts/__init__.py"
+_WORKFORCE: Final = "src/probos/workforce.py"
+#: AD-1346 M3e4d8 (D334): the write scopes of workforce.py that a later part of M3e4d classifies; each is a row of
+#: _SCOPE_PENDING (register R160 orders them).
+_WORKFORCE_PENDING: Final = (
+    "WorkItemStore._finish_owned_store_write",
+    "WorkItemStore._admit_legacy_execution",
+    "WorkItemStore._write_owned_journal",
+    "WorkItemStore.compare_and_set_owned_finalization",
+    "WorkItemStore._migrate_owned_steps_history",
+    "WorkItemStore.capture_owned_steps_repair_observation",
+    "WorkItemStore.claim_owned_steps_proposal",
+    "WorkItemStore.publish_owned_steps_proposal",
+    "WorkItemStore.fail_owned_steps_proposal",
+    "WorkItemStore._apply_owned_replan",
+    "WorkItemStore.apply_owned_steps_proposal",
+    "WorkItemStore._seed_owned_steps",
+    "WorkItemStore.start_owned_legacy_parent",
+    "WorkItemStore._compare_and_set_owned_step_core",
+    "WorkItemStore._mutate_owned_child",
+    "WorkItemStore.clear_crew_session_provisioning",
+    "WorkItemStore.delete_untouched_crew_session_provisioning",
+    "WorkItemStore.fail_crew_session_provisioning",
+    "WorkItemStore.install_child_plan_with_parent_metadata",
+    "WorkItemStore.adopt_child_plan_with_parent_metadata",
+    "WorkItemStore.compare_and_set_work_item_assignment",
+    "WorkItemStore.update_work_item",
+    "WorkItemStore.confirm_value_context",
+    "WorkItemStore.merge_work_item_metadata",
+    "WorkItemStore.compare_and_set_work_item_verification",
+    "WorkItemStore.publish_work_item_metadata_with_child_barrier",
+    "WorkItemStore.transition_crew_session_terminal_with_trust",
+    "WorkItemStore.mark_crew_session_delivery_delivered",
+    "WorkItemStore.enqueue_promoted_report",
+    "WorkItemStore.mark_promoted_report_delivered",
+    "WorkItemStore.mark_promoted_report_undeliverable",
+    "WorkItemStore.mark_crew_trust_outcome_delivered",
+    "WorkItemStore.transition_work_item",
+    "WorkItemStore.delete_work_item",
+    "WorkItemStore.add_work_watcher",
+    "WorkItemStore.claim_work_notice",
+    "WorkItemStore._assign_work_item",
+    "WorkItemStore.unassign_work_item",
+    "WorkItemStore.start_booking",
+    "WorkItemStore.pause_booking",
+    "WorkItemStore.resume_booking",
+    "WorkItemStore.complete_booking",
+    "WorkItemStore._cancel_booking",
+    "WorkItemStore._generate_journal",
+    "WorkItemStore._record_timestamp",
+)
 
-#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306) and M3e4d5 (D313): each (file,
-#: enclosing scope) of these nine files that holds a SQL write statement -> its coverage.
-STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
+#: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313), M3e4d6 (D320),
+#: M3e4d7 (D327) and M3e4d8 (D334): each (file, enclosing scope) of these twelve files that holds a SQL write statement
+#: -> its coverage.
+STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
     (_MESSAGES, "MessageStore.edit_post"): StoreCheck((_WARD_ROOM, "WardRoomService.edit_post"), "author_id", "_messages"),
@@ -290,6 +340,31 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System]] = {
     # System (D239): the default channels, with created_by 'system', and a channel's archived flag.
     (_CHANNELS, "ChannelManager._ensure_default_channels"): System(SHIP, "the default channels, with created_by 'system'"),
     (_CHANNELS, "ChannelManager.archive_channel"): System(SHIP, "a channel's archived flag"),
+    # AD-1346 M3e4d6 (D320). Agent-attributed (D239): a filing's rationale with agent_id, and a decision's reason with
+    # decided_by, written by decide or, for a filing with a ladder record, by _decide_ladder_row, which decide calls;
+    # decide's one check comes before both (D321).
+    (_REQUESTS, "CapabilityRequestStore.file_request"): StoreCheck((_REQUESTS, "CapabilityRequestStore.file_request"), "agent_id"),
+    (_REQUESTS, "CapabilityRequestStore.decide"): StoreCheck((_REQUESTS, "CapabilityRequestStore.decide"), "decided_by"),
+    (_REQUESTS, "_decide_ladder_row"): StoreCheck((_REQUESTS, "CapabilityRequestStore.decide"), "decided_by"),
+    # System (D239): each takes only a request id.
+    (_REQUESTS, "CapabilityRequestStore.mark_fulfilled"): System(SHIP, "a request's status, fulfilled"),
+    (_REQUESTS, "CapabilityRequestStore.require_build_consensus"): System(SHIP, "a pending build's payload, with requires_consensus set"),
+    # AD-1346 M3e4d7 (D327). Agent-attributed (D239): a work product's version, its name, content hash and MIME type,
+    # with created_by, written by add_version, and a chain's first version with created_by, written by
+    # reconcile_exact_version; each check is its scope (D328).
+    (_ARTIFACTS, "ArtifactStore.add_version"): StoreCheck((_ARTIFACTS, "ArtifactStore.add_version"), "created_by"),
+    (_ARTIFACTS, "ArtifactStore.reconcile_exact_version"): StoreCheck((_ARTIFACTS, "ArtifactStore.reconcile_exact_version"), "created_by"),
+    # System (D239): it takes only an artifact id.
+    (_ARTIFACTS, "ArtifactStore.delete"): System(SHIP, "the deletion of an artifact's row"),
+    # AD-1346 M3e4d8 (D334). Agent-attributed (D239): a work item's title and description with created_by, which
+    # _insert_work_item takes from the item create_work_item or a crew session's parent reservation hands it; the check
+    # is its scope (D335).
+    (_WORKFORCE, "WorkItemStore._insert_work_item"): StoreCheck((_WORKFORCE, "WorkItemStore._insert_work_item"), "item.created_by"),
+    # System (D239): an outbox table with no author column.
+    (_WORKFORCE, "_insert_crew_trust_effects"): System(SHIP, "a crew session's trust outcomes in crew_trust_outbox, which has no author column"),
+    (_WORKFORCE, "_insert_crew_session_delivery"): System(SHIP, "a crew session's delivery record in crew_delivery_outbox, which has no author column"),
+    # Pending (D334): a later part of M3e4d classifies each.
+    **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
 
 

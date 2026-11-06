@@ -3355,6 +3355,7 @@ class ProbOSRuntime:
             records_store=self._records_store,  # AD-1140: commons-write tool
             notebook_quality_engine=self._notebook_quality_engine,  # AD-1140
             pull_resource_resolver=self.resolve_workforce_pull_resource,
+            admission=self.admission_service,  # AD-1346 M3e4d6 (D322): handed to the capability request store's constructor and, from AD-1346 M3e4d8 (D336), the work item store's; None checks nothing
         )
         self.persistent_task_store = comm.persistent_task_store
         self.work_item_store = comm.work_item_store
@@ -3438,6 +3439,7 @@ class ProbOSRuntime:
         if isinstance(self.llm_client, OpenAICompatibleClient):  # AD-1346 M3d3a (D127): the model gateway's sink check; None checks nothing
             self.llm_client.set_admission(self.admission_service)
         HttpFetchAgent.set_admission(self.admission_service)  # AD-1346 M3e3b (D203): the http_fetch egress sink's service, class-level; shutdown sets it back to None
+        from probos.artifacts import ArtifactStore
         from probos.assignment import AssignmentService
         from probos.cognitive.clinical_notes_store import ClinicalNotesStore
         from probos.cognitive.episodic import EpisodicMemory
@@ -3460,6 +3462,8 @@ class ProbOSRuntime:
             self.chat_thread_store.set_admission(self.admission_service)
         if isinstance(self.assignment_service, AssignmentService):  # AD-1346 M3e4d4 (D308): the assignment service's check; None checks nothing
             self.assignment_service.set_admission(self.admission_service)
+        if isinstance(self.artifact_store, ArtifactStore):  # AD-1346 M3e4d7 (D329): the artifact store's two checks; None checks nothing
+            self.artifact_store.set_admission(self.admission_service)
         self.tool_permission_store = comm.tool_permission_store
         self.cognitive_journal = comm.cognitive_journal
         self.knowledge_edges = comm.knowledge_edges  # AD-687

@@ -298,7 +298,8 @@ def test_the_sink_set_names_five_classes_and_the_delivered_ones_are_the_ticket_e
 
 
 def test_the_census_helpers_report_a_new_site_a_stale_row_a_count_a_reference_an_import_and_a_literal() -> None:
-    """EC8: the helpers on synthetic input, so a helper that reports nothing cannot pass EC2, EC4, EC5 or EC6 silently."""
+    """EC8: the helpers on synthetic input, so a helper that reports nothing cannot pass EC2, EC4, EC5 or EC6 silently;
+    from AD-1346 M3e4d6 (A1), its string case is what lets WM1's third branch see a quoted name."""
     listed: dict[tuple[str, str], tuple[int, object]] = {
         ("src/probos/a.py", "f"): (1, System(SHIP, "r")),
         ("src/probos/b.py", "g"): (2, System(SHIP, "r")),
@@ -312,6 +313,9 @@ def test_the_census_helpers_report_a_new_site_a_stale_row_a_count_a_reference_an
     ]
     source = "class A:\n    def run(self):\n        self._go()\n    def other(self):\n        return self._go\n    def _go(self):\n        pass\n\n\n_go = None\n"
     assert references_outside(ast.parse(source), "_go", ("A.run", "A._go")) == [("A.other", 5), ("<module>", 10)]
+    quoted = 'def run():\n    return _go()\n\n\ndef other():\n    return globals()["_go"]\n\n\nNAMES = ["_go"]\n'
+    assert references_outside(ast.parse(quoted), "_go", ("run",)) == []
+    assert references_outside(ast.parse(quoted), "_go", ("run",), strings=True) == [("other", 6), ("<module>", 9)]
     sources = {
         "src/probos/runtime.py": "from probos.doctor import run_doctor\n",
         "src/probos/doctor/x.py": "from probos.doctor.protocol import A\n",
