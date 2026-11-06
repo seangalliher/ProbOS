@@ -86,6 +86,10 @@ ALLOWED_EXCEPTIONS = {
     ("cognitive/ground_truth.py", "probos.workforce"),
     # AD-583: knowledge → cognitive.social_verification — pure function import for independence scoring
     ("knowledge/records_store.py", "probos.cognitive.social_verification"),
+    # BF-952: knowledge → cognitive.provenance — ``record_write_time``, BF-950's total parser of a record's
+    # ``updated``/``created``, breaks search ties by date. A pure function over a dict; provenance.py imports
+    # only the standard library, so there is no cycle and no behavioural coupling (AD-583 precedent above).
+    ("knowledge/records_store.py", "probos.cognitive.provenance"),
     # AD-689: knowledge → mesh.routing — REL_INTENT relation-type constant
     # for filtering Hebbian weights during edge backfill. Pure constant, no
     # behavioral coupling.

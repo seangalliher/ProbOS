@@ -242,7 +242,10 @@ async def test_a_root_spelled_as_it_resolves_walks_as_before(tmp_path: Path) -> 
     assert await store.list_entries("notebooks") == whole
     assert await store.list_entries("_archived") == []
     hits = await store.search("engineering", scope="ship", reader_id="captain")
-    assert [hit["path"] for hit in hits] == [_BRAVO, _ZEPHYR]
+    # BF-952: search ranks by relevance, then by the newer ``updated``, not by path (Zephyr's shorter note now
+    # leads). This test is about the walk, so it compares the paths found; the directory walk below must still
+    # return the same list in the same order.
+    assert {hit["path"] for hit in hits} == {_BRAVO, _ZEPHYR}
     assert await store.search("engineering", scope="ship", reader_id="captain", directory="notebooks") == hits
     assert await store.list_bills() == [{"path": "bills/drill.bill.yaml", "bill_id": "drill"}]
 
