@@ -4417,6 +4417,7 @@ class CognitiveAgent(BaseAgent):
         # Claude Cowork / Codex / Copilot parity. A no-tool turn is a single pass.
         # Honest-degrades to the single-pass path below on any miss/failure
         # (the helper returns None), so the flag never drops the Captain's turn.
+        _t_turn = time.monotonic()  # AD-1357: the DM-turn journal row's latency
         _agentic_output = await self._maybe_run_conversational_agentic(
             observation,
             system_prompt=composed,
@@ -4431,8 +4432,33 @@ class CognitiveAgent(BaseAgent):
             }
             # AD-1203 + AD-1248: provenance for the turn, set by the run above.
             _attach_run_provenance(decision, observation)
-            # AD-1357 (#1749): the id the reply's context manifest gives this turn.
+            # AD-1357 (#1749): the loop's own model calls write no journal row
+            # (``journal_token_report``'s docstring), so the DM turn writes one
+            # under this id, which the reply's context manifest names. ``model``
+            # is "unknown", as BF-901 requires of a row that names no answering
+            # model, and the empty token source files it as uncharged.
             _turn_entry_id = uuid.uuid4().hex
+            if self._cognitive_journal:
+                try:
+                    await self._cognitive_journal.record(
+                        entry_id=_turn_entry_id,
+                        timestamp=time.time(),
+                        agent_id=self.id,
+                        agent_type=self.agent_type,
+                        tier="agentic",
+                        model="unknown",
+                        latency_ms=(time.monotonic() - _t_turn) * 1000,
+                        intent=observation.get("intent", ""),
+                        success=True,
+                        prompt_hash=context_manifest.turn_hash(user_message),
+                        response_length=len(_agentic_output),
+                        intent_id=observation.get("intent_id", ""),
+                        dag_node_id=context_manifest.DM_TURN_DAG_NODE,
+                        response_hash=context_manifest.turn_hash(_agentic_output),
+                        correlation_id=observation.get("correlation_id", ""),
+                    )
+                except Exception:
+                    logger.debug("AD-1357: DM-turn journal recording failed", exc_info=True)
             context_manifest.record_manifest(
                 observation,
                 path="agentic",

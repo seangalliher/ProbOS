@@ -40,7 +40,6 @@ from probos.threads import ChatThreadStore
 from probos.types import Episode, IntentMessage, IntentResult, LLMResponse
 from tests.fixtures.ad1028_golden._capture_golden import dm_observation, make_dm_agent
 
-_UNTIL_M4 = pytest.mark.xfail(strict=True, reason="AD-1357 M4: an agentic DM turn writes no journal row")
 
 AGENT_ID = "ad1357-ezri"
 GAME_RECORD = "recreation/games/tictactoe/game-58042e2b4637.md"
@@ -472,7 +471,6 @@ async def test_the_manifest_names_its_journal_row_on_the_single_pass_path(tmp_pa
     )
 
 
-@_UNTIL_M4
 async def test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names(tmp_path: Path) -> None:
     """#1749 acceptance 4: the journal has a row for the DM turn, beside the chain intents."""
     journal = CognitiveJournal(db_path=str(tmp_path / "cognitive_journal.db"))
