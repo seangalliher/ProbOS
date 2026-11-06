@@ -206,8 +206,8 @@ _SEARCH_BM25_B = 0.75
 _SEARCH_LIMIT = 20
 #: BF-952: every Ship's Records reader loads frontmatter with libyaml when it is installed (search
 #: parses every record on each call, and PyYAML's pure-Python scanner was about a third of that
-#: cost). libyaml uses PyYAML's own safe constructor; ``_read_document`` falls back to
-#: ``yaml.safe_load`` for a frontmatter libyaml refuses.
+#: cost). libyaml uses PyYAML's own safe constructor; ``_load_frontmatter`` reads a frontmatter
+#: libyaml cannot load, for any reason, as the base did, with ``yaml.safe_load`` (A4, round 4).
 _RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
 
 
@@ -239,17 +239,22 @@ def _search_field_text(value: Any) -> str:
 
 
 def _load_frontmatter(block: str) -> Any:
-    """BF-952 A1: a frontmatter block loaded by libyaml (``_RECORDS_YAML_LOADER``), then ``yaml.safe_load``.
+    """BF-952 A1, A4: a frontmatter block loaded by libyaml (``_RECORDS_YAML_LOADER``), else as the base loaded it.
 
-    ``None`` when neither loader accepts it; ``{}`` for an empty or falsy one. An error of YAML's
-    constructor (``updated: 2026-13-05`` raises ``ValueError``) propagates.
+    A block libyaml loads is its value, ``{}`` for a falsy one. That differs from the base only where
+    PyYAML's scanner refuses the block (RK8: a tab after a key). A block libyaml cannot load, for any
+    reason, is read as the base read it (A4, round 4): ``yaml.safe_load``, ``None`` for a ``YAMLError``
+    (the reader's ``{}``), and an error of YAML's constructor (``updated: 2026-13-05`` raises
+    ``ValueError``) propagates. So a block that libyaml scans and cannot build, and that PyYAML's
+    scanner refuses (``updated:<TAB>2026-13-05``), reads as ``{}``, as on the base, instead of raising.
+    Nothing is swallowed: the fallback is the base's own call, which raises the base's own error.
     """
     try:
         frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
-    except yaml.YAMLError:
+    except Exception:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it
         try:
             frontmatter = yaml.safe_load(block)
-        except yaml.YAMLError:
+        except yaml.YAMLError:  # A4 (round 4): the base's own catch; a constructor error propagates
             return None  # A1: neither loader accepts the block
     return frontmatter or {}
 

@@ -260,6 +260,13 @@ async def test_a_query_with_no_words_finds_nothing(tmp_path: Path, query: str) -
 
 
 _LIBYAML = bool(getattr(yaml, "__with_libyaml__", False))
+#: T23's lines: a tab after a key, which PyYAML's scanner refuses and libyaml scans, with values libyaml builds and
+#: values it cannot (A4, round 4), and plain lines to pair them with.
+_TAB_GRID_LINES = (
+    "classification:\tprivate", "author:\tbob", "updated:\t2026-06-01", "updated:\t2026-13-05",
+    "updated:\t2026-02-30", "count:\t!!int 7", "count:\t!!int word", "ratio:\t!!float warp",
+    "author: alice", "classification: private", "updated: 2026-13-05", "broken: [unclosed",
+)
 
 
 @pytest.mark.parametrize(("raw", "frontmatter", "body"), [
@@ -512,7 +519,7 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
     author's, or as a constructor error for a valid store-written value. Every shape here, over the three rounds'
     lines, closing markers, bodies and both line endings, reads under ``_read_document`` and ``_parse_document``
     exactly as the base read it, a constructor error included. No line holds a tab, so libyaml and PyYAML read each
-    alike; RK8's one difference is T13's tab case."""
+    alike; the tab shapes, RK8's and round 4's, are T23's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     shapes = [
         "---\n" + "".join(f"{line}\n" for line in lines) + close + body
@@ -533,3 +540,94 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
         ):
             differ.append(shape)
     assert differ == [], (len(differ), differ[:5])
+
+
+def _rk8_read(raw: str) -> Any:
+    """RK8's one admitted difference, computed here from the two loaders: where libyaml loads the base framing's
+    frontmatter and ``yaml.safe_load`` raises ``YAMLError``, every reader reads libyaml's value (``{}`` for a falsy
+    one). ``None`` for any other document, which reads as on the base."""
+    if not _LIBYAML or not raw.startswith("---"):
+        return None
+    parts = raw.split("---", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        pass
+    except Exception:  # noqa: BLE001 -- PyYAML raised as the base raised: not RK8, the base's reading applies
+        return None
+    else:
+        return None
+    try:
+        frontmatter = yaml.load(parts[1], Loader=yaml.CSafeLoader)
+    except Exception:  # noqa: BLE001 -- libyaml cannot load it either: not RK8, the base's reading applies
+        return None
+    return (frontmatter or {}), parts[2].strip()
+
+
+def test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base(tmp_path: Path) -> None:
+    """A4 (round 4, finding 1): PyYAML's scanner refuses a tab after a key and libyaml scans it. Where libyaml then
+    cannot build a value (``updated:<TAB>2026-13-05`` and ``count:<TAB>!!int word`` raise ``ValueError``), A1's
+    ``_load_frontmatter`` let the error escape, so ``read_entry`` raised and ``list_entries`` dropped the record; on
+    the base ``yaml.safe_load`` raised ``ScannerError`` and every reader read ``{}``. Now a block libyaml cannot load,
+    for any reason, is read as the base read it. Over tab and plain lines, one or two to a frontmatter and both line
+    endings, every shape reads under ``_read_document`` and ``_parse_document`` as on the base, a constructor error
+    included, or, where libyaml loads it and PyYAML's scanner refuses it, as libyaml read it (RK8). T22 holds no tab."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    shapes = [
+        "---\n" + "".join(f"{line}\n" for line in lines) + "---\nwarp notes\n"
+        for count in (1, 2)
+        for lines in itertools.product(_TAB_GRID_LINES, repeat=count)
+    ]
+    shapes += [shape.replace("\n", "\r\n") for shape in shapes]
+    assert len(shapes) == 312  # premise: (12 + 144) line sequences x 2 line endings
+    differ: list[str] = []
+    admitted = 0
+    for shape in shapes:
+        base = _read_or_error(_base_read, shape)
+        rk8 = _rk8_read(shape)
+        expected = base if rk8 is None else rk8
+        admitted += rk8 is not None and rk8 != base
+        if (
+            _read_or_error(records_store_module._read_document, shape) != expected
+            or _read_or_error(store._parse_document, shape) != expected
+        ):
+            differ.append(shape)
+    assert differ == [], (len(differ), differ[:5])
+    if _LIBYAML:  # premise: the grid holds round 4's class and RK8's
+        for block in ("\nupdated:\t2026-13-05\n", "\ncount:\t!!int word\n"):
+            with pytest.raises(ValueError):
+                yaml.load(block, Loader=yaml.CSafeLoader)
+            with pytest.raises(yaml.YAMLError):
+                yaml.safe_load(block)
+        assert admitted > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("line", [
+    pytest.param("updated:\t2026-13-05", id="tab-plus-bad-date"),
+    pytest.param("count:\t!!int word", id="tab-plus-bad-int-tag"),
+])
+async def test_a_record_libyaml_cannot_build_is_read_listed_and_found_as_on_the_base(
+    tmp_path: Path, line: str,
+) -> None:
+    """A4 (round 4, finding 1), through the real readers. Before A4, libyaml's ``ValueError`` escaped: ``read_entry``
+    raised (the route's HTTP 400), ``list_entries`` dropped the record and the search withheld it. On the base every
+    reader read ``{}``, and does again. ``{}`` names no classification; what another reader may then read is the
+    base's default and BF-940's (#1686), and this test asserts nothing about it, nor about ``publish``'s rewrite."""
+    raw = f"---\nauthor: alice\nclassification: private\n{line}\n---\n\nwarp core notes\n"
+    if _LIBYAML:  # premise: the shape is the class round 4 found
+        with pytest.raises(ValueError):
+            yaml.load(raw.split("---", 2)[1], Loader=yaml.CSafeLoader)
+    assert _base_read(raw) == ({}, "warp core notes")  # premise: the base reads it as {}
+    store = await _store(tmp_path)
+    path = "notebooks/alice/tabbed.md"
+    target = store.repo_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(raw, encoding="utf-8")
+    assert await store.read_entry(path, reader_id="captain") == {
+        "frontmatter": {}, "content": "warp core notes", "path": path,
+    }
+    assert [(entry["path"], entry["frontmatter"]) for entry in await store.list_entries("notebooks")] == [(path, {})]
+    assert await _paths(store, "warp", reader_id="captain") == [path]
