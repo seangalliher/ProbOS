@@ -142,9 +142,9 @@ describe('NotebooksPanel (AD-523b)', () => {
     expect(color.replace(/\s/g, '').toLowerCase()).toMatch(/#7060a8|rgb\(112,96,168\)/);
   });
 
-  it('search runs against /api/records/search and filters to notebooks/* paths', async () => {
+  it('search asks /api/records/search for notebooks/ only and filters to notebooks/* paths', async () => {
     useStore.setState({ notebooksOpen: true, notebooksSearchQuery: 'reactor' });
-    vi.spyOn(global, 'fetch').mockResolvedValue(jsonResp({
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(jsonResp({
       results: [
         { path: 'notebooks/atlas/reactor-a.md', frontmatter: { topic: 'Reactor A', author: 'atlas' }, score: 0.95, snippet: 'reactor coolant' },
         { path: 'notebooks/sage/reactor-b.md', frontmatter: { topic: 'Reactor B', author: 'sage' }, score: 0.81, snippet: 'reactor flux' },
@@ -155,6 +155,8 @@ describe('NotebooksPanel (AD-523b)', () => {
     await act(async () => {
       await useStore.getState().runNotebookSearch();
     });
+    // BF-952 A1: the server confines the walk before its cap of 20; the client filter stays as a guard.
+    expect(fetchSpy).toHaveBeenCalledWith('/api/records/search?q=reactor&scope=ship&directory=notebooks');
     const entriesCol = screen.getByTestId('notebooks-entries');
     expect(entriesCol.textContent).toContain('2 results');
     expect(screen.getByTestId('notebooks-search-result-notebooks/atlas/reactor-a.md')).toBeTruthy();

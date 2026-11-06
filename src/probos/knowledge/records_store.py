@@ -3,14 +3,18 @@
 import asyncio
 import fnmatch
 import logging
+import math
 import os
+import re
 import subprocess
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
 
 logger = logging.getLogger(__name__)
@@ -164,6 +168,307 @@ def _jaccard_similarity(text_a: str, text_b: str) -> float:
     return len(intersection) / len(union)
 
 
+# BF-952: the keyword axis of Ship's Records search (``RecordsStore.search``).
+#
+# The base scored a record by the fraction of query words found as substrings of the raw file,
+# YAML keys included, and broke ties by path: ``i`` matched "ship", ``status`` matched every
+# record, and a conversational question matched the whole repository at one score, so the paths
+# that sort first won. A record is now matched on whole words of its body and of the frontmatter
+# values in ``_SEARCH_FIELD_WEIGHTS``, and ranked by term rarity: BM25 with field weights, the
+# shape BF-625 uses in ``cognitive/transcript_grounding.py``.
+_SEARCH_TOKEN_RE = re.compile(r"\w+(?:[-.]\w+)*")
+_SEARCH_PART_RE = re.compile(r"\w+")
+_SEARCH_STOPWORDS: frozenset[str] = frozenset(
+    (
+        "a about above after again against all also am an and any are as at be because been before being "
+        "below between both but by can could did do does doing down during each few for from further had has "
+        "have having he her here hers herself him himself his how i if in into is it its itself just me may "
+        "might more most must my myself no nor not now of off on once only or other our ours ourselves out "
+        "over own same shall she should so some such than that the their theirs them themselves then there "
+        "these they this those through to too under until up us very was we were what when where which while "
+        "who whom why will with would you your yours yourself yourselves "
+        # what the tokeniser leaves of a contraction: I'd, we'll, I'm, they're, it's, don't, I've
+        "d ll m re s t ve"
+    ).split()
+)
+#: Frontmatter fields whose *values* are scored, each weighted against one body occurrence (1.0).
+#: Keys, ``classification``, ``status``, the timestamps and ``revision`` are never scored.
+#: ``department`` is here because the self-monitoring pull searches by department name.
+_SEARCH_FIELD_WEIGHTS: dict[str, float] = {
+    "title": 3.0,
+    "topic": 3.0,
+    "tags": 3.0,
+    "department": 2.0,
+    "author": 2.0,
+}
+_SEARCH_BM25_K1 = 1.5
+_SEARCH_BM25_B = 0.75
+_SEARCH_LIMIT = 20
+#: BF-952: the search loads frontmatter with libyaml when it is installed (it parses every record on
+#: each call, and PyYAML's pure-Python scanner was about a third of that cost). Every other reader
+#: loads as the base did, with ``yaml.safe_load`` (A5, round 5). ``_search_load_frontmatter`` reads as
+#: the base did a frontmatter libyaml cannot load, for any reason (A4), and one nesting
+#: ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep or more (A5).
+_RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
+#: BF-952 A5: the search hands libyaml only a block nesting fewer than this many collections deep. Below
+#: it PyYAML's pure-Python composer builds the block too; from about 330 levels it raises
+#: ``RecursionError`` (the base's reading), and a block that deep is read with the base's call.
+_SEARCH_LIBYAML_DEPTH_LIMIT = 100
+
+
+def _search_query_terms(query: str) -> list[str]:
+    """BF-952: the distinct compound tokens of ``query``, in order, without stopwords.
+
+    A query made only of stopwords keeps them all rather than finding nothing.
+    """
+    terms = list(dict.fromkeys(match.group() for match in _SEARCH_TOKEN_RE.finditer(query.lower())))
+    kept = [term for term in terms if term not in _SEARCH_STOPWORDS]
+    return kept or terms
+
+
+def _search_field_text(value: Any) -> str:
+    """BF-952: a frontmatter value as the text to score: a string, a number, or the strings and numbers of a list.
+
+    A boolean is not text, alone or in a list (A1, finding 2).
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)) and type(value) is not bool:
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        return " ".join(
+            str(item) for item in value
+            if isinstance(item, (str, int, float)) and type(item) is not bool
+        )
+    return ""
+
+
+def _split_document(raw: str) -> tuple[str | None, str]:
+    """BF-952 A3, A5: a Ship's Records document framed exactly as the base framed it: frontmatter block and body.
+
+    A document that starts with ``---`` has frontmatter up to the next ``---`` wherever it stands, inside a value
+    too, and its body is what follows, stripped; one with no later ``---`` has no frontmatter (``None``) and its
+    body is the whole document (L18). That framing cuts a value holding ``---``; BF-940 (#1686) owns changing it,
+    for every reader at once (L25). Only the search calls it: ``RecordsStore._parse_document`` keeps the base's own
+    copy, so PyYAML's recursion frontier stays the base's for every other reader (A6, round 6; L30).
+    """
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)  # A6: the base's split, copied; _parse_document keeps its own
+        if len(parts) >= 3:  # A6: the base's test, copied
+            return parts[1], parts[2].strip()
+    return None, raw
+
+
+def _load_frontmatter(block: str) -> Any:
+    """BF-952 A5: a frontmatter block loaded exactly as the base loaded it, with ``yaml.safe_load``.
+
+    A falsy value or a ``YAMLError`` is ``{}``. Any other error propagates, as on the base: a constructor's
+    (``updated: 2026-13-05`` raises ``ValueError``) and PyYAML's ``RecursionError`` for a block nesting about 330
+    collections deep.
+    """
+    try:
+        return yaml.safe_load(block) or {}
+    except yaml.YAMLError:  # A5: the base's own catch; a constructor error or a RecursionError propagates
+        return {}
+
+
+def _nests_below(block: str, limit: int) -> bool:
+    """BF-952 A5: whether libyaml parses ``block`` and its collections nest fewer than ``limit`` deep.
+
+    It reads the loader's event stream, which the parser produces without recursing, and stops at ``limit``, so it
+    is safe however deep the block. Siblings add no depth. A block that does not parse is not below the limit.
+    """
+    depth = 0
+    try:
+        for event in yaml.parse(block, Loader=_RECORDS_YAML_LOADER):
+            if isinstance(event, yaml.CollectionStartEvent):
+                depth += 1
+                if depth >= limit:
+                    return False
+            elif isinstance(event, yaml.CollectionEndEvent):
+                depth -= 1
+    except Exception:  # A5: not a swallow; the base's call then reads it: its value, {} or its error (A6)
+        return False
+    return True
+
+
+def _search_load_frontmatter(block: str) -> Any:
+    """BF-952 A1, A4, A5: a frontmatter block as the search loads it: libyaml where it is safe, else as the base did.
+
+    With libyaml installed and the block nesting fewer than ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep, the
+    block is libyaml's value, ``{}`` for a falsy one. That differs from the base where PyYAML's scanner refuses the
+    block (RK8: a tab after a key). A block libyaml cannot load, for any reason (A4), and one nesting deeper (A5),
+    is read by :func:`_load_frontmatter`, the base's call: its value, ``{}`` for a ``YAMLError``, or its error (A6).
+    """
+    if _RECORDS_YAML_LOADER is yaml.SafeLoader or not _nests_below(block, _SEARCH_LIBYAML_DEPTH_LIMIT):
+        return _load_frontmatter(block)
+    try:
+        frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
+    except Exception:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it
+        return _load_frontmatter(block)
+    return frontmatter or {}
+
+
+def _search_read_document(raw: str) -> tuple[Any, str, str | None]:
+    """BF-952 A5: a document's frontmatter and body as the search reads them, and its frontmatter block.
+
+    The base's framing (:func:`_split_document`) and the search's load (:func:`_search_load_frontmatter`). The
+    block (``None`` for a document with no frontmatter) lets the search check a record it would return against
+    the base's reading (:func:`_base_reading_admits`).
+    """
+    block, body = _split_document(raw)
+    return ({} if block is None else _search_load_frontmatter(block)), body, block
+
+
+def _base_reading_admits(
+    block: str, *, scope: str, reader_id: str | None, reader_department: str,
+) -> bool:
+    """BF-952 A5: whether the base's reading of a frontmatter block admits this reader at ``scope``.
+
+    That reading is ``read_entry``'s and the semantic index's (:func:`_load_frontmatter`). The search returns a
+    record only where it admits the reader too, so no difference between libyaml's reading and the base's, known
+    (RK8) or not, can show a reader a record the base's reading withholds (RK15; BF-679).
+    """
+    try:
+        frontmatter = _load_frontmatter(block)
+    except Exception:  # A5: read_entry raises on this block (a constructor error, a RecursionError)
+        logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
+        return False  # A5: the search withholds what read_entry raises on
+    return type(frontmatter) is dict and record_is_readable(
+        frontmatter, scope=scope, reader_id=reader_id, reader_department=reader_department,
+    )
+
+
+def _search_record_counts(
+    frontmatter: dict[str, Any], body: str, terms: list[str],
+) -> tuple[dict[str, float], int]:
+    """BF-952: each query term's weighted count in a record, and the record's length in words.
+
+    A body occurrence counts 1 and a field of ``_SEARCH_FIELD_WEIGHTS`` its weight. A plain
+    term counts each word (``\\w+``) equal to it, so ``952`` is found inside ``bf-952``; a term
+    holding ``-`` or ``.`` counts each whole compound equal to it. The length counts words,
+    whatever their weight. A record whose scored text holds no term even as a substring is
+    only measured: a term counted as a word is always such a substring, so nothing is lost.
+    """
+    scored = [(body.lower(), 1.0)]
+    scored.extend(
+        (_search_field_text(frontmatter.get(name)).lower(), weight)
+        for name, weight in _SEARCH_FIELD_WEIGHTS.items()
+    )
+    words = [_SEARCH_PART_RE.findall(text) for text, _ in scored]
+    length = sum(len(found) for found in words)
+    weights: dict[str, float] = {}
+    if not any(term in text for text, _ in scored for term in terms):
+        return weights, length
+    compound_terms = [term for term in terms if "-" in term or "." in term]
+    for (text, weight), found in zip(scored, words):
+        if not found:
+            continue
+        word_counts = Counter(found)
+        compound_counts = Counter(_SEARCH_TOKEN_RE.findall(text)) if compound_terms else word_counts
+        for term in terms:
+            count = compound_counts[term] if term in compound_terms else word_counts[term]
+            if count:
+                weights[term] = weights.get(term, 0.0) + weight * count
+    return weights, length
+
+
+def _search_records(
+    search_path: Path,
+    root: Path,
+    terms: list[str],
+    *,
+    scope: str,
+    reader_id: str | None,
+    reader_department: str,
+) -> list[dict]:
+    """BF-952: the walk, parse and ranking of :meth:`RecordsStore.search`, run in a worker thread.
+
+    It reads files under ``search_path`` and touches no store state, so it is safe off the
+    event loop. Every record is parsed, not only those that match, because a term's rarity
+    is counted over what this reader may read and over nothing else (A4).
+    """
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
+    for md_file in sorted(search_path.rglob("*.md")):
+        rel_path = str(md_file.relative_to(root)).replace("\\", "/")
+        if rel_path.startswith("_archived/"):
+            continue
+        try:
+            raw = md_file.read_text(encoding="utf-8")
+        except Exception:
+            logger.debug("Skipping unreadable file", exc_info=True)
+            continue
+        try:
+            frontmatter, content_text, block = _search_read_document(raw)
+        except Exception:
+            # A1, A5: YAML accepted the frontmatter and its constructor raised (``updated: 2026-13-05``
+            # is a ``ValueError``, not a ``YAMLError``), or it nests too deep for PyYAML's composer
+            # (``RecursionError``). ``read_entry`` raises for such a record; the search withholds it
+            # rather than end every search or read it as ``{}``.
+            logger.debug("BF-952: skipping %s, whose frontmatter cannot be constructed", rel_path, exc_info=True)
+            continue
+        if type(frontmatter) is not dict:
+            # A non-empty YAML list or a truthy scalar names no classification; the record is
+            # withheld rather than read at a default level (it raised on the base). A falsy one
+            # (``[]``, ``false``, ``0``, ``''``) is ``{}``, as every reader has read it.
+            logger.debug("BF-952: skipping %s, whose frontmatter is not a mapping", rel_path)
+            continue
+        # Classification scope + reader-identity check (BF-679)
+        if not record_is_readable(
+            frontmatter,
+            scope=scope,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        ):
+            continue
+        weights, length = _search_record_counts(frontmatter, content_text, terms)
+        readable.append((rel_path, frontmatter, content_text, weights, length, block))
+    if not readable:
+        return []
+
+    count = len(readable)
+    average_length = sum(entry[4] for entry in readable) / count
+    rarity: dict[str, float] = {}
+    for term in terms:
+        holders = sum(1 for entry in readable if term in entry[3])
+        rarity[term] = math.log(1.0 + (count - holders + 0.5) / (holders + 0.5))
+    total_rarity = sum(rarity[term] for term in terms)
+
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None]] = []
+    for rel_path, frontmatter, content_text, weights, length, block in readable:
+        matched = [term for term in terms if term in weights]
+        if not matched:
+            continue
+        coverage = min(1.0, sum(rarity[term] for term in matched) / total_rarity)
+        norm = 1.0 - _SEARCH_BM25_B + _SEARCH_BM25_B * (length / average_length if average_length else 0.0)
+        relevance = sum(
+            rarity[term] * weights[term] * (_SEARCH_BM25_K1 + 1.0)
+            / (weights[term] + _SEARCH_BM25_K1 * norm)
+            for term in matched
+        )
+        written = record_write_time(frontmatter)
+        key = (-coverage, -relevance, written is None, -(written or 0.0), rel_path)
+        ranked.append((key, {
+            "path": rel_path,
+            "frontmatter": frontmatter,
+            "score": coverage,
+            "snippet": content_text[:200],
+        }, block))
+    ranked.sort(key=lambda pair: pair[0])
+    results: list[dict] = []
+    for _, result, block in ranked:
+        # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
+        # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        if block is not None and not _base_reading_admits(
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+        ):
+            continue
+        results.append(result)
+        if len(results) == _SEARCH_LIMIT:
+            break
+    return results
+
+
 def _markdown_files_or_raise(search_path: Path) -> list[Path]:
     """AD-1341 S4 (A4, A5): every file named ``*.md`` under ``search_path``, or the ``OSError`` that hid one.
 
@@ -268,9 +573,16 @@ class RecordsStore:
         Returns the relative path of the created file.
 
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
-        the frontmatter **before** ``yaml.dump``, so they round-trip through
-        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
-        sidecar. Any key in :data:`_RESERVED_FRONTMATTER_KEYS` raises
+        the frontmatter **before** ``yaml.dump``. They round-trip through
+        ``_parse_document`` when every value is one YAML's safe loader builds
+        (a string, number, boolean, date, or a list or mapping of them) and
+        holds no ``---``, which the reader's framing cuts (BF-940, #1686).
+        ``yaml.dump`` writes a tuple or another Python object with a
+        ``!!python/`` tag, which no reader loads (BF-952 L24). The AD-1138
+        ``frontmatter_json`` sidecar holds them whole only within
+        ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
+        past it the index stores ``{}``. Any key in
+        :data:`_RESERVED_FRONTMATTER_KEYS` raises
         ``ValueError`` — this is the fail-fast tier, because silently dropping a
         reserved key would let a caller believe it stamped provenance that is
         not there. ``None`` (the default) leaves the written bytes identical.
@@ -375,7 +687,7 @@ class RecordsStore:
                 await self._semantic_indexer.index_record(
                     path=path,
                     content=content,
-                    classification=classification,
+                    classification=frontmatter["classification"],
                     author=author,
                     department=department,
                     topic=topic,
@@ -389,7 +701,7 @@ class RecordsStore:
                     path, exc_info=True,
                 )
 
-        logger.info("Record written: %s by %s (%s)", path, author, classification)
+        logger.info("Record written: %s by %s (%s)", path, author, frontmatter["classification"])
         return path
 
     def set_semantic_indexer(self, indexer: Any) -> None:
@@ -1117,7 +1429,25 @@ class RecordsStore:
     ) -> list[dict]:
         """Keyword search across records.
 
-        Simple word-matching against frontmatter fields and content.
+        BF-952: a record matches on whole words of its body and of the values of
+        its ``title``, ``topic``, ``tags``, ``department`` and ``author``
+        frontmatter, never on a YAML key or on part of a word. The query's
+        stopwords are dropped; a query made only of stopwords keeps them all, and
+        a query with no words finds nothing. Records rank by how much of the
+        query's rarity they hold, then by BM25 relevance with title, topic and tag
+        hits weighted above body hits, then by the newer ``updated`` (else
+        ``created``), then by path. ``score`` is the first of these: the summed
+        rarity (IDF) of the query terms the record holds over that of all of them,
+        between 0 and 1, and it never rises down the list. Rarity is counted only
+        over the records this reader may read, so a record withheld from the
+        reader cannot move the scores it is shown. A record whose frontmatter is
+        a non-empty YAML list or a truthy scalar, or one YAML's constructor cannot
+        build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
+        parse reads as ``{}``, as every reader reads it (A3; BF-940, #1686). A
+        number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
+        scored as text; a boolean is not. At most 20 results. The walk, parse and
+        ranking (:func:`_search_records`) run in a worker thread, so a search does
+        not block the event loop; ``scope`` and ``directory`` are checked first, here.
 
         BF-679: ``reader_id`` / ``reader_department`` add the identity layer
         :meth:`read_entry` applies, so a caller that knows who is asking no
@@ -1140,40 +1470,20 @@ class RecordsStore:
         search_path = self._safe_path(directory) if directory else self._repo_path
         # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
         root = self._repo_path.resolve() if directory else self._repo_path
-        query_words = set(query.lower().split())
-        results = []
-        for md_file in sorted(search_path.rglob("*.md")):
-            rel_path = str(md_file.relative_to(root)).replace("\\", "/")
-            if rel_path.startswith("_archived/"):
-                continue
-            try:
-                raw = md_file.read_text(encoding="utf-8")
-            except Exception:
-                logger.debug("Skipping unreadable file", exc_info=True)
-                continue
-
-            # Simple keyword match
-            raw_lower = raw.lower()
-            matches = sum(1 for w in query_words if w in raw_lower)
-            if matches > 0:
-                fm, content_text = self._parse_document(raw)
-                # Classification scope + reader-identity check (BF-679)
-                if not record_is_readable(
-                    fm,
-                    scope=scope,
-                    reader_id=reader_id,
-                    reader_department=reader_department,
-                ):
-                    continue
-                results.append({
-                    "path": rel_path,
-                    "frontmatter": fm,
-                    "score": matches / len(query_words) if query_words else 0,
-                    "snippet": content_text[:200],
-                })
-
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:20]
+        terms = _search_query_terms(query)
+        if not terms:
+            return []
+        # BF-952: the walk parses every readable record (A4), most of a second on a ship's
+        # corpus, so it runs in a worker thread and the event loop stays free meanwhile.
+        return await asyncio.to_thread(
+            _search_records,
+            search_path,
+            root,
+            terms,
+            scope=scope,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        )
 
     async def get_stats(self) -> dict:
         """Get repository statistics."""
