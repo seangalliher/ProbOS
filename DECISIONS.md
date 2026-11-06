@@ -1441,6 +1441,17 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual, accepted.* Registers R160 and R161 of the contract.
 - *Reversal.* Revert the M3e4d8 commits.
 
+### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
+
+AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
+
+- *D340 (the cut).* Part (a) alone, as thirteen rows of the ship's. Rejected: parts (a) and (b) together, which bring `enqueue_promoted_report`'s classification and possibly a check; checks at the writes an agent's own call reaches; part (a) in two parts.
+- *D341 (the rows).* Each reason names what its scope's statements write. `transition_work_item` writes no author column, and its metadata patch is a value its caller composes, the reason `PersistentTaskStore._fire_task`'s row gives. Rejected: a check presenting its `source`, which it does not write; keeping it pending.
+- *D342 (the guards).* WC1's and WC3's counts move; no new test. Rejected: a column-name guard over the system scopes; a pin listing the thirteen; retiring `AGENT_ATTRIBUTED_SCOPES` and WC5 now.
+- *D343 (cost).* No call is added.
+- *Residual, accepted.* Register R162 of the contract.
+- *Reversal.* Revert the M3e4d9 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
