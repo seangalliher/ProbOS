@@ -9,15 +9,20 @@ output through it, so the two cannot drift apart.
 
 :func:`read_head_to_head` reads one game type's records as one reader, through
 ``RecordsStore.list_entries`` and ``RecordsStore.read_entry``, so a record that reader may not
-read is not counted. It returns ``None`` when no game between the two players is recorded,
-when more than :data:`MAX_GAME_RECORDS` records of the type are listed, and on any failure.
+read is not counted. The reads run in a worker thread, never on the event loop (A1). It returns
+``None`` when no game between the two players is recorded, when the directory holds more than
+:data:`MAX_GAME_RECORDS` ``*.md`` files (then none is read), and when a listing or read raises.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from itertools import islice
+from pathlib import Path
 from typing import Any, Final
 
 from probos.cognitive.provenance import iso_utc, record_write_time
@@ -29,7 +34,9 @@ logger = logging.getLogger(__name__)
 MAX_GAME_RECORDS: Final = 256
 #: The longest player name the block repeats.
 MAX_NAME_CHARS: Final = 64
-#: The longest block :meth:`HeadToHead.render` can return, by construction.
+#: The longest block :meth:`HeadToHead.render` returns for a tally :func:`read_head_to_head` built:
+#: its game type is checked, each count is at most :data:`MAX_GAME_RECORDS` and the name is cut to
+#: :data:`MAX_NAME_CHARS` (at most 317 characters). A ``HeadToHead`` built directly is not checked.
 MAX_BLOCK_CHARS: Final = 400
 HEADER: Final = "--- Previous Games (Ship's Records) ---"
 
@@ -91,6 +98,60 @@ def parse_game_record(content: Any) -> GameOutcome | None:
     return GameOutcome(x_player, o_player, winner)
 
 
+def _drive(make: Callable[..., Coroutine[Any, Any, Any]], /, *args: Any) -> Any:
+    """A1 (F1): run ``make(*args)`` to its end in this worker thread, with no event loop.
+
+    ``RecordsStore.list_entries`` and ``read_entry`` are coroutines that await nothing, so one
+    ``send`` runs one to its end. A coroutine that suspends would need an event loop this thread
+    does not have: it is closed and ``RuntimeError`` raised, which the caller logs as a failure.
+    """
+    coro = make(*args)
+    try:
+        coro.send(None)
+    except StopIteration as done:
+        return done.value
+    coro.close()
+    raise RuntimeError("AD-1358: a records store read suspended; the tally reads only stores that do not")
+
+
+async def _read_records(
+    records_store: Any, game_type: str, reader_id: str, reader_department: str,
+) -> list[dict[str, Any]] | None:
+    """The records of one game type that the reader may read, or ``None`` above the cap.
+
+    Run by :func:`_drive` in a worker thread. It reads files only through the store's own
+    ``list_entries`` and ``read_entry``, which touch no store state but the repository path, so
+    they are safe off the event loop, as BF-952's ``_search_records`` walk is. The directory's
+    ``*.md`` files are counted by name first, reading none, so a directory above the cap costs
+    one scan and no reads.
+    """
+    directory = f"recreation/games/{game_type}"
+    named = Path(records_store.repo_path, directory).rglob("*.md")
+    if len(list(islice(named, MAX_GAME_RECORDS + 1))) > MAX_GAME_RECORDS:
+        logger.warning(
+            "AD-1358: more than %d %s game records; no head-to-head tally is shown",
+            MAX_GAME_RECORDS, game_type,
+        )
+        return None
+    listed = await records_store.list_entries(
+        directory, tags=["game", game_type], strict=True,
+    )
+    if len(listed) > MAX_GAME_RECORDS:
+        logger.warning(
+            "AD-1358: %d %s game records exceed the head-to-head cap of %d; no tally is shown",
+            len(listed), game_type, MAX_GAME_RECORDS,
+        )
+        return None
+    docs: list[dict[str, Any]] = []
+    for entry in listed:
+        doc = await records_store.read_entry(
+            entry["path"], reader_id=reader_id, reader_department=reader_department,
+        )
+        if doc is not None:
+            docs.append(doc)
+    return docs
+
+
 async def read_head_to_head(
     records_store: Any,
     *,
@@ -102,10 +163,14 @@ async def read_head_to_head(
 ) -> HeadToHead | None:
     """The recorded ``game_type`` games between ``me`` and ``opponent``, read as one reader.
 
-    One strict listing of ``recreation/games/<game_type>/`` (a file that cannot be read fails the
-    read rather than going uncounted), then at most :data:`MAX_GAME_RECORDS` ``read_entry`` calls
-    as ``reader_id``/``reader_department``: a record that reader may not read is not counted.
-    ``None`` when nothing is recorded, above the cap, and on any failure.
+    A count by name of ``recreation/games/<game_type>/*.md``, then one strict listing, then at most
+    :data:`MAX_GAME_RECORDS` ``read_entry`` calls as ``reader_id``/``reader_department``, all in a
+    worker thread (:func:`_read_records`): a record that reader may not read is not counted. A
+    listing or read that raises gives ``None`` and a warning. A file the store's listing itself
+    skips (bytes that are not UTF-8, a frontmatter whose constructor raises) and a ``read_entry``
+    that returns ``None`` are not counted (contract L11). ``None`` when nothing is recorded and
+    above the cap. A cancelled caller gets ``CancelledError`` at once; the worker finishes its
+    bounded pass and its result is dropped.
     """
     if records_store is None or type(me) is not str or type(opponent) is not str:
         return None
@@ -116,21 +181,11 @@ async def read_head_to_head(
     me_won = opponent_won = drawn = 0
     latest: float | None = None
     try:
-        listed = await records_store.list_entries(
-            f"recreation/games/{game_type}", tags=["game", game_type], strict=True,
-        )
-        if len(listed) > MAX_GAME_RECORDS:
-            logger.warning(
-                "AD-1358: %d %s game records exceed the head-to-head cap of %d; no tally is shown",
-                len(listed), game_type, MAX_GAME_RECORDS,
-            )
+        # A1 (F1): every file read and parse runs in a worker thread, never on the event loop.
+        docs = await asyncio.to_thread(_drive, _read_records, records_store, game_type, reader_id, reader_department)
+        if docs is None:
             return None
-        for entry in listed:
-            doc = await records_store.read_entry(
-                entry["path"], reader_id=reader_id, reader_department=reader_department,
-            )
-            if doc is None:
-                continue
+        for doc in docs:
             outcome = parse_game_record(doc.get("content"))
             if outcome is None or {outcome.x_player, outcome.o_player} != {me, opponent}:
                 continue

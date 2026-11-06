@@ -8642,6 +8642,10 @@ class CognitiveAgent(BaseAgent):
         try:
             game = rec_svc.get_game_by_player(callsign)
         except Exception:
+            logger.warning(
+                "AD-1358: the active game of %s could not be read for a head-to-head tally; none is shown",
+                callsign, exc_info=True,
+            )
             return None
         if type(game) is not dict:
             return None

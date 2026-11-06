@@ -16,10 +16,12 @@ at an assertion and the file collects.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import json
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -376,6 +378,7 @@ async def test_the_read_is_bounded(
     )
     if case == "above-cap":
         assert tally is None and calls["read"] == 0
+        assert calls["list"] == []  # A1 (F1): counted by name above the cap; nothing is listed
         assert any("AD-1358" in r.getMessage() for r in caplog.records)
     elif case == "at-cap":
         assert tally.total == 3 and calls["read"] == 3
@@ -458,3 +461,147 @@ async def test_the_most_recent_date_is_the_latest_record_and_is_left_out_when_no
     )
     assert tally.last_date == last
     assert tally.render() == _block(2, "Captain", 2, 0, 0, last)
+
+
+# ── T10 to T14: Amendment A1 ─────────────────────────────────────────
+
+
+async def test_the_records_are_read_in_a_worker_thread_while_the_event_loop_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1), structural, no timing: every store call runs off the event-loop thread, and a
+    callback queued on the loop runs before the listing proceeds. Read on the loop thread, the
+    callback cannot run, the wait ends at its bound and the first assertion fails."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    for index in range(3):
+        await _record(store, f"g{index}", x="Captain", o="Ezri", winner="Captain")
+    loop_thread = threading.get_ident()
+    loop_ran = threading.Event()
+    seen: dict[str, Any] = {"loop_ran_first": None, "threads": []}
+    real_list, real_read = store.list_entries, store.read_entry
+
+    async def list_spy(*args: Any, **kwargs: Any) -> Any:
+        seen["threads"].append(threading.get_ident())
+        seen["loop_ran_first"] = loop_ran.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    async def read_spy(*args: Any, **kwargs: Any) -> Any:
+        seen["threads"].append(threading.get_ident())
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", list_spy)
+    monkeypatch.setattr(store, "read_entry", read_spy)
+    asyncio.get_running_loop().call_soon(loop_ran.set)
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert seen["loop_ran_first"] is True
+    assert len(seen["threads"]) == 4 and loop_thread not in seen["threads"]
+    assert (tally.total, tally.opponent_won) == (3, 3)
+
+
+async def test_cancelling_the_tally_while_the_records_are_read_raises_cancelled_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1), 13.8: a caller cancelled while the worker reads gets ``CancelledError``, not ``None``
+    and not a tally; the worker's result is dropped."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "g0", x="Captain", o="Ezri", winner="Captain")
+    entered, release = threading.Event(), threading.Event()
+    real_list = store.list_entries
+
+    async def held_list(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        release.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", held_list)
+    task = asyncio.create_task(read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5.0)  # premise: the listing has begun
+        task.cancel()
+        (outcome,) = await asyncio.gather(task, return_exceptions=True)
+    finally:
+        release.set()
+    assert isinstance(outcome, asyncio.CancelledError)
+
+
+async def test_a_game_lookup_that_fails_for_the_tally_adds_nothing_and_logs_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A1 (F4), HH6: the tally's own ``get_game_by_player`` (the second of the turn; the active-game
+    block's is the first) raising gives the prompt with no tally and a WARNING with ``exc_info``."""
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        await _play(service, "Captain", "Ezri", X_WINS)
+        await service.create_game("tictactoe", "Captain", "Ezri")
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+        real_lookup = service.get_game_by_player
+        calls: list[str] = []
+
+        def second_fails(callsign: str) -> Any:
+            calls.append(callsign)
+            if len(calls) == 2:
+                raise RuntimeError("the game table is busy")
+            return real_lookup(callsign)
+
+        monkeypatch.setattr(service, "get_game_by_player", second_fails)
+        caplog.set_level(logging.WARNING, logger="probos.cognitive.cognitive_agent")
+        prompt, manifest = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+    finally:
+        await service.turns.stop()
+    assert calls == ["Ezri", "Ezri"]  # premise: the active-game block's lookup, then the tally's
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+    assert any(
+        r.levelno == logging.WARNING and r.name == "probos.cognitive.cognitive_agent"
+        and "AD-1358" in r.getMessage() and r.exc_info is not None
+        for r in caplog.records
+    )
+
+
+async def test_a_record_the_store_cannot_decode_is_not_counted(tmp_path: Path) -> None:
+    """A1 (F3), L11, a guard of a recorded limit: ``list_entries(strict=True)`` skips a file whose
+    bytes are not UTF-8 (the store's rule), so the other records are counted. If the store's rule
+    changes, change L11 with this test."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "kept", x="Captain", o="Ezri", winner="Captain")
+    await _record(store, "undecodable", x="Captain", o="Ezri", winner="Captain")
+    path = store.repo_path / GAMES / "undecodable.md"
+    path.write_bytes(b"\xff" + path.read_bytes())
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert tally.total == 1
+
+
+async def test_a_records_store_that_suspends_gives_no_tally_and_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A1 (F1): the worker drives the store's coroutines with no event loop, which holds for
+    ``RecordsStore`` (its reads await nothing). A read that does suspend fails closed and loudly:
+    no tally and a WARNING with ``exc_info``, never a hang."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "g0", x="Captain", o="Ezri", winner="Captain")
+    real_list = store.list_entries
+
+    async def suspending_list(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0)
+        return await real_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", suspending_list)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    assert await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ) is None
+    assert any(
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage() and r.exc_info is not None
+        for r in caplog.records
+    )
