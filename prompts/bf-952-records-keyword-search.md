@@ -4,10 +4,11 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: cost amendment, after the orchestrator measured the draft at about 2.7 s per call that blocked the event loop. It adds RK7 and RK8, rewrites the search internals inside P1-2 and P1-3, adds tests T13 and T14 and one T4 case, re-anchors RKS-4, RKS-7 to RKS-13, RKS-16 and RKS-18, adds rows RKS-19 to RKS-22, adds bounds B1 and B2 (§4, §16), and revises L1 and adds L13 to L16.
 **Revised by:** the orchestrator (Copilot), 2026-11-06: P1-3's SEARCH, which the cost amendment wrote as a reference to the first draft, is the verbatim 68-line block of `records_store.py:1109-1176` (the script that restored it asserts that it equals the base file's text); and the base is the AD-1346 M3e4d6 to M3e4d8 batch's merge, so the batch's own `PROGRESS.md` and `DECISIONS.md` text is on it (P3-1's SEARCH is the title line and P3-2's the BF-950 heading, and both still occur once); the Status line names the batch's merge (`a745e447`) instead of its branch; no other change.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A1, the repair of review round 1 (GPT-6.1 Sol, NOT READY). It adds one framing and load for every Ship's Records reader (BF-940, #1686), fail-closed reads of an unparseable frontmatter, the search's per-record parse boundary, numeric field values, the route's `directory` and the HXI request. T13 and T14 are rewritten and T15 to T19 added. Rows RKS-21 and RKS-22 are retired and RKS-23 to RKS-34 added. L9 and L16 are revised and L17 to L23 added.
-**Status:** ready to build. **Base:** drafted on `1c01a5ee` (`origin/main`, the BF-950 merge). The AD-1346 M3e4d6–d8 batch merged first (`a745e447`, PR #1756) and changed none of the M1 or M2 files: `git diff --stat 1c01a5ee a745e447 -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py` is empty. **M3's SEARCH text was written against `1c01a5ee` and still occurs once on `a745e447`, so §8 needed no re-anchoring.** **Dependencies:** none. **Tier:** M1 STANDARD with a shared contract (the `search` result list, read by four production callers and the HXI); M2 STANDARD, test only; M3 STANDARD, trackers. **Estimated tests:** one new file, `tests/test_bf952_records_keyword_search.py`, with 14 functions and 42 cases (counted by reading); after Amendment A1, 19 functions and 58 cases (counted by reading); after Amendment A2, 21 functions and 68 cases (counted by reading); after Amendment A3, 20 functions and 63 cases (counted by reading). Edits: `tests/test_bf949_notebook_reader_identity.py` (one assertion) and `tests/test_layer_boundaries.py` (one allowlist entry).
+**Status:** ready to build. **Base:** drafted on `1c01a5ee` (`origin/main`, the BF-950 merge). The AD-1346 M3e4d6–d8 batch merged first (`a745e447`, PR #1756) and changed none of the M1 or M2 files: `git diff --stat 1c01a5ee a745e447 -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py` is empty. **M3's SEARCH text was written against `1c01a5ee` and still occurs once on `a745e447`, so §8 needed no re-anchoring.** **Dependencies:** none. **Tier:** M1 STANDARD with a shared contract (the `search` result list, read by four production callers and the HXI); M2 STANDARD, test only; M3 STANDARD, trackers. **Estimated tests:** one new file, `tests/test_bf952_records_keyword_search.py`, with 14 functions and 42 cases (counted by reading); after Amendment A1, 19 functions and 58 cases (counted by reading); after Amendment A2, 21 functions and 68 cases (counted by reading); after Amendment A3, 20 functions and 63 cases (counted by reading); after Amendment A4, 22 functions and 66 cases (counted by reading). Edits: `tests/test_bf949_notebook_reader_identity.py` (one assertion) and `tests/test_layer_boundaries.py` (one allowlist entry).
 **BF number:** BF-952, held by the title of #1751 (OPEN). Nothing is allocated, and no AD number is needed.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A2, the repair of review round 2 (GPT-6.1 Sol, NOT READY). The line framing is read only where it keeps the classification the base read (RK13), and a rewrite that keeps a note's classification is indexed at it (RK14). T13 gains three cases; T20 and T21 are added. RKS-23 to RKS-26 are re-anchored and RKS-35 to RKS-40 added. L18 and L19 are revised and L24 added.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3, the round-three brake after review round 3 (GPT-6.1 Sol, NOT READY). **Split:** every reader reads with the base's framing again (RK15); RK9, RK10 and RK13 are withdrawn to BF-940 (#1686). T16 and T17 are retired, T13 loses two cases, T20 gains one and T22 is added. RKS-23 to RKS-25, RKS-31, RKS-32, RKS-35 to RKS-38 and RKS-40 are retired and RKS-41 to RKS-44 added. L18, L19 and L24 are revised, L21 is withdrawn and L25 is added.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A4, the repair of review round 4 (GPT-6.1 Sol, NOT READY, finding 1). A frontmatter that libyaml cannot load, for any reason, is read as the base read it, so RK8 is where libyaml's load returns and PyYAML's scanner refuses. T22's docstring changes; T23 and T24 are added. RKS-41 and RKS-44's cells are corrected (finding 3) and RKS-45 to RKS-47 added. L26 and L27 are added.
 
 **Which text describes the head.** Line numbers are those of `1c01a5ee`. Before building, run `git diff --stat 1c01a5ee HEAD -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py`. If it is not empty, or any M1 or M2 SEARCH no longer matches, return to the Architect. Where prose and a block differ, the block wins. Files are LF in the index; SEARCH text is LF.
 
@@ -1068,6 +1069,8 @@ Not built. Each item is ready for #1754, without redoing the search:
 - **L23 (A1).** The route's `directory` is any directory inside the records repository (`_safe_path`). The route reads as the Captain, so a confined search shows nothing a whole-repository search could not.
 - **L24 (A2, A3).** `write_entry` writes frontmatter with `yaml.dump`, which tags a tuple or another Python object `!!python/`. No reader loads that tag, so the record reads as `{}` for every reader (L19). Normalizing or rejecting such a value before writing (AD-1140's fail-fast tier) is #1686's.
 - **L25 (A3).** The base's framing cuts a value holding `---`, for every reader, as on the base (BF-940, #1686). A store-written `author` holding `---` loses the keys after it (round 1, finding 1). A quoted value holding `---` and `: ` does not parse (L19). A value whose cut prefix is a bad timestamp (`2026-13-05---nominal`) raises from `read_entry`, while search withholds it (round 3, finding 3). A value whose prefix parses reads as that prefix (round 3, finding 1). None of these differs from the base. #1686's acceptance receives T16 and T17 as they stand at `cf61c683`, the round-3 reviewer's corpus and T22, rewritten to its rule.
+- **L26 (A4).** Where both libyaml and PyYAML load a frontmatter, they are taken to read it alike (one constructor, PyYAML's `SafeConstructor`). T22 and T23 check this on their grids, and §16's census on the records. A scanner difference other than a tab that both loaders accept is not otherwise proven.
+- **L27 (A4, round 4, finding 2).** A numeric tag accepted by the API (`tags: [717]`) is written, found by keyword search, and never reaches the semantic index: `semantic.py:406` joins the tags as strings and raises `TypeError`, on write and on backfill. This is the same on `a745e447`. It goes to BF-940 (#1686), whose frontmatter-type policy (L24) normalizes or rejects such a value before writing.
 
 ## 12. Verified Against Codebase (2026-11-05, on `1c01a5ee`)
 
@@ -2779,10 +2782,10 @@ None to decide. The change is reversible, keeps every caller's contract, strengt
 ### A3.3 Mutation rows
 | # | File | Line | Mutate to | Claimed failing test |
 |---|---|---|---|---|
-| RKS-41 | records_store.py | `        parts = raw.split("---", 2)` | `        parts = [""] + raw[3:].split("\n---", 1)` | `test_every_document_reads_as_on_the_base` |
+| RKS-41 | records_store.py | `        parts = raw.split("---", 2)` | `        parts = [""] + raw[3:].split(chr(10) + "---", 1)` | `test_every_document_reads_as_on_the_base` |
 | RKS-42 | records_store.py | `            return ({} if frontmatter is None else frontmatter), parts[2].strip()` | `            return frontmatter, parts[2].strip()` | `test_every_reader_frames_and_loads_a_document_alike` (malformed-yaml) |
 | RKS-43 | records_store.py | the RKS-42 line | `            return ({} if frontmatter is None else frontmatter), parts[2]` | same test (the-store-shape) |
-| RKS-44 | records_store.py | `        if len(parts) >= 3:` | `        if len(parts) >= 2:` | same test (never-closed-L18) |
+| RKS-44 | records_store.py | `        if len(parts) >= 3:` | `        if len(parts) >= 2:` | same test (never-closed-has-no-frontmatter-L18) |
 
 Retired: RKS-23, 24, 25 (now an equivalent mutant), 31, 32, 35, 36, 37, 38 and 40. **32 rows are active.**
 
@@ -3256,3 +3259,75 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
 
 ### A3.7 Prior art
 No web search: A3 is a revert to the base. The framing rule's prior art (§A1.8) belongs to #1686.
+
+## Amendment A4 (2026-11-06): review round 4 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** head `c7e186f3`.
+
+### A4.1 Findings and decisions
+| Finding | Disposition |
+|---|---|
+| R4-F1 (P2, regression since A1) | Fixed: `_load_frontmatter` reads a block libyaml cannot load, for any reason, with the base's own call (A4-02) |
+| R4-F2 (P2, base) | L27; moved to #1686 |
+| R4-F3 (P3, text) | Fixed: RKS-41 and RKS-44's cells (A4-06, A4-07) |
+
+- **RK8 (as A4 defines it).** The one admitted difference is a frontmatter that libyaml's load returns and `yaml.safe_load` refuses with `YAMLError`. RK15 is otherwise unchanged.
+- **Invariant.** For every block, `_load_frontmatter` returns or raises what the base's `yaml.safe_load(block) or {}` did (`None` for its caught `YAMLError`), except RK8. A block that libyaml scans and cannot build, and that PyYAML refuses, reads as on the base.
+- **Rejected:**
+  - PyYAML first for every reader (B1 fails);
+  - keeping R4-F1 as fail-closed (`list_entries` drops the record; `publish` raises).
+- **Held as round 5's fallback:** every reader but the search on `yaml.safe_load` (RK8's parity given up).
+
+### A4.2 Gates
+- **GA4 (A4-M1's head):** GA1's command (§A1.3).
+  - Expected in the new file: **66 passed (22 functions)**.
+  - Expected in total: **837 passed, 1 skipped**.
+  - Then `scripts/check_architecture_principles.py --check`.
+- **Red on `c7e186f3`:** exactly three failures, with libyaml installed: T23, and T24's two cases.
+- **Hard stops:**
+  - T23 fails: report `len(differ)` and the first five shapes, and do not tune;
+  - any T22, T24, T20 or T13 case fails;
+  - T21 skips.
+- **B1/B2 not rerun:** a second load happens only where libyaml raises, and the synthetic corpus has no such record.
+- **Mutation:** run RKS-26, RKS-27 and RKS-45 to RKS-47 (5 rows) on A4-M1's head. The other 30 active rows carry forward: neither their Line nor their claimed test changed. Report `yaml.__with_libyaml__`.
+
+### A4.3 Mutation rows
+| # | File | Line | Mutate to | Claimed failing test |
+|---|---|---|---|---|
+| RKS-45 | records_store.py | `    except Exception:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it` | `    except yaml.YAMLError:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it` | `test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base`, `test_a_record_libyaml_cannot_build_is_read_listed_and_found_as_on_the_base` (killed only with libyaml installed) |
+| RKS-46 | records_store.py | `        except yaml.YAMLError:  # A4 (round 4): the base's own catch; a constructor error propagates` | `        except Exception:  # A4 (round 4): the base's own catch; a constructor error propagates` | `test_every_document_reads_as_on_the_base` |
+| RKS-47 | records_store.py | `            frontmatter = yaml.safe_load(block)` | `            frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)` | `test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base` (killed only with libyaml installed) |
+
+**35 rows are active.**
+
+### A4.4 Census (§16, read-only clone, counts only)
+- **Not rerun.** A4 changes a reading only where libyaml's load raised an error other than `YAMLError`, and there it gives the base's reading. A3's census found every record read alike by the base and the head. This holds if that census compared a raised error as a reading. If it skipped records where either side raised, run it again.
+- **Any future run** adds one count: records whose libyaml load raises an error other than `YAMLError`. The stop applies RK8 as A4 defines it.
+
+### A4.5 Round 5
+- **Whole candidate**, with three properties: (a) the invariant (A4.1), for every reader; (b) the A4 delta; (c) R4-F2 is base-equal.
+- **Stop rule:** "Round 5 is READY unless it finds (i) a document whose reading by `_read_document`, `_parse_document`, `read_entry`, `list_entries` or `publish` (frontmatter, body, or the type of the exception raised) differs from `a745e447`'s, other than RK8 as Amendment A4 defines it (libyaml's load of the base framing's frontmatter returns and `yaml.safe_load` raises `YAMLError`) and the search's withholding of a record whose read raises or is not a mapping; or (ii) a Critical or High defect in the search itself. A finding equal to the base goes to #1686 and does not block. On (i) or (ii) the orchestrator makes no repair in this item and returns to the Architect, whose leading option is rank 4 of A4.1 (every reader but the search loads with `yaml.safe_load` as on the base; RK8's parity is given up and recorded as a limit)."
+
+### A4.6 #1686 hand-off (add to A3.6's comment)
+- R4-F2 (L27), with the round-4 reviewer's numeric-tag probe.
+- The tab shapes of T23 and T24 as corpus: a private note whose frontmatter holds a tab and a value YAML cannot build reads as `{}` for every reader, as on the base.
+
+### A4.7 Verified Against Codebase (2026-11-06, on `c7e186f3`)
+    grep -n "def _load_frontmatter\|_load_frontmatter(\|_RECORDS_YAML_LOADER" src/probos/knowledge/records_store.py
+      211: _RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if ...   241: def _load_frontmatter   248: yaml.load(block, Loader=_RECORDS_YAML_LOADER)   249: except yaml.YAMLError:   275: frontmatter = _load_frontmatter(parts[1])
+    grep -n "except Exception" src/probos/knowledge/records_store.py   (list_entries skips: 1283; search withholds: 341)
+    git show a745e447:src/probos/knowledge/records_store.py   1271: fm = yaml.safe_load(parts[1]) or {}   1272: except yaml.YAMLError:
+    git show a745e447:src/probos/knowledge/semantic.py        406: header += f" [{', '.join(tags)}]"   (git diff a745e447 c7e186f3 -- semantic.py: empty)
+
+### Absence Verified, Amendment A4 (2026-11-06, on `c7e186f3`)
+CLAIM: only `_read_document` calls `_load_frontmatter`, and only `_load_frontmatter` loads with `_RECORDS_YAML_LOADER`
+RUN:   rg -n "_load_frontmatter\(|_RECORDS_YAML_LOADER" src/
+FOUND: records_store.py:211 (definition), :241 (def), :248 (its load), :275 (the one call)
+HOLDS: yes
+CLAIM: T23, T24, RKS-45 to RKS-47 and L26 to L27 are unused labels
+RUN:   rg -n "\bT2[3-9]\b|RKS-4[5-9]|\bL2[6-9]\b" prompts/bf-952-records-keyword-search.md
+FOUND: none
+HOLDS: yes
+
+### A4.8 Prior art
+No web search: A4 restores the base's reading for one class of documents. The difference is the known one between PyYAML's tab handling and libyaml's (RK8).
