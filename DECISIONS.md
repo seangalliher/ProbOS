@@ -1346,6 +1346,20 @@ AD-1346 M3e4d5 is the fifth part of M3e4d. `ChannelManager.create_channel` and `
 - *Residual, accepted.* Registers R153 and R154 of the contract.
 - *Reversal.* Revert the M3e4d5 commits.
 
+### BF-952 -- Ship's Records keyword search matches whole words and ranks rare ones first (2026-11-05, #1751)
+
+- *Scope.* `knowledge/records_store.py` (`RecordsStore.search`; module functions `_search_query_terms`, `_search_field_text`, `_search_document`, `_search_record_counts`, `_search_records`; the `_SEARCH_*` constants), `tests/test_layer_boundaries.py` (one allowlist entry), `tests/test_bf949_notebook_reader_identity.py` (one order assertion), tests. Contract `prompts/bf-952-records-keyword-search.md`.
+- *RK1 (matching).* Whole words of the body and of the `title`, `topic`, `tags`, `department` and `author` values; compounds whole and by part; query stopwords dropped, all words kept when nothing else is left. Rejected: substring matching; scoring every frontmatter value.
+- *RK2 (rank and score).* IDF-weighted coverage, then BM25 with field weights, then the newer `updated` (else `created`, by BF-950's `record_write_time`), then path. `score` is the coverage, 0 to 1, non-increasing. Rejected: BM25 over the top score; BM25 order with a coverage score.
+- *RK3 (privacy).* Term rarity is counted only over records the reader may read; `_archived/` is excluded.
+- *RK4 (compatibility).* Return shape, cap, scope and reader rules unchanged; the Oracle's `/10` unchanged, so AD-1141's 0.35 floor still admits no keyword-only record.
+- *RK5.* A record whose frontmatter is not a mapping is withheld; it raised on the base.
+- *RK7 (cost).* A worker thread (`asyncio.to_thread`), libyaml for the search parse, and term counting only in records that hold a query term as a substring of their parsed text. Bound: no slower than the base's match-all search, and the event loop is not blocked for more than 100 ms. Rejected for this BF: an in-memory cache (shared state across threads, invalidation, memory); an index is its own item.
+- *RK8.* The search parse equals `_parse_document` for every input (a test); `_parse_document` is unchanged.
+- *Not changed.* `oracle_service.py`, `proactive.py`, `routers/records.py`, `dm_targeted_lookup.py`, the HXI, the other six stoplists.
+- *Residual.* Recorded limits L1 to L16 of the contract.
+- *Reversal.* Revert the BF-952 commits.
+
 ### BF-950 -- An oracle_query result is aged by its own write time, not by its retrieval (2026-11-05, #1742)
 
 - *Scope.* `cognitive/provenance.py` (`ProvenanceTag.content_timestamp`, `age_seconds`, `is_stale`, `format_inline`; `STALE_AFTER_SECONDS`, `entry_write_time`, `record_write_time`, `iso_utc`; docstrings), `tools/oracle_query_tool.py` (`_ORACLE_DISPOSITION`, the description, docstrings), `proactive.py` (`_notebook_read_back`; Amendment 1: the notebook index's sort key, the repetition check's revision read and the read-back's own error boundary; Amendment 2: `_notebook_index_topic`, the index's topic; Amendment 3: its file-name fallback), `cognitive/crew_executor.py` (`_COMMONS_DISPOSITION`, Amendment 1), `cognitive/cognitive_agent.py` (`_notebook_block_lines`, both `<notebook>` renderers), the AD-1179 golden, tests. Contract `prompts/bf-950-oracle-result-age.md`.
