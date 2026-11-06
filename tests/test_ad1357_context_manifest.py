@@ -468,10 +468,42 @@ def _nested(depth: int, container: str = "list") -> dict[str, Any]:
 
 
 class _RaisingItems(dict):
-    """A producer's own mapping type whose ``items`` raises; ``json.dumps`` with ``sort_keys`` calls it."""
+    """A producer's own mapping type whose ``items`` raises; ``json.dumps`` calls it for any dict subclass."""
 
     def items(self):  # type: ignore[override]
         raise RuntimeError("a producer's mapping failed")
+
+
+class _Disagreeing(dict):
+    """A producer's mapping whose ``items``, which ``json.dumps`` encodes, can differ from its own storage and from its
+    ``values``, which A2's depth walk read (review round 3). ``values_drawn`` counts what a reader drew from ``values``."""
+
+    def __init__(self, storage: dict[str, Any], items: list[tuple[str, Any]], values_count: int = 0) -> None:
+        super().__init__(storage)
+        self._encoded_items = items
+        self._values_count = values_count
+        self.values_drawn = 0
+
+    def items(self):  # type: ignore[override]
+        return list(self._encoded_items)
+
+    def values(self):  # type: ignore[override]
+        for _ in range(self._values_count):
+            self.values_drawn += 1
+            yield []
+
+
+class _Int(int):
+    """A producer's own int type; ``json.dumps`` writes its base value."""
+
+
+def _is_plain(value: Any) -> bool:
+    """Whether ``value`` holds only the exact types ``json.loads`` makes."""
+    if type(value) is dict:
+        return all(type(key) is str and _is_plain(child) for key, child in value.items())
+    if type(value) is list:
+        return all(_is_plain(child) for child in value)
+    return type(value) in (str, int, float, bool, type(None))
 
 
 @pytest.mark.parametrize(
@@ -734,28 +766,10 @@ def test_a_manifest_on_a_result_that_the_store_would_refuse_is_stored_as_a_stub(
     assert saved is not None and saved.metadata["context_manifest"] == stub
 
 
-@pytest.mark.parametrize(
-    ("route", "depth"),
-    [
-        pytest.param("one-to-one", 8, id="one-to-one-at-the-bound"),
-        pytest.param("one-to-one", 9, id="one-to-one-one-over"),
-        pytest.param("one-to-one", 200, id="one-to-one-far-over"),
-        pytest.param("group", 8, id="group-at-the-bound"),
-        pytest.param("group", 9, id="group-one-over"),
-        pytest.param("group", 200, id="group-far-over"),
-    ],
-)
-async def test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one(
-    tmp_path: Path, route: str, depth: int,
-) -> None:
-    """Review round 2, finding 1, across the HXI API's response boundary: a reply stored through either route reads
-    back through ``GET /api/threads/{id}/messages``, and the group POST answers. On the tip a manifest nested 200
-    deep is stored and then fails the response (500), and one nested 9 deep is stored as it came."""
-    from probos.cognitive import context_manifest as cm
-
-    manifest = _nested(depth)
-    stub = {"v": cm.MANIFEST_VERSION, "path": "single_pass", "unrecorded": "unencodable"}
-    expected = manifest if depth <= 8 else stub
+def _manifest_read_back(tmp_path: Path, route: str, manifest: dict[str, Any]) -> Any:
+    """``manifest`` on a reply stored through ``route``, read back through ``GET /api/threads/{id}/messages``: the
+    1:1 route's metadata builder and the store, or the real group fan-out in ``_group_room`` behind the group POST.
+    The POST, when there is one, and the GET must answer 200."""
     if route == "one-to-one":
         store = _thread_store(tmp_path)
         runtime: Any = SimpleNamespace(chat_thread_store=store)
@@ -778,7 +792,82 @@ async def test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the
         transcript = client.get(f"/api/threads/{thread.id}/messages")
     assert transcript.status_code == 200
     rows = {m["author_id"]: m["metadata"] for m in transcript.json()["messages"] if m["role"] == "agent"}
-    assert rows[author]["context_manifest"] == expected
+    return rows[author]["context_manifest"]
+
+
+@pytest.mark.parametrize(
+    ("route", "depth"),
+    [
+        pytest.param("one-to-one", 8, id="one-to-one-at-the-bound"),
+        pytest.param("one-to-one", 9, id="one-to-one-one-over"),
+        pytest.param("one-to-one", 200, id="one-to-one-far-over"),
+        pytest.param("group", 8, id="group-at-the-bound"),
+        pytest.param("group", 9, id="group-one-over"),
+        pytest.param("group", 200, id="group-far-over"),
+    ],
+)
+async def test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one(
+    tmp_path: Path, route: str, depth: int,
+) -> None:
+    """Review round 2, finding 1, across the HXI API's response boundary: a reply stored through either route reads
+    back through ``GET /api/threads/{id}/messages``, and the group POST answers. On the tip a manifest nested 200
+    deep is stored and then fails the response (500), and one nested 9 deep is stored as it came."""
+    from probos.cognitive import context_manifest as cm
+
+    manifest = _nested(depth)
+    stub = {"v": cm.MANIFEST_VERSION, "path": "single_pass", "unrecorded": "unencodable"}
+    expected = manifest if depth <= 8 else stub
+    assert _manifest_read_back(tmp_path, route, manifest) == expected
+
+
+@pytest.mark.parametrize("case", ["values-never-walked", "json-types-in-key-order"])
+def test_storable_measures_and_returns_the_json_value_the_store_writes_not_the_producers_object(case: str) -> None:
+    """Review round 3, F1 and F2: ``storable`` decodes its size-checked encoding and measures and returns that. A
+    producer's mapping whose ``values`` disagree with the ``items`` that ``json.dumps`` encodes is never iterated (on
+    the tip the depth walk drew 25,000 containers from a 35-byte manifest), and what is returned is plain JSON in the
+    manifest's own key order (on the tip the producer's tuple and subclasses came back as they were)."""
+    from probos.cognitive import context_manifest as cm
+
+    if case == "values-never-walked":
+        mapping = _Disagreeing({}, [], values_count=25_000)
+        manifest: dict[str, Any] = {"v": 1, "path": "single_pass", "x": mapping}
+        expected: dict[str, Any] = {"v": 1, "path": "single_pass", "x": {}}
+    else:
+        mapping = _Disagreeing({"k": object()}, [("k", "shown")])
+        manifest = {"v": 1, "path": "single_pass", "t": (1, (2,)), "n": _Int(3), "x": mapping, "journal_entry_id": None}
+        expected = {"v": 1, "path": "single_pass", "t": [1, [2]], "n": 3, "x": {"k": "shown"}, "journal_entry_id": None}
+    out = cm.storable(manifest, path="single_pass")
+    assert mapping.values_drawn == 0
+    assert out == expected and list(out) == list(expected)
+    assert _is_plain(out)
+
+
+@pytest.mark.parametrize(
+    ("route", "case"),
+    [
+        pytest.param("one-to-one", "concealed-depth", id="one-to-one-concealed-depth"),
+        pytest.param("group", "concealed-depth", id="group-concealed-depth"),
+        pytest.param("group", "unserializable-storage", id="group-unserializable-storage"),
+    ],
+)
+async def test_a_manifest_whose_encoding_differs_from_its_contents_reads_back_as_the_store_wrote_it(
+    tmp_path: Path, route: str, case: str,
+) -> None:
+    """Review round 3, F1 and F2, across the HXI API's response boundary. On the tip a mapping whose ``values`` hid a
+    list nested 199 deep that its ``items`` encoded was stored as it came and failed the transcript read (500), and
+    one whose ``items`` encoded ``{}`` over an object the API cannot serialize failed the group POST (500)."""
+    from probos.cognitive import context_manifest as cm
+
+    if case == "concealed-depth":
+        deep = _nested(200)["x"]
+        # The storage holds it too: json.dumps writes an empty dict subclass as {} without calling items().
+        hidden = _Disagreeing({"k": deep}, [("k", deep)])
+        expected: dict[str, Any] = {"v": cm.MANIFEST_VERSION, "path": "single_pass", "unrecorded": "unencodable"}
+    else:
+        hidden = _Disagreeing({"k": object()}, [])
+        expected = {"v": 1, "path": "single_pass", "x": {}}
+    manifest: dict[str, Any] = {"v": 1, "path": "single_pass", "x": hidden}
+    assert _manifest_read_back(tmp_path, route, manifest) == expected
 
 
 def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_considers_it_after_the_keys_above() -> None:

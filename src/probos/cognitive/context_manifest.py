@@ -295,19 +295,21 @@ def note_oracle(observation: Any, scope: str, sources: Iterable[tuple[str, str]]
 
 
 def _nests_within(value: Any, limit: int) -> bool:
-    """Whether no dict, list or tuple in ``value`` nests deeper than ``limit``,
-    ``value`` itself counting as 1: the containers ``json.dumps`` writes.
+    """Whether no dict or list in ``value`` nests deeper than ``limit``, ``value``
+    itself counting as 1.
 
-    Iterative, so a value nested past the interpreter's recursion limit is
-    measured rather than followed down the stack. ``storable`` calls it only on
-    a value ``json.dumps`` has just encoded, which therefore has no cycle.
+    ``storable`` calls it only on what ``json.loads`` returned for an encoding at
+    most ``MAX_MANIFEST_BYTES`` long, so every node is a plain JSON value, there is
+    no cycle, and the work is bounded by that size. Iterative, so a value nested
+    past the interpreter's recursion limit is measured rather than followed down
+    the stack.
     """
     pending: list[tuple[Any, int]] = [(value, 1)]
     while pending:
         node, depth = pending.pop()
         if isinstance(node, dict):
             children: Iterable[Any] = node.values()
-        elif isinstance(node, (list, tuple)):
+        elif isinstance(node, list):
             children = node
         else:
             continue
@@ -318,9 +320,9 @@ def _nests_within(value: Any, limit: int) -> bool:
 
 
 def storable(manifest: dict[str, Any], *, path: str) -> dict[str, Any]:
-    """``manifest`` when it encodes as the chat store encodes metadata, fits
-    ``MAX_MANIFEST_BYTES`` and nests at most ``MAX_MANIFEST_DEPTH`` deep; otherwise
-    a stub that says why it was not recorded.
+    """``manifest`` as the chat store will write it, when it encodes as the store
+    encodes metadata, fits ``MAX_MANIFEST_BYTES`` and nests at most
+    ``MAX_MANIFEST_DEPTH`` deep; otherwise a stub that says why it was not recorded.
 
     ``ChatThreadStore.append_message_once`` refuses metadata that ``json.dumps``
     rejects with ``allow_nan=False``, and the 1:1 route's append catches that
@@ -329,25 +331,32 @@ def storable(manifest: dict[str, Any], *, path: str) -> dict[str, Any]:
     back, and one such reply fails every read of its transcript and the group
     reply's response, so a manifest nested past the bound is ``unencodable`` too.
     Any exception while encoding or measuring, including one the value's own type
-    raises, gives that stub, as BF-805's ``IntentBus._encoded`` treats it. The size
-    is checked before the walk, so the walk reads at most ``MAX_MANIFEST_BYTES``.
+    raises, gives that stub, as BF-805's ``IntentBus._encoded`` treats it.
+
+    What is returned is the encoding decoded again: plain dicts, lists, strings,
+    numbers, booleans and ``None``, in the manifest's own key order (no
+    ``sort_keys``), so ``journal_entry_id`` stays last. The routers store it and
+    the group POST returns it, so the reply's response carries what the store
+    writes, whatever types the producer used. Beyond that one encoding, the work
+    is bounded by ``MAX_MANIFEST_BYTES``: the size is checked before decoding, and
+    the depth is measured on the decoded value, never on the producer's object.
     """
     try:
         encoded = json.dumps(
             manifest,
-            sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
             allow_nan=False,
         ).encode("utf-8")
         if len(encoded) > MAX_MANIFEST_BYTES:
             return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "oversize"}
-        nested_within = _nests_within(manifest, MAX_MANIFEST_DEPTH)
+        plain: dict[str, Any] = json.loads(encoded)  # A3: what the store writes, in the manifest's key order
+        nested_within = _nests_within(plain, MAX_MANIFEST_DEPTH)
     except Exception:  # A2: any failure to encode or measure, as BF-805's IntentBus._encoded
         return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "unencodable"}
     if not nested_within:
         return {"v": MANIFEST_VERSION, "path": path, "unrecorded": "unencodable"}
-    return manifest
+    return plain
 
 
 def build_manifest(
