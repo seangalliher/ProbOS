@@ -12,6 +12,7 @@ module functions the walk calls only to observe the thread each runs on.
 
 from __future__ import annotations
 
+import itertools
 import threading
 from datetime import date
 from pathlib import Path
@@ -267,15 +268,6 @@ _LIBYAML = bool(getattr(yaml, "__with_libyaml__", False))
         {"author": "bones", "classification": "ship"}, "Warp report.", id="the-store-shape",
     ),
     pytest.param(
-        "---\ntopic: Inspection --- nominal\nclassification: private\n---\nbody",
-        {"topic": "Inspection --- nominal", "classification": "private"}, "body", id="a-value-holding-three-hyphens",
-    ),
-    pytest.param(
-        "---\ntopic: 'Inspection --- status: nominal'\nclassification: private\n---\nbody",
-        {"topic": "Inspection --- status: nominal", "classification": "private"}, "body",
-        id="a-quoted-value-holding-a-key",
-    ),
-    pytest.param(
         "---\nauthor: bones\n---\nabove\n---\nbelow", {"author": "bones"}, "above\n---\nbelow",
         id="a-body-holding-a-rule",
     ),
@@ -283,9 +275,9 @@ _LIBYAML = bool(getattr(yaml, "__with_libyaml__", False))
     pytest.param('---\ntitle: "Caf\\xE9"\n---\nbody', {"title": "Café"}, "body", id="an-escaped-value"),
     pytest.param("---\n---\nbody", {}, "body", id="empty-frontmatter"),
     pytest.param("---\n[]\n---\nbody", {}, "body", id="a-falsy-frontmatter-reads-as-empty"),
-    pytest.param("---\nkey: [unclosed\n---\nbody", None, "body", id="malformed-yaml"),
+    pytest.param("---\nkey: [unclosed\n---\nbody", {}, "body", id="malformed-yaml"),
     pytest.param(
-        "---\nclassification:\tprivate\n---\nbody", {"classification": "private"} if _LIBYAML else None, "body",
+        "---\nclassification:\tprivate\n---\nbody", {"classification": "private"} if _LIBYAML else {}, "body",
         id="a-tab-only-libyaml-accepts",
     ),
     pytest.param("no frontmatter at all", {}, "no frontmatter at all", id="no-frontmatter"),
@@ -304,15 +296,15 @@ _LIBYAML = bool(getattr(yaml, "__with_libyaml__", False))
     ),
 ])
 def test_every_reader_frames_and_loads_a_document_alike(
-    tmp_path: Path, raw: str, frontmatter: dict[str, Any] | None, body: str,
+    tmp_path: Path, raw: str, frontmatter: dict[str, Any], body: str,
 ) -> None:
-    """A1 (BF-940, #1686; finding 6): ``_read_document`` is the one parse. ``_parse_document`` reads ``None`` (a
-    frontmatter block no loader accepts) as ``{}``, as on the base. The base cut the second and third cases at the
-    ``---`` inside the topic, and the third then did not parse. A tab after a key is refused by PyYAML's scanner
-    and accepted by libyaml, so with libyaml installed every reader now reads it."""
+    """A1 (finding 6), A3: ``_read_document`` is the one parse, with the base's framing. A frontmatter block no
+    loader accepts reads as ``{}``, as on the base. A tab after a key is refused by PyYAML's scanner and accepted by
+    libyaml, so with libyaml installed every reader now reads it (RK8). A value holding ``---`` is BF-940's
+    (#1686), not this file's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     assert records_store_module._read_document(raw) == (frontmatter, body)
-    assert store._parse_document(raw) == ({} if frontmatter is None else frontmatter, body)
+    assert store._parse_document(raw) == (frontmatter, body)
 
 
 @pytest.mark.asyncio
@@ -363,60 +355,6 @@ async def test_a_numeric_frontmatter_value_is_scored_and_a_boolean_is_not(
     store = await _store(tmp_path)
     path = await store.write_notebook("Ezri", topic, "coolant log")
     assert await _paths(store, query, reader_id="captain") == ([path] if found else [])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("author", "values"), [
-    pytest.param("Ezri---Prime", {}, id="an-author-holding-three-hyphens"),
-    pytest.param("Ezri", {"topic": "Inspection --- status: nominal"}, id="a-quoted-topic-holding-a-key"),
-    pytest.param("Ezri", {"topic": "first line\n---\nlast line"}, id="a-multi-line-topic-holding-a-rule"),
-    pytest.param("Ezri", {"tags": ["warp --- core"]}, id="a-tag-holding-three-hyphens"),
-])
-async def test_a_frontmatter_value_holding_three_hyphens_is_read_whole_and_stays_private(
-    tmp_path: Path, author: str, values: dict[str, Any],
-) -> None:
-    """Finding 1 and BF-940 (#1686), through ``write_entry``, ``read_entry``, ``search`` and update-in-place. The
-    base ended the frontmatter at the first ``---`` anywhere. The author's case kept only ``author``, and neither
-    topic case parsed, so each read as ``ship`` and another reader was shown the private record; the tag's case
-    kept its classification, and its body began with the rest of the tag. The multi-line case checks that
-    ``yaml.dump`` starts no line of a value with ``---``."""
-    store = await _store(tmp_path)
-    path = "notebooks/Ezri/inspection.md"
-    write: dict[str, Any] = {
-        "author": author, "path": path, "content": "PRIVATE_BODY_PROOF the coolant", "message": "probe",
-        "classification": "private", **values,
-    }
-    await store.write_entry(**write)
-    own = await store.read_entry(path, reader_id=author)
-    assert own is not None and own["frontmatter"]["classification"] == "private"
-    assert {key: own["frontmatter"][key] for key in values} == values
-    assert own["content"] == "PRIVATE_BODY_PROOF the coolant"
-    assert await store.read_entry(path, reader_id="alice") is None
-    assert await _paths(store, "coolant", reader_id="alice") == []
-    assert await _paths(store, "coolant", reader_id=author) == [path]
-    await store.write_entry(**write)  # update-in-place carries ``created`` forward and counts the revision
-    again = await store.read_entry(path, reader_id=author)
-    assert again is not None and again["frontmatter"]["revision"] == 2
-    assert again["frontmatter"]["created"] == own["frontmatter"]["created"]
-
-
-@pytest.mark.asyncio
-async def test_a_record_whose_frontmatter_does_not_parse_is_shown_to_the_captain_alone(tmp_path: Path) -> None:
-    """RK10 (finding 1's injected reach): such a record names no classification. The base read it as ``{}``, so as
-    ``ship``, and every reader was shown it. Now ``read_entry`` and ``search`` show it to the Captain alone; its
-    author is unknown, so the author is not shown it either."""
-    store = await _store(tmp_path)
-    _write(store, "reports/open.md", "warp core report")
-    (store.repo_path / "notebooks" / "Bravo").mkdir(parents=True, exist_ok=True)
-    (store.repo_path / "notebooks" / "Bravo" / "secret.md").write_text(
-        "---\nauthor: Bravo\nclassification: private\ntitle: [unclosed\n---\n\nwarp core secret\n", encoding="utf-8",
-    )
-    assert await store.read_entry("notebooks/Bravo/secret.md", reader_id="alice") is None
-    assert await store.read_entry("notebooks/Bravo/secret.md", reader_id="Bravo") is None
-    captain = await store.read_entry("notebooks/Bravo/secret.md", reader_id="captain")
-    assert captain is not None and captain["frontmatter"] == {} and captain["content"] == "warp core secret"
-    assert await _paths(store, "warp", reader_id="alice") == ["reports/open.md"]
-    assert set(await _paths(store, "warp", reader_id="captain")) == {"reports/open.md", "notebooks/Bravo/secret.md"}
 
 
 @pytest.mark.asyncio
@@ -474,6 +412,11 @@ _INLINE_CLOSE = "---\nauthor: alice\nclassification: private --- the closing mar
         _INLINE_CLOSE + "classification: ship\n---\nwarp core notes\n", True,
         id="closed-inside-a-line-then-a-repeated-key-and-a-rule",
     ),
+    pytest.param(
+        "---\nauthor: alice\nclassification: private --- legacy\nclassification: private\nauthor: bob\n---\n"
+        "warp core notes\n",
+        True, id="closed-inside-a-line-then-keys-naming-another-author-and-a-rule",
+    ),
     pytest.param("---\nauthor: alice\nclassification: private\n---\nwarp core notes\n", True, id="closed-on-its-own-line"),
     pytest.param("---\nauthor: alice\nclassification: private\nwarp core notes\n", False, id="never-closed-L18"),
 ])
@@ -483,9 +426,11 @@ async def test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_b
     """A2 (round 2, finding 1), through ``read_entry`` and ``search``. A1 ended a frontmatter only at a line
     beginning ``---``, so a hand-made or legacy file closed inside a line read as ``{}`` (the first case) or took
     its body as YAML: the second case then read an unknown classification, the third did not parse (its author
-    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. The
-    fifth is the store's own shape. The last has no closing marker and reads as on the base, with no frontmatter
-    (L18); BF-956 owns any change to it and updates this case."""
+    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. In the
+    fifth (round 3, finding 2) A1 and A2 read the repeated keys and gave the record to ``bob``; it is ``alice``'s, as
+    on the base (A3: the base's framing for every reader). The sixth is the store's own shape. The last has no
+    closing marker and reads as on the base, with no frontmatter (L18); BF-940 (#1686) owns any change to it and
+    updates this case."""
     store = await _store(tmp_path)
     path = "notebooks/alice/framing.md"
     target = store.repo_path / path
@@ -526,3 +471,65 @@ async def test_a_rewritten_note_is_indexed_at_the_classification_it_keeps(tmp_pa
         assert [meta.get("classification") for meta in indexed if meta.get("path") == path] == ["ship"]
     finally:
         await layer.stop()
+
+
+def _base_read(raw: str) -> tuple[Any, str]:
+    """``RecordsStore._parse_document`` of the base (``a745e447``, ``records_store.py:1265-1275``), verbatim but for
+    ``self``: T22's oracle. It is a reference, not a statement that the base frames correctly: BF-940 (#1686) owns
+    the framing, replaces this oracle with its own rule and rewrites T22."""
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+            except yaml.YAMLError:
+                fm = {}
+            return fm, parts[2].strip()
+    return {}, raw
+
+
+def _read_or_error(read: Any, raw: str) -> Any:
+    """``read(raw)``, or the name of the exception it raised: a constructor error must be the same error."""
+    try:
+        return read(raw)
+    except Exception as exc:  # noqa: BLE001 -- compared, never swallowed: the test asserts on it
+        return type(exc).__name__
+
+
+_GRID_LINES = (
+    "author: alice", "author: alice --- legacy", "author: Ezri---Prime",
+    "classification: private", "classification: private --- legacy", "classification: ship",
+    "department: medical", "topic: Review --- nominal", "topic: 2026-13-05---nominal",
+    "topic: 'Inspection --- status: nominal'", "broken: [unclosed", "updated: 2026-13-05",
+)
+_GRID_CLOSES = ("---\n", "----\n", "")
+_GRID_BODIES = ("", "warp notes\n", "classification: ship\nauthor: bob\n", "---\nmore notes\n")
+
+
+def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
+    """A3 (round 3, findings 1 to 3): BF-952 changes no reader's reading of a document. Each reconciliation of the
+    base's framing with a line framing (A1, A2) misread some shape: as ``{}``, as an unclassified prefix, as another
+    author's, or as a constructor error for a valid store-written value. Every shape here, over the three rounds'
+    lines, closing markers, bodies and both line endings, reads under ``_read_document`` and ``_parse_document``
+    exactly as the base read it, a constructor error included. No line holds a tab, so libyaml and PyYAML read each
+    alike; RK8's one difference is T13's tab case."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    shapes = [
+        "---\n" + "".join(f"{line}\n" for line in lines) + close + body
+        for count in (1, 2)
+        for lines in itertools.product(_GRID_LINES, repeat=count)
+        for close in _GRID_CLOSES
+        for body in _GRID_BODIES
+    ]
+    shapes += [shape.replace("\n", "\r\n") for shape in shapes]
+    shapes += ["no frontmatter", "-- two hyphens\n---\nbody", "\n---\nauthor: alice\n---\nbody"]
+    assert len(shapes) == 3747  # premise: (12 + 144) line sequences x 3 closes x 4 bodies x 2 line endings, + 3
+    differ = []
+    for shape in shapes:
+        expected = _read_or_error(_base_read, shape)
+        if (
+            _read_or_error(records_store_module._read_document, shape) != expected
+            or _read_or_error(store._parse_document, shape) != expected
+        ):
+            differ.append(shape)
+    assert differ == [], (len(differ), differ[:5])

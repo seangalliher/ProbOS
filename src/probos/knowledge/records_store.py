@@ -254,53 +254,27 @@ def _load_frontmatter(block: str) -> Any:
     return frontmatter or {}
 
 
-def _line_framing_is_kept(framed: Any, legacy: Any) -> bool:
-    """BF-952 A2: whether A1's line framing replaces the base's framing of a document.
-
-    It does when it loads as a mapping and, where the base's framing names a ``classification``,
-    names the same one. A frontmatter that a hand-made or legacy file closed inside a line would
-    otherwise take the body as YAML: the body may not load, or may give ``classification`` an
-    unknown or a repeated value, and the record would lose the level the base read for it.
-    """
-    if type(framed) is not dict:
-        return False
-    if type(legacy) is dict and "classification" in legacy:
-        return framed.get("classification") == legacy["classification"]
-    return True
-
-
 def _read_document(raw: str) -> tuple[Any, str]:
-    """BF-952 A1, A2: a Ship's Records document's frontmatter and body, the one parse every reader uses.
+    """BF-952 A1, A3: a Ship's Records document's frontmatter and body, the one parse every reader uses.
 
     ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
 
-    Framing. A document that starts with ``---`` has frontmatter up to the next ``---``, as the
-    base framed it (``raw.split("---", 2)``), and its body is what follows, stripped. When that
-    ``---`` is inside a line and a later line begins ``---``, the frontmatter may hold a
-    store-written value with ``---`` in it (BF-940, #1686: ``author: Ezri---Prime``,
-    ``topic: Inspection --- nominal``), which the base cut. It then runs to that line instead,
-    when ``_line_framing_is_kept`` accepts it (A1). It does not when that framing does not load
-    as a mapping or names a classification other than the base framing's (A2), so a hand-made
-    or legacy file whose frontmatter is closed inside a line reads as on the base, at the level
-    the base read. A document with no later ``---`` has no frontmatter, as on the base (L18).
+    Framing (A3): exactly the base's. A document that starts with ``---`` has frontmatter up to
+    the next ``---`` wherever it stands, inside a value too, and its body is what follows,
+    stripped; one with no later ``---`` has no frontmatter (L18). That framing cuts a value
+    holding ``---``; BF-940 (#1686) owns changing it, for every reader at once (L25).
 
-    Loading: ``_load_frontmatter``, so a frontmatter either loader accepts is read, and every
-    reader reads it alike. ``None`` means a frontmatter block is there and neither loader
-    accepts it. An error of YAML's constructor propagates, as it did from ``_parse_document``
-    on the base.
+    Loading (RK8): ``_load_frontmatter``, libyaml then ``yaml.safe_load``, so every reader reads a
+    frontmatter alike. A frontmatter neither loader accepts reads as ``{}``, as on the base. An
+    error of YAML's constructor (``updated: 2026-13-05``) propagates, as it did from
+    ``_parse_document`` on the base; the search withholds such a record.
     """
-    if not raw.startswith("---"):
-        return {}, raw
-    cut = raw.find("---", 3)
-    if cut < 0:
-        return {}, raw
-    legacy = _load_frontmatter(raw[3:cut]), raw[cut + 3:].strip()
-    close = raw.find("\n---", 3)
-    if close + 1 > cut:
-        framed = _load_frontmatter(raw[3:close + 1])
-        if _line_framing_is_kept(framed, legacy[0]):
-            return framed, raw[close + 4:].strip()
-    return legacy
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = _load_frontmatter(parts[1])
+            return ({} if frontmatter is None else frontmatter), parts[2].strip()
+    return {}, raw
 
 
 def _search_record_counts(
@@ -370,13 +344,6 @@ def _search_records(
             # the search withholds it rather than end every search or read it as ``{}``.
             logger.debug("BF-952: skipping %s, whose frontmatter cannot be constructed", rel_path, exc_info=True)
             continue
-        if frontmatter is None:
-            # A1: a frontmatter block no loader accepts names no classification, so the record
-            # is shown to the Captain alone, as ``read_entry`` rules.
-            if reader_id != _UNRESTRICTED_READER:
-                logger.debug("BF-952: withholding %s, whose frontmatter does not parse", rel_path)
-                continue
-            frontmatter = {}
         if type(frontmatter) is not dict:
             # A non-empty YAML list or a truthy scalar names no classification; the record is
             # withheld rather than read at a default level (it raised on the base). A falsy one
@@ -532,12 +499,15 @@ class RecordsStore:
         Returns the relative path of the created file.
 
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
-        the frontmatter **before** ``yaml.dump``, so they round-trip through
-        ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
-        sidecar, when every value is one YAML's safe loader builds (a string,
-        number, boolean, date, or a list or mapping of them). BF-952 A2:
+        the frontmatter **before** ``yaml.dump``. They round-trip through
+        ``_parse_document`` when every value is one YAML's safe loader builds
+        (a string, number, boolean, date, or a list or mapping of them) and
+        holds no ``---``, which the reader's framing cuts (BF-940, #1686).
         ``yaml.dump`` writes a tuple or another Python object with a
-        ``!!python/`` tag, which no reader loads (BF-952 L24). Any key in
+        ``!!python/`` tag, which no reader loads (BF-952 L24). The AD-1138
+        ``frontmatter_json`` sidecar holds them whole only within
+        ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
+        past it the index stores ``{}``. Any key in
         :data:`_RESERVED_FRONTMATTER_KEYS` raises
         ``ValueError`` — this is the fail-fast tier, because silently dropping a
         reserved key would let a caller believe it stamped provenance that is
@@ -1251,13 +1221,6 @@ class RecordsStore:
 
         raw = file_path.read_text(encoding="utf-8")
         frontmatter, content = _read_document(raw)
-        if frontmatter is None:
-            # BF-952 A1: a frontmatter block that no loader accepts names no classification.
-            # The base read it as ``{}``, so as ``ship``, and showed it to every reader; now
-            # only the Captain, who reads every record, is shown it.
-            if reader_id != "captain":
-                return None
-            frontmatter = {}
 
         # Classification check — Captain has unrestricted read access
         if reader_id != "captain":
@@ -1406,7 +1369,7 @@ class RecordsStore:
         reader cannot move the scores it is shown. A record whose frontmatter is
         a non-empty YAML list or a truthy scalar, or one YAML's constructor cannot
         build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
-        parse is shown to the Captain alone, as :meth:`read_entry` rules (A1). A
+        parse reads as ``{}``, as every reader reads it (A3; BF-940, #1686). A
         number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does
@@ -1538,12 +1501,10 @@ class RecordsStore:
     def _parse_document(self, raw: str) -> tuple[dict, str]:
         """Parse YAML frontmatter + content from a markdown document.
 
-        BF-952 A1: :func:`_read_document` frames and loads it, as it does for ``read_entry``
-        and the search. A frontmatter block that no loader accepts reads as ``{}`` here, as
-        on the base; ``read_entry`` and the search show such a record to the Captain alone.
+        BF-952 A1, A3: :func:`_read_document` frames and loads it with the base's framing,
+        as it does for ``read_entry`` and the search.
         """
-        frontmatter, content = _read_document(raw)
-        return ({} if frontmatter is None else frontmatter), content
+        return _read_document(raw)
 
     def _safe_path(self, user_path: str) -> Path:
         """Validate and resolve a user-supplied path, preventing traversal.

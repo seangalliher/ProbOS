@@ -82,9 +82,8 @@ _NOT_LESSON_TEXT = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udff
 # A2: what cannot stand in one line of an exit note: every control character, the line and paragraph separators (each
 # ends a line for str.splitlines), and lone surrogates.
 _NOT_ONE_LINE = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
-# A4 (R2-F3): Ship's Records split a document's frontmatter at the first two "---" it found, inside a value too
-# (records_store._parse_document, register R25), so an envelope value holding one came back cut short. BF-952 A1
-# ends the frontmatter only at a "---" that begins a line; this rule still refuses "---" and is unchanged.
+# A4 (R2-F3): Ship's Records splits a document's frontmatter at the first two "---" it finds, inside a value too
+# (records_store._parse_document, register R25), so an envelope value holding one would come back cut short.
 _FRONTMATTER_DELIMITER = "---"
 
 
