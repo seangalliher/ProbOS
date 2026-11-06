@@ -4436,9 +4436,13 @@ class CognitiveAgent(BaseAgent):
             # (``journal_token_report``'s docstring), so the DM turn writes one
             # under this id, which the reply's context manifest names. ``model``
             # is "unknown", as BF-901 requires of a row that names no answering
-            # model, and the empty token source files it as uncharged.
-            _turn_entry_id = uuid.uuid4().hex
+            # model, and the empty token source files it as uncharged. The manifest
+            # names the row only once ``record`` has returned: with no journal
+            # (``cognitive_journal.enabled`` false) or a write that raised, it
+            # names none.
+            _turn_row_id: str | None = None
             if self._cognitive_journal:
+                _turn_entry_id = uuid.uuid4().hex
                 try:
                     await self._cognitive_journal.record(
                         entry_id=_turn_entry_id,
@@ -4457,6 +4461,7 @@ class CognitiveAgent(BaseAgent):
                         response_hash=context_manifest.turn_hash(_agentic_output),
                         correlation_id=observation.get("correlation_id", ""),
                     )
+                    _turn_row_id = _turn_entry_id
                 except Exception:
                     logger.debug("AD-1357: DM-turn journal recording failed", exc_info=True)
             context_manifest.record_manifest(
@@ -4465,7 +4470,7 @@ class CognitiveAgent(BaseAgent):
                 system_prompt=composed,
                 user_message=user_message,
                 response_text=_agentic_output,
-                journal_entry_id=_turn_entry_id,
+                journal_entry_id=_turn_row_id,
             )
             if applied_strategy_ids:
                 decision["_applied_strategy_ids"] = applied_strategy_ids
@@ -4627,6 +4632,7 @@ class CognitiveAgent(BaseAgent):
         }
 
         # AD-431: Record to Cognitive Journal (fire-and-forget)
+        _journal_row_id: str | None = None  # AD-1357: set once record returns
         if self._cognitive_journal:
             try:
                 _prompt_hash = hashlib.md5(user_message[:500].encode()).hexdigest()[:12]
@@ -4664,18 +4670,20 @@ class CognitiveAgent(BaseAgent):
                     level=str(observation.get("level", "")) if observation.get("intent") == "diagnose_system" else "",
                     level_rank=int(observation.get("level_rank", 0)) if observation.get("intent") == "diagnose_system" else 0,
                 )
+                _journal_row_id = request.id  # AD-1357
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
 
         # AD-1357 (#1749): what this reply was given, naming the journal row above
-        # by ``request.id`` and its two hashes.
+        # by ``request.id`` and its two hashes, or ``None`` when no row was handed
+        # to a journal (none configured, or the write raised).
         context_manifest.record_manifest(
             observation,
             path="single_pass",
             system_prompt=composed,
             user_message=user_message,
             response_text=response.content,
-            journal_entry_id=request.id,
+            journal_entry_id=_journal_row_id,
         )
 
         # BF-922 (#1639): a single call that answers for a chain that returned no

@@ -16,7 +16,7 @@ small, bounded, JSON-safe context manifest, stored under the reply's
   recall, the room id for transcript grounding, and for the Oracle a count per
   tier plus the paths of its Ship's Records results;
 * the cognitive journal's prompt and response hashes, and the id of the
-  journal row for the same turn.
+  journal row for the same turn, or ``null`` when the turn wrote none.
 
 It holds no section text, no other agent's message text, no peer agent's
 episode id and no camera scene. A section is recorded by its name alone, so a
@@ -64,6 +64,9 @@ MAX_MANIFEST_BYTES: Final = 16384
 #: those results are counted and never identified.
 _IDENTIFIED_TIER: Final = "records"
 _LOOKUPS: Final = ("cross_agent_recall", "transcript_grounding", "oracle")
+#: The ``path`` values ``record_manifest`` is given. A stub ``context_manifest_metadata``
+#: makes names any other value as ``""``, so the stub itself always stores.
+_PATHS: Final = ("single_pass", "agentic")
 
 
 def turn_hash(text: Any) -> str:
@@ -317,9 +320,13 @@ def build_manifest(
     system_prompt: Any,
     user_message: Any,
     response_text: Any,
-    journal_entry_id: str,
+    journal_entry_id: str | None,
 ) -> dict[str, Any]:
-    """The manifest for one reply; ``recall`` is ``None`` when recall did not run."""
+    """The manifest for one reply; ``recall`` is ``None`` when recall did not run.
+
+    ``journal_entry_id`` is ``None`` when the turn handed no row to a journal; the
+    manifest then holds ``null`` in the same, last, position.
+    """
     sections, omitted = ledger.to_wire()
     if recall is None:
         recall_wire: dict[str, Any] = {"ran": False}
@@ -336,7 +343,7 @@ def build_manifest(
         "lookups": lookups,
         "prompt_hash": turn_hash(user_message),
         "response_hash": turn_hash(response_text),
-        "journal_entry_id": _text(journal_entry_id, MAX_ID_CHARS),
+        "journal_entry_id": _text(journal_entry_id, MAX_ID_CHARS) or None,
     }
     return storable(manifest, path=path)
 
@@ -348,7 +355,7 @@ def record_manifest(
     system_prompt: Any,
     user_message: Any,
     response_text: Any,
-    journal_entry_id: str,
+    journal_entry_id: str | None,
 ) -> None:
     """Put this turn's manifest on the observation when ``_build_user_message``
     assembled a ``direct_message`` prompt on it.
@@ -382,6 +389,11 @@ def context_manifest_metadata(result: Any) -> dict[str, Any]:
 
     ``{}`` when the result carries no non-empty dict under the key, so such a
     reply's metadata is unchanged. An ``Exception`` reading the result gives ``{}``.
+
+    Both chat routers store what this returns, and a result's metadata can come
+    from any agent, so the dict goes through ``storable`` here as well: one the
+    store would refuse is replaced by the stub and cannot cost the reply its row.
+    The stub names the dict's ``path`` only when it is one of ``_PATHS``.
     """
     try:
         metadata = getattr(result, "metadata", None)
@@ -389,5 +401,6 @@ def context_manifest_metadata(result: Any) -> dict[str, Any]:
     except Exception:
         return {}
     if type(manifest) is dict and manifest:
-        return {CONTEXT_MANIFEST_METADATA_KEY: manifest}
+        path = manifest.get("path")
+        return {CONTEXT_MANIFEST_METADATA_KEY: storable(manifest, path=path if type(path) is str and path in _PATHS else "")}
     return {}

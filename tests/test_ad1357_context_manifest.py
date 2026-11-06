@@ -496,6 +496,71 @@ async def test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names
     }
 
 
+class _RaisingJournal(CognitiveJournal):
+    """A configured journal whose ``record`` raises (``CognitiveJournal.record`` itself never does)."""
+
+    async def record(self, **_kwargs: Any) -> None:  # type: ignore[override]
+        raise RuntimeError("journal down")
+
+
+def _no_row_runtime(case: str, tmp_path: Path) -> SimpleNamespace:
+    """``cognitive_journal.enabled`` false, wired as startup wires it (no journal on the runtime,
+    ``startup/communication.py``), or a configured journal whose write raises."""
+    if case == "journal-disabled":
+        config = SystemConfig()
+        config.cognitive_journal = config.cognitive_journal.model_copy(update={"enabled": False})
+        return _runtime(config=config, cognitive_journal=None)
+    return _runtime(cognitive_journal=_RaisingJournal(db_path=str(tmp_path / "cognitive_journal.db")))
+
+
+@pytest.mark.parametrize("case", ["journal-disabled", "journal-raised"])
+async def test_a_single_pass_turn_that_wrote_no_journal_row_names_none(tmp_path: Path, case: str) -> None:
+    """Review round 1, finding 2: the manifest names a journal row only once the turn handed it to a journal."""
+    agent = _agent(_no_row_runtime(case, tmp_path), _OneReply("Aye, Captain."))
+    observation, decision = await _turn(agent, {"text": "Status?", "captain_message": "Status?"})
+    manifest = _manifest_of(observation, decision)
+    assert manifest["path"] == "single_pass" and len(agent._llm_client.requests) == 1  # premise: the model answered
+    assert list(manifest)[-1] == "journal_entry_id" and manifest["journal_entry_id"] is None
+    assert not (tmp_path / "cognitive_journal.db").exists()
+
+
+@pytest.mark.parametrize("case", ["journal-disabled", "journal-raised"])
+async def test_an_agentic_turn_that_wrote_no_journal_row_names_none(tmp_path: Path, case: str) -> None:
+    """Finding 2 on the agentic branch. The loop is stubbed as T6 stubs it: the row and the manifest are
+    written after it returns, in ``_decide_via_llm``, which runs unstubbed."""
+    agent = _agent(_no_row_runtime(case, tmp_path), _OneReply("unused"))
+    agent._maybe_run_conversational_agentic = AsyncMock(return_value="Done, Captain.")  # type: ignore[method-assign]
+    observation, decision = await _turn(agent, {"text": "Make me a doc.", "captain_message": "Make me a doc."})
+    manifest = _manifest_of(observation, decision)
+    assert decision["tier_used"] == "agentic" and manifest["path"] == "agentic"  # premise: the loop answered
+    assert list(manifest)[-1] == "journal_entry_id" and manifest["journal_entry_id"] is None
+    assert not (tmp_path / "cognitive_journal.db").exists()
+
+
+async def test_the_doctor_explains_the_uncharged_row_an_agentic_dm_turn_writes(tmp_path: Path) -> None:
+    """Review round 1, finding 3: the DM-turn row reaches the doctor's view as uncharged, and the view's
+    legend and coverage lines name it, a successful turn whose model calls are not metered."""
+    from probos.doctor.checks import token_accounting_check as check
+    from probos.doctor.protocol import CheckOutcome, DoctorContext
+
+    journal = CognitiveJournal(db_path=str(tmp_path / check.JOURNAL_FILE))
+    await journal.start()
+    try:
+        agent = _agent(_runtime(cognitive_journal=journal), _OneReply("unused"))
+        agent._maybe_run_conversational_agentic = AsyncMock(return_value="Done, Captain.")  # type: ignore[method-assign]
+        await _turn(agent, {"text": "Make me a doc.", "captain_message": "Make me a doc."})
+    finally:
+        await journal.stop()
+    result = await check._TokenAccountingCheck().run(
+        DoctorContext(config=None, home_dir=tmp_path, data_dir=tmp_path, config_path=None)
+    )
+    lines = result.detail.splitlines()
+    assert result.outcome is CheckOutcome.OK
+    assert "  agentic: measured 0 tokens over 0 calls; estimated 0 tokens over 0 calls; uncharged 0 tokens over 1 call" in lines
+    assert "dm-turn" in lines[0] and "dm-turn" in lines[1]
+    assert "the agentic loop writes no journal row" not in result.detail
+
+
 # ── T7 to T9: the sinks and the wire ─────────────────────────────────
 
 
@@ -524,8 +589,9 @@ def test_a_reply_without_a_manifest_keeps_its_metadata_unchanged(result: Any) ->
     assert _build_reply_metadata("intent-1", result, None) == {"intent_id": "intent-1"}
 
 
-async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_unchanged(tmp_path: Path) -> None:
-    """The real AD-914 fan-out over a real ``IntentBus`` and store (test_ad914's harness, restated)."""
+async def _group_reply_rows(tmp_path: Path, scout_metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The real AD-914 fan-out over a real ``IntentBus`` and store (test_ad914's harness, restated): scout1
+    replies with ``scout_metadata`` and counselor1 with none. Each stored agent row's metadata, by author."""
     store = _thread_store(tmp_path)
     bus = IntentBus(SignalManager(reap_interval=1.0))
     types = {"scout1": "scout", "counselor1": "counselor"}
@@ -534,7 +600,6 @@ async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_u
         registry=SimpleNamespace(get=lambda aid: SimpleNamespace(agent_type=types[aid]) if aid in types else None),
         callsign_registry=SimpleNamespace(get_callsign=lambda t: {"scout": "Wesley", "counselor": "Ezri"}.get(t, "")),
     )
-    manifest = {"v": 1, "path": "single_pass", "sections": [{"name": "captain_message", "chars": 10, "kept": True}]}
 
     def _handler(agent_id: str, metadata: dict[str, Any]):
         async def _handle(intent: IntentMessage) -> IntentResult:
@@ -544,15 +609,53 @@ async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_u
             )
         return _handle
 
-    bus.subscribe("scout1", _handler("scout1", {"context_manifest": manifest}), intent_names=["direct_message"])
+    bus.subscribe("scout1", _handler("scout1", scout_metadata), intent_names=["direct_message"])
     bus.subscribe("counselor1", _handler("counselor1", {}), intent_names=["direct_message"])
     thread = store.create_thread(title="room", participants=["scout1", "counselor1"])
     captain = store.append_message(thread.id, author_id="captain", role="captain", body="status?")
     await group_chat_fanout(runtime, thread.id, captain_body="status?", captain_msg=captain)
-    rows = {m.author_id: m.metadata for m in store.list_messages(thread.id, limit=100) if m.role == "agent"}
+    return {m.author_id: m.metadata for m in store.list_messages(thread.id, limit=100) if m.role == "agent"}
+
+
+async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_unchanged(tmp_path: Path) -> None:
+    manifest = {"v": 1, "path": "single_pass", "sections": [{"name": "captain_message", "chars": 10, "kept": True}]}
+    rows = await _group_reply_rows(tmp_path, {"context_manifest": manifest})
     assert rows["scout1"]["context_manifest"] == manifest
     assert "context_manifest" not in rows["counselor1"]
     assert rows["counselor1"]["fanout"] == "ad914"
+
+
+async def test_a_group_reply_whose_manifest_the_store_would_refuse_is_stored_with_a_stub(tmp_path: Path) -> None:
+    """Review round 1, finding 1, through the real group fan-out: the reply keeps its row."""
+    rows = await _group_reply_rows(tmp_path, {"context_manifest": {"v": 1, "path": "single_pass", "x": float("nan")}})
+    assert set(rows) == {"scout1", "counselor1"}
+    assert rows["scout1"]["context_manifest"] == {"v": 1, "path": "single_pass", "unrecorded": "unencodable"}
+
+
+@pytest.mark.parametrize(
+    ("manifest", "stub_path", "reason"),
+    [
+        pytest.param({"v": 1, "path": "single_pass", "x": float("nan")}, "single_pass", "unencodable", id="nan"),
+        pytest.param({"v": 1, "path": "agentic", "x": {1, 2}}, "agentic", "unencodable", id="a-set"),
+        pytest.param({"v": 1, "path": "\ud800"}, "", "unencodable", id="lone-surrogate-path"),
+        pytest.param({"v": 1, "path": "single_pass", "x": "y" * 16_385}, "single_pass", "oversize", id="oversize"),
+    ],
+)
+def test_a_manifest_on_a_result_that_the_store_would_refuse_is_stored_as_a_stub(
+    tmp_path: Path, manifest: dict[str, Any], stub_path: str, reason: str,
+) -> None:
+    """Review round 1, finding 1: the routers' helper checks what it forwards, so a result whose manifest did
+    not come from ``record_manifest`` cannot cost the reply its row in the transcript."""
+    from probos.cognitive import context_manifest as cm
+
+    result = IntentResult(intent_id="i1", agent_id="a1", success=True, metadata={"context_manifest": manifest})
+    metadata = _build_reply_metadata("intent-1", result, None)
+    stub = {"v": cm.MANIFEST_VERSION, "path": stub_path, "unrecorded": reason}
+    assert metadata == {"intent_id": "intent-1", "context_manifest": stub}
+    store = _thread_store(tmp_path)
+    thread = store.get_or_create_default_for_agent(AGENT_ID, "Ezri")
+    saved = store.append_message(thread.id, author_id=AGENT_ID, role="agent", body="hi", metadata=metadata)
+    assert saved is not None and saved.metadata["context_manifest"] == stub
 
 
 def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first() -> None:
