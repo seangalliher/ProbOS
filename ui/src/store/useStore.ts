@@ -2070,7 +2070,9 @@ export const useStore = create<HXIState>((set, get) => ({
     }
     set({ notebooksLoading: true });
     try {
-      const res = await fetch(`/api/records/search?q=${encodeURIComponent(q)}&scope=ship`);
+      // BF-952 A1: the server confines the walk to notebooks/ before its cap of 20, so a note
+      // is not cut by twenty better matches elsewhere; the filter below stays as a guard.
+      const res = await fetch(`/api/records/search?q=${encodeURIComponent(q)}&scope=ship&directory=notebooks`);
       if (!res.ok) {
         set({ notebooksSearchResults: [], notebooksLoading: false });
         return;
@@ -2082,7 +2084,7 @@ export const useStore = create<HXIState>((set, get) => ({
         score: r.score || 0,
         snippet: r.snippet || '',
       }));
-      // Filter to notebooks/* only — search runs over all records
+      // Filter to notebooks/* only — a guard; the server already confined the walk (BF-952 A1)
       const filtered = all.filter(r => r.path.startsWith('notebooks/'));
       set({ notebooksSearchResults: filtered, notebooksLoading: false });
     } catch {

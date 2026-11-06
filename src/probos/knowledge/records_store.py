@@ -204,9 +204,11 @@ _SEARCH_FIELD_WEIGHTS: dict[str, float] = {
 _SEARCH_BM25_K1 = 1.5
 _SEARCH_BM25_B = 0.75
 _SEARCH_LIMIT = 20
-#: BF-952: search parses every record's frontmatter on each call, and PyYAML's pure-Python scanner
-#: was about a third of that cost. libyaml, when installed, parses with the same safe constructor.
-_SEARCH_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
+#: BF-952: every Ship's Records reader loads frontmatter with libyaml when it is installed (search
+#: parses every record on each call, and PyYAML's pure-Python scanner was about a third of that
+#: cost). libyaml uses PyYAML's own safe constructor; ``_read_document`` falls back to
+#: ``yaml.safe_load`` for a frontmatter libyaml refuses.
+_RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
 
 
 def _search_query_terms(query: str) -> list[str]:
@@ -220,9 +222,14 @@ def _search_query_terms(query: str) -> list[str]:
 
 
 def _search_field_text(value: Any) -> str:
-    """BF-952: a frontmatter value as the text to score: a string, or the strings and numbers of a list."""
+    """BF-952: a frontmatter value as the text to score: a string, a number, or the strings and numbers of a list.
+
+    A boolean is not text, alone or in a list (A1, finding 2).
+    """
     if isinstance(value, str):
         return value
+    if isinstance(value, (int, float)) and type(value) is not bool:
+        return str(value)
     if isinstance(value, (list, tuple)):
         return " ".join(
             str(item) for item in value
@@ -231,23 +238,40 @@ def _search_field_text(value: Any) -> str:
     return ""
 
 
-def _search_document(raw: str) -> tuple[Any, str]:
-    """BF-952: ``RecordsStore._parse_document``'s split and result, parsed with libyaml when installed.
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1: a Ship's Records document's frontmatter and body, the one parse every reader uses.
 
-    A frontmatter libyaml refuses is parsed again by ``yaml.safe_load``, so a document
-    reads here as ``_parse_document`` reads it; a BF-952 test holds the two together.
+    ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
+
+    Framing (BF-940, #1686): a document that starts with ``---`` has frontmatter up to the
+    first later ``---`` that begins a line, and its body is what follows that ``---``,
+    stripped. The base ended the frontmatter at the first ``---`` anywhere, so a value
+    holding one inside a line (``topic: Inspection --- nominal``) was cut, the keys after
+    it were lost or the YAML stopped parsing, and the record read with no classification.
+    A store-written value holding ``---`` now stays whole (T16 writes four through
+    ``write_entry``). A document whose frontmatter is not closed by a line beginning
+    ``---`` has no frontmatter here.
+
+    Loading: libyaml (``_RECORDS_YAML_LOADER``) when installed, then ``yaml.safe_load``
+    when libyaml refuses the text, so a frontmatter either loader accepts is read, and
+    every reader reads it alike. An empty or falsy frontmatter is ``{}``. ``None`` means a
+    frontmatter block is there and neither loader accepts it. An error of YAML's
+    constructor (``updated: 2026-13-05`` raises ``ValueError``) propagates, as it did from
+    ``_parse_document`` on the base.
     """
     if raw.startswith("---"):
-        parts = raw.split("---", 2)
-        if len(parts) >= 3:
+        close = raw.find("\n---", 3)
+        if close >= 0:
+            block = raw[3:close + 1]
+            body = raw[close + 4:].strip()
             try:
-                frontmatter = yaml.load(parts[1], Loader=_SEARCH_YAML_LOADER) or {}
+                frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
             except yaml.YAMLError:
                 try:
-                    frontmatter = yaml.safe_load(parts[1]) or {}
+                    frontmatter = yaml.safe_load(block)
                 except yaml.YAMLError:
-                    frontmatter = {}
-            return frontmatter, parts[2].strip()
+                    return None, body
+            return frontmatter or {}, body
     return {}, raw
 
 
@@ -310,10 +334,25 @@ def _search_records(
         except Exception:
             logger.debug("Skipping unreadable file", exc_info=True)
             continue
-        frontmatter, content_text = _search_document(raw)
+        try:
+            frontmatter, content_text = _read_document(raw)
+        except Exception:
+            # A1: YAML accepted the frontmatter and its constructor raised (``updated: 2026-13-05``
+            # is a ``ValueError``, not a ``YAMLError``). ``read_entry`` raises for such a record;
+            # the search withholds it rather than end every search or read it as ``{}``.
+            logger.debug("BF-952: skipping %s, whose frontmatter cannot be constructed", rel_path, exc_info=True)
+            continue
+        if frontmatter is None:
+            # A1: a frontmatter block no loader accepts names no classification, so the record
+            # is shown to the Captain alone, as ``read_entry`` rules.
+            if reader_id != _UNRESTRICTED_READER:
+                logger.debug("BF-952: withholding %s, whose frontmatter does not parse", rel_path)
+                continue
+            frontmatter = {}
         if type(frontmatter) is not dict:
-            # A YAML list or scalar names no classification; the record is withheld
-            # rather than read at a default level (it raised on the base).
+            # A non-empty YAML list or a truthy scalar names no classification; the record is
+            # withheld rather than read at a default level (it raised on the base). A falsy one
+            # (``[]``, ``false``, ``0``, ``''``) is ``{}``, as every reader has read it.
             logger.debug("BF-952: skipping %s, whose frontmatter is not a mapping", rel_path)
             continue
         # Classification scope + reader-identity check (BF-679)
@@ -1179,7 +1218,14 @@ class RecordsStore:
             return None
 
         raw = file_path.read_text(encoding="utf-8")
-        frontmatter, content = self._parse_document(raw)
+        frontmatter, content = _read_document(raw)
+        if frontmatter is None:
+            # BF-952 A1: a frontmatter block that no loader accepts names no classification.
+            # The base read it as ``{}``, so as ``ship``, and showed it to every reader; now
+            # only the Captain, who reads every record, is shown it.
+            if reader_id != "captain":
+                return None
+            frontmatter = {}
 
         # Classification check — Captain has unrestricted read access
         if reader_id != "captain":
@@ -1326,9 +1372,13 @@ class RecordsStore:
         between 0 and 1, and it never rises down the list. Rarity is counted only
         over the records this reader may read, so a record withheld from the
         reader cannot move the scores it is shown. A record whose frontmatter is
-        not a mapping is skipped. At most 20 results. The walk, parse and ranking
-        (:func:`_search_records`) run in a worker thread, so a search does not
-        block the event loop; ``scope`` and ``directory`` are checked first, here.
+        a non-empty YAML list or a truthy scalar, or one YAML's constructor cannot
+        build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
+        parse is shown to the Captain alone, as :meth:`read_entry` rules (A1). A
+        number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
+        scored as text; a boolean is not. At most 20 results. The walk, parse and
+        ranking (:func:`_search_records`) run in a worker thread, so a search does
+        not block the event loop; ``scope`` and ``directory`` are checked first, here.
 
         BF-679: ``reader_id`` / ``reader_department`` add the identity layer
         :meth:`read_entry` applies, so a caller that knows who is asking no
@@ -1454,16 +1504,14 @@ class RecordsStore:
         return path
 
     def _parse_document(self, raw: str) -> tuple[dict, str]:
-        """Parse YAML frontmatter + content from a markdown document."""
-        if raw.startswith("---"):
-            parts = raw.split("---", 2)
-            if len(parts) >= 3:
-                try:
-                    fm = yaml.safe_load(parts[1]) or {}
-                except yaml.YAMLError:
-                    fm = {}
-                return fm, parts[2].strip()
-        return {}, raw
+        """Parse YAML frontmatter + content from a markdown document.
+
+        BF-952 A1: :func:`_read_document` frames and loads it, as it does for ``read_entry``
+        and the search. A frontmatter block that no loader accepts reads as ``{}`` here, as
+        on the base; ``read_entry`` and the search show such a record to the Captain alone.
+        """
+        frontmatter, content = _read_document(raw)
+        return ({} if frontmatter is None else frontmatter), content
 
     def _safe_path(self, user_path: str) -> Path:
         """Validate and resolve a user-supplied path, preventing traversal.

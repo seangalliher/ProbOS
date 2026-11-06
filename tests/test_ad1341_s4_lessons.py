@@ -643,8 +643,9 @@ _YAML_HARD = (
 async def test_every_provenance_value_the_rule_admits_comes_back_whole_from_ship_s_records(
     tmp_path: Path, field: str,
 ) -> None:
-    """A4 (R2-F3): Ship's Records cuts a document's frontmatter at the first two ``---`` it finds, wherever they stand
-    (register R25), so a callsign such as ``normal---value`` came back as ``normal``: the stand-down reported the
+    """A4 (R2-F3): Ship's Records cut a document's frontmatter at the first two ``---`` it found, wherever they stood
+    (register R25; BF-952 A1 now ends it only at a ``---`` that begins a line), so a callsign such as
+    ``normal---value`` came back as ``normal``: the stand-down reported the
     note written and the promotion withheld it. The rule now refuses a value holding ``---``. Each value here (YAML's
     quoting cases, and for the callsign, which the store writes three times, every code point to U+017F) is either
     refused by the rule and withheld, or admitted, stored, read back whole and archived."""

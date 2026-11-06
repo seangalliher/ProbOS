@@ -5,8 +5,9 @@ of the raw file, YAML keys included, and broke ties by path: ``i`` matched "ship
 every record, and a conversational question matched every record at one score, so the paths that sort
 first won. It also ran its whole walk on the event loop. Real fixtures throughout: a real
 ``RecordsStore`` on ``tmp_path`` with records written to disk as a person or the store writes them,
-the real ``OracleService`` (T9) and the real self-monitoring pull (T10). Nothing here replaces
-``RecordsStore.search``; T14 wraps its parse function only to observe the thread it runs on.
+the real ``OracleService`` (T9), the real self-monitoring pull (T10) and the real ``search_records``
+route function (T19). Nothing here replaces ``RecordsStore.search``; T14 wraps the path methods and
+module functions the walk calls only to observe the thread each runs on.
 """
 
 from __future__ import annotations
@@ -14,15 +15,18 @@ from __future__ import annotations
 import threading
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import yaml
+from fastapi.responses import JSONResponse
 
 from probos.cognitive.oracle_service import OracleService
 from probos.config import RecordsConfig
 from probos.knowledge import records_store as records_store_module
 from probos.knowledge.records_store import RecordsStore
+from probos.routers.records import search_records
 from tests.test_bf949_notebook_reader_identity import _self_monitoring
 
 _QUESTION = (
@@ -60,7 +64,8 @@ async def _scores(store: RecordsStore, query: str, **reader: Any) -> dict[str, f
 @pytest.mark.asyncio
 async def test_a_question_made_mostly_of_stopwords_finds_the_record_holding_its_rare_terms(tmp_path: Path) -> None:
     """#1751 acceptance 1: the Captain's question no longer matches every record, and the record holding its
-    rare terms leads. On the base its ``i``, ``to`` and ``if`` were substrings of every file."""
+    rare terms leads. On the base its ``i`` and ``if`` were substrings of every file here (both are inside the
+    ``classification`` key), so every file matched it."""
     store = await _store(tmp_path)
     for index in range(6):
         _write(store, f"reports/filler-{index}.md", "I think that if you can, it is to be done. Was it a good watch?")
@@ -252,34 +257,187 @@ async def test_a_query_with_no_words_finds_nothing(tmp_path: Path, query: str) -
     assert await store.search(query, scope="ship", reader_id="captain") == []
 
 
-@pytest.mark.parametrize("raw", [
-    pytest.param("---\nauthor: bones\nclassification: ship\n---\n\nWarp report.\n", id="the-store-shape"),
-    pytest.param("---\nupdated: 2026-06-01\n---\nbody", id="a-yaml-date"),
-    pytest.param('---\ntitle: "Caf\\xE9"\n---\nbody', id="an-escaped-value"),
-    pytest.param("---\n- a\n- b\n---\nbody", id="a-yaml-list"),
-    pytest.param("---\n---\nbody", id="empty-frontmatter"),
-    pytest.param("---\nkey: [unclosed\n---\nbody", id="malformed-yaml"),
-    pytest.param("no frontmatter at all", id="no-frontmatter"),
+_LIBYAML = bool(getattr(yaml, "__with_libyaml__", False))
+
+
+@pytest.mark.parametrize(("raw", "frontmatter", "body"), [
+    pytest.param(
+        "---\nauthor: bones\nclassification: ship\n---\n\nWarp report.\n",
+        {"author": "bones", "classification": "ship"}, "Warp report.", id="the-store-shape",
+    ),
+    pytest.param(
+        "---\ntopic: Inspection --- nominal\nclassification: private\n---\nbody",
+        {"topic": "Inspection --- nominal", "classification": "private"}, "body", id="a-value-holding-three-hyphens",
+    ),
+    pytest.param(
+        "---\ntopic: 'Inspection --- status: nominal'\nclassification: private\n---\nbody",
+        {"topic": "Inspection --- status: nominal", "classification": "private"}, "body",
+        id="a-quoted-value-holding-a-key",
+    ),
+    pytest.param(
+        "---\nauthor: bones\n---\nabove\n---\nbelow", {"author": "bones"}, "above\n---\nbelow",
+        id="a-body-holding-a-rule",
+    ),
+    pytest.param("---\nupdated: 2026-06-01\n---\nbody", {"updated": date(2026, 6, 1)}, "body", id="a-yaml-date"),
+    pytest.param('---\ntitle: "Caf\\xE9"\n---\nbody', {"title": "Café"}, "body", id="an-escaped-value"),
+    pytest.param("---\n---\nbody", {}, "body", id="empty-frontmatter"),
+    pytest.param("---\n[]\n---\nbody", {}, "body", id="a-falsy-frontmatter-reads-as-empty"),
+    pytest.param("---\nkey: [unclosed\n---\nbody", None, "body", id="malformed-yaml"),
+    pytest.param(
+        "---\nclassification:\tprivate\n---\nbody", {"classification": "private"} if _LIBYAML else None, "body",
+        id="a-tab-only-libyaml-accepts",
+    ),
+    pytest.param("no frontmatter at all", {}, "no frontmatter at all", id="no-frontmatter"),
 ])
-def test_search_reads_a_document_as_the_store_reads_it(tmp_path: Path, raw: str) -> None:
-    """RK8: the search parse (libyaml when installed) returns exactly what ``_parse_document`` returns."""
+def test_every_reader_frames_and_loads_a_document_alike(
+    tmp_path: Path, raw: str, frontmatter: dict[str, Any] | None, body: str,
+) -> None:
+    """A1 (BF-940, #1686; finding 6): ``_read_document`` is the one parse. ``_parse_document`` reads ``None`` (a
+    frontmatter block no loader accepts) as ``{}``, as on the base. The base cut the second and third cases at the
+    ``---`` inside the topic, and the third then did not parse. A tab after a key is refused by PyYAML's scanner
+    and accepted by libyaml, so with libyaml installed every reader now reads it."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
-    assert records_store_module._search_document(raw) == store._parse_document(raw)
+    assert records_store_module._read_document(raw) == (frontmatter, body)
+    assert store._parse_document(raw) == ({} if frontmatter is None else frontmatter, body)
 
 
 @pytest.mark.asyncio
 async def test_a_search_runs_off_the_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """RK7: the walk, parse and ranking run in a worker thread, so a search never blocks the event loop.
-    On the base the whole walk ran on the loop's thread."""
+    """RK7: the walk, the reads, the parse and the ranking all run in a worker thread, so a search never blocks
+    the event loop. The test records the thread of each step: ``rglob`` and ``read_text`` on the store's own path
+    class, and the module functions the walk calls. On the base the whole walk ran on the loop's thread (and
+    ``_read_document`` does not exist there, so the test fails at setup)."""
     store = await _store(tmp_path)
     _write(store, "reports/entry.md", "warp core report")
-    threads: list[int] = []
-    parse = records_store_module._search_document
+    seen: dict[str, list[int]] = {"rglob": [], "read_text": [], "parse": [], "count": [], "rank": []}
+    path_type = type(store.repo_path)
 
-    def _recording_parse(raw: str) -> tuple[Any, str]:
-        threads.append(threading.get_ident())
-        return parse(raw)
+    def _recording(step: str, function: Any) -> Any:
+        def record(*args: Any, **kwargs: Any) -> Any:
+            seen[step].append(threading.get_ident())
+            return function(*args, **kwargs)
+        return record
 
-    monkeypatch.setattr(records_store_module, "_search_document", _recording_parse)
+    monkeypatch.setattr(path_type, "rglob", _recording("rglob", path_type.rglob))
+    monkeypatch.setattr(path_type, "read_text", _recording("read_text", path_type.read_text))
+    monkeypatch.setattr(records_store_module, "_read_document", _recording("parse", records_store_module._read_document))
+    monkeypatch.setattr(
+        records_store_module, "_search_record_counts", _recording("count", records_store_module._search_record_counts),
+    )
+    monkeypatch.setattr(
+        records_store_module, "record_write_time", _recording("rank", records_store_module.record_write_time),
+    )
     assert await _paths(store, "warp", reader_id="captain") == ["reports/entry.md"]
-    assert threads and threading.get_ident() not in threads
+    loop_thread = threading.get_ident()
+    assert all(seen.values()), seen  # premise: every step ran
+    assert not any(loop_thread in threads for threads in seen.values()), seen
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("topic", "query", "found"), [
+    pytest.param(314159, "314159", True, id="an-integer-topic"),
+    pytest.param(2.5, "2.5", True, id="a-float-topic"),
+    pytest.param(True, "true", False, id="a-boolean-topic-is-not-text"),
+])
+async def test_a_numeric_frontmatter_value_is_scored_and_a_boolean_is_not(
+    tmp_path: Path, topic: Any, query: str, found: bool,
+) -> None:
+    """Finding 2: ``POST /api/records/notebooks/{callsign}`` hands its JSON ``topic`` to ``write_notebook`` as it
+    came (``routers/records.py:146``, ``:151-160``), so a number is stored as a number. The base found it as a
+    substring of the raw file, and the candidate before A1 dropped it; a list's numbers were already scored. A
+    boolean is not text, alone or in a list."""
+    store = await _store(tmp_path)
+    path = await store.write_notebook("Ezri", topic, "coolant log")
+    assert await _paths(store, query, reader_id="captain") == ([path] if found else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("author", "values"), [
+    pytest.param("Ezri---Prime", {}, id="an-author-holding-three-hyphens"),
+    pytest.param("Ezri", {"topic": "Inspection --- status: nominal"}, id="a-quoted-topic-holding-a-key"),
+    pytest.param("Ezri", {"topic": "first line\n---\nlast line"}, id="a-multi-line-topic-holding-a-rule"),
+    pytest.param("Ezri", {"tags": ["warp --- core"]}, id="a-tag-holding-three-hyphens"),
+])
+async def test_a_frontmatter_value_holding_three_hyphens_is_read_whole_and_stays_private(
+    tmp_path: Path, author: str, values: dict[str, Any],
+) -> None:
+    """Finding 1 and BF-940 (#1686), through ``write_entry``, ``read_entry``, ``search`` and update-in-place. The
+    base ended the frontmatter at the first ``---`` anywhere. The author's case kept only ``author``, and neither
+    topic case parsed, so each read as ``ship`` and another reader was shown the private record; the tag's case
+    kept its classification, and its body began with the rest of the tag. The multi-line case checks that
+    ``yaml.dump`` starts no line of a value with ``---``."""
+    store = await _store(tmp_path)
+    path = "notebooks/Ezri/inspection.md"
+    write: dict[str, Any] = {
+        "author": author, "path": path, "content": "PRIVATE_BODY_PROOF the coolant", "message": "probe",
+        "classification": "private", **values,
+    }
+    await store.write_entry(**write)
+    own = await store.read_entry(path, reader_id=author)
+    assert own is not None and own["frontmatter"]["classification"] == "private"
+    assert {key: own["frontmatter"][key] for key in values} == values
+    assert own["content"] == "PRIVATE_BODY_PROOF the coolant"
+    assert await store.read_entry(path, reader_id="alice") is None
+    assert await _paths(store, "coolant", reader_id="alice") == []
+    assert await _paths(store, "coolant", reader_id=author) == [path]
+    await store.write_entry(**write)  # update-in-place carries ``created`` forward and counts the revision
+    again = await store.read_entry(path, reader_id=author)
+    assert again is not None and again["frontmatter"]["revision"] == 2
+    assert again["frontmatter"]["created"] == own["frontmatter"]["created"]
+
+
+@pytest.mark.asyncio
+async def test_a_record_whose_frontmatter_does_not_parse_is_shown_to_the_captain_alone(tmp_path: Path) -> None:
+    """RK10 (finding 1's injected reach): such a record names no classification. The base read it as ``{}``, so as
+    ``ship``, and every reader was shown it. Now ``read_entry`` and ``search`` show it to the Captain alone; its
+    author is unknown, so the author is not shown it either."""
+    store = await _store(tmp_path)
+    _write(store, "reports/open.md", "warp core report")
+    (store.repo_path / "notebooks" / "Bravo").mkdir(parents=True, exist_ok=True)
+    (store.repo_path / "notebooks" / "Bravo" / "secret.md").write_text(
+        "---\nauthor: Bravo\nclassification: private\ntitle: [unclosed\n---\n\nwarp core secret\n", encoding="utf-8",
+    )
+    assert await store.read_entry("notebooks/Bravo/secret.md", reader_id="alice") is None
+    assert await store.read_entry("notebooks/Bravo/secret.md", reader_id="Bravo") is None
+    captain = await store.read_entry("notebooks/Bravo/secret.md", reader_id="captain")
+    assert captain is not None and captain["frontmatter"] == {} and captain["content"] == "warp core secret"
+    assert await _paths(store, "warp", reader_id="alice") == ["reports/open.md"]
+    assert set(await _paths(store, "warp", reader_id="captain")) == {"reports/open.md", "notebooks/Bravo/secret.md"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("updated", [
+    pytest.param("2026-13-05", id="month-13"),
+    pytest.param("2026-02-30", id="february-30"),
+    pytest.param("2026-01-01 25:00:00", id="hour-25"),
+])
+async def test_a_record_whose_frontmatter_cannot_be_constructed_is_withheld_not_raised(
+    tmp_path: Path, updated: str,
+) -> None:
+    """Finding 5: YAML reads each of these as a timestamp and its constructor raises ``ValueError``, which is not a
+    ``YAMLError``. On the base a search that matched such a record raised; before A1 every search raised."""
+    store = await _store(tmp_path)
+    _write(store, "reports/good.md", "warp core report")
+    (store.repo_path / "reports" / "bad.md").write_text(
+        f"---\nauthor: captain\nclassification: ship\nupdated: {updated}\n---\n\nwarp core report\n", encoding="utf-8",
+    )
+    for reader in ("captain", "alice"):
+        assert await _paths(store, "warp", reader_id=reader) == ["reports/good.md"]
+
+
+@pytest.mark.asyncio
+async def test_the_records_search_route_confines_a_search_to_a_directory(tmp_path: Path) -> None:
+    """RK11 (finding 3): the HXI's notebook search filters the route's results to ``notebooks/`` after the cap of
+    20, so twenty better matches elsewhere cut the note. ``directory=notebooks`` confines the walk instead, and a
+    directory outside the repository is HTTP 400. On the base the route took no ``directory``."""
+    store = await _store(tmp_path)
+    for index in range(20):
+        _write(store, f"reports/reactor-{index}.md", "reactor reactor coolant", tags=["reactor"])
+    _write(store, "notebooks/Ezri/reactor-note.md", "reactor note")
+    runtime = SimpleNamespace(_records_store=store)
+    everywhere = await search_records(q="reactor", scope="ship", runtime=runtime)
+    assert "notebooks/Ezri/reactor-note.md" not in [hit["path"] for hit in everywhere["results"]]  # premise: cut
+    confined = await search_records(q="reactor", scope="ship", directory="notebooks", runtime=runtime)
+    assert [hit["path"] for hit in confined["results"]] == ["notebooks/Ezri/reactor-note.md"]
+    outside = await search_records(q="reactor", scope="ship", directory="../outside", runtime=runtime)
+    assert isinstance(outside, JSONResponse) and outside.status_code == 400
