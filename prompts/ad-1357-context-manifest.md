@@ -3,11 +3,12 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05
 **Revised by:** the orchestrator (Copilot), 2026-11-06, after applying every pair by tool and running the gates on a scratch tree: Absence A7's FOUND names the docstring hit at `federation/bridge.py:2237`; the mutation rows CXM-21 to CXM-23 mutate to `pass` (their statement is the only body of its block, so deleting the line is an `IndentationError` that fails every test, not the claimed case; with `pass` each is killed by its claimed T16 case alone); and each milestone that removes a marker's last decorator also deletes that marker's definition line (§7.2 to §7.4), so no `_UNTIL_` constant is left unused. No pair, count or test changes.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05, Amendment A1 after review round 1 (four findings, all confirmed): `context_manifest_metadata` stores a dict the store would refuse as the stub; `journal_entry_id` is `null` unless `record` returned (journal disabled, or the write raised); the doctor's legend and coverage name the DM-turn row; the tracker texts name this file. T8's harness moves to `_group_reply_rows` with its assertions unchanged; T19 to T23 and CXM-47 to CXM-56 are new; CXM-24 is restated; L10 is amended; L16 and L17 are new.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06, Amendment A2 after review round 2 (two findings, both confirmed): `storable` refuses a manifest nested more than 8 deep, which the HXI API could not read back, and any exception from its encoding, with the existing `unencodable` stub; the BF-805 claim is corrected to "considered after the keys above". T24 and T25 are new; T4a gains a depth assertion; T9 is renamed with its assertions unchanged; `_group_reply_rows` builds its room with the new `_group_room`. CXM-57 to CXM-64 are new; CM5, properties 6 and 7 are amended; L18 and L19 are new.
 **Status:** ready to build.
 **Base:** drafted on `8ecf968d567632ea09316406dc9d7fdb3d98c7c1` (tree `d0733f9e`), the head of the AD-1346 M3e4d6 to M3e4d8 batch. That batch changes only admission, census, `capability_request.py`, `artifacts`, `workforce.py` and tests, so every file this contract anchors in is as on `origin/main` `1c01a5ee`.
 **Dependencies:** none. BF-952 (#1751) edits `knowledge/records_store.py` and the trackers. This contract does not touch `records_store.py`, and section 8 re-anchors the tracker pairs.
 **Tier:** M1 STANDARD; M2, M3 and M4 STANDARD with a shared contract each (§4); M5 STANDARD.
-**Estimated tests:** one new file, `tests/test_ad1357_context_manifest.py`, with 20 functions and 37 cases at M4. Amendment A1 makes it 25 functions and 47 cases (T19 to T23), and moves T8's harness into `_group_reply_rows` with T8's assertions unchanged. Both counts were made by reading the file, not by running it. No other test file is edited.
+**Estimated tests:** one new file, `tests/test_ad1357_context_manifest.py`, with 20 functions and 37 cases at M4. Amendment A1 makes it 25 functions and 47 cases (T19 to T23), and moves T8's harness into `_group_reply_rows` with T8's assertions unchanged. Amendment A2 makes it 27 functions and 59 cases (T24, T25), adds one assertion to T4a, builds `_group_reply_rows`'s room with the new `_group_room`, and renames T9 with its assertions unchanged. All counts were made by reading the file, not by running it. No other test file is edited.
 **AD number:** AD-1357, held by the title of #1749. `scripts/ad_ceiling.py` reports CEILING AD-1358 (from GitHub issue titles, all states). Nothing new is allocated.
 
 **Which text describes the head.** Line numbers are those of `8ecf968d`. Before building, run `git diff --stat 8ecf968d HEAD -- src/probos/cognitive/cognitive_agent.py src/probos/cognitive/oracle_service.py src/probos/cognitive/transcript_grounding.py src/probos/routers/agents.py src/probos/routers/thread_fanout.py`. It must be empty. A SEARCH that no longer matches goes back to the Architect; do not rebase it by hand. Where prose and a block differ, the block wins. The two tracker pairs (§8) are the only re-anchoring allowed.
@@ -76,9 +77,11 @@
 4. Never keep the query. Rejected: it is the Captain's own text in the Captain's own thread, and it is what made BF-631's line useful.
 - **Federation:** the manifest never leaves the vessel. `_serialize_directed_result` forwards only `dm_reply` (`federation/bridge.py:943-947`).
 
-**CM5, the wire.** The manifest is the last key of `_build_result_metadata`. BF-805's `_prune_metadata` keeps keys greedily in iteration order (`mesh/intent.py:2387-2390`), so when the envelope is too large the manifest is dropped first (T9). `storable` returns a stub when the store's own encoding would refuse the manifest (`threads/__init__.py:1474-1482`), because the 1:1 append catches that refusal and the Captain would lose the reply in the transcript (`routers/agents.py:3849-3853`).
+**CM5, the wire.** The manifest is the last key of `_build_result_metadata`. BF-805's `_prune_metadata` keeps keys greedily in iteration order (`mesh/intent.py:2387-2390`), so it considers the manifest after every key above, and the manifest never takes their room (T9). It is not dropped first: a larger key above that does not fit is dropped, and the manifest can still be kept (A2, L18). `storable` returns a stub when the store's own encoding would refuse the manifest (`threads/__init__.py:1474-1482`), because the 1:1 append catches that refusal and the Captain would lose the reply in the transcript (`routers/agents.py:3849-3853`).
 
 **CM5, A1.** `context_manifest_metadata` applies `storable` too, because both routers store what it returns (`routers/agents.py:2875` through `_build_reply_metadata`, `:3841`; `routers/thread_fanout.py:969`), and a result's metadata can come from an agent that never ran `record_manifest`. The stub's `path` is the dict's only when it is `single_pass` or `agentic`, else `""`, so the stub always stores (T19, T20).
+
+**CM5, A2.** `storable` also refuses a manifest whose dicts and lists nest deeper than `MAX_MANIFEST_DEPTH` (8; `build_manifest` nests 4, pinned by T4a), measured iteratively after the encoding and size checks, and gives the existing `unencodable` stub. The chat store accepts nesting to about 2,996 levels. The HXI API's serializer (pydantic-core 2.41.5) refuses metadata about 97 deep, and fails the whole transcript read and the group POST's response with it (review round 2, R2-1, measured by the orchestrator). The encoding catches `Exception`, as BF-805's `IntentBus._encoded` does (`mesh/intent.py:2175-2187`), so a producer's own type that raises while encoding gives the stub rather than leaving the helper, where the routes' try would cost the reply its row (`routers/agents.py:3835-3857`, `routers/thread_fanout.py:962-974`) (T24, T25).
 
 **CM6, flags and cost.**
 - No `SystemConfig` field. The feature is always on, and the recall-off case is recorded as `{"ran": false}`.
@@ -116,6 +119,9 @@ For M2 to M4 the Diff Reviewer covers each whole contract (§16), not only the d
 - **G-A1 (Amendment A1):** `PY -m pytest tests/test_ad1357_context_manifest.py tests/test_bf901_s3_token_accounting_view.py tests/test_bf901_s2_journal_token_provenance.py tests/test_cognitive_journal.py tests/test_ad914_group_chat_fanout.py tests/test_ad1065_conversational_agentic.py tests/test_ad1203_turn_provenance.py tests/test_ad631_skill_effectiveness.py -q -n 0`, then the architecture check.
   - Expected: **47 passed** in the new file (25 functions). Others: 0 failed, with counts equal to M0.
   - On `f30f28ec`, each of T19 to T23 fails at an assertion, not at setup.
+- **G-A2 (Amendment A2):** `PY -m pytest tests/test_ad1357_context_manifest.py tests/test_ad914_group_chat_fanout.py tests/test_ad791_chat_threads.py tests/test_ad1203_turn_provenance.py -q -n 0`, then the architecture check.
+  - Expected: **59 passed** in the new file (27 functions). Others: 0 failed, with counts equal to M0.
+  - On `b3348e2a`: T24 [list-one-over], [dict-one-over], [tuple-one-over], [list-far-over] and [a-dict-whose-items-raise] fail at the assertion; T25 [one-to-one-one-over] and [group-one-over] fail at the manifest assertion; T25 [one-to-one-far-over] fails at the GET's status and [group-far-over] at the POST's status. T24 [list-at-the-bound] and T25 [*-at-the-bound] pass on the tip (the boundary guards).
 - **G5:** `PY -P scripts/gen_ad_ledger.py`; `PY -P scripts/gen_ad_ledger.py --check`; `PY -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
 - **The harness rule (applies to G1 to G4).** The new tests drive real `_decide_via_llm` and `_recall_relevant_memories` with a `SimpleNamespace` runtime. If a test fails only because the runtime lacks an attribute the DM path reads, the Builder may add that attribute to `_runtime()` as `None` or as an inert value, and must report which. Not allowed: a source change, a skip, a `MagicMock` runtime (it makes `dm_agentic.enabled` truthy), or loosening an assertion. Any of those goes back to the Architect.
 - The broad gate runs once, in the main session with `--receipt`, after the review repairs.
@@ -143,7 +149,7 @@ For M2 to M4 the Diff Reviewer covers each whole contract (§16), not only the d
 | T7 | `test_the_reply_metadata_carries_the_manifest_the_agent_made` | 1 | 1:1 sink | M2 |
 | T7b | `test_a_reply_without_a_manifest_keeps_its_metadata_unchanged` | 4 | compatibility | none |
 | T8 | `test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_unchanged` | 1 | group sink, real fan-out | M2 |
-| T9 | `test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first` | 1 | CM5 | M2 |
+| T9 | `test_the_manifest_is_the_last_reply_metadata_key_so_bf805_considers_it_after_the_keys_above` | 1 | CM5 (renamed by A2, assertions unchanged) | M2 |
 | T10 | `test_a_section_is_recorded_by_its_name_alone_and_kept_only_when_assembly_renders_it` | 1 | CM2 registry | M2 |
 | T11 | `test_a_section_the_attention_budget_drops_is_recorded_as_not_kept` | 1 | CM2, "dropped" | M2 |
 | T13 | `test_the_oracle_reports_what_it_rendered_and_renders_the_same_text` | 1 | `sources_out` | M3 |
@@ -157,6 +163,8 @@ For M2 to M4 the Diff Reviewer covers each whole contract (§16), not only the d
 | T21 | `test_a_single_pass_turn_that_wrote_no_journal_row_names_none` | 2 | A1, finding 2 | none (A1) |
 | T22 | `test_an_agentic_turn_that_wrote_no_journal_row_names_none` | 2 | A1, finding 2 | none (A1) |
 | T23 | `test_the_doctor_explains_the_uncharged_row_an_agentic_dm_turn_writes` | 1 | A1, finding 3: agent → journal → doctor | none (A1) |
+| T24 | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` | 6 | A2, R2-1: the depth bound and the encoding guard | none (A2) |
+| T25 | `test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one` | 6 | A2, R2-1: helper → store → HXI API, 1:1 and group | none (A2) |
 
 ## 7. The contract
 
@@ -736,7 +744,7 @@ async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_u
 
 
 @_UNTIL_M2
-def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first() -> None:
+def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_considers_it_after_the_keys_above() -> None:
     from probos.cognitive import context_manifest as cm
 
     metadata = _build_result_metadata({}, {}, {"_tool_trace_ref": "a" * 64, cm.MANIFEST_KEY: {"v": 1}})
@@ -1365,8 +1373,10 @@ REPLACE:
             metadata["owned_steps_view_references"] = references[:8]
             break
     # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
-    # prune (``IntentBus._prune_metadata``, in iteration order) drops it before any
-    # key above when the reply would not fit the wire.
+    # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
+    # after every key above and it never takes the room of one of them. It is not
+    # dropped first: a larger key above that does not fit is dropped, and the
+    # manifest can still be kept.
     for source in sources:
         manifest = source.get(context_manifest.MANIFEST_KEY)
         if type(manifest) is dict and manifest:
@@ -2090,7 +2100,7 @@ REPLACE:
 ```
 # ProbOS Progress
 
-**AD-1357 (2026-11-05), #1749 -- a crew chat reply records what it was given.** A crew `direct_message` reply carries a context manifest under its stored `metadata["context_manifest"]` (`cognitive/context_manifest.py`). The manifest names each prompt section the `_emit` bids of `_build_user_message` put up, in emission order, with its character count and whether the attention budget kept it, then the text appended after assembly (strategy advice, the owned-steps view, room inputs). It records whether episodic recall ran; its query, only when that is the Captain's own words on a 1:1 turn; the agent's own recalled episode ids and source tags; and the AD-981a band, best similarity and AD-1038 recall type. It records whether cross-agent recall (a count), transcript grounding (the room id) and the passive Oracle lookup (a count per tier, and the paths of Ship's Records results) ran. It also carries the journal's prompt and response hashes and the id of the turn's journal row, or null when the turn wrote none (the journal is disabled, or its write raised). It holds no section text, no other agent's text, no peer episode id and no camera scene, and it is at most 16 KiB. With the cognitive journal enabled, an agentic DM turn writes one cognitive-journal row (`tier` agentic, `model` unknown, `dag_node_id` dm-turn, no token source); a single-pass turn already wrote one. The doctor's token view explains that row as uncharged: the turn succeeded, but its model calls are not metered. The 1:1 route and the group fan-out store the manifest; a manifest the chat store would refuse, whichever agent put it on the result, is stored as the stub. `OracleService.query_formatted` and `consult_transcript` gain a keyword-only `sources_out` list and return the same text. No config field. The contract is `prompts/ad-1357-context-manifest.md`.
+**AD-1357 (2026-11-05), #1749 -- a crew chat reply records what it was given.** A crew `direct_message` reply carries a context manifest under its stored `metadata["context_manifest"]` (`cognitive/context_manifest.py`). The manifest names each prompt section the `_emit` bids of `_build_user_message` put up, in emission order, with its character count and whether the attention budget kept it, then the text appended after assembly (strategy advice, the owned-steps view, room inputs). It records whether episodic recall ran; its query, only when that is the Captain's own words on a 1:1 turn; the agent's own recalled episode ids and source tags; and the AD-981a band, best similarity and AD-1038 recall type. It records whether cross-agent recall (a count), transcript grounding (the room id) and the passive Oracle lookup (a count per tier, and the paths of Ship's Records results) ran. It also carries the journal's prompt and response hashes and the id of the turn's journal row, or null when the turn wrote none (the journal is disabled, or its write raised). It holds no section text, no other agent's text, no peer episode id and no camera scene, and it is at most 16 KiB. With the cognitive journal enabled, an agentic DM turn writes one cognitive-journal row (`tier` agentic, `model` unknown, `dag_node_id` dm-turn, no token source); a single-pass turn already wrote one. The doctor's token view explains that row as uncharged: the turn succeeded, but its model calls are not metered. The 1:1 route and the group fan-out store the manifest; a manifest the chat store would refuse, or one the HXI API could not read back (nested more than 8 deep), whichever agent put it on the result, is stored as the stub. `OracleService.query_formatted` and `consult_transcript` gain a keyword-only `sources_out` list and return the same text. No config field. The contract is `prompts/ad-1357-context-manifest.md`.
 
 ```
 
@@ -2112,9 +2122,9 @@ REPLACE:
 - *CM2 (producer).* Each DM `_emit` bid's renderer is the ledger's: it returns the same text and marks the section kept, because `ContextAssembler` renders only the bids it keeps. A section is recorded by its name, so a new one needs no change here. Rejected: a survivors API on the assembler; rebuilding the sections from observation keys.
 - *CM3 (journal).* The agentic branch writes one row: `model` unknown (BF-901), an empty token source (uncharged), `cached` 0, `dag_node_id` dm-turn. On both paths the manifest names its row by id and hashes once `record` has returned; with no journal configured, or a write that raised, `journal_entry_id` is null. The doctor's token view explains the DM-turn row as a successful turn whose model calls are not metered. Rejected: `cached` true (filed as replayed); a separate table; journaling each loop call (BF-901 S2's gap).
 - *CM4 (privacy).* The agent's own episode ids, Ship's Records paths and its own transcript room are identified. Cross-agent recall and every other Oracle tier are counted. The query is kept only when it is the Captain's words on a 1:1 turn. Rejected: hashed peer ids; peer ids.
-- *CM5 (wire).* The manifest is the last key of `_build_result_metadata`, so BF-805's prune drops it first, and `storable` turns one the store would refuse into a stub, both where the agent builds it and in `context_manifest_metadata`, through which both routers store it.
+- *CM5 (wire).* The manifest is the last key of `_build_result_metadata`, so BF-805's greedy fit check considers it after every other key and it never takes their room; it is not guaranteed to be dropped first (L18). `storable` turns one the store would refuse, one whose encoding raises, or one nested more than 8 deep (which the HXI API could not read back) into a stub, both where the agent builds it and in `context_manifest_metadata`, through which both routers store it.
 - *Not changed.* `ContextAssembler`, `AttentionFaculty`, the prompt text, `CognitiveJournal`'s schema, the federation bridge (it forwards only `dm_reply`), config.
-- *Residual.* Recorded limits L1 to L17 of the contract.
+- *Residual.* Recorded limits L1 to L19 of the contract.
 - *Reversal.* Revert the AD-1357 commits.
 
 ```
@@ -2138,6 +2148,7 @@ Then regenerate the ledger (`PY -P scripts/gen_ad_ledger.py`) and stage `docs/de
 - Run an unmutated baseline of the new file first, then each row against it.
 - Record the base tree and the sha256 of `context_manifest.py`, `cognitive_agent.py`, `oracle_service.py`, `transcript_grounding.py`, `routers/agents.py` and `routers/thread_fanout.py`.
 - **A1:** CXM-47 to CXM-56 run on A1's head, as a campaign of record over A1's `context_manifest.py`, `cognitive_agent.py` and `doctor/checks/token_accounting_check.py` (record their sha256). Of the earlier rows, rerun only those whose lines A1 rewrote or sit beside: CXM-18, CXM-24, CXM-25 and DTJ-1 to DTJ-6. The others keep their M4 result.
+- **A2:** CXM-57 to CXM-64 run on A2's head, as a campaign of record over A2's `context_manifest.py` and `tests/test_ad1357_context_manifest.py` (record their sha256), after a 59-pass unmutated baseline. Of the earlier rows, rerun only CXM-15 and CXM-16, whose lines A2 moved inside `storable`'s guard. The others keep their result.
 - A row whose line appears more than once names the function it sits in.
 
 | Id | File | Line | Mutate to | Killed by |
@@ -2166,7 +2177,7 @@ Then regenerate the ledger (`PY -P scripts/gen_ad_ledger.py`) and stage `docs/de
 | CXM-23 | cognitive_agent.py | `_ledger.note_appended("room_inputs", len(user_message) - _before_room_inputs)` | `pass` | `test_text_appended_after_assembly_is_recorded_by_name_and_length` [room-inputs] |
 | CXM-24 | cognitive_agent.py | `journal_entry_id=_journal_row_id,` (restated by A1) | `journal_entry_id="",` | `test_the_manifest_names_its_journal_row_on_the_single_pass_path` |
 | CXM-25 | cognitive_agent.py | `path="single_pass",` | `path="agentic",` | `test_the_manifest_names_its_journal_row_on_the_single_pass_path` |
-| CXM-26 | cognitive_agent.py | `metadata[context_manifest.CONTEXT_MANIFEST_METADATA_KEY] = manifest` | `pass` | `test_a_dm_reply_with_recall_an_active_game_and_a_records_hit_lists_all_three`, `test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first` |
+| CXM-26 | cognitive_agent.py | `metadata[context_manifest.CONTEXT_MANIFEST_METADATA_KEY] = manifest` | `pass` | `test_a_dm_reply_with_recall_an_active_game_and_a_records_hit_lists_all_three`, `test_the_manifest_is_the_last_reply_metadata_key_so_bf805_considers_it_after_the_keys_above` |
 | CXM-27 | cognitive_agent.py | `not params.get("is_group_chat")` | `True` | `test_the_manifest_holds_no_other_agents_text_and_no_camera_scene` [group-turn-with-captain-message] |
 | CXM-28 | cognitive_agent.py | `and bool(_captain_words)` | delete the line | `test_the_manifest_holds_no_other_agents_text_and_no_camera_scene` [empty-captain-message] |
 | CXM-29 | cognitive_agent.py | `context_manifest.note_episodes(observation, episodes)  # AD-1357` | delete the line | `test_a_dm_reply_with_recall_an_active_game_and_a_records_hit_lists_all_three`, `test_the_manifest_holds_no_other_agents_text_and_no_camera_scene` |
@@ -2191,6 +2202,14 @@ Then regenerate the ledger (`PY -P scripts/gen_ad_ledger.py`) and stage `docs/de
 | CXM-54 | cognitive_agent.py | `journal_entry_id=_turn_row_id,` | `journal_entry_id=uuid.uuid4().hex,` | `test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names`, `test_an_agentic_turn_that_wrote_no_journal_row_names_none` (both) |
 | CXM-55 | doctor/checks/token_accounting_check.py | `"(dag_node_id dm-turn) that succeeded but whose model calls are not metered."` | `"that succeeded but whose model calls are not metered."` | `test_the_doctor_explains_the_uncharged_row_an_agentic_dm_turn_writes` |
 | CXM-56 | doctor/checks/token_accounting_check.py | `"write no journal row; an agentic DM turn adds one uncharged row (dm-turn), so its tokens are not counted."` | `"write no journal row."` | `test_the_doctor_explains_the_uncharged_row_an_agentic_dm_turn_writes` |
+| CXM-57 | context_manifest.py | `MAX_MANIFEST_DEPTH: Final = 8` | `MAX_MANIFEST_DEPTH: Final = 9` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [list-one-over], [dict-one-over], [tuple-one-over]; `test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one` [one-to-one-one-over], [group-one-over] |
+| CXM-58 | context_manifest.py | `if depth > limit:` | `if depth >= limit:` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [list-at-the-bound]; `test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one` [one-to-one-at-the-bound], [group-at-the-bound] |
+| CXM-59 | context_manifest.py | the CXM-58 line | `if depth > limit + 1:` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [list-one-over], [dict-one-over], [tuple-one-over] |
+| CXM-60 | context_manifest.py | `elif isinstance(node, (list, tuple)):` | `elif isinstance(node, list):` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [tuple-one-over] |
+| CXM-61 | context_manifest.py | `children: Iterable[Any] = node.values()` | `children: Iterable[Any] = ()` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [dict-one-over] |
+| CXM-62 | context_manifest.py | `pending.extend((child, depth + 1) for child in children)` | `pending.extend((child, depth) for child in children)` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [list-one-over], [list-far-over] |
+| CXM-63 | context_manifest.py | `if not nested_within:` | `if False:` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [list-far-over]; `test_the_transcript_reads_back_a_manifest_at_the_nesting_bound_and_the_stub_for_a_deeper_one` [one-to-one-far-over], [group-far-over] |
+| CXM-64 | context_manifest.py | `except Exception:  # A2: any failure to encode or measure, as BF-805's IntentBus._encoded` | `except (TypeError, ValueError, OverflowError, RecursionError):` | `test_a_manifest_nested_past_the_bound_or_that_raises_while_encoding_is_stored_as_the_stub` [a-dict-whose-items-raise] |
 | DTJ-1 | cognitive_agent.py | `tier="agentic",` | `tier="standard",` | `test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names` |
 | DTJ-2 | cognitive_agent.py | `model="unknown",` (in the DM-turn `record` call; the other `model="unknown",` lines carry a comment) | `model="",` | `test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names` |
 | DTJ-3 | cognitive_agent.py | `dag_node_id=context_manifest.DM_TURN_DAG_NODE,` | delete the line | `test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names` |
@@ -2217,6 +2236,8 @@ Then regenerate the ledger (`PY -P scripts/gen_ad_ledger.py`) and stage `docs/de
 - **L15.** Explicit tool lookups (`oracle_query`, the records tools) are in the tool trace (`tool_trace_ref`) and are not repeated in the manifest. The source refs a later section reads (AD-1358 option C's game records) would need a `refs` field on the ledger; considered, deferred.
 - **L16 (A1).** A configured journal can return from `record` without writing: `_db` is empty after `stop()` while shutdown has not yet cleared `runtime.cognitive_journal` (`journal.py:404-405`, `startup/shutdown.py:1815-1818`); an SQLite error is logged and swallowed (`:427-428`); `INSERT OR IGNORE` skips an existing id. The manifest then names a row that was not written. Telling these apart needs `record` to report whether it wrote, a return its other call sites share. Failure and shutdown-window reach only.
 - **L17 (A1).** The episode ids, Ship's Records paths and transcript room id name what existed when the turn ran. A later archive, record edit or deleted thread is not reflected; the manifest records what the prompt was given.
+- **L18 (A2).** BF-805's fit check is greedy in iteration order and has no retention priority; its own docstring says one belongs there (`mesh/intent.py:2387-2390`). The manifest, last, is considered after every other key and never takes an earlier key's room. It is not dropped first: when an earlier, larger key such as `dm_reply` does not fit, that key is dropped and the manifest can still be kept (review round 2, R2-2, executed by the reviewer). That is the pruner's behaviour on the base; nothing here changes it.
+- **L19 (A2).** Injected-only (a dict on `IntentResult.metadata` that `record_manifest` did not build), not executed: (a) `json.dumps` writes a tuple as a list, int, float, bool and None keys as strings, and a subclass of a JSON type as its base value. The stored row and the transcript read that JSON form, while the group POST's response and the message-committed callback carry the object itself (`threads/__init__.py:1547-1557`), so the two can differ in form; no reader was found to fail on it. (b) A container subclass whose iteration differs between two calls can be measured differently from how it was encoded. (c) Integers up to `json`'s 4,300-digit limit are accepted; pydantic-core's int serializer has a big-integer path (pydantic-core PR #745). Considered, deferred: returning the decoded JSON value from `storable`. The store's `sort_keys=True` would reorder the in-memory manifest and move `journal_entry_id` from its last position (property 15).
 
 ## 12. The Captain's items
 
@@ -2316,6 +2337,16 @@ A13 CLAIM: dag_node_id is parsed only for the "st:" prefix
    HOLDS: yes
 ```
 
+## 13a. Verified for A2 (2026-11-06, on `b3348e2a`)
+
+- `storable` checks `json.dumps` and size only: `context_manifest.py:291-312`; it is called at `:348` and `:405`. `build_manifest` nests 4 deep: `:138-141`, `:160-173`, `:212-218`, `:285-288`.
+- No `src` reader of `unrecorded`: the only hits are `context_manifest.py:309`, `:311` and three AD-1357 test lines.
+- The store accepts until RecursionError: `threads/__init__.py:1474-1482`. It returns the message with the in-memory metadata: `:1547-1555`.
+- The transcript GET is `routers/threads.py:437-454`. The group response is `persisted_message = saved_message.to_dict()` at `routers/thread_fanout.py:976`.
+- Both routers call the helper inside a try that logs and drops the reply: `routers/agents.py:3835-3857`, `routers/thread_fanout.py:962-974`.
+- BF-805: `_encoded` catches `Exception` (`mesh/intent.py:2175-2187`); `_prune_metadata` is greedy (`:2387-2411`).
+- Harness: `test_ad791_chat_threads.py:157-168`, `test_ad914_group_chat_fanout.py:131-138`.
+
 ## 14. Deterministic gate checks, resolved up front
 
 - **`check_architecture_principles.py --check`:** `context_manifest.py` sits in the ranked `cognitive` package and imports only the stdlib. `routers` is unranked. No new class approaches the `SRP_MAX_*` limits: `ContextLedger` has 4 methods and `RecallRecord` has 1. `CognitiveAgent` keeps its frozen triggers.
@@ -2357,8 +2388,8 @@ M2 to M4 are shared contracts: review each whole contract, not only the delta.
 3. **Order and kept flags.** Sections follow emission order, appended ones come last, and `kept` is true if and only if the assembler rendered that section.
 4. **The manifest holds no content.** No section text, no peer episode id, callsign or text, and no camera scene. The query is present only for a non-group turn with a non-empty `str` `captain_message`.
 5. **Oracle results.** Only `records` results are identified, by path; every tier is counted; `by_tier` has at most 8 keys.
-6. **Storability.** Every manifest stored is accepted by `ChatThreadStore.append_message_once`'s encoding and is at most 16,384 bytes, or it is the stub. This holds for any dict on a result, not only `record_manifest`'s: `context_manifest_metadata` applies `storable`, and the stub's `path` is `""` unless it is `single_pass` or `agentic` (T19, T20).
-7. **Key order.** The manifest is the last key of `_build_result_metadata`.
+6. **Storability.** Every manifest stored is accepted by `ChatThreadStore.append_message_once`'s encoding and is at most 16,384 bytes, or it is the stub. This holds for any dict on a result, not only `record_manifest`'s: `context_manifest_metadata` applies `storable`, and the stub's `path` is `""` unless it is `single_pass` or `agentic` (T19, T20). (A2) It also nests at most `MAX_MANIFEST_DEPTH` (8) dicts, lists and tuples deep, measured iteratively, and any exception while encoding gives the stub. So every stored manifest reads back through the transcript GET and the group POST's response, and none leaves the helper as an exception (T24, T25).
+7. **Key order.** The manifest is the last key of `_build_result_metadata`. BF-805's greedy fit check therefore considers it after every other key. Nothing makes it dropped first (L18), and no comment or tracker may say so.
 8. **The single-pass journal call is byte-identical.** The manifest's hashes equal its row's (T5), and the agentic row's hashes equal the manifest's (T6).
 9. **The agentic branch writes exactly one row when a journal is configured.** Its fields are as T6 lists, and it is written before `record_manifest` with the same id. The id is made inside the journal guard and named only after `record` returned.
 10. **`sources_out` is a pure sink.** In `query_formatted` and `consult_transcript` it is keyword-only, defaults to `None`, never changes the returned text, and is appended to only for rendered results (the Oracle) or a returned excerpt (the transcript).
