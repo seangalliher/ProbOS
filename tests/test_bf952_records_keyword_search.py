@@ -13,6 +13,7 @@ module functions the walk calls only to observe the thread each runs on.
 from __future__ import annotations
 
 import itertools
+import sys
 import threading
 from datetime import date
 from pathlib import Path
@@ -305,12 +306,11 @@ _TAB_GRID_LINES = (
 def test_every_reader_frames_and_loads_a_document_alike(
     tmp_path: Path, raw: str, frontmatter: dict[str, Any], body: str,
 ) -> None:
-    """A1 (finding 6), A3, A5: every reader but the search reads with ``_read_document``, the base's framing and
-    load, and the search frames alike. A frontmatter block no loader accepts reads as ``{}``, as on the base. A tab
+    """A1 (finding 6), A3, A5, A6: every reader but the search reads with ``_parse_document``, the base's own text
+    (A6), and the search frames alike. A frontmatter block no loader accepts reads as ``{}``, as on the base. A tab
     after a key is refused by PyYAML's scanner and accepted by libyaml, so with libyaml installed only the search
     reads it (RK8, A5). A value holding ``---`` is BF-940's (#1686), not this file's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
-    assert records_store_module._read_document(raw) == (frontmatter, body)
     assert store._parse_document(raw) == (frontmatter, body)
     searched = _rk8_read(raw) or (frontmatter, body)
     assert records_store_module._search_read_document(raw)[:2] == searched
@@ -524,7 +524,7 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
     """A3 (round 3, findings 1 to 3): BF-952 changes no reader's reading of a document. Each reconciliation of the
     base's framing with a line framing (A1, A2) misread some shape: as ``{}``, as an unclassified prefix, as another
     author's, or as a constructor error for a valid store-written value. Every shape here, over the three rounds'
-    lines, closing markers, bodies and both line endings, reads under ``_read_document`` and ``_parse_document``
+    lines, closing markers, bodies and both line endings, reads under ``_parse_document`` (the base's own text, A6)
     exactly as the base read it, a constructor error included, and the search reads it so too (A5): no line holds a
     tab, so libyaml and PyYAML read each alike. The tab shapes, RK8's and round 4's, are T23's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
@@ -542,8 +542,7 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
     for shape in shapes:
         expected = _read_or_error(_base_read, shape)
         if (
-            _read_or_error(records_store_module._read_document, shape) != expected
-            or _read_or_error(store._parse_document, shape) != expected
+            _read_or_error(store._parse_document, shape) != expected
             or _read_or_error(_search_read, shape) != expected
         ):
             differ.append(shape)
@@ -585,7 +584,7 @@ def test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base(tmp_path: Path) 
     ``_load_frontmatter`` let the error escape, so ``read_entry`` raised and ``list_entries`` dropped the record; on
     the base ``yaml.safe_load`` raised ``ScannerError`` and every reader read ``{}``. Now a block libyaml cannot load,
     for any reason, is read as the base read it. Over tab and plain lines, one or two to a frontmatter and both line
-    endings, every shape reads under ``_read_document`` and ``_parse_document`` as on the base, a constructor error
+    endings, every shape reads under ``_parse_document`` (the base's own text, A6) as on the base, a constructor error
     included (A5: RK8's shapes too), and under the search as on the base or, where libyaml loads it and PyYAML's
     scanner refuses it, as libyaml read it (RK8). T22 holds no tab."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
@@ -604,8 +603,7 @@ def test_a_frontmatter_libyaml_cannot_load_reads_as_on_the_base(tmp_path: Path) 
         searched = base if rk8 is None else rk8
         admitted += rk8 is not None and rk8 != base
         if (
-            _read_or_error(records_store_module._read_document, shape) != base
-            or _read_or_error(store._parse_document, shape) != base
+            _read_or_error(store._parse_document, shape) != base
             or _read_or_error(_search_read, shape) != searched
         ):
             differ.append(shape)
@@ -668,8 +666,8 @@ def test_a_deeply_nested_frontmatter_reads_as_on_the_base(tmp_path: Path, depth:
     """A5 (round 5, finding 1): libyaml loads a frontmatter nesting about 330 collections deep or more, where the
     base's ``yaml.safe_load`` raised ``RecursionError``, which is not a ``YAMLError``; through A4 every reader read
     what the base raised on. Every reader but the search now reads with the base's call, and the search hands
-    libyaml only a block nesting fewer than 100 deep. Each shape reads under ``_read_document``,
-    ``_parse_document`` and the search as on the base, the ``RecursionError`` included."""
+    libyaml only a block nesting fewer than 100 deep. Each shape reads under ``_parse_document`` (the base's own
+    text, A6) and the search as on the base, the ``RecursionError`` included."""
     raw = _nested(depth, style)
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     expected = _read_or_error(_base_read, raw)
@@ -679,7 +677,6 @@ def test_a_deeply_nested_frontmatter_reads_as_on_the_base(tmp_path: Path, depth:
             assert type(yaml.load(raw.split("---", 2)[1], Loader=yaml.CSafeLoader)) is dict
     else:  # premise: PyYAML reads it
         assert type(expected[0]) is dict and expected[0]["classification"] == "ship"
-    assert _read_or_error(records_store_module._read_document, raw) == expected
     assert _read_or_error(store._parse_document, raw) == expected
     assert _read_or_error(_search_read, raw) == expected
 
@@ -779,3 +776,53 @@ def test_libyaml_is_given_only_a_block_nesting_fewer_than_the_limit_deep() -> No
     assert not nests_below("nest: " + "[" * 99 + "]" * 99, limit)  # 100 deep
     assert nests_below("tags: [" + ", ".join(["[warp]"] * 150) + "]", limit)  # 3 deep, 152 collections
     assert not nests_below("broken: [unclosed", limit)
+
+
+def _frontier(read: Any) -> int:
+    """A6 (round 6, finding 1): the deepest flow nesting ``read`` reads when called from here, by bisection.
+
+    PyYAML's composer recurses about two Python frames a nesting level, so where a reader raises ``RecursionError``
+    depends on the frames between its caller and ``yaml.safe_load``. Every reader compared is called from this frame.
+    """
+    low, high = 2, sys.getrecursionlimit()
+    assert _read_or_error(read, _nested(low, "flow")) != "RecursionError"  # premise: the low end reads
+    assert _read_or_error(read, _nested(high, "flow")) == "RecursionError"  # premise: the high end raises
+    while high - low > 1:
+        middle = (low + high) // 2
+        if _read_or_error(read, _nested(middle, "flow")) == "RecursionError":
+            high = middle
+        else:
+            low = middle
+    return low
+
+
+def test_parse_document_raises_at_the_base_recursion_frontier(tmp_path: Path) -> None:
+    """A6 (round 6, finding 1): A5 sent ``_parse_document`` through two more frames before ``yaml.safe_load``, so a
+    document nesting one level below the base's limit raised ``RecursionError`` where the base read it, and
+    update-in-place reset its ``created``, ``revision`` and classification. ``_parse_document`` is the base's own
+    text again: called from the same frame as the base's (``_base_read``), it reads to the same depth."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    assert _frontier(store._parse_document) == _frontier(_base_read)
+
+
+@pytest.mark.asyncio
+async def test_read_entry_reads_with_parse_document_as_on_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A6 (round 6, finding 1): ``read_entry`` reads a document with ``self._parse_document(raw)``, the base's own
+    call, so its reading and the depth at which it raises ``RecursionError`` are the base's from every caller. A5
+    called a module function two frames deeper instead."""
+    store = await _store(tmp_path)
+    path = "notebooks/alice/warp.md"
+    _write(store, path, "warp core notes", author="alice")
+    parsed: list[str] = []
+    parse = store._parse_document
+
+    def _recording(raw: str) -> tuple[dict, str]:
+        parsed.append(raw)
+        return parse(raw)
+
+    monkeypatch.setattr(store, "_parse_document", _recording)
+    entry = await store.read_entry(path, reader_id="captain")
+    assert entry is not None and entry["content"] == "warp core notes"
+    assert parsed == [(store.repo_path / path).read_text(encoding="utf-8")]

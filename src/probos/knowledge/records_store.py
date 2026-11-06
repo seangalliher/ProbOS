@@ -249,11 +249,12 @@ def _split_document(raw: str) -> tuple[str | None, str]:
     A document that starts with ``---`` has frontmatter up to the next ``---`` wherever it stands, inside a value
     too, and its body is what follows, stripped; one with no later ``---`` has no frontmatter (``None``) and its
     body is the whole document (L18). That framing cuts a value holding ``---``; BF-940 (#1686) owns changing it,
-    for every reader at once (L25).
+    for every reader at once (L25). Only the search calls it: ``RecordsStore._parse_document`` keeps the base's own
+    copy, so PyYAML's recursion frontier stays the base's for every other reader (A6, round 6; L30).
     """
     if raw.startswith("---"):
-        parts = raw.split("---", 2)
-        if len(parts) >= 3:
+        parts = raw.split("---", 2)  # A6: the base's split, copied; _parse_document keeps its own
+        if len(parts) >= 3:  # A6: the base's test, copied
             return parts[1], parts[2].strip()
     return None, raw
 
@@ -271,19 +272,6 @@ def _load_frontmatter(block: str) -> Any:
         return {}
 
 
-def _read_document(raw: str) -> tuple[Any, str]:
-    """BF-952 A1, A3, A5: a document's frontmatter and body, exactly as the base's ``_parse_document`` read them.
-
-    ``RecordsStore._parse_document`` and ``RecordsStore.read_entry`` call it, and so does every reader but the
-    search: ``list_entries``, ``publish``, update-in-place, the similarity and convergence scans and the semantic
-    backfill. It is the base's framing (:func:`_split_document`) and the base's load (:func:`_load_frontmatter`),
-    so it reads every document as the base did by construction (A5, round 5). The search reads with
-    :func:`_search_read_document`.
-    """
-    block, body = _split_document(raw)
-    return ({} if block is None else _load_frontmatter(block)), body
-
-
 def _nests_below(block: str, limit: int) -> bool:
     """BF-952 A5: whether libyaml parses ``block`` and its collections nest fewer than ``limit`` deep.
 
@@ -299,7 +287,7 @@ def _nests_below(block: str, limit: int) -> bool:
                     return False
             elif isinstance(event, yaml.CollectionEndEvent):
                 depth -= 1
-    except Exception:  # A5: not a swallow; a block that does not parse is read with the base's call, which raises
+    except Exception:  # A5: not a swallow; the base's call then reads it: its value, {} or its error (A6)
         return False
     return True
 
@@ -310,7 +298,7 @@ def _search_load_frontmatter(block: str) -> Any:
     With libyaml installed and the block nesting fewer than ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep, the
     block is libyaml's value, ``{}`` for a falsy one. That differs from the base where PyYAML's scanner refuses the
     block (RK8: a tab after a key). A block libyaml cannot load, for any reason (A4), and one nesting deeper (A5),
-    is read by :func:`_load_frontmatter`, the base's call, which raises the base's own errors.
+    is read by :func:`_load_frontmatter`, the base's call: its value, ``{}`` for a ``YAMLError``, or its error (A6).
     """
     if _RECORDS_YAML_LOADER is yaml.SafeLoader or not _nests_below(block, _SEARCH_LIBYAML_DEPTH_LIMIT):
         return _load_frontmatter(block)
@@ -1306,7 +1294,7 @@ class RecordsStore:
             return None
 
         raw = file_path.read_text(encoding="utf-8")
-        frontmatter, content = _read_document(raw)
+        frontmatter, content = self._parse_document(raw)
 
         # Classification check — Captain has unrestricted read access
         if reader_id != "captain":
@@ -1585,12 +1573,16 @@ class RecordsStore:
         return path
 
     def _parse_document(self, raw: str) -> tuple[dict, str]:
-        """Parse YAML frontmatter + content from a markdown document.
-
-        BF-952 A1, A3, A5: :func:`_read_document`, the base's own framing and load, as for
-        ``read_entry``; the search reads with :func:`_search_read_document`.
-        """
-        return _read_document(raw)
+        """Parse YAML frontmatter + content from a markdown document."""
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    fm = yaml.safe_load(parts[1]) or {}
+                except yaml.YAMLError:
+                    fm = {}
+                return fm, parts[2].strip()
+        return {}, raw
 
     def _safe_path(self, user_path: str) -> Path:
         """Validate and resolve a user-supplied path, preventing traversal.
