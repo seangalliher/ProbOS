@@ -356,10 +356,11 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     (_WORKFORCE, "WorkItemStore._generate_journal"): System(SHIP, "a booking's journal segments, derived from its timestamps; booking_journals has no author column"),
     (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),
     # AD-1346 M3e4d10 (D346). System (D239, D218): the four outbox marks take only a row's identity and write its
-    # delivered and delivered_at; a promoted report's pending row is the ship's copy of an agent's report, which the
-    # delivery service replays through ChatThreadStore.append_message_once (register R163).
+    # delivered and delivered_at; a promoted report's pending row holds a copy of an agent's report (D218) or one of
+    # the ship's own status notices (D239), which the delivery service replays through
+    # ChatThreadStore.append_message_once (register R163).
     (_WORKFORCE, "WorkItemStore.mark_crew_session_delivery_delivered"): System(SHIP, "a crew session delivery's delivered and delivered_at in crew_delivery_outbox, which has no author column"),
-    (_WORKFORCE, "WorkItemStore.enqueue_promoted_report"): System(SHIP, "a promoted report's pending row in promoted_report_outbox, with its agent_id and body: the ship's copy of an agent's report, replayed through ChatThreadStore.append_message_once (D218)"),
+    (_WORKFORCE, "WorkItemStore.enqueue_promoted_report"): System(SHIP, "a promoted report's pending row in promoted_report_outbox, with its agent_id and body: a copy of an agent's report (D218) or one of the ship's own status notices (D239), replayed through ChatThreadStore.append_message_once"),
     (_WORKFORCE, "WorkItemStore.mark_promoted_report_delivered"): System(SHIP, "a pending report's delivered = 1 and delivered_at; it takes only a message_id"),
     (_WORKFORCE, "WorkItemStore.mark_promoted_report_undeliverable"): System(SHIP, "a pending report's delivered = 2 and delivered_at; it takes only a message_id"),
     (_WORKFORCE, "WorkItemStore.mark_crew_trust_outcome_delivered"): System(SHIP, "a trust outcome's delivered and delivered_at in crew_trust_outbox, which has no author column"),
