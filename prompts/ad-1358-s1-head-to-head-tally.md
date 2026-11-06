@@ -1,11 +1,12 @@
 # AD-1358 S1 (#1750): a crew member in a game is told the recorded games against that opponent
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A1 (§15), the repair of review round 1 (GPT-6.1 Sol, NOT READY): the reads run off the event loop and the cap is checked by name before any read (HH8); the tally's game lookup logs its failure; L4, L10 and HH5 corrected; L11 to L13 added; T10 to T14 added and T6 above-cap strengthened; rows HH-18 to HH-22 added and HH-4, HH-5, HH-11 restated.
 **Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
 **Base:** `cognitive_agent.py`, `oracle_service.py`, `dm_targeted_lookup.py`, `DECISIONS.md` (the AD-1357 entry) as on `b3348e2a` (AD-1357 + A1). The records files as on `cf61c683` (BF-952 + A2); this slice edits neither `records_store.py` nor `routers/records.py`.
 **Dependencies:** AD-1357 (the DM bid ledger and manifest). Not BF-952: no keyword search is used.
 **Tier:** M1 STANDARD (tests only); M2 STANDARD with a shared contract (`records_reader_for`, BF-949's reader rule, now public); M3 STANDARD (trackers).
-**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases. Counted by reading, not by running. No existing test file is edited.
+**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases; after A1, 15 functions, 38 cases. Counted by reading, not by running. No existing test file is edited.
 **AD number:** AD-1358, held by #1750. Nothing new is allocated.
 
 **Which text describes the head.** Before building, run `git diff --stat b3348e2a HEAD -- src/probos/cognitive/cognitive_agent.py src/probos/cognitive/oracle_service.py src/probos/cognitive/dm_targeted_lookup.py src/probos/recreation/`. Any change other than BF-952's merge (which touches none of these files) is a hard stop: the SEARCH text goes back to the Architect. Working copies are CRLF and SEARCH text here is LF. Where prose and a block differ, the block wins.
@@ -37,7 +38,7 @@ HH1 to HH7 as in the consult answer of 2026-11-06 (summary):
 - **HH2:** a strict tag-filtered `list_entries`, then `read_entry` per path, then a body parse. A frontmatter lookup is impossible: the record's frontmatter holds no players or result.
 - **HH3:** one line, for the active game's type and opponent only. Zero games means no block. Size ≤ `MAX_BLOCK_CHARS`.
 - **HH4:** the agent reads as itself (`records_reader_for`, BF-949). A record `read_entry` returns `None` for is not counted.
-- **HH5:** one listing plus at most 256 `read_entry` calls per DM turn during a game. Above the cap: no block, no entry reads, a WARNING.
+- **HH5:** a count by name, then one listing plus at most 256 `read_entry` calls per DM turn during a game, all in a worker thread (A1, HH8). Above the cap: no listing, no entry reads, no block, a WARNING.
 - **HH6:** any exception means `None` plus a WARNING with `exc_info`; the prompt is unchanged.
 - **HH7:** the manifest records the section `head_to_head` by name, length and kept flag only.
 - **Flag:** none. The block appears only when at least one recorded game between these two players exists during an active game, so the default preserves behaviour (T2).
@@ -1036,7 +1037,7 @@ Then run `PY -P scripts/gen_ad_ledger.py` and stage `docs/development/open-ads-r
 - The Ward Room chain's active-game situation (`_sensorium_situation_active_game`, `:9734`) and `proactive.py:2366`.
 - No config field, no `EventType`, no `create_task`, no database connection.
 
-## 9. Mutation rows (each Line occurs once in its file on M2's head)
+## 9. Mutation rows (each Line occurs once in its file on M2's head; after A1, on A1-M2's head, with §15.6)
 
 | Id | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -1058,20 +1059,23 @@ Then run `PY -P scripts/gen_ad_ledger.py` and stage `docs/development/open-ads-r
 | HH-16 | history.py | `            line += f" Most recent: {self.last_date}."` | `            pass` | T9 latest, T1 |
 | HH-17 | oracle_service.py | `        return make_reader_identity_resolver(registry=registry, ontology=ontology)(agent_id)` | `        return agent_id, ""` | T7 resolved |
 
-No campaign of record yet; the Builder runs them on M2's head.
+No campaign of record yet; after A1, the campaign of record runs on A1-M2's head (§15.6).
 
 ## 10. Recorded limits
 
 - **L1.** DM path only. The Ward Room chain and proactive game context are unchanged.
 - **L2.** Forfeits are not recorded by AD-526a (`forfeit_game`, `service.py:321-344`), so they are not counted.
 - **L3.** Players match by the exact callsign in the record. Games played before a callsign change are not matched.
-- **L4.** No cache: each DM turn during a game lists the directory once. Above 256 records of one type, no tally is shown. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
+- **L4.** No cache. Each DM turn during a game counts the directory's `*.md` files by name (no read). At most 256, it lists them (each file read and parsed) and reads each again with `read_entry`: up to 512 file reads, in a worker thread, which the DM turn waits for (A1). Above 256 `*.md` files in the directory, game records or not, no tally is shown and none is read. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
 - **L5.** Dates are UTC (`updated`, else `created`, by BF-950's `record_write_time`).
 - **L6.** Zero games gives no block. Stating the absence is S3's job.
 - **L7.** `read_entry`'s department rule (an empty department matches an empty one) is inherited, as for the agent's own reads.
 - **L8.** A document that does not match the AD-526a body form is not counted, and nothing is logged.
 - **L9.** `_build_head_to_head_context` repeats `_build_active_game_context`'s opponent expression (default `""` there, `"unknown"` in AD-572); AD-572 is not refactored.
-- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The records involved are ship-classified.
+- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The tally counts every record the agent whose prompt it is may read (HH4), its own private records and its department's records included; `_record_game` writes ship-classified records, so another classification arises only when a record is rewritten through the store. The other participants see that agent's reply, so a count that includes such a record can reach them through it, as any other content of its prompt can. A group-turn restriction to ship-classified records would apply to every DM-side read; considered, deferred.
+- **L11.** A file the store's strict listing skips is not counted, and AD-1358 logs nothing for it: bytes that are not UTF-8 (the store's rule, "a property of the file, not of the moment") and a frontmatter whose YAML constructor raises. A frontmatter YAML rejects reads as `{}` without the game tags, so it is not listed. A listed file that is gone, or that `read_entry` withholds, reads as `None` and is not counted. Only a listing or read that raises fails the tally.
+- **L12.** `HeadToHead` built directly is not validated; `MAX_BLOCK_CHARS` bounds only a tally `read_head_to_head` returns (at most 317 characters).
+- **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk.
 
 ## 11. Verified Against Codebase (2026-11-06)
 
@@ -1091,7 +1095,9 @@ See the Verified block in the consult answer; it is copied here unchanged when t
 2. Every counted record came back from `read_entry` called with `records_reader_for(runtime, self.id)`'s identity, never a hard-coded reader. A `None` read is never counted.
 3. Every path through `records_reader_for` that does not resolve returns `("", "")`. `_knowledge_lookup_reader` gives the same output as before for every input.
 4. The parser accepts the body `_record_game` writes for a win by either side and for a draw, and rejects a winner who is not a player.
-5. The listing is strict, covers one directory and is tag-filtered. There are at most `MAX_GAME_RECORDS` `read_entry` calls, and none above the cap.
+5. The listing is strict, covers one directory and is tag-filtered. There are at most `MAX_GAME_RECORDS` `read_entry` calls. Above the cap (counted by name), there is no listing and no `read_entry`.
+10. (A1) No `RecordsStore` file read or YAML parse of the tally runs on the event-loop thread; the store is reached only through `list_entries`, `read_entry` and the `repo_path` property.
+11. (A1) `RecordsStore.list_entries` and `read_entry`, run in a worker, touch no mutable store state; a store read that suspends fails closed (WARNING, no tally).
 6. The `head_to_head` bid is emitted only after an `active_game` bid and before `captain_message`. The manifest holds its name, length and kept flag only.
 7. `game_type` is validated before it forms a path.
 8. Failure is log-and-degrade (WARNING with `exc_info`). `CancelledError` is not swallowed.
@@ -1101,4 +1107,647 @@ See the Verified block in the consult answer; it is copied here unchanged when t
 
 - G1, G2 and G3 as expected. #1750 acceptance 2 (first half) is met by T1.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
-````
+
+## 15. Amendment A1 (2026-11-06): review round 1 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** candidate head `baea653d` (base `48ed13bf`). Every SEARCH below occurs exactly once in its file on `baea653d` (§15.9). Working copies are CRLF; SEARCH text is LF. Where §15 and §7 differ, §15 wins.
+
+### 15.1 Findings and decisions
+
+| # | Finding | Decision |
+|---|---|---|
+| F1 | The tally's listing and reads run synchronously on the event loop; the listing reads every file before the cap is checked | **HH8:** the reads run in a worker thread (`asyncio.to_thread`), which drives the store's own `list_entries` and `read_entry` coroutines with no event loop (`_drive`; they await nothing). Before any read, the directory's `*.md` files are counted by name (`RecordsStore.repo_path`, public); above `MAX_GAME_RECORDS`, nothing is listed or read. The check after the listing stays. `RecordsStore` is unchanged (13.9 holds). |
+| F2 | L10 says the group-turn records are ship-classified | L10 corrected: the agent's own private and department records are counted (HH4) |
+| F3 | A file that is not UTF-8 is skipped by the strict listing, so the claim "a read that fails fails the tally" is false | Claims narrowed (docstring, PROGRESS, DECISIONS); L11; T13 guards the recorded limit |
+| F4 | The tally's own `get_game_by_player` swallows silently | WARNING with `exc_info` (HH6); `_build_active_game_context` (AD-572) unchanged |
+| F5 | `MAX_BLOCK_CHARS` "by construction" is false for a `HeadToHead` built directly | Comment narrowed to tallies `read_head_to_head` builds; L12 |
+
+**Rejected for F1:** a `RecordsStore` method (a shared contract; deferred with L4's index); offloading without the count (the cost above the cap is unbounded); yielding between reads (the listing is one blocking call); `asyncio.run` in the worker (a new event loop per tally, with a loopback socket pair on Windows).
+
+### 15.2 Milestones and gates
+
+| M | Pairs | Gate |
+|---|---|---|
+| A1-M1 (tests) | A1-T1 to A1-T4 | GA1a on `baea653d` + A1-M1 |
+| A1-M2 (source) | A1-S1 to A1-S7 | GA1b, then the campaign (§15.6), then B (§15.7) |
+| A1-M3 (trackers, contract, ledger) | A1-P1, A1-P2, C-01 to C-08 (§15.8), ledger | G3 |
+
+Commit A1-M1 and A1-M2 as one commit (`AD-1358 S1 A1: the tally reads off the event loop; review round 1 repairs (#1750)`), so no commit carries a failing test. Commit A1-M3 separately (`AD-1358 S1 A1: trackers, contract and ledger (#1750)`).
+
+- **GA1a** (A1-M1 applied, source still `baea653d`): `PY -m pytest tests/test_ad1358_s1_head_to_head.py -q -n 0`.
+  - Expected: **33 passed, 5 failed**: `test_the_read_is_bounded[above-cap]`, T10, T11, T12 and T14, each at an `AssertionError`.
+  - T10 and T11 each wait about 5 s on the tip; that is their bound, not a hang.
+  - Any other count, or a failure at setup or collection, is a hard stop.
+- **GA1b** (after A1-M2): G2's command unchanged (§4).
+  - Expected: **38 passed** in the new file; **810 passed** over G2's files (805 + 5), 0 failed.
+  - Then `PY -P scripts/check_architecture_principles.py --check`.
+  - Hard stop: `test_dm_golden_byte_identical` fails.
+- **G3** after A1-M3, as in §4.
+
+### 15.3 Tests (new file total: 15 functions, 38 cases)
+
+| Id | Test | Cases | Covers | On `baea653d` |
+|---|---|---|---|---|
+| T6 (changed) | `test_the_read_is_bounded[above-cap]` also asserts no listing | 0 new | HH8's count | fails (listing called) |
+| T10 | `test_the_records_are_read_in_a_worker_thread_while_the_event_loop_runs` | 1 | F1, structural: every store call is off the loop thread, and a callback queued on the loop runs before the listing proceeds | fails: the wait times out on the loop thread (5 s) |
+| T11 | `test_cancelling_the_tally_while_the_records_are_read_raises_cancelled_error` | 1 | 13.8 with the worker | fails: the tally completes |
+| T12 | `test_a_game_lookup_that_fails_for_the_tally_adds_nothing_and_logs_a_warning` | 1 | F4 | fails: no warning |
+| T13 | `test_a_record_the_store_cannot_decode_is_not_counted` | 1 | L11 (a guard of the recorded limit) | passes by design |
+| T14 | `test_a_records_store_that_suspends_gives_no_tally_and_a_warning` | 1 | the driver fails closed | fails: a tally is returned |
+
+T10 uses no wall clock. If the read regresses to the loop thread, the loop cannot run the queued callback, `Event.wait(5.0)` returns `False`, and the first assertion fails. If a regression yields before an on-loop listing, the thread assertion fails instead.
+
+### 15.4 Pairs: A1-M1 (tests)
+
+**A1-T1** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+import importlib
+import importlib.util
+import json
+import logging
+```
+REPLACE:
+```
+import asyncio
+import importlib
+import importlib.util
+import json
+import logging
+import threading
+```
+
+**A1-T2** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+        assert tally is None and calls["read"] == 0
+```
+REPLACE:
+```
+        assert tally is None and calls["read"] == 0
+        assert calls["list"] == []  # A1 (F1): counted by name above the cap; nothing is listed
+```
+
+**A1-T3** `tests/test_ad1358_s1_head_to_head.py` (appends T10 to T14 after T9)
+
+SEARCH:
+```
+    assert tally.last_date == last
+    assert tally.render() == _block(2, "Captain", 2, 0, 0, last)
+```
+REPLACE:
+```
+    assert tally.last_date == last
+    assert tally.render() == _block(2, "Captain", 2, 0, 0, last)
+
+
+# ── T10 to T14: Amendment A1 ─────────────────────────────────────────
+
+
+async def test_the_records_are_read_in_a_worker_thread_while_the_event_loop_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1), structural, no timing: every store call runs off the event-loop thread, and a
+    callback queued on the loop runs before the listing proceeds. Read on the loop thread, the
+    callback cannot run, the wait ends at its bound and the first assertion fails."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    for index in range(3):
+        await _record(store, f"g{index}", x="Captain", o="Ezri", winner="Captain")
+    loop_thread = threading.get_ident()
+    loop_ran = threading.Event()
+    seen: dict[str, Any] = {"loop_ran_first": None, "threads": []}
+    real_list, real_read = store.list_entries, store.read_entry
+
+    async def list_spy(*args: Any, **kwargs: Any) -> Any:
+        seen["threads"].append(threading.get_ident())
+        seen["loop_ran_first"] = loop_ran.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    async def read_spy(*args: Any, **kwargs: Any) -> Any:
+        seen["threads"].append(threading.get_ident())
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", list_spy)
+    monkeypatch.setattr(store, "read_entry", read_spy)
+    asyncio.get_running_loop().call_soon(loop_ran.set)
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert seen["loop_ran_first"] is True
+    assert len(seen["threads"]) == 4 and loop_thread not in seen["threads"]
+    assert (tally.total, tally.opponent_won) == (3, 3)
+
+
+async def test_cancelling_the_tally_while_the_records_are_read_raises_cancelled_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1), 13.8: a caller cancelled while the worker reads gets ``CancelledError``, not ``None``
+    and not a tally; the worker's result is dropped."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "g0", x="Captain", o="Ezri", winner="Captain")
+    entered, release = threading.Event(), threading.Event()
+    real_list = store.list_entries
+
+    async def held_list(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        release.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", held_list)
+    task = asyncio.create_task(read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5.0)  # premise: the listing has begun
+        task.cancel()
+        (outcome,) = await asyncio.gather(task, return_exceptions=True)
+    finally:
+        release.set()
+    assert isinstance(outcome, asyncio.CancelledError)
+
+
+async def test_a_game_lookup_that_fails_for_the_tally_adds_nothing_and_logs_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A1 (F4), HH6: the tally's own ``get_game_by_player`` (the second of the turn; the active-game
+    block's is the first) raising gives the prompt with no tally and a WARNING with ``exc_info``."""
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        await _play(service, "Captain", "Ezri", X_WINS)
+        await service.create_game("tictactoe", "Captain", "Ezri")
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+        real_lookup = service.get_game_by_player
+        calls: list[str] = []
+
+        def second_fails(callsign: str) -> Any:
+            calls.append(callsign)
+            if len(calls) == 2:
+                raise RuntimeError("the game table is busy")
+            return real_lookup(callsign)
+
+        monkeypatch.setattr(service, "get_game_by_player", second_fails)
+        caplog.set_level(logging.WARNING, logger="probos.cognitive.cognitive_agent")
+        prompt, manifest = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+    finally:
+        await service.turns.stop()
+    assert calls == ["Ezri", "Ezri"]  # premise: the active-game block's lookup, then the tally's
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+    assert any(
+        r.levelno == logging.WARNING and r.name == "probos.cognitive.cognitive_agent"
+        and "AD-1358" in r.getMessage() and r.exc_info is not None
+        for r in caplog.records
+    )
+
+
+async def test_a_record_the_store_cannot_decode_is_not_counted(tmp_path: Path) -> None:
+    """A1 (F3), L11, a guard of a recorded limit: ``list_entries(strict=True)`` skips a file whose
+    bytes are not UTF-8 (the store's rule), so the other records are counted. If the store's rule
+    changes, change L11 with this test."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "kept", x="Captain", o="Ezri", winner="Captain")
+    await _record(store, "undecodable", x="Captain", o="Ezri", winner="Captain")
+    path = store.repo_path / GAMES / "undecodable.md"
+    path.write_bytes(b"\xff" + path.read_bytes())
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert tally.total == 1
+
+
+async def test_a_records_store_that_suspends_gives_no_tally_and_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A1 (F1): the worker drives the store's coroutines with no event loop, which holds for
+    ``RecordsStore`` (its reads await nothing). A read that does suspend fails closed and loudly:
+    no tally and a WARNING with ``exc_info``, never a hang."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "g0", x="Captain", o="Ezri", winner="Captain")
+    real_list = store.list_entries
+
+    async def suspending_list(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0)
+        return await real_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", suspending_list)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    assert await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ) is None
+    assert any(
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage() and r.exc_info is not None
+        for r in caplog.records
+    )
+```
+
+### 15.5 Pairs: A1-M2 (source)
+
+**A1-S1** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+import logging
+import re
+from dataclasses import dataclass
+from typing import Any, Final
+```
+REPLACE:
+```
+import asyncio
+import logging
+import re
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from itertools import islice
+from pathlib import Path
+from typing import Any, Final
+```
+
+**A1-S2** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+:func:`read_head_to_head` reads one game type's records as one reader, through
+``RecordsStore.list_entries`` and ``RecordsStore.read_entry``, so a record that reader may not
+read is not counted. It returns ``None`` when no game between the two players is recorded,
+when more than :data:`MAX_GAME_RECORDS` records of the type are listed, and on any failure.
+```
+REPLACE:
+```
+:func:`read_head_to_head` reads one game type's records as one reader, through
+``RecordsStore.list_entries`` and ``RecordsStore.read_entry``, so a record that reader may not
+read is not counted. The reads run in a worker thread, never on the event loop (A1). It returns
+``None`` when no game between the two players is recorded, when the directory holds more than
+:data:`MAX_GAME_RECORDS` ``*.md`` files (then none is read), and when a listing or read raises.
+```
+
+**A1-S3** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+#: The longest block :meth:`HeadToHead.render` can return, by construction.
+MAX_BLOCK_CHARS: Final = 400
+```
+REPLACE:
+```
+#: The longest block :meth:`HeadToHead.render` returns for a tally :func:`read_head_to_head` built:
+#: its game type is checked, each count is at most :data:`MAX_GAME_RECORDS` and the name is cut to
+#: :data:`MAX_NAME_CHARS` (at most 317 characters). A ``HeadToHead`` built directly is not checked.
+MAX_BLOCK_CHARS: Final = 400
+```
+
+**A1-S4** `src/probos/recreation/history.py` (two functions before `read_head_to_head`)
+
+SEARCH:
+```
+    return GameOutcome(x_player, o_player, winner)
+
+
+async def read_head_to_head(
+```
+REPLACE:
+```
+    return GameOutcome(x_player, o_player, winner)
+
+
+def _drive(make: Callable[..., Coroutine[Any, Any, Any]], /, *args: Any) -> Any:
+    """A1 (F1): run ``make(*args)`` to its end in this worker thread, with no event loop.
+
+    ``RecordsStore.list_entries`` and ``read_entry`` are coroutines that await nothing, so one
+    ``send`` runs one to its end. A coroutine that suspends would need an event loop this thread
+    does not have: it is closed and ``RuntimeError`` raised, which the caller logs as a failure.
+    """
+    coro = make(*args)
+    try:
+        coro.send(None)
+    except StopIteration as done:
+        return done.value
+    coro.close()
+    raise RuntimeError("AD-1358: a records store read suspended; the tally reads only stores that do not")
+
+
+async def _read_records(
+    records_store: Any, game_type: str, reader_id: str, reader_department: str,
+) -> list[dict[str, Any]] | None:
+    """The records of one game type that the reader may read, or ``None`` above the cap.
+
+    Run by :func:`_drive` in a worker thread. It reads files only through the store's own
+    ``list_entries`` and ``read_entry``, which touch no store state but the repository path, so
+    they are safe off the event loop, as BF-952's ``_search_records`` walk is. The directory's
+    ``*.md`` files are counted by name first, reading none, so a directory above the cap costs
+    one scan and no reads.
+    """
+    directory = f"recreation/games/{game_type}"
+    named = Path(records_store.repo_path, directory).rglob("*.md")
+    if len(list(islice(named, MAX_GAME_RECORDS + 1))) > MAX_GAME_RECORDS:
+        logger.warning(
+            "AD-1358: more than %d %s game records; no head-to-head tally is shown",
+            MAX_GAME_RECORDS, game_type,
+        )
+        return None
+    listed = await records_store.list_entries(
+        directory, tags=["game", game_type], strict=True,
+    )
+    if len(listed) > MAX_GAME_RECORDS:
+        logger.warning(
+            "AD-1358: %d %s game records exceed the head-to-head cap of %d; no tally is shown",
+            len(listed), game_type, MAX_GAME_RECORDS,
+        )
+        return None
+    docs: list[dict[str, Any]] = []
+    for entry in listed:
+        doc = await records_store.read_entry(
+            entry["path"], reader_id=reader_id, reader_department=reader_department,
+        )
+        if doc is not None:
+            docs.append(doc)
+    return docs
+
+
+async def read_head_to_head(
+```
+
+**A1-S5** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+    One strict listing of ``recreation/games/<game_type>/`` (a file that cannot be read fails the
+    read rather than going uncounted), then at most :data:`MAX_GAME_RECORDS` ``read_entry`` calls
+    as ``reader_id``/``reader_department``: a record that reader may not read is not counted.
+    ``None`` when nothing is recorded, above the cap, and on any failure.
+    """
+```
+REPLACE:
+```
+    A count by name of ``recreation/games/<game_type>/*.md``, then one strict listing, then at most
+    :data:`MAX_GAME_RECORDS` ``read_entry`` calls as ``reader_id``/``reader_department``, all in a
+    worker thread (:func:`_read_records`): a record that reader may not read is not counted. A
+    listing or read that raises gives ``None`` and a warning. A file the store's listing itself
+    skips (bytes that are not UTF-8, a frontmatter whose constructor raises) and a ``read_entry``
+    that returns ``None`` are not counted (contract L11). ``None`` when nothing is recorded and
+    above the cap. A cancelled caller gets ``CancelledError`` at once; the worker finishes its
+    bounded pass and its result is dropped.
+    """
+```
+
+**A1-S6** `src/probos/recreation/history.py`
+
+SEARCH:
+```
+    try:
+        listed = await records_store.list_entries(
+            f"recreation/games/{game_type}", tags=["game", game_type], strict=True,
+        )
+        if len(listed) > MAX_GAME_RECORDS:
+            logger.warning(
+                "AD-1358: %d %s game records exceed the head-to-head cap of %d; no tally is shown",
+                len(listed), game_type, MAX_GAME_RECORDS,
+            )
+            return None
+        for entry in listed:
+            doc = await records_store.read_entry(
+                entry["path"], reader_id=reader_id, reader_department=reader_department,
+            )
+            if doc is None:
+                continue
+            outcome = parse_game_record(doc.get("content"))
+```
+REPLACE:
+```
+    try:
+        # A1 (F1): every file read and parse runs in a worker thread, never on the event loop.
+        docs = await asyncio.to_thread(_drive, _read_records, records_store, game_type, reader_id, reader_department)
+        if docs is None:
+            return None
+        for doc in docs:
+            outcome = parse_game_record(doc.get("content"))
+```
+
+**A1-S7** `src/probos/cognitive/cognitive_agent.py`
+
+SEARCH:
+```
+        try:
+            game = rec_svc.get_game_by_player(callsign)
+        except Exception:
+            return None
+        if type(game) is not dict:
+```
+REPLACE:
+```
+        try:
+            game = rec_svc.get_game_by_player(callsign)
+        except Exception:
+            logger.warning(
+                "AD-1358: the active game of %s could not be read for a head-to-head tally; none is shown",
+                callsign, exc_info=True,
+            )
+            return None
+        if type(game) is not dict:
+```
+
+### 15.6 Mutation rows (A1). Each Line occurs once in its file on A1-M2's head
+
+HH-4, HH-5 and HH-11 are restated because their code moved into `_read_records`. HH-1 to HH-3, HH-6 to HH-10 and HH-12 to HH-17 are unchanged and still occur once. **Campaign of record:** run all rows, HH-1 to HH-22, on A1-M2's head. Record the sha256 of `history.py`, `cognitive_agent.py` and `oracle_service.py`; if a later repair changes a file, rerun only that file's rows.
+
+| Id | File | Line | Mutate to | Killed by |
+|---|---|---|---|---|
+| HH-4 (A1) | history.py | `    if len(listed) > MAX_GAME_RECORDS:` | `>=` | T6 at-cap |
+| HH-5 (A1) | history.py | `            entry["path"], reader_id=reader_id, reader_department=reader_department,` | `            entry["path"], reader_id="captain", reader_department="",` | T3 other-department, T3 anonymous |
+| HH-11 (A1) | history.py | `        directory, tags=["game", game_type], strict=True,` | `        directory, tags=["game", game_type], strict=False,` | T6 strict-listing |
+| HH-18 | history.py | `        docs = await asyncio.to_thread(_drive, _read_records, records_store, game_type, reader_id, reader_department)` | `        docs = _drive(_read_records, records_store, game_type, reader_id, reader_department)` | T10, T11 |
+| HH-19 | history.py | `    if len(list(islice(named, MAX_GAME_RECORDS + 1))) > MAX_GAME_RECORDS:` | `    if False:` | T6 above-cap (listing called) |
+| HH-20 | history.py | `    raise RuntimeError("AD-1358: a records store read suspended; the tally reads only stores that do not")` | `    return None` | T14 (no warning) |
+| HH-21 | history.py | `    except Exception:` | `    except BaseException:` | T11 |
+| HH-22 | cognitive_agent.py | `                callsign, exc_info=True,` | `                callsign, exc_info=False,` | T12 |
+
+### 15.7 B: loop measurement (reported, not a test)
+
+On A1-M2's head, rerun the orchestrator's `probe_loop_block.py` for N = 3, 256, 257 and 1,024. Report the median and the longest loop gap for each.
+
+- **Expected:** for N ≥ 257, no `read_entry` and no listing (one scan by name). For N = 256, the longest gap is far below the base's 386 ms, of the order of the GIL switch interval.
+- **Return to the Architect** if the longest gap at N = 256 or N = 1,024 exceeds 50 ms.
+
+### 15.8 Contract text edits (apply before appending §15)
+
+**C-01**
+SEARCH:
+```
+**Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
+```
+REPLACE:
+```
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A1 (§15), the repair of review round 1 (GPT-6.1 Sol, NOT READY): the reads run off the event loop and the cap is checked by name before any read (HH8); the tally's game lookup logs its failure; L4, L10 and HH5 corrected; L11 to L13 added; T10 to T14 added and T6 above-cap strengthened; rows HH-18 to HH-22 added and HH-4, HH-5, HH-11 restated.
+**Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
+```
+
+**C-02**
+SEARCH:
+```
+**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases. Counted by reading, not by running. No existing test file is edited.
+```
+REPLACE:
+```
+**Estimated tests:** one new file, `tests/test_ad1358_s1_head_to_head.py`: 10 functions, 33 cases; after A1, 15 functions, 38 cases. Counted by reading, not by running. No existing test file is edited.
+```
+
+**C-03**
+SEARCH:
+```
+- **HH5:** one listing plus at most 256 `read_entry` calls per DM turn during a game. Above the cap: no block, no entry reads, a WARNING.
+```
+REPLACE:
+```
+- **HH5:** a count by name, then one listing plus at most 256 `read_entry` calls per DM turn during a game, all in a worker thread (A1, HH8). Above the cap: no listing, no entry reads, no block, a WARNING.
+```
+
+**C-04**
+SEARCH:
+```
+- **L4.** No cache: each DM turn during a game lists the directory once. Above 256 records of one type, no tally is shown. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
+```
+REPLACE:
+```
+- **L4.** No cache. Each DM turn during a game counts the directory's `*.md` files by name (no read). At most 256, it lists them (each file read and parsed) and reads each again with `read_entry`: up to 512 file reads, in a worker thread, which the DM turn waits for (A1). Above 256 `*.md` files in the directory, game records or not, no tally is shown and none is read. The remedy, structured frontmatter on new records plus an index, is considered and deferred.
+```
+
+**C-05**
+SEARCH:
+```
+- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The records involved are ship-classified.
+```
+REPLACE:
+```
+- **L10.** A group-chat DM turn shows the block too, as it shows the active-game block. The tally counts every record the agent whose prompt it is may read (HH4), its own private records and its department's records included; `_record_game` writes ship-classified records, so another classification arises only when a record is rewritten through the store. The other participants see that agent's reply, so a count that includes such a record can reach them through it, as any other content of its prompt can. A group-turn restriction to ship-classified records would apply to every DM-side read; considered, deferred.
+- **L11.** A file the store's strict listing skips is not counted, and AD-1358 logs nothing for it: bytes that are not UTF-8 (the store's rule, "a property of the file, not of the moment") and a frontmatter whose YAML constructor raises. A frontmatter YAML rejects reads as `{}` without the game tags, so it is not listed. A listed file that is gone, or that `read_entry` withholds, reads as `None` and is not counted. Only a listing or read that raises fails the tally.
+- **L12.** `HeadToHead` built directly is not validated; `MAX_BLOCK_CHARS` bounds only a tally `read_head_to_head` returns (at most 317 characters).
+- **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk.
+```
+
+**C-06**
+SEARCH:
+```
+5. The listing is strict, covers one directory and is tag-filtered. There are at most `MAX_GAME_RECORDS` `read_entry` calls, and none above the cap.
+```
+REPLACE:
+```
+5. The listing is strict, covers one directory and is tag-filtered. There are at most `MAX_GAME_RECORDS` `read_entry` calls. Above the cap (counted by name), there is no listing and no `read_entry`.
+10. (A1) No `RecordsStore` file read or YAML parse of the tally runs on the event-loop thread; the store is reached only through `list_entries`, `read_entry` and the `repo_path` property.
+11. (A1) `RecordsStore.list_entries` and `read_entry`, run in a worker, touch no mutable store state; a store read that suspends fails closed (WARNING, no tally).
+```
+
+**C-07**
+SEARCH:
+```
+## 9. Mutation rows (each Line occurs once in its file on M2's head)
+```
+REPLACE:
+```
+## 9. Mutation rows (each Line occurs once in its file on M2's head; after A1, on A1-M2's head, with §15.6)
+```
+
+**C-08**
+SEARCH:
+```
+No campaign of record yet; the Builder runs them on M2's head.
+```
+REPLACE:
+```
+No campaign of record yet; after A1, the campaign of record runs on A1-M2's head (§15.6).
+```
+
+### 15.9 A1-M3 tracker pairs
+
+**A1-P1** `PROGRESS.md`. Replace the whole of line 3. The head, its first 120 characters, is unchanged.
+
+SEARCH:
+```
+**AD-1358 S1 (2026-11-06), #1750 -- a crew member in a game is told the recorded games against that opponent.** During an active game, a crew `direct_message` prompt carries, directly after the AD-572 active-game block, a head-to-head block counted from the AD-526a game records in Ship's Records (`recreation/games/<game_type>/`): the number of recorded games of that type between the agent and its opponent, how many each won, the draws, and the UTC date of the latest (`recreation/history.py`). The records are read as the agent (`oracle_service.records_reader_for`, BF-949's reader, which `dm_targeted_lookup._knowledge_lookup_reader` now delegates to), so a record it may not read is not counted. With no game recorded between the two, no records store, more than 256 records of the type, or a read that fails, nothing is added and the prompt is as before. The AD-1357 manifest names the section `head_to_head` by its length only. No config field. The contract is `prompts/ad-1358-s1-head-to-head-tally.md`. S2 (a claimed lookup checked against the turn's tool trace) and S3 (claims about shared history, with the BF-741 check) follow.
+```
+REPLACE:
+```
+**AD-1358 S1 (2026-11-06), #1750 -- a crew member in a game is told the recorded games against that opponent.** During an active game, a crew `direct_message` prompt carries, directly after the AD-572 active-game block, a head-to-head block counted from the AD-526a game records in Ship's Records (`recreation/games/<game_type>/`): the number of recorded games of that type between the agent and its opponent, how many each won, the draws, and the UTC date of the latest (`recreation/history.py`). The records are read as the agent (`oracle_service.records_reader_for`, BF-949's reader, which `dm_targeted_lookup._knowledge_lookup_reader` now delegates to), so a record it may not read is not counted; its own private and department records are. The directory is counted by name, then listed and read in a worker thread, so the event loop is not held. With no game recorded between the two, no records store, more than 256 records of the type (then none is read), or a game lookup, listing or read that raises (logged), nothing is added and the prompt is as before; a file the store's listing skips (bytes that are not UTF-8) is left out of the count. The AD-1357 manifest names the section `head_to_head` by its length only. No config field. The contract is `prompts/ad-1358-s1-head-to-head-tally.md`, with Amendment A1. S2 (a claimed lookup checked against the turn's tool trace) and S3 (claims about shared history, with the BF-741 check) follow.
+```
+
+**A1-P2** `DECISIONS.md`
+
+SEARCH:
+```
+- *HH5 (cost).* One listing plus at most 256 entry reads per DM turn during a game; above the cap, none, no block and a warning.
+- *HH6 (failure).* Log-and-degrade: any failure gives no block and a warning; the prompt is unchanged.
+- *Not changed.* `records_store.py`, `RecreationService`, the AD-526a record format, `context_manifest.py`, the Ward Room chain's game context, config.
+- *Residual.* Recorded limits L1 to L10 of the contract.
+- *Reversal.* Revert the AD-1358 S1 commits.
+```
+REPLACE:
+```
+- *HH5 (cost).* A count of the directory's `*.md` files by name, then one listing plus at most 256 entry reads per DM turn during a game, all in a worker thread; above the cap, no listing, no read, no block and a warning.
+- *HH6 (failure).* Log-and-degrade: a game lookup, listing or read that raises gives no block and a warning with the traceback; the prompt is unchanged. A file the store's listing skips (bytes that are not UTF-8) is not counted (L11).
+- *HH8 (A1, off the loop).* The store's own `list_entries` and `read_entry` coroutines, which await nothing, are run to their end in a worker thread with no event loop, as BF-952's search walk runs off the loop; a store read that suspends fails closed. Rejected: a synchronous or counting `RecordsStore` method (a shared contract; deferred with the index of L4); yielding between reads (the listing is one blocking call); a private event loop per tally.
+- *Not changed.* `records_store.py`, `RecreationService`, the AD-526a record format, `context_manifest.py`, the Ward Room chain's game context, config.
+- *Residual.* Recorded limits L1 to L13 of the contract.
+- *Reversal.* Revert the AD-1358 S1 commits.
+```
+
+Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json` as written; then G3. `docs/development/roadmap.md` is not updated.
+
+### 15.10 Verified Against Codebase (2026-11-06, on `baea653d`)
+
+    rg "def read_entry|def list_entries" src/probos/knowledge/records_store.py
+      1282: async def read_entry(   1313: async def list_entries(
+    records_store.py:1296  raw = file_path.read_text(encoding="utf-8")      (synchronous, in the coroutine)
+    records_store.py:1342  found = _markdown_files_or_raise(search_path) if strict else ...
+    records_store.py:1350  raw = md_file.read_text(encoding="utf-8")       (every file, before any cap)
+    records_store.py:1330  "Bytes that are not UTF-8 are still skipped"
+    records_store.py:1357-1359  except Exception: logger.debug("Skipping unreadable file"...); continue
+    records_store.py:1305  if doc_class == "private" and reader_id != doc_author: return None
+    records_store.py:1478  return await asyncio.to_thread(   (BF-952 precedent)
+    records_store.py:527-528  @property / def repo_path(self) -> Path:
+    records_store.py:671  file_path.write_text(full_content, encoding="utf-8")   (write_entry, in place)
+    records_store.py:1575-1585  _parse_document: yaml.YAMLError -> {} ; no other state
+    history.py:32  #: The longest block :meth:`HeadToHead.render` can return, by construction.
+    history.py:105-108, 118-134, 146   the docstring, the on-loop try block, except Exception
+    cognitive_agent.py:66  logger = logging.getLogger(__name__)
+    cognitive_agent.py:8642-8646  try / get_game_by_player / except Exception: return None / if type(game) is not dict:
+    cognitive_agent.py:8590-8591, 8620-8621  _build_active_game_context's lookup and its silent except (AD-572; untouched)
+    startup/cognitive_services.py:609  records_store = RecordsStore(rcfg, ontology=None)   (production store is RecordsStore)
+    CPython 3.12.13 (d:/ProbOS/.venv/pyvenv.cfg): pathlib.py:169-170 select_from returns iter([]) when not is_dir();
+      unittest/mock.py:2279-2314 AsyncMock's _execute_mock_call awaits only a side_effect coroutine (never suspends)
+    pyproject.toml:9 requires-python = ">=3.12"   (asyncio.to_thread available)
+    SEARCH uniqueness on baea653d: history.py:18,21 (imports), :10-13, :32-33, :91-94, :105-109, :118-134;
+      cognitive_agent.py:8642-8646 (":8646 if type(game) is not dict:" once; ":8643" differs from ":8591" by the next line);
+      tests:21-22, :378, :459-460; PROGRESS.md:3; DECISIONS.md:1484-1488 (":1487 Residual L1 to L10" also at :1394, unique with :1488);
+      contract :4, :8, :40, :1061, :1068, :1074, :1094, and the §9 heading — each one hit.
+    New Lines unique post-repair: "callsign, exc_info=True," at 16 spaces has no hit in cognitive_agent.py today
+      (hits only in after_action.py, stand_down.py, reply_pipeline.py and others).
+
+### Absence Verified (2026-11-06)
+
+    CLAIM: only read_head_to_head constructs HeadToHead
+    RUN:   rg "HeadToHead\(" src/   FOUND: history.py:154   HOLDS: yes
+    CLAIM: no test outside the new file calls the tally
+    RUN:   rg "head_to_head|recreation\.history" tests/   FOUND: the new file; test_ad1357_context_manifest.py:894,899 (an unrelated literal)   HOLDS: yes
+    CLAIM: the store's two read coroutines touch no mutable store state
+    RUN:   Read records_store.py:1282-1373   FOUND: self._safe_path, self._repo_path, self._parse_document only   HOLDS: yes
+    CLAIM: MAX_BLOCK_CHARS has no production consumer
+    RUN:   rg "MAX_BLOCK_CHARS" src/   FOUND: history.py:33 only   HOLDS: yes
+
+**Bound for L12:** a 39-character header, plus 1, plus a 273-character line (a 32-character type, two 64-character names, four counts of at most 3 digits each, a 10-character date), plus 4, makes 317.
+
+### 15.11 Prior art and blind spots (A1)
+
+- Offloading blocking file I/O from an asyncio loop with `asyncio.to_thread` is the standard library's documented pattern. BF-952 is the in-repo precedent: absorbed.
+- Running a coroutine that never suspends with `send(None)` (no loop) instead of `asyncio.run` per call: adapted, with a fail-closed guard (T14).
+- **Blind spots handled:**
+  - The GIL: the worker's pure-Python YAML still shares the GIL, but the loop regains it at each switch interval (§15.7 measures it).
+  - Cancellation cannot stop the worker. Its pass is bounded, and its result is dropped (T11).
+  - A concurrent writer (L13).
+  - Files added between the count and the listing: the check after the listing stays.
+- External search was skipped: this is ProbOS-specific plumbing with an in-repo precedent.

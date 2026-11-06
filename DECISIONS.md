@@ -1481,10 +1481,11 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *HH2 (read).* A strict, tag-filtered `list_entries` of one game-type directory, then `read_entry` per record and a parse of the body: the record's frontmatter holds no players or result. Rejected: a frontmatter lookup (impossible for existing records); a new store API.
 - *HH3 (what).* One line for the active game's type and opponent: the total, wins each, draws, latest UTC date. Zero games gives no block.
 - *HH4 (privacy).* Read as the agent through BF-949's rule, now `records_reader_for`; a record `read_entry` withholds is not counted.
-- *HH5 (cost).* One listing plus at most 256 entry reads per DM turn during a game; above the cap, none, no block and a warning.
-- *HH6 (failure).* Log-and-degrade: any failure gives no block and a warning; the prompt is unchanged.
+- *HH5 (cost).* A count of the directory's `*.md` files by name, then one listing plus at most 256 entry reads per DM turn during a game, all in a worker thread; above the cap, no listing, no read, no block and a warning.
+- *HH6 (failure).* Log-and-degrade: a game lookup, listing or read that raises gives no block and a warning with the traceback; the prompt is unchanged. A file the store's listing skips (bytes that are not UTF-8) is not counted (L11).
+- *HH8 (A1, off the loop).* The store's own `list_entries` and `read_entry` coroutines, which await nothing, are run to their end in a worker thread with no event loop, as BF-952's search walk runs off the loop; a store read that suspends fails closed. Rejected: a synchronous or counting `RecordsStore` method (a shared contract; deferred with the index of L4); yielding between reads (the listing is one blocking call); a private event loop per tally.
 - *Not changed.* `records_store.py`, `RecreationService`, the AD-526a record format, `context_manifest.py`, the Ward Room chain's game context, config.
-- *Residual.* Recorded limits L1 to L10 of the contract.
+- *Residual.* Recorded limits L1 to L13 of the contract.
 - *Reversal.* Revert the AD-1358 S1 commits.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
