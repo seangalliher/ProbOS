@@ -35,8 +35,6 @@ from probos.knowledge.records_store import RecordsStore
 from probos.recreation.service import RecreationService
 from probos.types import IntentMessage, LLMResponse
 
-_UNTIL_M2 = pytest.mark.xfail(strict=True, raises=AssertionError, reason="AD-1358 S1: built in M2")
-
 AGENT_ID = "ad1358-ezri"
 GAMES = "recreation/games/tictactoe"
 X_WINS = ["0", "3", "1", "4", "2"]  # X takes the top row (test_cognitive_agent_dm_game.py:691)
@@ -189,7 +187,6 @@ def _block(total: int, opponent: str, opponent_won: int, me_won: int, drawn: int
 # ── T1: the crossing ─────────────────────────────────────────────────
 
 
-@_UNTIL_M2
 async def test_recorded_games_reach_the_dm_prompt_as_a_head_to_head_tally(tmp_path: Path) -> None:
     """#1750 acceptance 2 (C), across every seam: the real service records the games, the agent reads
     them as itself, the tally follows the active-game block, and the manifest names the section only."""
@@ -247,7 +244,6 @@ async def test_with_no_recorded_game_between_the_two_the_dm_prompt_is_unchanged(
 
 
 @pytest.mark.parametrize("failing", ["list_entries", "read_entry"])
-@_UNTIL_M2
 async def test_a_records_read_that_fails_adds_nothing_and_logs_a_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, failing: str,
 ) -> None:
@@ -283,7 +279,6 @@ async def test_a_records_read_that_fails_adds_nothing_and_logs_a_warning(
         pytest.param("", "", (1, 1, 0), id="anonymous"),
     ],
 )
-@_UNTIL_M2
 async def test_a_record_the_reader_may_not_read_is_not_counted(
     tmp_path: Path, reader_id: str, reader_department: str, expected: tuple[int, int, int],
 ) -> None:
@@ -308,7 +303,6 @@ async def test_a_record_the_reader_may_not_read_is_not_counted(
     ("moves", "side"),
     [pytest.param(X_WINS, "x", id="x-wins"), pytest.param(O_WINS, "o", id="o-wins"), pytest.param(DRAW, "", id="draw")],
 )
-@_UNTIL_M2
 async def test_the_writers_record_round_trips_through_the_parser(tmp_path: Path, moves: list[str], side: str) -> None:
     parse_game_record = _built("parse_game_record")
     game_outcome = _built("GameOutcome")
@@ -334,7 +328,6 @@ NOT_RECORDS = {
 
 
 @pytest.mark.parametrize("name", list(NOT_RECORDS))
-@_UNTIL_M2
 async def test_a_document_that_is_not_an_ad526a_record_is_not_counted(tmp_path: Path, name: str) -> None:
     parse_game_record = _built("parse_game_record")
     read_head_to_head = _built("read_head_to_head")
@@ -352,7 +345,6 @@ async def test_a_document_that_is_not_an_ad526a_record_is_not_counted(tmp_path: 
 
 
 @pytest.mark.parametrize("case", ["above-cap", "at-cap", "unsafe-game-type", "strict-listing", "long-name"])
-@_UNTIL_M2
 async def test_the_read_is_bounded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, case: str,
 ) -> None:
@@ -412,7 +404,6 @@ async def test_the_read_is_bounded(
         ("empty-id", ("", "")),
     ],
 )
-@_UNTIL_M2
 def test_the_records_reader_is_the_agent_or_the_anonymous_reader(case: str, expected: tuple[str, str]) -> None:
     records_reader_for = getattr(oracle_service, "records_reader_for", None)
     assert callable(records_reader_for), "AD-1358 S1: records_reader_for is not built"
@@ -433,7 +424,6 @@ def test_the_records_reader_is_the_agent_or_the_anonymous_reader(case: str, expe
 @pytest.mark.parametrize(
     ("me", "opponent", "me_won", "opponent_won"), [("Ezri", "Captain", 2, 1), ("Captain", "Ezri", 1, 2)],
 )
-@_UNTIL_M2
 async def test_the_tally_is_told_from_the_readers_side_whichever_side_it_played(
     tmp_path: Path, me: str, opponent: str, me_won: int, opponent_won: int,
 ) -> None:
@@ -456,7 +446,6 @@ async def test_the_tally_is_told_from_the_readers_side_whichever_side_it_played(
         pytest.param(["not a date", "also not a date"], "", id="no-date"),
     ],
 )
-@_UNTIL_M2
 async def test_the_most_recent_date_is_the_latest_record_and_is_left_out_when_none_parses(
     tmp_path: Path, updates: list[str], last: str,
 ) -> None:

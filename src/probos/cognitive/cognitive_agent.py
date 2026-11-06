@@ -29,6 +29,7 @@ from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_
 from probos.cognitive import context_manifest  # AD-1357
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
+from probos.recreation import history as game_history  # AD-1358 S1
 from probos.recreation.turns import RecreationTurnClaim, RecreationTurnOperations
 from probos.substrate.agent import BaseAgent
 from probos.types import (
@@ -1320,6 +1321,10 @@ class CognitiveAgent(BaseAgent):
         "_build_active_game_context": SensoriumEntry(
             layer=SensoriumLayer.EXTEROCEPTION,
             description="Active game board state (inventory; DM-side rendered inline; AD-723a-1)",
+        ),
+        "_build_head_to_head_context": SensoriumEntry(
+            layer=SensoriumLayer.EXTEROCEPTION,
+            description="Recorded games against the active game's opponent (inventory; DM-side rendered inline; AD-1358 S1)",
         ),
         "_build_user_message": SensoriumEntry(
             layer=SensoriumLayer.EXTEROCEPTION,
@@ -8615,6 +8620,46 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             return None
 
+    async def _build_head_to_head_context(self) -> str | None:
+        """AD-1358 S1 (#1750): the recorded games against the active game's opponent.
+
+        Counted from the AD-526a game records in Ship's Records, read as this agent
+        (``records_reader_for``, BF-949's reader), so a record it may not read is not
+        counted. ``None`` with no active game, no records store or nothing recorded, and
+        on any failure: the prompt is then as before. The Oracle module is imported here,
+        not at module scope, as its import pulls in the knowledge package.
+        """
+        from probos.cognitive.oracle_service import records_reader_for
+
+        rt = getattr(self, '_runtime', None)
+        if not rt:
+            return None
+        rec_svc = getattr(rt, 'recreation_service', None)
+        store = getattr(rt, 'records_store', None)
+        callsign = self._resolve_callsign()
+        if not rec_svc or store is None or not callsign:
+            return None
+        try:
+            game = rec_svc.get_game_by_player(callsign)
+        except Exception:
+            return None
+        if type(game) is not dict:
+            return None
+        opponent = next(
+            (p for p in (game.get("challenger", ""), game.get("opponent", "")) if p != callsign),
+            "",
+        )
+        reader_id, reader_department = records_reader_for(rt, self.id)
+        tally = await game_history.read_head_to_head(
+            store,
+            game_type=game.get("game_type", ""),
+            me=callsign,
+            opponent=opponent,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        )
+        return tally.render() if tally is not None else None
+
     def _summarize_action(self, intent, decision: dict, result: dict) -> str:
         """AD-573: Produce a one-line summary of what I just did."""
         intent_type = intent.intent
@@ -10558,7 +10603,7 @@ class CognitiveAgent(BaseAgent):
         Chain path: cognitive state, situation awareness, sensorium budget tracking,
         then chain ANALYZE prompt rendering. DM path: temporal awareness, cognitive
         zone, telemetry, working memory, episodic memories, Oracle context, source
-        attribution, session history, active game context, then Captain message.
+        attribution, session history, active game context, the head-to-head record (AD-1358), then Captain message.
         WR path: channel/thread header, temporal awareness, cognitive zone, DM
         self-monitoring, telemetry, working memory, episodic memories,
         self-recognition, thread context, then author message.
@@ -10828,6 +10873,11 @@ class CognitiveAgent(BaseAgent):
             active_game_ctx = self._build_active_game_context()
             if active_game_ctx:
                 _emit("active_game", [active_game_ctx, ""])
+                # AD-1358 S1 (#1750): the recorded games against this opponent, from the
+                # AD-526a game records; nothing is added when none is recorded.
+                head_to_head_ctx = await self._build_head_to_head_context()
+                if head_to_head_ctx:
+                    _emit("head_to_head", [head_to_head_ctx, ""])
 
             _emit("captain_message", [self._format_direct_message_trigger(params)])
 

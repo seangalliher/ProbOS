@@ -134,6 +134,29 @@ def make_reader_identity_resolver(
     return _resolve
 
 
+def records_reader_for(runtime: Any, agent_id: str) -> tuple[str, str]:
+    """BF-949, AD-1358: the Ship's Records reader an agent reads as.
+
+    The agent resolved as the Oracle resolves its callers (``make_reader_identity_resolver``):
+    its callsign and its ontology department. A runtime without a registry or an ontology, an
+    agent id that is empty or not a string, an agent the resolver does not find, and a resolver
+    that raises all give ``("", "")``, BF-679's anonymous reader (``record_is_readable``).
+    """
+    registry = getattr(runtime, "registry", None)
+    ontology = getattr(runtime, "ontology", None)
+    if registry is None or ontology is None or type(agent_id) is not str or not agent_id:
+        return "", ""
+    try:
+        return make_reader_identity_resolver(registry=registry, ontology=ontology)(agent_id)
+    except Exception:
+        logger.warning(
+            "BF-949: records reader resolution failed for agent=%s; Ship's Records "
+            "are read as the anonymous reader",
+            agent_id, exc_info=True,
+        )
+        return "", ""
+
+
 def _decode_record_frontmatter(raw: Any) -> dict[str, Any]:
     """AD-1138: rehydrate the frontmatter sidecar stored in ChromaDB metadata.
 
