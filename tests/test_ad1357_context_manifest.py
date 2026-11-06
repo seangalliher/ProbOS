@@ -40,7 +40,6 @@ from probos.threads import ChatThreadStore
 from probos.types import Episode, IntentMessage, IntentResult, LLMResponse
 from tests.fixtures.ad1028_golden._capture_golden import dm_observation, make_dm_agent
 
-_UNTIL_M3 = pytest.mark.xfail(strict=True, reason="AD-1357 M3: recall and the lookups are not recorded")
 _UNTIL_M4 = pytest.mark.xfail(strict=True, reason="AD-1357 M4: an agentic DM turn writes no journal row")
 
 AGENT_ID = "ad1357-ezri"
@@ -216,7 +215,6 @@ def _thread_store(tmp_path: Path) -> ChatThreadStore:
 # ── T1: the crossing ─────────────────────────────────────────────────
 
 
-@_UNTIL_M3
 async def test_a_dm_reply_with_recall_an_active_game_and_a_records_hit_lists_all_three(tmp_path: Path) -> None:
     """#1749 acceptance 1 and 2, across every seam: recall, the prompt, the result's metadata, the reply's
     metadata, the stored row."""
@@ -293,7 +291,6 @@ async def test_a_dm_reply_with_recall_off_says_recall_did_not_run(
 # ── T3: privacy ──────────────────────────────────────────────────────
 
 
-@_UNTIL_M3
 @pytest.mark.parametrize(
     "case", ["one-to-one-scene-and-peer", "group-turn", "group-turn-with-captain-message", "empty-captain-message"],
 )
@@ -615,7 +612,6 @@ async def test_a_section_the_attention_budget_drops_is_recorded_as_not_kept() ->
 # ── T13 to T18: the lookups ──────────────────────────────────────────
 
 
-@_UNTIL_M3
 async def test_the_oracle_reports_what_it_rendered_and_renders_the_same_text(tmp_path: Path) -> None:
     oracle = await _records_oracle(tmp_path)
     sources: list[tuple[str, str]] = []
@@ -627,7 +623,6 @@ async def test_the_oracle_reports_what_it_rendered_and_renders_the_same_text(tmp
         assert path in with_sink
 
 
-@_UNTIL_M3
 @pytest.mark.parametrize("case", ["a-room-matches", "only-a-title-matches"])
 def test_transcript_grounding_reports_the_room_its_excerpt_came_from(tmp_path: Path, case: str) -> None:
     from probos.cognitive.transcript_grounding import consult_transcript
@@ -695,7 +690,6 @@ async def test_text_appended_after_assembly_is_recorded_by_name_and_length(case:
     assert manifest["sections"][-1] == {"name": name, "chars": chars, "kept": True}
 
 
-@_UNTIL_M3
 async def test_recall_records_the_room_transcript_grounding_drew_on(tmp_path: Path) -> None:
     from probos.cognitive import context_manifest as cm
 
@@ -715,7 +709,6 @@ async def test_recall_records_the_room_transcript_grounding_drew_on(tmp_path: Pa
     assert lookups["transcript_grounding"] == {"ran": True, "hit": True, "thread_ids": [thread.id]}
 
 
-@_UNTIL_M3
 async def test_a_graph_only_lookup_is_recorded_with_its_scope(tmp_path: Path) -> None:
     """No trust network: the agent's rank is None, so its tier is ENHANCED and BF-265's graph-only query runs."""
     from probos.cognitive import context_manifest as cm

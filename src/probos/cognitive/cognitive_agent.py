@@ -11489,6 +11489,23 @@ class CognitiveAgent(BaseAgent):
 
             if not query:
                 return observation
+            # AD-1357 (#1749): recall ran for this direct_message turn. Its query is
+            # kept only when it is the Captain's own words, BF-632's
+            # ``captain_message`` on a 1:1 turn. A group turn's query is the room's
+            # trigger, which can be another agent's message, and the ``text``
+            # fallback can lead with the camera scene (AD-733a); for those only
+            # the length is kept.
+            if intent.intent == "direct_message":
+                _captain_words = params.get("captain_message")
+                context_manifest.start_recall(
+                    observation,
+                    query=query,
+                    captain_words=(
+                        not params.get("is_group_chat")
+                        and isinstance(_captain_words, str)
+                        and bool(_captain_words)
+                    ),
+                )
 
             # AD-602: Classify query and select strategy
             _ad602_strategy = None
@@ -11775,12 +11792,15 @@ class CognitiveAgent(BaseAgent):
                 ):
                     try:
                         oracle = self._runtime._oracle_service
+                        _oracle_sources: list[tuple[str, str]] = []  # AD-1357
                         oracle_text = await oracle.query_formatted(
                             query_text=query,
                             agent_id=_mem_id,
                             k_per_tier=3,
                             max_chars=2000,
+                            sources_out=_oracle_sources,
                         )
+                        context_manifest.note_oracle(observation, "all", _oracle_sources)
                         if oracle_text:
                             observation["_oracle_context"] = oracle_text
                             logger.debug(
@@ -11791,6 +11811,7 @@ class CognitiveAgent(BaseAgent):
                             logger.debug("Oracle returned empty for %s", self.agent_type)
                     except Exception:
                         logger.warning("AD-568a: Oracle query failed, continuing without", exc_info=True)
+                        context_manifest.note_oracle(observation, "all", None)  # AD-1357
                 elif (
                     _recall_tier in (RecallTier.FULL, RecallTier.ENHANCED)
                     and hasattr(self, '_runtime')
@@ -11803,17 +11824,21 @@ class CognitiveAgent(BaseAgent):
                     # structure, not classified intelligence.
                     try:
                         oracle = self._runtime._oracle_service
+                        _graph_sources: list[tuple[str, str]] = []  # AD-1357
                         graph_text = await oracle.query_formatted(
                             query_text=query,
                             agent_id=_mem_id,
                             k_per_tier=3,
                             max_chars=1000,
                             tiers=["graph"],
+                            sources_out=_graph_sources,
                         )
+                        context_manifest.note_oracle(observation, "graph", _graph_sources)
                         if graph_text:
                             observation["_oracle_context"] = graph_text
                     except Exception:
                         logger.debug("BF-265: graph-only Oracle query failed, continuing without")
+                        context_manifest.note_oracle(observation, "graph", None)  # AD-1357
 
             # AD-568c: Compute source priority framing
             _framing = None
@@ -11946,6 +11971,7 @@ class CognitiveAgent(BaseAgent):
                     memory_list.append(mem)
 
                 observation["recent_memories"] = memory_list
+                context_manifest.note_episodes(observation, episodes)  # AD-1357
                 # BF-631 DIAG: surface what the per-message recall actually fed
                 # into the prompt for a Captain DM — so we can see whether the
                 # ANSWER (not just the Captain's repeated question-echoes) lands
@@ -11963,6 +11989,7 @@ class CognitiveAgent(BaseAgent):
                     )
         except Exception:
             logger.warning("BF-138: Failed to fetch episodic memory context — agent will respond without memory", exc_info=True)
+            context_manifest.note_recall_failed(observation)  # AD-1357
 
         # AD-979d slice 2: cross-agent associative recall. Gated ENTIRELY behind
         # the default-OFF flag -> when off this block does NOTHING (no extra
@@ -11974,10 +12001,13 @@ class CognitiveAgent(BaseAgent):
         if mem_cfg is not None and getattr(mem_cfg, "cross_agent_recall_enabled", False):
             try:
                 _peer_mems = await self._maybe_cross_agent_recall(query=query, mem_id=_mem_id, k=3)
+                # AD-1357: how many peer memories came back; never their ids or text.
+                context_manifest.note_cross_agent(observation, len(_peer_mems))
                 if _peer_mems:
                     observation.setdefault("recent_memories", []).extend(_peer_mems)
             except Exception:
                 logger.warning("AD-979d: cross-agent recall wiring failed; continuing", exc_info=True)
+                context_manifest.note_cross_agent(observation, None)  # AD-1357
 
         # AD-981b + AD-1038: one shared sovereign recall-confidence probe drives
         # BOTH the honest-absence band cue (AD-981b, recall_confidence_gating_enabled)
@@ -11991,6 +12021,7 @@ class CognitiveAgent(BaseAgent):
         if _band_on or _type_on:
             try:
                 _conf = await self._recall_confidence_probe(query=query, mem_id=_mem_id, k=5)
+                context_manifest.note_confidence(observation, _conf)  # AD-1357
                 if _conf is not None:
                     if _band_on and _conf.band:
                         observation["_recall_fok_band"] = _conf.band
@@ -12026,10 +12057,15 @@ class CognitiveAgent(BaseAgent):
                     _agent_ids = {
                         x for x in (self.id, getattr(self, "sovereign_id", None)) if x
                     }
+                    _tg_threads: list[str] = []  # AD-1357: the room the excerpt came from
                     _excerpt = consult_transcript(
                         _store, _agent_ids, _tg_query,
                         max_threads=getattr(_mem_cfg, "transcript_grounding_max_threads", 8),
                         max_chars=getattr(_mem_cfg, "transcript_grounding_max_chars", 1200),
+                        sources_out=_tg_threads,
+                    )
+                    context_manifest.note_transcript(
+                        observation, hit=bool(_excerpt), thread_ids=_tg_threads,
                     )
                     if _excerpt:
                         observation["_transcript_grounding"] = _excerpt
