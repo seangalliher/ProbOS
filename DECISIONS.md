@@ -1441,6 +1441,18 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual, accepted.* Registers R160 and R161 of the contract.
 - *Reversal.* Revert the M3e4d8 commits.
 
+### AD-1357 -- A crew chat reply records what it was given: a context manifest beside it, and a journal row for the agentic DM turn (2026-11-05, #1749)
+
+- *Scope.* `cognitive/context_manifest.py` (new: `ContextLedger`, `RecallRecord`, `build_manifest`, `record_manifest`, `storable`, `turn_hash`, `context_manifest_metadata`), `cognitive/cognitive_agent.py` (the DM `_emit` renderer, both exits of `_decide_via_llm` and the agentic journal row, the recall and lookup notes in `_recall_relevant_memories`, `_build_result_metadata`), `cognitive/oracle_service.py` (`query_formatted(sources_out=)`), `cognitive/transcript_grounding.py` (`consult_transcript(sources_out=)`), `routers/agents.py` (`_build_reply_metadata`), `routers/thread_fanout.py` (the group reply's metadata), tests. Contract `prompts/ad-1357-dm-context-manifest.md`.
+- *CM1 (shape).* Inline under the reply's `metadata["context_manifest"]`, at most 16 KiB and always storable, so it is kept as long as the message. Rejected: a content-addressed blob ref; a new table.
+- *CM2 (producer).* Each DM `_emit` bid's renderer is the ledger's: it returns the same text and marks the section kept, because `ContextAssembler` renders only the bids it keeps. A section is recorded by its name, so a new one needs no change here. Rejected: a survivors API on the assembler; rebuilding the sections from observation keys.
+- *CM3 (journal).* The agentic branch writes one row: `model` unknown (BF-901), an empty token source (uncharged), `cached` 0, `dag_node_id` dm-turn. On both paths the manifest names its row by id and hashes. Rejected: `cached` true (filed as replayed); a separate table; journaling each loop call (BF-901 S2's gap).
+- *CM4 (privacy).* The agent's own episode ids, Ship's Records paths and its own transcript room are identified. Cross-agent recall and every other Oracle tier are counted. The query is kept only when it is the Captain's words on a 1:1 turn. Rejected: hashed peer ids; peer ids.
+- *CM5 (wire).* The manifest is the last key of `_build_result_metadata`, so BF-805's prune drops it first, and `storable` turns one the store would refuse into a stub.
+- *Not changed.* `ContextAssembler`, `AttentionFaculty`, the prompt text, `CognitiveJournal`'s schema, the federation bridge (it forwards only `dm_reply`), config.
+- *Residual.* Recorded limits L1 to L15 of the contract.
+- *Reversal.* Revert the AD-1357 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
