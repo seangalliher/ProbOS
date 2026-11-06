@@ -10,6 +10,7 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3, the round-three brake after review round 3 (GPT-6.1 Sol, NOT READY). **Split:** every reader reads with the base's framing again (RK15); RK9, RK10 and RK13 are withdrawn to BF-940 (#1686). T16 and T17 are retired, T13 loses two cases, T20 gains one and T22 is added. RKS-23 to RKS-25, RKS-31, RKS-32, RKS-35 to RKS-38 and RKS-40 are retired and RKS-41 to RKS-44 added. L18, L19 and L24 are revised, L21 is withdrawn and L25 is added.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A4, the repair of review round 4 (GPT-6.1 Sol, NOT READY, finding 1). A frontmatter that libyaml cannot load, for any reason, is read as the base read it, so RK8 is where libyaml's load returns and PyYAML's scanner refuses. T22's docstring changes; T23 and T24 are added. RKS-41 and RKS-44's cells are corrected (finding 3) and RKS-45 to RKS-47 added. L26 and L27 are added.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A5, the repair of review round 5 (GPT-6.1 Sol, NOT READY, finding 1). Every reader but the search reads with the base's own call; the search keeps libyaml below 100 levels of nesting and returns a record only where the base's reading admits the reader. RK8 and RK15 are restated; T13, T14, T22 and T23 change; T25 to T29 are added. RKS-42, 43, 46 and 47 are retired and RKS-48 to RKS-56 added. L26 is revised and L28 and L29 added.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A6, the repair of review round 6 (GPT-6.1 Sol, NOT READY, finding 1). `read_entry` and `_parse_document` are the base's own text again and `_read_document` is deleted, so every reader but the search runs `a745e447`'s code; the search is unchanged. RK15 is restated; T13, T22, T23 and T25 drop `_read_document`; T30 and T31 are added. RKS-48 is retired, RKS-41 and RKS-44 are re-anchored and RKS-57 and RKS-58 are added. L30 is added. A5.5's held fallback is renamed NL.
 
 **Which text describes the head.** Line numbers are those of `1c01a5ee`. Before building, run `git diff --stat 1c01a5ee HEAD -- src/probos/knowledge/records_store.py tests/test_bf949_notebook_reader_identity.py tests/test_layer_boundaries.py`. If it is not empty, or any M1 or M2 SEARCH no longer matches, return to the Architect. Where prose and a block differ, the block wins. Files are LF in the index; SEARCH text is LF.
 
@@ -1074,6 +1075,7 @@ Not built. Each item is ready for #1754, without redoing the search:
 - **L27 (A4, round 4, finding 2).** A numeric tag accepted by the API (`tags: [717]`) is written, found by keyword search, and never reaches the semantic index: `semantic.py:406` joins the tags as strings and raises `TypeError`, on write and on backfill. This is the same on `a745e447`. It goes to BF-940 (#1686), whose frontmatter-type policy (L24) normalizes or rejects such a value before writing.
 - **L28 (A5).** The keyword search may be stricter than `read_entry` and the semantic path, never looser. A frontmatter only libyaml reads (RK8: a tab after a key) reads as `{}` (`ship`) for `read_entry`, `list_entries` and the semantic index, as on the base. The search reads it as libyaml does, and shows the record only to readers both readings admit: alice's tabbed private note is shown to alice and the Captain and withheld from bob, to whom `read_entry` shows it. So BF-679's keyword/semantic parity holds as an inclusion for RK8 records, not as an equality. A record the base's reading refuses still counts in that call's term statistics; the top-20 list skips it and fills from below. Making the base's reading of a tabbed frontmatter match its author's intent is #1686's.
 - **L29 (A5).** libyaml's C composer gets only blocks that the event stream shows nesting fewer than 100 deep. A deeper block is read with the base's call; from about 330 levels that call raises `RecursionError`, and the search withholds the record. The bundled libyaml (0.2.5 in PyYAML 6.0.3's Windows wheel) carries no nesting-limit message, and its composer does not stop at depth: the A5.6 probe (2026-11-06, CPython 3.12.13, that wheel) loaded a flow sequence nested 100,000 levels and one nested 10,000 levels, each in a child process, in the main thread and in a worker thread, and every run ended the process with exit code 0xC00000FD (stack overflow) before `returned` printed. A loader that hands libyaml an unbounded block can therefore end the process, where PyYAML's composer raises `RecursionError`; A1 to A4 gave libyaml every block, and A5 gives it none nested 100 deep or more. The event pass adds a second libyaml parse of every frontmatter, which B1 bounds.
+- **L30 (A6).** Where PyYAML's composer raises `RecursionError` depends on the caller's stack, about two frames a nesting level, and the base's own consumers (the HTTP route, the Oracle, the proactive loop, a worker thread) reach `yaml.safe_load` at depths tens of frames apart. Every reader but the search runs the base's own code, so its frontier is the base's at every call site (T30, T31). Round 6 found A5's shared helper two frames deeper, one level earlier. The search reads, and checks admission, in a worker thread whose stack is shallower than the event loop's: a record nesting within that window is found by the search where `read_entry` from a deeper caller raises `RecursionError`. The admission check reads it as the same mapping `read_entry` would, so it is shown only to readers that mapping admits. On the base, the search itself raised for such a record and ended the whole search. Only a hand-made file reaches it.
 
 ## 12. Verified Against Codebase (2026-11-05, on `1c01a5ee`)
 
@@ -3499,3 +3501,398 @@ Sources:
 - [CVE-2026-33532 (OSV)](https://osv.dev/CVE-2026-33532)
 - [GitLab advisory CVE-2026-33532](https://advisories.gitlab.com/npm/yaml/CVE-2026-33532/)
 - [libyaml tests/test-nesting.c (mirror)](https://gitverse.ru/githubmirror/libyaml/content/master/tests/test-nesting.c)
+
+## Amendment A6 (2026-11-06): review round 6 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** head `d1070efe`.
+
+### A6.1 Decision: Option 1, restore the base's text in the two non-search readers
+
+**Option 1 wins, on F1 and P3.** It touches `src/probos/knowledge/records_store.py` and `tests/test_bf952_records_keyword_search.py`.
+
+- `read_entry`'s parse line and `_parse_document`'s body go back to `a745e447`'s exact text, and `_read_document` is deleted. After that, every reader except the search runs the base's own code, so F1 closes for every caller, not just the ones measured.
+- P3 is two text fixes.
+- A5.5's held fallback, which A5 called "A6", is **not applied**. It removes libyaml from the search only, and F1 sits in the non-search readers. It keeps its content under the new name **NL** (A6.6), so that "A6" can name this amendment.
+
+| # | Option | Verdict |
+|---|---|---|
+| **1** | Base text restored in `read_entry` and `_parse_document`; `_read_document` deleted; T30 (frontier) and T31 (delegation) added | **Chosen.** Closed by construction, and a `git diff` hunk list can check it mechanically. Search code is unchanged, so B1, B2 and the census still stand. |
+| 2 | NL (A5.5's "A6") | Rejected. It leaves F1 in place, as the reviewer found (`review-bf952-r6.md:26`). |
+| 3 | Reframe: accept the two-frame shift as L30 and narrow clause (i) | Rejected. It weakens no security control, but it rests on an argument, and it leaves a real data effect: update-in-place resets `created`, `revision` and the classification (`records_store.py:643-658`) of a document the base handled. Option 1 costs less. |
+
+The frontier argument is still true for the **search**. The search and its admission check run in a worker thread, so they find their frontier somewhere else. That is recorded as **L30**, and round 7's clause (ii) is narrowed to say so (A6.6). This weakens no access control: when the admission check reads a record, it reads the same mapping that `read_entry` would read.
+
+**Evidence**
+- `records_store.py:1309` is `frontmatter, content = _read_document(raw)`.
+- `:1593` is `return _read_document(raw)`.
+- `:274-284` is `_read_document`, which goes through `_split_document` and `_load_frontmatter` to `yaml.safe_load`.
+- Base `:1265-1275` is the inline `_parse_document`, and base `:985` is `self._parse_document(raw)`.
+- `git diff a745e447 d1070efe` gives 9 hunks in `records_store.py`. Their old-side starts are 3, 164, 268, 375, 389, **982** (`read_entry`), 1117, 1140 and **1263** (`_parse_document`).
+
+**A side effect you would otherwise hit.** Once the base `_parse_document` is back, active rows RKS-41 (`        parts = raw.split("---", 2)`) and RKS-44 (`        if len(parts) >= 3:`) stop being unique. Each of those 8-space lines is a substring of the restored 12-space copy. A6-01 adds a comment to each line in `_split_document`, and A6.5 re-anchors both rows.
+
+
+### A6.2 Pairs: A6-M1 (code and tests)
+
+Each SEARCH below was checked unique at `d1070efe` (`records_store.py` read at 246-332 and 1295-1310, plus 1580-1594; the test file read at 1-64, 268-319, 486-725 and 770-781). The SEARCH text is LF.
+
+**A6-01** `records_store.py`, `_split_document`
+SEARCH:
+```
+    body is the whole document (L18). That framing cuts a value holding ``---``; BF-940 (#1686) owns changing it,
+    for every reader at once (L25).
+    """
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            return parts[1], parts[2].strip()
+    return None, raw
+```
+REPLACE:
+```
+    body is the whole document (L18). That framing cuts a value holding ``---``; BF-940 (#1686) owns changing it,
+    for every reader at once (L25). Only the search calls it: ``RecordsStore._parse_document`` keeps the base's own
+    copy, so PyYAML's recursion frontier stays the base's for every other reader (A6, round 6; L30).
+    """
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)  # A6: the base's split, copied; _parse_document keeps its own
+        if len(parts) >= 3:  # A6: the base's test, copied
+            return parts[1], parts[2].strip()
+    return None, raw
+```
+
+**A6-02** `records_store.py`, delete `_read_document`
+SEARCH:
+```
+def _read_document(raw: str) -> tuple[Any, str]:
+    """BF-952 A1, A3, A5: a document's frontmatter and body, exactly as the base's ``_parse_document`` read them.
+
+    ``RecordsStore._parse_document`` and ``RecordsStore.read_entry`` call it, and so does every reader but the
+    search: ``list_entries``, ``publish``, update-in-place, the similarity and convergence scans and the semantic
+    backfill. It is the base's framing (:func:`_split_document`) and the base's load (:func:`_load_frontmatter`),
+    so it reads every document as the base did by construction (A5, round 5). The search reads with
+    :func:`_search_read_document`.
+    """
+    block, body = _split_document(raw)
+    return ({} if block is None else _load_frontmatter(block)), body
+
+
+def _nests_below(block: str, limit: int) -> bool:
+```
+REPLACE:
+```
+def _nests_below(block: str, limit: int) -> bool:
+```
+
+**A6-03** `records_store.py`, P3 comment in `_nests_below`
+SEARCH: `    except Exception:  # A5: not a swallow; a block that does not parse is read with the base's call, which raises`
+REPLACE: `    except Exception:  # A5: not a swallow; the base's call then reads it: its value, {} or its error (A6)`
+
+**A6-04** `records_store.py`, P3 docstring of `_search_load_frontmatter`
+SEARCH: ``    is read by :func:`_load_frontmatter`, the base's call, which raises the base's own errors.``
+REPLACE: ``    is read by :func:`_load_frontmatter`, the base's call: its value, ``{}`` for a ``YAMLError``, or its error (A6).``
+
+**A6-05** `records_store.py`, `read_entry` (the base's line)
+SEARCH:
+```
+        raw = file_path.read_text(encoding="utf-8")
+        frontmatter, content = _read_document(raw)
+```
+REPLACE:
+```
+        raw = file_path.read_text(encoding="utf-8")
+        frontmatter, content = self._parse_document(raw)
+```
+
+**A6-06** `records_store.py`, `_parse_document` (byte-equal to base `:1265-1275`; add no comment, because a comment would create a hunk)
+SEARCH:
+```
+    def _parse_document(self, raw: str) -> tuple[dict, str]:
+        """Parse YAML frontmatter + content from a markdown document.
+
+        BF-952 A1, A3, A5: :func:`_read_document`, the base's own framing and load, as for
+        ``read_entry``; the search reads with :func:`_search_read_document`.
+        """
+        return _read_document(raw)
+```
+REPLACE:
+```
+    def _parse_document(self, raw: str) -> tuple[dict, str]:
+        """Parse YAML frontmatter + content from a markdown document."""
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    fm = yaml.safe_load(parts[1]) or {}
+                except yaml.YAMLError:
+                    fm = {}
+                return fm, parts[2].strip()
+        return {}, raw
+```
+
+**A6-07** test file, imports
+SEARCH: `import itertools\nimport threading\n`
+REPLACE: `import itertools\nimport sys\nimport threading\n`
+
+**A6-08** test file, T13
+SEARCH:
+```
+    """A1 (finding 6), A3, A5: every reader but the search reads with ``_read_document``, the base's framing and
+    load, and the search frames alike. A frontmatter block no loader accepts reads as ``{}``, as on the base. A tab
+    after a key is refused by PyYAML's scanner and accepted by libyaml, so with libyaml installed only the search
+    reads it (RK8, A5). A value holding ``---`` is BF-940's (#1686), not this file's."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    assert records_store_module._read_document(raw) == (frontmatter, body)
+    assert store._parse_document(raw) == (frontmatter, body)
+```
+REPLACE:
+```
+    """A1 (finding 6), A3, A5, A6: every reader but the search reads with ``_parse_document``, the base's own text
+    (A6), and the search frames alike. A frontmatter block no loader accepts reads as ``{}``, as on the base. A tab
+    after a key is refused by PyYAML's scanner and accepted by libyaml, so with libyaml installed only the search
+    reads it (RK8, A5). A value holding ``---`` is BF-940's (#1686), not this file's."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    assert store._parse_document(raw) == (frontmatter, body)
+```
+
+**A6-09** test file, T22 docstring
+SEARCH: ``    lines, closing markers, bodies and both line endings, reads under ``_read_document`` and ``_parse_document`` ``
+REPLACE: ``    lines, closing markers, bodies and both line endings, reads under ``_parse_document`` (the base's own text, A6)``
+(Neither line ends with a trailing space. The backtick fencing above is only quoting.)
+
+**A6-10** test file, T22
+SEARCH:
+```
+            _read_or_error(records_store_module._read_document, shape) != expected
+            or _read_or_error(store._parse_document, shape) != expected
+```
+REPLACE:
+```
+            _read_or_error(store._parse_document, shape) != expected
+```
+
+**A6-11** test file, T23 docstring
+SEARCH: ``    endings, every shape reads under ``_read_document`` and ``_parse_document`` as on the base, a constructor error``
+REPLACE: ``    endings, every shape reads under ``_parse_document`` (the base's own text, A6) as on the base, a constructor error``
+
+**A6-12** test file, T23
+SEARCH:
+```
+            _read_or_error(records_store_module._read_document, shape) != base
+            or _read_or_error(store._parse_document, shape) != base
+```
+REPLACE:
+```
+            _read_or_error(store._parse_document, shape) != base
+```
+
+**A6-13** test file, T25 docstring
+SEARCH:
+```
+    libyaml only a block nesting fewer than 100 deep. Each shape reads under ``_read_document``,
+    ``_parse_document`` and the search as on the base, the ``RecursionError`` included."""
+```
+REPLACE:
+```
+    libyaml only a block nesting fewer than 100 deep. Each shape reads under ``_parse_document`` (the base's own
+    text, A6) and the search as on the base, the ``RecursionError`` included."""
+```
+
+**A6-14** test file, T25
+SEARCH:
+```
+    assert _read_or_error(records_store_module._read_document, raw) == expected
+    assert _read_or_error(store._parse_document, raw) == expected
+```
+REPLACE:
+```
+    assert _read_or_error(store._parse_document, raw) == expected
+```
+
+**A6-15** test file, T30 and T31 (appended)
+SEARCH:
+```
+    assert nests_below("tags: [" + ", ".join(["[warp]"] * 150) + "]", limit)  # 3 deep, 152 collections
+    assert not nests_below("broken: [unclosed", limit)
+```
+REPLACE:
+```
+    assert nests_below("tags: [" + ", ".join(["[warp]"] * 150) + "]", limit)  # 3 deep, 152 collections
+    assert not nests_below("broken: [unclosed", limit)
+
+
+def _frontier(read: Any) -> int:
+    """A6 (round 6, finding 1): the deepest flow nesting ``read`` reads when called from here, by bisection.
+
+    PyYAML's composer recurses about two Python frames a nesting level, so where a reader raises ``RecursionError``
+    depends on the frames between its caller and ``yaml.safe_load``. Every reader compared is called from this frame.
+    """
+    low, high = 2, sys.getrecursionlimit()
+    assert _read_or_error(read, _nested(low, "flow")) != "RecursionError"  # premise: the low end reads
+    assert _read_or_error(read, _nested(high, "flow")) == "RecursionError"  # premise: the high end raises
+    while high - low > 1:
+        middle = (low + high) // 2
+        if _read_or_error(read, _nested(middle, "flow")) == "RecursionError":
+            high = middle
+        else:
+            low = middle
+    return low
+
+
+def test_parse_document_raises_at_the_base_recursion_frontier(tmp_path: Path) -> None:
+    """A6 (round 6, finding 1): A5 sent ``_parse_document`` through two more frames before ``yaml.safe_load``, so a
+    document nesting one level below the base's limit raised ``RecursionError`` where the base read it, and
+    update-in-place reset its ``created``, ``revision`` and classification. ``_parse_document`` is the base's own
+    text again: called from the same frame as the base's (``_base_read``), it reads to the same depth."""
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    assert _frontier(store._parse_document) == _frontier(_base_read)
+
+
+@pytest.mark.asyncio
+async def test_read_entry_reads_with_parse_document_as_on_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A6 (round 6, finding 1): ``read_entry`` reads a document with ``self._parse_document(raw)``, the base's own
+    call, so its reading and the depth at which it raises ``RecursionError`` are the base's from every caller. A5
+    called a module function two frames deeper instead."""
+    store = await _store(tmp_path)
+    path = "notebooks/alice/warp.md"
+    _write(store, path, "warp core notes", author="alice")
+    parsed: list[str] = []
+    parse = store._parse_document
+
+    def _recording(raw: str) -> tuple[dict, str]:
+        parsed.append(raw)
+        return parse(raw)
+
+    monkeypatch.setattr(store, "_parse_document", _recording)
+    entry = await store.read_entry(path, reader_id="captain")
+    assert entry is not None and entry["content"] == "warp core notes"
+    assert parsed == [(store.repo_path / path).read_text(encoding="utf-8")]
+```
+
+**Counts after A6-M1:** the new file has **29 functions and 80 cases**, up from 27 and 78 (counted by reading).
+
+### A6.3 Pairs: A6-M2 (contract, trackers, ledger)
+
+**Order:** commit the contract first, then A6-M1, then the trackers, as A5 did.
+
+- **C1** (contract header). SEARCH `L26 is revised and L28 and L29 added.` REPLACE: the same text, then a newline, then:
+  `**Revised by:** \`claude-architect\` (Claude Code, Opus 5.5), 2026-11-06: Amendment A6, the repair of review round 6 (GPT-6.1 Sol, NOT READY, finding 1). \`read_entry\` and \`_parse_document\` are the base's own text again and \`_read_document\` is deleted, so every reader but the search runs \`a745e447\`'s code; the search is unchanged. RK15 is restated; T13, T22, T23 and T25 drop \`_read_document\`; T30 and T31 are added. RKS-48 is retired, RKS-41 and RKS-44 are re-anchored and RKS-57 and RKS-58 are added. L30 is added. A5.5's held fallback is renamed NL.`
+- **C2** (§11). SEARCH `which B1 bounds.` (unique, `:1076`). REPLACE: the same text, then a newline, then:
+  `- **L30 (A6).** Where PyYAML's composer raises \`RecursionError\` depends on the caller's stack, about two frames a nesting level, and the base's own consumers (the HTTP route, the Oracle, the proactive loop, a worker thread) reach \`yaml.safe_load\` at depths tens of frames apart. Every reader but the search runs the base's own code, so its frontier is the base's at every call site (T30, T31). Round 6 found A5's shared helper two frames deeper, one level earlier. The search reads, and checks admission, in a worker thread whose stack is shallower than the event loop's: a record nesting within that window is found by the search where \`read_entry\` from a deeper caller raises \`RecursionError\`. The admission check reads it as the same mapping \`read_entry\` would, so it is shown only to readers that mapping admits. On the base, the search itself raised for such a record and ended the whole search. Only a hand-made file reaches it.`
+- **C3**: append sections A6.1 to A6.8 of this answer after `:3501`, under `## Amendment A6 (2026-11-06): review round 6 (GPT-6.1 Sol, NOT READY)`, with the Drafted-by line and `**Anchors:** head \`d1070efe\``. Do not edit A5's text. Its mentions of `_read_document` (A5.1 Invariant, A5.5 clauses (i) and (ii), A5.7) describe A5's head, and A6 supersedes them.
+- **P1** (`PROGRESS.md`, unique). SEARCH `exactly as the base did, with the base's own framing and PyYAML call.` REPLACE `exactly as the base did, with the base's own code.`
+- **D1** (`DECISIONS.md`). SEARCH ``(`RecordsStore.search`, `RecordsStore.read_entry`, `RecordsStore._parse_document`; module functions`` REPLACE ``(`RecordsStore.search`; module functions``
+- **D2**. SEARCH ``` `_load_frontmatter`, `_read_document`, `_nests_below` ``` REPLACE ``` `_load_frontmatter`, `_nests_below` ```
+- **D3** (unique; `:571` has another "A1 to A5"). SEARCH ``bf-952-records-keyword-search.md`, with Amendments A1 to A5 (review rounds 1 to 5).`` REPLACE ``bf-952-records-keyword-search.md`, with Amendments A1 to A6 (review rounds 1 to 6).``
+- **D4**. SEARCH ``*RK15 (A3, A5).* Every reader but the search reads every document exactly as `a745e447`'s `_parse_document` did, by construction.`` REPLACE ``*RK15 (A3, A5, A6).* Every reader but the search runs `a745e447`'s own code (`read_entry` calls `self._parse_document(raw)`, whose body is the base's text), so it reads every document as the base did, including the nesting depth at which PyYAML raises `RecursionError` (A6: A5's shared helper sat two frames deeper).``
+- **D5**. SEARCH `*Residual.* Recorded limits L1 to L29 of the contract.` REPLACE `*Residual.* Recorded limits L1 to L30 of the contract.`
+- **Ledger:** regenerate both ledger files as A5-M2 did, then run `tests/test_ad1184_ad_ledger.py`.
+- **Roadmap:** not touched. It has no BF-952 row.
+
+### A6.4 Gates (all `-n 0`)
+
+1. **Diff check** on A6-M1's head (gated):
+   - `git diff a745e447 HEAD -- src/probos/knowledge/records_store.py | grep "^@@"` gives exactly 7 hunks, with old-side starts **3, 164, 268, 375, 389, 1117 and 1140**. There is none at 982 or 1263.
+   - `git diff d1070efe HEAD -- src` touches `records_store.py` only.
+   - Grep `\b_read_document\b` over `src/` and `tests/` finds nothing. The `\b` keeps `test_capability.py:84` out.
+2. **GA6**: GA1's command (§A1.3) on A6-M1's head.
+   - New file: **80 passed (29 functions)**.
+   - Total: **851 passed, 1 skipped**.
+   - Then `scripts/check_architecture_principles.py --check`.
+3. **Red check** (gated): `src` at `d1070efe` with A6-M1's test file. **Exactly T30 and T31 fail: 2 failed, 78 passed.**
+4. **Campaign**: 9 rows (A6.5).
+5. **B1 and B2:** the search code is unchanged, so A5's results stand. Run the pending quiet-host rerun on A6-M1's head.
+6. **Census:** none. A5.4's item (2) now holds by construction; items (3) and (4) are the search's, and the search is unchanged.
+
+**Hard stops** (report, do not tune):
+- the diff check differs;
+- either T30 premise fails;
+- T30 or T31 fails on the head, or passes on the red check;
+- any of T13 or T22 to T29 fails;
+- a row survives;
+- the architecture check fails.
+
+### A6.5 Mutation rows
+
+| # | File | Line | Mutate to | Claimed failing test |
+|---|---|---|---|---|
+| RKS-41 (re-anchored) | records_store.py | `        parts = raw.split("---", 2)  # A6: the base's split, copied; _parse_document keeps its own` | `        parts = [""] + raw[3:].split(chr(10) + "---", 1)  # A6: the base's split, copied; _parse_document keeps its own` | `test_every_document_reads_as_on_the_base` (through the search) |
+| RKS-44 (re-anchored) | records_store.py | `        if len(parts) >= 3:  # A6: the base's test, copied` | `        if len(parts) >= 2:  # A6: the base's test, copied` | `test_every_reader_frames_and_loads_a_document_alike` (never-closed-has-no-frontmatter-L18) |
+| RKS-57 | records_store.py | `                    fm = yaml.safe_load(parts[1]) or {}` | `                    fm = (lambda: (lambda: yaml.safe_load(parts[1]))())() or {}` | `test_parse_document_raises_at_the_base_recursion_frontier` |
+| RKS-58 | records_store.py | `        frontmatter, content = self._parse_document(raw)` | `        frontmatter, content = _search_read_document(raw)[:2]` | `test_read_entry_reads_with_parse_document_as_on_the_base` |
+
+- **Retired:** RKS-48; its line is gone.
+- **Reruns:**
+  - RKS-27, RKS-49 and RKS-50 (claimed tests T13 or T22);
+  - RKS-45 (T23);
+  - RKS-51 (T25);
+  - any other active row whose claimed test is T13, T22, T23 or T25. Those tests lost an assertion.
+- **Total run:** RKS-27, 41, 44, 45, 49, 50, 51, 57 and 58, that is **9 rows**. **41 rows are active.**
+- **Before running:** the harness checks that each active row's line occurs exactly once in the file, as a substring.
+- **Equivalent mutant, not rowed:** a single lambda (one extra frame). With two frames a level, whether it shifts the frontier depends on parity, so it is not reliably killed. That is why RKS-57 uses two.
+
+### A6.6 Round 7: a **delta** review
+
+**Why a delta is enough.** The repair moves a shared contract back to the base's text; it does not change one. Round 6 reviewed the whole candidate and blocked only on F1.
+
+**Scope:**
+- `git diff d1070efe <A6-M1 head> -- src tests`;
+- the diff check's hunk list;
+- L30.
+
+**Reviewer:** GPT-6.1 Sol.
+
+**Properties to verify:**
+- (a) No hunk of `git diff a745e447 HEAD -- src` falls inside a non-search reader.
+- (b) T30 and T31 fail on `d1070efe` and pass on the head, and T30 compares the two readers from one frame.
+- (c) The delta does not change how the search behaves; it changes comments and docstrings only.
+- (d) L30's claim: the admission check reads the mapping that `read_entry` reads, whenever both read it.
+- (e) The P3 text is accurate.
+
+**Stop rule (exact):** "Round 7 is READY unless it finds (i) a hunk of `git diff a745e447 HEAD -- src/probos/knowledge/records_store.py` inside a reader other than the search (`read_entry`, `_parse_document`, `list_entries`, `publish`, update-in-place, the similarity and convergence scans, the semantic backfill), or a document that such a reader, called from the same frame as the base's, reads differently from `a745e447` (frontmatter, body, exception type, or the nesting depth at which it first raises); (ii) a record the search returns to a reader whom `_base_reading_admits`'s reading withholds it from, or for which that reading raises in the frame where `_base_reading_admits` runs (a `RecursionError` that only a deeper caller's stack produces is L30, not (ii)); (iii) an input on which any reader ends or hangs the process where the base raised; or (iv) a Critical or High defect in the A6 delta. A finding equal to the base, a ranking or term-statistics difference from libyaml's reading (L28), and the frontier difference L30 records do not block. On (i) the orchestrator restores the base's text (a build error), reruns the diff check and GA6, and opens no new round. On (ii) or (iii) it applies NL with no further brake, and round 8 is a delta review of NL's removal. On (iv) it returns to the Architect."
+
+**NL** is A5.5's held fallback, unchanged in content:
+- The search reads with `_split_document` and `_load_frontmatter`.
+- Delete `_RECORDS_YAML_LOADER`, `_SEARCH_LIBYAML_DEPTH_LIMIT`, `_nests_below`, `_search_load_frontmatter`, `_base_reading_admits` and the admission loop.
+- RK8 is retired, and L15's behaviour becomes the norm.
+- If B1 then fails, B1 is reported and no longer gated, and N1 (#1754) carries the remedy.
+- B2 stays gated.
+
+**What a failing round 7 means:**
+- (i) means the build missed the restoration; it is mechanical.
+- (ii) or (iii) can only come from search code that round 6 already passed. Going to NL is then the end state, with no further reconciliation.
+- (iv) is the only case that comes back to me.
+
+None of these is a Captain condition: in every one, a single option leaves no open Critical or High defect.
+
+### A6.7 Evidence (2026-11-06, on `d1070efe`)
+
+**Verified against the codebase:**
+- `records_store.py:246-258` `_split_document`; `:261-271` `_load_frontmatter`; `:274-284` `_read_document`; `:302` the P3 comment; `:313` the P3 docstring; `:1309` and `:1593` the two non-search calls.
+- Base `:985` and `:1265-1275`.
+- Test uses of `_read_document`: `:313`, `:545`, `:607` and `:682`, plus the docstrings at `:308`, `:527`, `:588` and `:671`.
+- `_frontier` relies on `_nested` (`:651`), `_base_read` (`:490`), `_read_or_error` (`:505`), `_store` and `_write` (`:44`, `:50`), and `store.repo_path` (used at `:53`).
+
+**Absence verified:**
+```
+CLAIM: _read_document has no other user. RUN: Grep "[^h]_read_document" repo minus prompts/
+FOUND: records_store.py:274,1309,1590,1593; the test file's 8 lines above; test_capability.py:84 (unrelated name). HOLDS: yes
+CLAIM: only RKS-41 and RKS-44 collide with the restored base text. RUN: Grep the rows for startswith/len(parts)/split/return {}/fm =
+FOUND: RKS-41 (:2788) and RKS-44 (:2791) only. HOLDS: yes
+CLAIM: T30, T31, L30, RKS-57 and RKS-58 are unused labels. RUN: Grep "\bT3\d\b|RKS-5[7-9]|\bL3\d\b" in the contract. FOUND: none. HOLDS: yes
+CLAIM: the D1-D5 and P1 SEARCH texts are unique. RUN: Grep with output_mode count. FOUND: 1 each (D3 uses the contract path, because :571 also says "A1 to A5"). HOLDS: yes
+```
+
+**Not verified (the bridge does not run Python):**
+- the T30 and T31 counts, and the red check's 2 failures;
+- that a two-frame mutant shifts the frontier by exactly one level. This rests on your measurement: 2 frames moved it 1 level.
+
+GA6, the red check and RKS-57 gate each of these.
+
+### A6.8 Prior art
+None applies; this is ProbOS plumbing.
+- **Considered and rejected:** raising `sys.setrecursionlimit`. It is global process state and would only move the frontier.
+- **Considered and deferred:** an iterative composer, which would change the dependency's behaviour.
+- **Reference projects:** none relevant is overdue.
