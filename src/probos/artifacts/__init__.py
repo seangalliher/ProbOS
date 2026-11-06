@@ -439,7 +439,8 @@ class ArtifactStore:
 def _notify_version_committed(callback: Callable[[Artifact], None] | None, artifact: Artifact) -> None:
     """AD-1346 M3e4d7 (D329): ``ArtifactStore``'s version-committed notice, moved out of the class so that
     ``set_admission`` keeps it at 15 direct methods; the store passes its callback. None does nothing; a callback that
-    raises is logged, and the store still returns the committed version."""
+    raises an ``Exception`` is logged, and the store goes on to return the committed version. A ``BaseException`` from
+    the callback (a cancellation, for one) and a failure of the logging itself propagate, after the commit."""
     if callback is None:
         return
     try:

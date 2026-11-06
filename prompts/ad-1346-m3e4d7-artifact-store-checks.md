@@ -1,7 +1,7 @@
 # AD-1346 M3e4d7 (#1604): the artifact store's store-write checks, in shadow
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-03
-**Revised by:** the orchestrator (Copilot), 2026-11-05: §8's two stale `DECISIONS.md` line citations (`:1349`, `:1361`) are dropped from the "Where the entries land" prose; §8's dates are 2026-11-05, the date of the build; and the Status line's ceiling record is re-measured (AD-1358); no other change.
+**Revised by:** the orchestrator (Copilot), 2026-11-05: §8's two stale `DECISIONS.md` line citations (`:1349`, `:1361`) are dropped from the "Where the entries land" prose; §8's dates are 2026-11-05, the date of the build; and the Status line's ceiling record is re-measured (AD-1358). Amendment A1 (review round 1): M1-07's docstring for `_notify_version_committed` says exactly what a raising callback does (an `Exception` is logged, and a `BaseException` or a failure of the logging propagates, after the commit), and D331 counts the calls that reach the check; no other change.
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601). The seventh part of M3e4d (register R113). No new AD or BF number (`scripts/ad_ceiling.py`: CEILING AD-1358 on 2026-11-05). **Tier:** HIGH (M1: `src` and the census guards that pin it), test (M2), docs (M3). Nothing parked.
 **Dependencies:** AD-1346 M3e4d3, M3e4d4, M3e4d5 and M3e4d6. The build's base is the final commit of the batch that carries them; the Architect sends an amendment for any SEARCH that differs there.
 **Anchors:** every SEARCH text in §7 and §8 was read on `258c87bb` (the head of the batch of M3e4d3 to M3e4d5 with M3e4d6's contract applied by tool). 41 SEARCH/REPLACE blocks (M1 29, M2 10, M3 2), no new file, 2 regenerated files (M3).
@@ -144,7 +144,7 @@
     3. a new test file: it duplicates the fixtures.
 - **D331 Cost** (question 4; D324's method).
   - The imports run once, when the module is imported.
-  - Each call to `add_version` and each call to `reconcile_exact_version` makes one call to `check_at`. With anything but an exact `AdmissionService`, `check_at` compares its first argument's type with `AdmissionService` and returns (`admission/seam.py:61-63`).
+  - Each call to `reconcile_exact_version` makes one call to `check_at`. So does each call to `add_version`, unless its `_id_factory()` or `_clock()` raises first: both run before the check, and such a call counts nothing and writes nothing. With anything but an exact `AdmissionService`, `check_at` compares its first argument's type with `AdmissionService` and returns (`admission/seam.py:61-63`).
   - With `admission.shadow_enabled` false the runtime has no service, and the hand-off sets None (WM5's second runtime).
   - No timing test. The volume is counted from `admission_shadow.db`: `SELECT day, SUM(findings) FROM ticket_findings WHERE operation = 'store_write' GROUP BY day`.
   - Ranked:
@@ -324,7 +324,8 @@ REPLACE:
 def _notify_version_committed(callback: Callable[[Artifact], None] | None, artifact: Artifact) -> None:
     """AD-1346 M3e4d7 (D329): ``ArtifactStore``'s version-committed notice, moved out of the class so that
     ``set_admission`` keeps it at 15 direct methods; the store passes its callback. None does nothing; a callback that
-    raises is logged, and the store still returns the committed version."""
+    raises an ``Exception`` is logged, and the store goes on to return the committed version. A ``BaseException`` from
+    the callback (a cancellation, for one) and a failure of the logging itself propagate, after the commit."""
     if callback is None:
         return
     try:
