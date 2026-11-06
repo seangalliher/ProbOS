@@ -1,6 +1,7 @@
 # AD-1346 M3e4d9 (#1604): part (a) of the pending `workforce.py` scopes, classified as the ship's, in shadow
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A1 (review round 1): D341, R162, the M3e4d9 comment and two reasons in M1's rows (`transition_work_item` as a D218 copy, distinguished from `ChatThreadStore.create_thread`'s check; `_record_timestamp`'s caller-supplied `source`), the check count in D343 option 2, and the Lines of WG-1 and WG-4. No classification or count changes.
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601). The ninth part of M3e4d (register R113) and part (a) of register R160. No new AD or BF number (`scripts/ad_ceiling.py`: CEILING AD-1358, as reported by the request). **Tier:** test (M1: the census rows and the guards that pin them; no `src` file), docs (M2). Nothing parked.
 **Dependencies:** AD-1346 M3e4d6 to M3e4d8. The build's base is the merge of the batch that carries them into `origin/main`; the Architect sends an amendment for any SEARCH that differs there.
 **Anchors:** every SEARCH text in §7 and §8 was read on `8ecf968d` (tree `d0733f9e`). The block count is in §12. No new file. Two files are regenerated (M2).
@@ -89,8 +90,9 @@
     3. part (a) with checks at the writes an agent's own call reaches (a claim through `tools/work_item_pull_tool.py:367`, a run's result through `transition_work_item`): no part (a) scope takes an author id it could present (D341);
     4. part (a) in two parts: every row is of one class, so a split adds a review and saves none.
 - **D341 The rows** (question 2; D239's rule).
-  - Each of the 13 scopes is `System`. Per D239, its statements write a lifecycle state, a booking or a journal derived from timestamps, a row that names the agent it is about (`add_work_watcher`, and `_assign_work_item`'s booking and `assigned_to`), or a row with no text (`claim_work_notice`, `_record_timestamp`).
-  - **`transition_work_item`.** Its statements do not write `created_by`, and its `source` is not written (Absence 2). A metadata patch is a value its caller composes. The agent work runner's patch names the executor by callsign inside a JSON value (§1), and that is not an id the scope takes as the row's author. This is the reason given for `PersistentTaskStore._fire_task`'s row, whose `last_result` is a run's result (`tests/fixtures/ad1346_store_census.py:299`). Register R162 carries it.
+  - Each of the 13 scopes is `System`. Per D239, its statements write a lifecycle state, a booking or a journal derived from timestamps, a row that names the agent it is about (`add_work_watcher`, and `_assign_work_item`'s booking and `assigned_to`), a row with no text (`claim_work_notice`), or a booking timestamp in a table with no author column, whose `source` includes caller-supplied text (`_record_timestamp`; register R162).
+  - **`transition_work_item`.** Its statements write no author column, and its `source` is not written (Absence 2). Its production metadata patches are records that ship's services compose (`agent_work_runner.py:291-293`, `:378-387`; `cognitive/capability_gap_driver.py:175-177`; `cognitive/turn_promotion.py:3003-3010`). The one that carries an agent's content is the agent work runner's `agent_work_result`: a copy of the executor's answer, cut to `REPORT_MAX_CHARS`, with the executor's callsign beside it (§1). D218 makes a copy that a ship's service makes of an agent's content the ship's, with or without the author's id, as it does for `ChatThreadStore.create_crew_session_thread`'s row (D298), which takes `created_by`. The row is `System` by D218 for that patch and by D239 for the rest.
+  - **How it differs from `ChatThreadStore.create_thread`'s check.** That check presents `metadata["created_by_agent"]` (`threads/__init__.py:296`), which `AgentGroupChatService` sets to the agent id of the room's creator (`threads/agent_group_chat.py:220-224`). There the JSON key is the row's own author field: the room is its creator's, and `chat_threads` has no other author column. Here the record's author is the runner, which writes it after the run ends. `executor` names the producer of a value copied into the record, and it is a callsign, not an agent id. Placement in JSON decides neither row; what the embedded value names decides both. `PersistentTaskStore._fire_task`'s `last_result`, a run's result (`tests/fixtures/ad1346_store_census.py:299`), is the same kind of record. Register R162 carries both.
   - **Several writes in one method.** A row is per scope (D229) and covers every point of its scope. A scope that calls another (`_assign_work_item` and `complete_booking` call `_record_timestamp`; `complete_booking` calls `_generate_journal`; `unassign_work_item` calls `_cancel_booking`) leaves the callee's statements to the callee's own row. Where there is a check, it is one statement per scope (WM1) and counts once per call, not once per write; part (a) adds none.
   - **Threads, start-up, shutdown.** No call is added, so the service's lifetime does not apply.
   - `transition_work_item`, ranked:
@@ -110,7 +112,7 @@
   - No call is added, so there is no hot-path cost and `admission.shadow_enabled` is not involved. No `SystemConfig` field is added.
   - Ranked:
     1. this;
-    2. checks in the booking and journal scopes: they run once per booking move and once per journal segment (`complete_booking` writes one segment per adjacent pair of timestamps, `workforce.py:11793-11822`), with no author id to present.
+    2. checks in the booking and journal scopes: they run once per booking move and once per `_generate_journal` invocation (`complete_booking` makes one, `workforce.py:11685`; the other callers are `:7434` and `:11777`). A check is a statement of its scope's own body (WM1), so the number of segments, one per adjacent pair of timestamps (`workforce.py:11793-11822`), sets the SQL writes and not the checks. Neither scope has an author id to present.
 - **D344 Register rows.** R113 and R160 are advanced. New: R162 (what this slice does not see).
 
 ## 4. Milestones and focused gates
@@ -191,10 +193,10 @@ SEARCH:
 REPLACE:
 ```
     (_WORKFORCE, "_insert_crew_session_delivery"): System(SHIP, "a crew session's delivery record in crew_delivery_outbox, which has no author column"),
-    # AD-1346 M3e4d9 (D341). System (D239): a work item's lifecycle, its agent-work watchers and notice claims, its
+    # AD-1346 M3e4d9 (D341). System (D239, D218): a work item's lifecycle, its agent-work watchers and notice claims, its
     # assignment, and its bookings with their timestamps and journal; each reason names what its scope's statements
     # write (register R162).
-    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata; these statements do not write created_by"),
+    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata: a ship's service's record, the agent work runner's with a copy of its executor's answer under the executor's callsign (D218)"),
     (_WORKFORCE, "WorkItemStore.delete_work_item"): System(SHIP, "the deletion of a work item, its bookings with their timestamps and journals, and its resource requirements"),
     (_WORKFORCE, "WorkItemStore.add_work_watcher"): System(SHIP, "an agent-work watcher row, which names the agent it is about (D239)"),
     (_WORKFORCE, "WorkItemStore.claim_work_notice"): System(SHIP, "a notice claim: work_item_id, recipient, kind and claimed_at, no text (D239)"),
@@ -206,7 +208,7 @@ REPLACE:
     (_WORKFORCE, "WorkItemStore.complete_booking"): System(SHIP, "a booking's status, actual_end and total_tokens_consumed, and its work item's actual_tokens and updated_at"),
     (_WORKFORCE, "WorkItemStore._cancel_booking"): System(SHIP, "a booking's status"),
     (_WORKFORCE, "WorkItemStore._generate_journal"): System(SHIP, "a booking's journal segments, derived from its timestamps; booking_journals has no author column"),
-    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),
+    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),
     # Pending (D334): a later part of M3e4d classifies each.
     **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
@@ -340,7 +342,7 @@ REPLACE:
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
 
 - *D340 (the cut).* Part (a) alone, as thirteen rows of the ship's. Rejected: parts (a) and (b) together, which bring `enqueue_promoted_report`'s classification and possibly a check; checks at the writes an agent's own call reaches; part (a) in two parts.
-- *D341 (the rows).* Each reason names what its scope's statements write. `transition_work_item` writes no author column, and its metadata patch is a value its caller composes, the reason `PersistentTaskStore._fire_task`'s row gives. Rejected: a check presenting its `source`, which it does not write; keeping it pending.
+- *D341 (the rows).* Each reason names what its scope's statements write. `transition_work_item` writes no author column and does not write its `source`. Its production metadata patches are ship's services' records; the agent work runner's holds a copy of an executor's answer under the executor's callsign, which D218 makes the ship's, and `PersistentTaskStore._fire_task`'s run result is the same kind of record. `ChatThreadStore.create_thread`'s check presents `created_by_agent` from a JSON value because that value is the row's own author, the agent that opens the room; a producer named beside a copied result is not. Rejected: a check presenting its `source`, which it does not write; a check presenting the executor from the patch; keeping it pending.
 - *D342 (the guards).* WC1's and WC3's counts move; no new test. Rejected: a column-name guard over the system scopes; a pin listing the thirteen; retiring `AGENT_ATTRIBUTED_SCOPES` and WC5 now.
 - *D343 (cost).* No call is added.
 - *Residual, accepted.* Register R162 of the contract.
@@ -363,10 +365,10 @@ AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirtee
 
 | # | M | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|---|
-| WG-1 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),` | `(_WORKFORCE, "WorkItemStore._record_timestamps"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
+| WG-1 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),` | `(_WORKFORCE, "WorkItemStore._record_timestamps"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
 | WG-2 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_WORKFORCE, "WorkItemStore.delete_work_item"): System(SHIP, "the deletion of a work item, its bookings with their timestamps and journals, and its resource requirements"),` | `(_WORKFORCE, "WorkItemStore.delete_work_item"): _SCOPE_PENDING,` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
 | WG-3 | M1 | `tests/fixtures/ad1346_store_census.py` | `"WorkItemStore.mark_crew_trust_outcome_delivered",` | `"WorkItemStore.mark_crew_trust_outcome_delivered", "WorkItemStore.delete_work_item",` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
-| WG-4 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata; these statements do not write created_by"),` | `(_WORKFORCE, "WorkItemStore.transition_work_item"): StoreCheck((_WORKFORCE, "WorkItemStore.transition_work_item"), "source"),` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
+| WG-4 | M1 | `tests/fixtures/ad1346_store_census.py` | `(_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata: a ship's service's record, the agent work runner's with a copy of its executor's answer under the executor's callsign (D218)"),` | `(_WORKFORCE, "WorkItemStore.transition_work_item"): StoreCheck((_WORKFORCE, "WorkItemStore.transition_work_item"), "source"),` | `test_every_file_with_a_sql_write_statement_is_a_row_and_every_row_is_one` |
 
 - WG-1: the scanned scope `WorkItemStore._record_timestamp` has no row and the mutated key has no point, so WC1's key equality fails.
 - WG-2 and WG-3: WC1's counter reads 63 `System` and 33 `Pending`. In WG-3, the spread comes after the `System` row in the dict literal and overrides it. WC3's pin also fails on both.
@@ -501,8 +503,8 @@ HOLDS: yes
   - (e) owned steps and legacy execution: 15 scopes, 32 points.
   - Then the file-write rows and the JetStream rows, as R160 items 2 and 3 say. The last part of item 1 removes `_SCOPE_PENDING`, WC1's `Pending` key, and may retire `AGENT_ATTRIBUTED_SCOPES` and WC5.
 - **R162:** what this slice does not see:
-  - `transition_work_item` writes, unchecked, the metadata patch its caller composes. The agent work runner's patch records a run's `answer` and its `executor`, the value `_callsign_of(slot)` returns (`agent_work_runner.py:369-380`, `:651`). If a later decision treats an author named inside a caller-composed value as D239's author, this row and `PersistentTaskStore._fire_task`'s are the ones to revisit.
-  - `_record_timestamp`'s `source` column takes, through `assign_work_item`, the assign route's request value, defaulting to `"captain"` (`routers/workforce.py:375-379`). The row records no text and is not checked.
+  - `transition_work_item` and `PersistentTaskStore._fire_task` write, unchecked, run results that a ship's service records. The agent work runner's `agent_work_result` holds a copy of the executor's answer with the executor's callsign (`agent_work_runner.py:365-387`, `:651`); `_fire_task`'s `last_result` holds a run's result. D341 makes both the ship's under D218 and says how they differ from `ChatThreadStore.create_thread`'s check (`threads/__init__.py:296`), which already presents an author named inside a JSON value. A later decision that counts the producer named beside a copied result as the record's author would move these two rows.
+  - `_record_timestamp`'s `source` column takes, through `assign_work_item`, the assign route's request value, defaulting to `"captain"` (`routers/workforce.py:375-379`). That value is free text an HTTP caller supplies, and the statement writes it (`workforce.py:12151-12154`). The row has no author column and is not checked; D239 makes such a row the ship's.
   - An agent's own claim (`claim_work_item` from `tools/work_item_pull_tool.py:367`) and an agent's transitions (`cognitive/turn_promotion.py:1031` passes `source=agent_id`, which the scope does not write) write under these rows unchecked.
   - A system row is not re-read: an edit that adds an author column or text to one of these 13 scopes' statements is not noticed by WC1, as register R121 says of a system file.
   - The census is static: a statement whose text does not start in a constant is not seen (register R111).

@@ -339,10 +339,10 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     # System (D239): an outbox table with no author column.
     (_WORKFORCE, "_insert_crew_trust_effects"): System(SHIP, "a crew session's trust outcomes in crew_trust_outbox, which has no author column"),
     (_WORKFORCE, "_insert_crew_session_delivery"): System(SHIP, "a crew session's delivery record in crew_delivery_outbox, which has no author column"),
-    # AD-1346 M3e4d9 (D341). System (D239): a work item's lifecycle, its agent-work watchers and notice claims, its
+    # AD-1346 M3e4d9 (D341). System (D239, D218): a work item's lifecycle, its agent-work watchers and notice claims, its
     # assignment, and its bookings with their timestamps and journal; each reason names what its scope's statements
     # write (register R162).
-    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata; these statements do not write created_by"),
+    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata: a ship's service's record, the agent work runner's with a copy of its executor's answer under the executor's callsign (D218)"),
     (_WORKFORCE, "WorkItemStore.delete_work_item"): System(SHIP, "the deletion of a work item, its bookings with their timestamps and journals, and its resource requirements"),
     (_WORKFORCE, "WorkItemStore.add_work_watcher"): System(SHIP, "an agent-work watcher row, which names the agent it is about (D239)"),
     (_WORKFORCE, "WorkItemStore.claim_work_notice"): System(SHIP, "a notice claim: work_item_id, recipient, kind and claimed_at, no text (D239)"),
@@ -354,7 +354,7 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     (_WORKFORCE, "WorkItemStore.complete_booking"): System(SHIP, "a booking's status, actual_end and total_tokens_consumed, and its work item's actual_tokens and updated_at"),
     (_WORKFORCE, "WorkItemStore._cancel_booking"): System(SHIP, "a booking's status"),
     (_WORKFORCE, "WorkItemStore._generate_journal"): System(SHIP, "a booking's journal segments, derived from its timestamps; booking_journals has no author column"),
-    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),
+    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),
     # AD-1346 M3e4d10 (D346). System (D239, D218): the four outbox marks take only a row's identity and write its
     # delivered and delivered_at; a promoted report's pending row is the ship's copy of an agent's report, which the
     # delivery service replays through ChatThreadStore.append_message_once (register R163).
