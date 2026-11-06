@@ -244,24 +244,11 @@ _WORKFORCE_PENDING: Final = (
     "WorkItemStore.mark_promoted_report_delivered",
     "WorkItemStore.mark_promoted_report_undeliverable",
     "WorkItemStore.mark_crew_trust_outcome_delivered",
-    "WorkItemStore.transition_work_item",
-    "WorkItemStore.delete_work_item",
-    "WorkItemStore.add_work_watcher",
-    "WorkItemStore.claim_work_notice",
-    "WorkItemStore._assign_work_item",
-    "WorkItemStore.unassign_work_item",
-    "WorkItemStore.start_booking",
-    "WorkItemStore.pause_booking",
-    "WorkItemStore.resume_booking",
-    "WorkItemStore.complete_booking",
-    "WorkItemStore._cancel_booking",
-    "WorkItemStore._generate_journal",
-    "WorkItemStore._record_timestamp",
 )
 
 #: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313), M3e4d6 (D320),
-#: M3e4d7 (D327) and M3e4d8 (D334): each (file, enclosing scope) of these twelve files that holds a SQL write statement
-#: -> its coverage.
+#: M3e4d7 (D327), M3e4d8 (D334) and M3e4d9 (D341): each (file, enclosing scope) of these twelve files that holds a SQL
+#: write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -363,6 +350,22 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     # System (D239): an outbox table with no author column.
     (_WORKFORCE, "_insert_crew_trust_effects"): System(SHIP, "a crew session's trust outcomes in crew_trust_outbox, which has no author column"),
     (_WORKFORCE, "_insert_crew_session_delivery"): System(SHIP, "a crew session's delivery record in crew_delivery_outbox, which has no author column"),
+    # AD-1346 M3e4d9 (D341). System (D239): a work item's lifecycle, its agent-work watchers and notice claims, its
+    # assignment, and its bookings with their timestamps and journal; each reason names what its scope's statements
+    # write (register R162).
+    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata; these statements do not write created_by"),
+    (_WORKFORCE, "WorkItemStore.delete_work_item"): System(SHIP, "the deletion of a work item, its bookings with their timestamps and journals, and its resource requirements"),
+    (_WORKFORCE, "WorkItemStore.add_work_watcher"): System(SHIP, "an agent-work watcher row, which names the agent it is about (D239)"),
+    (_WORKFORCE, "WorkItemStore.claim_work_notice"): System(SHIP, "a notice claim: work_item_id, recipient, kind and claimed_at, no text (D239)"),
+    (_WORKFORCE, "WorkItemStore._assign_work_item"): System(SHIP, "a booking, its work item's assigned_to, status and updated_at, and a requirement's fulfilled; resource_id and assigned_to name the resource they are about (D239)"),
+    (_WORKFORCE, "WorkItemStore.unassign_work_item"): System(SHIP, "a work item's cleared assigned_to, status and updated_at; it does not write its reason"),
+    (_WORKFORCE, "WorkItemStore.start_booking"): System(SHIP, "a booking's status and actual_start, and its work item's status and updated_at"),
+    (_WORKFORCE, "WorkItemStore.pause_booking"): System(SHIP, "a booking's status"),
+    (_WORKFORCE, "WorkItemStore.resume_booking"): System(SHIP, "a booking's status"),
+    (_WORKFORCE, "WorkItemStore.complete_booking"): System(SHIP, "a booking's status, actual_end and total_tokens_consumed, and its work item's actual_tokens and updated_at"),
+    (_WORKFORCE, "WorkItemStore._cancel_booking"): System(SHIP, "a booking's status"),
+    (_WORKFORCE, "WorkItemStore._generate_journal"): System(SHIP, "a booking's journal segments, derived from its timestamps; booking_journals has no author column"),
+    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),
     # Pending (D334): a later part of M3e4d classifies each.
     **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
