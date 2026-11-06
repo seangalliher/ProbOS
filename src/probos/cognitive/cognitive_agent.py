@@ -26,6 +26,7 @@ from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
+from probos.cognitive import context_manifest  # AD-1357
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
 from probos.recreation.turns import RecreationTurnClaim, RecreationTurnOperations
@@ -264,8 +265,9 @@ def _build_result_metadata(
     rebuilds the decision. Report and decision are consulted first only so an
     explicitly-forwarded value still wins.
 
-    Empty on every non-agentic path, so an unchanged turn carries an unchanged
-    (empty) metadata dict.
+    Empty on every non-agentic path except a ``direct_message`` turn whose
+    prompt ``_build_user_message`` assembled, which carries its AD-1357 context
+    manifest; any other such turn carries an unchanged (empty) metadata dict.
     """
     sources = [s for s in (report, decision, observation) if isinstance(s, dict)]
 
@@ -303,6 +305,14 @@ def _build_result_metadata(
         references = source.get("_owned_steps_view_references")
         if type(references) is list and references:
             metadata["owned_steps_view_references"] = references[:8]
+            break
+    # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
+    # prune (``IntentBus._prune_metadata``, in iteration order) drops it before any
+    # key above when the reply would not fit the wire.
+    for source in sources:
+        manifest = source.get(context_manifest.MANIFEST_KEY)
+        if type(manifest) is dict and manifest:
+            metadata[context_manifest.CONTEXT_MANIFEST_METADATA_KEY] = manifest
             break
     return metadata
 
@@ -4002,6 +4012,10 @@ class CognitiveAgent(BaseAgent):
                 )
 
         user_message = await self._build_user_message(observation)
+        # AD-1357 (#1749): the ledger ``_build_user_message`` left for a
+        # direct_message prompt, or None. Text appended below is recorded by its
+        # name and length, never its content.
+        _ledger = context_manifest.ledger_of(observation)
 
         # Strategy advice (AD-384)
         applied_strategy_ids: list[str] = []
@@ -4014,6 +4028,8 @@ class CognitiveAgent(BaseAgent):
                 context = self._strategy_advisor.format_for_context(strategies)
                 if context:
                     user_message = user_message + "\n\n" + context
+                    if _ledger is not None:
+                        _ledger.note_appended("strategy_advice", len(context) + 2)
                 applied_strategy_ids = [
                     s["id"] for s in strategies if s.get("id")
                 ]
@@ -4023,10 +4039,13 @@ class CognitiveAgent(BaseAgent):
         )
         if owned_presentation is not None:
             owned_raw, _, _, _ = owned_presentation
+            _before_owned = len(user_message)
             user_message = (
                 f"{user_message}\n\n<owned_steps_view>\n"
                 f"{owned_raw}\n</owned_steps_view>"
             )
+            if _ledger is not None:
+                _ledger.note_appended("owned_steps_view", len(user_message) - _before_owned)
 
         from probos.cognitive.standing_orders import compose_instructions
 
@@ -4412,12 +4431,23 @@ class CognitiveAgent(BaseAgent):
             }
             # AD-1203 + AD-1248: provenance for the turn, set by the run above.
             _attach_run_provenance(decision, observation)
+            # AD-1357 (#1749): the id the reply's context manifest gives this turn.
+            _turn_entry_id = uuid.uuid4().hex
+            context_manifest.record_manifest(
+                observation,
+                path="agentic",
+                system_prompt=composed,
+                user_message=user_message,
+                response_text=_agentic_output,
+                journal_entry_id=_turn_entry_id,
+            )
             if applied_strategy_ids:
                 decision["_applied_strategy_ids"] = applied_strategy_ids
             return decision
 
         room_input_context = None
         room_params = observation.get("params", {})
+        _before_room_inputs = len(user_message)  # AD-1357
         if (
             observation.get("intent") == "direct_message"
             and room_params.get("is_group_chat") is True
@@ -4453,6 +4483,8 @@ class CognitiveAgent(BaseAgent):
                 user_message += "\nRoom inputs unavailable; do not claim complete analysis."
             if room_params.get("room_inputs_omitted"):
                 user_message += "\nSome room inputs were omitted; do not claim complete analysis."
+        if _ledger is not None:  # AD-1357: room inputs are named and counted, never stored
+            _ledger.note_appended("room_inputs", len(user_message) - _before_room_inputs)
 
         # AD-730 (Wave 151): vision pipe-through for DM perception.
         # When the intent params carry vision_messages (Captain attached an
@@ -4608,6 +4640,17 @@ class CognitiveAgent(BaseAgent):
                 )
             except Exception:
                 logger.debug("Journal recording failed", exc_info=True)  # Non-critical — never block agent cognition
+
+        # AD-1357 (#1749): what this reply was given, naming the journal row above
+        # by ``request.id`` and its two hashes.
+        context_manifest.record_manifest(
+            observation,
+            path="single_pass",
+            system_prompt=composed,
+            user_message=user_message,
+            response_text=response.content,
+            journal_entry_id=request.id,
+        )
 
         # BF-922 (#1639): a single call that answers for a chain that returned no
         # decision runs the chain's deterministic output checks on its reply.
@@ -7929,7 +7972,8 @@ class CognitiveAgent(BaseAgent):
             error=report.get("error"),
             confidence=self.confidence,
             # AD-1203: so the caller recording this turn can bind the claim to
-            # the calls behind it. Empty on every non-agentic path.
+            # the calls behind it. Empty on every non-agentic path but a
+            # direct_message, which carries its AD-1357 context manifest.
             # AD-1248: plus the DM reply's attachments, bounded and versioned.
             # The BODY stays in ``result`` un-rendered -- duplicating it here
             # doubles a large reply and can fail the whole NATS request.
@@ -10494,6 +10538,10 @@ class CognitiveAgent(BaseAgent):
             # ContextAssembler joins survivors with "\n" — byte-identical to the
             # prior ``"\n".join(parts)`` when nothing drops (default-OFF budget).
             _bids: list[AttentionBid] = []
+            # AD-1357 (#1749): each bid's renderer is the ledger's. It returns the
+            # same text and records that assembly kept the section, by name and
+            # length only, so the prompt is unchanged (the AD-1028 golden holds it).
+            _ledger = context_manifest.start_ledger(observation)
 
             def _emit(
                 source: str,
@@ -10506,7 +10554,7 @@ class CognitiveAgent(BaseAgent):
                 text = "\n".join(segments)
                 _bids.append(AttentionBid(
                     source=source,
-                    render=(lambda _t=text: _t),
+                    render=_ledger.renderer(source, text),
                     # AD-1030: an explicit salience (episodic/WM when scoring is
                     # ON) overrides the fixed insertion priority; default None ⇒
                     # float(idx) ⇒ byte-identical to the AD-1028/1029 path.

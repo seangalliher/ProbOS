@@ -40,7 +40,6 @@ from probos.threads import ChatThreadStore
 from probos.types import Episode, IntentMessage, IntentResult, LLMResponse
 from tests.fixtures.ad1028_golden._capture_golden import dm_observation, make_dm_agent
 
-_UNTIL_M2 = pytest.mark.xfail(strict=True, reason="AD-1357 M2: a DM reply carries no context manifest")
 _UNTIL_M3 = pytest.mark.xfail(strict=True, reason="AD-1357 M3: recall and the lookups are not recorded")
 _UNTIL_M4 = pytest.mark.xfail(strict=True, reason="AD-1357 M4: an agentic DM turn writes no journal row")
 
@@ -271,7 +270,6 @@ async def test_a_dm_reply_with_recall_an_active_game_and_a_records_hit_lists_all
 # ── T2: recall off says so ───────────────────────────────────────────
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize(
     ("runtime_attributes", "agent_type", "params"),
     [
@@ -357,7 +355,6 @@ def _encoded_size(manifest: dict[str, Any]) -> int:
     )
 
 
-@_UNTIL_M2
 def test_the_manifest_fits_its_bound_at_every_cap() -> None:
     """The largest manifest the caps allow, in ASCII as production names and ids are (the query at its worst
     JSON escape), fits ``MAX_MANIFEST_BYTES``; one shaped like the 2026-11-04 turn is under 4 KiB."""
@@ -406,7 +403,6 @@ def test_the_manifest_fits_its_bound_at_every_cap() -> None:
     assert _encoded_size(shaped) <= 4096
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize(
     "similarity", [float("nan"), float("inf"), True, "0.5", 10**400],
     ids=["nan", "infinity", "a-bool", "text", "too-large-for-a-float"],
@@ -434,7 +430,6 @@ def test_a_similarity_that_is_not_a_finite_number_is_recorded_as_none_and_the_ro
     assert saved is not None and saved.metadata["context_manifest"] == manifest
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize(
     ("value", "reason"),
     [
@@ -460,7 +455,6 @@ def test_a_manifest_the_store_would_refuse_is_replaced_by_a_stub_that_says_so(
 # ── T5, T6: the journal row ──────────────────────────────────────────
 
 
-@_UNTIL_M2
 async def test_the_manifest_names_its_journal_row_on_the_single_pass_path(tmp_path: Path) -> None:
     """The single-pass row (``entry_id=request.id``) and the manifest carry the same id and hashes."""
     journal = CognitiveJournal(db_path=str(tmp_path / "cognitive_journal.db"))
@@ -510,7 +504,6 @@ async def test_an_agentic_dm_turn_writes_one_journal_row_that_the_manifest_names
 # ── T7 to T9: the sinks and the wire ─────────────────────────────────
 
 
-@_UNTIL_M2
 def test_the_reply_metadata_carries_the_manifest_the_agent_made() -> None:
     manifest = {"v": 1, "path": "single_pass", "sections": []}
     result = IntentResult(
@@ -536,7 +529,6 @@ def test_a_reply_without_a_manifest_keeps_its_metadata_unchanged(result: Any) ->
     assert _build_reply_metadata("intent-1", result, None) == {"intent_id": "intent-1"}
 
 
-@_UNTIL_M2
 async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_unchanged(tmp_path: Path) -> None:
     """The real AD-914 fan-out over a real ``IntentBus`` and store (test_ad914's harness, restated)."""
     store = _thread_store(tmp_path)
@@ -568,7 +560,6 @@ async def test_a_group_reply_is_stored_with_its_manifest_and_one_without_stays_u
     assert rows["counselor1"]["fanout"] == "ad914"
 
 
-@_UNTIL_M2
 def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first() -> None:
     from probos.cognitive import context_manifest as cm
 
@@ -582,7 +573,6 @@ def test_the_manifest_is_the_last_reply_metadata_key_so_bf805_drops_it_first() -
 # ── T10, T11: the ledger ─────────────────────────────────────────────
 
 
-@_UNTIL_M2
 def test_a_section_is_recorded_by_its_name_alone_and_kept_only_when_assembly_renders_it() -> None:
     from probos.cognitive import context_manifest as cm
 
@@ -605,7 +595,6 @@ def test_a_section_is_recorded_by_its_name_alone_and_kept_only_when_assembly_ren
     assert (sections[0]["kept"], sections[1]["kept"]) == (True, False)
 
 
-@_UNTIL_M2
 async def test_a_section_the_attention_budget_drops_is_recorded_as_not_kept() -> None:
     from probos.cognitive import context_manifest as cm
 
@@ -661,7 +650,6 @@ def test_transcript_grounding_reports_the_room_its_excerpt_came_from(tmp_path: P
         assert excerpt is None and rooms == []
 
 
-@_UNTIL_M2
 def test_only_ship_records_results_are_identified_and_every_tier_is_counted() -> None:
     from probos.cognitive import context_manifest as cm
 
@@ -683,7 +671,6 @@ def test_only_ship_records_results_are_identified_and_every_tier_is_counted() ->
     }
 
 
-@_UNTIL_M2
 @pytest.mark.parametrize("case", ["strategy-advice", "owned-steps-view", "room-inputs"])
 async def test_text_appended_after_assembly_is_recorded_by_name_and_length(case: str) -> None:
     agent = _agent(_runtime(), _OneReply("Aye."))
