@@ -342,7 +342,7 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     # AD-1346 M3e4d9 (D341). System (D239, D218): a work item's lifecycle, its agent-work watchers and notice claims, its
     # assignment, and its bookings with their timestamps and journal; each reason names what its scope's statements
     # write (register R162).
-    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata: a ship's service's record, the agent work runner's with a copy of its executor's answer under the executor's callsign (D218)"),
+    (_WORKFORCE, "WorkItemStore.transition_work_item"): System(SHIP, "a work item's status and updated_at and, with a metadata patch that changes it, its metadata: a ship's service's record, the agent work runner's with a copy of its executor's answer under the executor's callsign or slot id (D218)"),
     (_WORKFORCE, "WorkItemStore.delete_work_item"): System(SHIP, "the deletion of a work item, its bookings with their timestamps and journals, and its resource requirements"),
     (_WORKFORCE, "WorkItemStore.add_work_watcher"): System(SHIP, "an agent-work watcher row, which names the agent it is about (D239)"),
     (_WORKFORCE, "WorkItemStore.claim_work_notice"): System(SHIP, "a notice claim: work_item_id, recipient, kind and claimed_at, no text (D239)"),
