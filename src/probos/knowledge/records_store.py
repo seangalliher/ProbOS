@@ -238,41 +238,69 @@ def _search_field_text(value: Any) -> str:
     return ""
 
 
+def _load_frontmatter(block: str) -> Any:
+    """BF-952 A1: a frontmatter block loaded by libyaml (``_RECORDS_YAML_LOADER``), then ``yaml.safe_load``.
+
+    ``None`` when neither loader accepts it; ``{}`` for an empty or falsy one. An error of YAML's
+    constructor (``updated: 2026-13-05`` raises ``ValueError``) propagates.
+    """
+    try:
+        frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
+    except yaml.YAMLError:
+        try:
+            frontmatter = yaml.safe_load(block)
+        except yaml.YAMLError:
+            return None  # A1: neither loader accepts the block
+    return frontmatter or {}
+
+
+def _line_framing_is_kept(framed: Any, legacy: Any) -> bool:
+    """BF-952 A2: whether A1's line framing replaces the base's framing of a document.
+
+    It does when it loads as a mapping and, where the base's framing names a ``classification``,
+    names the same one. A frontmatter that a hand-made or legacy file closed inside a line would
+    otherwise take the body as YAML: the body may not load, or may give ``classification`` an
+    unknown or a repeated value, and the record would lose the level the base read for it.
+    """
+    if type(framed) is not dict:
+        return False
+    if type(legacy) is dict and "classification" in legacy:
+        return framed.get("classification") == legacy["classification"]
+    return True
+
+
 def _read_document(raw: str) -> tuple[Any, str]:
-    """BF-952 A1: a Ship's Records document's frontmatter and body, the one parse every reader uses.
+    """BF-952 A1, A2: a Ship's Records document's frontmatter and body, the one parse every reader uses.
 
     ``RecordsStore._parse_document``, ``RecordsStore.read_entry`` and the search all call it.
 
-    Framing (BF-940, #1686): a document that starts with ``---`` has frontmatter up to the
-    first later ``---`` that begins a line, and its body is what follows that ``---``,
-    stripped. The base ended the frontmatter at the first ``---`` anywhere, so a value
-    holding one inside a line (``topic: Inspection --- nominal``) was cut, the keys after
-    it were lost or the YAML stopped parsing, and the record read with no classification.
-    A store-written value holding ``---`` now stays whole (T16 writes four through
-    ``write_entry``). A document whose frontmatter is not closed by a line beginning
-    ``---`` has no frontmatter here.
+    Framing. A document that starts with ``---`` has frontmatter up to the next ``---``, as the
+    base framed it (``raw.split("---", 2)``), and its body is what follows, stripped. When that
+    ``---`` is inside a line and a later line begins ``---``, the frontmatter may hold a
+    store-written value with ``---`` in it (BF-940, #1686: ``author: Ezri---Prime``,
+    ``topic: Inspection --- nominal``), which the base cut. It then runs to that line instead,
+    when ``_line_framing_is_kept`` accepts it (A1). It does not when that framing does not load
+    as a mapping or names a classification other than the base framing's (A2), so a hand-made
+    or legacy file whose frontmatter is closed inside a line reads as on the base, at the level
+    the base read. A document with no later ``---`` has no frontmatter, as on the base (L18).
 
-    Loading: libyaml (``_RECORDS_YAML_LOADER``) when installed, then ``yaml.safe_load``
-    when libyaml refuses the text, so a frontmatter either loader accepts is read, and
-    every reader reads it alike. An empty or falsy frontmatter is ``{}``. ``None`` means a
-    frontmatter block is there and neither loader accepts it. An error of YAML's
-    constructor (``updated: 2026-13-05`` raises ``ValueError``) propagates, as it did from
-    ``_parse_document`` on the base.
+    Loading: ``_load_frontmatter``, so a frontmatter either loader accepts is read, and every
+    reader reads it alike. ``None`` means a frontmatter block is there and neither loader
+    accepts it. An error of YAML's constructor propagates, as it did from ``_parse_document``
+    on the base.
     """
-    if raw.startswith("---"):
-        close = raw.find("\n---", 3)
-        if close >= 0:
-            block = raw[3:close + 1]
-            body = raw[close + 4:].strip()
-            try:
-                frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
-            except yaml.YAMLError:
-                try:
-                    frontmatter = yaml.safe_load(block)
-                except yaml.YAMLError:
-                    return None, body
-            return frontmatter or {}, body
-    return {}, raw
+    if not raw.startswith("---"):
+        return {}, raw
+    cut = raw.find("---", 3)
+    if cut < 0:
+        return {}, raw
+    legacy = _load_frontmatter(raw[3:cut]), raw[cut + 3:].strip()
+    close = raw.find("\n---", 3)
+    if close + 1 > cut:
+        framed = _load_frontmatter(raw[3:close + 1])
+        if _line_framing_is_kept(framed, legacy[0]):
+            return framed, raw[close + 4:].strip()
+    return legacy
 
 
 def _search_record_counts(
@@ -506,7 +534,11 @@ class RecordsStore:
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
         the frontmatter **before** ``yaml.dump``, so they round-trip through
         ``_parse_document`` and land whole in the AD-1138 ``frontmatter_json``
-        sidecar. Any key in :data:`_RESERVED_FRONTMATTER_KEYS` raises
+        sidecar, when every value is one YAML's safe loader builds (a string,
+        number, boolean, date, or a list or mapping of them). BF-952 A2:
+        ``yaml.dump`` writes a tuple or another Python object with a
+        ``!!python/`` tag, which no reader loads (BF-952 L24). Any key in
+        :data:`_RESERVED_FRONTMATTER_KEYS` raises
         ``ValueError`` — this is the fail-fast tier, because silently dropping a
         reserved key would let a caller believe it stamped provenance that is
         not there. ``None`` (the default) leaves the written bytes identical.
@@ -611,7 +643,7 @@ class RecordsStore:
                 await self._semantic_indexer.index_record(
                     path=path,
                     content=content,
-                    classification=classification,
+                    classification=frontmatter["classification"],
                     author=author,
                     department=department,
                     topic=topic,
@@ -625,7 +657,7 @@ class RecordsStore:
                     path, exc_info=True,
                 )
 
-        logger.info("Record written: %s by %s (%s)", path, author, classification)
+        logger.info("Record written: %s by %s (%s)", path, author, frontmatter["classification"])
         return path
 
     def set_semantic_indexer(self, indexer: Any) -> None:

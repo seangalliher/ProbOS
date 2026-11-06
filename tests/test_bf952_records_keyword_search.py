@@ -26,6 +26,7 @@ from probos.cognitive.oracle_service import OracleService
 from probos.config import RecordsConfig
 from probos.knowledge import records_store as records_store_module
 from probos.knowledge.records_store import RecordsStore
+from probos.knowledge.semantic import SemanticKnowledgeLayer
 from probos.routers.records import search_records
 from tests.test_bf949_notebook_reader_identity import _self_monitoring
 
@@ -288,6 +289,19 @@ _LIBYAML = bool(getattr(yaml, "__with_libyaml__", False))
         id="a-tab-only-libyaml-accepts",
     ),
     pytest.param("no frontmatter at all", {}, "no frontmatter at all", id="no-frontmatter"),
+    pytest.param(
+        "---\nauthor: alice\nclassification: private --- the closing marker is inline\nbody",
+        {"author": "alice", "classification": "private"}, "the closing marker is inline\nbody",
+        id="closed-inside-a-line-as-the-base-framed-it",
+    ),
+    pytest.param(
+        "---\nauthor: bones --- warp notes\n", {"author": "bones"}, "warp notes",
+        id="closed-inside-a-line-naming-no-classification",
+    ),
+    pytest.param(
+        "---\nauthor: alice\nclassification: private\nbody", {}, "---\nauthor: alice\nclassification: private\nbody",
+        id="never-closed-has-no-frontmatter-L18",
+    ),
 ])
 def test_every_reader_frames_and_loads_a_document_alike(
     tmp_path: Path, raw: str, frontmatter: dict[str, Any] | None, body: str,
@@ -441,3 +455,74 @@ async def test_the_records_search_route_confines_a_search_to_a_directory(tmp_pat
     assert [hit["path"] for hit in confined["results"]] == ["notebooks/Ezri/reactor-note.md"]
     outside = await search_records(q="reactor", scope="ship", directory="../outside", runtime=runtime)
     assert isinstance(outside, JSONResponse) and outside.status_code == 400
+
+
+_INLINE_CLOSE = "---\nauthor: alice\nclassification: private --- the closing marker is inline\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("raw", "kept"), [
+    pytest.param(_INLINE_CLOSE + "warp core notes\n", True, id="closed-inside-a-line"),
+    pytest.param(
+        _INLINE_CLOSE + "status: nominal\n---\nwarp core notes\n", True, id="closed-inside-a-line-then-a-key-and-a-rule",
+    ),
+    pytest.param(
+        _INLINE_CLOSE + "Warp core notes, in prose.\n---\nmore warp notes\n", True,
+        id="closed-inside-a-line-then-prose-and-a-rule",
+    ),
+    pytest.param(
+        _INLINE_CLOSE + "classification: ship\n---\nwarp core notes\n", True,
+        id="closed-inside-a-line-then-a-repeated-key-and-a-rule",
+    ),
+    pytest.param("---\nauthor: alice\nclassification: private\n---\nwarp core notes\n", True, id="closed-on-its-own-line"),
+    pytest.param("---\nauthor: alice\nclassification: private\nwarp core notes\n", False, id="never-closed-L18"),
+])
+async def test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_base_read(
+    tmp_path: Path, raw: str, kept: bool,
+) -> None:
+    """A2 (round 2, finding 1), through ``read_entry`` and ``search``. A1 ended a frontmatter only at a line
+    beginning ``---``, so a hand-made or legacy file closed inside a line read as ``{}`` (the first case) or took
+    its body as YAML: the second case then read an unknown classification, the third did not parse (its author
+    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. The
+    fifth is the store's own shape. The last has no closing marker and reads as on the base, with no frontmatter
+    (L18); BF-956 owns any change to it and updates this case."""
+    store = await _store(tmp_path)
+    path = "notebooks/alice/framing.md"
+    target = store.repo_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(raw, encoding="utf-8")
+    own = await store.read_entry(path, reader_id="alice")
+    assert own is not None and "warp" in own["content"].lower()
+    assert await _paths(store, "warp", reader_id="alice") == [path]
+    other = await store.read_entry(path, reader_id="bob")
+    if kept:
+        assert own["frontmatter"]["classification"] == "private"
+        assert other is None
+        assert await _paths(store, "warp", reader_id="bob") == []
+    else:
+        assert own["frontmatter"] == {} and other is not None
+        assert await _paths(store, "warp", reader_id="bob") == [path]
+
+
+@pytest.mark.asyncio
+async def test_a_rewritten_note_is_indexed_at_the_classification_it_keeps(tmp_path: Path) -> None:
+    """A2 (round 2, finding 2; AD-1157a): a notebook rewrite that names no classification keeps the note's own, and
+    ``write_entry`` handed the semantic index the caller's default (``private``) instead, so a note that reads as
+    ``ship`` on disk was missing from another reader's semantic results (on the base too). Real
+    ``SemanticKnowledgeLayer`` and Chroma, as in ``test_ad1138_records_semantic_index.py``."""
+    store = await _store(tmp_path)
+    layer = SemanticKnowledgeLayer(db_path=tmp_path / "semantic", episodic_memory=None)
+    await layer.start()
+    try:
+        store.set_semantic_indexer(layer)
+        path = await store.write_notebook("Ezri", "coolant", "reactor coolant log", classification="ship")
+        await store.write_notebook("Ezri", "coolant", "reactor coolant log, revised")
+        on_disk = await store.read_entry(path, reader_id="alice")
+        assert on_disk is not None and on_disk["frontmatter"]["classification"] == "ship"  # premise: AD-1157a kept it
+        rows = await layer.search(
+            "reactor coolant", types=["records"], limit=20, records_scope="ship", reader_id="alice",
+        )
+        indexed = [row.get("metadata") or {} for row in rows]
+        assert [meta.get("classification") for meta in indexed if meta.get("path") == path] == ["ship"]
+    finally:
+        await layer.stop()
