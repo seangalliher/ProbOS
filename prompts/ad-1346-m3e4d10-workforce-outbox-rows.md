@@ -3,6 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05
 **Revised by:** the orchestrator (Copilot), 2026-11-06: §11's record of the `STORE_WRITE_SCOPES` Grep over `tests` counts 28 lines (it said 30; the 28 listed lines are unchanged, re-run on `55f60873`); no other change.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-05: Amendment A1 (review round 1): `enqueue_promoted_report`'s body covers the ship's own status notices (D239) as well as copies of agents' reports (D218), in §3, the M3e4d10 comment, its reason, D346, WH-1, R163 and the PROGRESS pair; R163 names the body limit the base's issue #1757 tracks. No classification or count changes.
+**Revised by:** the orchestrator (Copilot), 2026-11-06: M1-03's SEARCH and REPLACE quote d9's `_record_timestamp` row as d9's Amendment A1 repaired it, so the pair applies on the repaired d9 fixture. No other change.
 **Status:** build-ready. **Issue:** #1604 (AD-1346 M3, epic #1601). The tenth part of M3e4d (register R113) and part (b) of register R160. No new AD or BF number (`scripts/ad_ceiling.py`: CEILING AD-1358, as reported by the request). **Tier:** test (M1: the census rows and the guards that pin them; no `src` file), docs (M2). Nothing parked.
 **Dependencies:** AD-1346 M3e4d6 to M3e4d9. The build's base is the merge of the batch that carries M3e4d6 to M3e4d8 into `origin/main`, with M3e4d9 built on it. The Architect sends an amendment for any SEARCH that differs there.
 **Anchors:** every SEARCH text in §7 was read on the scratch commit `55f60873` (tree `311e619d`), which is `8ecf968d` plus M3e4d9's M1 pairs, applied by tool. The SEARCH of M2-02 is the last bullet of M3e4d9's `DECISIONS.md` entry as M3e4d9's contract writes it; it is not in that tree. The block count is in §12. No new file. Two files are regenerated (M2).
@@ -177,14 +178,14 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
 
 SEARCH:
 ```
-    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),
+    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),
     # Pending (D334): a later part of M3e4d classifies each.
     **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
 ```
 REPLACE:
 ```
-    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source, and no text (D239)"),
+    (_WORKFORCE, "WorkItemStore._record_timestamp"): System(SHIP, "a booking's status change with its time and source; booking_timestamps has no author column, and source includes caller-supplied text (D239)"),
     # AD-1346 M3e4d10 (D346). System (D239, D218): the four outbox marks take only a row's identity and write its
     # delivered and delivered_at; a promoted report's pending row holds a copy of an agent's report (D218) or one of
     # the ship's own status notices (D239), which the delivery service replays through
