@@ -1441,6 +1441,52 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual, accepted.* Registers R160 and R161 of the contract.
 - *Reversal.* Revert the M3e4d8 commits.
 
+### AD-1357 -- A crew chat reply records what it was given: a context manifest beside it, and a journal row for the agentic DM turn (2026-11-05, #1749)
+
+- *Scope.* `cognitive/context_manifest.py` (new: `ContextLedger`, `RecallRecord`, `build_manifest`, `record_manifest`, `storable`, `turn_hash`, `context_manifest_metadata`), `cognitive/cognitive_agent.py` (the DM `_emit` renderer, both exits of `_decide_via_llm` and the agentic journal row, the recall and lookup notes in `_recall_relevant_memories`, `_build_result_metadata`), `cognitive/oracle_service.py` (`query_formatted(sources_out=)`), `cognitive/transcript_grounding.py` (`consult_transcript(sources_out=)`), `routers/agents.py` (`_build_reply_metadata`), `routers/thread_fanout.py` (the group reply's metadata), `doctor/checks/token_accounting_check.py` and `cognitive/journal_token_report.py` (the uncharged legend and coverage wording), tests. Contract `prompts/ad-1357-context-manifest.md`.
+- *CM1 (shape).* Inline under the reply's `metadata["context_manifest"]`, at most 16 KiB and always storable, so it is kept as long as the message. Rejected: a content-addressed blob ref; a new table.
+- *CM2 (producer).* Each DM `_emit` bid's renderer is the ledger's: it returns the same text and marks the section kept, because `ContextAssembler` renders only the bids it keeps. A section is recorded by its name, so a new one needs no change here. Rejected: a survivors API on the assembler; rebuilding the sections from observation keys.
+- *CM3 (journal).* The agentic branch writes one row: `model` unknown (BF-901), an empty token source (uncharged), `cached` 0, `dag_node_id` dm-turn. On both paths the manifest names its row by id and hashes once `record` has returned; with no journal configured, or a write that raised, `journal_entry_id` is null. The doctor's token view explains the DM-turn row as a successful turn whose model calls are not metered. Rejected: `cached` true (filed as replayed); a separate table; journaling each loop call (BF-901 S2's gap).
+- *CM4 (privacy).* The agent's own episode ids, Ship's Records paths and its own transcript room are identified. Cross-agent recall and every other Oracle tier are counted. The query is kept only when it is the Captain's words on a 1:1 turn. Rejected: hashed peer ids; peer ids.
+- *CM5 (wire).* The manifest is the last key of `_build_result_metadata`, so BF-805's greedy fit check considers it after every other key and it never takes their room; it is not guaranteed to be dropped first (L18). `storable` turns one the store would refuse, one whose encoding raises, or one nested more than 8 deep (which the HXI API could not read back) into a stub, both where the agent builds it and in `context_manifest_metadata`, through which both routers store it. It returns its own encoding decoded again, in the manifest's key order, and measures depth on that, so the routers store and return what the store writes (A3).
+- *Not changed.* `ContextAssembler`, `AttentionFaculty`, the prompt text, `CognitiveJournal`'s schema, the federation bridge (it forwards only `dm_reply`), config.
+- *Residual.* Recorded limits L1 to L19 of the contract.
+- *Reversal.* Revert the AD-1357 commits.
+
+### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
+
+AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
+
+- *D340 (the cut).* Part (a) alone, as thirteen rows of the ship's. Rejected: parts (a) and (b) together, which bring `enqueue_promoted_report`'s classification and possibly a check; checks at the writes an agent's own call reaches; part (a) in two parts.
+- *D341 (the rows).* Each reason names what its scope's statements write. `transition_work_item` writes no author column and does not write its `source`. Its production metadata patches are ship's services' records; the agent work runner's holds a copy of an executor's answer under the executor's callsign or slot id, which D218 makes the ship's, and `PersistentTaskStore._fire_task`'s run result is the same kind of record. `ChatThreadStore.create_thread`'s check presents `created_by_agent` from a JSON value because that value is the row's own author, the agent that opens the room; a producer named beside a copied result is not. Rejected: a check presenting its `source`, which it does not write; a check presenting the executor from the patch; keeping it pending.
+- *D342 (the guards).* WC1's and WC3's counts move; no new test. Rejected: a column-name guard over the system scopes; a pin listing the thirteen; retiring `AGENT_ATTRIBUTED_SCOPES` and WC5 now.
+- *D343 (cost).* No call is added.
+- *Residual, accepted.* Register R162 of the contract.
+- *Reversal.* Revert the M3e4d9 commits.
+
+### AD-1346 M3e4d10 -- part (b) of the pending workforce scopes, classified (2026-11-05, #1604)
+
+AD-1346 M3e4d10 is the tenth part of M3e4d and part (b) of register R160. Five `WorkItemStore` scopes, the outbox and report marks, leave `_WORKFORCE_PENDING` and become `System` rows. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 69 `System` and 27 `Pending` rows. The contract is `prompts/ad-1346-m3e4d10-workforce-outbox-rows.md`.
+
+- *D345 (the cut).* Part (b) alone, as five rows of the ship's. Rejected: a check at `enqueue_promoted_report`; parts (b) and (c) together; part (b) folded into M3e4d9.
+- *D346 (the rows).* The four marks take only a row's identity and write `delivered` and `delivered_at` (D239). `enqueue_promoted_report`'s row is the ship's copy of a message posted under an agent's id, which the delivery service replays through `ChatThreadStore.append_message_once`. Its body is a copy of the agent's report, which D218 makes the ship's, or one of the ship's own status notices, whose text no agent wrote (D239). Rejected: a check presenting its `agent_id`, which counts the copy as the author's; keeping it pending.
+- *D347 (the guards).* WC1's and WC3's counts move; no new test. Rejected: a tally test over the outbox, the delivery service and the thread store (register R163); a pin listing the five; retiring `AGENT_ATTRIBUTED_SCOPES` and WC5 now.
+- *D348 (cost).* No call is added.
+- *Residual, accepted.* Register R163 of the contract.
+- *Reversal.* Revert the M3e4d10 commits.
+
+### AD-1346 M3e4d11 -- part (c) of the pending workforce scopes, six classified (2026-11-05, #1604)
+
+AD-1346 M3e4d11 is the eleventh part of M3e4d and part (c1) of register R160. Six `WorkItemStore` scopes of the work item fields leave `_WORKFORCE_PENDING` and become `System` rows; `update_work_item` stays pending. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 75 `System` and 21 `Pending` rows. The contract is `prompts/ad-1346-m3e4d11-workforce-field-rows.md`.
+
+- *D350 (the cut).* Six scopes as rows of the ship's; `update_work_item` in its own slice. Rejected: a check in `update_work_item` now; all seven as the ship's; all seven kept pending.
+- *D351 (the rows).* No scope takes an author id or writes `created_by`. An assignee names the agent it is about, and a confirmation has no text (D239). The metadata, verification and contract records are composed by the crew executor, the crew finalizer and `CrewSessionService`, with copies of agents' text under their ids, which D218 makes the ship's. Rejected: a check presenting `confirmed_by` on `MessageStore.endorse`'s precedent; checks presenting the assignee or producer from a payload, which names the agent a record is about or the producer of a copy, not the record's author (D341).
+- *D352 (`update_work_item`).* D239 holds for its step write: the plan's labels and a rejection note, with `facilitator` and `confirmed_by` taken from `set_steps` and `update_step`, to which the DM reply pipeline passes the agent's id. Its check is designed in its own slice (register R165). Rejected: a row of the ship's; reading the author out of the `steps` payload.
+- *D353 (the guards).* WC1's and WC3's counts move; no new test.
+- *D354 (cost).* No call is added.
+- *Residual, accepted.* Registers R164 and R165 of the contract.
+- *Reversal.* Revert the M3e4d11 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
