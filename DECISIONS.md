@@ -1474,6 +1474,19 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L19 of the contract.
 - *Reversal.* Revert the AD-1357 commits.
 
+### AD-1358 S1 -- A crew member in a game is told the recorded games against that opponent (2026-11-06, #1750)
+
+- *Scope.* `recreation/history.py` (new: `parse_game_record`, `GameOutcome`, `HeadToHead`, `read_head_to_head`), `cognitive/cognitive_agent.py` (`_build_head_to_head_context`, the `head_to_head` DM bid after `active_game`, its inventory entry), `cognitive/oracle_service.py` (`records_reader_for`, public), `cognitive/dm_targeted_lookup.py` (`_knowledge_lookup_reader` delegates), tests. Contract `prompts/ad-1358-s1-head-to-head-tally.md`.
+- *HH1 (where).* A new module beside the record's writer, so a round-trip test pins writer and parser together. Rejected: a `RecreationService` method (its 16th, over the SRP trigger); inside the synchronous `_build_active_game_context`.
+- *HH2 (read).* A strict, tag-filtered `list_entries` of one game-type directory, then `read_entry` per record and a parse of the body: the record's frontmatter holds no players or result. Rejected: a frontmatter lookup (impossible for existing records); a new store API.
+- *HH3 (what).* One line for the active game's type and opponent: the total, wins each, draws, latest UTC date. Zero games gives no block.
+- *HH4 (privacy).* Read as the agent through BF-949's rule, now `records_reader_for`; a record `read_entry` withholds is not counted.
+- *HH5 (cost).* One listing plus at most 256 entry reads per DM turn during a game; above the cap, none, no block and a warning.
+- *HH6 (failure).* Log-and-degrade: any failure gives no block and a warning; the prompt is unchanged.
+- *Not changed.* `records_store.py`, `RecreationService`, the AD-526a record format, `context_manifest.py`, the Ward Room chain's game context, config.
+- *Residual.* Recorded limits L1 to L10 of the contract.
+- *Reversal.* Revert the AD-1358 S1 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
