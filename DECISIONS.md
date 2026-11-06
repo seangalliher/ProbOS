@@ -1463,6 +1463,18 @@ AD-1346 M3e4d10 is the tenth part of M3e4d and part (b) of register R160. Five `
 - *Residual, accepted.* Register R163 of the contract.
 - *Reversal.* Revert the M3e4d10 commits.
 
+### AD-1346 M3e4d11 -- part (c) of the pending workforce scopes, six classified (2026-11-05, #1604)
+
+AD-1346 M3e4d11 is the eleventh part of M3e4d and part (c1) of register R160. Six `WorkItemStore` scopes of the work item fields leave `_WORKFORCE_PENDING` and become `System` rows; `update_work_item` stays pending. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 75 `System` and 21 `Pending` rows. The contract is `prompts/ad-1346-m3e4d11-workforce-field-rows.md`.
+
+- *D350 (the cut).* Six scopes as rows of the ship's; `update_work_item` in its own slice. Rejected: a check in `update_work_item` now; all seven as the ship's; all seven kept pending.
+- *D351 (the rows).* No scope takes an author id or writes `created_by`. An assignee names the agent it is about, and a confirmation has no text (D239). The metadata, verification and contract records are composed by the crew executor, the crew finalizer and `CrewSessionService`, with copies of agents' text under their ids, which D218 makes the ship's. Rejected: a check presenting `confirmed_by` on `MessageStore.endorse`'s precedent; checks presenting the assignee or producer from a payload.
+- *D352 (`update_work_item`).* D239 holds for its step write: the plan's labels and a rejection note, with `facilitator` and `confirmed_by` taken from `set_steps` and `update_step`, to which the DM reply pipeline passes the agent's id. Its check is designed in its own slice (register R165). Rejected: a row of the ship's; reading the author out of the `steps` payload.
+- *D353 (the guards).* WC1's and WC3's counts move; no new test.
+- *D354 (cost).* No call is added.
+- *Residual, accepted.* Registers R164 and R165 of the contract.
+- *Reversal.* Revert the M3e4d11 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
