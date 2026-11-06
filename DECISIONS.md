@@ -1452,6 +1452,17 @@ AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirtee
 - *Residual, accepted.* Register R162 of the contract.
 - *Reversal.* Revert the M3e4d9 commits.
 
+### AD-1346 M3e4d10 -- part (b) of the pending workforce scopes, classified (2026-11-05, #1604)
+
+AD-1346 M3e4d10 is the tenth part of M3e4d and part (b) of register R160. Five `WorkItemStore` scopes, the outbox and report marks, leave `_WORKFORCE_PENDING` and become `System` rows. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 69 `System` and 27 `Pending` rows. The contract is `prompts/ad-1346-m3e4d10-workforce-outbox-rows.md`.
+
+- *D345 (the cut).* Part (b) alone, as five rows of the ship's. Rejected: a check at `enqueue_promoted_report`; parts (b) and (c) together; part (b) folded into M3e4d9.
+- *D346 (the rows).* The four marks take only a row's identity and write `delivered` and `delivered_at` (D239). `enqueue_promoted_report`'s row is the ship's copy of an agent's report, which the delivery service replays through `ChatThreadStore.append_message_once`; D218 makes such a copy the ship's. Rejected: a check presenting its `agent_id`, which counts the copy as the author's; keeping it pending.
+- *D347 (the guards).* WC1's and WC3's counts move; no new test. Rejected: a tally test over the outbox, the delivery service and the thread store (register R163); a pin listing the five; retiring `AGENT_ATTRIBUTED_SCOPES` and WC5 now.
+- *D348 (cost).* No call is added.
+- *Residual, accepted.* Register R163 of the contract.
+- *Reversal.* Revert the M3e4d10 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
