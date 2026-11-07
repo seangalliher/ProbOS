@@ -155,7 +155,9 @@ class _RecordsGitCheck:
                 message="Ship's Records git: auto_commit is off, so ProbOS keeps no records history to check",
             )
         repo = resolve_records_repo_path(records, ctx.data_dir)
-        if not repo.exists() and not repo.is_symlink():
+        try:
+            repo.lstat()  # BF-957 A4: an entry exists even when it is a link whose target is missing
+        except FileNotFoundError:
             return CheckResult(
                 outcome=CheckOutcome.OK,
                 message=f"Ship's Records git: {repo} does not exist yet; it is created when the vessel starts",

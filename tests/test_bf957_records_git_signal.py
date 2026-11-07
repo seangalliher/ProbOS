@@ -34,7 +34,8 @@ async def _store(tmp_path: Path) -> RecordsStore:
 
 def _git(repo: Path, *args: str, **env: str) -> str:
     return subprocess.run(
-        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env={**os.environ, **env},
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, encoding="utf-8", errors="replace",
+        env={**os.environ, **env},
     ).stdout
 
 
@@ -67,6 +68,41 @@ def _ctx(tmp_path: Path, records: RecordsConfig | None, *, loaded: bool = True) 
 
 def _fake_run(monkeypatch: pytest.MonkeyPatch, fake) -> None:
     monkeypatch.setattr("probos.knowledge.records_store.subprocess.run", fake)
+
+
+def _broken_link(link: Path, target: Path) -> None:
+    """A directory link whose target is then removed: a symlink, or a junction where Windows refuses a symlink."""
+    target.mkdir()
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError:  # WinError 1314: no symlink privilege; a junction needs none
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    target.rmdir()
+    assert os.path.lexists(link) and not link.exists(), "premise: the link remains and its target is gone"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_git(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """BF-957 A4: no host git configuration or repository redirect reaches these tests' git, before any store starts.
+
+    The store's git and the check's git inherit ``os.environ`` (``trusted_command_env``), as ``_git`` does. The
+    store sets its own commit identity, so the empty configuration needs none.
+    """
+    home = tmp_path_factory.mktemp("bf957-git-home")
+    empty = home / ".gitconfig"
+    empty.write_bytes(b"")
+    for name in (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR", "GIT_CONFIG_PARAMETERS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")  # no system scope (Git for Windows' own gitconfig included)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))  # git 2.32+: the global scope is this empty file
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")  # no command-line scope from the environment (the harness's fsmonitor)
+    monkeypatch.setenv("HOME", str(home))  # an older git reads ~/.gitconfig and the XDG file from here
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
 
 
 # ---------------------------------------------------------------- the seam
@@ -193,6 +229,7 @@ async def test_a_commit_that_raises_is_logged_once_at_warning_and_does_not_raise
     logged = _warnings(caplog)
     assert len(logged) == 1, logged
     assert "FileNotFoundError" in logged[0]
+    assert "not known" in logged[0] and "did not run" not in logged[0], logged[0]  # A4: no claim git did not run
 
 
 def test_one_git_child_runs_at_a_time_per_store(tmp_path, monkeypatch):
@@ -282,7 +319,9 @@ async def test_a_failure_is_logged_with_git_s_first_line_only(tmp_path, caplog, 
     repo = store.repo_path
     _plant_lock(repo)
     (repo / "reports" / "one.md").write_text("First.", encoding="utf-8")
-    plain = subprocess.run(["git", "-C", str(repo), "add", "reports/one.md"], capture_output=True, text=True)
+    plain = subprocess.run(
+        ["git", "-C", str(repo), "add", "reports/one.md"], capture_output=True, encoding="utf-8", errors="replace",
+    )
     assert plain.returncode != 0 and "remove the file manually" in plain.stderr, (
         f"premise: this git advises removing the lock; report this, do not skip: {plain.stderr!r}"
     )
@@ -295,21 +334,30 @@ async def test_a_failure_is_logged_with_git_s_first_line_only(tmp_path, caplog, 
 
 
 @pytest.mark.parametrize("case", ["success", "failure", "timeout"])
-def test_the_warning_memory_changes_only_while_the_git_lock_is_held(tmp_path, monkeypatch, case):
+def test_the_warning_memory_changes_under_the_git_lock_and_is_logged_after_its_release(
+    tmp_path, caplog, monkeypatch, case
+):
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
     store = RecordsStore(_records(tmp_path))
     held: list[tuple[str, bool]] = []
-    forget, warn = store._forget_git_warnings, store._warn_git_once
 
-    def forget_spy() -> None:
-        held.append(("forget", store._git_lock.locked()))
-        forget()
+    class Memory(dict):  # the store's warning memory, observed where it changes
+        def __setitem__(self, key: object, value: object) -> None:
+            held.append(("remember", store._git_lock.locked()))
+            super().__setitem__(key, value)
 
-    def warn_spy(*args: object) -> None:
-        held.append(("warn", store._git_lock.locked()))
-        warn(*args)
+        def clear(self) -> None:
+            held.append(("forget", store._git_lock.locked()))
+            super().clear()
 
-    monkeypatch.setattr(store, "_forget_git_warnings", forget_spy)
-    monkeypatch.setattr(store, "_warn_git_once", warn_spy)
+    class Emitted(logging.Handler):  # where a vessel's log handler runs; it may read git through the store
+        def emit(self, record: logging.LogRecord) -> None:
+            held.append(("log", store._git_lock.locked()))
+
+    store._git_warned = Memory()
+    handler = Emitted(logging.WARNING)
+    log = logging.getLogger(_LOGGER)
+    log.addHandler(handler)
 
     def fake(argv, **kwargs):
         if case == "timeout":
@@ -317,14 +365,36 @@ def test_the_warning_memory_changes_only_while_the_git_lock_is_held(tmp_path, mo
         return subprocess.CompletedProcess(argv, 0 if case == "success" else 1, stdout="", stderr="fatal: bf957\n")
 
     _fake_run(monkeypatch, fake)
-    if case == "timeout":
-        with pytest.raises(subprocess.TimeoutExpired):
+    try:
+        if case == "timeout":
+            with pytest.raises(subprocess.TimeoutExpired):
+                store._git_sync(("add", "x.md"))
+        else:
             store._git_sync(("add", "x.md"))
-    else:
-        store._git_sync(("add", "x.md"))
+    finally:
+        log.removeHandler(handler)
 
-    # held, not merely called: a later child's warning can then never be cleared by an earlier child's success
-    assert held == [("forget" if case == "success" else "warn", True)]
+    # The memory changes while the lock is held, so a later child's warning is never cleared by an earlier
+    # child's success; the record is emitted after the release, so a handler that reads git cannot deadlock.
+    assert held == ([("forget", True)] if case == "success" else [("remember", True), ("log", False)])
+
+
+@pytest.mark.asyncio
+async def test_history_is_read_as_utf8_whatever_the_host_locale(tmp_path, monkeypatch):
+    store = await _store(tmp_path)
+    await store.write_entry("bones", "reports/one.md", "First.", "\u0401 first")
+    real_run = subprocess.run
+
+    def cp1252_host(argv, **kwargs):
+        if "encoding" not in kwargs:  # decoding left to the locale: decode as a cp1252 host does (0x81 is undefined)
+            kwargs["encoding"] = "cp1252"
+        return real_run(argv, **kwargs)
+
+    _fake_run(monkeypatch, cp1252_host)
+    history = await store.get_history("reports/one.md")
+
+    # The base lost this row on a cp1252 host (git exited 0; the reader returned None) and misread the em dash.
+    assert [row["message"] for row in history] == ["[records] \u0401 first \u2014 by bones"], history
 
 
 # ---------------------------------------------------------------- the doctor check
@@ -395,15 +465,18 @@ async def test_the_check_skips_without_config_records_or_auto_commit(tmp_path, c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["no directory", "a file", "not a repository", "no commit yet"])
+@pytest.mark.parametrize("case", ["no directory", "a file", "a broken link", "not a repository", "no commit yet"])
 async def test_a_missing_directory_or_repository_or_commit_is_reported(tmp_path, case):
     repo = tmp_path / "ship-records"
     if case == "a file":
         repo.write_text("not a directory", encoding="utf-8")
-        with pytest.raises(FileExistsError):  # premise: startup refuses this path, so OK would be false
-            await RecordsStore(_records(tmp_path)).initialize()
+    elif case == "a broken link":
+        _broken_link(repo, tmp_path / "removed-target")
     elif case != "no directory":
         repo.mkdir()
+    if case in ("a file", "a broken link"):
+        with pytest.raises(FileExistsError):  # premise: startup refuses this path, so OK would be false
+            await RecordsStore(_records(tmp_path)).initialize()
     if case == "no commit yet":
         _git(repo, "init")
 
@@ -412,13 +485,17 @@ async def test_a_missing_directory_or_repository_or_commit_is_reported(tmp_path,
     expected = {
         "no directory": CheckOutcome.OK,
         "a file": CheckOutcome.FAIL,
+        "a broken link": CheckOutcome.FAIL,
         "not a repository": CheckOutcome.WARN,
         "no commit yet": CheckOutcome.WARN,
     }
     assert result.outcome == expected[case]
-    if case == "a file":
+    if case in ("a file", "a broken link"):
         assert "not a directory" in result.message
+    if case == "a file":
         assert repo.read_text(encoding="utf-8") == "not a directory"
+    if case == "a broken link":
+        assert os.path.lexists(repo) and not repo.exists()  # nothing was created behind the link
     if case == "no commit yet":
         assert "last commit: not read" in result.detail
 
@@ -464,16 +541,15 @@ async def test_the_check_runs_no_fsmonitor_and_writes_nothing_in_the_repository(
     hook.write_bytes(f'#!/bin/sh\necho ran >> "{marker.as_posix()}"\n'.encode("utf-8"))
     os.chmod(hook, 0o755)
     _git(repo, "config", "core.fsmonitor", hook.as_posix())
-    # The agent harness exports core.fsmonitor=false at command-line scope (GIT_CONFIG_COUNT), which overrides the
-    # repository's value and would hide a missing option. Switch it off, so the test means the same on any host.
-    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
-    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")
+    # _hermetic_git switched off the harness's command-line core.fsmonitor=false (GIT_CONFIG_COUNT) and the host's
+    # git configuration before the store initialised, so neither can hide a missing option or stop the first commit.
+    assert _git(repo, "rev-list", "--count", "HEAD").strip() == "1", "premise: initialisation committed"
     check = _check()
 
     # premise: with optional locks off, as the check's reads had before A3, plain git status runs the fsmonitor
     plain = subprocess.run(
         ["git", "-C", str(repo), "status", "--porcelain"],
-        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}, capture_output=True, text=True,
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}, capture_output=True, encoding="utf-8", errors="replace",
     )
     assert plain.returncode == 0, plain.stderr
     assert marker.is_file(), "premise: this git runs a configured fsmonitor; report this, do not skip"
