@@ -673,7 +673,7 @@ async def test_the_game_in_progress_is_not_counted_when_it_finishes_while_the_re
 @pytest.mark.parametrize(
     ("current", "total"), [pytest.param("game-b", 2, id="current"), pytest.param("", 3, id="none")],
 )
-async def test_the_record_of_the_game_the_tally_is_shown_in_is_not_read(
+async def test_the_record_of_the_game_the_tally_is_shown_in_is_not_passed_to_read_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, current: str, total: int,
 ) -> None:
     """A3 (F1): ``current_game_id`` names the game the tally is shown in; its record is skipped
@@ -711,6 +711,15 @@ def _directory_link(link: Path, target: Path) -> None:
         assert link.is_symlink()
 
 
+def _remove_directory_link(link: Path) -> None:
+    """Remove the link ``_directory_link`` made, never its target or what lies below it, as AD-1200's
+    ``_unlink_junction``: ``rmdir`` on Windows (a junction), ``unlink`` elsewhere (a symlink)."""
+    if os.name == "nt":
+        link.rmdir()
+    else:
+        link.unlink()
+
+
 def _scandir_spy(monkeypatch: pytest.MonkeyPatch, listed: list[Path] | None, limit: int = 2000) -> dict[str, int]:
     """Replace ``os.scandir`` for one test. Every call is counted, and the ``limit``-th raises, so a walk
     that does not terminate fails fast instead of hanging the suite. With ``listed``, each path argument
@@ -738,9 +747,10 @@ def _scandir_spy(monkeypatch: pytest.MonkeyPatch, listed: list[Path] | None, lim
 async def test_a_game_directory_that_leads_out_of_the_records_is_not_walked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, link: str,
 ) -> None:
-    """A3 (F3): a directory link at ``link`` leads out of the records. The count refuses it before
-    listing it, as ``RecordsStore._safe_path`` refuses it: nothing outside is listed, no tally is
-    shown, and a WARNING carries the refusal. The link and its target both live in ``tmp_path``."""
+    """A3 (F3): a directory link at ``link`` leads out of the records, in a layout that does not change
+    during the pass. The count refuses it before listing it, as ``RecordsStore._safe_path`` refuses it:
+    nothing outside is listed, no tally is shown, and a WARNING carries the refusal. The link and its
+    target both live in ``tmp_path``; the link alone is removed in a ``finally`` (A4)."""
     read_head_to_head = _built("read_head_to_head")
     store = await _store(tmp_path)
     outside = tmp_path / "outside"
@@ -751,11 +761,14 @@ async def test_a_game_directory_that_leads_out_of_the_records_is_not_walked(
     _directory_link(store.repo_path / link, outside)
     outside_resolved = outside.resolve()
     listed: list[Path] = []
-    _scandir_spy(monkeypatch, listed)
-    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
-    tally = await read_head_to_head(
-        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
-    )
+    try:
+        _scandir_spy(monkeypatch, listed)
+        caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+        tally = await read_head_to_head(
+            store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        )
+    finally:
+        _remove_directory_link(store.repo_path / link)
     assert not [p for p in listed if p.is_relative_to(outside_resolved)], listed
     assert tally is None
     assert any(
@@ -786,7 +799,7 @@ async def test_a_directory_cycle_under_the_game_directory_ends_the_walk(
             store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
         )
     finally:
-        loop.rmdir() if os.name == "nt" else loop.unlink()  # the link only, as AD-1200's _unlink_junction
+        _remove_directory_link(loop)
     assert calls["n"] < 2000, "the walk does not terminate"
     assert tally is None
     warnings = [r for r in caplog.records if r.name == "probos.recreation.history"]
