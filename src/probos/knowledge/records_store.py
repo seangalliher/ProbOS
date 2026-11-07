@@ -523,7 +523,7 @@ def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
       included (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried). The
       default passes over that directory, as ``rglob`` did.
     - O3 each step of a listing: any ``OSError`` raises, in both modes, as ``rglob``'s descent (``Path.walk``)
-      raised one. ``rglob`` also matched each directory in a second scan that swallowed one, so the base outlived
+      raised one. ``rglob`` also matched each directory in a separate scan that swallowed one, so the base outlived
       a one-shot fault that hit that scan, losing that directory's own documents (BF-958 contract L10).
     - OJ ``entry.is_junction()`` (BF-958): a directory junction is not descended, and a WARNING names it, in both
       modes. ``is_dir(follow_symlinks=False)`` is true for a junction, so before BF-958 this walk descended one.

@@ -598,7 +598,7 @@ def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
       included (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried). The
       default passes over that directory, as ``rglob`` did.
     - O3 each step of a listing: any ``OSError`` raises, in both modes, as ``rglob``'s descent (``Path.walk``)
-      raised one. ``rglob`` also matched each directory in a second scan that swallowed one, so the base outlived
+      raised one. ``rglob`` also matched each directory in a separate scan that swallowed one, so the base outlived
       a one-shot fault that hit that scan, losing that directory's own documents (BF-958 contract L10).
     - OJ ``entry.is_junction()`` (BF-958): a directory junction is not descended, and a WARNING names it, in both
       modes. ``is_dir(follow_symlinks=False)`` is true for a junction, so before BF-958 this walk descended one.
@@ -926,7 +926,7 @@ REPLACE:
 
 **BF-958 (DATE), #1761 -- Ship's Records listing and search follow no directory junction out of the repository.**
 - **Base.** `RecordsStore.list_entries` (strict or not) and `search` descended a directory junction below a listed directory (`is_dir(follow_symlinks=False)` is true for one on Windows) and read a `*.md` link without checking where it resolves, so they could return a file from outside the repository that `read_entry` refused, with its frontmatter and, in a search, a 200-character snippet.
-- **Fix.** One walk, `_markdown_files(strict=...)`, serves both listings and the search and does not descend a directory junction; each listed file is read only if it resolves inside the resolved repository (`_safe_path`'s rule). Both skips are logged at WARNING in both modes and raise in neither. The default walk passes over a directory it cannot open and takes an entry whose type it cannot read for a file, as `rglob` did; an `OSError` while listing a directory raises in both modes, as `rglob`'s descent raised it (the base outlived a one-shot fault in its second, matching scan: contract L10).
+- **Fix.** One walk, `_markdown_files(strict=...)`, serves both listings and the search and does not descend a directory junction; each listed file is read only if it resolves inside the resolved repository (`_safe_path`'s rule). Both skips are logged at WARNING in both modes and raise in neither. The default walk passes over a directory it cannot open and takes an entry whose type it cannot read for a file, as `rglob` did; an `OSError` while listing a directory raises in both modes, as `rglob`'s descent raised it (the base outlived a one-shot fault in its separate matching scan: contract L10).
 - **Changed for a link layout.** A junction cycle is not descended, so the strict walk no longer ends with `OSError` after about 60 levels. A junction that stays inside is not descended either; its records are listed at their own paths.
 - **Not changed.** The store's other walks (`get_stats`, `list_bills`, the notebook similarity and convergence checks; follow-up `#1762`) and `_count_record_names` (AD-1358). Contract `prompts/bf-958-records-link-containment.md`.
 
