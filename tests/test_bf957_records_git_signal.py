@@ -426,21 +426,22 @@ async def test_history_is_read_as_stored_whatever_the_configured_encoding(tmp_pa
         _git(repo, "config", "i18n.commitEncoding", "CP1252")
         await store.write_entry("bones", "reports/one.md", "Second.", "caf\u00e9 second")
 
-    # premise: git labels each message as configured without converting it, so every stored message is UTF-8
+    # premise (A7): the store's commits carry no encoding label whatever the operator's i18n.commitEncoding, and
+    # every stored message is UTF-8; through A6 git labelled them as configured, without converting them
     listed = [line.split("|") for line in _git(repo, "log", "--format=%H|%e", "--", "reports/one.md").split()]
-    labels = {"logOutputEncoding": [""], "commitEncoding": ["CP1252"], "both": ["CP1252"]}
-    assert [label for _, label in listed] == labels.get(case, ["CP1252", ""]), listed
+    expected = 2 if case == "commitEncoding after the first" else 1
+    assert [label for _, label in listed] == [""] * expected, listed
     for commit, _ in listed:
         raw = subprocess.run(["git", "-C", str(repo), "cat-file", "commit", commit], check=True, capture_output=True)
-        assert "caf\u00e9".encode("utf-8") in raw.stdout, raw.stdout
+        assert "caf\u00e9".encode("utf-8") in raw.stdout and b"\nencoding " not in raw.stdout, raw.stdout
     if case == "logOutputEncoding":  # premise: plain git log re-encodes the message as configured
         plain = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], check=True, capture_output=True)
         assert b"caf\xe9" in plain.stdout, plain.stdout
 
     history = await store.get_history("reports/one.md")
 
-    # A4 garbled "logOutputEncoding" and the older row of "commitEncoding after the first"; a single
-    # --encoding=utf-8 garbles every labelled row.
+    # A4 garbled "logOutputEncoding"; a single --encoding=UTF-8 garbles a labelled store commit, which the store no
+    # longer writes (A7). A commit an older store labelled is read as git converts it (contract L15).
     newest = ["[records] caf\u00e9 second \u2014 by bones"] if case == "commitEncoding after the first" else []
     assert [row["message"] for row in history] == newest + ["[records] caf\u00e9 first \u2014 by bones"], history
 
@@ -452,10 +453,20 @@ async def test_history_is_read_as_stored_whatever_the_configured_encoding(tmp_pa
         ("ISO-8859-1", b"[foreign] caf\xe9 first", "[foreign] caf\u00e9 first"),
         ("Shift_JIS", "[foreign] \u65e5\u672c".encode("shift_jis"), "[foreign] \u65e5\u672c"),
         ("|x", "[foreign] caf\u00e9 first".encode("utf-8"), "[foreign] caf\u00e9 first"),
+        ("x\ry", "[foreign] caf\u00e9 first".encode("utf-8"), "[foreign] caf\u00e9 first"),
+        ("ISO-8859-1", b"[foreign] \xc3\xa9", "[foreign] \u00c3\u00a9"),
     ],
-    ids=["ISO-8859-1", "Shift_JIS", "a label that begins with a pipe"],
+    ids=[
+        "ISO-8859-1",
+        "Shift_JIS",
+        "a label that begins with a pipe",
+        "a label that holds a carriage return",
+        "ISO-8859-1 bytes that are also UTF-8",
+    ],
 )
-async def test_a_commit_not_written_by_the_store_is_read_in_its_labelled_encoding(tmp_path, label, stored, text):
+async def test_a_commit_not_written_by_the_store_is_read_in_its_labelled_encoding(
+    tmp_path, monkeypatch, label, stored, text
+):
     store = await _store(tmp_path)
     repo = store.repo_path
     await store.write_entry("bones", "reports/one.md", "First.", "first")
@@ -469,12 +480,41 @@ async def test_a_commit_not_written_by_the_store_is_read_in_its_labelled_encodin
     head = _git(repo, "rev-parse", "HEAD").strip()
     raw = subprocess.run(["git", "-C", str(repo), "cat-file", "commit", head], check=True, capture_output=True).stdout
     assert f"\nencoding {label}\n".encode("ascii") in raw and stored in raw, raw
+    launches: list[object] = []
+    real_run = subprocess.run
+
+    def counted(argv, **kwargs):
+        launches.append(argv)
+        return real_run(argv, **kwargs)
+
+    _fake_run(monkeypatch, counted)
+    history = await store.get_history("reports/one.md")
+
+    # A7 reads every commit once, as git converts it from its label. A6 dropped the carriage-return label's row
+    # (round-4 F2) and read the last case's bytes as UTF-8; A5 split the pipe label's line.
+    assert [row["message"] for row in history] == [text, "[records] first \u2014 by bones"], history
+    # one launch per read: A5 and A6 added one per distinct label (round-4 F1, F4)
+    assert len(launches) == 1, launches
+    assert await store.get_history("reports/one.md", limit=1) == history[:1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("setting", ["no setting", "logOutputEncoding", "commitEncoding", "both"])
+async def test_the_store_s_own_message_is_read_as_written_whatever_the_setting(tmp_path, setting):
+    store = await _store(tmp_path)
+    repo = store.repo_path
+    if setting in ("logOutputEncoding", "both"):
+        _git(repo, "config", "i18n.logOutputEncoding", "CP1252")
+    if setting in ("commitEncoding", "both"):
+        _git(repo, "config", "i18n.commitEncoding", "CP1252")
+    written = "caf\u00e9 \ufffd | \u65e5\u672c"  # a legitimate U+FFFD, a pipe, and text CP1252 cannot hold
+    await store.write_entry("bones", "reports/one.md", "First.", written)
 
     history = await store.get_history("reports/one.md")
 
-    # A5 replaced git's conversion of the first two with stored bytes that are not UTF-8, and split the third's
-    # line at the pipe in its label; A4 read all three right.
-    assert [row["message"] for row in history] == [text, "[records] first \u2014 by bones"], history
+    # A6 kept git's conversion from CP1252 under "commitEncoding" and "both": it took the U+FFFD for a decoding
+    # replacement (round-4 F3). From A7 the store's commits carry no label (T14), so git outputs them as stored.
+    assert [row["message"] for row in history] == [f"[records] {written} \u2014 by bones"], history
 
 
 @pytest.mark.asyncio

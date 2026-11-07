@@ -1398,44 +1398,27 @@ class RecordsStore:
     async def get_history(self, path: str, limit: int = 20) -> list[dict]:
         """Get git log for a specific file.
 
-        BF-957 A5, A6: every commit is first read with ``--encoding=UTF-8``, which overrides an operator's
-        ``i18n.logOutputEncoding``; git converts a labelled commit's subject from its label to UTF-8. That is
-        right when the stored bytes are in the labelled encoding (a commit not written by the store), and wrong
-        for the store's UTF-8 messages that an operator's ``i18n.commitEncoding`` labelled without converting.
-        So the commits of each label are read again, from the same newest commit, with that label as the output
-        encoding, which git outputs as stored; that text replaces the first only when it is valid UTF-8 (it holds
-        no replacement character after ``_git_sync``'s decoding). Fields are separated by NUL (A6), so a label or
-        subject that holds ``|`` cannot shift them.
+        BF-957 A5, A7: one ``git log`` with ``--encoding=UTF-8``, which overrides an operator's
+        ``i18n.logOutputEncoding``. Git outputs an unlabelled commit's subject as stored and converts a labelled
+        commit's subject from its encoding label to UTF-8. The store's own commits carry no label: ``_git_sync``
+        runs every ``git commit`` with ``i18n.commitEncoding=UTF-8`` (A7), because an operator's setting would
+        label the store's UTF-8 messages without converting them. A commit an older store labelled that way is
+        read as git converts it (contract L15). Fields are separated by NUL (A6).
         """
         self._safe_path(path)  # Validate — raises ValueError if traversal
         try:
             result = await self._git(
                 "log", f"--max-count={limit}",
-                "--encoding=UTF-8", "--format=%H%x00%aI%x00%e%x00%s",  # BF-957 A5, A6: %e is the encoding label
+                "--encoding=UTF-8", "--format=%H%x00%aI%x00%s",  # BF-957 A5, A7: one read, UTF-8 output
                 "--follow", "--", path
             )
             entries = []
-            labelled: dict[str, list[dict]] = {}
             for line in result.strip().split("\n"):
                 if not line.strip():
                     continue
-                parts = line.split("\x00", 3)  # BF-957 A6: a label may hold "|"
-                if len(parts) == 4:
-                    entry = {"commit": parts[0], "timestamp": parts[1], "message": parts[3]}
-                    entries.append(entry)
-                    if parts[2]:  # BF-957 A5: a labelled commit; git may have converted its subject
-                        labelled.setdefault(parts[2], []).append(entry)
-            for label, rows in labelled.items():
-                subjects = await self._git(
-                    "log", f"--max-count={limit}",
-                    f"--encoding={label}", "--format=%H%x00%s",  # BF-957 A5: output equals the label: verbatim
-                    "--follow", entries[0]["commit"], "--", path
-                )
-                by_commit = {c: s for c, sep, s in (ln.partition("\x00") for ln in subjects.split("\n")) if sep}
-                for entry in rows:
-                    subject = by_commit.get(entry["commit"], entry["message"])
-                    if "\ufffd" not in subject:  # BF-957 A6: stored bytes not UTF-8: git's conversion stands
-                        entry["message"] = subject
+                parts = line.split("\x00", 2)
+                if len(parts) == 3:
+                    entries.append({"commit": parts[0], "timestamp": parts[1], "message": parts[2]})
             return entries
         except Exception:
             logger.debug("Git query failed", exc_info=True)
@@ -1679,16 +1662,19 @@ class RecordsStore:
         ``_git_lock``, so a log handler that reads git through this store does not wait on this call; it can
         still wait for a command another thread is running (contract L14). Git's output is decoded as UTF-8
         with replacement, so a locale codec (cp1252) that cannot decode it no longer turns it into ``None``.
-        Git re-encodes a commit subject for a configured encoding, so ``get_history`` re-reads a labelled commit
-        in its own encoding and keeps that text when it is UTF-8 (A5, A6).
+        Git re-encodes a commit subject for a configured encoding, so ``get_history`` asks for UTF-8 output. A7:
+        ``git commit`` alone runs with ``-c i18n.commitEncoding=UTF-8`` (``pin``), so an operator's setting cannot
+        label the store's UTF-8 messages without converting them; no other command's argv changes.
         """
         verb = args[0] if args else ""
+        # BF-957 A7: the store writes UTF-8; an operator's i18n.commitEncoding would label it without converting
+        pin = ("-c", "i18n.commitEncoding=UTF-8") if verb == "commit" else ()
         due: tuple[object, ...] = ()  # BF-957 A4: the WARNING, emitted once _git_lock is released
         try:
             with self._git_lock:
                 try:
                     result = subprocess.run(
-                        ["git"] + list(args),
+                        ["git", *pin, *args],
                         env=trusted_command_env(),
                         cwd=str(self._repo_path),
                         capture_output=True,
