@@ -3,6 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A1 (§15), the repair of review round 1 (GPT-6.1 Sol, NOT READY): the reads run off the event loop and the cap is checked by name before any read (HH8); the tally's game lookup logs its failure; L4, L10 and HH5 corrected; L11 to L13 added; T10 to T14 added and T6 above-cap strengthened; rows HH-18 to HH-22 added and HH-4, HH-5, HH-11 restated.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A3 (§17), the repair of review round 2 (GPT-6.1 Sol, NOT READY): the record of the game in progress is never counted (HH9); the count by name follows the store's strict walk and refuses a directory outside the records; the read bound is qualified (L4, L13); L10 corrected; L14 added; T15 to T18 added, T2 and T6 strengthened; rows HH-24 to HH-30 added and HH-18, HH-19 restated.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A4 (§18), the repair of review round 3 (GPT-6.1 Sol, NOT READY; text and test cleanup, no behaviour change): T17 and T18 remove their links in a `finally`; the guarantees for the game in progress (property 13, HH9) and for links (property 12, L14, BF-958) stated precisely; T16 renamed; §17's milestone table and baseline corrected.
 **Status:** ready to build after AD-1357 (#1749) and BF-952 (#1751) are on `main`.
 **Base:** `cognitive_agent.py`, `oracle_service.py`, `dm_targeted_lookup.py`, `DECISIONS.md` (the AD-1357 entry) as on `b3348e2a` (AD-1357 + A1). The records files as on `cf61c683` (BF-952 + A2); this slice edits neither `records_store.py` nor `routers/records.py`.
 **Dependencies:** AD-1357 (the DM bid ledger and manifest). Not BF-952: no keyword search is used.
@@ -1078,7 +1079,7 @@ No campaign of record yet; after A1, the campaign of record runs on A1-M2's head
 - **L11.** A file the store's strict listing skips is not counted, and AD-1358 logs nothing for it: bytes that are not UTF-8 (the store's rule, "a property of the file, not of the moment") and a frontmatter whose YAML constructor raises. A frontmatter YAML rejects reads as `{}` without the game tags, so it is not listed. A listed file that is gone, or that `read_entry` withholds, reads as `None` and is not counted. Only a listing or read that raises fails the tally.
 - **L12.** `HeadToHead` built directly is not validated; `MAX_BLOCK_CHARS` bounds only a tally `read_head_to_head` returns (at most 317 characters).
 - **L13.** The worker may read while the event loop writes a record (`write_entry` rewrites the file in place). A record read mid-write may parse as no record and go uncounted for that turn, as in BF-952's search walk. Files created between the count and the listing are listed too: the store's `list_entries` has no limit and reads and parses every file present when it runs, so the pass's cost is bounded by the files present then, not by the count; `read_entry` still runs at most 256 times, and none above the cap (A3). A hard bound needs a limit on the store's listing, a shared contract; considered, deferred with L4's index.
-- **L14.** (A3) The count checks each directory with `_safe_path`'s rule before listing it, so a directory link that leads out of the records is refused and the store is not reached. A directory replaced by such a link between that check and its listing is still listed (names only, no file opened); the store's own listing has the same window. It needs a writer racing inside Ship's Records.
+- **L14.** (A3, A4) For a layout that does not change during the pass, the count checks each directory with `_safe_path`'s rule before listing it, so a directory link that leads out of the records is refused (a WARNING, no tally), nothing outside is listed and the store is not reached. A layout changed during the pass escapes that check. The count can list a directory replaced by such a link after its check (names only, no file opened). After the count, the store's strict listing refuses the game-type directory or an ancestor replaced by such a link (`_safe_path`), but walks a subdirectory replaced by one and reads and parses the files below it (`records_store.py:1342-1350`). A listed one that reaches `read_entry` is refused there (`ValueError`: a WARNING, no tally). One without both game tags is not listed, so the records inside can still be counted. The listing's missing check below its directory is the store's own defect, BF-958 (#1761), shared with `search` and not repaired by S1. Every case needs a writer racing inside Ship's Records.
 
 ## 11. Verified Against Codebase (2026-11-06)
 
@@ -1101,8 +1102,8 @@ See the Verified block in the consult answer; it is copied here unchanged when t
 5. The listing is strict, covers one directory and is tag-filtered. There are at most `MAX_GAME_RECORDS` `read_entry` calls. Above the cap (counted by name), there is no listing and no `read_entry`.
 10. (A1) No `RecordsStore` file read or YAML parse of the tally runs on the event-loop thread; the store is reached only through `list_entries`, `read_entry` and the `repo_path` property.
 11. (A1) `RecordsStore.list_entries` and `read_entry`, run in a worker, touch no mutable store state; a store read that suspends fails closed (WARNING, no tally).
-12. (A3) The count lists no directory outside the resolved records repository, and for a directory that does not change during the pass it counts exactly the paths the store's strict walk lists (a directory named `*.md` is not counted); a directory cycle ends in `OSError`, as the store's walk does. Read and cost claims hold "while the directory does not grow" (L13).
-13. (A3) The record `<game_id>.md` of the game whose board the prompt shows is never read nor counted, however the read and the game's end interleave.
+12. (A3, A4) For a layout that does not change during the pass, the count lists no directory outside the resolved records repository and counts exactly the paths the store's strict walk lists (a directory named `*.md` is not counted); a junction cycle (Windows) ends in `OSError`, as the store's walk does, and a symlink is not descended. A layout changed during the pass: L14. Read and cost claims hold "while the directory does not grow" (L13).
+13. (A3, A4) The record `<game_id>.md` of the game whose board the prompt shows is not passed to `read_entry` and not counted, however the read and the game's end interleave; the strict listing reads and parses it when it is present (L13).
 6. The `head_to_head` bid is emitted only after an `active_game` bid and before `captain_message`. The manifest holds its name, length and kept flag only.
 7. `game_type` is validated before it forms a path.
 8. Failure is log-and-degrade (WARNING with `exc_info`). `CancelledError` is not swallowed.
@@ -1774,7 +1775,7 @@ Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/ope
 
 ## 17. Amendment A3 (2026-11-06): review round 2 (GPT-6.1 Sol, NOT READY)
 
-**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** candidate head `7a9a4709` (base `48ed13bf`). Every SEARCH below occurs exactly once in its file on `7a9a4709` (§17.9). Working copies are CRLF; SEARCH text is LF. Where §17 and §15 or §16 differ, §17 wins. §15.8's C-04 and C-05 REPLACE blocks record A1's edits as applied; C3-03 and C3-04 supersede the texts they quote.
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** candidate head `7a9a4709` (base `48ed13bf`). Every SEARCH below occurs exactly once in its file on `7a9a4709` (§17.9). Working copies are CRLF; SEARCH text is LF. Where §17 and §15 or §16 differ, §17 wins. §15.8's C-04 and C-05 REPLACE blocks record A1's edits as applied; C3-03 and C3-04 supersede the texts they quote. §18 (A4) edits §17 in place only through C4-04 to C4-07; the pair texts of §17.4, §17.5, §17.7 and §17.8 record A3's edits as applied, and where §18 or the files differ from them, §18 and the files win.
 
 ### 17.1 Findings and decisions
 
@@ -1792,8 +1793,8 @@ Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/ope
 
 | M | Pairs | Gate |
 |---|---|---|
-| A3-M1 (tests) | A3-T1 to A3-T5 | GA3a on `7a9a4709` + A3-M1 |
-| A3-M2 (source) | A3-S1 to A3-S5 | GA3b, then the campaign (§17.6) |
+| A3-M1 (tests) | A3-T1 to A3-T6 | GA3a on `7a9a4709` + A3-M1 |
+| A3-M2 (source) | A3-S1 to A3-S6 | GA3b, then the campaign (§17.6) |
 | A3-M3 (contract, trackers, ledger) | C3-01 to C3-07 (§17.7, applied before §17 is appended), A3-P1, A3-P2, ledger | G3 |
 
 Commit A3-M1 and A3-M2 as one commit (`AD-1358 S1 A3: the game in progress is not counted; the count follows the store's walk (#1750)`). Commit A3-M3 separately (`AD-1358 S1 A3: trackers, contract and ledger (#1750)`).
@@ -1815,11 +1816,11 @@ Commit A3-M1 and A3-M2 as one commit (`AD-1358 S1 A3: the game in progress is no
 | T2 (changed) | also asserts no WARNING from `probos.recreation.history` | 0 new | a missing directory counts 0 | passes (guard) | HH-28 fails `[no-directory]` |
 | T6 (changed) | `[directory-named-md]`: 3 records, cap 3, plus an empty directory `notes.md` | 1 | F2 | fails: `tally` is None | HH-27 |
 | T15 | `test_the_game_in_progress_is_not_counted_when_it_finishes_while_the_records_are_read` | 1 | F1 at the prompt, structural | fails: the prompt says 2 | HH-24, HH-25, HH-29; HH-18 (the hold times out on the loop thread) |
-| T16 | `test_the_record_of_the_game_the_tally_is_shown_in_is_not_read` | 2 | F1 in the unit: skipped before `read_entry`; empty skips nothing | fails: no `current_game_id` parameter | HH-25, HH-29 |
+| T16 | `test_the_record_of_the_game_the_tally_is_shown_in_is_not_passed_to_read_entry` | 2 | F1 in the unit: skipped before `read_entry`; empty skips nothing | fails: no `current_game_id` parameter | HH-25, HH-29 |
 | T17 | `test_a_game_directory_that_leads_out_of_the_records_is_not_walked` | 3 | F3: a link at `recreation`, `recreation/games`, `recreation/games/tictactoe` | fails: the outside directory was listed | HH-26 |
 | T18 | `test_a_directory_cycle_under_the_game_directory_ends_the_walk` | 1 | a junction cycle (Windows) ends in `OSError`, a WARNING and no tally; on POSIX, no descent | passes (guard) | HH-30 (Windows) |
 
-T15 uses no wall clock: the worker's listing sets `listing_entered` and waits on `game_recorded`; a task on the loop waits for `listing_entered`, plays the winning move (the real `make_move` and `_record_game`), then sets `game_recorded`. If the read regressed onto the loop, the hold would block the loop, the wait would end at its bound, and the first assertion would fail. T17 and T18 make the link as AD-1200's tests do, and replace `os.scandir` with `_scandir_spy` (it counts every call, raises at the 2,000th, and records path arguments as strings, `bytes` included; a descriptor passes through unrecorded) (a junction through `_winapi.CreateJunction` on Windows, which needs no privilege; a symlink on POSIX). The link and its target both live in `tmp_path`.
+T15 uses no wall clock: the worker's listing sets `listing_entered` and waits on `game_recorded`; a task on the loop waits for `listing_entered`, plays the winning move (the real `make_move` and `_record_game`), then sets `game_recorded`. If the read regressed onto the loop, the hold would block the loop, the wait would end at its bound, and the first assertion would fail. T17 and T18 make the link as AD-1200's tests do (a junction through `_winapi.CreateJunction` on Windows, which needs no privilege; a symlink on POSIX), and replace `os.scandir` with `_scandir_spy` (it counts every call, raises at the 2,000th, and records each path argument resolved, `bytes` included; a descriptor passes through unrecorded). The link and its target both live in `tmp_path`; each test removes the link alone in a `finally` (`_remove_directory_link`, A4).
 
 ### 17.4 Pairs: A3-M1 (tests)
 
@@ -2369,7 +2370,7 @@ REPLACE:
 
 ### 17.6 Mutation rows (A3). Each Line occurs once in its file on A3-M2's head
 
-HH-18 and HH-19 are restated because their lines changed. **Campaign of record (A3):** the baseline (45 passed), then HH-1 to HH-16 and HH-18 to HH-30 on A3-M2's head (HH-30 on Windows), because `history.py` and `cognitive_agent.py` changed. HH-17 stands from A1's campaign (`oracle_service.py` unchanged; confirm its sha256 equals A1's record). Record the sha256 of `history.py`, `cognitive_agent.py`, `oracle_service.py` and the test file. HH-4's killer is T6 at-cap; T6 directory-named-md is a second killer.
+HH-18 and HH-19 are restated because their lines changed. **Campaign of record (A3):** the baseline (46 passed), then HH-1 to HH-16 and HH-18 to HH-30 on A3-M2's head (HH-30 on Windows), because `history.py` and `cognitive_agent.py` changed. HH-17 stands from A1's campaign (`oracle_service.py` unchanged; confirm its sha256 equals A1's record). Record the sha256 of `history.py`, `cognitive_agent.py`, `oracle_service.py` and the test file. HH-4's killer is T6 at-cap; T6 directory-named-md is a second killer.
 
 | Id | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -2562,3 +2563,270 @@ Then the ledger: `PY -P scripts/gen_ad_ledger.py`, staging `docs/development/ope
   - a link swapped in after the check (L14);
   - concurrent games of one crew pair (counting them is true).
 - External search was skipped except one query on how Python 3.12 treats Windows junctions; it was inconclusive, and A3 does not depend on the answer (§17.9).
+
+## 18. Amendment A4 (2026-11-06): review round 3 (GPT-6.1 Sol, NOT READY)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06. **Anchors:** candidate head `08d9ccb9` (base `48ed13bf`). Every SEARCH below occurs exactly once in its file on `08d9ccb9` (§18.7). Working copies are CRLF; SEARCH text is LF. No behaviour change: `git diff 08d9ccb9 -- src` touches docstring lines only. Where §18 and §17 differ, §18 wins. The pair texts of §17.4, §17.5, §17.7 and §17.8 record A3's edits as applied on `7a9a4709` and are not rewritten (C4-08).
+
+### 18.1 Findings and decisions
+
+| # | Finding | Decision |
+|---|---|---|
+| R3-1 | T17 leaves its three links behind | A helper `_remove_directory_link` (DRY: T17 and T18 both use it; AD-1200 and BF-910 keep a per-file copy, so a cross-file helper would widen the diff); T17 wraps the spy and the call in `try/finally`, as T18 does |
+| R3-2 | "never read nor counted" / "is not read": the strict listing reads and parses the record when present | One wording everywhere: **is not passed to `read_entry` and not counted; the strict listing reads and parses it when it is present (L13)**. T16 is renamed `…_is_not_passed_to_read_entry`; rows HH-25 and HH-29 cite it as `T16[current]`, so no row changes |
+| R3-3 | Property 12, L14 and the counter's docstring state the static-layout guarantee unconditionally; after the count, the store's listing reads files below a swapped-in link | Qualified "for a layout that does not change during the pass"; L14 states the count's window (names only) and the store's (files read, then `read_entry` refuses); the store's gap is BF-958 (#1761), not S1's |
+| R3-4 | §17.2 names A3-T1–T5 and A3-S1–S5; §17.6 says 45 passed | T6, S6 and 46 |
+| self | Property 12: "a directory cycle ends in `OSError`" is Windows-only; §17.3: "records path arguments as strings" (it records resolved paths) | Corrected |
+
+### 18.2 Milestones and gates
+
+| M | Pairs | Gate |
+|---|---|---|
+| A4-M1 (tests, source docstrings) | A4-T1 to A4-T5, A4-S1 to A4-S4 | GA4 |
+| A4-M2 (contract, trackers, ledger) | C4-01 to C4-08 (applied before §18 is appended), A4-P1, A4-P2, ledger | G3 |
+
+Commits: `AD-1358 S1 A4: T17 and T18 remove their links; the tally's read and link guarantees stated precisely (#1750)`, then `AD-1358 S1 A4: trackers, contract and ledger (#1750)`.
+
+- **GA4** (after A4-M1):
+  - `PY -m pytest tests/test_ad1358_s1_head_to_head.py -q -n 0 --basetemp=<a new, empty directory>`. Expected: **46 passed**, then **0** junctions or symlinks under the basetemp, counted by the same method used for R3-1.
+  - Then G2's command (§4) plus `tests/test_ad1184_ad_ledger.py`. Expected: **851 passed**, 0 failed.
+  - Then `PY -P scripts/check_architecture_principles.py --check`.
+  - `git diff 08d9ccb9 -- src` must show changed lines only inside the four docstrings of `history.py`. Anything else is a hard stop.
+- **Campaign:** no full rerun.
+  - Confirm that each of HH-1 to HH-30's `Line` still occurs exactly once in its file. A4 adds no code line, and no new docstring text contains a row's `Line`.
+  - Rerun **HH-26** (killer T17, whose body changed) and **HH-30** (killer T18, whose cleanup changed). Each must still be killed by its named killer.
+  - HH-25 and HH-29 stand: T16's body is unchanged and only its name changed; record the new name.
+  - Record the new sha256 of `history.py` and the test file. `cognitive_agent.py` and `oracle_service.py` are unchanged; confirm their sha256 equal A3's record.
+- **G3** after A4-M2, as in §4. Run `PY -P scripts/gen_ad_ledger.py` and stage what it writes; no change is expected.
+
+### 18.3 Pairs: A4-M1 (tests)
+
+**A4-T1** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+        link.symlink_to(target, target_is_directory=True)
+        assert link.is_symlink()
+```
+REPLACE:
+```
+        link.symlink_to(target, target_is_directory=True)
+        assert link.is_symlink()
+
+
+def _remove_directory_link(link: Path) -> None:
+    """Remove the link ``_directory_link`` made, never its target or what lies below it, as AD-1200's
+    ``_unlink_junction``: ``rmdir`` on Windows (a junction), ``unlink`` elsewhere (a symlink)."""
+    if os.name == "nt":
+        link.rmdir()
+    else:
+        link.unlink()
+```
+
+**A4-T2** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+async def test_the_record_of_the_game_the_tally_is_shown_in_is_not_read(
+```
+REPLACE:
+```
+async def test_the_record_of_the_game_the_tally_is_shown_in_is_not_passed_to_read_entry(
+```
+
+**A4-T3** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+    """A3 (F3): a directory link at ``link`` leads out of the records. The count refuses it before
+    listing it, as ``RecordsStore._safe_path`` refuses it: nothing outside is listed, no tally is
+    shown, and a WARNING carries the refusal. The link and its target both live in ``tmp_path``."""
+```
+REPLACE:
+```
+    """A3 (F3): a directory link at ``link`` leads out of the records, in a layout that does not change
+    during the pass. The count refuses it before listing it, as ``RecordsStore._safe_path`` refuses it:
+    nothing outside is listed, no tally is shown, and a WARNING carries the refusal. The link and its
+    target both live in ``tmp_path``; the link alone is removed in a ``finally`` (A4)."""
+```
+
+**A4-T4** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+    _directory_link(store.repo_path / link, outside)
+    outside_resolved = outside.resolve()
+    listed: list[Path] = []
+    _scandir_spy(monkeypatch, listed)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert not [p for p in listed if p.is_relative_to(outside_resolved)], listed
+```
+REPLACE:
+```
+    _directory_link(store.repo_path / link, outside)
+    outside_resolved = outside.resolve()
+    listed: list[Path] = []
+    try:
+        _scandir_spy(monkeypatch, listed)
+        caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+        tally = await read_head_to_head(
+            store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        )
+    finally:
+        _remove_directory_link(store.repo_path / link)
+    assert not [p for p in listed if p.is_relative_to(outside_resolved)], listed
+```
+
+**A4-T5** `tests/test_ad1358_s1_head_to_head.py`
+
+SEARCH:
+```
+        loop.rmdir() if os.name == "nt" else loop.unlink()  # the link only, as AD-1200's _unlink_junction
+```
+REPLACE:
+```
+        _remove_directory_link(loop)
+```
+
+### 18.4 Pairs: A4-M1 (source docstrings, `src/probos/recreation/history.py`)
+
+**A4-S1**
+
+SEARCH:
+```
+or listed, when the directory leads out of the records, and when a listing or read raises. The
+record of the game the tally is shown in is never counted (A3).
+"""
+```
+REPLACE:
+```
+or listed, when the count finds a directory that leads out of the records (contract L14), and when
+a listing or read raises. The record of the game the tally is shown in is not passed to
+``read_entry`` and not counted (A3); the strict listing reads and parses it when it is present
+(contract L13).
+"""
+```
+
+**A4-S2**
+
+SEARCH:
+```
+    ``ValueError``: nothing outside the records is listed, and a refusal never reaches the store. For
+    a directory that does not change during the pass, the count is the number of paths that walk lists.
+    """
+```
+REPLACE:
+```
+    ``ValueError``. For a layout that does not change during the pass, nothing outside the records is
+    listed, a refusal never reaches the store, and the count is the number of paths that walk lists. A
+    directory replaced by an outside link after its check is listed, names only (contract L14).
+    """
+```
+
+**A4-S3**
+
+SEARCH:
+```
+    (:func:`_count_record_names`, which opens no file and refuses a directory outside the records),
+    so a directory above the cap costs one scan and no reads. Files are then read only through the
+    store's own ``list_entries`` and ``read_entry``, which touch no store state but the repository
+    path, so they are safe off the event loop, as BF-952's ``_search_records`` walk is. The listing
+    reads every file present when it runs, including any created after the count (contract L13);
+    ``read_entry`` still runs at most :data:`MAX_GAME_RECORDS` times. The entry named
+    ``current_record``, the record of the game the tally is shown in, is not read (A3).
+    """
+```
+REPLACE:
+```
+    (:func:`_count_record_names`, which opens no file and refuses a directory it finds outside the
+    records), so a directory above the cap costs one scan and no reads. Files are then read only
+    through the store's own ``list_entries`` and ``read_entry``, which touch no store state but the
+    repository path, so they are safe off the event loop, as BF-952's ``_search_records`` walk is. The
+    listing reads every file present when it runs, including any created after the count (contract
+    L13) and any below a subdirectory replaced by an outside link after the count; ``read_entry``
+    refuses such a path if it reaches it (contract L14) and still runs at most
+    :data:`MAX_GAME_RECORDS` times. The entry named ``current_record``, the record of the game the
+    tally is shown in, is not passed to ``read_entry`` and not counted (A3).
+    """
+```
+
+**A4-S4**
+
+SEARCH:
+```
+    A count by name of ``recreation/games/<game_type>/*.md`` (refused when the directory leads out
+    of the records), then one strict listing, then at most :data:`MAX_GAME_RECORDS` ``read_entry``
+    calls as ``reader_id``/``reader_department``, all in a worker thread (:func:`_read_records`): a
+    record that reader may not read is not counted. The record ``<current_game_id>.md``, the game
+    the tally is shown in, is never counted (A3). A listing or read that raises gives ``None`` and a
+```
+REPLACE:
+```
+    A count by name of ``recreation/games/<game_type>/*.md`` (refused when it finds a directory that
+    leads out of the records; contract L14), then one strict listing, then at most
+    :data:`MAX_GAME_RECORDS` ``read_entry`` calls as ``reader_id``/``reader_department``, all in a
+    worker thread (:func:`_read_records`): a record that reader may not read is not counted. The
+    record ``<current_game_id>.md``, the game the tally is shown in, is not passed to ``read_entry``
+    and not counted (A3). A listing or read that raises gives ``None`` and a
+```
+
+### 18.5 A4-M2 tracker pairs
+
+**A4-P1** `PROGRESS.md` (two passages of line 3)
+
+SEARCH: `(then none is read), a directory that leads out of Ship's Records, or a game lookup`
+REPLACE: `(then none is read), a directory the count finds leading out of Ship's Records, or a game lookup`
+
+SEARCH: `` `prompts/ad-1358-s1-head-to-head-tally.md`, with Amendments A1 to A3. ``
+REPLACE: `` `prompts/ad-1358-s1-head-to-head-tally.md`, with Amendments A1 to A4. ``
+
+**A4-P2** `DECISIONS.md` (two passages, lines 1484 and 1485)
+
+SEARCH: `(no file opened; a directory that leads out of Ship's Records is refused)`
+REPLACE: `(no file opened; a directory the count finds leading out of Ship's Records is refused; contract L14)`
+
+SEARCH: ``The record `<game_id>.md` of the game the prompt shows is skipped before it is read, so``
+REPLACE: ``The record `<game_id>.md` of the game the prompt shows is not passed to `read_entry` and not counted (the strict listing reads and parses it when it is present, L13), so``
+
+### 18.6 Sibling sweep (what the tally reads, lists, opens or counts)
+
+| Where | Sentence | Verdict |
+|---|---|---|
+| `history.py:13-16` | "leads out of the records"; "never counted" | A4-S1 |
+| `history.py:123` | "No file is opened." (the count) | true; kept |
+| `history.py:128-131` | "nothing outside … is listed, a refusal never reaches the store" | A4-S2 |
+| `history.py:166, 170-172` | "refuses a directory outside"; "is not read" | A4-S3 |
+| `history.py:215-219` | "refused when the directory leads out"; "never counted" | A4-S4 |
+| `history.py:222-224` | "reads at most 2 × … while the directory does not grow" | true: a swapped-in link that adds files is growth |
+| `history.py:237` | "every file read and parse runs in a worker thread" | true; kept |
+| `cognitive_agent.py` (A3 comment) | "its own record is not counted" | true; kept |
+| test `:6, :383, :632` | "not counted" | true; kept |
+| test T16 name | "is_not_read" | A4-T2 |
+| test T17 docstring | "nothing outside is listed" | A4-T3 (static layout) |
+| contract L4 `:1071` | "no file opened … none is read" above the cap | true: its subject is the count; growth is L13, cited in the same item |
+| contract L13, L14, properties 5, 10–13 | | C4-02, C4-03; 5, 10, 11 true |
+| contract §17.1 F1 and F3 rows | "skipped before `read_entry`"; "checked before it is listed" | true; kept |
+| contract §17.3 `:1818, :1822` | the T16 name; "records path arguments as strings" | C4-05, C4-06 |
+| contract §17.10 | "a link swapped in after the check (L14)" | true |
+| `DECISIONS.md` HH5, HH9 | | A4-P2 |
+| `PROGRESS.md` line 3 | "leads out"; "never counted among the games before it" | A4-P1; the second is true |
+
+**Not rewritten:** the pair texts in §15.8, §16, §17.4, §17.5, §17.7 and §17.8 (for example `:2013`, `:2153`, `:2212`, `:2248`, `:2254`, `:2318`, `:2454`, `:2469-2470`, `:2507`). They record edits as applied; C4-08 marks them superseded.
+
+**Not checked:** the PR text, which is not yet written. Write it from §18.1's wordings only.
+
+### 18.7 Verified Against Codebase (2026-11-06, on `08d9ccb9`)
+
+    tests:702-711 _directory_link; :711 assert link.is_symlink() then two blank lines   (A4-T1 anchor, 1 hit, multiline)
+    tests:676 T16 def; :741-743 T17 docstring; :751-759 T17 body; :789 T18's removal    (1 hit each)
+    tests/test_ad1200_instruction_file_access.py:47-51  _unlink_junction: rmdir on nt, else unlink
+    history.py:13-16, :128-131, :165-172, :215-219   the four docstring passages (1 hit each)
+    records_store.py:1292 read_entry -> _safe_path   :1337 _safe_path(directory) (top only)
+      :1342 _markdown_files_or_raise   :1350 read_text every file found   :1368 tag filter
+    contract :4-5 (A1 line then A3 line, 1 hit multiline); :1081 L14 + "## 11" + "See the Verified block" (1 hit);
+      :1102-1104 properties 10-12 consecutive (1 hit); :1777, :1795, :1818, :1822, :2372 (1 hit each)
+    DECISIONS.md:1484 "a directory that leads out of Ship's Records" (1); :1485 HH9
+    PROGRESS.md line 3: both passages (1 each); gh issue 1761 OPEN "BF-958: … only read_entry enforces the containment rule"
