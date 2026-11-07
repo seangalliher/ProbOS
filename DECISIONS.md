@@ -1489,6 +1489,17 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L14 of the contract.
 - *Reversal.* Revert the AD-1358 S1 commits.
 
+### BF-957 -- Ship's Records says when git fails, and probos doctor reports a stopped records history (2026-11-07, #1760)
+
+- *Scope.* `knowledge/records_store.py` (`_git_sync`, `_commit`, `_warn_git_once`, `_forget_git_warnings`, `_git_error_line`, a per-store git lock), `doctor/checks/records_git_check.py` (new), `doctor/checks/__init__.py`, `config_models/knowledge.py` (three `RecordsConfig` thresholds), the config facade baseline and reference (regenerated), two guard tables, tests. Contract `prompts/bf-957-records-git-signal.md`.
+- *G1 (cause).* The code proves one defect and cannot choose the cause of a stale lock. `_commit_lock` covered `git commit` only, so the store's `git add` calls overlapped its other git commands in executor threads. The loser failed with git's lock message and its path was left out of the history, but it left no lock. A lock that stays needs a git process that ended without its cleanup: the `subprocess.run` timeout kill (TerminateProcess or SIGKILL) or a termination from outside. Chosen: one git child per store at a time, and a WARNING when the timeout stops a command. Deferred: not killing on timeout (trigger: that WARNING in a log). Rejected: a lock pre-check (a race; git already refuses), a longer timeout (no evidence for a value).
+- *G2 (signal).* WARNING once per (verb, first output line) until a git add or commit succeeds; 32 remembered, oldest dropped; nothing-staged commits are not errors; return values and raised exceptions unchanged.
+- *G3 (doctor).* `records_git` after `disk`: a lock at least `git_lock_stale_minutes` old is FAIL; uncommitted paths over `git_uncommitted_warn_paths`, and a last commit at least `git_last_commit_warn_hours` old with uncommitted paths, are WARN. Read-only: stat, and git with `GIT_OPTIONAL_LOCKS=0`.
+- *G4 (removal).* No automatic removal of a lock. The log and the doctor say that removing one is the operator's decision.
+- *Not changed.* The 30 s timeout, the write paths and their return values, `KnowledgeStore`, `config/system.yaml`.
+- *Residual.* Recorded limits L1 to L11 of the contract.
+- *Reversal.* Revert the BF-957 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
