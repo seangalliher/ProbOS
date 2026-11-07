@@ -336,15 +336,18 @@ async def test_a_failure_is_logged_with_git_s_first_line_only(tmp_path, caplog, 
     plain = subprocess.run(
         ["git", "-C", str(repo), "add", "reports/one.md"], capture_output=True, encoding="utf-8", errors="replace",
     )
-    assert plain.returncode != 0 and "remove the file manually" in plain.stderr, (
-        f"premise: this git advises removing the lock; report this, do not skip: {plain.stderr!r}"
+    # git words its lock explanation differently by version (2.53 advises removing the file, 2.56 says the lock may be
+    # stale), so the premise is the shape: a first line, then an explanation the store must not log.
+    explained = [line for line in plain.stderr.splitlines() if line.strip()]
+    assert plain.returncode != 0 and len(explained) >= 2, (
+        f"premise: this git explains the lock failure after its first line; report this, do not skip: {plain.stderr!r}"
     )
 
     await store.write_entry("bones", "reports/one.md", "First.", "first")
 
     logged = _add_lock_warnings(caplog)
     assert len(logged) == 1, _warnings(caplog)
-    assert "remove the file" not in logged[0] and "\n" not in logged[0], logged[0]
+    assert "remove the file" not in logged[0] and explained[1] not in logged[0] and "\n" not in logged[0], logged[0]
 
 
 @pytest.mark.parametrize("case", ["success", "failure", "timeout"])
