@@ -1474,6 +1474,21 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L19 of the contract.
 - *Reversal.* Revert the AD-1357 commits.
 
+### AD-1358 S1 -- A crew member in a game is told the recorded games against that opponent (2026-11-06, #1750)
+
+- *Scope.* `recreation/history.py` (new: `parse_game_record`, `GameOutcome`, `HeadToHead`, `read_head_to_head`), `cognitive/cognitive_agent.py` (`_build_head_to_head_context`, the `head_to_head` DM bid after `active_game`, its inventory entry), `cognitive/oracle_service.py` (`records_reader_for`, public), `cognitive/dm_targeted_lookup.py` (`_knowledge_lookup_reader` delegates), tests. Contract `prompts/ad-1358-s1-head-to-head-tally.md`.
+- *HH1 (where).* A new module beside the record's writer, so a round-trip test pins writer and parser together. Rejected: a `RecreationService` method (its 16th, over the SRP trigger); inside the synchronous `_build_active_game_context`.
+- *HH2 (read).* A strict, tag-filtered `list_entries` of one game-type directory, then `read_entry` per record and a parse of the body: the record's frontmatter holds no players or result. Rejected: a frontmatter lookup (impossible for existing records); a new store API.
+- *HH3 (what).* One line for the active game's type and opponent: the total, wins each, draws, latest UTC date. Zero games gives no block.
+- *HH4 (privacy).* Read as the agent through BF-949's rule, now `records_reader_for`; a record `read_entry` withholds is not counted.
+- *HH5 (cost).* A count of the `*.md` names under the game-type directory by the store's strict walk rule, stopping at 257 (no file opened; a directory the count finds leading out of Ship's Records is refused; contract L14), then one listing plus at most 256 entry reads per DM turn during a game, all in a worker thread; above the cap by name, no listing, no read, no block and a warning. The listing reads the files its own walk finds, so files created after the count add to its cost (L4, L13).
+- *HH9 (A3, the game in progress).* The record `<game_id>.md` of the game the prompt shows is not passed to `read_entry` and not counted (the strict listing reads and parses it when it is present, L13), so a game that finishes while the records are read is not counted before itself. Rejected: revalidating the game after the read (drops the tally whenever the game ends mid-read; a third lookup); comparing revisions (drops it on every move).
+- *HH6 (failure).* Log-and-degrade: a game lookup, listing or read that raises gives no block and a warning with the traceback; the prompt is unchanged. A file the store's listing skips (bytes that are not UTF-8) is not counted (L11).
+- *HH8 (A1, off the loop).* The store's own `list_entries` and `read_entry` coroutines, which await nothing, are run to their end in a worker thread with no event loop, as BF-952's search walk runs off the loop; a store read that suspends fails closed. Rejected: a synchronous or counting `RecordsStore` method (a shared contract; deferred with the index of L4); yielding between reads (the listing is one blocking call); a private event loop per tally.
+- *Not changed.* `records_store.py`, `RecreationService`, the AD-526a record format, `context_manifest.py`, the Ward Room chain's game context, config.
+- *Residual.* Recorded limits L1 to L14 of the contract.
+- *Reversal.* Revert the AD-1358 S1 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.

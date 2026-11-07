@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from probos.cognitive.oracle_service import make_reader_identity_resolver
+from probos.cognitive.oracle_service import records_reader_for
 
 if TYPE_CHECKING:
     from probos.config import DmTargetedLookupConfig
@@ -103,25 +103,10 @@ class RegexSubintentClassifier:
 def _knowledge_lookup_reader(runtime: Any, agent_id: str) -> tuple[str, str]:
     """BF-949: the Ship's Records reader the knowledge lookup reads as.
 
-    The agent the DM is addressed to, resolved as the Oracle resolves its callers
-    (``make_reader_identity_resolver``): its callsign and its ontology department.
-    A runtime without a registry or an ontology, an agent id that is empty or not
-    a string, an agent the resolver does not find, and a resolver that raises all
-    give ``("", "")``, BF-679's anonymous reader (``record_is_readable``).
+    The agent the DM is addressed to: :func:`probos.cognitive.oracle_service.records_reader_for`,
+    which AD-1358 S1 made public so the DM head-to-head tally reads by the same rule.
     """
-    registry = getattr(runtime, "registry", None)
-    ontology = getattr(runtime, "ontology", None)
-    if registry is None or ontology is None or type(agent_id) is not str or not agent_id:
-        return "", ""
-    try:
-        return make_reader_identity_resolver(registry=registry, ontology=ontology)(agent_id)
-    except Exception:
-        logger.warning(
-            "BF-949: records reader resolution failed for agent=%s; the knowledge "
-            "lookup reads as the anonymous reader",
-            agent_id, exc_info=True,
-        )
-        return "", ""
+    return records_reader_for(runtime, agent_id)
 
 
 class LookupDispatcher:

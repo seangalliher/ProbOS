@@ -1,0 +1,809 @@
+"""AD-1358 S1 (#1750): a crew member in a game is told the recorded games against that opponent.
+
+During an active game the crew ``direct_message`` prompt carries, directly after the AD-572
+active-game block, a block counted from the AD-526a game records in Ship's Records
+(``recreation/games/<game_type>/``), read as the agent (BF-949's reader identity), so a record
+it may not read is not counted. With nothing recorded between the two players, or on any
+failure, nothing is added and the prompt is as before.
+
+Real fixtures: a real ``RecreationService`` plays and records the games through a real
+``RecordsStore`` on ``tmp_path``; a real ``CognitiveAgent`` runs ``_recall_relevant_memories``
+then ``_decide_via_llm`` with a ``SimpleNamespace`` runtime and a real ``SystemConfig`` (a
+``MagicMock`` config would make ``dm_agentic.enabled`` truthy). Names the slice adds are reached
+through ``_built``, which asserts that they exist, so on the base every new-behaviour test fails
+at an assertion and the file collects.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import importlib.util
+import inspect
+import json
+import logging
+import os
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
+import pytest
+
+from probos.activation.dispatcher import DispatchResult
+from probos.cognitive import oracle_service
+from probos.cognitive.cognitive_agent import CognitiveAgent, _build_result_metadata
+from probos.config import RecordsConfig, SystemConfig
+from probos.knowledge.records_store import RecordsStore
+from probos.recreation.service import RecreationService
+from probos.types import IntentMessage, LLMResponse
+
+AGENT_ID = "ad1358-ezri"
+GAMES = "recreation/games/tictactoe"
+X_WINS = ["0", "3", "1", "4", "2"]  # X takes the top row (test_cognitive_agent_dm_game.py:691)
+O_WINS = ["0", "3", "1", "4", "8", "5"]  # O takes the middle row (:692)
+DRAW = ["0", "1", "2", "4", "3", "5", "7", "6", "8"]  # (:693)
+FROZEN_TEMPORAL = "Current time: 2026-11-06 12:00:00 UTC (Friday)"
+HEADER = "--- Previous Games (Ship's Records) ---"
+
+
+def _built(name: str) -> Any:
+    """An attribute of ``probos.recreation.history``, asserted to exist."""
+    assert importlib.util.find_spec("probos.recreation.history") is not None, "AD-1358 S1 is not built"
+    module = importlib.import_module("probos.recreation.history")
+    assert hasattr(module, name), name
+    return getattr(module, name)
+
+
+async def _empty_sensorium(path: object, observation: dict) -> dict[str, str]:
+    del path, observation
+    return {}
+
+
+class _OneReply:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.requests: list[Any] = []
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:
+        self.requests.append(request)
+        return LLMResponse(
+            content=self.content, model="scripted", tier="standard",
+            tokens_used=10, prompt_tokens=5, completion_tokens=5,
+        )
+
+
+class _RaisingRegistry:
+    def get(self, _agent_id: str) -> Any:
+        raise RuntimeError("registry unavailable")
+
+    def all(self) -> list[Any]:
+        raise RuntimeError("registry unavailable")
+
+
+def _crew_registry() -> SimpleNamespace:
+    ezri = SimpleNamespace(id=AGENT_ID, agent_type="scout", callsign="Ezri", sovereign_id="")
+    return SimpleNamespace(
+        get=lambda agent_id: ezri if agent_id == AGENT_ID else None,
+        all=lambda: [ezri],
+        get_by_pool=lambda _pool: [],
+    )
+
+
+def _runtime(**attributes: Any) -> SimpleNamespace:
+    base: dict[str, Any] = {
+        "config": SystemConfig(),
+        "cognitive_journal": None,
+        "episodic_memory": None,
+        "trust_network": None,
+        "recreation_service": None,
+        "records_store": None,
+        "registry": _crew_registry(),
+        "ontology": SimpleNamespace(get_agent_department=lambda _agent_type: "science"),
+    }
+    base.update(attributes)
+    return SimpleNamespace(**base)
+
+
+def _agent(runtime: Any) -> CognitiveAgent:
+    agent = CognitiveAgent(agent_id=AGENT_ID, instructions="You are Ezri.")
+    agent.agent_type = "scout"
+    agent.callsign = "Ezri"
+    agent._runtime = runtime
+    agent._llm_client = _OneReply("Good luck, Captain.")
+    agent._build_temporal_context = lambda: FROZEN_TEMPORAL  # type: ignore[method-assign]
+    agent._dispatch_sensorium_async = _empty_sensorium  # type: ignore[method-assign]
+    return agent
+
+
+async def _turn(agent: CognitiveAgent) -> tuple[str, dict[str, Any]]:
+    """One DM turn on "Hello Ezri": the prompt, and the manifest as ``IntentResult.metadata`` carries it."""
+    params = {"text": "Hello Ezri", "captain_message": "Hello Ezri"}
+    intent = IntentMessage(intent="direct_message", params=params)
+    observation = await agent._recall_relevant_memories(
+        intent, {"intent": "direct_message", "intent_id": intent.id, "params": params},
+    )
+    decision = await agent._decide_via_llm(observation)
+    manifest = _build_result_metadata({}, decision, observation)["context_manifest"]
+    return agent._llm_client.requests[0].prompt, manifest
+
+
+def _names(manifest: dict[str, Any]) -> list[str]:
+    return [section["name"] for section in manifest["sections"]]
+
+
+async def _store(tmp_path: Path) -> RecordsStore:
+    store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
+    await store.initialize()
+    return store
+
+
+def _service(store: Any) -> RecreationService:
+    dispatcher = SimpleNamespace(dispatch=AsyncMock(return_value=DispatchResult("admission", 1, 1, 0, 0, [])))
+    return RecreationService(records_store=store, dispatcher=dispatcher)
+
+
+async def _play(service: RecreationService, x: str, o: str, moves: list[str]) -> dict[str, Any]:
+    """One whole game through the real service; ``_record_game`` writes its record on the last move."""
+    game = await service.create_game("tictactoe", x, o)
+    for index, position in enumerate(moves):
+        await service.make_move(game["game_id"], x if index % 2 == 0 else o, position)
+    assert game["result"]["status"] in ("won", "draw")  # premise: finished, so recorded
+    return game
+
+
+async def _record(
+    store: RecordsStore, name: str, *, x: str, o: str, winner: str,
+    author: str = "system", classification: str = "ship", department: str = "",
+) -> None:
+    """A record in the AD-526a body form, written through the store with the writer's tags."""
+    result = f"won — **{winner}** wins!" if winner else "draw"
+    await store.write_entry(
+        author, f"{GAMES}/{name}.md",
+        f"# Game Record: Tictactoe\n\n**Players:** {x} (X) vs {o} (O)\n**Result:** {result}\n**Moves:** 5\n",
+        "AD-1358 fixture", classification=classification, department=department, tags=["game", "tictactoe"],
+    )
+
+
+def _raw(store: RecordsStore, name: str, *, updated: str) -> None:
+    """A Captain-won record file with a chosen ``created``/``updated``, laid out as the store writes one."""
+    path = store.repo_path / GAMES / f"{name}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\nauthor: system\nclassification: ship\nstatus: draft\n"
+        f"created: '{updated}'\nupdated: '{updated}'\ntags:\n- game\n- tictactoe\n---\n\n"
+        "**Players:** Captain (X) vs Ezri (O)\n**Result:** won — **Captain** wins!\n",
+        encoding="utf-8",
+    )
+
+
+def _block(total: int, opponent: str, opponent_won: int, me_won: int, drawn: int, last: str) -> str:
+    line = (
+        f"Recorded tictactoe games between you and {opponent} before this one: {total}. "
+        f"{opponent} won {opponent_won}, you won {me_won}, {drawn} drawn."
+    )
+    if last:
+        line += f" Most recent: {last}."
+    return "\n".join([HEADER, line, "---"])
+
+
+# ── T1: the crossing ─────────────────────────────────────────────────
+
+
+async def test_recorded_games_reach_the_dm_prompt_as_a_head_to_head_tally(tmp_path: Path) -> None:
+    """#1750 acceptance 2 (C), across every seam: the real service records the games, the agent reads
+    them as itself, the tally follows the active-game block, and the manifest names the section only."""
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        counted = [
+            await _play(service, "Captain", "Ezri", X_WINS),  # Captain wins
+            await _play(service, "Ezri", "Captain", O_WINS),  # Ezri is X; Captain (O) wins
+            await _play(service, "Captain", "Ezri", DRAW),
+        ]
+        await _play(service, "Captain", "Lyra", O_WINS)  # another pair: not counted
+        await _record(store, "private-lyra", x="Captain", o="Ezri", winner="Ezri", author="Lyra", classification="private")
+        await _record(store, "private-ezri", x="Captain", o="Ezri", winner="Ezri", author="Ezri", classification="private")
+        await service.create_game("tictactoe", "Captain", "Ezri")  # the game in progress
+        prompt, manifest = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+    finally:
+        await service.turns.stop()
+
+    paths = [f"{GAMES}/{game['game_id']}.md" for game in counted] + [f"{GAMES}/private-ezri.md"]
+    dates = [str((await store.read_entry(path, "captain"))["frontmatter"]["updated"])[:10] for path in paths]
+    expected = _block(4, "Captain", 2, 1, 1, max(dates))
+    assert prompt.count(expected) == 1
+    assert prompt.index("--- Active Game ---") < prompt.index(expected) < prompt.index("Hello Ezri")
+    names = _names(manifest)
+    assert names[names.index("active_game") + 1] == "head_to_head"
+    assert {"name": "head_to_head", "chars": len(expected) + 1, "kept": True} in manifest["sections"]
+    encoded = json.dumps(manifest)
+    assert HEADER not in encoded and "Captain won" not in encoded
+
+
+# ── T2, T2b: the prompt is unchanged when nothing is counted ─────────
+
+
+@pytest.mark.parametrize("case", ["no-directory", "other-pairs-only", "no-store", "no-active-game"])
+async def test_with_no_recorded_game_between_the_two_the_dm_prompt_is_unchanged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, case: str,
+) -> None:
+    """Nothing to count adds nothing: the prompt equals one built with no records store, the manifest
+    names no head-to-head section, and nothing is logged (A3: a missing directory counts 0). Passes on
+    the base by design (a guard, as AD-1357's T7b)."""
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        if case != "no-directory":
+            await _play(service, "Captain", "Lyra", X_WINS)
+        if case == "no-active-game":
+            await _play(service, "Captain", "Ezri", X_WINS)
+        else:
+            await service.create_game("tictactoe", "Captain", "Ezri")
+        agent = _agent(_runtime(recreation_service=service, records_store=None if case == "no-store" else store))
+        prompt, manifest = await _turn(agent)
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+    finally:
+        await service.turns.stop()
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+    assert not [r for r in caplog.records if r.name == "probos.recreation.history"]
+
+
+@pytest.mark.parametrize("failing", ["list_entries", "read_entry"])
+async def test_a_records_read_that_fails_adds_nothing_and_logs_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, failing: str,
+) -> None:
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        await _play(service, "Captain", "Ezri", X_WINS)
+        await service.create_game("tictactoe", "Captain", "Ezri")
+        broken = AsyncMock(side_effect=OSError("the file is in use"))
+        setattr(store, failing, broken)
+        caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+        prompt, manifest = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+    finally:
+        await service.turns.stop()
+    assert broken.await_count == 1  # premise: the read was attempted
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+    assert any(
+        r.levelno == logging.WARNING and r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and str(r.exc_info[1]) == "the file is in use"  # A2: the traceback
+        for r in caplog.records
+    )
+
+
+# ── T3: privacy ──────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("reader_id", "reader_department", "expected"),
+    [
+        pytest.param("Ezri", "science", (1, 1, 0), id="other-department"),
+        pytest.param("Ezri", "medical", (2, 1, 1), id="same-department"),
+        pytest.param("", "", (1, 1, 0), id="anonymous"),
+    ],
+)
+async def test_a_record_the_reader_may_not_read_is_not_counted(
+    tmp_path: Path, reader_id: str, reader_department: str, expected: tuple[int, int, int],
+) -> None:
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "ship", x="Captain", o="Ezri", winner="Captain")
+    await _record(
+        store, "medical", x="Captain", o="Ezri", winner="Ezri",
+        author="Chapel", classification="department", department="medical",
+    )
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain",
+        reader_id=reader_id, reader_department=reader_department,
+    )
+    assert (tally.total, tally.opponent_won, tally.me_won) == expected
+
+
+# ── T4, T5: the parser ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("moves", "side"),
+    [pytest.param(X_WINS, "x", id="x-wins"), pytest.param(O_WINS, "o", id="o-wins"), pytest.param(DRAW, "", id="draw")],
+)
+async def test_the_writers_record_round_trips_through_the_parser(tmp_path: Path, moves: list[str], side: str) -> None:
+    parse_game_record = _built("parse_game_record")
+    game_outcome = _built("GameOutcome")
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        game = await _play(service, "Captain", "Ezri", moves)
+    finally:
+        await service.turns.stop()
+    winner = {"x": "Captain", "o": "Ezri", "": ""}[side]
+    assert game["result"]["winner"] == winner  # premise: the engine's result
+    doc = await store.read_entry(f"{GAMES}/{game['game_id']}.md", "captain")
+    assert parse_game_record(doc["content"]) == game_outcome("Captain", "Ezri", winner)
+
+
+NOT_RECORDS = {
+    "empty": "",
+    "prose": "# Notes\n\nThe Captain beat Ezri twice.\n",
+    "no-result": "**Players:** Captain (X) vs Ezri (O)\n",
+    "winner-not-a-player": "**Players:** Captain (X) vs Ezri (O)\n**Result:** won — **Lyra** wins!\n",
+    "forfeited": "**Players:** Captain (X) vs Ezri (O)\n**Result:** forfeited\n",
+}
+
+
+@pytest.mark.parametrize("name", list(NOT_RECORDS))
+async def test_a_document_that_is_not_an_ad526a_record_is_not_counted(tmp_path: Path, name: str) -> None:
+    parse_game_record = _built("parse_game_record")
+    read_head_to_head = _built("read_head_to_head")
+    assert parse_game_record(NOT_RECORDS[name]) is None
+    store = await _store(tmp_path)
+    await store.write_entry(
+        "system", f"{GAMES}/{name}.md", NOT_RECORDS[name] or "\n", "AD-1358 fixture", tags=["game", "tictactoe"],
+    )
+    assert await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ) is None
+
+
+# ── T6: bounds ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "case", ["above-cap", "at-cap", "directory-named-md", "unsafe-game-type", "strict-listing", "long-name"],
+)
+async def test_the_read_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, case: str,
+) -> None:
+    read_head_to_head = _built("read_head_to_head")
+    history = importlib.import_module("probos.recreation.history")
+    store = await _store(tmp_path)
+    opponent = "C" * 500 if case == "long-name" else "Captain"
+    for index in range(3):
+        await _record(store, f"g{index}", x=opponent, o="Ezri", winner=opponent)
+    calls: dict[str, Any] = {"list": [], "read": 0}
+    real_list, real_read = store.list_entries, store.read_entry
+
+    async def list_spy(*args: Any, **kwargs: Any) -> Any:
+        calls["list"].append((args, kwargs))
+        return await real_list(*args, **kwargs)
+
+    async def read_spy(*args: Any, **kwargs: Any) -> Any:
+        calls["read"] += 1
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", list_spy)
+    monkeypatch.setattr(store, "read_entry", read_spy)
+    if case == "directory-named-md":
+        (store.repo_path / GAMES / "notes.md").mkdir()  # A3 (F2): a directory is no record and is not counted
+    if case in ("above-cap", "at-cap", "directory-named-md"):
+        monkeypatch.setattr(history, "MAX_GAME_RECORDS", 2 if case == "above-cap" else 3)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    tally = await read_head_to_head(
+        store, game_type="../notebooks" if case == "unsafe-game-type" else "tictactoe",
+        me="Ezri", opponent=opponent, reader_id="Ezri", reader_department="science",
+    )
+    if case == "above-cap":
+        assert tally is None and calls["read"] == 0
+        assert calls["list"] == []  # A1 (F1): counted by name above the cap; nothing is listed
+        assert any("AD-1358" in r.getMessage() for r in caplog.records)
+    elif case in ("at-cap", "directory-named-md"):
+        assert tally is not None and tally.total == 3 and calls["read"] == 3
+    elif case == "unsafe-game-type":
+        assert tally is None and calls["list"] == []
+    elif case == "strict-listing":
+        assert calls["list"] == [(("recreation/games/tictactoe",), {"tags": ["game", "tictactoe"], "strict": True})]
+    else:
+        text = tally.render()
+        assert len(text) <= history.MAX_BLOCK_CHARS
+        assert "C" * history.MAX_NAME_CHARS + " won 3" in text
+        assert "C" * (history.MAX_NAME_CHARS + 1) not in text
+
+
+# ── T7: the reader ───────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("resolved", ("Ezri", "science")),
+        ("no-registry", ("", "")),
+        ("no-ontology", ("", "")),
+        ("unknown-agent", ("", "")),
+        ("raising-registry", ("", "")),
+        ("empty-id", ("", "")),
+    ],
+)
+def test_the_records_reader_is_the_agent_or_the_anonymous_reader(case: str, expected: tuple[str, str]) -> None:
+    records_reader_for = getattr(oracle_service, "records_reader_for", None)
+    assert callable(records_reader_for), "AD-1358 S1: records_reader_for is not built"
+    runtime = _runtime()
+    if case == "no-registry":
+        runtime.registry = None
+    if case == "no-ontology":
+        runtime.ontology = None
+    if case == "raising-registry":
+        runtime.registry = _RaisingRegistry()
+    agent_id = {"unknown-agent": "nobody", "empty-id": ""}.get(case, AGENT_ID)
+    assert records_reader_for(runtime, agent_id) == expected
+
+
+# ── T8, T9: perspective and date ─────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("me", "opponent", "me_won", "opponent_won"), [("Ezri", "Captain", 2, 1), ("Captain", "Ezri", 1, 2)],
+)
+async def test_the_tally_is_told_from_the_readers_side_whichever_side_it_played(
+    tmp_path: Path, me: str, opponent: str, me_won: int, opponent_won: int,
+) -> None:
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "a", x="Ezri", o="Captain", winner="Ezri")
+    await _record(store, "b", x="Captain", o="Ezri", winner="Ezri")
+    await _record(store, "c", x="Captain", o="Ezri", winner="Captain")
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me=me, opponent=opponent, reader_id="captain", reader_department="",
+    )
+    assert (tally.me_won, tally.opponent_won, tally.drawn) == (me_won, opponent_won, 0)
+    assert tally.render().startswith(_block(3, opponent, opponent_won, me_won, 0, "").removesuffix("\n---"))
+
+
+@pytest.mark.parametrize(
+    ("updates", "last"),
+    [
+        pytest.param(["2026-04-16T10:00:00+00:00", "2026-04-24T10:00:00+00:00"], "2026-04-24", id="latest"),
+        pytest.param(["not a date", "also not a date"], "", id="no-date"),
+    ],
+)
+async def test_the_most_recent_date_is_the_latest_record_and_is_left_out_when_none_parses(
+    tmp_path: Path, updates: list[str], last: str,
+) -> None:
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    for index, updated in enumerate(updates):
+        _raw(store, f"dated-{index}", updated=updated)
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert tally.last_date == last
+    assert tally.render() == _block(2, "Captain", 2, 0, 0, last)
+
+
+# ── T10 to T14: Amendment A1 ─────────────────────────────────────────
+
+
+async def test_the_records_are_read_in_a_worker_thread_while_the_event_loop_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1), structural, no timing: every store call runs off the event-loop thread, and a
+    callback queued on the loop runs before the listing proceeds. Read on the loop thread, the
+    callback cannot run, the wait ends at its bound and the first assertion fails."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    for index in range(3):
+        await _record(store, f"g{index}", x="Captain", o="Ezri", winner="Captain")
+    loop_thread = threading.get_ident()
+    loop_ran = threading.Event()
+    seen: dict[str, Any] = {"loop_ran_first": None, "threads": []}
+    real_list, real_read = store.list_entries, store.read_entry
+
+    async def list_spy(*args: Any, **kwargs: Any) -> Any:
+        seen["threads"].append(threading.get_ident())
+        seen["loop_ran_first"] = loop_ran.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    async def read_spy(*args: Any, **kwargs: Any) -> Any:
+        seen["threads"].append(threading.get_ident())
+        return await real_read(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", list_spy)
+    monkeypatch.setattr(store, "read_entry", read_spy)
+    asyncio.get_running_loop().call_soon(loop_ran.set)
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert seen["loop_ran_first"] is True
+    assert len(seen["threads"]) == 4 and loop_thread not in seen["threads"]
+    assert (tally.total, tally.opponent_won) == (3, 3)
+
+
+async def test_cancelling_the_tally_while_the_records_are_read_raises_cancelled_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A1 (F1), 13.8: a caller cancelled while the worker reads gets ``CancelledError``, not ``None``
+    and not a tally; the worker's result is dropped."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "g0", x="Captain", o="Ezri", winner="Captain")
+    entered, release = threading.Event(), threading.Event()
+    real_list = store.list_entries
+
+    async def held_list(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        release.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", held_list)
+    task = asyncio.create_task(read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5.0)  # premise: the listing has begun
+        task.cancel()
+        (outcome,) = await asyncio.gather(task, return_exceptions=True)
+    finally:
+        release.set()
+    assert isinstance(outcome, asyncio.CancelledError)
+
+
+async def test_a_game_lookup_that_fails_for_the_tally_adds_nothing_and_logs_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A1 (F4), HH6: the tally's own ``get_game_by_player`` (the second of the turn; the active-game
+    block's is the first) raising gives the prompt with no tally and a WARNING with ``exc_info``."""
+    store = await _store(tmp_path)
+    service = _service(store)
+    try:
+        await _play(service, "Captain", "Ezri", X_WINS)
+        await service.create_game("tictactoe", "Captain", "Ezri")
+        baseline_prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=None)))
+        real_lookup = service.get_game_by_player
+        calls: list[str] = []
+
+        def second_fails(callsign: str) -> Any:
+            calls.append(callsign)
+            if len(calls) == 2:
+                raise RuntimeError("the game table is busy")
+            return real_lookup(callsign)
+
+        monkeypatch.setattr(service, "get_game_by_player", second_fails)
+        caplog.set_level(logging.WARNING, logger="probos.cognitive.cognitive_agent")
+        prompt, manifest = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+    finally:
+        await service.turns.stop()
+    assert calls == ["Ezri", "Ezri"]  # premise: the active-game block's lookup, then the tally's
+    assert prompt == baseline_prompt
+    assert "head_to_head" not in _names(manifest)
+    assert any(
+        r.levelno == logging.WARNING and r.name == "probos.cognitive.cognitive_agent"
+        and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and str(r.exc_info[1]) == "the game table is busy"  # A2: the traceback
+        for r in caplog.records
+    )
+
+
+async def test_a_record_the_store_cannot_decode_is_not_counted(tmp_path: Path) -> None:
+    """A1 (F3), L11, a guard of a recorded limit: ``list_entries(strict=True)`` skips a file whose
+    bytes are not UTF-8 (the store's rule), so the other records are counted. If the store's rule
+    changes, change L11 with this test."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "kept", x="Captain", o="Ezri", winner="Captain")
+    await _record(store, "undecodable", x="Captain", o="Ezri", winner="Captain")
+    path = store.repo_path / GAMES / "undecodable.md"
+    path.write_bytes(b"\xff" + path.read_bytes())
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    )
+    assert tally.total == 1
+
+
+async def test_a_records_store_that_suspends_gives_no_tally_and_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A1 (F1): the worker drives the store's coroutines with no event loop, which holds for
+    ``RecordsStore`` (its reads await nothing). A read that does suspend fails closed and loudly:
+    no tally and a WARNING with ``exc_info``, never a hang."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    await _record(store, "g0", x="Captain", o="Ezri", winner="Captain")
+    real_list = store.list_entries
+
+    async def suspending_list(*args: Any, **kwargs: Any) -> Any:
+        await asyncio.sleep(0)
+        return await real_list(*args, **kwargs)
+
+    monkeypatch.setattr(store, "list_entries", suspending_list)
+    caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+    assert await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+    ) is None
+    assert any(
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and "suspended" in str(r.exc_info[1])  # A2: the traceback
+        for r in caplog.records
+    )
+
+
+# ── T15 to T18: Amendment A3 ─────────────────────────────────────────
+
+
+async def test_the_game_in_progress_is_not_counted_when_it_finishes_while_the_records_are_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A3 (F1), structural, no timing: the worker's listing waits until the loop has played the
+    winning move and ``_record_game`` has written that game's record. The prompt shows the board
+    rendered before (four moves), and the finished game's record is not counted before itself."""
+    store = await _store(tmp_path)
+    service = _service(store)
+    listing_entered, game_recorded = threading.Event(), threading.Event()
+    seen: dict[str, Any] = {"recorded_first": None}
+    real_list = store.list_entries
+
+    async def held_list(*args: Any, **kwargs: Any) -> Any:
+        listing_entered.set()
+        seen["recorded_first"] = game_recorded.wait(5.0)
+        return await real_list(*args, **kwargs)
+
+    try:
+        before = await _play(service, "Captain", "Ezri", X_WINS)  # the one game truly before
+        active = await service.create_game("tictactoe", "Captain", "Ezri")
+        for index, position in enumerate(X_WINS[:-1]):
+            await service.make_move(active["game_id"], "Captain" if index % 2 == 0 else "Ezri", position)
+
+        async def finish_during_the_read() -> None:
+            assert await asyncio.to_thread(listing_entered.wait, 5.0)  # the worker is in the listing
+            await service.make_move(active["game_id"], "Captain", X_WINS[-1])  # Captain wins; recorded
+            game_recorded.set()
+
+        monkeypatch.setattr(store, "list_entries", held_list)
+        finisher = asyncio.create_task(finish_during_the_read())
+        try:
+            prompt, _ = await _turn(_agent(_runtime(recreation_service=service, records_store=store)))
+        finally:
+            listing_entered.set()  # never leave the finisher waiting
+            finished = await asyncio.gather(finisher, return_exceptions=True)
+    finally:
+        await service.turns.stop()
+    assert finished == [None]
+    assert seen["recorded_first"] is True  # premise: the record was written while the worker read
+    assert active["result"]["status"] == "won"
+    assert (store.repo_path / GAMES / f"{active['game_id']}.md").is_file()
+    assert "Moves so far: 4." in prompt  # premise: the board was rendered before the game finished
+    first = await store.read_entry(f"{GAMES}/{before['game_id']}.md", "captain")
+    assert prompt.count(_block(1, "Captain", 1, 0, 0, str(first["frontmatter"]["updated"])[:10])) == 1
+
+
+@pytest.mark.parametrize(
+    ("current", "total"), [pytest.param("game-b", 2, id="current"), pytest.param("", 3, id="none")],
+)
+async def test_the_record_of_the_game_the_tally_is_shown_in_is_not_passed_to_read_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, current: str, total: int,
+) -> None:
+    """A3 (F1): ``current_game_id`` names the game the tally is shown in; its record is skipped
+    before ``read_entry``. Empty, the default, skips nothing."""
+    read_head_to_head = _built("read_head_to_head")
+    assert "current_game_id" in inspect.signature(read_head_to_head).parameters, "A3 is not built"
+    store = await _store(tmp_path)
+    for name in ("game-a", "game-b", "game-c"):
+        await _record(store, name, x="Captain", o="Ezri", winner="Captain")
+    reads: list[str] = []
+    real_read = store.read_entry
+
+    async def read_spy(path: str, *args: Any, **kwargs: Any) -> Any:
+        reads.append(path)
+        return await real_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(store, "read_entry", read_spy)
+    tally = await read_head_to_head(
+        store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        current_game_id=current,
+    )
+    assert tally is not None and tally.total == total
+    assert len(reads) == total and (f"{GAMES}/game-b.md" in reads) is (current == "")
+
+
+def _directory_link(link: Path, target: Path) -> None:
+    """A directory link, as AD-1200's tests make one: a junction on Windows (no privilege), else a symlink."""
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+        assert link.is_junction()
+    else:
+        link.symlink_to(target, target_is_directory=True)
+        assert link.is_symlink()
+
+
+def _remove_directory_link(link: Path) -> None:
+    """Remove the link ``_directory_link`` made, never its target or what lies below it, as AD-1200's
+    ``_unlink_junction``: ``rmdir`` on Windows (a junction), ``unlink`` elsewhere (a symlink)."""
+    if os.name == "nt":
+        link.rmdir()
+    else:
+        link.unlink()
+
+
+def _scandir_spy(monkeypatch: pytest.MonkeyPatch, listed: list[Path] | None, limit: int = 2000) -> dict[str, int]:
+    """Replace ``os.scandir`` for one test. Every call is counted, and the ``limit``-th raises, so a walk
+    that does not terminate fails fast instead of hanging the suite. With ``listed``, each path argument
+    is recorded resolved (``os.fsdecode``, so ``bytes`` too); a descriptor (``int``) names no path and
+    passes through unrecorded."""
+    real_scandir = os.scandir
+    calls = {"n": 0}
+
+    def spy(path: Any = ".") -> Any:
+        calls["n"] += 1
+        if calls["n"] >= limit:
+            raise AssertionError("the walk does not terminate")
+        if listed is not None and not isinstance(path, int):
+            listed.append(Path(os.fsdecode(path)).resolve())
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", spy)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "link", [pytest.param("recreation", id="recreation"), pytest.param("recreation/games", id="games"),
+             pytest.param(GAMES, id="game-type")],
+)
+async def test_a_game_directory_that_leads_out_of_the_records_is_not_walked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, link: str,
+) -> None:
+    """A3 (F3): a directory link at ``link`` leads out of the records, in a layout that does not change
+    during the pass. The count refuses it before listing it, as ``RecordsStore._safe_path`` refuses it:
+    nothing outside is listed, no tally is shown, and a WARNING carries the refusal. The link and its
+    target both live in ``tmp_path``; the link alone is removed in a ``finally`` (A4)."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    outside = tmp_path / "outside"
+    games = outside / Path(GAMES).relative_to(link)
+    games.mkdir(parents=True)
+    (games / "g0.md").write_text("**Players:** Captain (X) vs Ezri (O)\n**Result:** draw\n", encoding="utf-8")
+    (store.repo_path / link).parent.mkdir(parents=True, exist_ok=True)
+    _directory_link(store.repo_path / link, outside)
+    outside_resolved = outside.resolve()
+    listed: list[Path] = []
+    try:
+        _scandir_spy(monkeypatch, listed)
+        caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+        tally = await read_head_to_head(
+            store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        )
+    finally:
+        _remove_directory_link(store.repo_path / link)
+    assert not [p for p in listed if p.is_relative_to(outside_resolved)], listed
+    assert tally is None
+    assert any(
+        r.name == "probos.recreation.history" and "AD-1358" in r.getMessage()
+        and isinstance(r.exc_info, tuple) and isinstance(r.exc_info[1], ValueError)
+        and "traversal" in str(r.exc_info[1])
+        for r in caplog.records
+    )
+
+
+async def test_a_directory_cycle_under_the_game_directory_ends_the_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A3 revision, no wall clock, no thread of its own: ``loop`` links the game directory to itself.
+    On Windows a junction is a directory to ``is_dir(follow_symlinks=False)``; descended by its
+    growing path, it ends when the OS refuses the path (``OSError``): no tally and a WARNING, as the
+    store's strict listing fails. On POSIX a symlink is not descended: no tally, nothing logged. The
+    spy fails a walk that does not terminate at its 2,000th listing."""
+    read_head_to_head = _built("read_head_to_head")
+    store = await _store(tmp_path)
+    loop = store.repo_path / GAMES / "loop"
+    loop.parent.mkdir(parents=True)
+    _directory_link(loop, loop.parent)
+    try:
+        calls = _scandir_spy(monkeypatch, None)
+        caplog.set_level(logging.WARNING, logger="probos.recreation.history")
+        tally = await read_head_to_head(
+            store, game_type="tictactoe", me="Ezri", opponent="Captain", reader_id="Ezri", reader_department="science",
+        )
+    finally:
+        _remove_directory_link(loop)
+    assert calls["n"] < 2000, "the walk does not terminate"
+    assert tally is None
+    warnings = [r for r in caplog.records if r.name == "probos.recreation.history"]
+    if os.name == "nt":
+        assert any(isinstance(r.exc_info, tuple) and isinstance(r.exc_info[1], OSError) for r in warnings)
+    else:
+        assert warnings == []
