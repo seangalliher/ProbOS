@@ -256,6 +256,77 @@ async def test_the_return_value_and_raising_are_unchanged(tmp_path, monkeypatch,
             store._git_sync(("status",))
 
 
+@pytest.mark.asyncio
+async def test_a_commit_that_times_out_is_logged_once_and_not_called_unrun(tmp_path, caplog, monkeypatch):
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    store = RecordsStore(_records(tmp_path))
+
+    def timed_out(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    _fake_run(monkeypatch, timed_out)
+    await store._commit("first")
+    await store._commit("second")
+
+    logged = _warnings(caplog)
+    assert len(logged) == 1, logged
+    assert "did not finish" in logged[0] and "not known" in logged[0]
+    assert "did not run" not in logged[0]
+
+
+@pytest.mark.asyncio
+async def test_a_failure_is_logged_with_git_s_first_line_only(tmp_path, caplog, monkeypatch):
+    monkeypatch.setenv("LC_ALL", "C")  # git's English text, which the premise names
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    store = await _store(tmp_path)
+    repo = store.repo_path
+    _plant_lock(repo)
+    (repo / "reports" / "one.md").write_text("First.", encoding="utf-8")
+    plain = subprocess.run(["git", "-C", str(repo), "add", "reports/one.md"], capture_output=True, text=True)
+    assert plain.returncode != 0 and "remove the file manually" in plain.stderr, (
+        f"premise: this git advises removing the lock; report this, do not skip: {plain.stderr!r}"
+    )
+
+    await store.write_entry("bones", "reports/one.md", "First.", "first")
+
+    logged = _add_lock_warnings(caplog)
+    assert len(logged) == 1, _warnings(caplog)
+    assert "remove the file" not in logged[0] and "\n" not in logged[0], logged[0]
+
+
+@pytest.mark.parametrize("case", ["success", "failure", "timeout"])
+def test_the_warning_memory_changes_only_while_the_git_lock_is_held(tmp_path, monkeypatch, case):
+    store = RecordsStore(_records(tmp_path))
+    held: list[tuple[str, bool]] = []
+    forget, warn = store._forget_git_warnings, store._warn_git_once
+
+    def forget_spy() -> None:
+        held.append(("forget", store._git_lock.locked()))
+        forget()
+
+    def warn_spy(*args: object) -> None:
+        held.append(("warn", store._git_lock.locked()))
+        warn(*args)
+
+    monkeypatch.setattr(store, "_forget_git_warnings", forget_spy)
+    monkeypatch.setattr(store, "_warn_git_once", warn_spy)
+
+    def fake(argv, **kwargs):
+        if case == "timeout":
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return subprocess.CompletedProcess(argv, 0 if case == "success" else 1, stdout="", stderr="fatal: bf957\n")
+
+    _fake_run(monkeypatch, fake)
+    if case == "timeout":
+        with pytest.raises(subprocess.TimeoutExpired):
+            store._git_sync(("add", "x.md"))
+    else:
+        store._git_sync(("add", "x.md"))
+
+    # held, not merely called: a later child's warning can then never be cleared by an earlier child's success
+    assert held == [("forget" if case == "success" else "warn", True)]
+
+
 # ---------------------------------------------------------------- the doctor check
 
 
@@ -324,18 +395,30 @@ async def test_the_check_skips_without_config_records_or_auto_commit(tmp_path, c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["no directory", "not a repository", "no commit yet"])
+@pytest.mark.parametrize("case", ["no directory", "a file", "not a repository", "no commit yet"])
 async def test_a_missing_directory_or_repository_or_commit_is_reported(tmp_path, case):
     repo = tmp_path / "ship-records"
-    if case != "no directory":
+    if case == "a file":
+        repo.write_text("not a directory", encoding="utf-8")
+        with pytest.raises(FileExistsError):  # premise: startup refuses this path, so OK would be false
+            await RecordsStore(_records(tmp_path)).initialize()
+    elif case != "no directory":
         repo.mkdir()
     if case == "no commit yet":
         _git(repo, "init")
 
     result = await _check().run(_ctx(tmp_path, _records(tmp_path)))
 
-    expected = {"no directory": CheckOutcome.OK, "not a repository": CheckOutcome.WARN, "no commit yet": CheckOutcome.WARN}
+    expected = {
+        "no directory": CheckOutcome.OK,
+        "a file": CheckOutcome.FAIL,
+        "not a repository": CheckOutcome.WARN,
+        "no commit yet": CheckOutcome.WARN,
+    }
     assert result.outcome == expected[case]
+    if case == "a file":
+        assert "not a directory" in result.message
+        assert repo.read_text(encoding="utf-8") == "not a directory"
     if case == "no commit yet":
         assert "last commit: not read" in result.detail
 
@@ -370,6 +453,44 @@ async def test_the_check_reads_git_with_optional_locks_off(tmp_path, monkeypatch
 
     assert result.outcome == CheckOutcome.OK
     assert seen == ["0", "0"]
+
+
+@pytest.mark.asyncio
+async def test_the_check_runs_no_fsmonitor_and_writes_nothing_in_the_repository(tmp_path, monkeypatch):
+    store = await _store(tmp_path)
+    repo = store.repo_path
+    marker = repo / ".git" / "bf957-fsmonitor-ran"
+    hook = tmp_path / "fsmonitor-bf957"
+    hook.write_bytes(f'#!/bin/sh\necho ran >> "{marker.as_posix()}"\n'.encode("utf-8"))
+    os.chmod(hook, 0o755)
+    _git(repo, "config", "core.fsmonitor", hook.as_posix())
+    # The agent harness exports core.fsmonitor=false at command-line scope (GIT_CONFIG_COUNT), which overrides the
+    # repository's value and would hide a missing option. Switch it off, so the test means the same on any host.
+    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "0")
+    check = _check()
+
+    # premise: with optional locks off, as the check's reads had before A3, plain git status runs the fsmonitor
+    plain = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"}, capture_output=True, text=True,
+    )
+    assert plain.returncode == 0, plain.stderr
+    assert marker.is_file(), "premise: this git runs a configured fsmonitor; report this, do not skip"
+    marker.unlink()
+
+    def snapshot() -> dict[str, tuple[int, int]]:
+        return {
+            p.relative_to(repo).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns)
+            for p in repo.rglob("*") if p.is_file()
+        }
+
+    before = snapshot()
+    result = await check.run(_ctx(tmp_path, _records(tmp_path)))
+
+    assert result.outcome == CheckOutcome.OK, result.detail
+    assert not marker.exists(), "the check's git ran the repository's fsmonitor"
+    assert snapshot() == before
 
 
 def test_the_thresholds_are_bounded_config_fields_with_defaults():

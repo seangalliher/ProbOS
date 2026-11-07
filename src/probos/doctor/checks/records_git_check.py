@@ -6,8 +6,10 @@ Three readings of the records repository: an ``index.lock`` at least ``records.g
 old while uncommitted paths exist (WARN).
 
 The check writes nothing and takes no lock. The lock is read with ``stat``, and both git commands run with
-``GIT_OPTIONAL_LOCKS=0``, so ``git status`` does not refresh the index. It removes nothing either: removing a
-lock stays the operator's decision once no git process uses the repository.
+``GIT_OPTIONAL_LOCKS=0``, so ``git status`` does not refresh the index, and with ``HARDENED_GIT_CONFIG_ARGS``
+(BF-904a), so no repository hook or fsmonitor runs: optional locks do not stop a configured fsmonitor, which may
+write. It removes nothing either: removing a lock stays the operator's decision once no git process uses the
+repository.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from typing import Any
 from probos.config import resolve_records_repo_path
 from probos.doctor.protocol import CheckOutcome, CheckResult, DoctorContext
 from probos.doctor.registry import register_check
-from probos.execution.command_env import trusted_command_env
+from probos.execution.command_env import HARDENED_GIT_CONFIG_ARGS, trusted_command_env
 
 #: Seconds each read-only git command may take. Stopping one holds no lock: optional locks are off.
 _GIT_READ_TIMEOUT_S = 15.0
@@ -38,9 +40,9 @@ _Part = tuple[CheckOutcome, str, str]  # (outcome, detail line, remediation)
 
 
 def _git_read_sync(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """One read-only git command in ``repo``, with optional locks off so nothing in the repository is written."""
+    """One read-only git command in ``repo``: optional locks off, and no repository hook or fsmonitor runs."""
     return subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["git", *HARDENED_GIT_CONFIG_ARGS, "-C", str(repo), *args],  # BF-957 A3: optional locks do not stop an fsmonitor
         env={**trusted_command_env(), "GIT_OPTIONAL_LOCKS": "0"},
         capture_output=True,
         encoding="utf-8",
@@ -153,10 +155,17 @@ class _RecordsGitCheck:
                 message="Ship's Records git: auto_commit is off, so ProbOS keeps no records history to check",
             )
         repo = resolve_records_repo_path(records, ctx.data_dir)
-        if not repo.is_dir():
+        if not repo.exists() and not repo.is_symlink():
             return CheckResult(
                 outcome=CheckOutcome.OK,
                 message=f"Ship's Records git: {repo} does not exist yet; it is created when the vessel starts",
+            )
+        if not repo.is_dir():
+            return CheckResult(
+                outcome=CheckOutcome.FAIL,
+                message=f"Ship's Records git: {repo} exists and is not a directory, so Ship's Records cannot start",
+                remediation="records.repo_path must name a directory, or a path that does not exist yet, which "
+                "ProbOS creates when the vessel starts.",
             )
         git_dir = repo / ".git"
         if not git_dir.is_dir():

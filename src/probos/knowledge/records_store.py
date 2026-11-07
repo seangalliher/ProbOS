@@ -1648,10 +1648,12 @@ class RecordsStore:
         """Synchronous git execution.
 
         BF-957: at most one git child of this store runs at a time (``_git_lock``, held until the child has
-        exited), so the store's own commands never meet at the index lock. A non-zero exit is logged at WARNING
-        once per distinct error (``_warn_git_once``) and its stdout is returned as before; a commit with nothing
-        staged is not an error. A command that outlives the timeout is stopped by ``subprocess.run``; this logs
-        a WARNING, because a lock it held may remain, and re-raises the same exception.
+        exited and its result is classified), so the store's own commands never meet at the index lock, and the
+        once-per-error memory changes in the order the children ran. A non-zero exit is logged at WARNING once
+        per distinct error (``_warn_git_once``), with git's first output line only, and its stdout is returned as
+        before; a commit with nothing staged is not an error. A command that outlives the timeout is stopped by
+        ``subprocess.run``; this logs a WARNING, because what it changed is not known and a lock it held may
+        remain, and re-raises the same exception.
         """
         verb = args[0] if args else ""
         with self._git_lock:
@@ -1667,28 +1669,30 @@ class RecordsStore:
             except subprocess.TimeoutExpired:
                 self._warn_git_once(
                     (verb, "timeout"),
-                    "Ship's Records: git %s did not finish in 30 s and was stopped; a lock file it held may "
-                    "remain in %s. `probos doctor` reports the repository's state.",
+                    "Ship's Records: git %s did not finish in 30 s and was stopped. What it changed is not known, "
+                    "and a lock file it held may remain in %s. `probos doctor` reports the repository's state.",
                     verb,
                     self._repo_path / ".git",
                 )
                 raise
-        if result.returncode == 0:
-            if verb in _GIT_INDEX_VERBS:
-                self._forget_git_warnings()
+            # BF-957 A3: classified under the lock, so a later child's warning is never cleared by an earlier success.
+            if result.returncode == 0:
+                if verb in _GIT_INDEX_VERBS:
+                    self._forget_git_warnings()
+                return result.stdout
+            if any(phrase in result.stdout for phrase in _GIT_NOTHING_STAGED):
+                return result.stdout
+            error = _git_error_line(result.stderr, result.stdout)
+            self._warn_git_once(
+                (verb, error),
+                "Ship's Records: git %s failed (exit %d): %s. Records are still written to disk, but a failed "
+                "add or commit leaves them out of the records history. This error is logged once until a git add "
+                "or commit succeeds; `probos doctor` reports the repository's state.",
+                verb,
+                result.returncode,
+                error,  # BF-957 A3: git's first line only; the rest may advise removing a lock without the precondition
+            )
             return result.stdout
-        if any(phrase in result.stdout for phrase in _GIT_NOTHING_STAGED):
-            return result.stdout
-        self._warn_git_once(
-            (verb, _git_error_line(result.stderr, result.stdout)),
-            "Ship's Records: git %s failed (exit %d): %s. Records are still written to disk, but a failed add "
-            "or commit leaves them out of the records history. This error is logged once until a git add or "
-            "commit succeeds; `probos doctor` reports the repository's state.",
-            verb,
-            result.returncode,
-            (result.stderr.strip() or result.stdout.strip() or "(no output)")[:2000],
-        )
-        return result.stdout
 
     def _warn_git_once(self, key: tuple[str, str], msg: str, *args: object) -> None:
         """BF-957: log ``msg`` at WARNING unless ``key`` was logged since the last successful git add or commit.
@@ -1711,8 +1715,9 @@ class RecordsStore:
     async def _commit(self, message: str) -> None:
         """Debounced git commit.
 
-        BF-957: an exception (a timeout, git missing) is logged at WARNING once per exception type until a git
-        add or commit succeeds, and is not raised, as before.
+        BF-957: an exception that stopped the commit before git ran (for example, git is missing) is logged at
+        WARNING once per exception type until a git add or commit succeeds. A timeout is not logged again:
+        ``_git_sync`` has logged it, and what the stopped commit changed is not known. Nothing is raised, as before.
         """
         if not self._config.auto_commit:
             return
@@ -1720,6 +1725,8 @@ class RecordsStore:
             try:
                 await self._git("commit", "-m", message, "--allow-empty-message")
             except Exception as e:
+                if isinstance(e, subprocess.TimeoutExpired):
+                    return  # BF-957 A3: _git_sync logged it once per verb; "did not run" would be false
                 self._warn_git_once(
                     ("commit", type(e).__name__),
                     "Ship's Records: git commit did not run (%s: %s). The record is written to disk but not to "
