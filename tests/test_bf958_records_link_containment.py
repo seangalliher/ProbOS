@@ -21,11 +21,6 @@ from probos.knowledge.records_store import RecordsStore
 from tests.test_ad1341_s4_lessons import _WALK_FAULTS, _Trace, _TracedListing, _walk_tree
 
 _LOGGER = "probos.knowledge.records_store"
-_BUILT = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-958 M2 builds it")
-_BUILT_ON_WINDOWS = pytest.mark.xfail(
-    os.name == "nt", raises=AssertionError, strict=True,
-    reason="BF-958 M2 builds it; elsewhere the base already passes over a directory symbolic link",
-)
 _MODES = ["list-strict", "list-default", "search"]
 _NOTE = "notebooks/alice/note.md"
 
@@ -149,7 +144,6 @@ def _traced_default_walk(root: Path, trace: Any) -> list[Path]:
     pytest.param("list-strict", "notebooks", id="strict-directory"),
     pytest.param("search", "", id="search"),
 ])
-@_BUILT_ON_WINDOWS
 async def test_a_directory_link_out_of_the_repository_is_not_listed_or_searched(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, mode: str, directory: str,
 ) -> None:
@@ -176,7 +170,6 @@ async def test_a_directory_link_out_of_the_repository_is_not_listed_or_searched(
 
 @pytest.mark.parametrize("kind", ["outside", "loop"])
 @pytest.mark.parametrize("mode", _MODES)
-@_BUILT
 async def test_a_listed_file_that_resolves_outside_is_skipped_with_a_warning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, mode: str, kind: str,
 ) -> None:
@@ -193,7 +186,6 @@ async def test_a_listed_file_that_resolves_outside_is_skipped_with_a_warning(
 
 
 @pytest.mark.parametrize("mode", _MODES)
-@_BUILT
 async def test_a_markdown_link_to_a_file_outside_is_skipped_with_a_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, mode: str,
 ) -> None:
@@ -233,7 +225,6 @@ async def test_a_markdown_link_to_a_file_inside_is_listed_as_read_entry_reads_it
 
 
 @pytest.mark.parametrize("mode", _MODES)
-@_BUILT_ON_WINDOWS
 async def test_a_directory_link_cycle_is_not_descended_and_the_walk_ends(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, mode: str,
 ) -> None:
@@ -316,7 +307,6 @@ async def test_the_default_listing_and_search_pass_over_a_directory_they_cannot_
 
 
 @pytest.mark.parametrize("kind", sorted(_WALK_FAULTS))
-@_BUILT
 def test_the_default_walk_raises_only_a_failed_listing_step(tmp_path: Path, kind: str) -> None:
     """AD-1341 S4's trace-and-fault matrix, for the default walk: each operation of a clean walk fails once with
     ``kind``. Only a failed listing step (``next``) raises, as in ``rglob``'s walk; a directory that cannot be opened is

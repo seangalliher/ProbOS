@@ -123,7 +123,8 @@ def _drive(make: Callable[..., Coroutine[Any, Any, Any]], /, *args: Any) -> Any:
 def _count_record_names(repo_path: Path, directory: str, limit: int) -> int:
     """A3 (F2, F3): count the ``*.md`` names under ``directory`` by the store's strict walk rule, stopping at ``limit + 1``.
 
-    No file is opened. The walk is ``_markdown_files_or_raise``'s: the resolved ``directory`` is
+    No file is opened. The walk is the store's strict walk (``_markdown_files``) but for one rule: it
+    descends a directory junction, which the store's walk passes over (BF-958). The resolved ``directory`` is
     listed; an entry that ``is_dir(follow_symlinks=False)`` is descended by its unresolved path,
     not counted; any other entry matching ``*.md`` (``fnmatch``, the platform's case rule) is
     counted; a missing ``directory`` counts 0 and any other ``OSError`` raises. Each directory's

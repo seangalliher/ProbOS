@@ -404,14 +404,24 @@ def _search_records(
 
     It reads files under ``search_path`` and touches no store state, so it is safe off the
     event loop. Every record is parsed, not only those that match, because a term's rarity
-    is counted over what this reader may read and over nothing else (A4).
+    is counted over what this reader may read and over nothing else (A4). BF-958: the walk is
+    the default listing's (:func:`_markdown_files`), and a file that resolves outside the
+    repository is skipped before it is read, as :meth:`RecordsStore.list_entries` skips it.
     """
+    repo = root.resolve()  # BF-958: root is the repository, resolved or as configured
     readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
-    for md_file in sorted(search_path.rglob("*.md")):
+    for md_file in sorted(_markdown_files(search_path, strict=False)):
         rel_path = str(md_file.relative_to(root)).replace("\\", "/")
         if rel_path.startswith("_archived/"):
             continue
         try:
+            if not _resolves_inside(md_file, repo):  # BF-958: read_entry's rule, before the search reads
+                logger.warning(
+                    "BF-958: Ship's Records search skipped %s: it resolves outside the records repository (a link), "
+                    "so it is not read; read_entry refuses it too",
+                    rel_path,
+                )
+                continue
             raw = md_file.read_text(encoding="utf-8")
         except Exception:
             logger.debug("Skipping unreadable file", exc_info=True)
@@ -487,23 +497,42 @@ def _search_records(
     return results
 
 
-def _markdown_files_or_raise(search_path: Path) -> list[Path]:
-    """AD-1341 S4 (A4, A5): every file named ``*.md`` under ``search_path``, or the ``OSError`` that hid one.
+def _resolves_inside(path: Path, repo: Path) -> bool:
+    """BF-958: whether ``path`` resolves inside ``repo`` (the resolved repository), :meth:`RecordsStore._safe_path`'s
+    rule, which the listing and the search apply to each file their walk returns before reading it. A link loop
+    resolves nowhere (``Path.resolve`` raises ``RuntimeError``), so it is not inside; an ``OSError`` propagates."""
+    try:
+        return path.resolve().is_relative_to(repo)
+    except RuntimeError:
+        return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+
+
+def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
+    """AD-1341 S4 (A4, A5), BF-958: every file named ``*.md`` under ``search_path`` by a walk that descends no
+    directory link; with ``strict``, or the ``OSError`` that hid one.
 
     A5 (round 3 R3-M1-1): ``os.walk`` filed an entry whose type it could not read as a file and never descended into
     it, as ``Path.rglob`` passed over a directory it could not list (A4): each standard walker absorbs some error. So
-    this walk is explicit, and each filesystem operation it makes has one disposition (the contract's 7.3a table):
+    this walk is explicit, and each filesystem operation it makes has one disposition (the AD-1341 S4 contract's 7.3a
+    table, with BF-958's OJ row and default column):
 
     - O1 ``os.scandir(search_path)``: ``FileNotFoundError`` or ``NotADirectoryError`` lists nothing, since nothing
-      was written under a directory that is not there; any other ``OSError`` raises.
-    - O2 ``os.scandir`` of a directory a listing reported: any ``OSError`` raises, ``FileNotFoundError`` included
-      (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried).
-    - O3 each step of a listing: any ``OSError`` raises.
-    - O4 ``entry.is_dir(follow_symlinks=False)``: any ``OSError`` raises; the entry is never taken for a file. The
-      type comes from the listing record, so a symbolic link is not descended, as ``rglob`` descends none.
+      was written under a directory that is not there. Any other ``OSError``: ``strict`` raises; the default lists
+      nothing.
+    - O2 ``os.scandir`` of a directory a listing reported: ``strict`` raises any ``OSError``, ``FileNotFoundError``
+      included (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried). The
+      default passes over that directory, as ``rglob`` did.
+    - O3 each step of a listing: any ``OSError`` raises, in both modes (``rglob``'s walk raised it too).
+    - OJ ``entry.is_junction()`` (BF-958): a directory junction is not descended, and a WARNING names it, in both
+      modes. ``is_dir(follow_symlinks=False)`` is true for a junction, so before BF-958 this walk descended one.
+    - O4 ``entry.is_dir(follow_symlinks=False)``: the type comes from the listing record, so a symbolic link is not
+      descended, as ``rglob`` descends none.
 
-    Only a successful listing proves a document absent. A directory named ``*.md`` is no document and is not
-    returned; the suffix matches with the platform's case rule (``fnmatch``), as ``rglob``'s does.
+    An ``OSError`` from OJ or O4 raises with ``strict``, and the entry is never taken for a file; the default takes
+    the entry for no directory, as ``rglob``'s walk did. Only a successful listing proves a document absent. A
+    directory named ``*.md`` is no document and is not returned; the suffix matches with the platform's case rule
+    (``fnmatch``), as ``rglob``'s does. Whether a returned file resolves inside the repository is the caller's
+    check (:func:`_resolves_inside`).
     """
     found: list[Path] = []
     pending: list[Path] = [search_path]
@@ -512,13 +541,31 @@ def _markdown_files_or_raise(search_path: Path) -> list[Path]:
         try:
             listing = os.scandir(directory)  # O1 for search_path, O2 below it
         except (FileNotFoundError, NotADirectoryError):
-            if directory is not search_path:
+            if strict and directory is not search_path:
                 raise  # O2 (A5): a directory a listing reported is never "no documents"
-            return found  # O1: search_path does not exist, so nothing was written under it
+            continue  # O1: search_path does not exist, so nothing was written under it; O2 in the default mode
+        except OSError:
+            if strict:  # O1, O2: the strict walk raises what it cannot list
+                raise
+            logger.debug("Skipping a records directory that cannot be listed: %s", directory, exc_info=True)
+            continue  # O1, O2 in the default mode, as rglob passed over it
         with listing:
-            for entry in listing:  # O3: an OSError while listing propagates
+            for entry in listing:  # O3: an OSError while listing propagates, in both modes
                 path = Path(directory, entry.name)
-                if entry.is_dir(follow_symlinks=False):  # O4: an OSError propagates; it is never read as "a file"
+                try:
+                    if entry.is_junction():  # OJ (BF-958): never descended; it may lead out of the repository
+                        logger.warning(
+                            "BF-958: Ship's Records did not descend %s: it is a directory junction, which may lead "
+                            "out of the records repository; the records behind it are not listed or searched there",
+                            path,
+                        )
+                        continue
+                    is_dir = entry.is_dir(follow_symlinks=False)  # O4
+                except OSError:
+                    if strict:  # OJ, O4: the strict walk never reads an unknown entry as a file
+                        raise
+                    is_dir = False  # BF-958: the default walk reads it as rglob's walk did, as no directory
+                if is_dir:
                     pending.append(path)
                 elif fnmatch.fnmatch(entry.name, "*.md"):
                     found.append(path)
@@ -928,7 +975,7 @@ class RecordsStore:
         """List all Bill files in Ship's Records (AD-618a).
 
         Bypasses list_entries() — bills are .bill.yaml files, not .md.
-        list_entries() uses rglob("*.md") which would never find them.
+        list_entries() lists only *.md files, so it would never find them.
 
         Returns:
             List of dicts with 'path' and 'bill_id' keys for each bill.
@@ -1352,17 +1399,21 @@ class RecordsStore:
         exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
         AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
         that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
-        A4, A5: ``strict=True`` walks with ``_markdown_files_or_raise``, which raises every ``OSError`` that could leave
-        a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot read)
-        and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any ``OSError``,
-        with no second look at whether it is still a file (A5).
+        A4, A5: ``strict=True`` walks with ``_markdown_files(strict=True)``, which raises every ``OSError`` that could
+        leave a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot
+        read) and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any
+        ``OSError``, with no second look at whether it is still a file (A5).
+
+        BF-958: in both modes the walk does not descend a directory junction, and a listed file that resolves outside
+        the repository (a link; :meth:`read_entry` refuses it) is skipped. Each is logged at WARNING; neither raises.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
         root = self._repo_path.resolve() if directory else self._repo_path
+        repo = self._repo_path.resolve()  # BF-958: the containment rule compares resolved paths
         results = []
-        # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
-        found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
+        # AD-1341 S4 (A4), BF-958: one walk for both modes; only the strict mode raises what hid a document
+        found = _markdown_files(search_path, strict=strict)
 
         for md_file in sorted(found):
             rel_path = str(md_file.relative_to(root)).replace("\\", "/")
@@ -1370,6 +1421,13 @@ class RecordsStore:
             if rel_path.startswith("_archived/"):
                 continue
             try:
+                if not _resolves_inside(md_file, repo):  # BF-958: read_entry's rule, before the listing reads
+                    logger.warning(
+                        "BF-958: Ship's Records listing skipped %s: it resolves outside the records repository "
+                        "(a link), so it is not listed; read_entry refuses it too",
+                        rel_path,
+                    )
+                    continue
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
             except OSError:
