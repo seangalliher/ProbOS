@@ -114,6 +114,12 @@ class KnowledgeStore:
         self._flushing: bool = False  # Guard against debounce/flush race (AD-161)
         self._pending_messages: list[str] = []
         self._commit_timer: asyncio.TimerHandle | None = None
+        # BF-960: one add-and-commit sequence at a time (the debounce task, flush()
+        # and rollback_artifact), and the debounce timer's tasks until each is done.
+        # An asyncio.Lock binds to a loop only on its first contended acquire, so
+        # creating it here, before any loop runs, is safe (as RecordsStore does).
+        self._commit_lock = asyncio.Lock()
+        self._commit_tasks: set[asyncio.Task[None]] = set()
         self._skill_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
@@ -1082,36 +1088,89 @@ class KnowledgeStore:
             loop = asyncio.get_running_loop()
             self._commit_timer = loop.call_later(
                 self._config.commit_debounce_seconds,
-                lambda: asyncio.create_task(self._flush_pending()),
+                self._on_commit_timer,
             )
         except RuntimeError:
             # No running loop (e.g. during testing without async context)
             pass
 
-    async def _flush_pending(self) -> None:
-        """Commit all pending messages.  Called by debounce timer."""
-        if self._flushing:
+    def _on_commit_timer(self) -> None:
+        """The debounce timer's callback: start the commit and keep its task (BF-960).
+
+        A cancelled timer never runs its callback, and every re-arm cancels the
+        previous timer first, so the timer running this is ``_commit_timer``. It is
+        cleared here, so a timer armed after this point is the next one, which
+        ``flush()`` can still cancel. The task stays in ``_commit_tasks`` until it
+        is done, so ``flush()`` can wait for it.
+        """
+        self._commit_timer = None  # BF-960: this timer has fired; one armed later is the next
+        task = asyncio.create_task(self._flush_pending())
+        self._commit_tasks.add(task)
+        task.add_done_callback(self._on_commit_task_done)
+
+    def _on_commit_task_done(self, task: asyncio.Task[None]) -> None:
+        """Forget a finished debounce task; log an exception it ended with (BF-960)."""
+        self._commit_tasks.discard(task)
+        if task.cancelled():
             return
+        exc = task.exception()
+        if exc is not None:
+            log.warning(
+                "Knowledge store debounced commit failed at %s: %s; the writes "
+                "stay on disk and the next commit or the shutdown flush includes them",
+                self._repo_path,
+                exc,
+            )
+
+    def _take_pending(self) -> str | None:
+        """Hand the pending commit messages, joined, to one committer (BF-960).
+
+        Synchronous, so nothing else runs between the read and the clear: each
+        message is taken, and committed, by exactly one caller. ``None`` when
+        nothing is pending.
+        """
         if not self._pending_messages:
-            return
-
-        messages = self._pending_messages[:]
+            return None
+        combined = "; ".join(self._pending_messages)
         self._pending_messages.clear()
-        self._commit_timer = None
+        return combined
 
-        combined = "; ".join(messages)
+    async def _flush_pending(self) -> None:
+        """Commit all pending messages.  Called by the debounce timer's task.
+
+        BF-960: ``_take_pending`` and the commit lock request in ``_git_commit``
+        follow each other with no suspension point, so a ``flush()`` that starts
+        later queues behind this commit. The timer reference is cleared by
+        ``_on_commit_timer``, not here.
+        """
+        if self._flushing:  # BF-960: a flush that has begun takes the pending messages itself
+            return
+        combined = self._take_pending()
+        if combined is None:
+            return
         await self._git_commit(combined)
 
     async def _git_commit(self, message: str) -> None:
-        """Run git add + commit in thread executor (AD-166).
+        """Run git add + commit in thread executor (AD-166), one sequence at a time.
+
+        BF-960: the whole sequence runs under ``_commit_lock``, so a second caller
+        (the debounce task, ``flush()`` or ``rollback_artifact``) waits for the
+        first instead of meeting git's ``index.lock``. Nothing under the lock takes
+        it again: ``_git_add_and_commit`` awaits only ``_git_run`` and
+        ``_recover_last_commit_sha``, and neither calls back into this method.
+        """
+        if not self._git_available:
+            return
+        async with self._commit_lock:
+            await self._git_add_and_commit(message)
+
+    async def _git_add_and_commit(self, message: str) -> None:
+        """The add-and-commit sequence with its recovery; call only under ``_commit_lock``.
 
         BF: Concurrent processes touching the same repo can leave the
         index or HEAD ref in a half-written state. Detect both classes
         and recover in place rather than just logging a warning.
         """
-        if not self._git_available:
-            return
-
         try:
             result_add = await self._git_run("add", "-A")
             if (
@@ -1205,6 +1264,14 @@ class KnowledgeStore:
         """Force commit any pending changes.  Called on shutdown.
 
         Sets _flushing=True, cancels pending timer, commits, resets flag (AD-161).
+
+        BF-960: before its own commit it waits for every debounce task already
+        started, so no such task is still running when it returns. It waits and
+        never cancels: a task's git child runs in an executor thread that
+        cancelling cannot stop, so a cancelled task would leave git holding
+        ``index.lock``. It holds no lock while it waits (a task needs
+        ``_commit_lock``), and if ``flush()`` itself is cancelled the tasks run on.
+        Each git command is bounded by ``_git_run``'s 30 s timeout.
         """
         self._flushing = True
         try:
@@ -1212,14 +1279,13 @@ class KnowledgeStore:
                 self._commit_timer.cancel()
                 self._commit_timer = None
 
-            if self._pending_messages:
-                messages = self._pending_messages[:]
-                self._pending_messages.clear()
-                combined = "; ".join(messages)
-                await self._git_commit(combined)
-            else:
-                # Commit any un-committed file changes
-                await self._git_commit("Shutdown flush")
+            running = {task for task in self._commit_tasks if not task.done()}
+            if running:
+                await asyncio.wait(running)  # BF-960: wait, never cancel; see the docstring
+
+            # Commit the pending writes, or any un-committed file changes
+            combined = self._take_pending()
+            await self._git_commit(combined if combined is not None else "Shutdown flush")
         finally:
             self._flushing = False
 

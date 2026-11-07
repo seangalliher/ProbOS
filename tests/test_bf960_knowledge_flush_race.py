@@ -28,7 +28,6 @@ from probos.knowledge.store import KnowledgeStore
 
 _LOGGER = "probos.knowledge.store"
 _GIT = pytest.mark.skipif(shutil.which("git") is None, reason="git not available")
-_BUILT = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-960 M2 builds it")
 #: Seconds after flush() starts (T6: after it is cancelled) at which the held add is released. A flush
 #: that does not wait runs its own add (one git launch) well before this, while the lock is still held.
 _RELEASE_AFTER = 1.5
@@ -164,7 +163,6 @@ class _Git:
 
 
 @_GIT
-@_BUILT
 async def test_flush_waits_for_the_debounced_commit_in_flight_and_nothing_lands_after_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -212,7 +210,6 @@ async def test_control_a_flush_after_the_debounced_commit_finished_changes_nothi
 
 
 @_GIT
-@_BUILT
 async def test_two_concurrent_flushes_both_wait_and_neither_meets_the_lock(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -239,7 +236,6 @@ async def test_two_concurrent_flushes_both_wait_and_neither_meets_the_lock(
 
 
 @_GIT
-@_BUILT
 async def test_a_rollback_during_the_debounced_commit_queues_behind_it_and_head_matches_the_file(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -330,7 +326,6 @@ async def test_a_cancelled_flush_leaves_the_debounced_commit_running_to_its_end(
 # ---------------------------------------------------------------- the task and the hand-off
 
 
-@_BUILT
 @pytest.mark.parametrize("git", ["absent", pytest.param("present", marks=_GIT)])
 async def test_flush_returns_with_no_debounce_task_left_and_commits_each_write_once(
     tmp_path: Path, git: str,
@@ -353,7 +348,6 @@ async def test_flush_returns_with_no_debounce_task_left_and_commits_each_write_o
 
 
 @_GIT
-@_BUILT
 async def test_a_timer_armed_before_the_fired_timers_task_starts_stays_the_one_flush_cancels(
     tmp_path: Path,
 ) -> None:
@@ -395,7 +389,6 @@ async def test_a_store_whose_timer_never_fired_flushes_its_writes_in_one_commit(
     assert store._commit_timer is None
 
 
-@_BUILT
 async def test_a_debounce_task_that_raises_is_logged_once_and_forgotten(
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
