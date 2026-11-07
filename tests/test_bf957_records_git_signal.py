@@ -446,6 +446,38 @@ async def test_history_is_read_as_stored_whatever_the_configured_encoding(tmp_pa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "stored", "text"),
+    [
+        ("ISO-8859-1", b"[foreign] caf\xe9 first", "[foreign] caf\u00e9 first"),
+        ("Shift_JIS", "[foreign] \u65e5\u672c".encode("shift_jis"), "[foreign] \u65e5\u672c"),
+        ("|x", "[foreign] caf\u00e9 first".encode("utf-8"), "[foreign] caf\u00e9 first"),
+    ],
+    ids=["ISO-8859-1", "Shift_JIS", "a label that begins with a pipe"],
+)
+async def test_a_commit_not_written_by_the_store_is_read_in_its_labelled_encoding(tmp_path, label, stored, text):
+    store = await _store(tmp_path)
+    repo = store.repo_path
+    await store.write_entry("bones", "reports/one.md", "First.", "first")
+    (repo / "reports" / "one.md").write_text("Edited outside the store.", encoding="utf-8")
+    _git(repo, "add", "reports/one.md")
+    message = tmp_path / "foreign-message"
+    message.write_bytes(stored)
+    _git(repo, "-c", f"i18n.commitEncoding={label}", "commit", "-F", str(message))
+
+    # premise: git labels the commit as configured and keeps the bytes it was given
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    raw = subprocess.run(["git", "-C", str(repo), "cat-file", "commit", head], check=True, capture_output=True).stdout
+    assert f"\nencoding {label}\n".encode("ascii") in raw and stored in raw, raw
+
+    history = await store.get_history("reports/one.md")
+
+    # A5 replaced git's conversion of the first two with stored bytes that are not UTF-8, and split the third's
+    # line at the pipe in its label; A4 read all three right.
+    assert [row["message"] for row in history] == [text, "[records] first \u2014 by bones"], history
+
+
+@pytest.mark.asyncio
 async def test_the_git_isolation_removes_every_git_variable_and_an_external_config_is_unchanged(
     tmp_path, tmp_path_factory, monkeypatch
 ):
