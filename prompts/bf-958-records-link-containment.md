@@ -48,12 +48,12 @@ None of these overlaps a BF-957 region. The nearest gap is 15 lines (`:525` to `
 - **One walk.** `_markdown_files(search_path, *, strict)` serves the strict listing, the default listing and the search.
   - It never descends `entry.is_junction()` (new row OJ) and logs a WARNING naming the path.
   - In strict mode it keeps the AD-1341 S4 rows O1–O4 exactly.
-  - In default mode it ignores what `rglob`'s walk ignored: a directory it cannot open is passed over, and an entry whose type cannot be read is taken for no directory. An `OSError` during a listing step still raises, as it did in `rglob`.
+  - In default mode it ignores what `rglob`'s walk ignored: a directory it cannot open is passed over, and an entry whose type cannot be read is taken for no directory. An `OSError` during a listing step raises, as `rglob`'s descent (`Path.walk`) raised it; `rglob`'s matching scan swallowed one, so the base outlived a one-shot fault there (L10).
 - **A containment check per file.** `_resolves_inside(path, repo)` applies `_safe_path`'s rule to each file the walk returns. `list_entries` and `_search_records` call it before `read_text`. A file outside, or a link loop, is skipped with a WARNING in both modes and raises in neither.
 
 ## 3. Decisions
 
-Decisions D1–D7 are in the tables above this contract.
+The design choices bind where they are stated: section 2 (one walk; a per-file check before each read), section 9 (mutation rows), section 10 (recorded limits) and section 12 (prior art adopted and rejected). Amendment A1 (section 15) records review round 1's corrections.
 
 **Amendment to #1761's acceptance, line 3.** It said "A junction cycle still ends the strict walk with OSError". It becomes: "a junction cycle ends the walk without descending it: each record once, a WARNING naming the junction, no `OSError`". I wrote the original line; this amendment is within the delegated scope.
 
@@ -187,11 +187,14 @@ def _remove_directory_link(link: Path) -> None:
 
 def _file_link(link: Path, target: Path) -> None:
     """A ``*.md`` symbolic link to a file. Windows grants one only with a privilege or Developer Mode; a host without
-    it cannot make the layout, which is this test's platform precondition, not a failure."""
+    it (WinError 1314) cannot make the layout, which is this test's platform precondition, not a failure. Any other
+    creation error fails the test."""
     link.parent.mkdir(parents=True, exist_ok=True)
     try:
         link.symlink_to(target)
     except OSError as exc:
+        if getattr(exc, "winerror", None) != 1314:  # ERROR_PRIVILEGE_NOT_HELD; anything else is the fixture's
+            raise
         pytest.skip(f"this host cannot create a file symbolic link: {exc}")
 
 
@@ -218,6 +221,19 @@ def _resolve_away(monkeypatch: pytest.MonkeyPatch, victim: Path, outside: Path |
         return outside
 
     monkeypatch.setattr(Path, "resolve", resolve)
+
+
+def _record_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The name of every file ``Path.read_text`` reads, so "never read" is measured, not inferred (A1, F3)."""
+    real_read_text = Path.read_text
+    names: list[str] = []
+
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        names.append(self.name)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    return names
 
 
 def _count_listings(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
@@ -304,9 +320,12 @@ async def test_a_listed_file_that_resolves_outside_is_skipped_with_a_warning(
     victim = repo / "notebooks" / "alice" / "escape.md"
     _write(victim, "outsider", "A quasar seen from outside.")
     _resolve_away(monkeypatch, victim, tmp_path / "outside" / "secret.md" if kind == "outside" else None)
+    reads = _record_reads(monkeypatch)
     caplog.set_level(logging.WARNING, logger=_LOGGER)
     found = await _paths(store, mode)
     assert found == [_NOTE]
+    assert "note.md" in reads  # premise: the spy sees the reader's reads
+    assert "escape.md" not in reads  # skipped before its read: never read (A1, F3)
     assert any("skipped" in m and "notebooks/alice/escape.md" in m for m in _bf958_warnings(caplog)), caplog.text
 
 
@@ -437,8 +456,9 @@ async def test_the_default_listing_and_search_pass_over_a_directory_they_cannot_
 @_BUILT
 def test_the_default_walk_raises_only_a_failed_listing_step(tmp_path: Path, kind: str) -> None:
     """AD-1341 S4's trace-and-fault matrix, for the default walk: each operation of a clean walk fails once with
-    ``kind``. Only a failed listing step (``next``) raises, as in ``rglob``'s walk; a directory that cannot be opened is
-    passed over, and an entry whose type cannot be read is taken for no directory."""
+    ``kind``. Only a failed listing step (``next``) raises, as in ``rglob``'s descent (its matching scan swallowed
+    one: contract L10); a directory that cannot be opened is passed over, and an entry whose type cannot be read is
+    taken for no directory."""
     root = tmp_path / "records"
     _walk_tree(root)
     clean = _Trace()
@@ -577,7 +597,9 @@ def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
     - O2 ``os.scandir`` of a directory a listing reported: ``strict`` raises any ``OSError``, ``FileNotFoundError``
       included (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried). The
       default passes over that directory, as ``rglob`` did.
-    - O3 each step of a listing: any ``OSError`` raises, in both modes (``rglob``'s walk raised it too).
+    - O3 each step of a listing: any ``OSError`` raises, in both modes, as ``rglob``'s descent (``Path.walk``)
+      raised one. ``rglob`` also matched each directory in a second scan that swallowed one, so the base outlived
+      a one-shot fault that hit that scan, losing that directory's own documents (BF-958 contract L10).
     - OJ ``entry.is_junction()`` (BF-958): a directory junction is not descended, and a WARNING names it, in both
       modes. ``is_dir(follow_symlinks=False)`` is true for a junction, so before BF-958 this walk descended one.
     - O4 ``entry.is_dir(follow_symlinks=False)``: the type comes from the listing record, so a symbolic link is not
@@ -904,7 +926,7 @@ REPLACE:
 
 **BF-958 (DATE), #1761 -- Ship's Records listing and search follow no directory junction out of the repository.**
 - **Base.** `RecordsStore.list_entries` (strict or not) and `search` descended a directory junction below a listed directory (`is_dir(follow_symlinks=False)` is true for one on Windows) and read a `*.md` link without checking where it resolves, so they could return a file from outside the repository that `read_entry` refused, with its frontmatter and, in a search, a 200-character snippet.
-- **Fix.** One walk, `_markdown_files(strict=...)`, serves both listings and the search and does not descend a directory junction; each listed file is read only if it resolves inside the resolved repository (`_safe_path`'s rule). Both skips are logged at WARNING in both modes and raise in neither. The default walk passes over what `rglob` passed over.
+- **Fix.** One walk, `_markdown_files(strict=...)`, serves both listings and the search and does not descend a directory junction; each listed file is read only if it resolves inside the resolved repository (`_safe_path`'s rule). Both skips are logged at WARNING in both modes and raise in neither. The default walk passes over a directory it cannot open and takes an entry whose type it cannot read for a file, as `rglob` did; an `OSError` while listing a directory raises in both modes, as `rglob`'s descent raised it (the base outlived a one-shot fault in its second, matching scan: contract L10).
 - **Changed for a link layout.** A junction cycle is not descended, so the strict walk no longer ends with `OSError` after about 60 levels. A junction that stays inside is not descended either; its records are listed at their own paths.
 - **Not changed.** The store's other walks (`get_stats`, `list_bills`, the notebook similarity and convergence checks; follow-up `#1762`) and `_count_record_names` (AD-1358). Contract `prompts/bf-958-records-link-containment.md`.
 
@@ -965,13 +987,14 @@ There is no campaign of record yet; the Builder runs these mutants on M2's head 
 
 - **L1.** A file replaced by a link between the check and the read is read, the same window `read_entry` has. A descriptor-based check (`O_NOFOLLOW`, handle identity) was considered and deferred.
 - **L2.** A hard link to an outside file cannot be told apart, and is read, as `read_entry` reads it.
-- **L3.** A directory symbolic link (POSIX, or Windows `mklink /D`) is not descended, as before, and not logged. Only a junction is logged.
+- **L3.** A directory symbolic link (POSIX, or Windows `mklink /D`) is not descended, as before. One not named `*.md` is not logged. One named `*.md` is a file candidate (`is_dir(follow_symlinks=False)` is false for it): resolving outside, it is skipped with the containment WARNING in both modes, where the base read it, failed and logged at debug (or raised, in strict mode); resolving inside, its read fails as before. Found by reading and a predicate model in review round 1 (F2), not natively (WinError 1314).
 - **L4.** The WARNING repeats once per link per call; nothing deduplicates across calls.
 - **L5.** A directory reparse point that is not a junction (for example a cloud-file placeholder) is descended as before; its files are still contained.
 - **L6.** Records behind an inside junction are not listed under the junction's path, although `read_entry` reads that path.
-- **L7.** `list_entries`' walk and reads still run on the event loop (register R22). BF-958 adds one `Path.resolve` per listed file; the cost is not measured.
+- **L7.** `list_entries`' walk and reads still run on the event loop (register R22). BF-958 adds one `Path.resolve` per listed file. Review round 1 measured it on 300 files: 301 resolves per call; median listing about 111 ms against 61 ms on the base, search 100 ms against 53 ms.
 - **L8.** `_count_record_names` descends an inside junction, so its count can exceed the listing's. This errs on the safe side for the cap.
-- **L9.** In default mode, an entry named `*.md` whose type cannot be read is returned, then skipped at its read, as `rglob` did.
+- **L9.** In default mode, an entry named `*.md` whose type cannot be read is returned as a file, as `rglob`'s walk took it. It is then checked and read like any listed file: a readable file is returned, as on the base, and it is skipped only if the containment check or the read fails (for example, a directory).
+- **L10.** In both modes an `OSError` while listing a directory's entries (O3) raises. `rglob` scanned each directory twice: its descent (`Path.walk`) raised such an error; its matching scan (`_WildcardSelector._select_from`, CPython 3.12.13 `pathlib.py:200-207`) swallowed it and dropped that directory's own `*.md`. So the base raised a persistent fault, as BF-958 does, and outlived a one-shot fault only when it hit the matching scan. In the orchestrator's sweep (one transient fault at each scan position of one call; `PermissionError` and `OSError(EIO)`; `list_entries` and `search`) the base raised at 40 of 80 positions and survived at 40, at 4 of them losing the faulted directory's own document; BF-958 raised at 41 of 41. A fault at open is passed over by both. Passing over a directory whose listing fails partway (review round 1 F1, option B) is deferred to #1754: it would also pass over the persistent fault the base raised, and lose that directory's remaining entries silently.
 
 ## 11. Verified Against Codebase (2026-11-06, oracle `D:\ProbOS-worktrees\bf957-o3`)
 
@@ -994,7 +1017,7 @@ Read recreation/history.py:123-202 (_count_record_names directory check :141-142
 Read archive_promotion.py:296-375 (:310 strict listing; :315, :372 read_entry); stand_down.py:268-297 (:281)
 Read semantic.py:700-729; Grep read_entry semantic.py -> :738; Read __main__.py:3566-3576, :3138-3172
 Read routers/work.py:78-90 (work-item store)
-Grep "list_entries\(|(records|_store|store|_records)\.search\(" src -> consumers listed in D3
+Grep "list_entries\(|(records|_store|store|_records)\.search\(" src -> the callers of both readers (section 1.6 names the two that list and then read; review round 1's reach census enumerated the rest)
 Grep "strict=True" src -> archive_promotion.py:310, stand_down.py:281, recreation/history.py:184 (+ unrelated pydantic/zip)
 Read tests/test_ad1341_s4_lessons.py:1-62, :112-340, :920-970 (tracer, _TracedEntry, matrix :931-953)
 Read tests/test_bf952_records_keyword_search.py:316-354 (patches rglob)
@@ -1044,8 +1067,8 @@ HOLDS: yes
 
 - **Internal: adopted.** AD-1341 S6's snapshot walk (`records_snapshot.py:227`) treats `entry.is_junction()` as a link that is never followed. The same predicate is used here for directories.
   - **Not adopted:** S6 refuses every file link. The store's `read_entry` and `write_entry` admit an inside link, and stand-down relies on the listing agreeing with `write_entry`: it must not ask an agent to write over a note that exists behind a link.
-- **Internal: rejected.** AD-1358's per-directory check (`history.py:141`) is D1 option (b).
-- **Internal: reused.** `_safe_path`'s rule (`:1615-1618`) is restated in `_resolves_inside` for an absolute path. `_safe_path` takes a user path and raises, so it cannot be called on a walked file directly.
+- **Internal: rejected.** AD-1358's per-directory check (`history.py:141-143`) resolves each directory before listing it and raises `ValueError` for one outside. It was not adopted: it fails the whole call instead of passing over the link, it does not stop a cycle through a junction that stays inside, and it does not see a `*.md` file link.
+- **Internal: reused.** `_safe_path`'s rule (`:1615-1618`) is restated in `_resolves_inside`. `_safe_path` is a method that returns the resolved path or raises `ValueError`; it accepts an absolute path inside the repository (review round 1 F6). The readers need a Boolean that skips and logs instead, that takes a link loop (`RuntimeError`) for outside, and that the module-level search can call, so the rule is restated in a module function.
 - **External** (from search summaries only):
   - [bpo-23407](https://bugs.python.org/issue23407): `os.walk` followed Windows junctions with `followlinks=False`. A [UrBackup report](https://blog.urbackup.org/163/python-on-windows-issues) describes an infinite loop through `C:\Users` compatibility junctions, ended by the path-length limit.
   - Recent CPython treats a junction as a link in `os.walk` and `rmtree` ([gh-156707 commit](https://chromium.googlesource.com/external/github.com/python/cpython/+/d87ee279a1f6dfdb478ede5f0ba0360123d85916)). Not verified for 3.12.13; this design does not rely on it.
@@ -1057,8 +1080,8 @@ HOLDS: yes
   - Duplicates through an inside junction or a cycle (T4).
   - A loop link making `Path.resolve` raise `RuntimeError` (T2[loop]).
   - Readers that list and then call `read_entry` were raising `ValueError` on this layout (§1.6).
-  - The default walk keeps `rglob`'s tolerance (T7, T8).
-- **Blind spots recorded.** L1 (race), L3 (directory symlink not logged), L7 (event loop).
+  - The default walk keeps the tolerance of `rglob`'s descent (T7, T8); its matching scan's extra tolerance of a one-shot listing fault is not kept (L10).
+- **Blind spots recorded.** L1 (race), L3 (directory symbolic links), L7 (event loop), L10 (a one-shot listing fault).
 
 ## 13. Diff Reviewer: properties to verify (whole-candidate review: shared contract)
 
@@ -1082,6 +1105,14 @@ HOLDS: yes
 - **No regressions:** an ordinary nested directory, a root that is a link, an inside `*.md` link and every existing records test behave as before (T5, T6, T3b, G2).
 - T1 crosses the seam: a real link, reached through the public API, gives the result and the WARNING, and agrees with `read_entry`.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 15. Amendment A1 (2026-11-07, review round 1)
+
+- **F1 (P2):** recorded, no code change: O3 wording corrected in sections 2 and 12, `_markdown_files`' docstring, T8's docstring and `PROGRESS.md`; limit L10; option B deferred to #1754.
+- **F2, F5, F6, F7:** text corrected (L3, L9, section 12, section 3 and section 11's D-references). L7 now carries the measured cost.
+- **F3:** T2 spies on `Path.read_text` and asserts the excluded file is never read (the reviewer's read-before-check variant must fail it).
+- **F4:** `_file_link` skips only on WinError 1314; any other creation error fails the test.
+- **Review:** delta review of the test file. The source change is docstring-only and no mutation anchor moves, so the 14-of-14 campaign on `9f0c9a2d` stays the campaign of record.
 
 ---
 
