@@ -1396,24 +1396,41 @@ class RecordsStore:
         return results
 
     async def get_history(self, path: str, limit: int = 20) -> list[dict]:
-        """Get git log for a specific file."""
+        """Get git log for a specific file.
+
+        BF-957 A5: git outputs a subject as stored only when the output encoding equals its commit's encoding
+        label, and an operator's ``i18n.commitEncoding`` labels the store's UTF-8 messages without converting
+        them. So every commit is first read with ``--encoding=UTF-8``, which overrides an operator's
+        ``i18n.logOutputEncoding`` and is right for an unlabelled commit; the commits of each other label are
+        read again with that label as the output encoding, from the same newest commit.
+        """
         self._safe_path(path)  # Validate — raises ValueError if traversal
         try:
             result = await self._git(
                 "log", f"--max-count={limit}",
-                "--format=%H|%aI|%s", "--follow", "--", path
+                "--encoding=UTF-8", "--format=%H|%aI|%e|%s",  # BF-957 A5: %e is the commit's encoding label
+                "--follow", "--", path
             )
             entries = []
+            labelled: dict[str, list[dict]] = {}
             for line in result.strip().split("\n"):
                 if not line.strip():
                     continue
-                parts = line.split("|", 2)
-                if len(parts) == 3:
-                    entries.append({
-                        "commit": parts[0],
-                        "timestamp": parts[1],
-                        "message": parts[2],
-                    })
+                parts = line.split("|", 3)
+                if len(parts) == 4:
+                    entry = {"commit": parts[0], "timestamp": parts[1], "message": parts[3]}
+                    entries.append(entry)
+                    if parts[2]:  # BF-957 A5: a labelled commit; git may have converted its subject
+                        labelled.setdefault(parts[2], []).append(entry)
+            for label, rows in labelled.items():
+                subjects = await self._git(
+                    "log", f"--max-count={limit}",
+                    f"--encoding={label}", "--format=%H|%s",  # BF-957 A5: output equals the label: verbatim
+                    "--follow", entries[0]["commit"], "--", path
+                )
+                by_commit = {c: s for c, sep, s in (ln.partition("|") for ln in subjects.split("\n")) if sep}
+                for entry in rows:
+                    entry["message"] = by_commit.get(entry["commit"], entry["message"])
             return entries
         except Exception:
             logger.debug("Git query failed", exc_info=True)
@@ -1653,9 +1670,12 @@ class RecordsStore:
         per distinct error, with git's first output line only, and its stdout is returned as before; a commit
         with nothing staged is not an error. A command that outlives the timeout is stopped by
         ``subprocess.run``; this logs a WARNING, because what it changed is not known and a lock it held may
-        remain, and re-raises the same exception. A4: the WARNING is emitted after ``_git_lock`` is released,
-        so a log handler that reads git through this store does not wait on it; and git's output is decoded as
-        UTF-8 with replacement, so a locale codec (cp1252) that cannot decode it no longer turns it into ``None``.
+        remain, and re-raises the same exception. A4: the WARNING is emitted after this call releases
+        ``_git_lock``, so a log handler that reads git through this store does not wait on this call; it can
+        still wait for a command another thread is running (contract L14). Git's output is decoded as UTF-8
+        with replacement, so a locale codec (cp1252) that cannot decode it no longer turns it into ``None``.
+        Git re-encodes a commit subject for a configured encoding, so ``get_history`` asks for each subject in
+        its commit's own encoding label, which git outputs as stored (A5).
         """
         verb = args[0] if args else ""
         due: tuple[object, ...] = ()  # BF-957 A4: the WARNING, emitted once _git_lock is released
@@ -1667,7 +1687,7 @@ class RecordsStore:
                         env=trusted_command_env(),
                         cwd=str(self._repo_path),
                         capture_output=True,
-                        encoding="utf-8",  # BF-957 A4: git writes UTF-8; the locale's codec (cp1252) lost output
+                        encoding="utf-8",  # BF-957 A4: the locale's codec (cp1252) lost output; A5: see get_history
                         errors="replace",
                         timeout=30,
                     )

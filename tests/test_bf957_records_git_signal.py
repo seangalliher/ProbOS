@@ -71,38 +71,52 @@ def _fake_run(monkeypatch: pytest.MonkeyPatch, fake) -> None:
 
 
 def _broken_link(link: Path, target: Path) -> None:
-    """A directory link whose target is then removed: a symlink, or a junction where Windows refuses a symlink."""
+    """A directory link whose target is then removed.
+
+    BF-957 A5: on Windows always a junction, the entry A3's ``exists()``/``is_symlink()`` test read as absent, so
+    the case guards A4's ``lstat`` on a Windows host with or without the symlink privilege. Elsewhere a symlink
+    (POSIX has no junction).
+    """
     target.mkdir()
-    try:
-        os.symlink(target, link, target_is_directory=True)
-    except OSError:  # WinError 1314: no symlink privilege; a junction needs none
+    if os.name == "nt":
         import _winapi
 
         _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
     target.rmdir()
     assert os.path.lexists(link) and not link.exists(), "premise: the link remains and its target is gone"
+    if os.name == "nt":
+        assert os.path.isjunction(link) and not link.is_symlink(), "premise: a junction, which is not a symlink"
 
 
-@pytest.fixture(autouse=True)
-def _hermetic_git(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    """BF-957 A4: no host git configuration or repository redirect reaches these tests' git, before any store starts.
+def _isolate_git(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    """BF-957 A5: remove every ``GIT_*`` variable, then point git at an empty configuration under ``home``.
 
-    The store's git and the check's git inherit ``os.environ`` (``trusted_command_env``), as ``_git`` does. The
-    store sets its own commit identity, so the empty configuration needs none.
+    The whole class is removed, not a list of names: A4's list missed ``GIT_CONFIG``, which ``git config`` writes
+    to. After this, the only ``GIT_*`` variables are the three set below. ``HOME`` and ``XDG_CONFIG_HOME`` move the
+    per-user files for a git older than 2.32. Other variables git reads (the locale, ``EMAIL``, ``PATH``) are not
+    changed: T11 sets ``LC_ALL`` itself, and the store sets its own identity before its first commit.
     """
-    home = tmp_path_factory.mktemp("bf957-git-home")
     empty = home / ".gitconfig"
     empty.write_bytes(b"")
-    for name in (
-        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_COMMON_DIR", "GIT_CONFIG_PARAMETERS",
-    ):
-        monkeypatch.delenv(name, raising=False)
+    for name in list(os.environ):
+        if name.upper().startswith("GIT_"):
+            monkeypatch.delenv(name)
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")  # no system scope (Git for Windows' own gitconfig included)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))  # git 2.32+: the global scope is this empty file
     monkeypatch.setenv("GIT_CONFIG_COUNT", "0")  # no command-line scope from the environment (the harness's fsmonitor)
     monkeypatch.setenv("HOME", str(home))  # an older git reads ~/.gitconfig and the XDG file from here
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_git(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """BF-957 A4, A5: ``_isolate_git`` before any store starts (TI tests the helper).
+
+    The store's git and the check's git inherit ``os.environ`` (``trusted_command_env``), as ``_git`` does.
+    """
+    _isolate_git(monkeypatch, tmp_path_factory.mktemp("bf957-git-home"))
 
 
 # ---------------------------------------------------------------- the seam
@@ -375,7 +389,8 @@ def test_the_warning_memory_changes_under_the_git_lock_and_is_logged_after_its_r
         log.removeHandler(handler)
 
     # The memory changes while the lock is held, so a later child's warning is never cleared by an earlier
-    # child's success; the record is emitted after the release, so a handler that reads git cannot deadlock.
+    # child's success; the record is emitted after this call's release, so a handler that reads git through the
+    # store does not wait on this call (it can wait on another thread's command: contract L14).
     assert held == ([("forget", True)] if case == "success" else [("remember", True), ("log", False)])
 
 
@@ -395,6 +410,65 @@ async def test_history_is_read_as_utf8_whatever_the_host_locale(tmp_path, monkey
 
     # The base lost this row on a cp1252 host (git exited 0; the reader returned None) and misread the em dash.
     assert [row["message"] for row in history] == ["[records] \u0401 first \u2014 by bones"], history
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["logOutputEncoding", "commitEncoding", "both", "commitEncoding after the first"])
+async def test_history_is_read_as_stored_whatever_the_configured_encoding(tmp_path, case):
+    store = await _store(tmp_path)
+    repo = store.repo_path
+    if case in ("logOutputEncoding", "both"):
+        _git(repo, "config", "i18n.logOutputEncoding", "CP1252")
+    if case in ("commitEncoding", "both"):
+        _git(repo, "config", "i18n.commitEncoding", "CP1252")
+    await store.write_entry("bones", "reports/one.md", "First.", "caf\u00e9 first")
+    if case == "commitEncoding after the first":  # a history whose label changes, as every such repository has
+        _git(repo, "config", "i18n.commitEncoding", "CP1252")
+        await store.write_entry("bones", "reports/one.md", "Second.", "caf\u00e9 second")
+
+    # premise: git labels each message as configured without converting it, so every stored message is UTF-8
+    listed = [line.split("|") for line in _git(repo, "log", "--format=%H|%e", "--", "reports/one.md").split()]
+    labels = {"logOutputEncoding": [""], "commitEncoding": ["CP1252"], "both": ["CP1252"]}
+    assert [label for _, label in listed] == labels.get(case, ["CP1252", ""]), listed
+    for commit, _ in listed:
+        raw = subprocess.run(["git", "-C", str(repo), "cat-file", "commit", commit], check=True, capture_output=True)
+        assert "caf\u00e9".encode("utf-8") in raw.stdout, raw.stdout
+    if case == "logOutputEncoding":  # premise: plain git log re-encodes the message as configured
+        plain = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%s"], check=True, capture_output=True)
+        assert b"caf\xe9" in plain.stdout, plain.stdout
+
+    history = await store.get_history("reports/one.md")
+
+    # A4 garbled "logOutputEncoding" and the older row of "commitEncoding after the first"; a single
+    # --encoding=utf-8 garbles every labelled row.
+    newest = ["[records] caf\u00e9 second \u2014 by bones"] if case == "commitEncoding after the first" else []
+    assert [row["message"] for row in history] == newest + ["[records] caf\u00e9 first \u2014 by bones"], history
+
+
+@pytest.mark.asyncio
+async def test_the_git_isolation_removes_every_git_variable_and_an_external_config_is_unchanged(
+    tmp_path, tmp_path_factory, monkeypatch
+):
+    external = tmp_path / "external.gitconfig"
+    external.write_bytes(b"[core]\n\tpager = cat\n")
+    before = external.read_bytes()
+    for name, value in {  # host values A4's name list let through
+        "GIT_CONFIG": str(external),  # git config writes to this file, as with --file (the round-3 probe)
+        "GIT_TEMPLATE_DIR": str(tmp_path / "templates"),
+        "GIT_AUTHOR_NAME": "bf957 host",
+        "GIT_AUTHOR_EMAIL": "host@bf957.invalid",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    _isolate_git(monkeypatch, tmp_path_factory.mktemp("bf957-git-home"))
+
+    assert sorted(n.upper() for n in os.environ if n.upper().startswith("GIT_")) == [
+        "GIT_CONFIG_COUNT", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+    ]
+    store = await _store(tmp_path)
+    await store.write_entry("bones", "reports/one.md", "First.", "first")
+    assert external.read_bytes() == before, "the store's git wrote to the host's GIT_CONFIG file"
+    assert _git(store.repo_path, "log", "-1", "--format=%an <%ae>").strip() == "Ship Records <records@probos.local>"
 
 
 # ---------------------------------------------------------------- the doctor check
