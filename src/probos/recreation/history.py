@@ -11,7 +11,7 @@ output through it, so the two cannot drift apart.
 ``RecordsStore.list_entries`` and ``RecordsStore.read_entry``, so a record that reader may not
 read is not counted. The reads run in a worker thread, never on the event loop (A1). It returns
 ``None`` when no game between the two players is recorded, when more than
-:data:`MAX_GAME_RECORDS` ``*.md`` files are counted by name in the directory (then none is read)
+:data:`MAX_GAME_RECORDS` ``*.md`` names are counted under the directory (then none is read)
 or listed, when the count finds a directory that leads out of the records (contract L14), and when
 a listing or read raises. The record of the game the tally is shown in is not passed to
 ``read_entry`` and not counted (A3); the strict listing reads and parses it when it is present
@@ -34,8 +34,9 @@ from probos.cognitive.provenance import iso_utc, record_write_time
 
 logger = logging.getLogger(__name__)
 
-#: The most records of one game type read for one tally. Above it no tally is shown:
-#: a count of some of the records would be a wrong count.
+#: The cap of one tally: above this many ``*.md`` names counted, or entries listed, no tally is
+#: shown (a count of some of the records would be a wrong count), and ``read_entry`` runs at most
+#: this many times. What the listing reads: contract L4 and L13.
 MAX_GAME_RECORDS: Final = 256
 #: The longest player name the block repeats.
 MAX_NAME_CHARS: Final = 64
@@ -120,18 +121,15 @@ def _drive(make: Callable[..., Coroutine[Any, Any, Any]], /, *args: Any) -> Any:
 
 
 def _count_record_names(repo_path: Path, directory: str, limit: int) -> int:
-    """A3 (F2, F3): the ``*.md`` names the store's strict listing would list under ``directory``, up to ``limit + 1``.
+    """A3 (F2, F3): count the ``*.md`` names under ``directory`` by the store's strict walk rule, stopping at ``limit + 1``.
 
     No file is opened. The walk is ``_markdown_files_or_raise``'s: the resolved ``directory`` is
     listed; an entry that ``is_dir(follow_symlinks=False)`` is descended by its unresolved path,
-    never counted; any other entry matching ``*.md`` (``fnmatch``, the platform's case rule) is
-    counted; a missing ``directory`` counts 0 and any other ``OSError`` raises. A directory cycle (a
-    Windows junction to an ancestor) lengthens the path until the OS refuses it: ``OSError``, as in
-    the store's walk. Before each directory is listed, its resolved path must lie inside the resolved
-    repository (the rule of ``RecordsStore._safe_path``; the store has no public path check), else
-    ``ValueError``. For a layout that does not change during the pass, nothing outside the records is
-    listed, a refusal never reaches the store, and the count is the number of paths that walk lists. A
-    directory replaced by an outside link after its check is listed, names only (contract L14).
+    not counted; any other entry matching ``*.md`` (``fnmatch``, the platform's case rule) is
+    counted; a missing ``directory`` counts 0 and any other ``OSError`` raises. Each directory's
+    resolved path is checked against the resolved repository before it is listed (the rule of
+    ``RecordsStore._safe_path``; the store has no public path check), and one found outside raises
+    ``ValueError``. What the count guarantees, and when: contract property 12 and L14.
     """
     root = Path(repo_path).resolve()
     top = Path(repo_path, directory).resolve()
@@ -151,7 +149,7 @@ def _count_record_names(repo_path: Path, directory: str, limit: int) -> int:
         with listing:
             for entry in listing:
                 if entry.is_dir(follow_symlinks=False):
-                    # Unresolved, as the store descends: a cycle grows the path until the OS refuses it.
+                    # Unresolved, as the store's walk descends (contract property 12).
                     pending.append(Path(current, entry.name))
                 elif fnmatch.fnmatch(entry.name, "*.md"):
                     count += 1
@@ -170,10 +168,9 @@ async def _read_records(
     records), so a directory above the cap costs one scan and no reads. Files are then read only
     through the store's own ``list_entries`` and ``read_entry``, which touch no store state but the
     repository path, so they are safe off the event loop, as BF-952's ``_search_records`` walk is. The
-    listing reads every file present when it runs, including any created after the count (contract
-    L13) and any below a subdirectory replaced by an outside link after the count; ``read_entry``
-    refuses such a path if it reaches it (contract L14) and still runs at most
-    :data:`MAX_GAME_RECORDS` times. The entry named ``current_record``, the record of the game the
+    listing reads and parses the ``*.md`` files its own walk finds, which can include files the count
+    did not see (contract L13, L14); ``read_entry`` runs at most :data:`MAX_GAME_RECORDS` times. The
+    entry named ``current_record``, the record of the game the
     tally is shown in, is not passed to ``read_entry`` and not counted (A3).
     """
     directory = f"recreation/games/{game_type}"
@@ -217,7 +214,7 @@ async def read_head_to_head(
 ) -> HeadToHead | None:
     """The recorded ``game_type`` games between ``me`` and ``opponent``, read as one reader.
 
-    A count by name of ``recreation/games/<game_type>/*.md`` (refused when it finds a directory that
+    A count of the ``*.md`` names under ``recreation/games/<game_type>/`` (refused when it finds a directory that
     leads out of the records; contract L14), then one strict listing, then at most
     :data:`MAX_GAME_RECORDS` ``read_entry`` calls as ``reader_id``/``reader_department``, all in a
     worker thread (:func:`_read_records`): a record that reader may not read is not counted. The
@@ -225,9 +222,9 @@ async def read_head_to_head(
     and not counted (A3). A listing or read that raises gives ``None`` and a
     warning. A file the store's listing itself skips (bytes that are not UTF-8, a frontmatter whose
     constructor raises) and a ``read_entry`` that returns ``None`` are not counted (contract L11).
-    ``None`` when nothing is recorded and above the cap. While the directory does not grow during the
-    pass, it reads at most 2 × :data:`MAX_GAME_RECORDS` files; the listing also reads any file created
-    after the count (L13). A cancelled caller gets ``CancelledError`` at once; the worker finishes
+    ``None`` when nothing is recorded and above the cap. For a layout that does not change during the
+    pass it reads at most 2 × :data:`MAX_GAME_RECORDS` files; for one that does, contract L13 and L14.
+    A cancelled caller gets ``CancelledError`` at once; the worker finishes
     its pass and its result is dropped.
     """
     if records_store is None or type(me) is not str or type(opponent) is not str:
@@ -240,7 +237,7 @@ async def read_head_to_head(
     me_won = opponent_won = drawn = 0
     latest: float | None = None
     try:
-        # A1 (F1): every file read and parse runs in a worker thread, never on the event loop.
+        # A1 (F1): the store's file reads and YAML parses run in a worker thread (contract property 10).
         read_args = (_read_records, records_store, game_type, reader_id, reader_department, current_record)
         docs = await asyncio.to_thread(_drive, *read_args)
         if docs is None:
