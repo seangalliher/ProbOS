@@ -1489,6 +1489,16 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L14 of the contract.
 - *Reversal.* Revert the AD-1358 S1 commits.
 
+### BF-960 -- The knowledge store's shutdown flush waits for the debounced commit in flight (2026-11-07, #1767)
+
+- *Scope.* `knowledge/store.py`: `KnowledgeStore.__init__`, `_schedule_commit`, `_on_commit_timer`, `_on_commit_task_done`, `_take_pending`, `_flush_pending`, `_git_commit`, `_git_add_and_commit` and `flush`, plus tests. Contract `prompts/bf-960-knowledge-flush-race.md`.
+- *G1 (serialization).* One `asyncio.Lock` over the whole add-and-commit sequence, created in `__init__` as `RecordsStore` does. Rejected: a single-flight commit worker (more state for the same ordering); a per-command thread lock (two callers' adds and commits could interleave); retrying on `index.lock` (it depends on timing, and the commit still lands after stop).
+- *G2 (the task).* Each task is kept in a set until it is done. `flush()` waits with `asyncio.wait` and never cancels. Rejected: `await task` (a cancelled flush would cancel the commit); `asyncio.shield` (it raises the task's exception in flush, whereas the done callback logs it); cancelling (git keeps running in its thread and keeps `index.lock`).
+- *G3 (hand-off).* `_flushing` stays: once a flush has begun, it commits everything pending in one commit. `_take_pending` is synchronous, and nothing suspends between it and the lock request, so each message is committed once. The timer reference is cleared by the timer's own callback.
+- *Not changed.* `startup/shutdown.py`, `_git_run`, the recovery paths, the configuration.
+- *Residual.* Recorded limits L1 to L8 of the contract.
+- *Reversal.* Revert the BF-960 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
