@@ -1500,6 +1500,16 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L16 of the contract.
 - *Reversal.* Revert the BF-957 commits.
 
+### BF-958 -- Ship's Records listing and search follow no directory junction out of the repository (2026-11-07, #1761)
+
+- *Scope.* `knowledge/records_store.py` (`_markdown_files` replacing `_markdown_files_or_raise`, `_resolves_inside`, `list_entries`, `_search_records`, a docstring of `list_bills`), the docstring of `recreation/history.py::_count_record_names`, tests. Contract `prompts/bf-958-records-link-containment.md`.
+- *G1 (walk).* One walk for both listing modes and the search; it does not descend `DirEntry.is_junction()` (as AD-1341 S6's snapshot walk refuses one). Rejected: checking each directory against the repository before listing it (an inside cycle still descends until `OSError`; duplicates).
+- *G2 (file).* Each listed file is read only if it resolves inside the resolved repository, `read_entry`'s rule, so an inside `*.md` link stays listed as `read_entry` reads it.
+- *G3 (signal).* A skipped junction or file is logged at WARNING in both modes and raises in neither: it is no document of this store, so the strict callers' rule (an unreadable document is never an absent one) holds.
+- *Not changed.* `read_entry`, `_safe_path`, the store's other walks, `_count_record_names`'s behaviour.
+- *Residual.* Recorded limits L1 to L9 of the contract.
+- *Reversal.* Revert the BF-958 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
