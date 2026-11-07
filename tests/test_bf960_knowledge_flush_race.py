@@ -18,7 +18,7 @@ import os
 import shutil
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -107,13 +107,15 @@ def _lock_failures(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 
 class _Git:
-    """Wraps the store's ``_git_run``: holds or fails the next ``add`` on request, and signals results."""
+    """Wraps the store's ``_git_run``: holds or fails the next ``add`` on request, runs a queued late
+    writer after an ``add`` returns, and signals results."""
 
     def __init__(self, store: KnowledgeStore) -> None:
         self.original = store._git_run
         self.git_dir = store.repo_path / ".git"
         self.hold_next_add = False
         self.fail_next_add = ""  # "", "raises" or "fails"
+        self.after_add: list[Callable[[], Awaitable[None]]] = []  # one runs after each add returns
         self.held = threading.Event()
         self.release = threading.Event()
         self.add_returned = asyncio.Event()
@@ -144,6 +146,8 @@ class _Git:
         result = await self.original(*args)
         if verb == "add":
             self.add_returned.set()
+            if self.after_add:
+                await self.after_add.pop(0)()  # a writer whose file lands right after this add
         elif verb == "show":
             self.shown.set()
         elif verb == "commit":
@@ -413,3 +417,113 @@ async def test_a_debounce_task_that_raises_is_logged_once_and_forgotten(
     ]
     assert len(records) == 1 and "injected commit error" in records[0]
     assert store._commit_tasks == set()
+
+
+# ---------------------------------------------------------------- late writes (A2)
+
+_ROUTING = [{"source": "a", "target": "b", "rel_type": "intent", "weight": 0.5}]
+_WORKFLOWS = [{"pattern": "p", "hit_count": 1}]
+
+
+def _late_write(
+    store: KnowledgeStore, seen: list[bool], write: Callable[[], Awaitable[None]],
+) -> Callable[[], Awaitable[None]]:
+    """A ``_Git.after_add`` hook: ``write`` runs as a writer's would, and ``seen`` records whether
+    flush() was running. The store catches an exception raised under its commit, so the tests
+    assert on ``seen`` instead."""
+
+    async def run() -> None:
+        seen.append(store._flushing)
+        await write()
+
+    return run
+
+
+async def _committed(git: _Git) -> tuple[list[str], str, list[str]]:
+    """The files in HEAD, the porcelain status, and the commit subjects, newest first."""
+    tree = await git.original("ls-tree", "-r", "--name-only", "HEAD")
+    status = await git.original("status", "--porcelain")
+    return tree.stdout.splitlines(), status.stdout, await git.subjects()
+
+
+def _store_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.name == _LOGGER]
+
+
+@_GIT
+async def test_a_write_that_lands_while_flush_commits_is_in_head_when_flush_returns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T11: the write's file lands after flush()'s add, so flush()'s own commit cannot hold it."""
+    store = _store(tmp_path, 3600.0)
+    await store.initialize()
+    git = _Git(store)
+    seen: list[bool] = []
+    git.after_add = [_late_write(store, seen, lambda: store.store_routing_weights(_ROUTING))]
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        await store.store_trust_snapshot(_snapshot(2.0))
+        await asyncio.wait_for(store.flush(), _TIMEOUT)
+        files, status, subjects = await _committed(git)
+    assert "routing/weights.json" in files, f"in HEAD: {files}; flushing at each late write: {seen}"
+    assert status == ""
+    assert subjects == ["Store routing weights", "Store trust snapshot"]
+    assert store._pending_messages == [] and store._commit_timer is None
+    assert _store_warnings(caplog) == []
+    assert seen == [True], "premise: the write landed while flush() ran"
+
+
+@_GIT
+async def test_a_write_that_lands_while_the_drain_commits_is_committed_too(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T12: a second write lands during the first drain commit, so flush() commits once more for it."""
+    store = _store(tmp_path, 3600.0)
+    await store.initialize()
+    git = _Git(store)
+    seen: list[bool] = []
+    git.after_add = [
+        _late_write(store, seen, lambda: store.store_routing_weights(_ROUTING)),
+        _late_write(store, seen, lambda: store.store_workflows(_WORKFLOWS)),
+    ]
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        await store.store_trust_snapshot(_snapshot(2.0))
+        await asyncio.wait_for(store.flush(), _TIMEOUT)
+        files, status, subjects = await _committed(git)
+    assert {"routing/weights.json", "workflows/cache.json"} <= set(files), (
+        f"in HEAD: {files}; flushing at each late write: {seen}"
+    )
+    assert status == ""
+    assert subjects == ["Store workflow cache", "Store routing weights", "Store trust snapshot"]
+    assert store._pending_messages == [] and store._commit_timer is None
+    assert _store_warnings(caplog) == []
+    assert seen == [True, True], "premise: both writes landed while flush() ran"
+
+
+@_GIT
+async def test_a_writer_that_never_stops_cannot_hold_flush_past_the_drain_bound(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T13: a write lands during every commit; flush() stops after the bound, warns, keeps the message."""
+    monkeypatch.setattr("probos.knowledge.store._FLUSH_DRAIN_PASSES", 2)
+    store = _store(tmp_path, 3600.0)
+    await store.initialize()
+    git = _Git(store)
+    seen: list[bool] = []
+
+    async def again() -> None:
+        seen.append(store._flushing)
+        git.after_add.append(again)  # the writer is still writing when the next add returns
+        await store.store_routing_weights(
+            [{"source": "a", "target": "b", "rel_type": "intent", "weight": float(len(seen))}],
+        )
+
+    git.after_add = [again]
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        await store.store_trust_snapshot(_snapshot(2.0))
+        await asyncio.wait_for(store.flush(), _TIMEOUT)
+        _, _, subjects = await _committed(git)
+    assert subjects == ["Store routing weights", "Store routing weights", "Store trust snapshot"]
+    assert store._pending_messages == ["Store routing weights"]
+    assert [w for w in _store_warnings(caplog) if "still landing" in w] != []
+    assert store._flushing is False
+    assert seen == [True, True, True], "premise: a write landed in each of the three commits"
