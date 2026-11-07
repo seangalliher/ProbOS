@@ -64,11 +64,14 @@ def _remove_directory_link(link: Path) -> None:
 
 def _file_link(link: Path, target: Path) -> None:
     """A ``*.md`` symbolic link to a file. Windows grants one only with a privilege or Developer Mode; a host without
-    it cannot make the layout, which is this test's platform precondition, not a failure."""
+    it (WinError 1314) cannot make the layout, which is this test's platform precondition, not a failure. Any other
+    creation error fails the test."""
     link.parent.mkdir(parents=True, exist_ok=True)
     try:
         link.symlink_to(target)
     except OSError as exc:
+        if getattr(exc, "winerror", None) != 1314:  # ERROR_PRIVILEGE_NOT_HELD; anything else is the fixture's
+            raise
         pytest.skip(f"this host cannot create a file symbolic link: {exc}")
 
 
@@ -95,6 +98,19 @@ def _resolve_away(monkeypatch: pytest.MonkeyPatch, victim: Path, outside: Path |
         return outside
 
     monkeypatch.setattr(Path, "resolve", resolve)
+
+
+def _record_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The name of every file ``Path.read_text`` reads, so "never read" is measured, not inferred (A1, F3)."""
+    real_read_text = Path.read_text
+    names: list[str] = []
+
+    def read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        names.append(self.name)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    return names
 
 
 def _count_listings(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
@@ -179,9 +195,12 @@ async def test_a_listed_file_that_resolves_outside_is_skipped_with_a_warning(
     victim = repo / "notebooks" / "alice" / "escape.md"
     _write(victim, "outsider", "A quasar seen from outside.")
     _resolve_away(monkeypatch, victim, tmp_path / "outside" / "secret.md" if kind == "outside" else None)
+    reads = _record_reads(monkeypatch)
     caplog.set_level(logging.WARNING, logger=_LOGGER)
     found = await _paths(store, mode)
     assert found == [_NOTE]
+    assert "note.md" in reads  # premise: the spy sees the reader's reads
+    assert "escape.md" not in reads  # skipped before its read: never read (A1, F3)
     assert any("skipped" in m and "notebooks/alice/escape.md" in m for m in _bf958_warnings(caplog)), caplog.text
 
 
@@ -309,8 +328,9 @@ async def test_the_default_listing_and_search_pass_over_a_directory_they_cannot_
 @pytest.mark.parametrize("kind", sorted(_WALK_FAULTS))
 def test_the_default_walk_raises_only_a_failed_listing_step(tmp_path: Path, kind: str) -> None:
     """AD-1341 S4's trace-and-fault matrix, for the default walk: each operation of a clean walk fails once with
-    ``kind``. Only a failed listing step (``next``) raises, as in ``rglob``'s walk; a directory that cannot be opened is
-    passed over, and an entry whose type cannot be read is taken for no directory."""
+    ``kind``. Only a failed listing step (``next``) raises, as in ``rglob``'s descent (its matching scan swallowed
+    one: contract L10); a directory that cannot be opened is passed over, and an entry whose type cannot be read is
+    taken for no directory."""
     root = tmp_path / "records"
     _walk_tree(root)
     clean = _Trace()
