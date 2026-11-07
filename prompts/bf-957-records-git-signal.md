@@ -5,7 +5,7 @@
 **Base:** `baea653d` (origin/main `48ed13bf` with BF-952, plus AD-1358 S1). AD-1358 S1 touches none of this contract's source files.
 **Dependencies:** none.
 **Tier:** M1 STANDARD (tests only). M2 HIGH (data integrity: git handling of the records repository, plus a new subprocess site). M3 STANDARD (trackers).
-**Estimated tests:** one new file, `tests/test_bf957_records_git_signal.py`, with 18 functions and 29 cases. Five existing test or fixture files are edited. Counted by reading, not by running.
+**Estimated tests:** one new file, `tests/test_bf957_records_git_signal.py`, with 22 functions and 36 cases after Amendment A3 (18 and 29 before it). Five existing test or fixture files are edited. Counted by reading, not by running.
 **BF number:** BF-957, held by #1760. Nothing new is allocated.
 
 **Which text describes the head.** Before building, run `git diff --stat baea653d HEAD -- src/probos/knowledge/records_store.py src/probos/doctor/ src/probos/config_models/knowledge.py tests/test_ad1270e2f_knowledge_models.py tests/test_ad1270e1_config_facade.py tests/test_bf892_spawn_env_guard.py tests/fixtures/ad1346_effect_census.py`. Any change there is a hard stop: the SEARCH text goes back to the Architect. Working copies are CRLF; SEARCH text here is LF. Where prose and a block differ, the block wins.
@@ -96,7 +96,7 @@ The 30 s value is unchanged (L1).
 - **Repository path.** `resolve_records_repo_path(ctx.config.records, ctx.data_dir)` (`config.py:2658-2666`), the resolver startup uses (`cognitive_services.py:602-608`). Tests pass `repo_path` explicitly and a temporary `data_dir`.
 - **Read-only.**
   - The lock: `Path.stat()` only.
-  - Git: `git -C <repo> status --porcelain --untracked-files=all --no-renames -z` and `git log -1 --format=%ct`, with `env={**trusted_command_env(), "GIT_OPTIONAL_LOCKS": "0"}` and a 15 s timeout. With optional locks off, `git status` does not refresh the index, so stopping it at the timeout holds no lock.
+  - Git: `git -C <repo> status --porcelain --untracked-files=all --no-renames -z` and `git log -1 --format=%ct`, with `env={**trusted_command_env(), "GIT_OPTIONAL_LOCKS": "0"}` and a 15 s timeout. With optional locks off, `git status` does not refresh the index, so stopping it at the timeout holds no lock. A3: both commands also start with `HARDENED_GIT_CONFIG_ARGS` (`execution/command_env.py:70`: `core.hooksPath` set to the null device, `core.fsmonitor=false`), because optional locks do not stop a configured fsmonitor, which runs at `git status` and may write in the repository.
   - Nothing in the module writes, renames or deletes.
 - **Behaviour by case:**
 
@@ -105,6 +105,7 @@ The 30 s value is unchanged (L1).
 | Config not loaded | WARN, "not checked" |
 | `records.enabled` false | OK |
 | `auto_commit` false | OK, "ProbOS keeps no records history" (the lock is not read) |
+| Path exists and is not a directory (A3) | FAIL, "is not a directory": startup's `mkdir` refuses it and records are disabled |
 | Directory missing | OK, "created when the vessel starts" |
 | No `.git` directory | WARN |
 | `git` not on PATH | lock still reported; WARN line for the parts that need git |
@@ -119,7 +120,7 @@ The 30 s value is unchanged (L1).
 
 ### 3.4 Operator text (D5)
 
-- **Log.** "Ship's Records: git add failed (exit 128): fatal: Unable to create '…/index.lock': File exists. … Records are still written to disk, but a failed add or commit leaves them out of the records history. This error is logged once until a git add or commit succeeds; `probos doctor` reports the repository's state."
+- **Log.** (A3: the message carries git's first non-empty output line only, the line that keys the error. Git's further text, which for a lock says to remove the file without the backup precondition, is not logged. A timeout says what the command changed is not known.) "Ship's Records: git add failed (exit 128): fatal: Unable to create '…/index.lock': File exists. … Records are still written to disk, but a failed add or commit leaves them out of the records history. This error is logged once until a git add or commit succeeds; `probos doctor` reports the repository's state."
 - **Doctor remediation.** "A git process that ended without cleaning up leaves <lock>. With the vessel stopped and no git process using <repo>, back up <git_dir>; removing the lock file and committing the pending records are then the operator's decision. ProbOS does not remove it."
 
 ## 4. Milestones and gates
@@ -141,7 +142,7 @@ The 30 s value is unchanged (L1).
   2. `PY -P scripts/check_architecture_principles.py --check`
   3. `PY scripts/check_config_facade.py --check`
   4. `PY scripts/check_config_readers.py` (report-only; none of the three new fields may be listed as unread).
-  - Expected: **29 passed** in the new file; every other file 0 failed, with collected counts equal to M0. `test_ad1270e2f` gains no case; its RecordsConfig cases now assert the new values, and it pins a bound sum of 24 over four models; the effect census pins OutsideRuntime 6 and 40 launches. With A1, the 20 files of G2 give 819 passed, 0 failed (derived by the Architect from the oracle's 817 passed and 2 failed before A1; the collected counts do not change).
+  - Expected: **29 passed** in the new file; every other file 0 failed, with collected counts equal to M0. `test_ad1270e2f` gains no case; its RecordsConfig cases now assert the new values, and it pins a bound sum of 24 over four models; the effect census pins OutsideRuntime 6 and 40 launches. With A1, the 20 files of G2 give 819 passed, 0 failed (derived by the Architect from the oracle's 817 passed and 2 failed before A1; the collected counts do not change). With A3, the new file has 36 passed, and G2 gives 826 passed, 0 failed over the same 20 files (819 + 7 new cases; no other file changes).
 - **R1 (inside M2, before G2).**
   - Run `PY scripts/check_config_facade.py --update-baseline`. The diff may touch only the `RecordsConfig` block (three field rows and its `schema_sha256`), and the `schema_sha256` of any model that embeds it (`SystemConfig`). Anything else is a hard stop.
   - Run `PY scripts/gen_config_reference.py`. The diff may add only the three `records` rows.
@@ -173,10 +174,14 @@ The 30 s value is unchanged (L1).
 | DC3 | `test_uncommitted_paths_warn_only_over_the_bound` | 2 | count boundary | M2 |
 | DC4 | `test_an_old_last_commit_warns_only_with_uncommitted_paths` | 2 | age rule | M2 |
 | DC5 | `test_the_check_skips_without_config_records_or_auto_commit` | 3 | skip cases | M2 |
-| DC6 | `test_a_missing_directory_or_repository_or_commit_is_reported` | 3 | absent cases | M2 |
+| DC6 | `test_a_missing_directory_or_repository_or_commit_is_reported` | 4 | absent cases; A3 adds "a file" (FAIL) | M2; "a file" A3 |
 | DC7 | `test_without_git_the_lock_is_still_reported` | 1 | git missing | M2 |
 | DC8 | `test_the_check_reads_git_with_optional_locks_off` | 1 | read-only property | M2 |
 | CF1 | `test_the_thresholds_are_bounded_config_fields_with_defaults` | 1 | config | M2 |
+| T10 | `test_a_commit_that_times_out_is_logged_once_and_not_called_unrun` | 1 | A3 finding 5 | A3 |
+| T11 | `test_a_failure_is_logged_with_git_s_first_line_only` | 1 | A3 finding 6, real git, premise on git's advice | A3 |
+| T12 | `test_the_warning_memory_changes_only_while_the_git_lock_is_held` | 3 | A3 finding 4 ("timeout" is a guard) | A3 (success, failure) |
+| DC9 | `test_the_check_runs_no_fsmonitor_and_writes_nothing_in_the_repository` | 1 | A3 finding 2, real git, recursive snapshot, `GIT_CONFIG_COUNT=0` | A3 |
 
 On the base, each xfail case fails at an `AssertionError`:
 - The DC cases fail first at `_check()`'s `assert check is not None`.
@@ -1137,6 +1142,24 @@ REPLACE:
     assert sum(found.values()) == 40  # BF-957: + doctor records_git_check._git_read_sync
 ```
 
+### 7.2b Amendment A3 (review round 1; milestones A3-M1 and A3-M2, on `2f6087ad`)
+
+The cross-family Diff Reviewer's round-1 report (NOT READY, seven findings) is answered below. The SEARCH/REPLACE pairs are in the Architect's A3 consult answer; the built code is the record.
+
+| Finding | Decision | Where |
+|---|---|---|
+| 1. A raising log handler aborts a write | Recorded (injected-only) | L12 |
+| 2. The doctor's git runs a configured fsmonitor | Fixed: `HARDENED_GIT_CONFIG_ARGS` on both reads | `_git_read_sync`; DC9; D-8 |
+| 3. A path that is a file reads as "does not exist yet" | Fixed: FAIL | `run`; DC6 "a file"; D-7 |
+| 4. The memory changed after `_git_lock` was released | Fixed: classified under the lock | `_git_sync`; T12; R-12 |
+| 5. A timeout called an unrun commit, logged twice | Fixed: "not known"; `_commit` does not log a timeout again | `_git_sync`, `_commit`; T10; R-10 |
+| 6. The WARNING carried git's removal advice | Fixed: git's first line only | `_git_sync`; T11; R-11 |
+| 7. L8 missed the dream cycle's `git add -A` | Fixed: L8 corrected | §10 |
+
+- **A3-M1 (HIGH).** Tests first: the new file gives 6 failed (T10, T11, T12 "success" and "failure", DC6 "a file", DC9; each at an `AssertionError`) and 30 passed. After the source: 36 passed. Then G2: 826 passed, 0 failed.
+- **A3-M2 (docs).** This contract, plus the PROGRESS and DECISIONS entries.
+- **Shared contracts.** None: no public signature, persisted format, config field, event type or gate changes. `probos doctor` changes its outcome only for a records path that exists and is not a directory (OK to FAIL). R-4 moves four spaces deeper.
+
 ### 7.3 M3: tracking
 
 **P3-1.** `PROGRESS.md`. The anchor is the title line and the blank line after it. Replace `DATE` with M3's date.
@@ -1199,7 +1222,7 @@ REPLACE:
 | R-1 | records_store.py | `        with self._git_lock:` | `        if True:` | T7 |
 | R-2 | records_store.py | `            if key in self._git_warned:` | `            if False:` | T2 |
 | R-3 | records_store.py | `            if len(self._git_warned) >= _GIT_WARNED_MAX:` | `            if False:` | T4 |
-| R-4 | records_store.py | `            if verb in _GIT_INDEX_VERBS:` | `            if False:` | T3 "an add succeeds" |
+| R-4 | records_store.py | `                if verb in _GIT_INDEX_VERBS:` (A3: inside `with self._git_lock:`) | `                if False:` | T3 "an add succeeds" |
 | R-5 | records_store.py | `_GIT_NOTHING_STAGED = ("nothing to commit", "nothing added to commit")` | `_GIT_NOTHING_STAGED = ("nothing to commit",)` | T8 untracked |
 | R-6 | records_store.py | `            except subprocess.TimeoutExpired:` | `            except ValueError:` | T5 |
 | R-7 | records_store.py | `                return line.strip()[:300]` | `                return "fatal"` | T2 |
@@ -1211,6 +1234,11 @@ REPLACE:
 | D-4 | records_git_check.py | `        env={**trusted_command_env(), "GIT_OPTIONAL_LOCKS": "0"},` | `        env=trusted_command_env(),` | DC8 (sets an ambient `GIT_OPTIONAL_LOCKS=1` first, so the mutant passes `"1"` through on any host, including one that exports `0`) |
 | D-5 | records_git_check.py | `        if not records.auto_commit:` | `        if False:` | DC5 auto_commit off |
 | D-6 | checks/__init__.py | `    records_git_check,  # BF-957: after disk, before federation` | delete | DC1 |
+| R-10 | records_store.py | `                if isinstance(e, subprocess.TimeoutExpired):` | `                if False:` | T10 |
+| R-11 | records_store.py | `                error,  # BF-957 A3: git's first line only; the rest may advise removing a lock without the precondition` | `                result.stderr,` | T11 |
+| R-12 | records_store.py | `            # BF-957 A3: classified under the lock, so a later child's warning is never cleared by an earlier success.` | delete it and dedent every following line of `_git_sync` by four spaces (the shape at `2f6087ad`) | T12 "success", "failure" |
+| D-7 | records_git_check.py | `        if not repo.exists() and not repo.is_symlink():` | `        if not repo.is_dir():` | DC6 "a file" |
+| D-8 | records_git_check.py | `        ["git", *HARDENED_GIT_CONFIG_ARGS, "-C", str(repo), *args],  # BF-957 A3: optional locks do not stop an fsmonitor` | `        ["git", "-C", str(repo), *args],` | DC9 (sets `GIT_CONFIG_COUNT=0` first, so a host that exports `core.fsmonitor=false` cannot hide the mutant) |
 
 There is no campaign of record yet; the Builder runs the mutants on M2's head.
 
@@ -1223,10 +1251,11 @@ There is no campaign of record yet; the Builder runs the mutants on M2's head.
 - **L5.** Whether `git commit` itself fails on a stale lock or reports nothing staged depends on git's version. The tests assert only the `add`.
 - **L6.** Queued git calls occupy default-executor threads while they wait: no more threads than before, but each is held longer.
 - **L7.** `trusted_command_env()` passes the operator's `GIT_*` variables (for example `GIT_DIR`) through, as for the store.
-- **L8.** A path whose `git add` failed is committed only when it is written again. Re-adding everything (`git add -A`) is the Captain's recovery step in #1760, not this BF.
+- **L8.** A path whose `git add` failed stays out of the history until a later `git add` stages it: a write of the same path, or the dream cycle's notebook consolidation, which runs `git add -A` on the store when it archives an entry (`cognitive/dreaming.py:1027`; `notebook_consolidation_enabled` defaults to true). The next write's commit then records it; a vessel that writes nothing after the failure does not. (A3 corrects the earlier text, which named only a write of the same path.) Re-adding everything (`git add -A`) is the Captain's recovery step in #1760, not this BF.
 - **L9.** The uncommitted count includes any file in the repository, including files ProbOS did not write.
 - **L10.** A `.git` that is a file (gitfile) is reported as "not a git repository".
 - **L11.** The signal is the log plus `probos doctor` when the operator runs it. A runtime alert was considered and deferred.
+- **L12.** (A3, review finding 1.) A logging handler whose `emit` raises propagates out of `_git_sync` or `_commit` into the write that called it, and on the timeout path it replaces the `TimeoutExpired`. Python's own handlers catch their errors inside `emit` and report them through `handleError`; ProbOS's one custom handler (`__main__.py:119`) only counts. A guard would be a swallow-tier `except` around a log call, against property 1, and every log call on every write path has the same exposure. A raising sink is a logging-setup defect, to be fixed there if it is ever observed.
 
 ## 11. Verified Against Codebase (2026-11-06, tree `baea653d`)
 
@@ -1280,22 +1309,23 @@ git show --stat 48ed13bf -> BF-952 updated ad-ledger-snapshot.json and open-ads-
 - **Blind spots handled.**
   - The store contending with itself produced the same error text as a stale lock. Serialization separates them.
   - A git commit with untracked files present says "nothing added to commit". It is exempted.
-  - The doctor's own `git status` could take a lock, or be stopped while holding one. Optional locks are off.
+  - The doctor's own `git status` could take a lock, or be stopped while holding one. Optional locks are off. A configured fsmonitor still runs with optional locks off; A3 adds `HARDENED_GIT_CONFIG_ARGS` (review round 1 found it).
   - An idle vessel with a clean tree is not flagged for an old last commit.
 - **Blind spots recorded.** L3 (localized git), L8 (paths lost by a failed add), L11 (no runtime alert).
 
 ## 13. Diff Reviewer: properties to verify
 
-1. On every path that does not raise, `_git_sync` returns `result.stdout`. It raises exactly what the base raised, re-raising the same `TimeoutExpired` object, and has no new `except` for any other exception.
+1. On every path that does not raise, `_git_sync` returns `result.stdout`. It raises exactly what the base raised, re-raising the same `TimeoutExpired` object, and has no new `except` for any other exception. A logging handler that raises is out of scope (L12).
 2. Within one store, no git child starts while another is running. `_git_lock` is never held across an `await` and never taken on the event-loop thread. `_commit_lock` is still taken before `_git_lock`, never after it.
-3. A given key is logged at most once between successful `add` or `commit` exits. `_git_warned` never exceeds 32 keys and is touched only under `_git_warned_lock`. A successful read clears nothing.
+3. A given key is logged at most once between successful `add` or `commit` exits. `_git_warned` never exceeds 32 keys and is touched only under `_git_warned_lock`. A successful read clears nothing. (A3) In `_git_sync`, the result is classified and `_warn_git_once` / `_forget_git_warnings` are called while `_git_lock` is still held, so the memory changes in the order the children ran. `_commit` logs on the event-loop thread without `_git_lock` (property 2 forbids taking it there), and only for an exception raised before any child ran; a timeout that reaches `_commit` is not logged again.
 4. A non-zero commit whose stdout says "nothing to commit" or "nothing added to commit" logs nothing.
-5. Nothing in `records_git_check.py` writes, renames or deletes a path. Every git launch in it carries `GIT_OPTIONAL_LOCKS=0`.
+5. Nothing in `records_git_check.py` writes, renames or deletes a path. Every git launch in it carries `GIT_OPTIONAL_LOCKS=0` and (A3) starts with `HARDENED_GIT_CONFIG_ARGS`, so a configured fsmonitor or hook does not run; DC9 proves this with a recursive snapshot. A records path that exists and is not a directory is FAIL, not OK.
 6. The check obtains the repository only through `resolve_records_repo_path(ctx.config.records, ctx.data_dir)`.
 7. The three fields have the stated defaults, bounds and descriptions. A zero-config `SystemConfig()` loads.
 8. Each guard-table row names a function with exactly one launch. The census row is `OutsideRuntime` under `src/probos/doctor/`. The bound table moves by exactly RecordsConfig +3 (sum 21 to 24). The census moves by exactly OutsideRuntime +1 and launches +1 (39 to 40).
-9. No code under `src/` deletes `index.lock`. The messages give no instruction to delete without the stated precondition.
+9. No code under `src/` deletes `index.lock`. The messages give no instruction to delete without the stated precondition. (A3) The failure WARNING carries git's first output line only, so git's own "remove the file manually" advice is not logged.
 10. At M1, each xfail case fails at an `AssertionError`.
+11. (A3) No message says a timed-out command did not run or did not reach the history. The timeout WARNING says what it changed is not known, and `_commit` adds no second warning for it.
 
 ## 14. Acceptance criteria
 
@@ -1305,3 +1335,4 @@ git show --stat 48ed13bf -> BF-952 updated ad-ledger-snapshot.json and open-ads-
 
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06: Amendment A1 (§7.2a): P2-11 (the only inline pair, which the oracle's apply tool skipped) is replaced by the fenced A1-1, and the aggregate pins the contract left out are added (A1-2 to A1-5: the bound table's comment, docstring, sum and sorted list, and the effect census's `OutsideRuntime` and launch totals).
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-07: Amendment A2: DC8 now sets an ambient `GIT_OPTIONAL_LOCKS=1` before it reads, and row D-4 says so. The orchestrator's mutation rehearsal found that D-4 survived on a host that already exports `GIT_OPTIONAL_LOCKS=0`, where the test passed without testing anything.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-07: Amendment A3 (§7.2b), review round 1. Findings 2 to 7 fixed (fsmonitor, a file at the repo path, warning order under the git lock, timeout wording and double log, git's first line only, L8). Finding 1 recorded as L12. New tests T10, T11, T12, DC9, and DC6 "a file"; new mutation rows R-10 to R-12, D-7 and D-8; R-4 re-indented.
