@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1893
-  field_definitions: 1883
+  canonical_dump_leaves: 1896
+  field_definitions: 1886
   incidental: 13
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: 78eebb6f8ec49145999b7e7b59009b586a3763722ced0d2c06112ced7bed324d
+canonical_dump_sha256: 41fef1f6a011eb90dea0f4087dea94e9c293a4826459ea0ebf96ea30a49ee4fd
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -3025,7 +3025,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 659282bea3c479223d34bac5429cf8aaee0546cf1f61fc35b7a528cdcba90a8b
+    schema_sha256: f1431e587b7de985666dafeb1203844a1e067573c7f26cb0d004de5e43522d26
     fields:
     - {default: 'True', name: enabled}
     - {default: '''''', name: repo_path}
@@ -3055,6 +3055,9 @@ models:
     - {default: '0.5', name: notebook_quality_warn_threshold}
     - {default: '0.7', name: notebook_staleness_alert_rate}
     - {default: 'False', name: semantic_index_enabled}
+    - {default: '10.0', name: git_lock_stale_minutes}
+    - {default: '50', name: git_uncommitted_warn_paths}
+    - {default: '24.0', name: git_last_commit_warn_hours}
   RepairConfig:
     qualname: RepairConfig
     bases:
@@ -3424,7 +3427,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: bcaea570f9b86ac9f05acf3616597647547d677d4a2d2e253b4c2e5c600711ea
+    schema_sha256: 0e8cf01bfebdf993b070bb0754a7fb70ac8a43c906b655503867a0ae4fe71a16
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -353,6 +353,31 @@ class RecordsConfig(BaseModel):
     # AD-1138: index records into SemanticKnowledgeLayer and serve Oracle
     # Tier 2 from it. Default-OFF — when False, Tier 2 uses the keyword path.
     semantic_index_enabled: bool = False
+    # BF-957: probos doctor's records_git check reads these; the store's behaviour does not depend on them.
+    git_lock_stale_minutes: float = Field(
+        default=10.0,
+        gt=0,
+        description=(
+            "BF-957: probos doctor reports the records repository's .git/index.lock as stale (FAIL) once it is "
+            "this many minutes old. Ship's Records stops its own git commands after 30 seconds."
+        ),
+    )
+    git_uncommitted_warn_paths: int = Field(
+        default=50,
+        ge=1,
+        description=(
+            "BF-957: probos doctor warns when the records repository holds more than this many uncommitted "
+            "paths, untracked or modified."
+        ),
+    )
+    git_last_commit_warn_hours: float = Field(
+        default=24.0,
+        gt=0,
+        description=(
+            "BF-957: probos doctor warns when the records repository's last commit is at least this many hours "
+            "old while uncommitted paths exist."
+        ),
+    )
 
 
 class ArchiveConfig(BaseModel):

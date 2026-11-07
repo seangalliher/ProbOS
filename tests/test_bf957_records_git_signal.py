@@ -19,7 +19,6 @@ from probos.doctor.protocol import CheckOutcome, DoctorContext
 from probos.knowledge.records_store import RecordsStore
 
 _LOGGER = "probos.knowledge.records_store"
-_BUILT = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-957 M2 builds it")
 _THRESHOLDS = {"git_lock_stale_minutes": 10.0, "git_uncommitted_warn_paths": 50, "git_last_commit_warn_hours": 24.0}
 
 
@@ -73,7 +72,6 @@ def _fake_run(monkeypatch: pytest.MonkeyPatch, fake) -> None:
 # ---------------------------------------------------------------- the seam
 
 
-@_BUILT
 @pytest.mark.asyncio
 async def test_a_stale_lock_is_logged_once_and_reported_by_doctor_without_a_write(tmp_path, caplog):
     caplog.set_level(logging.WARNING, logger=_LOGGER)
@@ -107,7 +105,6 @@ async def test_a_stale_lock_is_logged_once_and_reported_by_doctor_without_a_writ
 # ---------------------------------------------------------------- the signal
 
 
-@_BUILT
 @pytest.mark.asyncio
 async def test_a_failed_git_command_is_logged_once_per_distinct_error_and_returns_its_stdout(tmp_path, caplog):
     caplog.set_level(logging.WARNING, logger=_LOGGER)
@@ -123,7 +120,6 @@ async def test_a_failed_git_command_is_logged_once_per_distinct_error_and_return
     assert "missing-one.md" in logged[0] and "missing-two.md" in logged[1]
 
 
-@_BUILT
 @pytest.mark.asyncio
 @pytest.mark.parametrize("between", ["a read succeeds", "an add succeeds"])
 async def test_a_successful_add_or_commit_forgets_the_logged_errors_and_a_read_does_not(tmp_path, caplog, between):
@@ -146,7 +142,6 @@ async def test_a_successful_add_or_commit_forgets_the_logged_errors_and_a_read_d
     assert len(_add_lock_warnings(caplog)) == expected
 
 
-@_BUILT
 def test_the_remembered_errors_are_bounded_and_the_oldest_is_dropped(tmp_path, caplog, monkeypatch):
     caplog.set_level(logging.WARNING, logger=_LOGGER)
     store = RecordsStore(_records(tmp_path))
@@ -166,7 +161,6 @@ def test_the_remembered_errors_are_bounded_and_the_oldest_is_dropped(tmp_path, c
     assert len(_warnings(caplog)) == 34
 
 
-@_BUILT
 def test_a_timed_out_git_command_is_logged_once_and_still_raises(tmp_path, caplog, monkeypatch):
     caplog.set_level(logging.WARNING, logger=_LOGGER)
     store = RecordsStore(_records(tmp_path))
@@ -184,7 +178,6 @@ def test_a_timed_out_git_command_is_logged_once_and_still_raises(tmp_path, caplo
     assert "did not finish" in logged[0] and "lock" in logged[0]
 
 
-@_BUILT
 @pytest.mark.asyncio
 async def test_a_commit_that_raises_is_logged_once_at_warning_and_does_not_raise(tmp_path, caplog, monkeypatch):
     caplog.set_level(logging.WARNING, logger=_LOGGER)
@@ -202,7 +195,6 @@ async def test_a_commit_that_raises_is_logged_once_at_warning_and_does_not_raise
     assert "FileNotFoundError" in logged[0]
 
 
-@_BUILT
 def test_one_git_child_runs_at_a_time_per_store(tmp_path, monkeypatch):
     store = RecordsStore(_records(tmp_path))
     counts = {"inside": 0, "peak": 0}
@@ -267,14 +259,12 @@ async def test_the_return_value_and_raising_are_unchanged(tmp_path, monkeypatch,
 # ---------------------------------------------------------------- the doctor check
 
 
-@_BUILT
 def test_the_doctor_check_is_registered_once_after_disk():
     names = [c.name for c in iter_checks()]
     assert names.count("records_git") == 1
     assert names[names.index("disk") + 1] == "records_git"
 
 
-@_BUILT
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("age", "outcome"), [(9.0, CheckOutcome.OK), (11.0, CheckOutcome.FAIL)])
 async def test_a_lock_is_reported_only_from_its_threshold(tmp_path, age, outcome):
@@ -287,7 +277,6 @@ async def test_a_lock_is_reported_only_from_its_threshold(tmp_path, age, outcome
     assert "index.lock: present" in result.detail
 
 
-@_BUILT
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("bound", "outcome"), [(3, CheckOutcome.OK), (2, CheckOutcome.WARN)])
 async def test_uncommitted_paths_warn_only_over_the_bound(tmp_path, bound, outcome):
@@ -301,7 +290,6 @@ async def test_uncommitted_paths_warn_only_over_the_bound(tmp_path, bound, outco
     assert "uncommitted: 3 path(s)" in result.detail
 
 
-@_BUILT
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("loose", "outcome"), [(False, CheckOutcome.OK), (True, CheckOutcome.WARN)])
 async def test_an_old_last_commit_warns_only_with_uncommitted_paths(tmp_path, loose, outcome):
@@ -317,7 +305,6 @@ async def test_an_old_last_commit_warns_only_with_uncommitted_paths(tmp_path, lo
     assert "last commit:" in result.detail
 
 
-@_BUILT
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["config not loaded", "records disabled", "auto_commit off"])
 async def test_the_check_skips_without_config_records_or_auto_commit(tmp_path, case):
@@ -336,7 +323,6 @@ async def test_the_check_skips_without_config_records_or_auto_commit(tmp_path, c
     assert "index.lock" not in result.detail
 
 
-@_BUILT
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["no directory", "not a repository", "no commit yet"])
 async def test_a_missing_directory_or_repository_or_commit_is_reported(tmp_path, case):
@@ -354,7 +340,6 @@ async def test_a_missing_directory_or_repository_or_commit_is_reported(tmp_path,
         assert "last commit: not read" in result.detail
 
 
-@_BUILT
 @pytest.mark.asyncio
 async def test_without_git_the_lock_is_still_reported(tmp_path, monkeypatch):
     store = await _store(tmp_path)
@@ -368,7 +353,6 @@ async def test_without_git_the_lock_is_still_reported(tmp_path, monkeypatch):
     assert "git: not found" in result.detail
 
 
-@_BUILT
 @pytest.mark.asyncio
 async def test_the_check_reads_git_with_optional_locks_off(tmp_path, monkeypatch):
     monkeypatch.setenv("GIT_OPTIONAL_LOCKS", "1")  # an ambient value the check must override, on any host
@@ -388,7 +372,6 @@ async def test_the_check_reads_git_with_optional_locks_off(tmp_path, monkeypatch
     assert seen == ["0", "0"]
 
 
-@_BUILT
 def test_the_thresholds_are_bounded_config_fields_with_defaults():
     fields = RecordsConfig.model_fields
     assert {name: fields[name].default for name in _THRESHOLDS if name in fields} == _THRESHOLDS

@@ -7,6 +7,7 @@ import math
 import os
 import re
 import subprocess
+import threading
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,23 @@ from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
 
 logger = logging.getLogger(__name__)
+
+# BF-957: how many distinct git errors one store remembers so that each is logged once; past this the oldest is dropped.
+_GIT_WARNED_MAX = 32
+# BF-957: the git verbs that take the index lock. A zero exit of one forgets every remembered error.
+_GIT_INDEX_VERBS = frozenset({"add", "commit"})
+# BF-957: a commit with nothing staged exits non-zero and says so on stdout; it is not an error.
+_GIT_NOTHING_STAGED = ("nothing to commit", "nothing added to commit")
+
+
+def _git_error_line(stderr: str, stdout: str) -> str:
+    """BF-957: the first non-empty line a failed git command printed. Two failures with the same line are one error."""
+    for text in (stderr, stdout):
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()[:300]
+    return "(no output)"
+
 
 # Directory structure per AD-434 design
 _SUBDIRS = (
@@ -519,6 +537,11 @@ class RecordsStore:
         self._repo_path = Path(config.repo_path)
         self._ontology = ontology
         self._commit_lock = asyncio.Lock()
+        # BF-957: one git child of this store at a time, held from launch until the child has exited.
+        self._git_lock = threading.Lock()
+        # BF-957: the git errors already logged, oldest first; read and written only under _git_warned_lock.
+        self._git_warned: dict[tuple[str, str], None] = {}
+        self._git_warned_lock = threading.Lock()
         self._pending_commits: list[str] = []
         self._commit_task: asyncio.Task | None = None
         self._confidence_tracker: Any = None
@@ -1622,26 +1645,85 @@ class RecordsStore:
         return await loop.run_in_executor(None, self._git_sync, args)
 
     def _git_sync(self, args: tuple[str, ...]) -> str:
-        """Synchronous git execution."""
-        result = subprocess.run(
-            ["git"] + list(args),
-            env=trusted_command_env(),
-            cwd=str(self._repo_path),
-            capture_output=True,
-            text=True,
-            timeout=30,
+        """Synchronous git execution.
+
+        BF-957: at most one git child of this store runs at a time (``_git_lock``, held until the child has
+        exited), so the store's own commands never meet at the index lock. A non-zero exit is logged at WARNING
+        once per distinct error (``_warn_git_once``) and its stdout is returned as before; a commit with nothing
+        staged is not an error. A command that outlives the timeout is stopped by ``subprocess.run``; this logs
+        a WARNING, because a lock it held may remain, and re-raises the same exception.
+        """
+        verb = args[0] if args else ""
+        with self._git_lock:
+            try:
+                result = subprocess.run(
+                    ["git"] + list(args),
+                    env=trusted_command_env(),
+                    cwd=str(self._repo_path),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                self._warn_git_once(
+                    (verb, "timeout"),
+                    "Ship's Records: git %s did not finish in 30 s and was stopped; a lock file it held may "
+                    "remain in %s. `probos doctor` reports the repository's state.",
+                    verb,
+                    self._repo_path / ".git",
+                )
+                raise
+        if result.returncode == 0:
+            if verb in _GIT_INDEX_VERBS:
+                self._forget_git_warnings()
+            return result.stdout
+        if any(phrase in result.stdout for phrase in _GIT_NOTHING_STAGED):
+            return result.stdout
+        self._warn_git_once(
+            (verb, _git_error_line(result.stderr, result.stdout)),
+            "Ship's Records: git %s failed (exit %d): %s. Records are still written to disk, but a failed add "
+            "or commit leaves them out of the records history. This error is logged once until a git add or "
+            "commit succeeds; `probos doctor` reports the repository's state.",
+            verb,
+            result.returncode,
+            (result.stderr.strip() or result.stdout.strip() or "(no output)")[:2000],
         )
-        if result.returncode != 0 and "nothing to commit" not in result.stdout:
-            if result.stderr.strip():
-                logger.debug("git %s stderr: %s", args[0], result.stderr.strip())
         return result.stdout
 
+    def _warn_git_once(self, key: tuple[str, str], msg: str, *args: object) -> None:
+        """BF-957: log ``msg`` at WARNING unless ``key`` was logged since the last successful git add or commit.
+
+        At most ``_GIT_WARNED_MAX`` keys are remembered; past that the oldest is dropped and may be logged again.
+        """
+        with self._git_warned_lock:
+            if key in self._git_warned:
+                return
+            if len(self._git_warned) >= _GIT_WARNED_MAX:
+                self._git_warned.pop(next(iter(self._git_warned)))
+            self._git_warned[key] = None
+        logger.warning(msg, *args)
+
+    def _forget_git_warnings(self) -> None:
+        """BF-957: a git add or commit succeeded, so any earlier error that recurs is logged again."""
+        with self._git_warned_lock:
+            self._git_warned.clear()
+
     async def _commit(self, message: str) -> None:
-        """Debounced git commit."""
+        """Debounced git commit.
+
+        BF-957: an exception (a timeout, git missing) is logged at WARNING once per exception type until a git
+        add or commit succeeds, and is not raised, as before.
+        """
         if not self._config.auto_commit:
             return
         async with self._commit_lock:
             try:
                 await self._git("commit", "-m", message, "--allow-empty-message")
             except Exception as e:
-                logger.debug("Git commit skipped: %s", e)
+                self._warn_git_once(
+                    ("commit", type(e).__name__),
+                    "Ship's Records: git commit did not run (%s: %s). The record is written to disk but not to "
+                    "the records history. Logged once until a git add or commit succeeds.",
+                    type(e).__name__,
+                    e,
+                )
