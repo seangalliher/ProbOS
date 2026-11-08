@@ -1073,9 +1073,15 @@ class KnowledgeStore:
         """Debounced commit (AD-161).
 
         Batches writes within the debounce window.
-        While _flushing is True (a shutdown flush is running) the message is kept but no
-        timer is armed: flush() commits it before it returns (BF-960 A2). The file is
-        already on disk, so the flush's next add stages it.
+        With auto_commit off it returns at once: no message is kept and no timer is armed
+        (BF-960 limit L11).
+        With auto_commit on, while _flushing is True (a shutdown flush is running) the
+        message is kept but no timer is armed: flush() commits it before it returns, up
+        to its drain bound (BF-960 A2, limit L9). The file is already on disk, so the
+        flush's next add stages it.
+        This is for one active flush: the first of two overlapping flush() calls to
+        finish clears _flushing on its way out, and a write after that arms a timer, as
+        on the base (limit L3).
         """
         if not self._config.auto_commit:
             return
@@ -1278,11 +1284,19 @@ class KnowledgeStore:
         ``_commit_lock``), and if ``flush()`` itself is cancelled the tasks run on.
         Each git command is bounded by ``_git_run``'s 30 s timeout.
 
-        A2: a write that lands while ``flush()`` commits keeps its message
-        (``_schedule_commit`` arms no timer for it), and ``flush()`` commits it before
-        it returns: one more commit per batch that landed during the previous one, at
-        most ``_FLUSH_DRAIN_PASSES``. Past that it logs a warning and leaves the
-        messages pending; their files stay on disk for the next commit (limit L9).
+        A2: with auto_commit on and one active flush, a write that lands while
+        ``flush()`` commits keeps its message (``_schedule_commit`` arms no timer for
+        it), and ``flush()`` commits it before it returns: one more commit per batch
+        that landed during the previous one, at most ``_FLUSH_DRAIN_PASSES``. Past that
+        it logs a warning and leaves the messages pending; their files stay on disk for
+        the next commit (limit L9).
+
+        A3, what that does not cover: with auto_commit off no message is kept, so a
+        write after the flush's add stays uncommitted until the next commit (limit
+        L11); and the first of two overlapping ``flush()`` calls to finish clears
+        ``_flushing`` on its way out, so a write after that arms a timer whose commit
+        can end after the other call returns (limit L3). In production only
+        shutdown() calls it, once per run.
         """
         self._flushing = True
         try:
@@ -1298,9 +1312,10 @@ class KnowledgeStore:
             combined = self._take_pending()
             await self._git_commit(combined if combined is not None else "Shutdown flush")
 
-            # BF-960 A2: a write that lands while flush() commits keeps its message (see
-            # _schedule_commit) and is committed here, one pass per batch. Nothing suspends
-            # between the take that finds nothing and the reset below, so none arrives after it.
+            # BF-960 A2: a message that _schedule_commit kept while flush() ran (see that
+            # docstring: auto_commit on, one flush) is committed here, one pass per batch.
+            # Nothing suspends between the take that finds nothing and the reset below, so
+            # none arrives after it.
             for _ in range(_FLUSH_DRAIN_PASSES):
                 late = self._take_pending()
                 if late is None:

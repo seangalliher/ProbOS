@@ -1,11 +1,11 @@
 # BF-960 (#1767): the knowledge store's shutdown flush waits for the debounced commit in flight
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-07
-**Revised by:** the Copilot `Architect` (fallback for `claude-architect`), 2026-11-07 (the caller's clock): Amendment A2, the repair of review round 1 (gpt-6.1-sol, NOT READY). A write that lands while `flush()` commits is now committed before `flush()` returns (P2, not introduced here), bounded at `_FLUSH_DRAIN_PASSES` extra commits; the shutdown-wait claim is corrected (P3). T11 to T13 are added, rows 15 to 20 are added, L2, L3 and L6 are revised, and L9 and L10 are added. See the end of this file.
+**Revised by:** the Copilot `Architect` (fallback for `claude-architect`), 2026-11-07 (the caller's clock): Amendment A2, the repair of review round 1 (gpt-6.1-sol, NOT READY). With `auto_commit` on and one active flush, a write that lands while `flush()` commits is now committed before `flush()` returns (P2, not introduced here), bounded at `_FLUSH_DRAIN_PASSES` extra commits; the shutdown-wait claim is corrected (P3). T11 to T13 are added, rows 15 to 20 are added, L2, L3 and L6 are revised, and L9 and L10 are added. Amendment A3 (review round 2, two P3 text findings) states that scope: L2, L3 and L6 are revised again and L11 is added. It changes no code line, no test and no mutation row. See the end of this file.
 **Status:** ready to build on `origin/main` `46950c39` (see the orchestrator note: it is built before the BF-957 + BF-958 batch merges).
 **Base:** the anchors were taken at `eb204e3c674a47cf5edc9cee4c8b8819d1160961`. `src/probos/knowledge/store.py` is blob `c2135ed2`, `tests/test_knowledge_store.py` is blob `4da2a472`, and `src/probos/startup/shutdown.py` is blob `e006c05f`.
 **Dependencies:** none in code.
-**Orchestrator note (2026-11-07, before building):** (1) **Order.** The BF-957 + BF-958 batch (PR #1768) has not merged. Its fourth canonical gate failed on this issue's race again, with the first gate's signature, so by the Architect's rule for that case this item is built FIRST, on `origin/main` `46950c39`, merged, and then main is merged into the batch branch. `store.py`, `shutdown.py` and the named test files have the same text on `46950c39` as at `eb204e3c` (the batch does not touch them), so every source and test pair applies unchanged: `git diff --stat eb204e3c HEAD -- <those files>` is empty on the build tree. (2) **Amendment A1 (T6).** The orchestrator's rehearsal of this contract by tool found T6 (`test_a_cancelled_flush_leaves_the_debounced_commit_running_to_its_end`) non-deterministic on the unbuilt base (2 failures in 5 runs; stable once built: 15 of 15, the file 4 of 4, the loaded G2 command 3 of 3). The Copilot `Architect` (the Claude Code bridge's login had expired) decided option C: T6 releases the injected hold `_RELEASE_AFTER` after it cancels `flush()`, not at once. The five amendment pairs (the G1 sentence, the section 6 note, the constant's comment, T6's release, limit L8) are already applied to this text; G1 is unchanged (5 passed, 7 xfailed). (3) **Trackers.** Main's DECISIONS.md has no BF-958 entry, so P3-2 is re-anchored on AD-1358 S1's last bullet (`- *Reversal.* Revert the AD-1358 S1 commits.`, once on main), and the residual line read L1 to L8 (L1 to L10 after Amendment A2). When main is merged into the batch branch later, the two insertions at that point conflict: keep both entries and regenerate the ledger.
+**Orchestrator note (2026-11-07, before building):** (1) **Order.** The BF-957 + BF-958 batch (PR #1768) has not merged. Its fourth canonical gate failed on this issue's race again, with the first gate's signature, so by the Architect's rule for that case this item is built FIRST, on `origin/main` `46950c39`, merged, and then main is merged into the batch branch. `store.py`, `shutdown.py` and the named test files have the same text on `46950c39` as at `eb204e3c` (the batch does not touch them), so every source and test pair applies unchanged: `git diff --stat eb204e3c HEAD -- <those files>` is empty on the build tree. (2) **Amendment A1 (T6).** The orchestrator's rehearsal of this contract by tool found T6 (`test_a_cancelled_flush_leaves_the_debounced_commit_running_to_its_end`) non-deterministic on the unbuilt base (2 failures in 5 runs; stable once built: 15 of 15, the file 4 of 4, the loaded G2 command 3 of 3). The Copilot `Architect` (the Claude Code bridge's login had expired) decided option C: T6 releases the injected hold `_RELEASE_AFTER` after it cancels `flush()`, not at once. The five amendment pairs (the G1 sentence, the section 6 note, the constant's comment, T6's release, limit L8) are already applied to this text; G1 is unchanged (5 passed, 7 xfailed). (3) **Trackers.** Main's DECISIONS.md has no BF-958 entry, so P3-2 is re-anchored on AD-1358 S1's last bullet (`- *Reversal.* Revert the AD-1358 S1 commits.`, once on main), and the residual line read L1 to L8 (L1 to L10 after Amendment A2, L1 to L11 after Amendment A3). When main is merged into the batch branch later, the two insertions at that point conflict: keep both entries and regenerate the ledger.
 **Tier:** M1 STANDARD, M2 HIGH, M3 STANDARD.
 **Estimated tests:** one new file with 10 functions and 12 cases; after Amendment A2, 13 functions and 15 cases. No existing test file is edited. Counted by reading, not by running.
 
@@ -33,7 +33,7 @@ Then:
 - **`_commit_lock`.** It serializes the add-and-commit sequence (`_git_commit` → `_git_add_and_commit`).
 - **The timer's callback.** `_on_commit_timer` clears `_commit_timer`, creates the task and keeps it in `_commit_tasks`. `_on_commit_task_done` removes the task and logs an exception it ended with.
 - **`flush()`.** After cancelling the timer, it waits for the running tasks with `asyncio.wait` and never cancels them. Then it commits what `_take_pending()` hands it, or `"Shutdown flush"` when nothing is pending. After that commit it makes up to `_FLUSH_DRAIN_PASSES` more, one per batch of writes that landed during the previous one (A2).
-- **`_schedule_commit`.** While `_flushing`, it keeps the message and arms no timer, so `flush()` commits it (A2). The base dropped it.
+- **`_schedule_commit`.** With `auto_commit` on (L11), while `_flushing` it keeps the message and arms no timer, so `flush()` commits it (A2). With two overlapping flushes `_flushing` can be false while one still runs (L3). The base dropped it.
 - **`_flush_pending`.** It keeps its `_flushing` check and uses `_take_pending()`.
 
 ## 3. Decisions
@@ -73,6 +73,7 @@ D0 to D6 are in the tables above this contract.
 - **M2:** `BF-960 M2: one commit lock for the knowledge store's git sequence, and flush() waits for the debounced commit in flight without cancelling it (#1767)`
 - **M3:** `BF-960 M3: trackers and ledger (#1767)`
 - **A2:** `BF-960 (#1767): Amendment A2, the repair of review round 1: flush() commits writes that land while it commits`
+- **A3:** `BF-960 (#1767): Amendment A3, the repair of review round 2: the late-write promise is scoped to auto_commit on and one active flush (text and docstrings only)`
 
 ## 6. Tests (`tests/test_bf960_knowledge_flush_race.py`)
 
@@ -836,8 +837,8 @@ REPLACE:
 
 **BF-960 (DATE), #1767 -- the knowledge store's shutdown flush waits for the debounced commit in flight.**
 - **Base.** `KnowledgeStore`'s debounce timer started its commit with `asyncio.create_task` and kept no reference to the task. `flush()` neither waited for that task nor serialized with it. A flush that started while the task's `git add` held `.git/index.lock` logged `Git add failed` and returned, and the task's commit landed after `rt.stop()`. The issue measured 10 files under `.git` changing afterwards. This was the intermittent red in `tests/test_bf906_crew_enrollment_boot.py`.
-- **Fix.** `_git_commit` runs its add-and-commit sequence under one `asyncio.Lock` (`_commit_lock`), so the debounce task, `flush()` and `rollback_artifact` queue instead of meeting git's lock. The timer's callback `_on_commit_timer` keeps each task in `_commit_tasks` until it is done, and an exception the task ends with is logged at WARNING. `flush()` waits for those tasks with `asyncio.wait`, never cancelling them, because a git child in an executor thread cannot be stopped. Then it commits what is pending, and commits again for each batch of writes that lands while it commits, up to five more commits (on the base such a write stayed uncommitted until the next commit). `_take_pending` hands the pending messages to exactly one committer.
-- **Changed.** At shutdown, `flush()` waits for every debounced commit that is running or queued when it starts, each normally one `git add` and one `git commit`, then makes its own commit and up to five more for writes that land while it commits; there is no aggregate timeout. A write that lands while a flush runs keeps its message and arms no timer. A timer re-armed between a timer firing and its task starting is no longer lost.
+- **Fix.** `_git_commit` runs its add-and-commit sequence under one `asyncio.Lock` (`_commit_lock`), so the debounce task, `flush()` and `rollback_artifact` queue instead of meeting git's lock. The timer's callback `_on_commit_timer` keeps each task in `_commit_tasks` until it is done, and an exception the task ends with is logged at WARNING. `flush()` waits for those tasks with `asyncio.wait`, never cancelling them, because a git child in an executor thread cannot be stopped. Then it commits what is pending, and, with `auto_commit` on and one flush at a time, commits again for each batch of writes that lands while it commits, up to five more commits (on the base such a write stayed uncommitted until the next commit). `_take_pending` hands the pending messages to exactly one committer.
+- **Changed.** At shutdown, `flush()` waits for every debounced commit that is running or queued when it starts, each normally one `git add` and one `git commit`, then makes its own commit and, with `auto_commit` on, up to five more for writes that land while it commits; there is no aggregate timeout. With `auto_commit` on and one flush at a time, a write that lands while a flush runs keeps its message and arms no timer. With `auto_commit` off no message is kept, and such a write stays uncommitted until the next commit, as before (L11). If two flushes overlap, a write that lands after the first one ends arms a timer, and that commit can end after the second returns, as before (L3). A timer re-armed between a timer firing and its task starting is no longer lost.
 - **Not changed.** `startup/shutdown.py`, the configuration, `_git_run` and its 30 s timeout, the index and ref recovery paths, and Ship's Records. The contract is `prompts/bf-960-knowledge-flush-race.md`.
 
 ```
@@ -857,9 +858,9 @@ REPLACE:
 - *G1 (serialization).* One `asyncio.Lock` over the whole add-and-commit sequence, created in `__init__` as `RecordsStore` does. Rejected: a single-flight commit worker (more state for the same ordering); a per-command thread lock (two callers' adds and commits could interleave); retrying on `index.lock` (it depends on timing, and the commit still lands after stop).
 - *G2 (the task).* Each task is kept in a set until it is done. `flush()` waits with `asyncio.wait` and never cancels. Rejected: `await task` (a cancelled flush would cancel the commit); `asyncio.shield` (it raises the task's exception in flush, whereas the done callback logs it); cancelling (git keeps running in its thread and keeps `index.lock`).
 - *G3 (hand-off).* `_flushing` stays: once a flush has begun, it takes everything pending for its own commit. `_take_pending` is synchronous, and nothing suspends between it and the lock request, so each message is committed once. The timer reference is cleared by the timer's own callback.
-- *G4 (late writes, A2).* A write that lands while the flush runs keeps its message and arms no timer; the flush commits it. After its own commit it makes up to `_FLUSH_DRAIN_PASSES` (5) more, one per batch that landed during the previous commit, and past that it warns and leaves the messages pending. Rejected: arming the timer (that commit would land after the store was told to stop, the defect this removes); asking git for a dirty tree after the commit (one more git call on every flush, and a tree that `add` cannot clean would loop); an unbounded drain (a writer that never stops would hold shutdown, and a `_take_pending` that failed to clear would hang it).
+- *G4 (late writes, A2).* With `auto_commit` on and one flush at a time, a write that lands while the flush runs keeps its message and arms no timer; the flush commits it. After its own commit it makes up to `_FLUSH_DRAIN_PASSES` (5) more, one per batch that landed during the previous commit, and past that it warns and leaves the messages pending. With `auto_commit` off `_schedule_commit` returns before it keeps a message, so such a write stays uncommitted until the next commit, as before (L11). If two flushes overlap, the first one's exit clears `_flushing`, and a write after that arms a timer whose commit can end after the second returns, as before (L3); production has one flush, from `shutdown()`. Rejected: arming the timer (that commit would land after the store was told to stop, the defect this removes); asking git for a dirty tree after the commit (one more git call on every flush, and a tree that `add` cannot clean would loop); an unbounded drain (a writer that never stops would hold shutdown, and a `_take_pending` that failed to clear would hang it).
 - *Not changed.* `startup/shutdown.py`, `_git_run`, the recovery paths, the configuration.
-- *Residual.* Recorded limits L1 to L10 of the contract.
+- *Residual.* Recorded limits L1 to L11 of the contract.
 - *Reversal.* Revert the BF-960 commits.
 ```
 
@@ -906,15 +907,16 @@ REPLACE:
 ## 10. Recorded limits
 
 - **L1.** The lock binds to the loop of its first contended acquire. A store whose lock was contended under one loop and is contended again under another raises `RuntimeError`. Production runs one loop. The suite's reuse of a store across `asyncio.run` calls (`test_knowledge_store_git_recovery.py`) never contends.
-- **L2.** A write after `flush()` returns arms a new timer, as on the base. A write whose `_schedule_commit` runs while `flush()` runs arms no timer: its message is kept and `flush()` commits it (A2, L9). Shutdown writes nothing to the store after `:2082` (§11).
-- **L3.** With two concurrent `flush()` calls, the first one's `finally` clears `_flushing` while the second is still committing. A write in that window arms a timer, as on the base; the second flush's drain commits it if it lands before that drain's last take, and the timer then finds nothing pending.
+- **L2.** A write after `flush()` returns arms a new timer, as on the base. With `auto_commit` on (L11) and one active flush (L3), a write whose `_schedule_commit` runs while `flush()` runs arms no timer: its message is kept and `flush()` commits it before it returns (A2, L9). Shutdown writes nothing to the store after `:2082` (§11).
+- **L3.** With two concurrent `flush()` calls, the first one's `finally` clears `_flushing` while the second is still running. A write in that window arms a timer, as on the base, and whichever of the timer's task and the second flush takes its message first commits it. If the second flush takes it (at a take of its drain, before the timer fires), the timer then finds nothing pending. If the timer's task takes it (a debounce shorter than the rest of the second flush), the second flush can return with that write not yet in HEAD and that debounce commit still pending, as on the base. The return guarantee of L2 is therefore for one active flush. Production has one: the only call site is `shutdown.py:2082`; a rollback does not reach it (`:2063`), and the BF-598 guard (`:914`) returns a repeated `shutdown()` that is not a rollback. No test has a write in this window: T3, the only test with two concurrent flushes, has none.
 - **L4.** When a debounced commit's `add` or `commit` fails, its messages are lost from the commit log. The files are not lost: the next commit includes them. This is unchanged. T5 does not pin the subjects for this reason.
 - **L5.** A rollback during the debounced commit can have the rolled-back file committed under the debounce message. The rollback's own commit is then empty (`--allow-empty`). HEAD still equals the file (T4). This is unchanged in kind.
-- **L6.** Shutdown waits for every debounced commit that is running or queued behind the commit lock when `flush()` starts, then for its own commit, then for one more commit per batch of writes that lands while it commits, at most `_FLUSH_DRAIN_PASSES` (A2). Each is normally one `add` and one `commit`; in the recovery path each git command is bounded by 30 s. There is no aggregate timeout, and no new timeout is added.
+- **L6.** Shutdown waits for every debounced commit that is running or queued behind the commit lock when `flush()` starts, then for its own commit, then, with `auto_commit` on, for one more commit per batch of writes that lands while it commits, at most `_FLUSH_DRAIN_PASSES` (A2). Each is normally one `add` and one `commit`; in the recovery path each git command is bounded by 30 s. There is no aggregate timeout, and no new timeout is added.
 - **L7.** A debounce task left pending by a loop that closed without cancelling it never completes, so a `flush()` on a later loop would wait for it. `asyncio.run` cancels and drains its tasks on exit. Not measured: whether pytest-asyncio's teardown does the same. Every store in the suite is function-scoped.
 - **L8.** Before the build, T1, T3, T4 and T6 each rely on one failing git `add` ending inside `_RELEASE_AFTER` (T4: `_ROLLBACK_WINDOW`) while the lock is held. On a host where one git launch takes longer, G1 can show an XPASS (T1, T3, T4) or a T6 failure. After the build these windows only delay a release; no assertion depends on them.
 - **L9.** The drain stops after `_FLUSH_DRAIN_PASSES` (5) extra commits. A writer that produces a message during every one of them leaves the last batch pending, with one WARNING (T13); the files stay on disk and the next commit or flush includes them, as on the base. No timer is armed for them: one armed during shutdown would commit after the store was told to stop. At `:2082` the pools, the IntentBus, the dream scheduler's monitor (`:1161`) and the proactive loop (`:1606`) have stopped, so only an in-flight request or task can still write. A `flush()` that is cancelled likewise leaves what it had not taken pending, with no timer; the base dropped those messages. A pass can be an empty commit (`--allow-empty`) when the `add` had already staged the file. The bound is a module constant, not a configuration field, as `_git_run`'s 30 s timeout is.
 - **L10.** `store_cooldowns` schedules no commit (`store.py:915-921`), so it leaves no message for the drain: a cooldowns write that lands after a flush's `add` stays uncommitted until the next commit, as on the base and as for every cooldowns write. Each of the 12 `_schedule_commit(` call sites belongs to another writer.
+- **L11.** With `auto_commit` off (the default is on: `config_models/knowledge.py:285`, `config/system.yaml:769`; startup passes the setting through, `cognitive_services.py:546-550`), `_schedule_commit` returns at its first guard, before it keeps a message, so L2 and the drain do not apply: no message is kept, no timer is ever armed, and a write that lands after a flush's `add` stays uncommitted until the next commit, as on the base. `flush()` does not read the flag, so at shutdown it still commits what is on disk at its `add`, as `Shutdown flush`. T1 to T13 all run with `auto_commit=True` (`_store`, the only store built in the test file), so none of them covers the off case.
 
 ## 11. Verified Against Codebase (2026-11-07, tree `eb204e3c`)
 
@@ -990,7 +992,7 @@ SEARCH uniqueness (store.py): ":116 self._commit_timer: asyncio.TimerHandle | No
 - G1, G2 and G3 pass as stated. The broad gate is green, with a receipt.
 - T1 (the issue's RACE scenario) passes. When `flush()` returns, the repository holds its commit, no `Git add failed` warning was logged, and nothing under `.git` changes after the store's tasks settle. T2 (the SETTLED control) passes on the base and after the change.
 - T3, T4 and T6 pass: two concurrent flushes, a rollback during the commit, and a cancelled flush each end with a consistent repository, and none deadlocks.
-- T11, T12 and T13 pass: a write that lands while `flush()` commits is in HEAD when it returns, a second one that lands during the drain is too, and a writer that never stops is cut off after `_FLUSH_DRAIN_PASSES` commits with a warning.
+- T11, T12 and T13 pass (they run with `auto_commit` on and one flush): a write that lands while `flush()` commits is in HEAD when it returns, a second one that lands during the drain is too, and a writer that never stops is cut off after `_FLUSH_DRAIN_PASSES` commits with a warning.
 - `tests/test_knowledge_store.py` and `tests/test_bf906_crew_enrollment_boot.py` pass unchanged.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
@@ -1356,3 +1358,186 @@ CLAIM: the old latency claim is carried only by PROGRESS.md:6 and contract lines
 RUN:   git grep -n -i -E "one in-flight|in-flight debounced|at most the in-flight|in-flight commit|longer by one|waits longer" 37a8b44d -- .   (unfiltered, whole tree)
 FOUND: 12 hits: those three, and nine in other ADs and BFs, delegation_budget.py and two UI tests (DECISIONS.md:2105 is "one in-flight read per ref", another entry)
 HOLDS: yes
+
+## Amendment A3 (2026-11-07): review round 2 (gpt-6.1-sol, NOT READY)
+
+**Drafted by:** the Copilot `Architect` (fallback for `claude-architect`, whose login had expired), 2026-11-07 (the caller's clock). **Anchors:** candidate head `028633ff` (tree `b16cd7dd`); blobs `store.py` `2adedba4`, `PROGRESS.md` `405c494f`, `DECISIONS.md` `a2f57663`, this contract `cace3d08`. **Tier:** STANDARD (text only: no code line, no test, no mutation row). A3-01 and A3-02 are M2 text (the docstrings of `store.py`), A3-03 is M2 text (one comment in `flush()`'s body), and A3-04 to A3-07 are M3 text (the trackers). The Builder applies A3-01 to A3-07 in label order; each SEARCH is LF and occurs once in its target as committed at `028633ff`. C3-01 to C3-12 were applied to this file by the orchestrator, in label order, and are not a Builder step. A2's blocks stay as the record of what A2 applied; A3 amends the result, so read A2 and then A3.
+
+### A3.1 Findings and decisions
+
+| # | Finding (round 2) | Severity, reach | Introduced here | Decision |
+|---|---|---|---|---|
+| 1 | The A2 promise (a write that lands while a flush runs keeps its message, arms no timer and is committed by `flush()`) omits `auto_commit`: `_schedule_commit` returns at its first guard when the option is off, so no message is kept and a write after the flush's `add` stays uncommitted until the next commit | P3, ordinary configuration (a config field, default on) | yes (the text; the behaviour is the base's) | Scope the promise to `auto_commit` on wherever it is made; record the off case as L11 (A3-01 to A3-07, C3-01 to C3-12) |
+| 2 | L3 says the second flush's drain commits a write in the overlap window and the timer then finds nothing; with a short debounce the timer's task takes the message first, and the second flush can return with the write not in HEAD while one debounce commit is pending | P3, injected only (production has one flush, A3.4) | yes (the text; the behaviour is the base's) | L3 states both outcomes, and the return guarantee is scoped to one active flush (A3-01, A3-02, C3-09) |
+
+Choices. L11 is its own limit, over a clause in L2 (three scopes in one limit, and the docstrings need a label to cite) and over L9 (the drain bound). A3-03 scopes a comment, which is neither a docstring nor code, over leaving it (it points to `_schedule_commit` for the condition). Finding 2 is fixed in text, over a code change (a depth counter for `_flushing`, or serialising `flush()` callers): production cannot reach the window, the base has it, and code would reopen the 20-row campaign and need a test. L3 and L11 are recorded limits and are not pinned by a test, as L10 is not (the test file calls only `store_trust_snapshot`, `store_routing_weights` and `store_workflows`: A3.4). The old text quoted in A2.1, A2-11 and A2.4 stays: it is a table cell naming a corrected claim, a SEARCH that must equal the file as it was, and an enumeration's own command.
+
+### A3.2 Gates
+
+- **GA3.1** after A3-01 to A3-03: `git diff -U0 028633ff -- src/probos/knowledge/store.py` shows 3 hunks, each inside old lines 1076-1078, 1281-1285 or 1301-1303; no other file under `src/` or `tests/` differs; the 16 distinct lines of section 9's rows 1 to 20 each still occur once, stripped, in `store.py`.
+- **GA3.2** after A3-04 to A3-07: each tracker pair replaces text inside one line (A3-07 changes one line of its two), so `git diff --numstat 028633ff -- PROGRESS.md DECISIONS.md` shows 2 lines added and 2 deleted in each file, and the line counts do not change.
+- **GA3.3** the checks a docstring or comment can reach: (1) `PY -m pytest tests/test_bf960_knowledge_flush_race.py -q -n 0 -p no:randomly`: 15 passed; (2) `PY -P scripts/check_architecture_principles.py --check`: clean, `unowned-task=13`; (3) the loaded run, `PY -m pytest tests/test_bf960_knowledge_flush_race.py tests/test_knowledge_store.py -q`: 322 passed, 1 skipped, as measured on `028633ff`; (4) G3: `PY -P scripts/gen_ad_ledger.py --check` and `PY -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`.
+- **GA3.4** not rerun: the serial 14-file list of G2. No statement changes (two docstrings and one comment differ), so no behavioural test can change its verdict; the text-keyed readers run in the broad gate before push, which is already required. The campaign of record (the 20-row run on `028633ff`'s files) stays the campaign of record: A3 alters none of the 20 anchor lines, no other code line and no test, so no mutant needs a rerun; the record keeps tree `b16cd7dd` and the sha256 of `store.py` and of the test file as they were in that run. A diff that fails GA3.1 voids this rule.
+- **Not changed by A3.** Every code line of `store.py`, `tests/`, the mutation rows (section 9), `startup/shutdown.py`, the configuration, `_FLUSH_DRAIN_PASSES`, and L1, L4 to L5, L7 to L10.
+- Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+### A3.3 Pairs: A3-01 to A3-07
+
+**A3-01.** `src/probos/knowledge/store.py` (M2 text: the `_schedule_commit` docstring)
+SEARCH:
+```
+        While _flushing is True (a shutdown flush is running) the message is kept but no
+        timer is armed: flush() commits it before it returns (BF-960 A2). The file is
+        already on disk, so the flush's next add stages it.
+```
+REPLACE:
+```
+        With auto_commit off it returns at once: no message is kept and no timer is armed
+        (BF-960 limit L11).
+        With auto_commit on, while _flushing is True (a shutdown flush is running) the
+        message is kept but no timer is armed: flush() commits it before it returns, up
+        to its drain bound (BF-960 A2, limit L9). The file is already on disk, so the
+        flush's next add stages it.
+        This is for one active flush: the first of two overlapping flush() calls to
+        finish clears _flushing on its way out, and a write after that arms a timer, as
+        on the base (limit L3).
+```
+
+**A3-02.** `src/probos/knowledge/store.py` (M2 text: the `flush()` docstring)
+SEARCH:
+```
+        A2: a write that lands while ``flush()`` commits keeps its message
+        (``_schedule_commit`` arms no timer for it), and ``flush()`` commits it before
+        it returns: one more commit per batch that landed during the previous one, at
+        most ``_FLUSH_DRAIN_PASSES``. Past that it logs a warning and leaves the
+        messages pending; their files stay on disk for the next commit (limit L9).
+```
+REPLACE:
+```
+        A2: with auto_commit on and one active flush, a write that lands while
+        ``flush()`` commits keeps its message (``_schedule_commit`` arms no timer for
+        it), and ``flush()`` commits it before it returns: one more commit per batch
+        that landed during the previous one, at most ``_FLUSH_DRAIN_PASSES``. Past that
+        it logs a warning and leaves the messages pending; their files stay on disk for
+        the next commit (limit L9).
+
+        A3, what that does not cover: with auto_commit off no message is kept, so a
+        write after the flush's add stays uncommitted until the next commit (limit
+        L11); and the first of two overlapping ``flush()`` calls to finish clears
+        ``_flushing`` on its way out, so a write after that arms a timer whose commit
+        can end after the other call returns (limit L3). In production only
+        shutdown() calls it, once per run.
+```
+
+**A3-03.** `src/probos/knowledge/store.py` (M2 text: a comment in the `flush()` body, not a docstring and not code)
+SEARCH:
+```
+            # BF-960 A2: a write that lands while flush() commits keeps its message (see
+            # _schedule_commit) and is committed here, one pass per batch. Nothing suspends
+            # between the take that finds nothing and the reset below, so none arrives after it.
+```
+REPLACE:
+```
+            # BF-960 A2: a message that _schedule_commit kept while flush() ran (see that
+            # docstring: auto_commit on, one flush) is committed here, one pass per batch.
+            # Nothing suspends between the take that finds nothing and the reset below, so
+            # none arrives after it.
+```
+
+**A3-04.** `PROGRESS.md` (M3 text: line 5, the Fix bullet)
+SEARCH:
+```
+Then it commits what is pending, and commits again for each batch of writes that lands while it commits, up to five more commits (on the base such a write stayed uncommitted until the next commit).
+```
+REPLACE:
+```
+Then it commits what is pending, and, with `auto_commit` on and one flush at a time, commits again for each batch of writes that lands while it commits, up to five more commits (on the base such a write stayed uncommitted until the next commit).
+```
+
+**A3-05.** `PROGRESS.md` (M3 text: line 6, the Changed bullet)
+SEARCH:
+```
+then makes its own commit and up to five more for writes that land while it commits; there is no aggregate timeout. A write that lands while a flush runs keeps its message and arms no timer.
+```
+REPLACE:
+```
+then makes its own commit and, with `auto_commit` on, up to five more for writes that land while it commits; there is no aggregate timeout. With `auto_commit` on and one flush at a time, a write that lands while a flush runs keeps its message and arms no timer. With `auto_commit` off no message is kept, and such a write stays uncommitted until the next commit, as before (L11). If two flushes overlap, a write that lands after the first one ends arms a timer, and that commit can end after the second returns, as before (L3).
+```
+
+**A3-06.** `DECISIONS.md` (M3 text: the G4 bullet, line 1498)
+SEARCH:
+```
+A write that lands while the flush runs keeps its message and arms no timer; the flush commits it. After its own commit it makes up to `_FLUSH_DRAIN_PASSES` (5) more, one per batch that landed during the previous commit, and past that it warns and leaves the messages pending. Rejected: arming the timer
+```
+REPLACE:
+```
+With `auto_commit` on and one flush at a time, a write that lands while the flush runs keeps its message and arms no timer; the flush commits it. After its own commit it makes up to `_FLUSH_DRAIN_PASSES` (5) more, one per batch that landed during the previous commit, and past that it warns and leaves the messages pending. With `auto_commit` off `_schedule_commit` returns before it keeps a message, so such a write stays uncommitted until the next commit, as before (L11). If two flushes overlap, the first one's exit clears `_flushing`, and a write after that arms a timer whose commit can end after the second returns, as before (L3); production has one flush, from `shutdown()`. Rejected: arming the timer
+```
+
+**A3-07.** `DECISIONS.md` (M3 text: the residual line, line 1500)
+SEARCH:
+```
+- *Residual.* Recorded limits L1 to L10 of the contract.
+- *Reversal.* Revert the BF-960 commits.
+```
+REPLACE:
+```
+- *Residual.* Recorded limits L1 to L11 of the contract.
+- *Reversal.* Revert the BF-960 commits.
+```
+
+### A3.4 Absence Verified (A3, on 028633ff)
+
+CLAIM: no other live text carries the unscoped late-write promise or the old L3 text, outside the lines A3 changes
+RUN:   P1 = git grep -n -i -E "keeps its message|keeps the message|keep its message|keep the message|message is kept|arms no timer|arm no timer|no timer is armed|arming the timer|keeps the pending|commits it before|committed before .flush|before it returns|before .flush\(\). returns|is in HEAD when|are in HEAD when|in HEAD when" 028633ff -- src tests PROGRESS.md DECISIONS.md prompts/bf-960-knowledge-flush-race.md
+       P2 = git grep -n -i -E "late write|lands while|land while|landed during|landing|writes that land|write that lands|drain|_FLUSH_DRAIN_PASSES" 028633ff -- src/probos/knowledge/store.py tests/test_bf960_knowledge_flush_race.py prompts/bf-960-knowledge-flush-race.md ; the same on PROGRESS.md and DECISIONS.md, read inside the two BF-960 entries (PROGRESS.md 3-7, DECISIONS.md 1492-1501)
+       P3 = git grep -n -i -E "finds nothing|second flush|two concurrent|overlapping|concurrent .?flush|one caller" over the same files and the same two entries
+FOUND: store.py 1076-1077 and 1281-1282 (docstrings: A3-01, A3-02), 1301-1303 (comment: A3-03), 56-58 (the constant and its comment: an upper bound, true in both configurations), 1303 ("the take that finds nothing": the invariant of one flush), 1304, 1312 and 1316 (the loop and its warning: code); tests/test_bf960_knowledge_flush_race.py 422-527, incl. 506 (the names, docstrings and messages of T11 to T13 describe the scenario each sets up through `_store`, which is auto_commit=True: left, A3 changes no test); PROGRESS.md 5 and 6 (A3-04, A3-05); DECISIONS.md 1498 and 1500 (A3-06, A3-07); contract, live part: 4, 8, 36, 75, 839-840, 860, 862, 909, 910, 913, 993 (C3-01 to C3-12), and left: 35 (a bound), 91-93 (the tests' Covers cells), 896 and 899 (mutation rows), 914, 916 and 917 (L7, L9, L10: other limits), 985-986 (code structure, true in both configurations); contract, A2 section (1002 on): the record of A2, including :1011, :1305 and :1356-1357 (left on purpose); other work: src/probos/audio/tts/resident.py:158, src/probos/execution/workspace_result_store.py:744, tests/test_ad1173_repair_verification.py:1, tests/test_issue1419_failed_start_rollback.py:2145 ("before it returns"), DECISIONS.md:12794, store.py:576 and :596 (another class's drain), and 36 (P3) and 103 (P2) hits inside other entries of PROGRESS.md and DECISIONS.md, counted and not read (the trackers name BF-960 only at DECISIONS.md:1492 and :1501 and PROGRESS.md:3, by git grep -n -E "BF-960|#1767")
+HOLDS: yes
+
+CLAIM: KnowledgeStore.flush() has one production call site
+RUN:   git grep -n -E "\.flush\(\)" 028633ff -- src ; git grep -n -P "\.flush\b(?!\()|[\x22\x27]flush[\x22\x27]" 028633ff -- src ; git grep -n -E "def flush\(" 028633ff -- src
+FOUND: 12 hits for .flush(): audio/tts/resident.py:196, cognitive/sandbox.py:83, cognitive/self_mod.py:596, infrastructure/snapshot_manifest.py:258, knowledge/records_snapshot.py:274, knowledge/store.py:848 (temp_file.flush()), routers/system.py:409, security/file_access.py:990, startup/shutdown.py:2082 (await runtime._knowledge_store.flush()), substrate/telemetry.py:131 (another class), warm_boot.py:147 and :567; one reference by name, shutdown.py:218 (audit_log); defs: consultation/dispatch.py:217, knowledge/store.py:1268, security/audit.py:349, substrate/telemetry.py:119
+HOLDS: yes, only shutdown.py:2082 calls the knowledge store's
+
+CLAIM: that call runs once per runtime and never in a rollback
+RUN:   git grep -n -E "_knowledge_store and not rollback|_shutdown_started" 028633ff -- src ; git grep -n -E "startup\.shutdown|from probos\.startup import shutdown" 028633ff -- src
+FOUND: runtime.py:1575 (= False, the only reset); startup/shutdown.py:914 (the guard, `and not rollback`), :921 (= True; no await between :914 and :921), :2063 (`if runtime._knowledge_store and not rollback:`); the importers of shutdown(): runtime.py:4326 (stop(), rollback False) and startup/rollback.py:93 (rollback=True at :98)
+HOLDS: yes
+
+CLAIM: auto_commit is read once in store.py, and the only timer is armed behind that read
+RUN:   git grep -n auto_commit 028633ff -- src ; git grep -n -E "call_later|_commit_timer *=" 028633ff -- src/probos/knowledge/store.py ; git grep -n _schedule_commit 028633ff -- src (hits outside store.py)
+FOUND: store.py:1080 is the only read in store.py (records_store.py reads it for Ship's Records); defaults true: config_models/knowledge.py:285 (KnowledgeConfig) and :322 (RecordsConfig), config/system.yaml:769 (knowledge) and :777 (records); call_later at store.py:1094 only (:119, :1111, :1291 declare or clear the handle); no caller of _schedule_commit outside store.py
+HOLDS: yes
+
+CLAIM: the BF-960 test file never builds a store with auto_commit off, never calls store_cooldowns, and no test has a write in the two-flush window
+RUN:   git grep -n -E "auto_commit|KnowledgeConfig\(|KnowledgeStore\(" 028633ff -- tests/test_bf960_knowledge_flush_race.py ; git grep -n -E "gather\(|create_task\(|flush\(\)" 028633ff -- tests/test_bf960_knowledge_flush_race.py ; git grep -c store_cooldowns 028633ff -- tests/test_bf960_knowledge_flush_race.py ; git grep -n -o -E "store\.store_[a-z_]+" 028633ff -- tests/test_bf960_knowledge_flush_race.py
+FOUND: :64-65 only (`_store`, auto_commit=True); two concurrent flushes only at :230 (T3: store_trust_snapshot, then gather(store.flush(), store.flush()), no write after); :310 (T6) creates one flush task; T11 to T13 (:465, :490, :523) run one flush each; store_cooldowns: no match (exit 1); the store_* calls are store_trust_snapshot (14), store_routing_weights (4) and store_workflows (1)
+HOLDS: yes (other test files do run stores with auto_commit=False, e.g. tests/test_knowledge_store.py:288; they are not BF-960 tests, and A3 adds none)
+
+CLAIM: no test reads the text or the docstring of `_schedule_commit`, `flush()` or `store.py`, apart from `_git_run`'s source
+RUN:   git grep -n -E "getsource|getdoc|__doc__" 028633ff -- tests (read for KnowledgeStore, _schedule_commit, flush, knowledge/store) ; git grep -n -E "knowledge[/\\]store\.py" 028633ff -- tests ; git grep -l -E "rglob\(.\*\.py.\)|glob\(.\*\*/\*\.py.\)" 028633ff -- tests
+FOUND: tests/test_quality_hardening.py:50 (inspect.getsource(KnowledgeStore._git_run): untouched by A3); `store.py` is named only as a census key, with `KnowledgeStore._git_run`, in tests/fixtures/ad1346_effect_census.py:144, tests/fixtures/ad1346_file_write_census.py:170 and tests/test_bf892_spawn_env_guard.py:101; 62 test files glob .py files under a tree and 55 of them read text or use a regex (counted, not read): they stay with the broad gate
+HOLDS: yes for the named readers
+
+CLAIM: the 16 distinct anchor lines of section 9 (rows 1 to 20) occur once each in store.py, and no A3 pair touches one
+RUN:   in memory (PowerShell): the stripped-line count of each anchor in `git show 028633ff:src/probos/knowledge/store.py`; the same count after A3-01 to A3-03 are applied; each line of those pairs' SEARCH and REPLACE compared with the 16
+FOUND: 16 of 16 distinct anchors (20 rows) count 1 before and after A3-01 to A3-03 are applied in memory; 0 lines of those pairs' SEARCH or REPLACE equal an anchor; the pairs lie in old lines 1076-1078, 1281-1285 and 1301-1303; the text outside them is identical; no triple quote, backslash, tab, trailing space or line over 100 columns in those REPLACE blocks; `store.py` grows by 15 lines (`KnowledgeStore`'s srp-size row records triggers only, `lines` and `methods`, so no baseline row changes)
+HOLDS: yes
+
+CLAIM: every SEARCH of A3-01 to A3-07 and C3-01 to C3-12 occurs exactly once in its target as committed at 028633ff, and every REPLACE is ASCII-only
+RUN:   in memory (PowerShell): this file parsed; the blob by `git show 028633ff:<path>`, LF; ordinal IndexOf count; any character above 127 in each REPLACE
+FOUND: 19 of 19 SEARCH blocks occur once in their target as committed at 028633ff (C3-01 to C3-12 also once at their turn, applied in label order); `git grep -c -F` on the committed blobs finds each of the 12 single-line blocks on exactly 1 line, and the first line of A3-01, A3-02 and A3-03 on 1 line, while C3-05, C3-06, C3-07 and A3-07 are two-line blocks whose first line also occurs elsewhere (the REPLACE blocks of A2-10, A2-12 and A2-13 in the contract; DECISIONS.md:1394), so their second line makes each unique; 0 non-ASCII characters in any block (the file has none) and no no-op pair; applied in memory, PROGRESS.md changes lines 5 and 6 only and DECISIONS.md lines 1498 and 1500 only, and both keep their line counts (1547 and 12922); after C3-01 to C3-12 the contract's section 7.3 Fix, Changed, G4 and residual lines equal those tracker lines
+HOLDS: yes
+
+Not run in this consult (a read-only call: no python, no pytest): the new file, the loaded run, the architecture check, the ledger check, an AST comparison of `store.py` before and after, and a render of the two docstrings. GA3.1 (hunks and anchors) stands in for the AST comparison; GA3.3 is the rest.
+
+### A3.5 Diff Reviewer: properties to verify (round 3: the delta of A3 on 028633ff only)
+
+1. **No code change.** The A3 diff touches no code line: the `store.py` hunks lie inside the two docstrings and one comment (GA3.1), the module's AST with docstrings removed equals `028633ff`'s, the 16 anchor lines occur once, and no file under `tests/` differs. Round 2's properties 1 to 5 therefore stand.
+2. **F1 as scoped.** With `auto_commit` off and an active flush on real git: no message is kept, none is pending and no timer is armed; a write after the flush's `add` stays uncommitted; `flush()` commits `Shutdown flush`. With it on, the T11 behaviour. Every sentence of L11 and of both docstrings is true.
+3. **F2 as scoped.** Two concurrent flushes and a write in the window: with a long debounce the second flush's drain commits it and the timer finds nothing; with a zero-delay debounce the timer's task takes it, and the second flush can return with the write not in HEAD and that debounce commit pending. On the candidate and on the base.
+4. **No unscoped carrier remains.** Rerun A3.4's P1 to P3 on the A3 head: every hit is scoped, a test's own scenario, a bound, another limit, or A2-section history.
+5. **The embedded text equals the trackers.** C3-05 to C3-07 render to PROGRESS.md lines 5 and 6 and DECISIONS.md lines 1498 and 1500 (the contract's heading date aside), and the contract's L2, L3, L6 and L11 agree with the two docstrings (A3-01, A3-02).
+6. **The production reach claim.** `shutdown.py:2082` is the only call site, `:2063` skips it in a rollback, and `:914` and `:921` make it once per runtime (A3.4).
+7. **Housekeeping.** Every REPLACE is ASCII-only; the tracker pairs keep the line counts; the ledger and the architecture check are current.
