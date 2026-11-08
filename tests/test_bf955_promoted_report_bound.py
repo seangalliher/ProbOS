@@ -30,7 +30,6 @@ _LIMIT = 65_536
 _NOTE = "\n\n(The rest of this report, "
 _LOGGER = "probos.cognitive.turn_promotion"
 _ROOT = "aaaaaaaaaaaa"
-_BUILT = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-955 M2 builds it")
 _TEXTS = {
     "at_limit": "x" * _LIMIT,
     "over_by_one": "x" * (_LIMIT + 1),
@@ -85,8 +84,8 @@ async def _post(threads: Any, work: Any, thread_id: str, text: str, *, failures:
     "case",
     [
         "at_limit",
-        pytest.param("over_by_one", marks=_BUILT),  # T1
-        pytest.param("over_multibyte", marks=_BUILT),  # T1
+        "over_by_one",
+        "over_multibyte",
     ],
 )
 async def test_an_exhausted_report_is_queued_and_replayed_as_the_first_attempt_posted_it(
@@ -141,7 +140,6 @@ async def test_an_exhausted_report_is_queued_and_replayed_as_the_first_attempt_p
 # ---------------------------------------------------------------- the bound
 
 
-@_BUILT  # T2
 @pytest.mark.parametrize("case", ["at_limit", "over_by_one", "over_multibyte"])
 def test_the_bound_keeps_a_text_at_the_limit_and_cuts_a_longer_one_on_a_character_boundary(case) -> None:
     bound, limit = _api()
@@ -163,7 +161,6 @@ def test_the_bound_keeps_a_text_at_the_limit_and_cuts_a_longer_one_on_a_characte
     assert bound(text) == result, "the same text is bounded the same way"
 
 
-@_BUILT  # T3
 @pytest.mark.parametrize("path", ["delivered", "exhausted"])
 async def test_the_disclosure_survives_the_cut_and_the_caller_keeps_the_full_text(
     tmp_path, monkeypatch, path,
@@ -203,7 +200,7 @@ async def test_the_disclosure_survives_the_cut_and_the_caller_keeps_the_full_tex
 
 @pytest.mark.parametrize(
     "case",
-    ["at_limit", pytest.param("over_by_one", marks=_BUILT)],  # T4
+    ["at_limit", "over_by_one"],
 )
 async def test_a_cancelled_turn_queues_the_text_its_attempt_posted(tmp_path, monkeypatch, case) -> None:
     monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (30.0,))
@@ -227,7 +224,6 @@ async def test_a_cancelled_turn_queues_the_text_its_attempt_posted(tmp_path, mon
         await work.stop()
 
 
-@_BUILT  # T5
 async def test_the_bound_is_the_limit_a_real_outbox_accepts(tmp_path) -> None:
     bound, limit = _api()
     work = await _work_store(tmp_path)
@@ -244,7 +240,7 @@ async def test_the_bound_is_the_limit_a_real_outbox_accepts(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     "case",
-    ["at_limit", pytest.param("over_by_one", marks=_BUILT)],  # T6
+    ["at_limit", "over_by_one"],
 )
 async def test_a_cut_is_logged_once_at_warning_with_the_work_item_and_what_was_cut(
     tmp_path, caplog, case,
@@ -271,7 +267,6 @@ async def test_a_cut_is_logged_once_at_warning_with_the_work_item_and_what_was_c
         await work.stop()
 
 
-@_BUILT  # T7
 @pytest.mark.parametrize("text", ["\ud800" + "x" * 10, "x" * 70_000 + "\ud800"], ids=["short", "long"])
 def test_a_text_that_is_not_utf8_encodable_is_returned_unchanged(text) -> None:
     bound, _limit = _api()
@@ -279,7 +274,6 @@ def test_a_text_that_is_not_utf8_encodable_is_returned_unchanged(text) -> None:
     assert result.text == text and result.cut_chars == 0
 
 
-@_BUILT  # T8
 @pytest.mark.parametrize("tail_case", ["too_large", "not_a_suffix"])
 def test_a_tail_is_kept_only_when_it_ends_the_text_and_leaves_room(tail_case) -> None:
     bound, _limit = _api()
