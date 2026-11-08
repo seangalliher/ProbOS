@@ -1522,6 +1522,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L9 of the contract.
 - *Reversal.* Revert the BF-958 commits.
 
+### BF-959 -- Ship's Records convergence scan, similarity check, statistics and bill listing follow no directory link out of the repository (2026-11-08, #1762)
+
+- *Scope.* `knowledge/records_store.py` (`_contained`, `_markdown_files`' `pattern`, the scan, layer 3, `get_stats`, `list_bills`), tests. Contract `prompts/bf-959-records-readers-containment.md`.
+- *G1 (scan).* A junction or symbolic link at `notebooks/<callsign>` is not scanned, wherever it points: one rule with BF-958's walk, and an inside alias would be a second agent; each file passes `_contained` before its first read. Rejected: the per-file rule alone (a WARNING per file), `_resolves_inside` per directory (BF-958 G1), the recursive walk (AD-1140 DD-7).
+- *G2 (statistics, bills).* `get_stats` counts in one walk of the repository and takes each directory's count from it, so a `_SUBDIRS` root link is an entry the walk's junction rule catches; `list_bills` uses the same walk with `pattern`. Rejected: two walks, `rglob` filtered afterwards.
+- *G3 (signal).* A file that resolves outside the repository and, in the scan, a junction or symbolic link at another agent's `notebooks/<callsign>` are WARNINGs by path, once per call; an `OSError` while resolving skips the file at DEBUG (fail closed); `_contained` raises nothing, but `get_stats` raises when the repository's own resolution fails, as `list_entries` does. No deduplication (BF-958 L4).
+- *Not changed.* Layer 2 of the similarity check, `read_entry`, `list_entries`, `search`, the result shapes, classification (the scan and layer 3 read every notebook inside the repository by design). *Residual.* L1 to L6 of the contract. *Reversal.* Revert the BF-959 commits.
+
 ### BF-955 -- A promoted report over 64 KiB keeps its durable retry (2026-11-08, #1757)
 
 - *Scope.* `cognitive/promoted_report_delivery.py` (`PROMOTED_REPORT_BODY_MAX_BYTES`, `BoundedReportBody`, `bound_promoted_report_body`), `cognitive/turn_promotion.py` (`_post_report`, the `ReportDelivery` docstring), tests. Contract `prompts/bf-955-promoted-report-bound.md`.

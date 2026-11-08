@@ -507,9 +507,30 @@ def _resolves_inside(path: Path, repo: Path) -> bool:
         return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
 
 
-def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
-    """AD-1341 S4 (A4, A5), BF-958: every file named ``*.md`` under ``search_path`` by a walk that descends no
-    directory link; with ``strict``, or the ``OSError`` that hid one.
+def _contained(path: Path, repo: Path, rel_path: str, reader: str) -> bool:
+    """BF-959: whether a reader that lists or reads ``path`` itself may use it: it resolves inside ``repo`` (the
+    resolved repository), :func:`_resolves_inside`'s rule. Never raises. A path outside, or in a link loop, is logged
+    at WARNING by ``rel_path`` and not used; one whose resolution raises ``OSError`` is logged at DEBUG and not used
+    either, as ``list_entries`` skips an unreadable file in its default mode."""
+    try:
+        inside = _resolves_inside(path, repo)
+    except OSError:  # BF-959: a path whose resolution fails is not used, and is no error of the reader
+        logger.debug(
+            "BF-959: Ship's Records %s skipped %s: its path could not be resolved", reader, rel_path, exc_info=True,
+        )
+        return False  # BF-959: fail closed
+    if not inside:
+        logger.warning(
+            "BF-959: Ship's Records %s skipped %s: it resolves outside the records repository (a link); "
+            "read_entry refuses it too",
+            reader, rel_path,
+        )
+    return inside
+
+
+def _markdown_files(search_path: Path, *, strict: bool, pattern: str = "*.md") -> list[Path]:
+    """AD-1341 S4 (A4, A5), BF-958, BF-959: every file named ``pattern`` (default ``*.md``) under ``search_path`` by a
+    walk that descends no directory link; with ``strict``, or the ``OSError`` that hid one.
 
     A5 (round 3 R3-M1-1): ``os.walk`` filed an entry whose type it could not read as a file and never descended into
     it, as ``Path.rglob`` passed over a directory it could not list (A4): each standard walker absorbs some error. So
@@ -569,7 +590,7 @@ def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
                     is_dir = False  # BF-958: the default walk reads it as rglob's walk did, as no directory
                 if is_dir:
                     pending.append(path)
-                elif fnmatch.fnmatch(entry.name, "*.md"):
+                elif fnmatch.fnmatch(entry.name, pattern):  # BF-959
                     found.append(path)
     return found
 
@@ -989,8 +1010,10 @@ class RecordsStore:
         results = []
         # BF-949 R1: bills_dir comes from _safe_path, which resolves, so its paths are taken against the resolved root
         root = self._repo_path.resolve()
-        for yaml_file in sorted(bills_dir.rglob("*.bill.yaml")):
+        for yaml_file in sorted(_markdown_files(bills_dir, strict=False, pattern="*.bill.yaml")):  # BF-959
             rel_path = str(yaml_file.relative_to(root)).replace("\\", "/")
+            if not _contained(yaml_file, root, rel_path, "bill listing"):  # BF-959
+                continue
             # Extract bill_id from filename (e.g. "research-consultation.bill.yaml" → "research-consultation")
             bill_id = yaml_file.name.removesuffix(".bill.yaml")
             results.append({"path": rel_path, "bill_id": bill_id})
@@ -1105,10 +1128,14 @@ class RecordsStore:
         if notebook_dir.is_dir():
             try:
                 entries: list[tuple[float, Path]] = []
+                repo = self._repo_path.resolve()  # BF-959: layer 3 compares resolved paths
                 for md_file in notebook_dir.glob("*.md"):
                     if md_file.name == f"{topic_slug}.md":
                         continue  # Already checked above
                     try:
+                        rel_path = f"notebooks/{callsign}/{md_file.name}"
+                        if not _contained(md_file, repo, rel_path, "notebook similarity check"):  # BF-959
+                            continue
                         raw = md_file.read_text(encoding="utf-8")
                         fm, _ = self._parse_document(raw)
                         updated_str = fm.get("updated", "")
@@ -1194,17 +1221,29 @@ class RecordsStore:
 
         # Scan other agents' notebook directories
         try:
+            repo = self._repo_path.resolve()  # BF-959: the scan compares resolved paths
             for agent_dir in sorted(notebooks_dir.iterdir()):
                 if not agent_dir.is_dir():
                     continue
                 other_callsign = agent_dir.name
                 if other_callsign == anchor_callsign:
                     continue  # Skip self
+                if agent_dir.is_junction() or agent_dir.is_symlink():  # BF-959: a directory link is never scanned
+                    logger.warning(
+                        "BF-959: Ship's Records convergence scan did not scan notebooks/%s: it is a directory link "
+                        "(a junction or a symbolic link), which may lead out of the records repository; the "
+                        "notebooks behind it are not read",
+                        other_callsign,
+                    )
+                    continue
 
                 # Collect recent entries for this agent
                 entries: list[tuple[float, Path, str, str]] = []  # (ts, path, topic, dept)
                 for md_file in agent_dir.glob("*.md"):
                     try:
+                        rel_path = f"notebooks/{other_callsign}/{md_file.name}"
+                        if not _contained(md_file, repo, rel_path, "convergence scan"):  # BF-959
+                            continue
                         raw = md_file.read_text(encoding="utf-8")
                         fm, content = self._parse_document(raw)
                         updated_str = fm.get("updated", "")
@@ -1574,8 +1613,19 @@ class RecordsStore:
         )
 
     async def get_stats(self) -> dict:
-        """Get repository statistics."""
-        doc_count = sum(1 for _ in self._repo_path.rglob("*.md"))
+        """Get repository statistics.
+
+        BF-959: one walk of the repository (:func:`_markdown_files`, which descends no directory junction) counts the
+        ``*.md`` files that resolve inside it, ``_archived`` included; a file that resolves outside (a link) is logged
+        at WARNING and not counted. Each directory's count is taken from that list by the file's first path component.
+        """
+        repo = self._repo_path.resolve()  # BF-959: the statistics compare resolved paths
+        counted: list[Path] = []  # BF-959: the repository-relative path of each file counted
+        for md_file in _markdown_files(self._repo_path, strict=False):
+            rel = md_file.relative_to(self._repo_path)
+            if _contained(md_file, repo, rel.as_posix(), "statistics"):  # BF-959
+                counted.append(rel)
+        doc_count = len(counted)
         try:
             commit_count_str = await self._git("rev-list", "--count", "HEAD")
             commit_count = int(commit_count_str.strip())
@@ -1588,9 +1638,8 @@ class RecordsStore:
         for subdir in _SUBDIRS:
             if subdir.startswith("_"):
                 continue
-            subdir_path = self._repo_path / subdir
-            if subdir_path.exists():
-                dir_counts[subdir] = sum(1 for _ in subdir_path.rglob("*.md"))
+            if (self._repo_path / subdir).exists():
+                dir_counts[subdir] = sum(1 for p in counted if p.parts[0] == subdir)  # BF-959
 
         return {
             "total_documents": doc_count,
