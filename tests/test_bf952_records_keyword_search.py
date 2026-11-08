@@ -319,12 +319,13 @@ def test_every_reader_frames_and_loads_a_document_alike(
 @pytest.mark.asyncio
 async def test_a_search_runs_off_the_event_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """RK7: the walk, the reads, the parse and the ranking all run in a worker thread, so a search never blocks
-    the event loop. The test records the thread of each step: ``rglob`` and ``read_text`` on the store's own path
-    class, and the module functions the walk calls. On the base the whole walk ran on the loop's thread (and
-    ``_search_read_document`` does not exist there, so the test fails at setup)."""
+    the event loop. The test records the thread of each step: the walk (``_markdown_files``; ``rglob`` before
+    BF-958), ``read_text`` on the store's own path class, and the module functions the search calls. On the base
+    the whole walk ran on the loop's thread (and ``_search_read_document`` does not exist there, so the test fails
+    at setup)."""
     store = await _store(tmp_path)
     _write(store, "reports/entry.md", "warp core report")
-    seen: dict[str, list[int]] = {"rglob": [], "read_text": [], "parse": [], "count": [], "rank": [], "admit": []}
+    seen: dict[str, list[int]] = {"walk": [], "read_text": [], "parse": [], "count": [], "rank": [], "admit": []}
     path_type = type(store.repo_path)
 
     def _recording(step: str, function: Any) -> Any:
@@ -333,7 +334,7 @@ async def test_a_search_runs_off_the_event_loop(tmp_path: Path, monkeypatch: pyt
             return function(*args, **kwargs)
         return record
 
-    monkeypatch.setattr(path_type, "rglob", _recording("rglob", path_type.rglob))
+    monkeypatch.setattr(records_store_module, "_markdown_files", _recording("walk", records_store_module._markdown_files))
     monkeypatch.setattr(path_type, "read_text", _recording("read_text", path_type.read_text))
     monkeypatch.setattr(
         records_store_module, "_search_read_document", _recording("parse", records_store_module._search_read_document),

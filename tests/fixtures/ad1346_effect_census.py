@@ -147,6 +147,7 @@ SUBPROCESS_SITES: Final[dict[tuple[str, str], tuple[int, Sink | System | Outside
     ("src/probos/__main__.py", "_ensure_ollama"): (1, OutsideRuntime("ollama serve")),
     ("src/probos/__main__.py", "_check_nats"): (1, OutsideRuntime("nats-server")),
     ("src/probos/__main__.py", "_cmd_reset"): (2, OutsideRuntime("git add and commit during probos reset")),
+    ("src/probos/doctor/checks/records_git_check.py", "_git_read_sync"): (1, OutsideRuntime("git status/log for probos doctor's records_git check")),
     ("src/probos/doctor/checks/sandbox_check.py", "_docker_info_sync"): (1, OutsideRuntime("docker info for probos doctor")),
 }
 
