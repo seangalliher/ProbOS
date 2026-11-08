@@ -1291,9 +1291,12 @@ class KnowledgeStore:
         it logs a warning and leaves the messages pending; their files stay on disk for
         the next commit (limit L9).
 
-        A3, what that does not cover: with auto_commit off no message is kept, so a
-        write after the flush's add stays uncommitted until the next commit (limit
-        L11); and the first of two overlapping ``flush()`` calls to finish clears
+        A3, what that does not cover: with auto_commit off no message is kept, and
+        ``_git_available`` is set only after that guard (the store calls
+        ``_ensure_repo`` only from ``_schedule_commit``), so it stays None and
+        ``flush()`` makes no git call; a write stays uncommitted until a later
+        commit (limit L11); and the first of two overlapping ``flush()`` calls to
+        finish clears
         ``_flushing`` on its way out, so a write after that arms a timer whose commit
         can end after the other call returns (limit L3). In production only
         shutdown() calls it, once per run.
