@@ -1510,6 +1510,17 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L9 of the contract.
 - *Reversal.* Revert the BF-958 commits.
 
+### BF-960 -- The knowledge store's shutdown flush waits for the debounced commit in flight (2026-11-07, #1767)
+
+- *Scope.* `knowledge/store.py`: `KnowledgeStore.__init__`, `_schedule_commit`, `_on_commit_timer`, `_on_commit_task_done`, `_take_pending`, `_flush_pending`, `_git_commit`, `_git_add_and_commit` and `flush`, plus tests. Contract `prompts/bf-960-knowledge-flush-race.md`.
+- *G1 (serialization).* One `asyncio.Lock` over the whole add-and-commit sequence, created in `__init__` as `RecordsStore` does. Rejected: a single-flight commit worker (more state for the same ordering); a per-command thread lock (two callers' adds and commits could interleave); retrying on `index.lock` (it depends on timing, and the commit still lands after stop).
+- *G2 (the task).* Each task is kept in a set until it is done. `flush()` waits with `asyncio.wait` and never cancels. Rejected: `await task` (a cancelled flush would cancel the commit); `asyncio.shield` (it raises the task's exception in flush, whereas the done callback logs it); cancelling (git keeps running in its thread and keeps `index.lock`).
+- *G3 (hand-off).* `_flushing` stays: once a flush has begun, it takes everything pending for its own commit. `_take_pending` is synchronous, and nothing suspends between it and the lock request, so each message is committed once. The timer reference is cleared by the timer's own callback.
+- *G4 (late writes, A2).* With `auto_commit` on and one flush at a time, a write that lands while the flush runs keeps its message and arms no timer; the flush commits it. After its own commit it makes up to `_FLUSH_DRAIN_PASSES` (5) more, one per batch that landed during the previous commit, and past that it warns and leaves the messages pending. With `auto_commit` off `_schedule_commit` returns before it keeps a message, so such a write stays uncommitted until the next commit, as before (L11). If two flushes overlap, the first one's exit clears `_flushing`, and a write after that arms a timer whose commit can end after the second returns, as before (L3); production has one flush, from `shutdown()`. Rejected: arming the timer (that commit would land after the store was told to stop, the defect this removes); asking git for a dirty tree after the commit (one more git call on every flush, and a tree that `add` cannot clean would loop); an unbounded drain (a writer that never stops would hold shutdown, and a `_take_pending` that failed to clear would hang it).
+- *Not changed.* `startup/shutdown.py`, `_git_run`, the recovery paths, the configuration.
+- *Residual.* Recorded limits L1 to L11 of the contract.
+- *Reversal.* Revert the BF-960 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
