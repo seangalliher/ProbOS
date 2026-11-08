@@ -227,17 +227,12 @@ _WORKFORCE_PENDING: Final = (
     "WorkItemStore.start_owned_legacy_parent",
     "WorkItemStore._compare_and_set_owned_step_core",
     "WorkItemStore._mutate_owned_child",
-    "WorkItemStore.clear_crew_session_provisioning",
-    "WorkItemStore.delete_untouched_crew_session_provisioning",
-    "WorkItemStore.fail_crew_session_provisioning",
-    "WorkItemStore.install_child_plan_with_parent_metadata",
-    "WorkItemStore.adopt_child_plan_with_parent_metadata",
     "WorkItemStore.update_work_item",
 )
 
 #: AD-1346 M3e4b (D229), M3e4d1 (D284), M3e4d2 (D291), M3e4d3 (D298), M3e4d4 (D306), M3e4d5 (D313), M3e4d6 (D320),
-#: M3e4d7 (D327), M3e4d8 (D334), M3e4d9 (D341), M3e4d10 (D346) and M3e4d11 (D351): each (file, enclosing scope) of
-#: these twelve files that holds a SQL write statement -> its coverage.
+#: M3e4d7 (D327), M3e4d8 (D334), M3e4d9 (D341), M3e4d10 (D346), M3e4d11 (D351) and M3e4d12 (D356): each (file,
+#: enclosing scope) of these twelve files that holds a SQL write statement -> its coverage.
 STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] = {
     # Agent-attributed (D218): the Ward Room's four content-write entries and the episodic store check them (D231, D232).
     (_MESSAGES, "MessageStore.create_post"): StoreCheck((_WARD_ROOM, "WardRoomService.create_post"), "author_id", "_messages"),
@@ -374,6 +369,17 @@ STORE_WRITE_SCOPES: Final[dict[tuple[str, str], StoreCheck | System | Pending]] 
     (_WORKFORCE, "WorkItemStore.compare_and_set_work_item_verification"): System(SHIP, "a child's verification record, merged metadata, actual_tokens and updated_at; the crew finalizer composes the record, with the producer's id, its result summaries and the verdicts' critiques (D218)"),
     (_WORKFORCE, "WorkItemStore.publish_work_item_metadata_with_child_barrier"): System(SHIP, "a CrewSession's metadata, its contract, synthesis and recovery records, with status and updated_at; CrewSessionService composes them, the contract with its last_result_summary (D218)"),
     (_WORKFORCE, "WorkItemStore.transition_crew_session_terminal_with_trust"): System(SHIP, "a failed CrewSession's contract in its metadata, with status and updated_at; CrewSessionService composes the contract (D218)"),
+    # AD-1346 M3e4d12 (D356). System (D239, D218): four scopes clear, fail or delete a CrewSession parent's
+    # provisioning marker or write its recovery record, and take no author id.
+    # install_child_plan_with_parent_metadata takes each child's created_by from its caller; its production callers
+    # pass the session's facilitator, the agent the children are about, for children the ship's decomposer derives
+    # from the session's goal. As with create_crew_session_thread's room (D298), the parent's creation is the
+    # checked write (D335). The owned-steps writes these scopes call are rows of their own, still pending (R166).
+    (_WORKFORCE, "WorkItemStore.clear_crew_session_provisioning"): System(SHIP, "a CrewSession parent's metadata with its crew_provisioning marker removed, and updated_at; it adds no text (D239)"),
+    (_WORKFORCE, "WorkItemStore.delete_untouched_crew_session_provisioning"): System(SHIP, "the deletion of an untouched draft CrewSession parent that has no child, booking or changed requirement, and of its resource requirement"),
+    (_WORKFORCE, "WorkItemStore.fail_crew_session_provisioning"): System(SHIP, "a draft CrewSession parent's metadata, with its provisioning marker set to phase failed and a last_error_code that _CREW_PROVISIONING_ERROR_RE limits to a lower-case code, and updated_at; the marker's other fields are those the row holds (D218)"),
+    (_WORKFORCE, "WorkItemStore.install_child_plan_with_parent_metadata"): System(SHIP, "a CrewSession's child work items and their resource requirements, from a plan the ship's decomposer derives from the session's goal, with created_by the session's facilitator, the agent they are about (D239, D218, D298); and the parent's recovery record in its metadata, with updated_at"),
+    (_WORKFORCE, "WorkItemStore.adopt_child_plan_with_parent_metadata"): System(SHIP, "a parent's metadata, with the recovery record CrewSessionService composes for its existing children, and updated_at; expected_assigned_to is a predicate, not written"),
     # Pending (D334): a later part of M3e4d classifies each.
     **{(_WORKFORCE, scope): _SCOPE_PENDING for scope in _WORKFORCE_PENDING},
 }
