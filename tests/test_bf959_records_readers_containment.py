@@ -30,11 +30,6 @@ from tests.test_bf958_records_link_containment import (
 
 _BODY = "a quasar seen from the bridge, logged for the convergence scan"
 _OTHER = "galley menu rotation next week pasta"
-_BUILT = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-959 M2 builds it")
-_BUILT_ON_WINDOWS = pytest.mark.xfail(
-    os.name == "nt", raises=AssertionError, strict=True,
-    reason="BF-959 M2 builds it; elsewhere the base's rglob already passes over a directory symbolic link",
-)
 
 
 def _note(path: Path, author: str, department: str, topic: str, body: str) -> None:
@@ -81,7 +76,6 @@ def _resolve_fails(monkeypatch: pytest.MonkeyPatch, victim: Path) -> None:
     monkeypatch.setattr(Path, "resolve", resolve)
 
 
-@_BUILT
 async def test_the_convergence_scan_reports_nothing_behind_a_directory_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -114,7 +108,6 @@ async def test_the_convergence_scan_reports_nothing_behind_a_directory_link(
 
 @pytest.mark.parametrize("kind", ["outside", "unreadable"])
 @pytest.mark.parametrize("reader", ["convergence", "similarity", "statistics", "bills"])
-@_BUILT
 async def test_a_file_that_resolves_away_is_skipped_by_each_reader(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, reader: str, kind: str,
 ) -> None:
@@ -152,9 +145,9 @@ async def test_a_file_that_resolves_away_is_skipped_by_each_reader(
 
 
 @pytest.mark.parametrize(("link_at", "directories"), [
-    pytest.param("notebooks/alice", {"notebooks": 1, "bills": 0}, marks=_BUILT_ON_WINDOWS, id="callsign"),
-    pytest.param("reports", {"notebooks": 1, "bills": 0, "reports": 0}, marks=_BUILT, id="subdirectory-root"),
-    pytest.param("bills/linked", {"notebooks": 1, "bills": 0}, marks=_BUILT_ON_WINDOWS, id="bills"),
+    pytest.param("notebooks/alice", {"notebooks": 1, "bills": 0}, id="callsign"),
+    pytest.param("reports", {"notebooks": 1, "bills": 0, "reports": 0}, id="subdirectory-root"),
+    pytest.param("bills/linked", {"notebooks": 1, "bills": 0}, id="bills"),
 ])
 async def test_the_statistics_and_the_bill_listing_descend_no_directory_link(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, link_at: str, directories: dict[str, int],
