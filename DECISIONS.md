@@ -1510,6 +1510,17 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L9 of the contract.
 - *Reversal.* Revert the BF-958 commits.
 
+### BF-955 -- A promoted report over 64 KiB keeps its durable retry (2026-11-08, #1757)
+
+- *Scope.* `cognitive/promoted_report_delivery.py` (`PROMOTED_REPORT_BODY_MAX_BYTES`, `BoundedReportBody`, `bound_promoted_report_body`), `cognitive/turn_promotion.py` (`_post_report`, the `ReportDelivery` docstring), tests. Contract `prompts/bf-955-promoted-report-bound.md`.
+- *G1 (where).* Bounded once in `_post_report`, before the first attempt; every attempt and both queue paths carry the bounded text, so AD-1274's frozen message is identical across delivery and replay. Rejected: raising both outbox limits (the cliff moves; `workforce.py` changes), cutting only the queued copy, and a limit in the thread store.
+- *G2 (how).* UTF-8 bytes, measured as the outbox measures; a text at the limit is unchanged; the head is cut on a code-point boundary, followed by a note giving the number of characters cut, followed by the tool-failure disclosure (AD-1248: the disclosure survives a budget). The note names no location: the only durable full copy is the outcome artifact, written only when `memory.recall_outcome_refs_enabled` is on.
+- *G3 (evidence).* The episode and the outcome artifact keep the full composed text: a cut is a fact about the transcript, not about the work. AD-1248's byte identity between the transcript and the reused text holds within the limit.
+- *G4 (one number, two copies).* `workforce.py` keeps its private 65,536; a test pins the two equal through a real store.
+- *Not changed.* The outbox's write and read checks, the thread store, `compose_bypass_reply`, the log's 400 characters, the AD-1166 and AD-1226 episode response.
+- *Residual.* Recorded limits L1 to L7 of the contract. Considered, deferred: a claim check (the full text of a cut report written to the attachment store and named in the note).
+- *Reversal.* Revert the BF-955 commits.
+
 ### BF-960 -- The knowledge store's shutdown flush waits for the debounced commit in flight (2026-11-07, #1767)
 
 - *Scope.* `knowledge/store.py`: `KnowledgeStore.__init__`, `_schedule_commit`, `_on_commit_timer`, `_on_commit_task_done`, `_take_pending`, `_flush_pending`, `_git_commit`, `_git_add_and_commit` and `flush`, plus tests. Contract `prompts/bf-960-knowledge-flush-race.md`.
