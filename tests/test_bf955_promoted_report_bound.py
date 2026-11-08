@@ -145,6 +145,9 @@ def test_the_bound_keeps_a_text_at_the_limit_and_cuts_a_longer_one_on_a_characte
     bound, limit = _api()
     assert limit == _LIMIT
     text = _TEXTS[case]
+    if case == "over_multibyte":
+        # Premise: the cut at the head's room (the limit less the note's reserve) falls inside a character.
+        assert len(text.encode("utf-8")) == 90_001 and text.encode("utf-8")[_LIMIT - 256] & 0xC0 == 0x80
     result = bound(text)
     if case == "at_limit":
         assert (result.text, result.cut_chars, result.cut_bytes) == (text, 0, 0)
