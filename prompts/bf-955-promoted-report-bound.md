@@ -1,7 +1,7 @@
 # BF-955 (#1757): a promoted report over 64 KiB keeps its durable retry
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-06
-**Status:** ready to build on `origin/main` after AD-1358 S1 (#1750), BF-957 (#1760) and BF-958 (#1761) merge.
+**Status:** ready to build on `origin/main` after AD-1358 S1 (#1750), BF-957 (#1760) and BF-958 (#1761) merge. Built 2026-11-08 on `98e8cb62` (after #1768 merged); the build and the campaign are recorded in sections 9 and 15.
 **Base:** the anchors were taken on `D:\ProbOS-worktrees\ad1358-build` (`fa030cae`), whose text of every source file below equals `48ed13bf`. `turn_promotion.py` is blob `f9c3c8da`; `promoted_report_delivery.py` is blob `67f56ef6`.
 **Dependencies:** none in code.
 **Tier:** M1 STANDARD (tests only). M2 HIGH (data integrity: what the thread and the outbox store and replay). M3 STANDARD.
@@ -843,7 +843,7 @@ REPLACE:
 | 14 | M2 | src/probos/cognitive/turn_promotion.py | `body=posted,  # BF-955: the outbox row carries the text the attempts posted` | `body=body,` | T1[over_*], T3[exhausted] |
 | 15 | M2 | src/probos/cognitive/turn_promotion.py | `if bounded.cut_chars:` | `if False:` | T6[over_by_one] |
 
-There is no campaign of record yet. The Builder runs these mutants on M2's head.
+**Campaign of record (orchestrator, 2026-11-08, M2 head `30338ae5`, a scratch tree, `tests/test_bf955_promoted_report_bound.py` only).** The unmutated baseline is 18 passed. All 15 mutants are killed: each fails at least one test of the new file, and the tree is clean afterwards. The census ran in its relaxed mode, which does not check the table's Killed-by cells, so the failing functions of every row were compared with those cells by hand: they agree.
 
 ## 10. Recorded limits
 
@@ -922,3 +922,10 @@ SEARCH uniqueness (rg -n, turn_promotion.py): :77, :365, :1128, :1130, :1143, :1
 - T1 crosses the seam with real stores. A 65,537-byte report whose attempts are all exhausted is queued, and the drain replays it as the message the attempts posted, which equals the free-path message. A report at the limit behaves the same on both paths.
 - The #1604 classification rows are unchanged, because `workforce.py` has no diff.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 15. Build record (orchestrator, 2026-11-08)
+
+- **Base and commits.** `98e8cb62` (main after #1768); this contract `df7724cd`; M1 `063af20b`; M2 `30338ae5`; M3 `5c54e716`. `git diff --stat 48ed13bf 98e8cb62` on the six source paths of the "Which text describes the head" check is empty.
+- **Anchors.** Every SEARCH of M1, M2 and M3 occurred exactly once when a tool applied the pairs on this base. The Builders' blobs equal that tool's: `promoted_report_delivery.py` `91f511b1`, `turn_promotion.py` `25a2e438`, the test file `0eb47457` after M1 and `ed852b67` after M2, `PROGRESS.md` `be44b93c`, `DECISIONS.md` `050e4f62`.
+- **M0, collected counts on the M1 head (`063af20b`), unchanged on M2's head.** `test_ad1165_turn_promotion` 80, `test_ad1226_recall_artifact` 36, `test_ad1248_slice_a_gaps` 20, `test_ad1274_report_off_loop` 13, `test_ad1274_report_outbox` 42, `test_ad1343_seam_registry` 8, `test_ad1346_admission_effect_census` 10, `test_ad1346_admission_store_census` 5, `test_bf732_promoted_run_slot` 9, `test_bf791_bf792_bypass_egress` 27, `test_layer_boundaries` 3. The new file collects 18.
+- **Gates.** G1 on the M1 head: 4 passed, 14 xfailed. G2 on the M2 head (`-n 0`): 271 passed (the 18 of the new file and 253 of the eleven existing files); the architecture check is clean. G3 on the M3 head: the ledger is current and `test_ad1184_ad_ledger` has 33 passed.
