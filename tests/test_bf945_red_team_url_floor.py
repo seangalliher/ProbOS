@@ -123,9 +123,6 @@ async def test_a_redirect_is_not_followed(monkeypatch):
 
 
 class TestTheVerifierJudgesTheUrlAsTheFetchAgentDoes:
-    # BF-945 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-945 M2 builds it")
-
     @pytest.mark.parametrize("success", [True, False], ids=["claimed-success", "claimed-failure"])
     @pytest.mark.parametrize("label,url,logged", REFUSED, ids=[row[0] for row in REFUSED])
     async def test_a_url_the_floor_refuses_or_cannot_judge_is_not_requested(
