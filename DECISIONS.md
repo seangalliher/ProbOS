@@ -1578,6 +1578,18 @@ AD-1346 M3e4d11 is the eleventh part of M3e4d and part (c1) of register R160. Si
 - *Residual, accepted.* Registers R164 and R165 of the contract.
 - *Reversal.* Revert the M3e4d11 commits.
 
+### AD-1346 M3e4d12 -- part (d) of the pending workforce scopes, classified (2026-11-08, #1604)
+
+AD-1346 M3e4d12 is the twelfth part of M3e4d and part (d) of register R160. The five `WorkItemStore` scopes of a CrewSession's provisioning and child plan leave `_WORKFORCE_PENDING` and become `System` rows. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 80 `System` and 16 `Pending` rows. The contract is `prompts/ad-1346-m3e4d12-workforce-provisioning-rows.md`.
+
+- *D355 (the cut).* All five scopes as rows of the ship's, in one slice. Rejected: a check in `install_child_plan_with_parent_metadata` in this slice; that scope kept pending; all five kept pending.
+- *D356 (the rows).* The marker clear, failure and deletion, and the plan adoption, take no author id. A deletion and a removed marker write no text, a failure code is a lower-case code, and a recovery record is `CrewSessionService`'s (D239, D218).
+- *D357 (the child plan).* `install_child_plan_with_parent_metadata` inserts children with its own statement. Their `created_by` is the session's facilitator. In an agent-origin session that is the requester, whose own id each child records, uncounted; in a Captain-origin session it is not the requester or the creator, nor the author of a generated plan; the author of a goal the decomposer copies on a handled failure is not established and may be the facilitator (D218 settles the copy). In provisioning the children copy the plan the checked creation of the parent wrote (D335, D218, as D298's room is a copy of the parent's record); in recovery no agent makes the call (the orchestrator's scheduled task installs what the ship's decomposer returns for the session's goal), but for an agent-origin session that install meets D239's first condition, and D357 keeps it the ship's as a deliberate exception (admission is in shadow; a Captain ruling reverses it, D355's rejected check). Rejected: a check presenting the first child's `created_by`; a check per child; a check presenting the parent's `created_by`.
+- *D358 (the guards).* WC1's and WC3's counts move; no new test.
+- *D359 (cost).* No call is added.
+- *Residual, accepted.* Registers R166 and R167 of the contract.
+- *Reversal.* Revert the M3e4d12 commits.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.
