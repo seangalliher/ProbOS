@@ -86,3 +86,4 @@ All code produced by Engineering department agents MUST comply with these princi
 10. Logging quality — structured context on all log messages
 11. Async hygiene — `create_task` with stored references, cancellation handled
 12. Principles compliance — verify against the ProbOS Principles Stack
+13. Size — no code the spec does not need: an unrequested option, a single-use helper, handling for a case that cannot occur, a change to neighbouring code, or a leftover the change made unused. Structure the Principles Stack requires (Protocol interfaces, abstract storage interfaces, boundary validation, the log-and-degrade tiers) is never a size finding. Report size in `suggestions`, never in blocking `issues`, unless the extra code breaks something.

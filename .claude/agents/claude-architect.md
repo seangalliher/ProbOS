@@ -238,7 +238,7 @@ Every build prompt should have:
    - New prompt: `**Drafted by:** \`claude-architect\` (Claude Code, Opus 5.5), YYYY-MM-DD`
    - Revising a prompt drafted elsewhere: keep the original header and add `**Revised by:** \`claude-architect\` (Claude Code, Opus 5.5), YYYY-MM-DD` beneath it. Never remove or rewrite another author's provenance line.
 3. **Problem** — concrete description with file paths and line numbers from grep.
-4. **Solution** — overview before implementation.
+4. **Solution** — overview before implementation. Choose the smallest design that settles the issue, and list each heavier design you rejected in one line (what it would add, why the issue does not need it). Structure the Engineering Principles require is not weight to cut.
 5. **Implementation sections** (`### Section 1`, etc.) — each independently buildable.
    - SEARCH/REPLACE blocks for modifications, with at least 3 lines of context.
    - Full code for new files.
