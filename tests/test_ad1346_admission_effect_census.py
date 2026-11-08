@@ -217,10 +217,10 @@ def test_every_launch_bf892_scans_is_a_row_and_every_row_a_launch() -> None:
         kind: sum(count for count, cover in SUBPROCESS_SITES.values() if type(cover) is kind)
         for kind in (Sink, System, OutsideRuntime, Pending, Unreached)
     }
-    assert by_kind == {Sink: 12, System: 19, OutsideRuntime: 5, Pending: 0, Unreached: 3}, by_kind  # AD-1346 M3e2b
+    assert by_kind == {Sink: 12, System: 19, OutsideRuntime: 6, Pending: 0, Unreached: 3}, by_kind  # AD-1346 M3e2b; BF-957: records_git +1
     assert sum(type(cover) is Sink for _count, cover in SUBPROCESS_SITES.values()) == 8
     assert [site for site, (_count, cover) in SUBPROCESS_SITES.items() if type(cover) is Pending] == []  # AD-1346 M3e2b: D160's zero
-    assert sum(found.values()) == 39
+    assert sum(found.values()) == 40  # BF-957: + doctor records_git_check._git_read_sync
 
 
 def test_each_subprocess_sink_holds_one_check_before_its_launch() -> None:

@@ -236,7 +236,11 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'ArchiveConfig': {'enabled': 
                          'notebook_quality_low_threshold': 0.3,
                          'notebook_quality_warn_threshold': 0.5,
                          'notebook_staleness_alert_rate': 0.7,
-                         'semantic_index_enabled': False},
+                         'semantic_index_enabled': False,
+                         # BF-957 appended three fields after the move; the move changed none.
+                         'git_lock_stale_minutes': 10.0,
+                         'git_uncommitted_warn_paths': 50,
+                         'git_last_commit_warn_hours': 24.0},
     'SalienceConfig': {   'enabled': True,
                           'weights': {   'relevance': 0.3,
                                          'recency': 0.25,
@@ -449,8 +453,9 @@ def test_constructing_with_no_arguments_matches_the_pre_move_dump(name: str) -> 
 
 
 #: Numeric bounds (Ge/Gt/Le/Lt) declared per model, counted on the PRE-MOVE
-#: source. Pinning the exact count per model is what makes the case below
-#: non-vacuous: twenty of the twenty-three carry no bound at all, so a bare
+#: source, except RecordsConfig's three, which BF-957 (#1760) appended after the
+#: move. Pinning the exact count per model is what makes the case below
+#: non-vacuous: nineteen of the twenty-three carry no bound at all, so a bare
 #: "at least zero were checked" assertion would pass even if a model that DOES
 #: carry bounds silently lost every one of them.
 EXPECTED_BOUND_COUNTS: dict[str, int] = {
@@ -469,7 +474,7 @@ EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "OrientationConfig": 0,
     "PredictiveBranchingConfig": 14,
     "QuestionAdaptiveConfig": 0,
-    "RecordsConfig": 0,
+    "RecordsConfig": 3,  # BF-957: the three git_* doctor thresholds (gt, ge, gt)
     "SalienceConfig": 0,
     "SelfImprovementConfig": 5,
     "SocialVerificationConfig": 0,
@@ -489,7 +494,7 @@ def test_every_declared_bound_is_still_enforced(name: str) -> None:
     Review of THIS batch taught the other half -- reading the live metadata and
     then asserting ``checked >= 0`` is always true, so a model could lose every
     bound and still pass. The count is pinned per model, from the pre-move
-    source, and must match exactly.
+    source plus BF-957's three RecordsConfig bounds, and must match exactly.
     """
     model = getattr(config_facade, name)
     checked = 0
@@ -528,10 +533,11 @@ def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     trivially satisfiable.
     """
     assert set(EXPECTED_BOUND_COUNTS) == set(MOVED_MODELS)
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 21
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 24  # BF-957: RecordsConfig +3
     assert sorted(n for n, c in EXPECTED_BOUND_COUNTS.items() if c) == [
         "LLMRateConfig",
         "PredictiveBranchingConfig",
+        "RecordsConfig",
         "SelfImprovementConfig",
     ]
 

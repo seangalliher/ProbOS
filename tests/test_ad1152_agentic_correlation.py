@@ -329,6 +329,11 @@ async def _off_observation(
     # AD-1346 M3c's shadow-admission section was added after this capture too. Its switch defaults on, and it is
     # read in ProbOSRuntime.start, which this observation never calls.
     assert config.pop("admission") == {"shadow_enabled": True}
+    # BF-957's three records-git thresholds were added after this capture too. Only the doctor's records_git check
+    # reads them, and the store's behaviour does not depend on them; this observation runs no doctor check.
+    assert config["records"].pop("git_lock_stale_minutes") == 10.0
+    assert config["records"].pop("git_uncommitted_warn_paths") == 50
+    assert config["records"].pop("git_last_commit_warn_hours") == 24.0
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)

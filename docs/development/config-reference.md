@@ -671,6 +671,9 @@ Ship's Records configuration (AD-434).
 | `notebook_quality_warn_threshold` | `float` | `0.5` | — |  |
 | `notebook_staleness_alert_rate` | `float` | `0.7` | — |  |
 | `semantic_index_enabled` | `bool` | `False` | — |  |
+| `git_lock_stale_minutes` | `float` | `10.0` | > 0 | BF-957: probos doctor reports the records repository's .git/index.lock as stale (FAIL) once it is this many minutes old. Ship's Records stops its own git commands after 30 seconds. |
+| `git_uncommitted_warn_paths` | `int` | `50` | ≥ 1 | BF-957: probos doctor warns when the records repository holds more than this many uncommitted paths, untracked or modified. |
+| `git_last_commit_warn_hours` | `float` | `24.0` | > 0 | BF-957: probos doctor warns when the records repository's last commit is at least this many hours old while uncommitted paths exist. |
 
 ## `archive`
 

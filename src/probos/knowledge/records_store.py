@@ -7,6 +7,7 @@ import math
 import os
 import re
 import subprocess
+import threading
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,23 @@ from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
 
 logger = logging.getLogger(__name__)
+
+# BF-957: how many distinct git errors one store remembers so that each is logged once; past this the oldest is dropped.
+_GIT_WARNED_MAX = 32
+# BF-957: the git verbs that take the index lock. A zero exit of one forgets every remembered error.
+_GIT_INDEX_VERBS = frozenset({"add", "commit"})
+# BF-957: a commit with nothing staged exits non-zero and says so on stdout; it is not an error.
+_GIT_NOTHING_STAGED = ("nothing to commit", "nothing added to commit")
+
+
+def _git_error_line(stderr: str, stdout: str) -> str:
+    """BF-957: the first non-empty line a failed git command printed. Two failures with the same line are one error."""
+    for text in (stderr, stdout):
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()[:300]
+    return "(no output)"
+
 
 # Directory structure per AD-434 design
 _SUBDIRS = (
@@ -386,14 +404,24 @@ def _search_records(
 
     It reads files under ``search_path`` and touches no store state, so it is safe off the
     event loop. Every record is parsed, not only those that match, because a term's rarity
-    is counted over what this reader may read and over nothing else (A4).
+    is counted over what this reader may read and over nothing else (A4). BF-958: the walk is
+    the default listing's (:func:`_markdown_files`), and a file that resolves outside the
+    repository is skipped before it is read, as :meth:`RecordsStore.list_entries` skips it.
     """
+    repo = root.resolve()  # BF-958: root is the repository, resolved or as configured
     readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
-    for md_file in sorted(search_path.rglob("*.md")):
+    for md_file in sorted(_markdown_files(search_path, strict=False)):
         rel_path = str(md_file.relative_to(root)).replace("\\", "/")
         if rel_path.startswith("_archived/"):
             continue
         try:
+            if not _resolves_inside(md_file, repo):  # BF-958: read_entry's rule, before the search reads
+                logger.warning(
+                    "BF-958: Ship's Records search skipped %s: it resolves outside the records repository (a link), "
+                    "so it is not read; read_entry refuses it too",
+                    rel_path,
+                )
+                continue
             raw = md_file.read_text(encoding="utf-8")
         except Exception:
             logger.debug("Skipping unreadable file", exc_info=True)
@@ -469,23 +497,44 @@ def _search_records(
     return results
 
 
-def _markdown_files_or_raise(search_path: Path) -> list[Path]:
-    """AD-1341 S4 (A4, A5): every file named ``*.md`` under ``search_path``, or the ``OSError`` that hid one.
+def _resolves_inside(path: Path, repo: Path) -> bool:
+    """BF-958: whether ``path`` resolves inside ``repo`` (the resolved repository), :meth:`RecordsStore._safe_path`'s
+    rule, which the listing and the search apply to each file their walk returns before reading it. A link loop
+    resolves nowhere (``Path.resolve`` raises ``RuntimeError``), so it is not inside; an ``OSError`` propagates."""
+    try:
+        return path.resolve().is_relative_to(repo)
+    except RuntimeError:
+        return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+
+
+def _markdown_files(search_path: Path, *, strict: bool) -> list[Path]:
+    """AD-1341 S4 (A4, A5), BF-958: every file named ``*.md`` under ``search_path`` by a walk that descends no
+    directory link; with ``strict``, or the ``OSError`` that hid one.
 
     A5 (round 3 R3-M1-1): ``os.walk`` filed an entry whose type it could not read as a file and never descended into
     it, as ``Path.rglob`` passed over a directory it could not list (A4): each standard walker absorbs some error. So
-    this walk is explicit, and each filesystem operation it makes has one disposition (the contract's 7.3a table):
+    this walk is explicit, and each filesystem operation it makes has one disposition (the AD-1341 S4 contract's 7.3a
+    table, with BF-958's OJ row and default column):
 
     - O1 ``os.scandir(search_path)``: ``FileNotFoundError`` or ``NotADirectoryError`` lists nothing, since nothing
-      was written under a directory that is not there; any other ``OSError`` raises.
-    - O2 ``os.scandir`` of a directory a listing reported: any ``OSError`` raises, ``FileNotFoundError`` included
-      (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried).
-    - O3 each step of a listing: any ``OSError`` raises.
-    - O4 ``entry.is_dir(follow_symlinks=False)``: any ``OSError`` raises; the entry is never taken for a file. The
-      type comes from the listing record, so a symbolic link is not descended, as ``rglob`` descends none.
+      was written under a directory that is not there. Any other ``OSError``: ``strict`` raises; the default lists
+      nothing.
+    - O2 ``os.scandir`` of a directory a listing reported: ``strict`` raises any ``OSError``, ``FileNotFoundError``
+      included (gone since, or unaddressable, it is not proved empty; a strict caller refuses and is retried). The
+      default passes over that directory, as ``rglob`` did.
+    - O3 each step of a listing: any ``OSError`` raises, in both modes, as ``rglob``'s descent (``Path.walk``)
+      raised one. ``rglob`` also matched each directory in a separate scan that swallowed one, so the base outlived
+      a one-shot fault that hit that scan, losing that directory's own documents (BF-958 contract L10).
+    - OJ ``entry.is_junction()`` (BF-958): a directory junction is not descended, and a WARNING names it, in both
+      modes. ``is_dir(follow_symlinks=False)`` is true for a junction, so before BF-958 this walk descended one.
+    - O4 ``entry.is_dir(follow_symlinks=False)``: the type comes from the listing record, so a symbolic link is not
+      descended, as ``rglob`` descends none.
 
-    Only a successful listing proves a document absent. A directory named ``*.md`` is no document and is not
-    returned; the suffix matches with the platform's case rule (``fnmatch``), as ``rglob``'s does.
+    An ``OSError`` from OJ or O4 raises with ``strict``, and the entry is never taken for a file; the default takes
+    the entry for no directory, as ``rglob``'s walk did. Only a successful listing proves a document absent. A
+    directory named ``*.md`` is no document and is not returned; the suffix matches with the platform's case rule
+    (``fnmatch``), as ``rglob``'s does. Whether a returned file resolves inside the repository is the caller's
+    check (:func:`_resolves_inside`).
     """
     found: list[Path] = []
     pending: list[Path] = [search_path]
@@ -494,13 +543,31 @@ def _markdown_files_or_raise(search_path: Path) -> list[Path]:
         try:
             listing = os.scandir(directory)  # O1 for search_path, O2 below it
         except (FileNotFoundError, NotADirectoryError):
-            if directory is not search_path:
+            if strict and directory is not search_path:
                 raise  # O2 (A5): a directory a listing reported is never "no documents"
-            return found  # O1: search_path does not exist, so nothing was written under it
+            continue  # O1: search_path does not exist, so nothing was written under it; O2 in the default mode
+        except OSError:
+            if strict:  # O1, O2: the strict walk raises what it cannot list
+                raise
+            logger.debug("Skipping a records directory that cannot be listed: %s", directory, exc_info=True)
+            continue  # O1, O2 in the default mode, as rglob passed over it
         with listing:
-            for entry in listing:  # O3: an OSError while listing propagates
+            for entry in listing:  # O3: an OSError while listing propagates, in both modes
                 path = Path(directory, entry.name)
-                if entry.is_dir(follow_symlinks=False):  # O4: an OSError propagates; it is never read as "a file"
+                try:
+                    if entry.is_junction():  # OJ (BF-958): never descended; it may lead out of the repository
+                        logger.warning(
+                            "BF-958: Ship's Records did not descend %s: it is a directory junction, which may lead "
+                            "out of the records repository; the records behind it are not listed or searched there",
+                            path,
+                        )
+                        continue
+                    is_dir = entry.is_dir(follow_symlinks=False)  # O4
+                except OSError:
+                    if strict:  # OJ, O4: the strict walk never reads an unknown entry as a file
+                        raise
+                    is_dir = False  # BF-958: the default walk reads it as rglob's walk did, as no directory
+                if is_dir:
                     pending.append(path)
                 elif fnmatch.fnmatch(entry.name, "*.md"):
                     found.append(path)
@@ -519,6 +586,11 @@ class RecordsStore:
         self._repo_path = Path(config.repo_path)
         self._ontology = ontology
         self._commit_lock = asyncio.Lock()
+        # BF-957: one git child of this store at a time, held from launch until the child has exited.
+        self._git_lock = threading.Lock()
+        # BF-957: the git errors already logged, oldest first; read and written only under _git_warned_lock.
+        self._git_warned: dict[tuple[str, str], None] = {}
+        self._git_warned_lock = threading.Lock()
         self._pending_commits: list[str] = []
         self._commit_task: asyncio.Task | None = None
         self._confidence_tracker: Any = None
@@ -905,7 +977,7 @@ class RecordsStore:
         """List all Bill files in Ship's Records (AD-618a).
 
         Bypasses list_entries() — bills are .bill.yaml files, not .md.
-        list_entries() uses rglob("*.md") which would never find them.
+        list_entries() lists only *.md files, so it would never find them.
 
         Returns:
             List of dicts with 'path' and 'bill_id' keys for each bill.
@@ -1329,17 +1401,21 @@ class RecordsStore:
         exists but cannot be read now), for a caller that must not take an unreadable document for an absent one (the
         AD-754 erasure's read of pending exit notes, and the stand-down). Bytes that are not UTF-8 are still skipped:
         that is a property of the file, not of the moment. ``False`` (the default) keeps every other caller unchanged.
-        A4, A5: ``strict=True`` walks with ``_markdown_files_or_raise``, which raises every ``OSError`` that could leave
-        a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot read)
-        and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any ``OSError``,
-        with no second look at whether it is still a file (A5).
+        A4, A5: ``strict=True`` walks with ``_markdown_files(strict=True)``, which raises every ``OSError`` that could
+        leave a document unseen (a directory it cannot open, a listing step that fails, an entry whose type it cannot
+        read) and reads only a missing ``directory`` as empty. A listed file whose read fails raises for any
+        ``OSError``, with no second look at whether it is still a file (A5).
+
+        BF-958: in both modes the walk does not descend a directory junction, and a listed file that resolves outside
+        the repository (a link; :meth:`read_entry` refuses it) is skipped. Each is logged at WARNING; neither raises.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
         root = self._repo_path.resolve() if directory else self._repo_path
+        repo = self._repo_path.resolve()  # BF-958: the containment rule compares resolved paths
         results = []
-        # AD-1341 S4 (A4): rglob passes over a directory it cannot list; the strict walk raises its OSError instead
-        found = _markdown_files_or_raise(search_path) if strict else search_path.rglob("*.md")
+        # AD-1341 S4 (A4), BF-958: one walk for both modes; only the strict mode raises what hid a document
+        found = _markdown_files(search_path, strict=strict)
 
         for md_file in sorted(found):
             rel_path = str(md_file.relative_to(root)).replace("\\", "/")
@@ -1347,6 +1423,13 @@ class RecordsStore:
             if rel_path.startswith("_archived/"):
                 continue
             try:
+                if not _resolves_inside(md_file, repo):  # BF-958: read_entry's rule, before the listing reads
+                    logger.warning(
+                        "BF-958: Ship's Records listing skipped %s: it resolves outside the records repository "
+                        "(a link), so it is not listed; read_entry refuses it too",
+                        rel_path,
+                    )
+                    continue
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
             except OSError:
@@ -1373,24 +1456,29 @@ class RecordsStore:
         return results
 
     async def get_history(self, path: str, limit: int = 20) -> list[dict]:
-        """Get git log for a specific file."""
+        """Get git log for a specific file.
+
+        BF-957 A5, A7: one ``git log`` with ``--encoding=UTF-8``, which overrides an operator's
+        ``i18n.logOutputEncoding``. Git outputs an unlabelled commit's subject as stored and converts a labelled
+        commit's subject from its encoding label to UTF-8. The store's own commits carry no label: ``_git_sync``
+        runs every ``git commit`` with ``i18n.commitEncoding=UTF-8`` (A7), because an operator's setting would
+        label the store's UTF-8 messages without converting them. A commit an older store labelled that way is
+        read as git converts it (contract L15). Fields are separated by NUL (A6).
+        """
         self._safe_path(path)  # Validate — raises ValueError if traversal
         try:
             result = await self._git(
                 "log", f"--max-count={limit}",
-                "--format=%H|%aI|%s", "--follow", "--", path
+                "--encoding=UTF-8", "--format=%H%x00%aI%x00%s",  # BF-957 A5, A7: one read, UTF-8 output
+                "--follow", "--", path
             )
             entries = []
             for line in result.strip().split("\n"):
                 if not line.strip():
                     continue
-                parts = line.split("|", 2)
+                parts = line.split("\x00", 2)
                 if len(parts) == 3:
-                    entries.append({
-                        "commit": parts[0],
-                        "timestamp": parts[1],
-                        "message": parts[2],
-                    })
+                    entries.append({"commit": parts[0], "timestamp": parts[1], "message": parts[2]})
             return entries
         except Exception:
             logger.debug("Git query failed", exc_info=True)
@@ -1622,26 +1710,115 @@ class RecordsStore:
         return await loop.run_in_executor(None, self._git_sync, args)
 
     def _git_sync(self, args: tuple[str, ...]) -> str:
-        """Synchronous git execution."""
-        result = subprocess.run(
-            ["git"] + list(args),
-            env=trusted_command_env(),
-            cwd=str(self._repo_path),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0 and "nothing to commit" not in result.stdout:
-            if result.stderr.strip():
-                logger.debug("git %s stderr: %s", args[0], result.stderr.strip())
-        return result.stdout
+        """Synchronous git execution.
+
+        BF-957: at most one git child of this store runs at a time (``_git_lock``, held until the child has
+        exited and its result is classified), so the store's own commands never meet at the index lock, and the
+        once-per-error memory changes in the order the children ran. A non-zero exit is logged at WARNING once
+        per distinct error, with git's first output line only, and its stdout is returned as before; a commit
+        with nothing staged is not an error. A command that outlives the timeout is stopped by
+        ``subprocess.run``; this logs a WARNING, because what it changed is not known and a lock it held may
+        remain, and re-raises the same exception. A4: the WARNING is emitted after this call releases
+        ``_git_lock``, so a log handler that reads git through this store does not wait on this call; it can
+        still wait for a command another thread is running (contract L14). Git's output is decoded as UTF-8
+        with replacement, so a locale codec (cp1252) that cannot decode it no longer turns it into ``None``.
+        Git re-encodes a commit subject for a configured encoding, so ``get_history`` asks for UTF-8 output. A7:
+        ``git commit`` alone runs with ``-c i18n.commitEncoding=UTF-8`` (``pin``), so an operator's setting cannot
+        label the store's UTF-8 messages without converting them; no other command's argv changes.
+        """
+        verb = args[0] if args else ""
+        # BF-957 A7: the store writes UTF-8; an operator's i18n.commitEncoding would label it without converting
+        pin = ("-c", "i18n.commitEncoding=UTF-8") if verb == "commit" else ()
+        due: tuple[object, ...] = ()  # BF-957 A4: the WARNING, emitted once _git_lock is released
+        try:
+            with self._git_lock:
+                try:
+                    result = subprocess.run(
+                        ["git", *pin, *args],
+                        env=trusted_command_env(),
+                        cwd=str(self._repo_path),
+                        capture_output=True,
+                        encoding="utf-8",  # BF-957 A4: the locale's codec (cp1252) lost output; A5: see get_history
+                        errors="replace",
+                        timeout=30,
+                    )
+                except subprocess.TimeoutExpired:
+                    if self._remember_git_warning((verb, "timeout")):
+                        due = (
+                            "Ship's Records: git %s did not finish in 30 s and was stopped. What it changed is "
+                            "not known, and a lock file it held may remain in %s. `probos doctor` reports the "
+                            "repository's state.",
+                            verb,
+                            self._repo_path / ".git",
+                        )
+                    raise
+                # BF-957 A3: classified under the lock, so a later child's warning is never cleared by an earlier success.
+                if result.returncode == 0:
+                    if verb in _GIT_INDEX_VERBS:
+                        self._forget_git_warnings()
+                    return result.stdout
+                if any(phrase in result.stdout for phrase in _GIT_NOTHING_STAGED):
+                    return result.stdout
+                error = _git_error_line(result.stderr, result.stdout)
+                if self._remember_git_warning((verb, error)):
+                    due = (
+                        "Ship's Records: git %s failed (exit %d): %s. Records are still written to disk, but a "
+                        "failed add or commit leaves them out of the records history. This error is logged once "
+                        "until a git add or commit succeeds; `probos doctor` reports the repository's state.",
+                        verb,
+                        result.returncode,
+                        error,  # BF-957 A3: git's first line only; the rest may advise removing a lock without the precondition
+                    )
+                return result.stdout
+        finally:
+            if due:  # BF-957 A4: after _git_lock is released; a log handler may read git through this store
+                logger.warning(*due)
+
+    def _remember_git_warning(self, key: tuple[str, str]) -> bool:
+        """BF-957 A4: remember ``key``; True when it was not logged since the last successful git add or commit.
+
+        At most ``_GIT_WARNED_MAX`` keys are remembered; past that the oldest is dropped and may be logged again.
+        The caller logs when this returns True; ``_git_sync`` does so after releasing ``_git_lock``.
+        """
+        with self._git_warned_lock:
+            if key in self._git_warned:
+                return False
+            if len(self._git_warned) >= _GIT_WARNED_MAX:
+                self._git_warned.pop(next(iter(self._git_warned)))
+            self._git_warned[key] = None
+            return True
+
+    def _warn_git_once(self, key: tuple[str, str], msg: str, *args: object) -> None:
+        """BF-957: log ``msg`` at WARNING unless ``key`` was logged since the last successful git add or commit."""
+        if self._remember_git_warning(key):
+            logger.warning(msg, *args)
+
+    def _forget_git_warnings(self) -> None:
+        """BF-957: a git add or commit succeeded, so any earlier error that recurs is logged again."""
+        with self._git_warned_lock:
+            self._git_warned.clear()
 
     async def _commit(self, message: str) -> None:
-        """Debounced git commit."""
+        """Debounced git commit.
+
+        BF-957: an ``Exception`` other than a timeout (for example, git is missing) is logged at WARNING once per
+        exception type until a git add or commit succeeds, without a claim about whether git ran: it may come from
+        before the launch or after it. A timeout is not logged again: ``_git_sync`` has logged it, and what the
+        stopped commit changed is not known. Neither is raised, as before; cancellation (``CancelledError``, not an
+        ``Exception``) still propagates, as before. Here the warning memory is updated without ``_git_lock``.
+        """
         if not self._config.auto_commit:
             return
         async with self._commit_lock:
             try:
                 await self._git("commit", "-m", message, "--allow-empty-message")
             except Exception as e:
-                logger.debug("Git commit skipped: %s", e)
+                if isinstance(e, subprocess.TimeoutExpired):
+                    return  # BF-957 A3: _git_sync logged it once per verb; "did not run" would be false
+                self._warn_git_once(
+                    ("commit", type(e).__name__),
+                    "Ship's Records: git commit raised %s: %s. The record is written to disk; whether it reached "
+                    "the records history is not known. Logged once until a git add or commit succeeds.",
+                    type(e).__name__,
+                    e,
+                )
