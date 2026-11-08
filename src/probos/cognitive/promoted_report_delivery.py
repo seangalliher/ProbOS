@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,67 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROMOTED_REPORT_DRAIN_LIMIT = 25
 
 PROMOTED_REPORT_SOURCE_KEY = "source"
+
+# BF-955: the largest body, in UTF-8 bytes, that the promoted-report outbox
+# accepts. ``WorkItemStore`` holds its own copy (``workforce.py``) and applies it
+# when a row is written and again when the drain reads one; the BF-955 suite
+# pins the two equal through a real store.
+PROMOTED_REPORT_BODY_MAX_BYTES = 65_536
+
+# BF-955: bytes held back for the cut note, which is under 160 bytes for any
+# count below 10**18.
+_CUT_NOTE_RESERVE_BYTES = 256
+
+_CUT_NOTE = (
+    "\n\n(The rest of this report, {:,} characters, was cut here, because a "
+    "report this long cannot be kept for redelivery.)"
+)
+
+
+@dataclass(frozen=True)
+class BoundedReportBody:
+    """BF-955: a promoted report's body as it is posted and queued.
+
+    ``cut_chars`` and ``cut_bytes`` count what was cut from the text before its
+    tool-failure disclosure; both are 0 when ``text`` is the input.
+    """
+
+    text: str
+    cut_chars: int = 0
+    cut_bytes: int = 0
+
+
+def bound_promoted_report_body(text: str, *, keep_tail: str = "") -> BoundedReportBody:
+    """BF-955: bound a report to what the outbox accepts, the same way every time.
+
+    A text of at most ``PROMOTED_REPORT_BODY_MAX_BYTES`` UTF-8 bytes is returned
+    unchanged. A longer one becomes its head, cut on a character boundary, then
+    the cut note, then ``keep_tail`` when the text ends with it and it leaves
+    room for a head (AD-1248: the tool-failure disclosure survives a cut). A
+    text that is not encodable as UTF-8 is returned unchanged.
+
+    Deterministic, so a replay of the same text posts the same message.
+    """
+    try:
+        data = text.encode("utf-8")
+    except UnicodeEncodeError:
+        return BoundedReportBody(text=text)
+    if len(data) <= PROMOTED_REPORT_BODY_MAX_BYTES:
+        return BoundedReportBody(text=text)
+    tail = keep_tail if keep_tail and text.endswith(keep_tail) else ""
+    tail_data = tail.encode("utf-8")
+    if len(tail_data) + _CUT_NOTE_RESERVE_BYTES >= PROMOTED_REPORT_BODY_MAX_BYTES:
+        tail, tail_data = "", b""
+    prose_data = data[: len(data) - len(tail_data)]
+    room = PROMOTED_REPORT_BODY_MAX_BYTES - _CUT_NOTE_RESERVE_BYTES - len(tail_data)
+    head = prose_data[:room].decode("utf-8", "ignore")
+    cut_chars = len(text) - len(tail) - len(head)
+    cut_bytes = len(prose_data) - len(head.encode("utf-8"))
+    return BoundedReportBody(
+        text=head + _CUT_NOTE.format(cut_chars) + tail,
+        cut_chars=cut_chars,
+        cut_bytes=cut_bytes,
+    )
 
 
 def promoted_report_metadata(
