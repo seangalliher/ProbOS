@@ -6,10 +6,9 @@ knows its own names) and ``httpx.AsyncClient`` (on a recording ``httpx.MockTrans
 it: the fetch agent's class-level egress policy (the egress test) and, in the chain test, the fetch agents'
 ``_wait_for_rate_limit`` (no wait), the trust network (a recorder), ``RedTeamAgent._verify_http_fetch`` (a wrapper
 that makes the name change its answer, then calls the real method) and the runtime itself: ``_stub_runtime`` of
-``test_issue1421_http_fetch_safe_methods`` binds the real ``submit_intent_with_consensus`` to a runtime that carries
-only what it reads, with stubs for its event log and Hebbian router and ``consensus_mode_for`` fixed to
-``execute_then_vote``. The class holds the cases the tree before BF-945 fails; the functions before it pass on both.
-No BF-945 name is imported.
+``test_issue1421_http_fetch_safe_methods`` binds the real ``submit_intent_with_consensus`` to a runtime, with stubs for
+its event log and Hebbian router and ``consensus_mode_for`` fixed to ``execute_then_vote``. The class holds the cases
+the tree before BF-945 fails; the functions before it pass on both. No BF-945 name is imported.
 """
 
 from __future__ import annotations
