@@ -1,7 +1,11 @@
 """BF-945 (#1720): the red team's http_fetch verifier applies the fetch agent's URL floor.
 
-The real ``RedTeamAgent``, URL guard and pin; only ``socket.getaddrinfo`` (a resolver that knows its own names) and
-``httpx.AsyncClient`` (on a recording ``httpx.MockTransport``) are replaced. The class holds the cases the unfixed tree
+Real: the ``RedTeamAgent``, the URL guard and pin, the fetch agent's own floor and request path and, in the chain
+test, the runtime's ``submit_intent_with_consensus``. Replaced in every test: ``socket.getaddrinfo`` (a resolver that
+knows its own names) and ``httpx.AsyncClient`` (on a recording ``httpx.MockTransport``). Replaced where a test needs
+it: the fetch agent's class-level egress policy (the egress test) and, in the chain test, the fetch agents'
+``_wait_for_rate_limit`` (no wait), the trust network (a recorder) and ``RedTeamAgent._verify_http_fetch`` (a wrapper
+that makes the name change its answer, then calls the real method). The class holds the cases the tree before BF-945
 fails; the functions before it pass on both. No BF-945 name is imported.
 """
 
@@ -22,8 +26,9 @@ from probos.agents.red_team import RedTeamAgent
 from probos.cognitive.decomposer import is_capability_gap
 from probos.types import IntentMessage, IntentResult
 
-NAME, PUBLIC = "api.example.test", "93.184.215.14"
+NAME, PUBLIC, SECOND = "api.example.test", "93.184.215.14", "93.184.215.15"
 URL = f"https://{NAME}/items/1"
+UNREACHED = "Verifier cannot reach URL but agent claims success"
 REFUSAL = "Agent claims success for a URL that the fetch floor refuses, so it was not re-fetched"
 FAULT = "The URL floor could not judge the URL, so it was not re-fetched"
 _LOGGER = "probos.agents.red_team"
@@ -86,16 +91,19 @@ AS_BEFORE = [  # id, claimed success, claimed status, claimed length, transport 
     ("verified", True, 200, 2, None, True, ""),
     ("claims-failure-but-reachable", False, 200, 2, None, False, "Agent claims failure but URL is reachable"),
     ("status-mismatch", True, 204, 2, None, False, "Status code mismatch: expected=200 actual=204"),
-    ("unreachable", True, 200, 2, httpx.ConnectError("down"), False, "Verifier cannot reach URL but agent claims success"),
+    ("unreachable", True, 200, 2, httpx.ConnectError("down"), False, UNREACHED),
 ]
-REFUSED = [  # id, url, what the log names (the floor's reason, or the exception class of a floor that raises)
+REFUSED = [  # id, url, what the log names: the reason without a scheme's value, or a raising floor's exception class
     ("loopback", "http://127.0.0.1:8080/admin", "Blocked private/reserved IP: 127.0.0.1"),
     ("link-local-metadata", "http://169.254.169.254/latest/meta-data/", "Blocked private/reserved IP: 169.254.169.254"),
     ("private", "http://10.0.0.5/", "Blocked private/reserved IP: 10.0.0.5"),
     ("reserved", "http://240.0.0.1/", "Blocked private/reserved IP: 240.0.0.1"),
     ("name-to-loopback", "http://localtest.me/", "Blocked private/reserved IP: 127.0.0.1"),
     ("unresolvable", "http://nowhere.example.test/", "Cannot resolve hostname: nowhere.example.test"),
-    ("file-scheme", "file:///etc/passwd", "Blocked scheme: file"),
+    ("file-scheme", "file:///etc/passwd", "Blocked scheme"),
+    ("userinfo-no-scheme", "acct-9f3b:s3cret" + _AT + "api.example.test/items/1", "Blocked scheme"),
+    # refused for its destination, not its userinfo: it pins that the log omits the userinfo
+    # (a public host with userinfo is approved, as before the change)
     ("credentials", "http://user:s3cret" + _AT + "169.254.169.254/latest/", "Blocked private/reserved IP: 169.254.169.254"),
     ("floor-raises", "http://boom.example.test/", "UnicodeError"),
 ]
@@ -142,7 +150,7 @@ class TestTheVerifierJudgesTheUrlAsTheFetchAgentDoes:
         host = urlparse(url).hostname or "-"  # the log names the host, or - for a URL with none (file:///...)
         verb = "could not judge" if label == "floor-raises" else "refused"
         assert f"{verb} {host} ({logged})" in caplog.text
-        assert "s3cret" not in caplog.text and "label too long" not in caplog.text
+        assert not any(text in caplog.text for text in ("s3cret", "acct-9f3b", "label too long")), caplog.text
 
     @pytest.mark.parametrize("answers", [[PUBLIC], [[PUBLIC], ["127.0.0.1"]]], ids=["stable", "name-changes-its-answer"])
     async def test_the_request_goes_to_the_approved_address_and_speaks_the_name(self, monkeypatch, answers):
@@ -151,6 +159,34 @@ class TestTheVerifierJudgesTheUrlAsTheFetchAgentDoes:
         (request,) = seen
         assert (request.url.host, request.headers.get("host"), request.extensions.get("sni_hostname")) == (PUBLIC, NAME, NAME)
         assert resolver.calls == [NAME] and verdict.verified is True
+
+    @pytest.mark.parametrize(
+        "first,second,attempts,answered",
+        [
+            (httpx.ConnectTimeout, None, 2, True),
+            (httpx.ConnectError, None, 2, True),
+            (httpx.ConnectTimeout, httpx.ConnectTimeout, 2, False),
+            (httpx.ReadTimeout, None, 1, False),
+            (httpx.WriteTimeout, None, 1, False),
+        ],
+        ids=["connect-timeout-then-answer", "connect-error-then-answer", "connect-timeout-twice",
+             "read-timeout-no-fallback", "write-timeout-no-fallback"],
+    )
+    async def test_the_next_approved_address_is_tried_only_after_a_failed_connect(
+        self, monkeypatch, first, second, attempts, answered,
+    ):
+        def handler(request: httpx.Request) -> httpx.Response:
+            failure = first if request.url.host == PUBLIC else second
+            if failure is not None:
+                raise failure("this address", request=request)
+            return httpx.Response(200, content=b"ok", request=request)
+
+        resolver, seen = _rig(monkeypatch, {NAME: [PUBLIC, SECOND]}, handler=handler)
+        verdict = await _verify(URL)
+        tried = [(r.url.host, r.headers.get("host"), r.extensions.get("sni_hostname")) for r in seen]
+        assert tried == [(PUBLIC, NAME, NAME), (SECOND, NAME, NAME)][:attempts]
+        assert (verdict.verified, verdict.discrepancy) == ((True, "") if answered else (False, UNREACHED))
+        assert resolver.calls == [NAME]
 
     @pytest.mark.parametrize(
         "answer,success,verified,discrepancy",

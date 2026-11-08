@@ -88,8 +88,23 @@ async def request_pinned(
     method: str,
     attempts: list[tuple[httpx.URL, dict[str, str], dict[str, str]]],
 ) -> httpx.Response:
-    """BF-945: the fetch agent's request over those attempts, each approved address in order (BF-821)."""
-    return await HttpFetchAgent._request_pinned(client, method, attempts)
+    """BF-945: the fetch agent's request over those attempts, each approved address in order (BF-821).
+
+    The fetch agent moves on only after a refused connection; the verifier also moves on after a connect that timed out,
+    as httpx's own connect did when it was handed the name. Any other error (a read, write or pool timeout) is not a
+    failed address and propagates, and so does the last address's error.
+    """
+    for url, headers, extensions in attempts[:-1]:
+        try:
+            return await HttpFetchAgent._request_pinned(client, method, [(url, headers, extensions)])
+        except httpx.ConnectError:
+            continue  # ``_request_pinned`` logged it (BF-821)
+        except httpx.ConnectTimeout:
+            logger.warning(
+                "BF-945: approved address %s timed out connecting for %s; trying the next approved address",
+                url.host, headers.get("Host", url.host),
+            )
+    return await HttpFetchAgent._request_pinned(client, method, attempts[-1:])
 
 
 class HttpFetchAgent(BaseAgent):

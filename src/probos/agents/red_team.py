@@ -43,6 +43,13 @@ def _host_of(url: Any) -> str:
         return "-"
 
 
+def _reason_for_log(reason: str) -> str:
+    """BF-945: the floor's refusal reason for a log line. Every reason names the URL's host, an address or nothing,
+    except a scheme's, which names the scheme: ``urlparse`` reads the ``account`` of a schemeless
+    ``account:pw@host/path`` as one, so the value is dropped."""
+    return "Blocked scheme" if reason.startswith("Blocked scheme") else reason
+
+
 class RedTeamAgent(BaseAgent):
     """Agent that independently verifies other agents' results.
 
@@ -556,7 +563,7 @@ class RedTeamAgent(BaseAgent):
         if target.reason is not None:  # BF-945: refused, so nothing is requested
             logger.warning(
                 "BF-945: the URL floor refused %s (%s); not re-fetched, the verdict rests on the refusal",
-                _host_of(url), target.reason,
+                _host_of(url), _reason_for_log(target.reason),
             )
             return VerificationResult(
                 verifier_id=self.id,
