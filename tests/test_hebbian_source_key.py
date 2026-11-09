@@ -9,8 +9,9 @@ from probos.runtime import ProbOSRuntime
 @pytest.fixture
 async def runtime(tmp_path):
     """Minimal runtime with temp data dir and a real file to read."""
-    # Create a file the read_file agent can successfully read
-    target = tmp_path / "data" / "readable.txt"
+    # Create a file the read_file agent can successfully read. BF-944: outside the runtime's data directory, which the pool's
+    # readers refuse now that they have the runtime (the read policy is the runtime's).
+    target = tmp_path / "readable.txt"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("hello world")
 

@@ -2859,6 +2859,9 @@ class SecurityInfraConfig(BaseModel):
     # Setting it restricts those intents to these roots plus the agent
     # workspace. Independent of the floor: the runtime data directory is refused
     # whatever this says, so widening it cannot hand out the credential vault.
+    # BF-944: the pool agents behind those intents apply it as well. The bundled todo, note and scheduler agents read their
+    # files in ~/.probos through read_file and list_directory, so list that directory here: a refused read of the todo or
+    # reminder file makes those agents answer that the list could not be read, and write nothing (BF-961).
     read_roots: list[str] = Field(default_factory=list)
 
     # AD-456b: Runtime Sandboxing
