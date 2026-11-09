@@ -537,8 +537,9 @@ async def test_write_file_refuses_absolute_paths_and_still_writes_the_neighbours
         result = await tool.invoke({"path": path, "content": "AMENDED\n"})
         assert not result.success and _AD in (result.error or ""), path
     assert _unchanged(swe_root)
-    for rel, text in (("config/standing_orders/ship.md", "SHIP v2\n"), ("config/other.yaml", "other: 2\n"),
-                      ("config/standing_orders/federation_notes.md", "notes\n")):
+    # BF-943: the ship tier and federation_notes.md are in CAPTAIN_DOCUMENT_PATHS, so the controls are neighbours outside it.
+    for rel, text in (("docs/notes.md", "SHIP v2\n"), ("config/other.yaml", "other: 2\n"),
+                      ("docs/federation_notes.md", "notes\n")):
         result = await tool.invoke({"path": rel, "content": text})
         assert result.success, f"{rel}: {result.error}"
         assert (swe_root / rel).read_text(encoding="utf-8") == text
@@ -577,9 +578,10 @@ async def test_edit_file_refuses_the_constitution(swe_root: Path, path: str) -> 
 
 
 async def test_edit_file_refuses_a_hard_link_and_still_edits_the_ship_tier(swe_root: Path) -> None:
-    """T28."""
+    """T28 (BF-943: the control edit is a neighbour outside CAPTAIN_DOCUMENT_PATHS; the name is kept for the AD-1344 record)."""
     tool = EditFileTool(SimpleNamespace())
-    ship = await tool.invoke({"path": "config/standing_orders/ship.md", "old_text": "SHIP v1", "new_text": "SHIP v2"})
+    (swe_root / "docs" / "notes.md").write_text(_SHIP, encoding="utf-8")  # BF-943: ship.md is in the set, notes.md is not
+    ship = await tool.invoke({"path": "docs/notes.md", "old_text": "SHIP v1", "new_text": "SHIP v2"})
     assert ship.success and ship.output["replacements"] == 1, f"control: {ship.error}"
     _hard_link(swe_root, "alias.md")
     result = await tool.invoke({"path": "docs/alias.md", "old_text": "CONSTITUTION v1", "new_text": "AMENDED"})
@@ -625,7 +627,7 @@ class _ShiftingPath:
 
 async def test_the_swe_tools_judge_the_text_they_write(swe_root: Path) -> None:
     """T38 (A1, F2): the tool converts the path once; the rule judges the text it then writes and returns."""
-    ship = "config/standing_orders/ship.md"
+    ship = "docs/notes.md"  # BF-943: not config/standing_orders/ship.md, which is in CAPTAIN_DOCUMENT_PATHS
     written = _ShiftingPath(ship, CONSTITUTION_RELATIVE_PATH)
     result = await WriteFileTool(SimpleNamespace()).invoke({"path": written, "content": "SHIP v2\n"})
     assert result.success, result.error
@@ -716,7 +718,7 @@ async def test_office_revise_and_update_refuse_a_link_to_the_constitution(
         await XlsxAgent(pool="office").handle_intent(IntentMessage(intent="xlsx_update", params={
             "file_path": str(xlsx_alias), "sheet": "Sheet", "updates": {"A1": "amended"}}))
     assert _unchanged(vessel)
-    notes = vessel / "config" / "standing_orders" / "notes.docx"
+    notes = vessel / "docs" / "notes.docx"  # BF-943: not under config/standing_orders, which is in CAPTAIN_DOCUMENT_PATHS
     await DocxAgent(pool="office").create_docx(title="Notes", content=["x"], output_path=str(notes))
     revised = await DocxAgent(pool="office").handle_intent(IntentMessage(intent="docx_revise", params={
         "file_path": str(notes), "instructions": "tidy"}))
