@@ -1352,10 +1352,11 @@ class EventLog:
                     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
                     deleted += await self._delete_head(
                         self._db,
-                        "SELECT id, row_hash FROM events WHERE id < "
-                        "COALESCE((SELECT id FROM events WHERE timestamp >= ? ORDER BY id ASC LIMIT 1), ?) "
+                        "SELECT id, row_hash FROM events WHERE "
+                        "id < (SELECT id FROM events WHERE timestamp >= ? ORDER BY id ASC LIMIT 1) "
+                        "OR NOT EXISTS (SELECT 1 FROM events WHERE timestamp >= ?) "
                         "ORDER BY id DESC LIMIT 1",
-                        (cutoff, _INT64_MAX),
+                        (cutoff, cutoff),
                     )
 
                 # Row-count cap
@@ -1371,11 +1372,12 @@ class EventLog:
                             (excess - 1,),
                         )
 
-                # BF-873: unconditional. DELETE opens an implicit transaction
-                # even when zero rows match, so committing only when
-                # deleted > 0 leaves it open — and the runtime prunes hourly,
-                # so one routine no-op prune wedges every later BEGIN IMMEDIATE
-                # and the vessel stops accepting intents.
+                # BF-873: unconditional. A statement that writes opens an implicit
+                # transaction that stays open until this commit, and the runtime
+                # prunes hourly, so one left open wedges every later BEGIN
+                # IMMEDIATE and the vessel stops accepting intents. BF-942: a
+                # stage with no boundary row writes nothing, so a routine no-op
+                # prune opens none; the commit stays so that no path leaves one.
                 await self._db.commit()
             except BaseException:
                 await self._rollback_quietly()

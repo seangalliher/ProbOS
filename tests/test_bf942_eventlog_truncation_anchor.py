@@ -189,6 +189,19 @@ class TestTheChainSurvivesAPrune:
             assert await log.prune(retention_days=7, max_rows=0) == 3
             assert _seen(await log.verify_chain()) == ((True, None), "truncated", old[2])
 
+    async def test_an_age_prune_deletes_the_row_with_the_highest_id_sqlite_allows(self, tmp_path, monkeypatch):
+        at = _clock(monkeypatch)
+        async with _opened(tmp_path) as log:
+            await _sql(log, "INSERT INTO sqlite_sequence (name, seq) VALUES ('events', ?)", 2**63 - 3)
+            at(10)
+            ids = await _fill(log, 2)
+            assert ids == [2**63 - 2, 2**63 - 1], "premise: the two rows hold the two highest ids"
+            before = await _rows(log)
+            at(0)
+            assert await log.prune(retention_days=7, max_rows=0) == 2
+            assert (await _rows(log), await _anchors(log)) == ([], [(ids[1], before[1][2])])
+            assert _seen(await log.verify_chain()) == ((True, None), "truncated", ids[1])
+
     async def test_when_both_stages_delete_one_anchor_names_the_last_row_deleted(self, tmp_path, monkeypatch):
         at = _clock(monkeypatch)
         async with _opened(tmp_path) as log:
