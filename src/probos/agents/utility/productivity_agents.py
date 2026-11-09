@@ -11,6 +11,7 @@ import logging
 import re
 from typing import Any
 
+from probos.agents.utility.stored_list import UnreadableListGuard
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -95,23 +96,8 @@ class CalculatorAgent(_BundledMixin, CognitiveAgent):
 
 
 # ------------------------------------------------------------------
-# Helper: mesh file I/O
+# Helper: mesh file I/O (the read is stored_list.read_stored_list, BF-961)
 # ------------------------------------------------------------------
-
-async def _mesh_read_file(runtime: Any, path: str) -> str | None:
-    """Read a file via mesh dispatch."""
-    if not runtime or not hasattr(runtime, "intent_bus"):
-        return None
-    msg = IntentMessage(intent="read_file", params={"path": path})
-    results = await runtime.intent_bus.broadcast(msg)
-    for r in results:
-        if r.success and r.result:
-            content = r.result
-            if isinstance(content, dict):
-                content = content.get("content", content.get("data", str(content)))
-            return str(content)
-    return None
-
 
 async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
     """Write a file via FileWriterAgent.commit_write (personal data path).
@@ -126,7 +112,7 @@ async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
     return result.get("success", False)
 
 
-class TodoAgent(_BundledMixin, CognitiveAgent):
+class TodoAgent(_BundledMixin, UnreadableListGuard, CognitiveAgent):
     """Manage a persistent todo list (file-backed via mesh I/O)."""
 
     agent_type = "todo_manager"
@@ -166,11 +152,9 @@ class TodoAgent(_BundledMixin, CognitiveAgent):
         if self._runtime:
             import os
             path = os.path.expanduser(self._TODO_PATH)
-            content = await _mesh_read_file(self._runtime, path)
-            if content:
-                obs["fetched_content"] = f"Current todos:\n{content}"
-            else:
-                obs["fetched_content"] = "Current todos:\n[]"
+            content = await self._stored_list(obs, path, "your todo list")  # BF-961: None: the read failed, ``decide`` ends the intent
+            if content is not None:
+                obs["fetched_content"] = f"Current todos:\n{content or '[]'}"
         return obs
 
     async def act(self, decision: dict) -> dict:

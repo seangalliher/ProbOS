@@ -1,5 +1,9 @@
 # ProbOS Progress
 
+**BF-961 (2026-11-08), #1774 -- the todo and scheduler agents refuse an intent whose stored list could not be read.**
+- **Base.** `_mesh_read_file` returned `None` for a read that failed, was refused or found nothing; the two agents showed the model `[]`, and the list it built from that replaced `~/.probos/todos.json` or `reminders.json`. A refused read (BF-944 will apply `read_roots` to the file pools), an OS error, a closed bus and an unanswered broadcast all read as an empty list.
+- **Fix.** New `agents/utility/stored_list.py`: `read_stored_list` says a file was found (empty included), missing (every answer is the reader's `File not found:`, now `FILE_NOT_FOUND_MARK` in `agents/file_reader.py`) or failed. After a failed read the agents answer `Could not read ...; nothing was changed or saved.` (`success` False) before the model and any write. The note agent reads through the helper; its text is unchanged. Contract `prompts/bf-961-unreadable-stored-list.md`. Closes #1774.
+
 **BF-945 (2026-11-08), #1720 -- the red team's http_fetch verifier applies the fetch agent's URL floor.**
 - **Base.** The verifier requested the intent's URL with no URL guard and no egress consult, so it sent a GET or HEAD to loopback, link-local, private and reserved addresses, and to names that resolve to one, that the fetch agent refuses; its resolution was unpinned.
 - **Fix.** It asks `vet_url` (the fetch agent's floor and egress consult: new public functions in `agents/http_fetch.py` over its own methods) and requests nothing it refuses (`verified` is `not claimed.success`; a floor that raises leaves the claim unverified); an approved URL is requested at the approved addresses in order (as BF-821; the next after a connect that was refused or timed out), no redirect followed; the refusal's log names the host and the floor's reason, a scheme's value dropped. Contract `prompts/bf-945-red-team-url-floor.md`. Closes #1720.

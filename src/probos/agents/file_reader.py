@@ -12,6 +12,17 @@ from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, 
 
 logger = logging.getLogger(__name__)
 
+#: BF-961: the first words of the error a ``read_file`` or ``stat_file`` result carries for a path that does not exist.
+FILE_NOT_FOUND_MARK = "File not found: "
+
+
+def is_file_not_found(error: object) -> bool:
+    """BF-961: whether *error*, the ``error`` of a ``read_file`` result, is this reader's answer for a path that is not there.
+
+    A path the read policy refuses, an OS error and a path that is not a file carry other text. A caller that must tell a
+    stored file that is not there yet from one it could not read asks here, and treats every other error as a failure."""
+    return isinstance(error, str) and error.startswith(FILE_NOT_FOUND_MARK)
+
 
 class FileReaderAgent(BaseAgent):
     """Concrete agent that reads files from the local filesystem.
@@ -133,7 +144,7 @@ class FileReaderAgent(BaseAgent):
             return {"success": False, "error": str(exc)}
         try:
             if not p.exists():
-                return {"success": False, "error": f"File not found: {path}"}
+                return {"success": False, "error": f"{FILE_NOT_FOUND_MARK}{path}"}
             if not p.is_file():
                 return {"success": False, "error": f"Not a file: {path}"}
 
@@ -159,7 +170,7 @@ class FileReaderAgent(BaseAgent):
             return {"success": False, "error": str(exc)}
         try:
             if not p.exists():
-                return {"success": False, "error": f"File not found: {path}"}
+                return {"success": False, "error": f"{FILE_NOT_FOUND_MARK}{path}"}
 
             stat = p.stat()
             return {
