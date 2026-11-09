@@ -179,9 +179,6 @@ async def test_a_callers_own_runtime_wins(tmp_path):
 
 
 class TestAPoolBuiltAgentAppliesTheRuntimesReadPolicy:
-    # BF-944 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-944 M2 builds it")
-
     @pytest.mark.parametrize("agent_type", TYPES)
     async def test_a_member_refuses_a_base_outside_read_roots_and_serves_one_inside(self, tmp_path, agent_type):
         """T1."""

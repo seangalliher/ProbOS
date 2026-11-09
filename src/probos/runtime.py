@@ -2671,6 +2671,11 @@ class ProbOSRuntime:
             # caller's own value wins. The code-search agent's read floor (BF-758) reads it as well.
             spawn_kwargs["runtime"] = self
 
+        if agent_type in (FileReaderAgent.agent_type, DirectoryListAgent.agent_type, FileSearchAgent.agent_type) and "runtime" not in spawn_kwargs:
+            # BF-944 (#1717): these agents apply their runtime's read policy to the path they are given (BF-758) and have none
+            # without one. The pool keeps its spawn kwargs, so a respawned or added member gets the runtime too. A caller's value wins.
+            spawn_kwargs["runtime"] = self
+
         on_agent_spawned: Callable[[Any], Awaitable[None]] | None = (
             self.onboarding.wire_agent
             if getattr(self, "onboarding", None) is not None

@@ -125,7 +125,7 @@ class FileSearchAgent(BaseAgent):
         the same seam, so leaving it open would have moved the leak rather than
         closed it.
         """
-        from probos.security.file_access import resolve_for_runtime
+        from probos.security.file_access import ReadFloor, resolve_for_runtime
 
         try:
             p = resolve_for_runtime(path, getattr(self, "_runtime", None))
@@ -145,6 +145,13 @@ class FileSearchAgent(BaseAgent):
                     str(f) for f in iter_files(p, skip_binary=False)
                     if f.match(pattern)
                 )
+            # BF-944: a ``..`` pattern or a link under the base can lead out of it, so a match is kept when the read policy admits the
+            # path it resolves to and dropped otherwise; the policy is composed after the walk.
+            floor = ReadFloor(getattr(self, "_runtime", None))
+            kept = [m for m in matches if floor.permits(m)]  # BF-944: a match the policy refuses is left out and not counted
+            if len(kept) != len(matches):
+                logger.info("BF-944: file search left out %d match(es) the read policy refuses", len(matches) - len(kept))
+            matches = kept
             return {
                 "success": True,
                 "data": matches,

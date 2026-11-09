@@ -104,7 +104,7 @@ class DirectoryListAgent(BaseAgent):
         only the content read would have closed one door and left this one
         enumerating the data directory.
         """
-        from probos.security.file_access import resolve_for_runtime
+        from probos.security.file_access import ReadFloor, resolve_for_runtime
 
         try:
             p = resolve_for_runtime(path, getattr(self, "_runtime", None))
@@ -116,9 +116,15 @@ class DirectoryListAgent(BaseAgent):
             if not p.is_dir():
                 return {"success": False, "error": f"Not a directory: {path}"}
 
+            floor = ReadFloor(getattr(self, "_runtime", None))  # BF-944: composed once, asked about an entry that is a link
             entries = []
             for entry in sorted(p.iterdir()):
                 try:
+                    # BF-944: stat() and is_dir() follow a link (a Windows junction is no symlink, so it is asked too). A link whose
+                    # target the read policy refuses is the entry of one that cannot be read: neither kind nor size.
+                    if (entry.is_symlink() or entry.is_junction()) and not floor.permits(str(entry)):  # BF-944: the target is refused
+                        entries.append({"name": entry.name, "type": "unknown", "size": 0})
+                        continue
                     stat = entry.stat()
                     entries.append({
                         "name": entry.name,

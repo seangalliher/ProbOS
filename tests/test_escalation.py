@@ -685,7 +685,8 @@ class TestRuntimeEscalation:
         mem.store = AsyncMock()
         mem.get_stats = AsyncMock(return_value={})
 
-        rt = ProbOSRuntime(data_dir=tmp_path, episodic_memory=mem)
+        # BF-944: the file below is outside the data directory, which the pool's readers refuse
+        rt = ProbOSRuntime(data_dir=tmp_path / "data", episodic_memory=mem)
         await rt.start()
 
         try:

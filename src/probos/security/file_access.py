@@ -650,6 +650,29 @@ def resolve_for_runtime(
     )
 
 
+class ReadFloor:
+    """BF-944: the read policy *runtime* configures (the floor, the agent workspace, ``security_infra.read_roots``), composed once
+    as :func:`resolve_for_runtime` composes it, for a caller that decides many paths. Built per listing or search."""
+
+    def __init__(self, runtime: Any) -> None:
+        self._protected = protected_read_roots(runtime)
+        self._exempt = workspace_exempt_roots(runtime)
+        self._permitted = permitted_read_roots(runtime) or None
+
+    def permits(self, path: str) -> bool:
+        """Whether the policy admits the absolute *path* (a link is followed). False for a refusal; any other failure propagates."""
+        try:
+            resolve_read_path(
+                path,
+                protected_roots=self._protected,
+                exempt_roots=self._exempt,
+                permitted_roots=self._permitted,
+            )
+        except FileAccessDenied:
+            return False  # BF-944: the policy refuses it
+        return True  # BF-944: the policy admits it
+
+
 INSTRUCTION_FILE_BYTES = 8192
 
 
