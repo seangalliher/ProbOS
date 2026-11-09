@@ -168,6 +168,7 @@ undeclared_stores:
 - module: probos.substrate.event_log
   tables:
   - events
+  - events_truncation_anchor
 - module: probos.task_sessions
   tables:
   - task_session_runs

@@ -1577,6 +1577,16 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *D7 (tests).* Three existing tests (`test_hebbian_source_key.py`, `test_escalation.py`, `test_runtime_discovery.py`) read inside their runtime's data directory: with the runtime two of them fail (Hebbian weights, a completed count) and one keeps passing without a successful read; they read outside it now. Rejected: xfail; widening `read_roots` (the floor wins).
 - *Residual.* L1 to L9 of the contract; with `read_roots` set and `~/.probos` unlisted, the todo and scheduler agents answer that their list could not be read (BF-961; L6). *Reversal.* Revert the BF-944 commits.
 
+### BF-942 -- Routine EventLog pruning leaves the hash chain verifiable from a durable truncation anchor (2026-11-09, #1706)
+
+- *Scope.* `substrate/event_log.py` (`events_truncation_anchor`, `ChainVerdict`, `verify_chain`, `prune`, `wipe`), `docs/development/deterministic-ship.md` (invariant 4), tests. Contract `prompts/bf-942-eventlog-truncation-anchor.md`.
+- *D1 (where).* A one-row table in `events.db` on the EventLog's own connection, created by `_SCHEMA` on every open. Rejected: a sidecar (not in the delete's transaction; `probos reset` removes `events.db` by name); a marker row or a column per row (they change the append and the hashes).
+- *D2, D3 (what, when).* The id and `row_hash` of the last deleted row, replaced in the transaction of each stage that deletes; a stage that deletes nothing writes nothing. The age stage deletes the head run older than the cutoff, so a clock stepped back cannot make it cut the middle.
+- *D4 (an emptied table).* After an anchor, a first retained row that links to genesis verifies: the append restarts the chain there. Rejected: keeping the newest row; chaining the append to the anchor.
+- *D5 (the result).* A two-item tuple subclass with `state` and `anchor_id`: the 24 call sites that unpack two items or compare with `(True, None)` are unchanged. Rejected: a three-item tuple; a second method beside it (the AuditLog's `chain_state`).
+- *D6, D7 (no anchor; wipe).* A store pruned before this change reports `unanchored`, `(False, first_id)` as before, and the walk goes on from that row's own link so an edit behind it is found. Rejected: reporting `intact`; an anchor written at upgrade (it would bless today's head). `wipe` clears the anchor in its transaction.
+- *Residual.* L1 to L10 of the contract. *Reversal.* Revert the BF-942 commits (the table stays and is ignored).
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
