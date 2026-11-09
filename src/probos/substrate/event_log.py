@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_category ON events (category);
 CREATE INDEX IF NOT EXISTS idx_events_agent ON events (agent_id);
+-- BF-942: where the last prune cut the chain: the id and row_hash of the last row it deleted.
+-- One row, written in the transaction that deletes the rows it names; empty until a prune deletes.
+CREATE TABLE IF NOT EXISTS events_truncation_anchor (
+    singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+    event_id    INTEGER NOT NULL,
+    row_hash    TEXT    NOT NULL
+);
 """
 
 
@@ -471,6 +478,39 @@ def _extract_cooperation_signature(
     else:
         return None
     return tuple(sorted(normalized_intents)), round(numeric_weight, 3)
+
+
+class ChainVerdict(tuple[bool, int | None]):
+    """What ``EventLog.verify_chain()`` found: ``(ok, broken_at)`` and its state (BF-942).
+
+    Still a two-item tuple: ``ok, broken_at = await log.verify_chain()`` and ``== (True, None)`` read as they
+    always did, and equality is the tuple's whatever the state. ``state`` is ``"intact"`` (no anchor; every row
+    verifies from genesis), ``"truncated"`` (a prune's anchor exists and every retained row verifies from it;
+    ``anchor_id`` is the last row that prune deleted; ``ok`` is True), ``"broken"`` (a row fails; ``broken_at``
+    is its id; ``anchor_id`` is the anchor the walk started from, if any) or ``"unanchored"`` (no anchor, and the
+    first retained row does not link to genesis: history was cut and nothing records where, as in a store pruned
+    before BF-942; ``ok`` is False and ``broken_at`` is that first row; the rows after it are consistent).
+    """
+
+    _state: str
+    _anchor_id: int | None
+
+    def __new__(cls, ok: bool, broken_at: int | None, *, state: str, anchor_id: int | None = None) -> "ChainVerdict":
+        verdict = super().__new__(cls, (ok, broken_at))
+        verdict._state = state
+        verdict._anchor_id = anchor_id
+        return verdict
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def anchor_id(self) -> int | None:
+        return self._anchor_id
+
+    def __repr__(self) -> str:
+        return f"ChainVerdict{tuple(self)!r} state={self._state!r} anchor_id={self._anchor_id!r}"
 
 
 class EventLog:
@@ -1208,21 +1248,31 @@ class EventLog:
             row = await cursor.fetchone()
             return row[0] if row else 0
 
-    async def verify_chain(self) -> tuple[bool, int | None]:
-        """AD-490: Walk the events table by id; return (ok, broken_at).
+    async def verify_chain(self) -> ChainVerdict:
+        """AD-490: Walk the events table by id; return ``(ok, broken_at)`` and its state (``ChainVerdict``).
 
-        Returns (True, None) if every row's row_hash equals the recomputed
-        hash of (prev row's row_hash || canonical_json(payload)). Returns
-        (False, broken_id) on the first mismatch. Empty table -> (True, None).
+        Each row's ``row_hash`` is recomputed from its stored ``prev_hash`` and payload, and its ``prev_hash`` must
+        be the row before it. The walk starts at genesis or, once a prune has recorded a truncation anchor (BF-942),
+        at the anchor's ``row_hash``: the first retained row must come after the anchor's id and link to its hash, or
+        to genesis when the prune left no row and the next append restarted the chain. Without an anchor, a first row
+        that does not link to genesis is a cut head: the walk goes on from its own link and ends ``(False, first_id)``,
+        ``unanchored``, if the rest verify, so an edit behind the cut is still found.
+
+        It takes no lock: a prune that commits during the walk can make it report a break that is not there, so
+        run it again before treating ``broken`` as tamper (BF-942 L3).
         """
         if not self._db:
-            return (True, None)
+            return ChainVerdict(True, None, state="intact")
+        anchor = await self._read_truncation_anchor()
+        anchor_id = anchor[0] if anchor is not None else None
         sql = (
             "SELECT id, timestamp, category, event, agent_id, agent_type, "
             "pool, detail, correlation_id, parent_event_id, data, "
             "prev_hash, row_hash FROM events ORDER BY id ASC"
         )
-        expected_prev = self.GENESIS_HASH
+        expected_prev = anchor[1] if anchor is not None else self.GENESIS_HASH
+        first = True
+        detached_at: int | None = None
         async with self._db.execute(sql) as cursor:
             async for row in cursor:
                 payload = {
@@ -1239,26 +1289,52 @@ class EventLog:
                 }
                 stored_prev = row[11]
                 stored_row_hash = row[12]
+                if first:
+                    first = False
+                    if anchor_id is not None and row[0] <= anchor_id:
+                        return ChainVerdict(False, row[0], state="broken", anchor_id=anchor_id)
+                    if stored_prev != expected_prev:
+                        if anchor is None:
+                            detached_at = row[0]
+                            expected_prev = stored_prev
+                        elif stored_prev == self.GENESIS_HASH:
+                            expected_prev = stored_prev
                 if stored_prev != expected_prev:
-                    return (False, row[0])
+                    return ChainVerdict(False, row[0], state="broken", anchor_id=anchor_id)
                 recomputed = _compute_row_hash(prev_hash=expected_prev, payload=payload)
                 if recomputed != stored_row_hash:
-                    return (False, row[0])
+                    return ChainVerdict(False, row[0], state="broken", anchor_id=anchor_id)
                 expected_prev = stored_row_hash
-        return (True, None)
+        if detached_at is not None:
+            return ChainVerdict(False, detached_at, state="unanchored")
+        if anchor_id is not None:
+            return ChainVerdict(True, None, state="truncated", anchor_id=anchor_id)
+        return ChainVerdict(True, None, state="intact")
+
+    async def _read_truncation_anchor(self) -> tuple[int, str] | None:
+        """``(id, row_hash)`` of the last row the last prune deleted, or None when no prune has deleted (BF-942)."""
+        if not self._db:
+            return None
+        async with self._db.execute(
+            "SELECT event_id, row_hash FROM events_truncation_anchor WHERE singleton = 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+        return (row[0], row[1]) if row else None
 
     async def prune(self, retention_days: int = 7, max_rows: int = 100_000) -> int:
         """Delete events older than retention_days and enforce max_rows cap.
 
         Returns number of rows deleted.
 
-        BF-873, deliberate and unfixed here: deleting rows severs the AD-490
-        chain, so verify_chain() reports the retained suffix as corrupt at its
-        first row. Repairing that needs a durable truncation anchor (the
-        AD-1278 AuditLog._truncated_at pattern), which needs schema or sidecar
-        state this concurrency fix is not allowed to add. Rehashing the
-        retained rows would forge the audit chain and is not an option. Tracked
-        separately; do not "fix" it by rehashing.
+        BF-942: only the head of the chain is deleted, and each stage that
+        deletes first records, in the same transaction, a truncation anchor
+        naming the last row it deletes (id and row_hash); verify_chain() starts
+        its walk there, so the kept rows verify as truncated, not broken at
+        their first row (the AD-1278 AuditLog._truncated_at pattern; BF-873
+        left this open, #1706). The age stage deletes the run of rows from the
+        head that are older than the cutoff, not every row with an old
+        timestamp: after a clock step back that would cut the middle. Kept rows
+        are never rewritten or rehashed, which would forge the chain.
         """
         if not self._db:
             return 0
@@ -1269,14 +1345,18 @@ class EventLog:
         # not interleave with log()'s BEGIN IMMEDIATE on this connection.
         async with self._write_lock:
             try:
-                # Age-based pruning
+                # Age-based pruning. BF-942: the head run of rows older than the
+                # cutoff, so a clock step back cannot make it cut the middle.
                 if retention_days > 0:
                     from datetime import timedelta
                     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-                    cursor = await self._db.execute(
-                        "DELETE FROM events WHERE timestamp < ?", (cutoff,)
+                    deleted += await self._delete_head(
+                        self._db,
+                        "SELECT id, row_hash FROM events WHERE id < "
+                        "COALESCE((SELECT id FROM events WHERE timestamp >= ? ORDER BY id ASC LIMIT 1), ?) "
+                        "ORDER BY id DESC LIMIT 1",
+                        (cutoff, _INT64_MAX),
                     )
-                    deleted += cursor.rowcount
 
                 # Row-count cap
                 if max_rows > 0:
@@ -1285,12 +1365,11 @@ class EventLog:
                     total = row[0] if row else 0
                     if total > max_rows:
                         excess = total - max_rows
-                        cursor = await self._db.execute(
-                            "DELETE FROM events WHERE id IN "
-                            "(SELECT id FROM events ORDER BY id ASC LIMIT ?)",
-                            (excess,)
+                        deleted += await self._delete_head(
+                            self._db,
+                            "SELECT id, row_hash FROM events ORDER BY id ASC LIMIT 1 OFFSET ?",
+                            (excess - 1,),
                         )
-                        deleted += cursor.rowcount
 
                 # BF-873: unconditional. DELETE opens an implicit transaction
                 # even when zero rows match, so committing only when
@@ -1307,13 +1386,31 @@ class EventLog:
 
         return deleted
 
+    async def _delete_head(self, db: DatabaseConnection, boundary_sql: str, params: tuple[Any, ...]) -> int:
+        """Anchor the boundary row, then delete every row up to it, in prune's transaction (BF-942).
+
+        ``boundary_sql`` selects ``(id, row_hash)`` of the last row to delete, or no row, and then nothing is
+        written. Returns the number of rows deleted.
+        """
+        async with db.execute(boundary_sql, params) as cursor:
+            boundary = await cursor.fetchone()
+        if boundary is None:
+            return 0
+        await db.execute(
+            "INSERT OR REPLACE INTO events_truncation_anchor (singleton, event_id, row_hash) VALUES (1, ?, ?)",
+            (boundary[0], boundary[1]),
+        )
+        cursor = await db.execute("DELETE FROM events WHERE id <= ?", (boundary[0],))
+        return cursor.rowcount
+
     async def wipe(self) -> None:
-        """Delete all events. Used by probos reset."""
+        """Delete all events and the truncation anchor (BF-942): the chain starts over at genesis."""
         if not self._db:
             return
         async with self._write_lock:
             try:
                 await self._db.execute("DELETE FROM events")
+                await self._db.execute("DELETE FROM events_truncation_anchor")
                 await self._db.commit()
             except BaseException as exc:
                 # BF-873: the DELETE already opened an implicit transaction;

@@ -157,9 +157,6 @@ async def test_a_cancelled_prune_leaves_no_open_transaction_and_no_anchor(tmp_pa
 
 
 class TestTheChainSurvivesAPrune:
-    # BF-942 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-942 M2 builds it")
-
     async def test_an_unpruned_chain_is_intact_and_an_edit_to_it_is_broken(self, tmp_path):
         async with _opened(tmp_path) as log:
             ids = await _fill(log, 5)
