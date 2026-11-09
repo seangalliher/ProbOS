@@ -1552,6 +1552,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L11 of the contract.
 - *Reversal.* Revert the BF-960 commits.
 
+### BF-945 -- The red team's http_fetch verifier applies the fetch agent's URL floor (2026-11-08, #1720)
+
+- *Scope.* `agents/http_fetch.py` (`vet_url`, `pin_kwargs`, `request_pinned`; two classmethods and a staticmethod), `agents/red_team.py` (`_verify_http_fetch`, `_host_of`), one constant of `tests/test_ad1346_admission_egress_sinks.py`, tests. Contract `prompts/bf-945-red-team-url-floor.md`.
+- *G1 (where).* Public functions in the fetch agent's module over its own methods. Rejected: the verifier's own pin (a second copy of BF-821); the bodies moved; `fetch_governed`.
+- *G2 (verdict).* `verified=not claimed.success`, as the method refusal in the same function (#1421); a floor that raises is `verified=False` (AD-1328 S2a). The WARNING names the host and the floor's reason with a scheme's value dropped (`urlparse` reads a schemeless `account:pw@host` as the scheme `account`). Rejected: `False` for both claims; `True` at low confidence; raising; changing the floor's strings (pinned by `test_bf743` and `test_bf821`).
+- *G3 (pin, egress).* The request goes to the approved addresses in order, to the next after a connect that was refused (as BF-821) or timed out (the verifier's `request_pinned`; `_request_pinned` is unchanged, its 8.0 s chain equals its connect timeout, so no time is left for a next address); no redirect is followed; the egress consult is the fetch agent's own policy, read where it reads it. Rejected: a setter on the red team; a constructor argument (the policy is built after the fleet); a runtime lookup (a policy the fetch agent does not enforce); widening `_request_pinned`.
+- *Residual.* L1 to L8 of the contract. *Reversal.* Revert the BF-945 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.

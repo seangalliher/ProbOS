@@ -70,6 +70,43 @@ class DomainRateState:
     consecutive_429s: int = 0
 
 
+def vet_url(url: str) -> PinnedTarget:
+    """BF-945: the fetch agent's judgement of a URL (the floor, then the egress consult) for a caller that is not the
+    fetch agent: the approved addresses or the refusal. It reads the policy the fetch agent reads."""
+    return HttpFetchAgent._validate_and_pin(url)
+
+
+def pin_kwargs(
+    logical: httpx.URL, addresses: tuple[str, ...]
+) -> list[tuple[httpx.URL, dict[str, str], dict[str, str]]]:
+    """BF-945: the fetch agent's pinned attempts (BF-821): connect to each approved address, speak to the name."""
+    return HttpFetchAgent._pin_kwargs(logical, addresses)
+
+
+async def request_pinned(
+    client: httpx.AsyncClient,
+    method: str,
+    attempts: list[tuple[httpx.URL, dict[str, str], dict[str, str]]],
+) -> httpx.Response:
+    """BF-945: the fetch agent's request over those attempts, each approved address in order (BF-821).
+
+    The fetch agent moves on only after a refused connection; the verifier also moves on after a connect that timed out,
+    as httpx's own connect did when it was handed the name. Any other error (a read, write or pool timeout) is not a
+    failed address and propagates, and so does the last address's error.
+    """
+    for url, headers, extensions in attempts[:-1]:
+        try:
+            return await HttpFetchAgent._request_pinned(client, method, [(url, headers, extensions)])
+        except httpx.ConnectError:
+            continue  # ``_request_pinned`` logged it (BF-821)
+        except httpx.ConnectTimeout:
+            logger.warning(
+                "BF-945: approved address %s timed out connecting for %s; trying the next approved address",
+                url.host, headers.get("Host", url.host),
+            )
+    return await HttpFetchAgent._request_pinned(client, method, attempts[-1:])
+
+
 class HttpFetchAgent(BaseAgent):
     """Concrete agent that fetches URLs via HTTP.
 
@@ -307,7 +344,8 @@ class HttpFetchAgent(BaseAgent):
             return error
         return self._check_egress(url)
 
-    def _check_egress(self, url: str) -> str | None:
+    @classmethod
+    def _check_egress(cls, url: str) -> str | None:  # BF-945: a classmethod, so ``vet_url`` needs no agent
         """AD-456b: Egress policy consultation (active enforcement).
 
         Defense in depth -- runs AFTER the scheme / host / private-address
@@ -319,7 +357,7 @@ class HttpFetchAgent(BaseAgent):
         Split out of :meth:`_validate_url` by BF-821 so the reason-only entry
         point and the pinning one apply the identical rule.
         """
-        policy = type(self)._egress_policy
+        policy = cls._egress_policy
         if policy is not None:
             try:
                 if not policy.is_allowed(url):
@@ -332,7 +370,8 @@ class HttpFetchAgent(BaseAgent):
 
         return None
 
-    def _validate_and_pin(self, url: str) -> PinnedTarget:
+    @classmethod
+    def _validate_and_pin(cls, url: str) -> PinnedTarget:  # BF-945: a classmethod, so ``vet_url`` needs no agent
         """The floor plus AD-456b egress, returning the addresses it approved.
 
         BF-821: ``_validate_url`` stays the reason-only entry point -- six tests
@@ -342,7 +381,7 @@ class HttpFetchAgent(BaseAgent):
         target = validate_and_pin_public_url(url)
         if target.reason is not None:
             return target
-        egress = self._check_egress(url)
+        egress = cls._check_egress(url)
         return PinnedTarget(egress) if egress else target
 
     async def fetch_governed(
@@ -719,8 +758,8 @@ class HttpFetchAgent(BaseAgent):
             for addr in addresses
         ]
 
+    @staticmethod  # BF-945: it reads no instance state
     async def _request_pinned(
-        self,
         client: httpx.AsyncClient,
         method: str,
         attempts: list[tuple[httpx.URL, dict[str, str], dict[str, str]]],

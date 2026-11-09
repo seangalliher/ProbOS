@@ -9,12 +9,13 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 from probos.admission.seam import check_at
 from probos.admission.taxonomy import EFFECT_EGRESS, EFFECT_SUBPROCESS
-from probos.agents.http_fetch import safe_fetch_method
+from probos.agents.http_fetch import pin_kwargs, request_pinned, safe_fetch_method, vet_url
 from probos.execution.command_env import build_command_env
 from probos.execution.command_gate import CommandPolicyGate
 from probos.execution.process_tree import ProcessTree, ProcessTreeSlot, process_tree_popen_kwargs
@@ -32,6 +33,21 @@ logger = logging.getLogger(__name__)
 # long past it the worker has to end the re-run's tree (the caller's wait is only a backstop).
 _RERUN_TIMEOUT_S = 5.0
 _RERUN_TEARDOWN_GRACE_S = 5.0
+
+
+def _host_of(url: Any) -> str:
+    """BF-945: the host of ``url`` for a log line (never credentials, path or query); ``-`` when there is none."""
+    try:
+        return urlparse(url).hostname or "-"
+    except (AttributeError, TypeError, ValueError):
+        return "-"
+
+
+def _reason_for_log(reason: str) -> str:
+    """BF-945: the floor's refusal reason for a log line. Every reason names the URL's host, an address or nothing,
+    except a scheme's, which names the scheme: ``urlparse`` reads the ``account`` of a schemeless
+    ``account:pw@host/path`` as one, so the value is dropped."""
+    return "Blocked scheme" if reason.startswith("Blocked scheme") else reason
 
 
 class RedTeamAgent(BaseAgent):
@@ -528,9 +544,41 @@ class RedTeamAgent(BaseAgent):
                 confidence=self.confidence,
             )
         check_at(getattr(getattr(self, "_runtime", None), "admission_service", None), effect=EFFECT_EGRESS, presented_id=None)  # AD-1346 M3e3b: the egress sink, in shadow; it blocks nothing (D164: no principal)
+        # BF-945: the fetch agent's floor, after the shadow check and before any request.
         try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                response = await client.request(method, url)
+            target = vet_url(url)
+        except Exception as error:  # BF-945: not judged, so not requested
+            logger.warning(
+                "BF-945: the URL floor could not judge %s (%s); not re-fetched, the claim is left unverified",
+                _host_of(url), type(error).__name__,
+            )
+            return VerificationResult(
+                verifier_id=self.id,
+                target_agent_id=target_agent_id,
+                intent_id=intent.id,
+                verified=False,
+                discrepancy="The URL floor could not judge the URL, so it was not re-fetched",
+                confidence=self.confidence,
+            )
+        if target.reason is not None:  # BF-945: refused, so nothing is requested
+            logger.warning(
+                "BF-945: the URL floor refused %s (%s); not re-fetched, the verdict rests on the refusal",
+                _host_of(url), _reason_for_log(target.reason),
+            )
+            return VerificationResult(
+                verifier_id=self.id,
+                target_agent_id=target_agent_id,
+                intent_id=intent.id,
+                verified=not claimed.success,  # BF-945: nothing was fetched
+                discrepancy=(
+                    "Agent claims success for a URL that the fetch floor refuses, so it was not re-fetched"
+                    if claimed.success else ""
+                ),
+                confidence=self.confidence,
+            )
+        try:
+            async with httpx.AsyncClient(timeout=4.0, follow_redirects=False) as client:  # BF-945: no hop, so no floor per hop
+                response = await request_pinned(client, method, pin_kwargs(httpx.URL(url), target.addresses))  # BF-945: pinned
 
             if not claimed.success:
                 self.update_confidence(True)
