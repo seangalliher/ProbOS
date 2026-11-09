@@ -1587,6 +1587,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *D6, D7 (no anchor; wipe).* A store pruned before this change reports `unanchored`, `(False, first_id)` as before, and the walk goes on from that row's own link so an edit behind it is found. Rejected: reporting `intact`; an anchor written at upgrade (it would bless today's head). `wipe` clears the anchor in its transaction.
 - *Residual.* L1 to L10 of the contract. *Reversal.* Revert the BF-942 commits (the table stays and is ignored).
 
+### BF-943 -- Agents cannot rewrite the Captain's governance, instruction and manifest files in the running checkout (2026-11-09, #1707)
+
+- *Scope.* `builder_paths.py` (`CAPTAIN_DOCUMENT_PATHS`, `captain_document_write_refusal`), the eight call sites of AD-1344's rule outside the builder, four AD-1344 tests, `deterministic-ship.md` (invariant 5), tests. Contract `prompts/bf-943-captain-document-write-refusal.md`.
+- *D1, D2 (set, roots).* The issue's 17 entries; canonical components; a directory entry names all below it; an absent name is named. Judged below the running checkout (above `constitution_path()`) and the writer's root, each as written and as resolved: `write_file`'s root is `<checkout>/src`. Rejected: more entries (L3); the writer's root alone; any tree; the working directory as a third root (L2).
+- *D3 to D6.* One function beside AD-1344's, called after it at its eight sites with each writer's error shape and a constant log line; a hard link to an existing document is found by a scan gated on `st_nlink != 1`; a sibling census (`_GUARDS` stays: it means any one of the rules). Not merged into AD-1344's or BF-911's rules.
+- *D8 (severity).* High: nothing between the DM loop and `WriteFileTool.invoke` compares a called tool with the offered set (T4); AD-548's hook is not on `DispatchToolExecutor` (unchanged).
+- *Residual.* L1 to L10 of the contract. *Reversal.* Revert the BF-943 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
