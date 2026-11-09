@@ -1560,6 +1560,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (pin, egress).* The request goes to the approved addresses in order, to the next after a connect that was refused (as BF-821) or timed out (the verifier's `request_pinned`; `_request_pinned` is unchanged, its 8.0 s chain equals its connect timeout, so no time is left for a next address); no redirect is followed; the egress consult is the fetch agent's own policy, read where it reads it. Rejected: a setter on the red team; a constructor argument (the policy is built after the fleet); a runtime lookup (a policy the fetch agent does not enforce); widening `_request_pinned`.
 - *Residual.* L1 to L8 of the contract. *Reversal.* Revert the BF-945 commits.
 
+### BF-961 -- The todo and scheduler agents refuse an intent whose stored list could not be read (2026-11-08, #1774)
+
+- *Scope.* `agents/utility/stored_list.py` (new), `agents/file_reader.py` (`FILE_NOT_FOUND_MARK`, `is_file_not_found`), `TodoAgent`, `SchedulerAgent` and the note agent's read, tests. Contract `prompts/bf-961-unreadable-stored-list.md`.
+- *G1 (missing or failed).* The reader's own `File not found:` text through one constant it owns; every other answer, and no answer, is a failure. Rejected: `stat_file` (the same shape); a reader-set `metadata` field (a wider change); an `exists()` probe by the agent (a second source of truth beside the read policy).
+- *G2 (the intent).* A shared `decide` ends the intent before the model: no model call, no write, `success` False. Rejected: running the model and refusing only the write; telling the model the list is unavailable; two copies.
+- *G3 (the note agent).* It reads through the helper, its text unchanged; a failed read still reads "not found" (no write depends on it). *G4 (the write).* `commit_write` is unchanged.
+- *Residual.* L1 to L8 of the contract. *Reversal.* Revert the BF-961 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
