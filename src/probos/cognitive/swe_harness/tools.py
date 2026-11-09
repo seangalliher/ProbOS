@@ -22,7 +22,7 @@ from typing import Any, TYPE_CHECKING
 
 from probos.admission.seam import check_at
 from probos.admission.taxonomy import EFFECT_SUBPROCESS
-from probos.cognitive.builder_paths import constitution_write_refusal
+from probos.cognitive.builder_paths import captain_document_write_refusal, constitution_write_refusal
 from probos.cognitive.standing_orders import (
     is_standing_order_name,
     standing_order_names,
@@ -1066,6 +1066,10 @@ class WriteFileTool:
             if refused is not None:
                 logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")
                 return ToolResult(error=refused)
+            refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: write_file
+            if refused is not None:
+                logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
+                return ToolResult(error=refused)
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: write_file
             if refused is not None:
                 logger.warning("BF-911 WriteFileTool refused operation=write_file reason_code=protected_write_refused")
@@ -1158,6 +1162,10 @@ class EditFileTool:
             refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file
             if refused is not None:
                 logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")
+                return ToolResult(error=refused)
+            refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: edit_file
+            if refused is not None:
+                logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
                 return ToolResult(error=refused)
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: edit_file
             if refused is not None:

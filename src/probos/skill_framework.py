@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 import aiosqlite
 
-from probos.cognitive.builder_paths import constitution_write_refusal
+from probos.cognitive.builder_paths import captain_document_write_refusal, constitution_write_refusal
 from probos.protocols import ConnectionFactory, DatabaseConnection
 from probos.security.file_access import protected_write_refusal
 from probos.substrate.skill_agent import SkillBasedAgent
@@ -211,6 +211,10 @@ class DocxAgent(SkillBasedAgent):
             if refused is not None:
                 logger.warning("AD-1344 DocxAgent refused: %s", refused)
                 raise PermissionError(refused)
+            refused = captain_document_write_refusal(str(target), Path.cwd())  # BF-943: docx_create
+            if refused is not None:
+                logger.warning("BF-943 DocxAgent refused operation=docx_create reason_code=captain_document_refused")
+                raise PermissionError(refused)
             refused = protected_write_refusal(str(target), runtime=self._runtime)  # BF-911: docx_create
             if refused is not None:
                 logger.warning("BF-911 DocxAgent refused operation=docx_create reason_code=protected_write_refused")
@@ -266,6 +270,10 @@ class DocxAgent(SkillBasedAgent):
         refused = constitution_write_refusal(str(source), Path.cwd())  # AD-1344: docx_revise
         if refused is not None:
             logger.warning("AD-1344 DocxAgent refused: %s", refused)
+            raise PermissionError(refused)
+        refused = captain_document_write_refusal(str(source), Path.cwd())  # BF-943: docx_revise
+        if refused is not None:
+            logger.warning("BF-943 DocxAgent refused operation=docx_revise reason_code=captain_document_refused")
             raise PermissionError(refused)
         refused = protected_write_refusal(str(source), runtime=self._runtime)  # BF-911: docx_revise
         if refused is not None:
@@ -418,6 +426,10 @@ class PptxAgent(SkillBasedAgent):
             if refused is not None:
                 logger.warning("AD-1344 PptxAgent refused: %s", refused)
                 raise PermissionError(refused)
+            refused = captain_document_write_refusal(str(target), Path.cwd())  # BF-943: pptx_create
+            if refused is not None:
+                logger.warning("BF-943 PptxAgent refused operation=pptx_create reason_code=captain_document_refused")
+                raise PermissionError(refused)
             refused = protected_write_refusal(str(target), runtime=self._runtime)  # BF-911: pptx_create
             if refused is not None:
                 logger.warning("BF-911 PptxAgent refused operation=pptx_create reason_code=protected_write_refused")
@@ -546,6 +558,10 @@ class XlsxAgent(SkillBasedAgent):
         refused = constitution_write_refusal(str(source), Path.cwd())  # AD-1344: xlsx_update
         if refused is not None:
             logger.warning("AD-1344 XlsxAgent refused: %s", refused)
+            raise PermissionError(refused)
+        refused = captain_document_write_refusal(str(source), Path.cwd())  # BF-943: xlsx_update
+        if refused is not None:
+            logger.warning("BF-943 XlsxAgent refused operation=xlsx_update reason_code=captain_document_refused")
             raise PermissionError(refused)
         refused = protected_write_refusal(str(source), runtime=self._runtime)  # BF-911: xlsx_update
         if refused is not None:

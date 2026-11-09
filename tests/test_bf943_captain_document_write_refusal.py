@@ -227,9 +227,6 @@ def test_census_the_captains_channels_do_not_consult_the_rule() -> None:
 
 
 class TestWhatTheBaseDoesNotRefuse:
-    # BF-943 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-943 M2 builds it")
-
     @pytest.mark.parametrize("spelling", [*_SPELLINGS, "absolute", "absolute without a root"])
     @pytest.mark.parametrize("member", (*_FILES, *_ABSENT))
     def test_the_rule_refuses_every_entry_in_every_spelling(self, checkout: Path, member: str, spelling: str) -> None:

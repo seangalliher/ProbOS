@@ -33,6 +33,12 @@ AD-1344 (#1596): ``constitution_write_refusal`` refuses a write to the Federatio
 Constitution (``standing_orders.CONSTITUTION_RELATIVE_PATH``); its docstring lists the
 cases. ``builder_write_refusal`` calls it, and so do the writers listed in
 ``tests/test_ad1344_constitution_write_refusal.py`` (``_EXPECTED_CALLERS``).
+
+BF-943 (#1707): ``captain_document_write_refusal`` refuses a write to an entry of ``CAPTAIN_DOCUMENT_PATHS`` (the
+Captain's standing orders and other governance files, instruction files, workflows and manifests) below the running
+checkout or the writer's root. The writers listed in ``tests/test_bf943_captain_document_write_refusal.py``
+(``_EXPECTED_CALLERS``) call it after AD-1344's rule. ``builder_write_refusal`` does not: a build runs in a linked
+worktree and reaches the checkout through the Captain's merge review.
 """
 
 from __future__ import annotations
@@ -40,7 +46,10 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import stat
 import unicodedata
+from collections.abc import Iterator, Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from probos.cognitive.standing_orders import CONSTITUTION_RELATIVE_PATH, constitution_path
@@ -191,6 +200,158 @@ def constitution_write_refusal(
             return _constitution_unverifiable(path, "target", exc)
         if os.path.samestat(current, constitution):
             return _constitution_refusal(path)
+    return None
+
+
+# BF-943 (#1707): the Captain's documents in a checkout: the orders, ontology, command policy and sealed list ProbOS loads,
+# the instruction files, workflows and CODEOWNERS the Captain's coding agents and CI load, and the manifests an install
+# reads. A trailing "/" names a directory and all below it; "*" matches within one component. An entry is judged below the
+# running checkout and below the writer's root: a copy in another tree is not named, and a name absent today is.
+CAPTAIN_DOCUMENT_PATHS = (
+    "config/standing_orders/",
+    "config/ontology/",
+    "config/command_policy/",
+    "config/sealed_modules.yaml",
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".claude/",
+    ".agents/",
+    ".codex/",
+    ".github/",
+    "pyproject.toml",
+    "uv.lock",
+    "requirements*.txt",
+    "ui/package.json",
+    "ui/package-lock.json",
+    "CODEOWNERS",
+    "docs/CODEOWNERS",
+)
+_CAPTAIN_DOCUMENT_PARTS = tuple(
+    tuple(_canonical(part) for part in entry.rstrip("/").split("/")) for entry in CAPTAIN_DOCUMENT_PATHS
+)
+_DOCUMENT_NOT_A_STR = "Captain document write refused (BF-943): the path is not an exact str, so it is not checked"
+
+
+def _captain_document_refusal(path_text: str) -> str:
+    return (
+        f"Captain document write refused (BF-943): {path_text!r} is one of the Captain's governance, instruction or "
+        "manifest files in a checkout (builder_paths.CAPTAIN_DOCUMENT_PATHS), which an agent does not write; standing "
+        "orders change through directives, and the other files through a build the Captain reviews"
+    )
+
+
+def _captain_document_unverifiable(path_text: str, stage: str, exc: BaseException) -> str:
+    return (
+        f"Captain document write refused (BF-943): cannot verify that {path_text!r} is not one of the Captain's "
+        f"documents ({stage}: {_exception_name(exc)})"
+    )
+
+
+def _running_checkout() -> Path:
+    """The project root the running vessel reads its standing orders from: the directory above ``config/standing_orders``."""
+    return Path(*constitution_path().parts[: -len(_CONSTITUTION_RELATIVE_PARTS)])
+
+
+def _document_component(name: str, expected: str) -> bool:
+    """Whether canonical *name* is an entry's component (``*`` globs) or an 8.3 short form with its first two characters."""
+    if fnmatchcase(name, expected):
+        return True
+    return _SHORT_NAME.search(name) is not None and name[:2] == expected.lstrip(".")[:2]  # a short name has no leading dot
+
+
+def _document_parts(absolute: Path) -> tuple[str, ...]:
+    """The anchor and components of an absolute path as the rule compares them: no Windows extended-length prefix, no ``:`` suffix, canonical."""
+    text = str(absolute)
+    if text[:8].upper() == "\\\\?\\UNC\\":
+        text = "\\\\" + text[8:]
+    elif text[:4] in ("\\\\?\\", "\\\\.\\"):
+        text = text[4:]
+    parts = Path(text).parts
+    names = (_canonical(part.split(":", 1)[0]) for part in parts[1:])
+    return (_canonical(parts[0]), *(name for name in names if name))
+
+
+def _names_a_document(target: Path, roots: Sequence[Path]) -> bool:
+    """Whether absolute *target* lies below one of the absolute *roots* at an entry of ``CAPTAIN_DOCUMENT_PATHS``."""
+    parts = _document_parts(target)
+    for root in roots:
+        top = _document_parts(root)
+        below = parts[len(top):]
+        if parts[: len(top)] == top and any(
+            len(below) >= len(entry) and all(_document_component(name, expected) for name, expected in zip(below, entry))
+            for entry in _CAPTAIN_DOCUMENT_PARTS
+        ):
+            return True
+    return False
+
+
+def _raise(exc: OSError) -> None:
+    raise exc
+
+
+def _document_files(root: Path) -> Iterator[Path]:
+    """Every existing file of an entry of ``CAPTAIN_DOCUMENT_PATHS`` below *root*; a link to a directory is not followed."""
+    for entry in CAPTAIN_DOCUMENT_PATHS:
+        for found in root.glob(entry.rstrip("/")):
+            if found.is_dir():
+                for directory, _names, files in os.walk(found, onerror=_raise):
+                    for name in files:
+                        yield Path(directory) / name
+            else:
+                yield found
+
+
+def _is_a_second_name_of_a_document(current: os.stat_result, roots: Sequence[Path]) -> bool:
+    """Whether *current* (an ``os.stat``) is that of an existing file of an entry below one of *roots*."""
+    for root in roots:
+        for document in _document_files(root):
+            try:
+                if os.path.samestat(current, os.stat(document)):
+                    return True
+            except (FileNotFoundError, NotADirectoryError):
+                continue  # gone since it was listed: nothing to alias
+    return False
+
+
+def captain_document_write_refusal(
+    path: str, root: str | os.PathLike[str] | None = None,
+) -> str | None:
+    """BF-943 (#1707): why an agent-reachable writer must not write *path*, or None if it may.
+
+    *path* is as the writer received it: relative to *root* (the working directory when None) or absolute. Refused, naming BF-943: a value
+    that is not an exact ``str``; a path that, as written or once resolved, lies below the running checkout (the directory above
+    ``constitution_path()``'s ``config/standing_orders``) or *root* at an entry of ``CAPTAIN_DOCUMENT_PATHS``, existing or not; an existing
+    regular file with more than one link that has the ``os.stat`` identity of an existing file of an entry; an ``OSError``, ``RuntimeError``
+    or ``ValueError`` while resolving, examining or listing. A document in another tree is not refused. Any other exception propagates.
+    """
+    if type(path) is not str:
+        return _DOCUMENT_NOT_A_STR
+    try:
+        writer_root = Path.cwd() if root is None else Path(root)
+        roots = [_running_checkout(), writer_root]
+        target = Path(path)
+        if not target.is_absolute():
+            target = writer_root / target
+        if _names_a_document(Path(os.path.abspath(target)), [Path(os.path.abspath(r)) for r in roots]):
+            return _captain_document_refusal(path)
+        resolved_roots = list(dict.fromkeys(r.resolve(strict=False) for r in roots))
+        if _names_a_document(target.resolve(strict=False), resolved_roots):
+            return _captain_document_refusal(path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _captain_document_unverifiable(path, "resolved", exc)
+    try:
+        current = os.stat(target)
+    except (FileNotFoundError, NotADirectoryError):
+        return None  # not on disk, so not a second name of an existing file
+    except (OSError, ValueError) as exc:
+        return _captain_document_unverifiable(path, "target", exc)
+    if not stat.S_ISREG(current.st_mode) or current.st_nlink == 1:
+        return None  # only a regular file with another name can be a second name of a document
+    try:
+        if _is_a_second_name_of_a_document(current, resolved_roots):
+            return _captain_document_refusal(path)
+    except (OSError, ValueError) as exc:
+        return _captain_document_unverifiable(path, "documents", exc)
     return None
 
 
