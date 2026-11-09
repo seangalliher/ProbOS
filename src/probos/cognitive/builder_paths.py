@@ -286,9 +286,17 @@ def _names_a_document(target: Path, roots: Sequence[Path]) -> bool:
     return False
 
 
+# A junction's reparse tag, IO_REPARSE_TAG_MOUNT_POINT's documented value (MS-FSCC 2.1.2.1). The ``stat`` module has that name on Windows builds
+# only, so the value is this module's own, as in ``probos.knowledge.records_snapshot`` (AD-1341 S6 A4).
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
+
 def _is_a_link(info: os.stat_result) -> bool:
-    """Whether an ``os.lstat`` is that of a symlink or, on Windows, of a junction (a mount point): a name a path can go through to somewhere else."""
-    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+    """Whether an ``os.lstat`` is that of a symlink or, on Windows, of a junction (a mount point): a name a path can go through to somewhere else.
+
+    It names nothing a POSIX build lacks: a POSIX status has no ``st_reparse_tag`` and is judged by its mode.
+    """
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == _IO_REPARSE_TAG_MOUNT_POINT
 
 
 def _resolve(path: Path) -> Path:

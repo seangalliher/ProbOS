@@ -4,13 +4,16 @@ The rule is ``builder_paths.captain_document_write_refusal``; the writers are ``
 office writers, run on a temporary layout in production's shape: the running checkout is ``<tmp>/checkout`` (``_DEFAULT_ORDERS_DIR`` points
 into it), ``swe_tools._PROJECT_ROOT`` is ``<checkout>/src``, the working directory is the checkout, the home directory is a temporary one.
 The class holds the cases the unfixed tree fails; the functions before it pass on both. No BF-943 name is imported: the rule is looked up
-once and, on the tree without it, refuses nothing.
+once and, on the tree without it, refuses nothing. Every case runs with the ``stat`` module a POSIX build has (``_the_rule_sees_a_posix_stat``,
+the swap of ``tests/posix_stat.py``), so a name that only a Windows build defines in it fails on any host.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,6 +27,7 @@ from probos.cognitive.swe_harness.tools import EditFileTool, WriteFileTool, regi
 from probos.skill_framework import DocxAgent, PptxAgent, XlsxAgent
 from probos.tools.registry import ToolRegistry
 from probos.types import IntentMessage
+from tests.posix_stat import _posix_stat
 from tests.test_ad1344_constitution_write_refusal import _CHANNEL_SUFFIXES, _build, _callee, _calls, _dir_link, _source, _tracked
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -63,6 +67,20 @@ def _real_documents_untouched():
     before = [(p.read_bytes(), os.stat(p).st_mode) for p in _REAL]
     yield
     assert [(p.read_bytes(), os.stat(p).st_mode) for p in _REAL] == before, "a real Captain document changed"
+
+
+_STAT_JUNCTION_TAG = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)  # the interpreter's own ``stat``, read here: a Windows build has it, a POSIX build does not
+
+
+@pytest.fixture(autouse=True)
+def _the_rule_sees_a_posix_stat():
+    """BF-943 A5 (round 5): the rule's module is shown the ``stat`` of a POSIX build in every case, on every host. The swap is for ``builder_paths.stat``
+    only (``tests/posix_stat.py``, moved there from AD-1341 S6's test modules): ``ntpath`` and ``shutil`` read the junction tag from the interpreter's own
+    ``stat`` on Windows. It has its own ``MonkeyPatch``, so a case's bare ``monkeypatch.undo()`` (T16) does not end it. The Linux CI found a Windows-only
+    name in the rule that no case here reached, because none ran without it."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(builder_paths, "stat", _posix_stat(), raising=False)  # raising=False: the tree without BF-943 imports no ``stat``
+        yield
 
 
 @pytest.fixture
@@ -450,6 +468,63 @@ class TestWhatTheBaseDoesNotRefuse:
             neighbour = _rule(str(tmp_path / "relative-neighbour.md"), checkout)
         assert asked and _refused(refused), "the relative target, read from checkout/config"
         assert neighbour is None, "a neighbour of it"
+
+    @pytest.mark.parametrize(
+        "kind", ["a regular file", "a directory", "a symlink", "a junction", "a reparse point that is no link"],
+    )
+    def test_a_link_is_told_by_its_status_where_the_stat_module_has_no_junction_tag(self, kind: str) -> None:
+        """T14m (A5, round 5): ``_is_a_link`` names nothing a POSIX build lacks. The ``stat`` module has ``IO_REPARSE_TAG_MOUNT_POINT`` on Windows builds
+        only, and the Linux CI of the pull request found the line that named it raising ``AttributeError`` for every file that is no symlink, so every
+        write that the rule's written and resolved names do not refuse was an error there (``_DOCUMENT_ERRORS`` does not hold it). The rule is shown a
+        POSIX ``stat`` in every case (the autouse fixture); the statuses are those a POSIX build gives (no ``st_reparse_tag``) and a Windows build gives
+        (a tag), so this runs the same on every host."""
+        statuses = {
+            "a regular file": (SimpleNamespace(st_mode=stat.S_IFREG | 0o644), False),
+            "a directory": (SimpleNamespace(st_mode=stat.S_IFDIR | 0o755), False),
+            "a symlink": (SimpleNamespace(st_mode=stat.S_IFLNK | 0o777), True),
+            "a junction": (SimpleNamespace(st_mode=stat.S_IFDIR | 0o777, st_reparse_tag=0xA0000003), True),
+            "a reparse point that is no link": (SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_reparse_tag=0x8000001B), False),  # an app execution alias
+        }
+        status, is_a_link = statuses[kind]
+        assert not hasattr(builder_paths.stat, "IO_REPARSE_TAG_MOUNT_POINT"), "premise: the rule is shown a stat without the name"
+        assert builder_paths._is_a_link(status) is is_a_link
+
+    @pytest.mark.skipif(_STAT_JUNCTION_TAG is None, reason="only a Windows build of stat has the name")
+    def test_the_rules_junction_tag_is_the_value_a_windows_stat_gives(self) -> None:
+        """T14n (A5): the rule's own constant is the documented value, as the real ``stat`` of a Windows build gives it."""
+        assert builder_paths._IO_REPARSE_TAG_MOUNT_POINT == _STAT_JUNCTION_TAG == 0xA0000003
+
+    @pytest.mark.parametrize("writer", [*_WRITERS, *_OFFICE])
+    async def test_every_writer_writes_a_neighbour_where_the_stat_module_has_no_junction_tag(
+        self, checkout: Path, writer: str, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """T14o (A5, round 5): T1's control across the seam, with its premises shown. Each writer writes a neighbour through the rule while ``stat`` is a
+        POSIX build's: the rule's module has no junction tag, and ``_is_a_link`` was asked about a name that is no link. The unfixed line raised there
+        and each writer answered with an error; a refusal case cannot say so, as ``_refused`` takes any BF-943 reason."""
+        judged: list[bool] = []
+        real = builder_paths._is_a_link
+
+        def asked(info):  # type: ignore[no-untyped-def]
+            judged.append(real(info))
+            return judged[-1]
+
+        monkeypatch.setattr(builder_paths, "_is_a_link", asked)
+        assert not hasattr(builder_paths.stat, "IO_REPARSE_TAG_MOUNT_POINT"), "premise: the rule is shown a stat without the name"
+        target = checkout / "docs" / ("n.docx" if writer == "docx_revise" else "n.xlsx" if writer == "xlsx_update" else "notes.md")
+        if writer in _OFFICE:
+            _office_file(target)
+        written, error = await _call(writer, str(target))
+        assert written, error
+        assert False in judged, "premise: the rule asked about a name that is no link"
+
+    @pytest.mark.parametrize(
+        "module", ["cognitive/builder_paths.py", "agents/file_writer.py", "skill_framework.py", "cognitive/swe_harness/tools.py"],
+    )
+    def test_no_module_the_rule_touches_spells_a_windows_only_stat_attribute(self, module: str) -> None:
+        """T14p (A5, as AD-1341 S6's X18): the source of the four modules BF-943 edits spells no attribute of ``stat`` that only a Windows build has,
+        in code or in a comment. A scan of the text: the cases above run the rule's module only."""
+        text = (_REPO / "src" / "probos" / module).read_text(encoding="utf-8-sig")
+        assert re.search(r"\bstat\.(IO_REPARSE_TAG_|FILE_ATTRIBUTE_)|\bst_file_attributes\b", text) is None, module
 
     @pytest.mark.skipif(os.name != "nt", reason="the denied query is the Windows final-path query")
     def test_an_entry_that_is_no_link_is_not_resolved_so_an_unreadable_one_refuses_nothing_else(
