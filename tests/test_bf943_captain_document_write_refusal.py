@@ -10,6 +10,7 @@ once and, on the tree without it, refuses nothing.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -265,17 +266,228 @@ class TestWhatTheBaseDoesNotRefuse:
         _dir_link(checkout / ".codex", checkout.parent / "codex-target")
         assert _refused(_rule(".codex/config.toml", checkout)), "the written form of a document directory that is a link"
 
-    @pytest.mark.skipif(os.name != "nt", reason="8.3 aliases and extended-length paths are Windows forms")
-    def test_a_real_8_3_alias_and_an_extended_length_path_are_refused(self, checkout: Path) -> None:
-        """T15: Windows only (this host, not the Linux CI): resolution expands a real alias; the extended-length prefix is dropped."""
+    def test_the_other_name_of_a_document_directory_that_is_a_link_is_refused(self, checkout: Path, tmp_path: Path) -> None:
+        """T14b (A1, F1): a document directory that is itself a link is also its target's name, under the checkout's root and a writer's."""
+        orders = tmp_path / "orders-real"
+        shutil.move(str(checkout / "config" / "standing_orders"), str(orders))
+        _dir_link(checkout / "config" / "standing_orders", orders)
+        assert (checkout / "config" / "standing_orders").resolve() == orders.resolve() and (orders / "ship.md").is_file(), "premise: a link"
+        for name in ("ship.md", "new.md", "crew_profiles/_default.yaml"):
+            assert _refused(_rule(str(orders / name), checkout)), name
+        assert _refused(_rule(str(orders / "ship.md"), checkout / "src")), "from the SWE root"
+        assert _rule(str(tmp_path / "orders-real.md"), checkout) is None, "a neighbour of the target"
+        workflows, elsewhere = tmp_path / "gh-real", tmp_path / "elsewhere"
+        workflows.mkdir()
+        elsewhere.mkdir()
+        _dir_link(elsewhere / ".github", workflows)
+        assert (elsewhere / ".github").resolve() == workflows.resolve(), "premise: the writer's own entry is a link"
+        assert _refused(_rule(str(workflows / "ci.yml"), elsewhere)), "under the writer's root"
+
+    def test_a_link_inside_a_document_directory_is_not_followed(self, checkout: Path) -> None:
+        """T14c (A1, F3): a link to a directory inside an entry is not entered: a loop does not stop a neighbour, and a workflow's alias is found."""
+        _dir_link(checkout / ".github" / "loop", checkout / ".github")
+        assert (checkout / ".github" / "loop").resolve() == (checkout / ".github").resolve(), "premise: the link leads to its own parent"
+        assert _rule(str(_link(checkout / "docs" / "notes.md", checkout / "docs" / "again.md")), checkout) is None
+        assert _refused(_rule(str(_link(checkout / ".github" / "workflows" / "ci.yml", checkout / "docs" / "ci.md")), checkout))
+
+    @pytest.mark.skipif(os.name != "nt", reason="the denied query is the Windows final-path query")
+    def test_a_link_whose_final_path_cannot_be_queried_is_refused_not_taken_as_resolved(
+        self, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """T14d (A2, R2-1): where a deny ACE on a link refuses the query of its final path (winerror 5), ``Path.resolve(strict=False)`` answers with
+        the link's own name; the rule refuses a write through the target of an entry that is such a link, and through a path that goes through one."""
+        import ntpath
+
+        github, orders, up = tmp_path / "gh-real", checkout / "config" / "standing_orders", checkout / "docs" / "up"
+        github.mkdir()
+        (github / "member.txt").write_text("x\n", encoding="utf-8")
+        shutil.rmtree(checkout / ".github")
+        _dir_link(checkout / ".github", github)
+        _dir_link(up, orders)
+        assert (checkout / ".github").resolve() == github.resolve() and up.resolve() == orders.resolve(), "premise: two links"
+        assert _refused(_rule(str(github / "member.txt"), checkout)) and _refused(_rule("docs/up/new.md", checkout)), "premise: refused while they resolve"
+        denied = {os.path.normcase(str(checkout / ".github")), os.path.normcase(str(up))}
+
+        def denying(real):  # type: ignore[no-untyped-def]
+            def query(path):  # type: ignore[no-untyped-def]
+                if os.path.normcase(os.fspath(path)).removeprefix("\\\\?\\") in denied:
+                    raise OSError(13, "denied by the test", None, 5)
+                return real(path)
+
+            return query
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ntpath, "_getfinalpathname", denying(ntpath._getfinalpathname))
+            patch.setattr(ntpath, "_nt_readlink", denying(ntpath._nt_readlink))
+            assert os.path.normcase(os.path.realpath(str(up))) == os.path.normcase(str(up)), "premise: the non-strict answer is the link's own name"
+            through_entry = _rule(str(github / "member.txt"), checkout)
+            through_path = _rule("docs/up/new.md", checkout)
+        assert _refused(through_entry) and "(entries: PermissionError)" in through_entry, through_entry
+        assert _refused(through_path) and "(resolved: PermissionError)" in through_path, through_path
+
+    def test_a_link_whose_target_is_gone_is_followed_as_far_as_it_goes(self, checkout: Path, tmp_path: Path) -> None:
+        """T14e (A2): an entry that is a link to a directory that is gone has that directory's name too: making the directory would make it live."""
+        gone = tmp_path / "codex-gone"
+        gone.mkdir()
+        _dir_link(checkout / ".codex", gone)
+        gone.rmdir()
+        assert os.path.lexists(checkout / ".codex") and not gone.exists(), "premise: a link to a directory that is gone"
+        assert _refused(_rule(str(gone / "config.toml"), checkout)), "through the name of the missing target"
+        assert _rule(str(tmp_path / "codex-gone-notes.md"), checkout) is None, "a neighbour of the target"
+
+    def test_a_name_that_is_not_there_yet_is_kept_after_a_link_to_the_checkout(self, checkout: Path) -> None:
+        """T14f (A2): the part of a path that does not exist is judged after the part that does: a link to the checkout, then a name no entry has yet."""
+        _dir_link(checkout / "docs" / "up", checkout)
+        assert (checkout / "docs" / "up").resolve() == checkout.resolve(), "premise: a link to the checkout"
+        for name in ("AGENTS.md", ".agents/skills/x.md", "CODEOWNERS", "docs/CODEOWNERS"):
+            assert _refused(_rule("docs/up/" + name, checkout)), name
+        assert _rule("docs/up/docs/notes2.md", checkout) is None, "a neighbour through the same link"
+
+    @pytest.mark.skipif(os.name != "nt", reason="a drive that is not there is a Windows case")
+    def test_a_path_on_a_drive_that_is_not_there_is_judged_as_written(self, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """T14h (A2, A3): where not even the root of a path exists, no link is on it: it is judged by its names, and the writer's own error follows.
+        The drive is a letter that is not in use; the host is simulated (its final-path query, ``lstat`` and ``stat`` are answered here, so the filesystem
+        is never asked about the name and no network is used)."""
+        import ntpath
+
+        letter = next((c for c in "ZYXWVUTSRQPONM" if not os.path.exists(c + ":\\")), None)
+        if letter is None:
+            pytest.skip("every probe drive letter is in use")
+        assert _rule(f"{letter}:\\no-such-drive\\x.md", checkout) is None, "a neighbour, not a refusal for what cannot be resolved"
+        asked = []
+
+        def absent(real):  # type: ignore[no-untyped-def]
+            def query(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+                if os.fspath(path).startswith("\\\\no-such-host-bf943"):
+                    asked.append(os.fspath(path))
+                    raise FileNotFoundError(2, "no such host (simulated)", None, 53)
+                return real(path, *args, **kwargs)
+
+            return query
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ntpath, "_getfinalpathname", absent(ntpath._getfinalpathname))
+            patch.setattr(builder_paths.os, "lstat", absent(os.lstat))
+            patch.setattr(builder_paths.os, "stat", absent(os.stat))
+            host = _rule("\\\\no-such-host-bf943\\share\\x.md", checkout)
+        assert asked and host is None, "the same for a host that is not there (the answer came from the simulated absence)"
+
+    def test_a_link_whose_missing_target_is_reached_through_another_link_is_followed_to_its_real_place(
+        self, checkout: Path, tmp_path: Path,
+    ) -> None:
+        """T14i (A3, F1): an entry that is a link to a directory that is gone, by a path that goes through another link, has the real place of that
+        path too: following the link only as far as it goes left the second link unfollowed."""
+        real, hop = tmp_path / "agents-real", tmp_path / "agents-hop"
+        (real / "gone").mkdir(parents=True)
+        _dir_link(hop, real)
+        _dir_link(checkout / ".agents", hop / "gone")
+        (real / "gone").rmdir()
+        assert os.path.lexists(checkout / ".agents") and not (real / "gone").exists() and hop.resolve() == real.resolve(), "premise: the layout"
+        assert _refused(_rule(str(real / "gone" / "skill.md"), checkout)), "the real place of the missing target"
+        assert _refused(_rule(str(hop / "gone" / "skill.md"), checkout)), "the stored place of the missing target"
+        assert _rule(str(real / "other.md"), checkout) is None, "a neighbour"
+
+    def test_a_dangling_link_whose_stored_target_cannot_be_read_refuses_the_write(
+        self, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """T14j (A3, F1): ``os.readlink`` is how a link whose target is gone is followed; a denied read refuses (``entries``) and is not answered
+        with the link's own name."""
+        gone, asked = tmp_path / "scratch-gone", []
+        gone.mkdir()
+        _dir_link(checkout / ".codex", gone)
+        gone.rmdir()
+        real = os.readlink
+
+        def readlink(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == ".codex":
+                asked.append(True)
+                raise PermissionError(13, "denied")
+            return real(path, *args, **kwargs)
+
+        assert _rule(str(tmp_path / "other.md"), checkout) is None, "premise: allowed while the link can be read"
+        with monkeypatch.context() as patch:
+            patch.setattr(builder_paths.os, "readlink", readlink)
+            refusal = _rule(str(tmp_path / "other.md"), checkout)
+        assert asked and _refused(refusal) and "(entries: PermissionError)" in refusal, refusal
+
+    def test_a_name_that_exists_but_is_called_absent_and_is_no_link_is_refused(
+        self, checkout: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """T14k (A3): where resolution says that a name is not there but it is, and it is no link to follow, the rule does not guess: it refuses."""
+        real = Path.resolve
+
+        def resolve(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if self.name == "notes.md" and kwargs.get("strict"):
+                raise FileNotFoundError(2, "not found (simulated)")
+            return real(self, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "resolve", resolve)
+            refusal = _rule("docs/notes.md", checkout)
+        assert _refused(refusal) and "(resolved: FileNotFoundError)" in refusal, refusal
+
+    def test_a_stored_target_that_is_relative_is_read_from_the_links_own_directory(
+        self, checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """T14l (A3): a symlink stores a relative target, and it is read from the directory the link is in, not from the working directory (a
+        junction stores an absolute one, so the stored value is replaced here)."""
+        shutil.rmtree(checkout / "config" / "ontology")
+        gone, asked = tmp_path / "ontology-gone", []
+        gone.mkdir()
+        _dir_link(checkout / "config" / "ontology", gone)
+        gone.rmdir()
+        real = os.readlink
+
+        def readlink(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == "ontology":
+                asked.append(True)
+                return os.path.join("..", "..", "relative-target")  # from checkout/config: tmp_path/relative-target
+            return real(path, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(builder_paths.os, "readlink", readlink)
+            refused = _rule(str(tmp_path / "relative-target" / "x.md"), checkout)
+            neighbour = _rule(str(tmp_path / "relative-neighbour.md"), checkout)
+        assert asked and _refused(refused), "the relative target, read from checkout/config"
+        assert neighbour is None, "a neighbour of it"
+
+    @pytest.mark.skipif(os.name != "nt", reason="the denied query is the Windows final-path query")
+    def test_an_entry_that_is_no_link_is_not_resolved_so_an_unreadable_one_refuses_nothing_else(
+        self, checkout: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """T14g (A2): a document that cannot be queried but is no link (a read-denied ``CLAUDE.md``) stays where it is: refused by name, and no
+        ordinary write is refused for it."""
+        import ntpath
+
+        entry, real = os.path.normcase(str(checkout / "CLAUDE.md")), ntpath._getfinalpathname
+
+        def query(path):  # type: ignore[no-untyped-def]
+            if os.path.normcase(os.fspath(path)).removeprefix("\\\\?\\") == entry:
+                raise OSError(13, "denied by the test", None, 5)
+            return real(path)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ntpath, "_getfinalpathname", query)
+            assert _rule("docs/notes.md", checkout) is None, "an ordinary write"
+            assert _refused(_rule("CLAUDE.md", checkout)), "the document itself, by name"
+
+    @pytest.mark.skipif(os.name != "nt", reason="8.3 aliases are a Windows form")
+    def test_a_real_8_3_alias_is_refused(self, checkout: Path) -> None:
+        """T15a (A1, F6): Windows only (this host, not the Linux CI), and only on a volume that makes short names (C: here, not G:)."""
         import ctypes
 
+        orders = checkout / "config" / "standing_orders"
         buffer = ctypes.create_unicode_buffer(1024)
-        if not ctypes.windll.kernel32.GetShortPathNameW(str(checkout / "config" / "standing_orders"), buffer, 1024):
-            pytest.skip("8.3 names are not available on this volume")
+        if not ctypes.windll.kernel32.GetShortPathNameW(str(orders), buffer, 1024) or buffer.value.lower() == str(orders).lower():
+            pytest.skip("this volume does not make 8.3 names")
+        assert "~" in Path(buffer.value).name and os.path.samefile(buffer.value, orders), "premise: a real alias of the directory"
         assert _refused(_rule(str(Path(buffer.value) / "new.md"), checkout)), buffer.value
+
+    @pytest.mark.skipif(os.name != "nt", reason="extended-length paths are a Windows form")
+    def test_an_extended_length_path_is_refused(self, checkout: Path) -> None:
+        """T15b: Windows only: the extended-length prefix is dropped, and the extended UNC form names the same share."""
         assert _refused(_rule("\\\\?\\" + str(checkout / "CLAUDE.md"), checkout))
-        parts = builder_paths._document_parts  # a pure function: the extended UNC form names the same share
+        parts = builder_paths._document_parts  # a pure function
         assert parts(Path("\\\\?\\UNC\\host\\share\\a\\CLAUDE.md")) == parts(Path("\\\\host\\share\\a\\CLAUDE.md"))
 
     def test_a_path_that_cannot_be_resolved_or_examined_is_refused(self, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -304,6 +516,99 @@ class TestWhatTheBaseDoesNotRefuse:
         assert _refused(resolved) and "(resolved: ValueError)" in resolved
         assert _refused(target) and "(target: PermissionError)" in target
         assert _refused(documents) and "(documents: PermissionError)" in documents
+
+    @pytest.mark.parametrize(
+        ("unlistable", "stage"), [(".", "entries"), (".github", "documents"), ("config/standing_orders", "documents")],
+    )
+    def test_a_directory_that_cannot_be_listed_refuses_the_write_instead_of_being_skipped(
+        self, checkout: Path, monkeypatch: pytest.MonkeyPatch, unlistable: str, stage: str,
+    ) -> None:
+        """T16b (A1, F2; A2): a root is listed, for ``requirements*.txt``, by every call that neither its written nor its resolved name refuses
+        (stage ``entries``); a document directory is scanned only for a write to a file with another name (stage ``documents``); a listing that fails
+        refuses, at its own stage."""
+        alias = _link(checkout / "requirements-dev.txt", checkout / "docs" / "alias.md")
+        assert _refused(_rule(str(alias), checkout)), "premise: the alias is refused while everything lists"
+        real, denied = os.scandir, (checkout / unlistable).resolve()
+
+        def scandir(path="."):  # type: ignore[no-untyped-def]
+            if Path(path).resolve() == denied:
+                raise PermissionError(13, "denied")
+            return real(path)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(builder_paths.os, "scandir", scandir)
+            refusal = _rule(str(alias), checkout)
+            ordinary = _rule("docs/notes.md", checkout)
+        assert _refused(refusal) and f"({stage}: PermissionError)" in refusal, refusal
+        assert (ordinary is None) == (stage == "documents"), "a root that cannot be listed refuses an ordinary write; a document directory does not"
+
+    @pytest.mark.parametrize("stage", ["resolved", "entries", "target", "scan"])
+    @pytest.mark.parametrize(
+        "error", [PermissionError(13, "denied"), RuntimeError("loop"), ValueError("embedded null")], ids=lambda e: type(e).__name__,
+    )
+    def test_an_oserror_a_runtimeerror_and_a_valueerror_are_each_refused_at_each_stage(
+        self, checkout: Path, monkeypatch: pytest.MonkeyPatch, stage: str, error: Exception,
+    ) -> None:
+        """T16c (A1, F4; A2, R2-2): the docstring's three classes are each refused by the handler of the resolution, of the entries' places, of the
+        target's ``os.stat`` and of the identity scan, and the reason names the stage; each injection is shown to have fired, at its own stage."""
+        _link(checkout / "docs" / "notes.md", checkout / "docs" / "again.md")
+        raised, armed = [], []
+        real_resolve, real_stat, real_locations = Path.resolve, os.stat, builder_paths._document_locations
+
+        def fail(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raised.append(stage)
+            raise error
+
+        def resolve(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return fail() if self.name == "probe.md" else real_resolve(self, *args, **kwargs)
+
+        def locations(*args, **kwargs):  # type: ignore[no-untyped-def]
+            armed.append(True)  # the resolution is over: only the target's own stat comes next
+            return real_locations(*args, **kwargs)
+
+        def stat(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+            return fail() if armed and Path(path).name == "notes.md" else real_stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            if stage == "resolved":
+                patch.setattr(Path, "resolve", resolve)
+            elif stage == "entries":
+                patch.setattr(builder_paths, "_document_locations", fail)
+            elif stage == "target":
+                patch.setattr(builder_paths, "_document_locations", locations)
+                patch.setattr(builder_paths.os, "stat", stat)
+            else:
+                patch.setattr(builder_paths, "_is_a_second_name_of_a_document", fail)
+            refusal = _rule("docs/" + {"resolved": "probe.md", "scan": "again.md"}.get(stage, "notes.md"), checkout)
+        assert raised == [stage], "premise: the injection fired once, at its own stage"
+        named = {"entries": "entries", "scan": "documents"}.get(stage, stage)
+        assert _refused(refusal) and f"({named}: {type(error).__name__})" in refusal, refusal
+
+    def test_an_entry_that_cannot_be_examined_refuses_every_write(self, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """T16d (A1, F2): an entry whose existence cannot be told is not taken to be absent."""
+        assert _rule("docs/notes.md", checkout) is None, "premise: allowed while every entry can be examined"
+        real = os.lstat
+
+        def lstat(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if Path(path).name == "CLAUDE.md":
+                raise PermissionError(13, "denied")
+            return real(path, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(builder_paths.os, "lstat", lstat)
+            refusal = _rule("docs/notes.md", checkout)
+        assert _refused(refusal) and "(entries: PermissionError)" in refusal, refusal
+
+    def test_any_other_exception_propagates(self, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """T16e (A1): the rule refuses on the three classes and swallows nothing else."""
+
+        def resolve(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            raise KeyError("not a refusal")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, "resolve", resolve)
+            with pytest.raises(KeyError):
+                _rule("docs/notes.md", checkout)
 
     def test_a_value_that_is_not_an_exact_str_is_refused(self, checkout: Path) -> None:
         """T17: the type is compared first (AD-1344's D14)."""

@@ -230,6 +230,7 @@ _CAPTAIN_DOCUMENT_PARTS = tuple(
     tuple(_canonical(part) for part in entry.rstrip("/").split("/")) for entry in CAPTAIN_DOCUMENT_PATHS
 )
 _DOCUMENT_NOT_A_STR = "Captain document write refused (BF-943): the path is not an exact str, so it is not checked"
+_DOCUMENT_ERRORS = (OSError, RuntimeError, ValueError)  # what the rule refuses on; any other exception propagates
 
 
 def _captain_document_refusal(path_text: str) -> str:
@@ -285,26 +286,121 @@ def _names_a_document(target: Path, roots: Sequence[Path]) -> bool:
     return False
 
 
-def _raise(exc: OSError) -> None:
-    raise exc
+def _is_a_link(info: os.stat_result) -> bool:
+    """Whether an ``os.lstat`` is that of a symlink or, on Windows, of a junction (a mount point): a name a path can go through to somewhere else."""
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
 
 
-def _document_files(root: Path) -> Iterator[Path]:
-    """Every existing file of an entry of ``CAPTAIN_DOCUMENT_PATHS`` below *root*; a link to a directory is not followed."""
-    for entry in CAPTAIN_DOCUMENT_PATHS:
-        for found in root.glob(entry.rstrip("/")):
-            if found.is_dir():
-                for directory, _names, files in os.walk(found, onerror=_raise):
-                    for name in files:
-                        yield Path(directory) / name
-            else:
-                yield found
+def _resolve(path: Path) -> Path:
+    """*path*, absolute, with every link in its existing part followed.
+
+    A name that is not there is kept as written, with what follows it. A link whose target is not there is followed through the target it stores,
+    which is resolved the same way. Any other failure to resolve (a denied query, a loop, a link that cannot be read) is raised:
+    ``Path.resolve(strict=False)`` answers such a failure with the unresolved name, which the rule must not take for an answer.
+    """
+    probe = path if path.is_absolute() else Path.cwd() / path
+    tail: list[str] = []
+    while True:
+        try:
+            resolved = probe.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError):
+            try:
+                info = os.lstat(probe)
+            except (FileNotFoundError, NotADirectoryError):
+                if probe.parent == probe:  # not even the root is there, so no link is on the path
+                    return Path(os.path.normpath(probe.joinpath(*reversed(tail))))
+                tail.append(probe.name)
+                probe = probe.parent
+                continue
+            if not _is_a_link(info):
+                raise  # there, and no link to follow: not a case to guess at
+            stored = Path(os.readlink(probe))  # a link whose target is not there
+            resolved = _resolve(stored if stored.is_absolute() else _resolve(probe.parent) / stored)
+        return Path(os.path.normpath(resolved.joinpath(*reversed(tail))))
 
 
-def _is_a_second_name_of_a_document(current: os.stat_result, roots: Sequence[Path]) -> bool:
-    """Whether *current* (an ``os.stat``) is that of an existing file of an entry below one of *roots*."""
-    for root in roots:
-        for document in _document_files(root):
+def _listing(directory: Path) -> list[str]:
+    """The names in *directory*: none if it is not there; any other failure to list it is raised, not skipped."""
+    try:
+        with os.scandir(directory) as entries:
+            return [entry.name for entry in entries]
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
+def _existing(directory: Path, parts: Sequence[str], linked: bool = False) -> Iterator[tuple[Path, bool]]:
+    """Each existing path below *directory* that the components *parts* of an entry name, with whether a link is among the names it goes through.
+
+    ``*`` matches within one component. A name that is a symlink or a junction makes everything below it ``linked``.
+    """
+    head, rest = parts[0], parts[1:]
+    if "*" in head:
+        names = [name for name in _listing(directory) if fnmatchcase(_canonical(name), _canonical(head))]
+    else:
+        names = [head]
+    for name in names:
+        candidate = directory / name
+        try:
+            through = linked or _is_a_link(os.lstat(candidate))
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # not there; any other failure to examine it is raised, not skipped
+        if rest:
+            yield from _existing(candidate, rest, through)
+        else:
+            yield candidate, through
+
+
+def _document_locations(roots: Sequence[Path]) -> list[Path]:
+    """Where each existing entry of ``CAPTAIN_DOCUMENT_PATHS`` below one of the resolved *roots* really is.
+
+    An entry that is itself a link, or goes through one (a junction, a symlink), has its target's name too, and the Captain's tools load it by
+    either: its place is resolved, and a failure to resolve it is raised. An entry that goes through no link is where the root and its names are.
+    """
+    return [
+        _resolve(found) if linked else found
+        for root in roots
+        for entry in CAPTAIN_DOCUMENT_PATHS
+        for found, linked in _existing(root, entry.rstrip("/").split("/"))
+    ]
+
+
+def _lies_at(resolved: Path, locations: Sequence[Path]) -> bool:
+    """Whether the resolved path is one of the *locations*, or lies below one."""
+    parts = _document_parts(resolved)
+    return any(parts[: len(top)] == top for top in map(_document_parts, locations))
+
+
+def _files_below(location: Path) -> Iterator[str]:
+    """Every file below the directory *location*; a failure to list a directory is raised, and a symlink or junction to a directory is not entered."""
+    pending = [os.fspath(location)]
+    while pending:
+        try:
+            entries = os.scandir(pending.pop())
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # gone since it was found: nothing to alias
+        with entries:
+            for entry in entries:
+                if entry.is_symlink() or entry.is_junction():
+                    if not entry.is_dir():
+                        yield entry.path  # a link to a file, or a dangling one: os.stat follows it or finds it gone
+                elif entry.is_dir():
+                    pending.append(entry.path)
+                else:
+                    yield entry.path
+
+
+def _is_a_second_name_of_a_document(current: os.stat_result, locations: Sequence[Path]) -> bool:
+    """Whether *current* (an ``os.stat``) is that of an existing file at, or below, one of the *locations*."""
+    for location in locations:
+        try:
+            info = os.stat(location)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # a link whose target is gone: nothing to alias
+        if not stat.S_ISDIR(info.st_mode):
+            if os.path.samestat(current, info):
+                return True
+            continue
+        for document in _files_below(location):
             try:
                 if os.path.samestat(current, os.stat(document)):
                     return True
@@ -320,9 +416,12 @@ def captain_document_write_refusal(
 
     *path* is as the writer received it: relative to *root* (the working directory when None) or absolute. Refused, naming BF-943: a value
     that is not an exact ``str``; a path that, as written or once resolved, lies below the running checkout (the directory above
-    ``constitution_path()``'s ``config/standing_orders``) or *root* at an entry of ``CAPTAIN_DOCUMENT_PATHS``, existing or not; an existing
-    regular file with more than one link that has the ``os.stat`` identity of an existing file of an entry; an ``OSError``, ``RuntimeError``
-    or ``ValueError`` while resolving, examining or listing. A document in another tree is not refused. Any other exception propagates.
+    ``constitution_path()``'s ``config/standing_orders``) or *root* at an entry of ``CAPTAIN_DOCUMENT_PATHS``, existing or not; a path that,
+    once resolved, is or lies below where an existing entry really is (an entry that is a link has its target's name too); an existing
+    regular file with more than one link that has the ``os.stat`` identity of an existing file at or below an entry (a link to a directory
+    inside an entry is not followed); an ``OSError``, ``RuntimeError`` or ``ValueError`` while resolving (a link that cannot be followed is an
+    error, not a name taken as written), examining or listing. A document
+    in another tree is not refused. Any other exception propagates.
     """
     if type(path) is not str:
         return _DOCUMENT_NOT_A_STR
@@ -334,23 +433,31 @@ def captain_document_write_refusal(
             target = writer_root / target
         if _names_a_document(Path(os.path.abspath(target)), [Path(os.path.abspath(r)) for r in roots]):
             return _captain_document_refusal(path)
-        resolved_roots = list(dict.fromkeys(r.resolve(strict=False) for r in roots))
-        if _names_a_document(target.resolve(strict=False), resolved_roots):
+        resolved_roots = list(dict.fromkeys(_resolve(r) for r in roots))
+        resolved = _resolve(target)
+        if _names_a_document(resolved, resolved_roots):
             return _captain_document_refusal(path)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except _DOCUMENT_ERRORS as exc:
         return _captain_document_unverifiable(path, "resolved", exc)
+    try:
+        locations = _document_locations(resolved_roots)
+        at_an_entry = _lies_at(resolved, locations)
+    except _DOCUMENT_ERRORS as exc:
+        return _captain_document_unverifiable(path, "entries", exc)
+    if at_an_entry:
+        return _captain_document_refusal(path)
     try:
         current = os.stat(target)
     except (FileNotFoundError, NotADirectoryError):
         return None  # not on disk, so not a second name of an existing file
-    except (OSError, ValueError) as exc:
+    except _DOCUMENT_ERRORS as exc:
         return _captain_document_unverifiable(path, "target", exc)
     if not stat.S_ISREG(current.st_mode) or current.st_nlink == 1:
         return None  # only a regular file with another name can be a second name of a document
     try:
-        if _is_a_second_name_of_a_document(current, resolved_roots):
+        if _is_a_second_name_of_a_document(current, locations):
             return _captain_document_refusal(path)
-    except (OSError, ValueError) as exc:
+    except _DOCUMENT_ERRORS as exc:
         return _captain_document_unverifiable(path, "documents", exc)
     return None
 
