@@ -1568,6 +1568,15 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (the note agent).* It reads through the helper, its text unchanged; a failed read still reads "not found"; no code writes what the read returned, but the model's own answer can still save a note (L5). *G4 (the write).* `commit_write` is unchanged.
 - *Residual.* L1 to L9 of the contract. *Reversal.* Revert the BF-961 commits.
 
+### BF-944 -- Pool-built file reader, directory list and file search agents apply the runtime's read policy (2026-11-09, #1717)
+
+- *Scope.* `runtime.py` (`create_pool`), `security/file_access.py` (`ReadFloor`), `agents/file_search.py`, `agents/directory_list.py`, a comment in `config.py`, tests (a new file; one block in each of three existing files). Contract `prompts/bf-944-pool-agents-read-policy.md`.
+- *D1 (wiring).* A per-type rule in `create_pool`, beside AD-1346 M3e1's, so start, recycle, refill and add carry the runtime. Rejected: `runtime=runtime` at the fleet rows; a runtime for every pool type; a module-level locator.
+- *D2 (default).* The floor is the runtime's, as for the readers that have the runtime: unchanged for a default or Docker vessel; the vessel's own data directory and `--config` file for a `--data-dir` or `--config` vessel. A search match the floor refuses is dropped and a link entry whose target it refuses is reported as unreadable. Rejected: keeping the platform floor while `read_roots` is empty; a switch.
+- *D3 (the two cases).* A link entry whose target the policy refuses is an unreadable entry (`unknown`, size 0); a match is kept when the policy admits its resolved path (a public `ReadFloor`; no pattern rule, no `reader_spelling`). Rejected: omitting the entry; BF-948's pattern refusal; `code_search._ReadFloor`.
+- *D7 (tests).* Three existing tests (`test_hebbian_source_key.py`, `test_escalation.py`, `test_runtime_discovery.py`) read inside their runtime's data directory: with the runtime two of them fail (Hebbian weights, a completed count) and one keeps passing without a successful read; they read outside it now. Rejected: xfail; widening `read_roots` (the floor wins).
+- *Residual.* L1 to L9 of the contract; with `read_roots` set and `~/.probos` unlisted, the todo and scheduler agents answer that their list could not be read (BF-961; L6). *Reversal.* Revert the BF-944 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
