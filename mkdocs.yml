@@ -91,6 +91,7 @@ nav:
     - Project Structure: development/structure.md
     - Design Principles: development/design-principles.md
     - "Probabilistic Crew, Deterministic Ship": development/deterministic-ship.md
+    - "How Literally Should ProbOS Take Ledger?": development/ship-ledger.md
     - Configuration Reference: development/config-reference.md
     - Contributing: development/contributing.md
   - Research:
