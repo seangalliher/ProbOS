@@ -23,7 +23,7 @@ UNREADABLE_KEY = "stored_list_unreadable"
 
 
 class ReadStatus(str, Enum):
-    FOUND = "found"  # a reader returned the file's text, which may be empty: the file exists
+    FOUND = "found"  # a reader answered success with the file's text, or with an empty result other than None (an empty file)
     MISSING = "missing"  # every answer is the reader's "no such file": nothing is stored yet
     FAILED = "failed"  # nobody answered, or an answer was a refusal or an error: what is stored is not known
 
@@ -38,9 +38,10 @@ class ListRead:
 async def read_stored_list(runtime: Any, path: str) -> ListRead:
     """Broadcast ``read_file`` for *path* and say what the answers told.
 
-    The first success with text is the text (as before). Failing that, a success with no text is an existing empty file;
-    answers that are all the reader's "no such file" are a file that is not there yet; anything else, including no answer
-    at all, is a failure and is logged at WARNING.
+    The first success whose result is not empty gives the text exactly as ``_mesh_read_file`` gave it: a dictionary result
+    is unwrapped to its ``content`` or ``data`` and made a string. Failing that, a success whose result is empty but is not
+    None is an existing empty file; answers that are all the reader's "no such file" are a file that is not there yet;
+    anything else, including no answer at all, is a failure and is logged at WARNING.
     """
     bus = getattr(runtime, "intent_bus", None)
     if bus is None:
@@ -52,9 +53,9 @@ async def read_stored_list(runtime: Any, path: str) -> ListRead:
     for r in answers:
         if r.success:
             content = r.result
-            if isinstance(content, dict):
-                content = content.get("content", content.get("data", str(content)))
             if content:
+                if isinstance(content, dict):
+                    content = content.get("content", content.get("data", str(content)))
                 return ListRead(ReadStatus.FOUND, str(content))
             if content is None:
                 reason = "a reader answered success with no content"

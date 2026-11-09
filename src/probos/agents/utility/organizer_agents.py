@@ -120,7 +120,7 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
                 filename = title.replace(" ", "-").lower()
                 if not filename.endswith(".md"):
                     filename += ".md"
-                # BF-961: a note that cannot be read shows as not found, as before (nothing is written after this read: L5)
+                # BF-961: a note that cannot be read shows as not found, as before; what the model then answers can still save a note (L5)
                 content = (await read_stored_list(self._runtime, f"{notes_dir}/{filename}")).text
                 if content:
                     obs["fetched_content"] = f"Note '{title}':\n{content}"

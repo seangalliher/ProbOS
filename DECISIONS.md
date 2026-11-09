@@ -1563,10 +1563,10 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 ### BF-961 -- The todo and scheduler agents refuse an intent whose stored list could not be read (2026-11-08, #1774)
 
 - *Scope.* `agents/utility/stored_list.py` (new), `agents/file_reader.py` (`FILE_NOT_FOUND_MARK`, `is_file_not_found`), `TodoAgent`, `SchedulerAgent` and the note agent's read, tests. Contract `prompts/bf-961-unreadable-stored-list.md`.
-- *G1 (missing or failed).* The reader's own `File not found:` text through one constant it owns; every other answer, and no answer, is a failure. Rejected: `stat_file` (the same shape); a reader-set `metadata` field (a wider change); an `exists()` probe by the agent (a second source of truth beside the read policy).
+- *G1 (missing or failed).* The reader's own `File not found:` text through one constant it owns; unless a reader answered success with a result (None is not one), every other answer, and no answer, is a failure. Rejected: `stat_file` (the same shape); a reader-set `metadata` field (a wider change); an `exists()` probe by the agent (a second source of truth beside the read policy).
 - *G2 (the intent).* A shared `decide` ends the intent before the model: no model call, no write, `success` False. Rejected: running the model and refusing only the write; telling the model the list is unavailable; two copies.
-- *G3 (the note agent).* It reads through the helper, its text unchanged; a failed read still reads "not found" (no write depends on it). *G4 (the write).* `commit_write` is unchanged.
-- *Residual.* L1 to L8 of the contract. *Reversal.* Revert the BF-961 commits.
+- *G3 (the note agent).* It reads through the helper, its text unchanged; a failed read still reads "not found"; no code writes what the read returned, but the model's own answer can still save a note (L5). *G4 (the write).* `commit_write` is unchanged.
+- *Residual.* L1 to L9 of the contract. *Reversal.* Revert the BF-961 commits.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 

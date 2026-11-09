@@ -37,6 +37,18 @@ _ANSWERS = {  # one read_file broadcast: (success, result, error) per answer
     "mixed": [(False, None, "File not found: x"), (False, None, "handler failed")],
     "no-content": [(True, None, None)],
     "nobody": [],
+    "dict-empty": [(True, {}, None)],  # these five are shown as _AS_ALWAYS says, as the old read showed them
+    "dict-false": [(True, {"content": False}, None)],
+    "dict-none": [(True, {"content": None}, None)],
+    "dict-blank-then-text": [(True, {"content": ""}, None), (True, STORED, None)],
+    "found-beside-failure": [(False, None, "handler failed"), (True, STORED, None)],
+}
+_AS_ALWAYS = {  # the text the old read, _mesh_read_file, returned for each of those five (a dictionary result is unwrapped, then made a string)
+    "dict-empty": "",
+    "dict-false": "False",
+    "dict-none": "None",
+    "dict-blank-then-text": "",
+    "found-beside-failure": STORED,
 }
 
 
@@ -137,11 +149,26 @@ async def test_through_the_real_readers_a_stored_missing_or_empty_file_still_wor
     assert json.loads(target.read_text(encoding="utf-8")) == [NEW] and len(scene.writes) == 1
 
 
-@pytest.mark.parametrize(("shape", "shown"), [("found", f"Note 'My Note':\n{STORED}"), ("missing", "Note 'My Note' not found.")])
+@pytest.mark.parametrize(
+    ("shape", "shown"),
+    [("found", f"Note 'My Note':\n{STORED}"), ("missing", "Note 'My Note' not found.")]
+    + [(shape, f"Note 'My Note':\n{text}" if text else "Note 'My Note' not found.") for shape, text in _AS_ALWAYS.items()],
+)
 async def test_the_note_agent_reads_as_before(scene, shape, shown):
     agent = NoteTakerAgent(agent_id="note-1", llm_client=_Model(""), runtime=SimpleNamespace(intent_bus=_Bus(shape)))
     obs = await agent.perceive(IntentMessage(intent="manage_notes", params={"action": "read", "title": "My Note"}))
     assert obs["fetched_content"] == shown
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("shape", _AS_ALWAYS)
+async def test_a_dictionary_or_mixed_answer_is_shown_as_it_always_was(scene, kind, shape):
+    """Each answer of _AS_ALWAYS is shown to the model as the old read showed it."""
+    result, model, _ = await _round(kind, _Bus(shape), scene, STORED)
+    assert result.success is True and len(model.requests) == 1
+    prompt = model.requests[0].prompt
+    assert f"{KINDS[kind].label}:\n{_AS_ALWAYS[shape] or '[]'}" in prompt
+    assert (STORED in prompt) == (shape == "found-beside-failure")
 
 
 async def test_the_reader_still_says_file_not_found_in_its_own_words(tmp_path):
