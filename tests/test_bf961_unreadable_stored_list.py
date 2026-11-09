@@ -43,7 +43,7 @@ _ANSWERS = {  # one read_file broadcast: (success, result, error) per answer
     "dict-blank-then-text": [(True, {"content": ""}, None), (True, STORED, None)],
     "found-beside-failure": [(False, None, "handler failed"), (True, STORED, None)],
 }
-_AS_ALWAYS = {  # the text the old read, _mesh_read_file, returned for each of those five (a dictionary result is unwrapped, then made a string)
+_AS_ALWAYS = {  # the text each agent shows for those five, as it always did; "" is shown as [] (the note agent: not found); the old read returned None for dict-empty and "" for dict-blank-then-text
     "dict-empty": "",
     "dict-false": "False",
     "dict-none": "None",
