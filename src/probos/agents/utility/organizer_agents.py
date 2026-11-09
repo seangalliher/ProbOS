@@ -11,6 +11,7 @@ import os
 import time
 from typing import Any
 
+from probos.agents.utility.stored_list import UnreadableListGuard, read_stored_list
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.types import (
     CapabilityDescriptor,
@@ -36,22 +37,8 @@ class _BundledMixin:
 
 
 # ------------------------------------------------------------------
-# Mesh file I/O helpers (same pattern as productivity_agents)
+# Mesh file I/O helpers (same pattern as productivity_agents; the read is stored_list.read_stored_list, BF-961)
 # ------------------------------------------------------------------
-
-async def _mesh_read_file(runtime: Any, path: str) -> str | None:
-    if not runtime or not hasattr(runtime, "intent_bus"):
-        return None
-    msg = IntentMessage(intent="read_file", params={"path": path})
-    results = await runtime.intent_bus.broadcast(msg)
-    for r in results:
-        if r.success and r.result:
-            content = r.result
-            if isinstance(content, dict):
-                content = content.get("content", content.get("data", str(content)))
-            return str(content)
-    return None
-
 
 async def _mesh_write_file(runtime: Any, path: str, content: str) -> bool:
     """Write a file via FileWriterAgent.commit_write (personal data path).
@@ -133,7 +120,8 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
                 filename = title.replace(" ", "-").lower()
                 if not filename.endswith(".md"):
                     filename += ".md"
-                content = await _mesh_read_file(self._runtime, f"{notes_dir}/{filename}")
+                # BF-961: a note that cannot be read shows as not found, as before (nothing is written after this read: L5)
+                content = (await read_stored_list(self._runtime, f"{notes_dir}/{filename}")).text
                 if content:
                     obs["fetched_content"] = f"Note '{title}':\n{content}"
                 else:
@@ -205,7 +193,7 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
 # SchedulerAgent
 # ------------------------------------------------------------------
 
-class SchedulerAgent(_BundledMixin, CognitiveAgent):
+class SchedulerAgent(_BundledMixin, UnreadableListGuard, CognitiveAgent):
     """Set reminders and manage schedule — tasks execute on timer within the session."""
 
     agent_type = "scheduler"
@@ -252,7 +240,9 @@ class SchedulerAgent(_BundledMixin, CognitiveAgent):
         obs = await super().perceive(intent)
         if self._runtime:
             path = os.path.expanduser(self._REMINDERS_PATH)
-            content = await _mesh_read_file(self._runtime, path)
+            content = await self._stored_list(obs, path, "your saved reminders")  # BF-961: None: the read failed, ``decide`` ends the intent
+            if content is None:
+                return obs
             parts = []
             if content:
                 parts.append(f"Saved reminders:\n{content}")

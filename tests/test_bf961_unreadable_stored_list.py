@@ -152,9 +152,6 @@ async def test_the_reader_still_says_file_not_found_in_its_own_words(tmp_path):
 
 
 class TestAFailedReadWritesNothing:
-    # BF-961 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-961 M2 builds it")
-
     @pytest.mark.parametrize("kind", KINDS)
     @pytest.mark.parametrize("shape", ["refused", "os-error", "mixed", "no-content", "nobody"])
     async def test_the_intent_is_refused_before_the_model_and_nothing_is_written(self, scene, kind, shape):
