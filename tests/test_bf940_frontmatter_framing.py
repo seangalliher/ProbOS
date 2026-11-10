@@ -201,9 +201,6 @@ def test_a_skill_file_without_three_hyphens_in_its_frontmatter_reads_and_rewrite
 
 
 class TestAValueHoldingThreeHyphensIsNotCutShort:
-    # BF-940 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-940 M2 builds it")
-
     @pytest.mark.parametrize(("author", "values"), [
         pytest.param("Ezri---Prime", {}, id="an-author-holding-three-hyphens"),
         pytest.param("Ezri---", {}, id="an-author-ending-in-three-hyphens"),

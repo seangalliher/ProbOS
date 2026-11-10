@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from probos.utils.frontmatter import split_frontmatter
+
 if TYPE_CHECKING:
     from probos.protocols import ConnectionFactory, DatabaseConnection
 
@@ -102,12 +104,11 @@ def parse_skill_file(path: Path) -> CognitiveSkillEntry | None:
         logger.warning("AD-596a: No frontmatter delimiters in %s", path)
         return None
 
-    parts = content.split("---", 2)
-    if len(parts) < 3:
+    yaml_text, _ = split_frontmatter(content)  # BF-940: the frontmatter ends at a line of its own
+    if yaml_text is None:
         logger.warning("AD-596a: Incomplete frontmatter delimiters in %s", path)
         return None
 
-    yaml_text = parts[1]
     try:
         fm = yaml.safe_load(yaml_text)
     except yaml.YAMLError:
@@ -173,14 +174,11 @@ def get_skill_body(path: Path) -> str | None:
     except Exception:
         return None
 
-    if not content.startswith("---"):
+    block, rest = split_frontmatter(content)  # BF-940: the frontmatter ends at a line of its own
+    if block is None:
         return None
 
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        return None
-
-    return parts[2].strip()
+    return rest.strip()
 
 
 def _validate_spec(entry: CognitiveSkillEntry) -> list[str]:
@@ -784,15 +782,12 @@ class CognitiveSkillCatalog:
     def _rewrite_frontmatter(skill_md: Path, entry: CognitiveSkillEntry) -> None:
         """Rewrite the SKILL.md frontmatter to reflect current entry metadata."""
         content = skill_md.read_text(encoding="utf-8")
-        if not content.startswith("---"):
-            return
-
-        parts = content.split("---", 2)
-        if len(parts) < 3:
+        block, rest = split_frontmatter(content)  # BF-940: the frontmatter ends at a line of its own
+        if block is None:
             return
 
         try:
-            fm = yaml.safe_load(parts[1]) or {}
+            fm = yaml.safe_load(block) or {}
         except yaml.YAMLError:
             return
 
@@ -811,7 +806,7 @@ class CognitiveSkillCatalog:
 
         # Write back preserving markdown body
         new_yaml = yaml.dump(fm, default_flow_style=False, sort_keys=False)
-        skill_md.write_text(f"---\n{new_yaml}---{parts[2]}", encoding="utf-8")
+        skill_md.write_text(f"---\n{new_yaml}---{rest}", encoding="utf-8")
 
     async def remove_skill(self, name: str) -> None:
         """Remove an external skill from catalog and filesystem.

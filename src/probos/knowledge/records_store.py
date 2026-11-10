@@ -17,6 +17,7 @@ import yaml
 
 from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
+from probos.utils.frontmatter import split_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -261,22 +262,6 @@ def _search_field_text(value: Any) -> str:
     return ""
 
 
-def _split_document(raw: str) -> tuple[str | None, str]:
-    """BF-952 A3, A5: a Ship's Records document framed exactly as the base framed it: frontmatter block and body.
-
-    A document that starts with ``---`` has frontmatter up to the next ``---`` wherever it stands, inside a value
-    too, and its body is what follows, stripped; one with no later ``---`` has no frontmatter (``None``) and its
-    body is the whole document (L18). That framing cuts a value holding ``---``; BF-940 (#1686) owns changing it,
-    for every reader at once (L25). Only the search calls it: ``RecordsStore._parse_document`` keeps the base's own
-    copy, so PyYAML's recursion frontier stays the base's for every other reader (A6, round 6; L30).
-    """
-    if raw.startswith("---"):
-        parts = raw.split("---", 2)  # A6: the base's split, copied; _parse_document keeps its own
-        if len(parts) >= 3:  # A6: the base's test, copied
-            return parts[1], parts[2].strip()
-    return None, raw
-
-
 def _load_frontmatter(block: str) -> Any:
     """BF-952 A5: a frontmatter block loaded exactly as the base loaded it, with ``yaml.safe_load``.
 
@@ -330,12 +315,14 @@ def _search_load_frontmatter(block: str) -> Any:
 def _search_read_document(raw: str) -> tuple[Any, str, str | None]:
     """BF-952 A5: a document's frontmatter and body as the search reads them, and its frontmatter block.
 
-    The base's framing (:func:`_split_document`) and the search's load (:func:`_search_load_frontmatter`). The
-    block (``None`` for a document with no frontmatter) lets the search check a record it would return against
-    the base's reading (:func:`_base_reading_admits`).
+    The framing every reader shares (BF-940: :func:`probos.utils.frontmatter.split_frontmatter`) and the search's load
+    (:func:`_search_load_frontmatter`). The block (``None`` for a document with no frontmatter) lets the search check
+    a record it would return against the base's reading (:func:`_base_reading_admits`).
     """
-    block, body = _split_document(raw)
-    return ({} if block is None else _search_load_frontmatter(block)), body, block
+    block, rest = split_frontmatter(raw)
+    if block is None:
+        return {}, raw, None
+    return _search_load_frontmatter(block), rest.strip(), block
 
 
 def _base_reading_admits(
@@ -668,9 +655,10 @@ class RecordsStore:
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
         the frontmatter **before** ``yaml.dump``. They round-trip through
         ``_parse_document`` when every value is one YAML's safe loader builds
-        (a string, number, boolean, date, or a list or mapping of them) and
-        holds no ``---``, which the reader's framing cuts (BF-940, #1686).
-        ``yaml.dump`` writes a tuple or another Python object with a
+        (a string, number, boolean, date, or a list or mapping of them), a
+        value holding ``---`` included: the frontmatter ends at a line of its
+        own (BF-940, #1686). ``yaml.dump`` writes a tuple or another Python
+        object with a
         ``!!python/`` tag, which no reader loads (BF-952 L24). The AD-1138
         ``frontmatter_json`` sidecar holds them whole only within
         ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
@@ -1710,16 +1698,20 @@ class RecordsStore:
         return path
 
     def _parse_document(self, raw: str) -> tuple[dict, str]:
-        """Parse YAML frontmatter + content from a markdown document."""
-        if raw.startswith("---"):
-            parts = raw.split("---", 2)
-            if len(parts) >= 3:
-                try:
-                    fm = yaml.safe_load(parts[1]) or {}
-                except yaml.YAMLError:
-                    fm = {}
-                return fm, parts[2].strip()
-        return {}, raw
+        """Parse YAML frontmatter + content from a markdown document.
+
+        BF-940 (#1686): the frontmatter ends at the first later line of only hyphens, so a value holding ``---``
+        stays whole (:func:`probos.utils.frontmatter.split_frontmatter`). The YAML is loaded here, in this frame,
+        so PyYAML's recursion frontier is the one the base had (BF-952 A6, L30).
+        """
+        block, rest = split_frontmatter(raw)
+        if block is None:
+            return {}, raw
+        try:
+            fm = yaml.safe_load(block) or {}
+        except yaml.YAMLError:
+            fm = {}
+        return fm, rest.strip()
 
     def _safe_path(self, user_path: str) -> Path:
         """Validate and resolve a user-supplied path, preventing traversal.

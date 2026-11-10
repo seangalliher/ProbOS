@@ -30,6 +30,7 @@ from probos.knowledge import records_store as records_store_module
 from probos.knowledge.records_store import RecordsStore
 from probos.knowledge.semantic import SemanticKnowledgeLayer
 from probos.routers.records import search_records
+from tests.test_bf940_frontmatter_framing import reframed
 from tests.test_bf949_notebook_reader_identity import _self_monitoring
 
 _QUESTION = (
@@ -416,36 +417,19 @@ _INLINE_CLOSE = "---\nauthor: alice\nclassification: private --- the closing mar
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("raw", "kept"), [
     pytest.param(_INLINE_CLOSE + "warp core notes\n", True, id="closed-inside-a-line"),
-    pytest.param(
-        _INLINE_CLOSE + "status: nominal\n---\nwarp core notes\n", True, id="closed-inside-a-line-then-a-key-and-a-rule",
-    ),
-    pytest.param(
-        _INLINE_CLOSE + "Warp core notes, in prose.\n---\nmore warp notes\n", True,
-        id="closed-inside-a-line-then-prose-and-a-rule",
-    ),
-    pytest.param(
-        _INLINE_CLOSE + "classification: ship\n---\nwarp core notes\n", True,
-        id="closed-inside-a-line-then-a-repeated-key-and-a-rule",
-    ),
-    pytest.param(
-        "---\nauthor: alice\nclassification: private --- legacy\nclassification: private\nauthor: bob\n---\n"
-        "warp core notes\n",
-        True, id="closed-inside-a-line-then-keys-naming-another-author-and-a-rule",
-    ),
+    # BF-940 (#1686): the four hand-made shapes with a closing line after the inline marker read to that line now. They moved
+    # to tests/test_bf940_frontmatter_framing.py, which pins each at its new reading (L3 of BF-940's contract).
     pytest.param("---\nauthor: alice\nclassification: private\n---\nwarp core notes\n", True, id="closed-on-its-own-line"),
     pytest.param("---\nauthor: alice\nclassification: private\nwarp core notes\n", False, id="never-closed-L18"),
 ])
 async def test_a_frontmatter_closed_inside_a_line_keeps_the_classification_the_base_read(
     tmp_path: Path, raw: str, kept: bool,
 ) -> None:
-    """A2 (round 2, finding 1), through ``read_entry`` and ``search``. A1 ended a frontmatter only at a line
-    beginning ``---``, so a hand-made or legacy file closed inside a line read as ``{}`` (the first case) or took
-    its body as YAML: the second case then read an unknown classification, the third did not parse (its author
-    lost it) and the fourth read the repeated ``ship``. Each read as ``private`` on the base, and does again. In the
-    fifth (round 3, finding 2) A1 and A2 read the repeated keys and gave the record to ``bob``; it is ``alice``'s, as
-    on the base (A3: the base's framing for every reader). The sixth is the store's own shape. The last has no
-    closing marker and reads as on the base, with no frontmatter (L18); BF-940 (#1686) owns any change to it and
-    updates this case."""
+    """A2 (round 2, finding 1), through ``read_entry`` and ``search``. A hand-made or legacy file closed inside a line, with no
+    closing line after it, read as ``private`` on the base and still does: BF-940's rule frames a text with no closing line
+    as the base did. The four cases that had a closing line after the inline marker (rounds 2 and 3) moved to BF-940's file
+    (#1686), where each is pinned at the reading the rule gives it. The next is the store's own shape. The last has no
+    closing marker and reads as on the base, with no frontmatter (L18, kept by BF-940)."""
     store = await _store(tmp_path)
     path = "notebooks/alice/framing.md"
     target = store.repo_path / path
@@ -522,12 +506,12 @@ _GRID_BODIES = ("", "warp notes\n", "classification: ship\nauthor: bob\n", "---\
 
 
 def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
-    """A3 (round 3, findings 1 to 3): BF-952 changes no reader's reading of a document. Each reconciliation of the
-    base's framing with a line framing (A1, A2) misread some shape: as ``{}``, as an unclassified prefix, as another
-    author's, or as a constructor error for a valid store-written value. Every shape here, over the three rounds'
-    lines, closing markers, bodies and both line endings, reads under ``_parse_document`` (the base's own text, A6)
-    exactly as the base read it, a constructor error included, and the search reads it so too (A5): no line holds a
-    tab, so libyaml and PyYAML read each alike. The tab shapes, RK8's and round 4's, are T23's."""
+    """A3 (round 3, findings 1 to 3): BF-952 changes no reader's reading of a document. BF-940 (#1686) reframes 2,388 of the
+    3,747 shapes (a ``---`` inside a line before the first closing line, or a closing line of more than three hyphens);
+    those are its T9's. The other 1,359 are this test's: over the three rounds' lines, closing markers, bodies and both
+    line endings, each reads under ``_parse_document`` exactly as the base read it, a constructor error included, and the
+    search reads it so too (A5): no line holds a tab, so libyaml and PyYAML read each alike. The tab shapes, RK8's and
+    round 4's, are T23's."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
     shapes = [
         "---\n" + "".join(f"{line}\n" for line in lines) + close + body
@@ -539,6 +523,8 @@ def test_every_document_reads_as_on_the_base(tmp_path: Path) -> None:
     shapes += [shape.replace("\n", "\r\n") for shape in shapes]
     shapes += ["no frontmatter", "-- two hyphens\n---\nbody", "\n---\nauthor: alice\n---\nbody"]
     assert len(shapes) == 3747  # premise: (12 + 144) line sequences x 3 closes x 4 bodies x 2 line endings, + 3
+    shapes = [shape for shape in shapes if not reframed(shape)]  # BF-940: the shapes it reframes are its own
+    assert len(shapes) == 1359  # premise: 3,747 less the 2,388 that BF-940's rule frames otherwise
     differ = []
     for shape in shapes:
         expected = _read_or_error(_base_read, shape)
