@@ -33,6 +33,12 @@ AD-1344 (#1596): ``constitution_write_refusal`` refuses a write to the Federatio
 Constitution (``standing_orders.CONSTITUTION_RELATIVE_PATH``); its docstring lists the
 cases. ``builder_write_refusal`` calls it, and so do the writers listed in
 ``tests/test_ad1344_constitution_write_refusal.py`` (``_EXPECTED_CALLERS``).
+
+BF-943 (#1707): ``captain_document_write_refusal`` refuses a write to an entry of ``CAPTAIN_DOCUMENT_PATHS`` (the
+Captain's standing orders and other governance files, instruction files, workflows and manifests) below the running
+checkout or the writer's root. The writers listed in ``tests/test_bf943_captain_document_write_refusal.py``
+(``_EXPECTED_CALLERS``) call it after AD-1344's rule. ``builder_write_refusal`` does not: a build runs in a linked
+worktree and reaches the checkout through the Captain's merge review.
 """
 
 from __future__ import annotations
@@ -40,7 +46,10 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import stat
 import unicodedata
+from collections.abc import Iterator, Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from probos.cognitive.standing_orders import CONSTITUTION_RELATIVE_PATH, constitution_path
@@ -191,6 +200,273 @@ def constitution_write_refusal(
             return _constitution_unverifiable(path, "target", exc)
         if os.path.samestat(current, constitution):
             return _constitution_refusal(path)
+    return None
+
+
+# BF-943 (#1707): the Captain's documents in a checkout: the orders, ontology, command policy and sealed list ProbOS loads,
+# the instruction files, workflows and CODEOWNERS the Captain's coding agents and CI load, and the manifests an install
+# reads. A trailing "/" names a directory and all below it; "*" matches within one component. An entry is judged below the
+# running checkout and below the writer's root: a copy in another tree is not named, and a name absent today is.
+CAPTAIN_DOCUMENT_PATHS = (
+    "config/standing_orders/",
+    "config/ontology/",
+    "config/command_policy/",
+    "config/sealed_modules.yaml",
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".claude/",
+    ".agents/",
+    ".codex/",
+    ".github/",
+    "pyproject.toml",
+    "uv.lock",
+    "requirements*.txt",
+    "ui/package.json",
+    "ui/package-lock.json",
+    "CODEOWNERS",
+    "docs/CODEOWNERS",
+)
+_CAPTAIN_DOCUMENT_PARTS = tuple(
+    tuple(_canonical(part) for part in entry.rstrip("/").split("/")) for entry in CAPTAIN_DOCUMENT_PATHS
+)
+_DOCUMENT_NOT_A_STR = "Captain document write refused (BF-943): the path is not an exact str, so it is not checked"
+_DOCUMENT_ERRORS = (OSError, RuntimeError, ValueError)  # what the rule refuses on; any other exception propagates
+
+
+def _captain_document_refusal(path_text: str) -> str:
+    return (
+        f"Captain document write refused (BF-943): {path_text!r} is one of the Captain's governance, instruction or "
+        "manifest files in a checkout (builder_paths.CAPTAIN_DOCUMENT_PATHS), which an agent does not write; standing "
+        "orders change through directives, and the other files through a build the Captain reviews"
+    )
+
+
+def _captain_document_unverifiable(path_text: str, stage: str, exc: BaseException) -> str:
+    return (
+        f"Captain document write refused (BF-943): cannot verify that {path_text!r} is not one of the Captain's "
+        f"documents ({stage}: {_exception_name(exc)})"
+    )
+
+
+def _running_checkout() -> Path:
+    """The project root the running vessel reads its standing orders from: the directory above ``config/standing_orders``."""
+    return Path(*constitution_path().parts[: -len(_CONSTITUTION_RELATIVE_PARTS)])
+
+
+def _document_component(name: str, expected: str) -> bool:
+    """Whether canonical *name* is an entry's component (``*`` globs) or an 8.3 short form with its first two characters."""
+    if fnmatchcase(name, expected):
+        return True
+    return _SHORT_NAME.search(name) is not None and name[:2] == expected.lstrip(".")[:2]  # a short name has no leading dot
+
+
+def _document_parts(absolute: Path) -> tuple[str, ...]:
+    """The anchor and components of an absolute path as the rule compares them: no Windows extended-length prefix, no ``:`` suffix, canonical."""
+    text = str(absolute)
+    if text[:8].upper() == "\\\\?\\UNC\\":
+        text = "\\\\" + text[8:]
+    elif text[:4] in ("\\\\?\\", "\\\\.\\"):
+        text = text[4:]
+    parts = Path(text).parts
+    names = (_canonical(part.split(":", 1)[0]) for part in parts[1:])
+    return (_canonical(parts[0]), *(name for name in names if name))
+
+
+def _names_a_document(target: Path, roots: Sequence[Path]) -> bool:
+    """Whether absolute *target* lies below one of the absolute *roots* at an entry of ``CAPTAIN_DOCUMENT_PATHS``."""
+    parts = _document_parts(target)
+    for root in roots:
+        top = _document_parts(root)
+        below = parts[len(top):]
+        if parts[: len(top)] == top and any(
+            len(below) >= len(entry) and all(_document_component(name, expected) for name, expected in zip(below, entry))
+            for entry in _CAPTAIN_DOCUMENT_PARTS
+        ):
+            return True
+    return False
+
+
+# A junction's reparse tag, IO_REPARSE_TAG_MOUNT_POINT's documented value (MS-FSCC 2.1.2.1). The ``stat`` module has that name on Windows builds
+# only, so the value is this module's own, as in ``probos.knowledge.records_snapshot`` (AD-1341 S6 A4).
+_IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
+
+def _is_a_link(info: os.stat_result) -> bool:
+    """Whether an ``os.lstat`` is that of a symlink or, on Windows, of a junction (a mount point): a name a path can go through to somewhere else.
+
+    It names nothing a POSIX build lacks: a POSIX status has no ``st_reparse_tag`` and is judged by its mode.
+    """
+    return stat.S_ISLNK(info.st_mode) or getattr(info, "st_reparse_tag", 0) == _IO_REPARSE_TAG_MOUNT_POINT
+
+
+def _resolve(path: Path) -> Path:
+    """*path*, absolute, with every link in its existing part followed.
+
+    A name that is not there is kept as written, with what follows it. A link whose target is not there is followed through the target it stores,
+    which is resolved the same way. Any other failure to resolve (a denied query, a loop, a link that cannot be read) is raised:
+    ``Path.resolve(strict=False)`` answers such a failure with the unresolved name, which the rule must not take for an answer.
+    """
+    probe = path if path.is_absolute() else Path.cwd() / path
+    tail: list[str] = []
+    while True:
+        try:
+            resolved = probe.resolve(strict=True)
+        except (FileNotFoundError, NotADirectoryError):
+            try:
+                info = os.lstat(probe)
+            except (FileNotFoundError, NotADirectoryError):
+                if probe.parent == probe:  # not even the root is there, so no link is on the path
+                    return Path(os.path.normpath(probe.joinpath(*reversed(tail))))
+                tail.append(probe.name)
+                probe = probe.parent
+                continue
+            if not _is_a_link(info):
+                raise  # there, and no link to follow: not a case to guess at
+            stored = Path(os.readlink(probe))  # a link whose target is not there
+            resolved = _resolve(stored if stored.is_absolute() else _resolve(probe.parent) / stored)
+        return Path(os.path.normpath(resolved.joinpath(*reversed(tail))))
+
+
+def _listing(directory: Path) -> list[str]:
+    """The names in *directory*: none if it is not there; any other failure to list it is raised, not skipped."""
+    try:
+        with os.scandir(directory) as entries:
+            return [entry.name for entry in entries]
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
+def _existing(directory: Path, parts: Sequence[str], linked: bool = False) -> Iterator[tuple[Path, bool]]:
+    """Each existing path below *directory* that the components *parts* of an entry name, with whether a link is among the names it goes through.
+
+    ``*`` matches within one component. A name that is a symlink or a junction makes everything below it ``linked``.
+    """
+    head, rest = parts[0], parts[1:]
+    if "*" in head:
+        names = [name for name in _listing(directory) if fnmatchcase(_canonical(name), _canonical(head))]
+    else:
+        names = [head]
+    for name in names:
+        candidate = directory / name
+        try:
+            through = linked or _is_a_link(os.lstat(candidate))
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # not there; any other failure to examine it is raised, not skipped
+        if rest:
+            yield from _existing(candidate, rest, through)
+        else:
+            yield candidate, through
+
+
+def _document_locations(roots: Sequence[Path]) -> list[Path]:
+    """Where each existing entry of ``CAPTAIN_DOCUMENT_PATHS`` below one of the resolved *roots* really is.
+
+    An entry that is itself a link, or goes through one (a junction, a symlink), has its target's name too, and the Captain's tools load it by
+    either: its place is resolved, and a failure to resolve it is raised. An entry that goes through no link is where the root and its names are.
+    """
+    return [
+        _resolve(found) if linked else found
+        for root in roots
+        for entry in CAPTAIN_DOCUMENT_PATHS
+        for found, linked in _existing(root, entry.rstrip("/").split("/"))
+    ]
+
+
+def _lies_at(resolved: Path, locations: Sequence[Path]) -> bool:
+    """Whether the resolved path is one of the *locations*, or lies below one."""
+    parts = _document_parts(resolved)
+    return any(parts[: len(top)] == top for top in map(_document_parts, locations))
+
+
+def _files_below(location: Path) -> Iterator[str]:
+    """Every file below the directory *location*; a failure to list a directory is raised, and a symlink or junction to a directory is not entered."""
+    pending = [os.fspath(location)]
+    while pending:
+        try:
+            entries = os.scandir(pending.pop())
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # gone since it was found: nothing to alias
+        with entries:
+            for entry in entries:
+                if entry.is_symlink() or entry.is_junction():
+                    if not entry.is_dir():
+                        yield entry.path  # a link to a file, or a dangling one: os.stat follows it or finds it gone
+                elif entry.is_dir():
+                    pending.append(entry.path)
+                else:
+                    yield entry.path
+
+
+def _is_a_second_name_of_a_document(current: os.stat_result, locations: Sequence[Path]) -> bool:
+    """Whether *current* (an ``os.stat``) is that of an existing file at, or below, one of the *locations*."""
+    for location in locations:
+        try:
+            info = os.stat(location)
+        except (FileNotFoundError, NotADirectoryError):
+            continue  # a link whose target is gone: nothing to alias
+        if not stat.S_ISDIR(info.st_mode):
+            if os.path.samestat(current, info):
+                return True
+            continue
+        for document in _files_below(location):
+            try:
+                if os.path.samestat(current, os.stat(document)):
+                    return True
+            except (FileNotFoundError, NotADirectoryError):
+                continue  # gone since it was listed: nothing to alias
+    return False
+
+
+def captain_document_write_refusal(
+    path: str, root: str | os.PathLike[str] | None = None,
+) -> str | None:
+    """BF-943 (#1707): why an agent-reachable writer must not write *path*, or None if it may.
+
+    *path* is as the writer received it: relative to *root* (the working directory when None) or absolute. Refused, naming BF-943: a value
+    that is not an exact ``str``; a path that, as written or once resolved, lies below the running checkout (the directory above
+    ``constitution_path()``'s ``config/standing_orders``) or *root* at an entry of ``CAPTAIN_DOCUMENT_PATHS``, existing or not; a path that,
+    once resolved, is or lies below where an existing entry really is (an entry that is a link has its target's name too); an existing
+    regular file with more than one link that has the ``os.stat`` identity of an existing file at or below an entry (a link to a directory
+    inside an entry is not followed); an ``OSError``, ``RuntimeError`` or ``ValueError`` while resolving (a link that cannot be followed is an
+    error, not a name taken as written), examining or listing. A document
+    in another tree is not refused. Any other exception propagates.
+    """
+    if type(path) is not str:
+        return _DOCUMENT_NOT_A_STR
+    try:
+        writer_root = Path.cwd() if root is None else Path(root)
+        roots = [_running_checkout(), writer_root]
+        target = Path(path)
+        if not target.is_absolute():
+            target = writer_root / target
+        if _names_a_document(Path(os.path.abspath(target)), [Path(os.path.abspath(r)) for r in roots]):
+            return _captain_document_refusal(path)
+        resolved_roots = list(dict.fromkeys(_resolve(r) for r in roots))
+        resolved = _resolve(target)
+        if _names_a_document(resolved, resolved_roots):
+            return _captain_document_refusal(path)
+    except _DOCUMENT_ERRORS as exc:
+        return _captain_document_unverifiable(path, "resolved", exc)
+    try:
+        locations = _document_locations(resolved_roots)
+        at_an_entry = _lies_at(resolved, locations)
+    except _DOCUMENT_ERRORS as exc:
+        return _captain_document_unverifiable(path, "entries", exc)
+    if at_an_entry:
+        return _captain_document_refusal(path)
+    try:
+        current = os.stat(target)
+    except (FileNotFoundError, NotADirectoryError):
+        return None  # not on disk, so not a second name of an existing file
+    except _DOCUMENT_ERRORS as exc:
+        return _captain_document_unverifiable(path, "target", exc)
+    if not stat.S_ISREG(current.st_mode) or current.st_nlink == 1:
+        return None  # only a regular file with another name can be a second name of a document
+    try:
+        if _is_a_second_name_of_a_document(current, locations):
+            return _captain_document_refusal(path)
+    except _DOCUMENT_ERRORS as exc:
+        return _captain_document_unverifiable(path, "documents", exc)
     return None
 
 

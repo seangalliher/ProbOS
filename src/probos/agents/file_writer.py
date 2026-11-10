@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from probos.cognitive.builder_paths import constitution_write_refusal
+from probos.cognitive.builder_paths import captain_document_write_refusal, constitution_write_refusal
 from probos.security.file_access import protected_write_refusal
 from probos.substrate.agent import BaseAgent
 from probos.types import CapabilityDescriptor, IntentDescriptor, IntentMessage, IntentResult
@@ -113,6 +113,10 @@ class FileWriterAgent(BaseAgent):
                 if refused is not None:
                     logger.warning("AD-1344 FileWriterAgent proposal refused: %s", refused)
                     return {"success": False, "error": refused}
+                refused = captain_document_write_refusal(str(p), Path.cwd())  # BF-943: the proposal
+                if refused is not None:
+                    logger.warning("BF-943 FileWriterAgent refused operation=propose_write reason_code=captain_document_refused")
+                    return {"success": False, "error": refused}
                 refused = protected_write_refusal(str(p), runtime=self._runtime)  # BF-911: the proposal
                 if refused is not None:
                     logger.warning("BF-911 FileWriterAgent refused operation=propose_write reason_code=protected_write_refused")
@@ -155,6 +159,10 @@ class FileWriterAgent(BaseAgent):
             refused = constitution_write_refusal(str(p), Path.cwd())  # AD-1344: the write
             if refused is not None:
                 logger.warning("AD-1344 FileWriterAgent write refused: %s", refused)
+                return {"success": False, "error": refused}
+            refused = captain_document_write_refusal(str(p), Path.cwd())  # BF-943: the write
+            if refused is not None:
+                logger.warning("BF-943 FileWriterAgent refused operation=commit_write reason_code=captain_document_refused")
                 return {"success": False, "error": refused}
             refused = protected_write_refusal(str(p), runtime=runtime)  # BF-911: the write
             if refused is not None:
