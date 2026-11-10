@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from probos.utils.frontmatter import split_frontmatter
+from probos.utils.frontmatter import base_split_frontmatter, split_frontmatter
 
 
 @pytest.mark.parametrize(("text", "framed"), [
@@ -44,8 +44,35 @@ def _loop(text: str) -> tuple[str | None, str]:
     return None, text
 
 
+def _documents(seed: int) -> list[str]:
+    """4,000 random texts of hyphen runs, line breaks and blanks, about half of them opening with ``---``."""
+    rng, pieces = random.Random(seed), ["---", "----", "--", "-", "\n", "\r\n", "\r", " ", "\t", "a", ": ", "x---y", "---\n", "\n---\n"]
+    return ["---" * rng.randint(0, 1) + "".join(rng.choice(pieces) for _ in range(rng.randint(0, 16))) for _ in range(4000)]
+
+
 def test_random_documents_are_framed_as_a_loop_over_the_lines_frames_them():
-    rng, pieces = random.Random(940), ["---", "----", "--", "-", "\n", "\r\n", "\r", " ", "\t", "a", ": ", "x---y", "---\n", "\n---\n"]
-    for _ in range(4000):
-        text = "---" * rng.randint(0, 1) + "".join(rng.choice(pieces) for _ in range(rng.randint(0, 16)))
+    for text in _documents(940):
         assert split_frontmatter(text) == _loop(text), repr(text)
+
+
+@pytest.mark.parametrize(("text", "framed"), [
+    pytest.param("---\na: 1\n---\nb", ("\na: 1\n", "\nb"), id="the-first-two-runs"),
+    pytest.param("---\na: 1 --- b\n---\nc", ("\na: 1 ", " b\n---\nc"), id="a-run-inside-a-line-is-the-second"),
+    pytest.param("------", ("", ""), id="six-hyphens"),
+    pytest.param("---\na: 1\nb", (None, "---\na: 1\nb"), id="one-run-only"),
+    pytest.param("a: 1\n---\nb\n---\n", (None, "a: 1\n---\nb\n---\n"), id="no-opener"),
+    pytest.param("", (None, ""), id="empty"),
+])
+def test_the_base_framing_cuts_at_the_first_two_hyphen_runs(text, framed):
+    assert base_split_frontmatter(text) == framed
+
+
+def test_the_base_cut_is_the_rules_block_up_to_its_first_hyphen_run():
+    """A1: the search's second reading holds only the rule's block and reads the base's cut as ``block.partition("---")[0]``.
+    Wherever the rule frames a text with a block, the base frames it with one, and that block is this."""
+    for text in _documents(941):
+        block, _ = split_frontmatter(text)
+        base_block, _ = base_split_frontmatter(text)
+        assert (block is None) == (base_block is None), repr(text)
+        if block is not None:
+            assert block.partition("---")[0] == base_block, repr(text)

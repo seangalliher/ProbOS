@@ -63,8 +63,21 @@ def reframed(raw: str) -> bool:
     return found is not None and ("---" in raw[3:found[0]] or found[1] > 3)
 
 
+def _base_read(raw: str) -> tuple[Any, str]:
+    """The base's ``_parse_document``, verbatim: the first two ``---`` end the frontmatter, wherever they stand."""
+    if raw.startswith("---"):
+        parts = raw.split("---", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+            except yaml.YAMLError:
+                fm = {}
+            return fm, parts[2].strip()
+    return {}, raw
+
+
 def _oracle(raw: str) -> tuple[Any, str]:
-    """The rule as a loop over the lines, not a pattern: what every reader's reading is compared with."""
+    """The rule as a loop over the lines, not a pattern, and A1's fallback: what every reader's reading is compared with."""
     block = rest = None
     if raw.startswith("---"):
         found = _closing(raw)
@@ -75,9 +88,14 @@ def _oracle(raw: str) -> tuple[Any, str]:
     if block is None:
         return {}, raw
     try:
-        return yaml.safe_load(block) or {}, rest.strip()
+        frontmatter = yaml.safe_load(block) or {}
     except yaml.YAMLError:
-        return {}, rest.strip()
+        frontmatter = {}
+    if not frontmatter:  # A1: a block that reads as nothing reads as the base read the text, where the base read something
+        earlier = _base_read(raw)
+        if earlier[0]:
+            return earlier
+    return frontmatter, rest.strip()
 
 
 def _read_or_error(read: Any, raw: str) -> Any:
@@ -200,6 +218,43 @@ def test_a_skill_file_without_three_hyphens_in_its_frontmatter_reads_and_rewrite
     assert _rewritten(path).department == "operations" and get_skill_body(path) == _SKILL_BODY
 
 
+async def test_a_private_note_with_three_hyphens_in_its_topic_stays_private_when_its_metrics_cannot_load(tmp_path, monkeypatch):
+    """A1 (round 1, F1): ``yaml.dump`` writes a tuple as ``!!python/tuple``, which ``safe_load`` refuses. The base cut this note's
+    block at the ``---`` in the topic, before ``metrics``, so the tag was never loaded and the note stayed alice's; the rule read
+    the whole block, got ``{}`` and so ``ship``: every reader was shown it and alice's own ``publish`` raised ``PermissionError``.
+    A block that reads as nothing now reads as the base read the text, where the base's cut reads. A tuple with no ``---`` before
+    it reads ``{}`` on both trees (L10): not asserted here."""
+    store = await _store(tmp_path, monkeypatch)
+    path = await store.write_notebook("alice", "review---nominal", "coolant private body", metrics={"sample": (1, 2)})
+    raw = (store.repo_path / path).read_text(encoding="utf-8")
+    assert "topic: review---nominal" in raw and "!!python/tuple" in raw, "premise: a tag safe_load refuses, after a ---"
+    assert await store.read_entry(path, reader_id="bob") is None
+    assert await store.search("coolant", reader_id="bob") == []
+    own = await store.read_entry(path, reader_id="alice")
+    assert own is not None and own["frontmatter"].get("classification") == "private" and own["frontmatter"].get("author") == "alice"
+    assert [hit["path"] for hit in await store.search("coolant", reader_id="alice")] == [path]
+    await store.publish(path, "alice")
+    assert await store.read_entry(path, reader_id="bob") is None
+
+
+async def test_the_search_shows_a_reader_no_note_that_read_entry_withholds_where_the_block_does_not_load(tmp_path, monkeypatch):
+    """A1: the block holds a tab after a key, which PyYAML refuses and libyaml reads (RK8), and a ``classification: ship`` after a
+    ``---`` inside the topic. ``read_entry`` (PyYAML) reads nothing from the block, so it reads the base's cut: alice's private
+    note, withheld from bob. libyaml reads the whole block as ``ship``, so the search's first reading admits bob and its second
+    (``_base_reading_admits``) must read the cut too, or the search shows bob what ``read_entry`` withholds. Without libyaml the
+    first reading is PyYAML's and the answer is the same (L17)."""
+    store = await _store(tmp_path, monkeypatch)
+    path = "notebooks/alice/tabbed.md"
+    (store.repo_path / "notebooks" / "alice").mkdir(parents=True)
+    raw = "---\nauthor: alice\nclassification: private\ntopic: warp --- core\nnote:\tabc\nclassification: ship\n---\n\nwarp notes\n"
+    (store.repo_path / path).write_text(raw, encoding="utf-8")
+    assert await store.read_entry(path, reader_id="bob") is None
+    assert await store.search("warp", reader_id="bob") == []
+    own = await store.read_entry(path, reader_id="alice")
+    assert own is not None and own["frontmatter"].get("classification") == "private"
+    assert [hit["path"] for hit in await store.search("warp", reader_id="alice")] == [path]
+
+
 class TestAValueHoldingThreeHyphensIsNotCutShort:
     @pytest.mark.parametrize(("author", "values"), [
         pytest.param("Ezri---Prime", {}, id="an-author-holding-three-hyphens"),
@@ -208,6 +263,7 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
         pytest.param("Ezri", {"topic": "first line\n---\nlast line"}, id="a-multi-line-topic-holding-a-rule"),
         pytest.param("Ezri", {"tags": ["warp --- core"]}, id="a-tag-holding-three-hyphens"),
         pytest.param("Ezri", {"extra_frontmatter": {"zz_note": "end --- of the envelope"}}, id="the-last-key-holding-three-hyphens"),
+        pytest.param("Ezri", {"topic": "review---nominal", "metrics": {"sample": [1, 2]}}, id="a-topic-holding-three-hyphens-and-list-metrics"),
         pytest.param("Ezri", {"extra_frontmatter": {"due": "2026-13-05---nominal"}}, id="a-value-whose-cut-prefix-is-a-bad-timestamp"),
     ])
     async def test_a_record_holding_it_is_read_whole_listed_found_updated_and_published(self, tmp_path, monkeypatch, author, values):
@@ -237,7 +293,8 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
         ),
         pytest.param(
             "---\nauthor: alice\nclassification: private --- inline\nWarp notes, in prose.\n---\nmore warp notes\n",
-            {}, "more warp notes", {"alice", "bob"}, id="then-prose-and-a-rule",
+            {"author": "alice", "classification": "private"}, "inline\nWarp notes, in prose.\n---\nmore warp notes", {"alice"},
+            id="then-prose-and-a-rule-reads-as-the-base-read-it",
         ),
         pytest.param(
             "---\nauthor: alice\nclassification: private --- inline\nclassification: ship\n---\nwarp notes\n",
@@ -252,21 +309,52 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
         self, tmp_path, monkeypatch, raw, frontmatter, body, readers,
     ):
         """The four BF-952 T20 / round-3 shapes that have a closing line after the inline marker. The base read each as alice's
-        private note; the inline marker now ends nothing, so each reads to its closing line, as here, and ``read_entry`` admits
-        the readers listed. No writer in the repository makes such a document (L3)."""
+        private note. Where the whole block loads (the 1st, 3rd and 4th) the inline marker now ends nothing and the shape reads to
+        its closing line, as here (L3); where it does not (the 2nd, prose after a key) the shape reads as the base read it (A1).
+        Each is asserted through ``_parse_document``, ``read_entry`` and the search for alice and for bob, as BF-952's T20 asserted
+        it (F2): the readers listed are the ones shown the record. No writer in the repository makes such a document."""
         store = await _store(tmp_path, monkeypatch)
+        path = "notebooks/alice/framing.md"
         (store.repo_path / "notebooks" / "alice").mkdir(parents=True)
-        (store.repo_path / "notebooks" / "alice" / "framing.md").write_text(raw, encoding="utf-8")
+        (store.repo_path / path).write_text(raw, encoding="utf-8")
         assert store._parse_document(raw) == (frontmatter, body)
-        assert {who for who in ("alice", "bob") if await store.read_entry("notebooks/alice/framing.md", reader_id=who)} == readers
+        assert {who for who in ("alice", "bob") if await store.read_entry(path, reader_id=who)} == readers
+        found = {who: [hit["path"] for hit in await store.search("warp", reader_id=who)] for who in ("alice", "bob")}
+        assert found == {who: [path] if who in readers else [] for who in ("alice", "bob")}
 
     def test_every_document_of_the_grid_reads_by_the_rule(self, tmp_path):
-        """BF-952's T22 over its 3,747 shapes, rewritten: both readers read each as ``_oracle`` does, a constructor error
-        included. Premise: ``reframed`` names 2,388 of them, and the base differs from the rule on those and no others."""
+        """BF-952's T22 over its 3,747 shapes, rewritten: both readers read each as ``_oracle`` does (the rule, then A1's fallback),
+        a constructor error included. Premise: ``reframed`` names 2,388 of them (the rule frames them otherwise than the base). The
+        number the contract claims, asserted last: 2,110 of them, and no other, are returned otherwise than ``_base_read`` returns
+        them, by either reader, an error compared by its name. The other 278 read as the base reads them: A1's fallback gives 90 of
+        the 2,200 that M2 changed back, and the rest raise the same error or read alike."""
         store, shapes = _bare(tmp_path), grid()
         assert len(shapes) == 3747 and sum(map(reframed, shapes)) == 2388, "premise: the grid and its reframed shapes"
         differ = [s for s in shapes if _read_or_error(store._parse_document, s) != _read_or_error(_oracle, s) or _read_or_error(_search_read, s) != _read_or_error(_oracle, s)]
         assert differ == [], (len(differ), differ[:3])
+        moved = [s for s in shapes if _read_or_error(store._parse_document, s) != _read_or_error(_base_read, s) or _read_or_error(_search_read, s) != _read_or_error(_base_read, s)]
+        assert len(moved) == 2110 and all(map(reframed, moved)), "claim: 2,110 shapes read otherwise than on the base, all of them reframed"
+
+    @pytest.mark.parametrize(("raw", "read"), [
+        pytest.param(
+            "---\nauthor: alice\nclassification: private\ntopic: review---nominal\nmetrics:\n  sample: !!python/tuple\n  - 1\n  - 2\n---\n\ncoolant body\n",
+            ({"author": "alice", "classification": "private", "topic": "review"}, "nominal\nmetrics:\n  sample: !!python/tuple\n  - 1\n  - 2\n---\n\ncoolant body"),
+            id="a-tag-safe-load-refuses-after-three-hyphens-reads-as-the-base-read-it",
+        ),
+        pytest.param("---\n- a\n- b---c\nfoo: bar\n---\nbody", (["a", "b"], "c\nfoo: bar\n---\nbody"), id="a-cut-that-is-a-list-is-taken-as-the-base-took-it"),
+        pytest.param("---\nkey: [unclosed\ntopic: a---b\n---\nbody", ({}, "body"), id="a-cut-that-does-not-load-either-reads-as-the-rule-reads-it"),
+        pytest.param(
+            "---\nauthor: alice\nclassification: private\ntopic: a --- b\nupdated: 2026-13-05\n---\nbody", "ValueError",
+            id="a-constructor-error-after-three-hyphens-is-not-a-parse-failure-L13",
+        ),
+    ])
+    def test_a_block_that_does_not_load_reads_as_the_base_read_the_text_where_the_cut_loads(self, tmp_path, raw, read):
+        """A1 (F1), through both readers. The first row is F1's note as a document. The second has a cut that is a list, taken as
+        the base took it (the search then withholds it: a mapping is required). The third has a cut that does not load either, so
+        the rule's reading stands, its body included. The last pins the trigger: a constructor error is not a parse failure, so it
+        raises, as the base raised for the same YAML (L13)."""
+        assert _read_or_error(_bare(tmp_path)._parse_document, raw) == read
+        assert _read_or_error(_search_read, raw) == read
 
     def test_a_skill_file_whose_frontmatter_holds_three_hyphens_is_read_whole_and_rewritten_whole(self, tmp_path):
         path = _skill(tmp_path, _SKILL)

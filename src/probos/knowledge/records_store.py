@@ -17,7 +17,7 @@ import yaml
 
 from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
-from probos.utils.frontmatter import split_frontmatter
+from probos.utils.frontmatter import base_split_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -317,12 +317,20 @@ def _search_read_document(raw: str) -> tuple[Any, str, str | None]:
 
     The framing every reader shares (BF-940: :func:`probos.utils.frontmatter.split_frontmatter`) and the search's load
     (:func:`_search_load_frontmatter`). The block (``None`` for a document with no frontmatter) lets the search check
-    a record it would return against the base's reading (:func:`_base_reading_admits`).
+    a record it would return against the base's reading (:func:`_base_reading_admits`). BF-940 A1: where the block reads as
+    nothing (it does not load) and the base's cut of the text (:func:`base_split_frontmatter`) reads as something, the
+    document reads as the base read it, as ``RecordsStore._parse_document`` reads it; the block returned stays the rule's.
     """
     block, rest = split_frontmatter(raw)
     if block is None:
         return {}, raw, None
-    return _search_load_frontmatter(block), rest.strip(), block
+    frontmatter = _search_load_frontmatter(block)
+    if not frontmatter:
+        base_block, base_rest = base_split_frontmatter(raw)
+        base_frontmatter = _search_load_frontmatter(base_block)
+        if base_frontmatter:
+            return base_frontmatter, base_rest.strip(), block
+    return frontmatter, rest.strip(), block
 
 
 def _base_reading_admits(
@@ -332,10 +340,14 @@ def _base_reading_admits(
 
     That reading is ``read_entry``'s and the semantic index's (:func:`_load_frontmatter`). The search returns a
     record only where it admits the reader too, so no difference between libyaml's reading and the base's, known
-    (RK8) or not, can show a reader a record the base's reading withholds (RK15; BF-679).
+    (RK8) or not, can show a reader a record the base's reading withholds (RK15; BF-679). BF-940 A1: ``read_entry`` reads the
+    base's cut where the block reads as nothing and the cut reads as something, so this reading does too; the cut is the block
+    up to its first ``---`` (:func:`base_split_frontmatter`; U4 pins it).
     """
     try:
         frontmatter = _load_frontmatter(block)
+        if not frontmatter:
+            frontmatter = _load_frontmatter(block.partition("---")[0]) or frontmatter
     except Exception:  # A5: read_entry raises on this block (a constructor error, a RecursionError)
         logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
         return False  # A5: the search withholds what read_entry raises on
@@ -659,7 +671,10 @@ class RecordsStore:
         value holding ``---`` included: the frontmatter ends at a line of its
         own (BF-940, #1686). ``yaml.dump`` writes a tuple or another Python
         object with a
-        ``!!python/`` tag, which no reader loads (BF-952 L24). The AD-1138
+        ``!!python/`` tag, which no reader loads (BF-952 L24): a document
+        holding one reads as ``{}``, so at the default ``ship`` classification
+        for every reader, unless a ``---`` before the tag lets the base's
+        earlier cut read (BF-940 A1; L10 of its contract). The AD-1138
         ``frontmatter_json`` sidecar holds them whole only within
         ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
         past it the index stores ``{}``. Any key in
@@ -1558,7 +1573,8 @@ class RecordsStore:
         reader cannot move the scores it is shown. A record whose frontmatter is
         a non-empty YAML list or a truthy scalar, or one YAML's constructor cannot
         build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
-        parse reads as ``{}``, as every reader reads it (A3; BF-940, #1686). A
+        parse reads as ``{}``, as every reader reads it, unless the base's earlier
+        cut of it parses and it reads as that (A3; BF-940 A1, #1686). A
         number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does
@@ -1702,7 +1718,8 @@ class RecordsStore:
 
         BF-940 (#1686): the frontmatter ends at the first later line of only hyphens, so a value holding ``---``
         stays whole (:func:`probos.utils.frontmatter.split_frontmatter`). The YAML is loaded here, in this frame,
-        so PyYAML's recursion frontier is the one the base had (BF-952 A6, L30).
+        so PyYAML's recursion frontier is the one the base had (BF-952 A6, L30). BF-940 A1: where the block reads as nothing
+        (it does not load) and the base's cut of the text reads as something, the document reads as the base read it.
         """
         block, rest = split_frontmatter(raw)
         if block is None:
@@ -1711,6 +1728,14 @@ class RecordsStore:
             fm = yaml.safe_load(block) or {}
         except yaml.YAMLError:
             fm = {}
+        if not fm:  # A1: the base's cut may read where the whole block does not (a tag safe_load refuses, after a ---)
+            base_block, base_rest = base_split_frontmatter(raw)
+            try:
+                base_fm = yaml.safe_load(base_block) or {}
+            except yaml.YAMLError:
+                base_fm = {}
+            if base_fm:
+                return base_fm, base_rest.strip()
         return fm, rest.strip()
 
     def _safe_path(self, user_path: str) -> Path:

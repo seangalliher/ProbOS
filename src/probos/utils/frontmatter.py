@@ -32,7 +32,18 @@ def split_frontmatter(text: str) -> tuple[str | None, str]:
         closing = _CLOSING_LINE.search(text, first_break + 1)
         if closing is not None:
             return text[3:closing.start()], text[closing.end(1):]
-    parts = text.split("---", 2)  # the base's framing, kept for a text with no closing line
+    return base_split_frontmatter(text)  # a text with no closing line is framed as the base framed it (L18)
+
+
+def base_split_frontmatter(text: str) -> tuple[str | None, str]:
+    """Frame ``text`` as the base framed every document: cut at the first two ``---`` it holds, wherever they stand.
+
+    ``block`` is what stands between the opener and the next ``---``, inside a value too, and ``rest`` is what follows it, not
+    stripped; ``(None, text)`` for a text that does not begin with ``---`` or holds no later one. It is the rule's answer for a
+    text with no closing line (L18), and the cut a reader reads where the rule's block does not load but this one does (A1, F1).
+    Wherever ``split_frontmatter`` returns a block this returns one too, and it is that block up to its first ``---`` (U4).
+    """
+    parts = text.split("---", 2) if text.startswith("---") else []
     if len(parts) >= 3:
         return parts[1], parts[2]
     return None, text
