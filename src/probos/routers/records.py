@@ -117,7 +117,9 @@ async def read_record(
     BF-940 slice 3 (#1686, F7-1): FastAPI writes the returned document after this
     function has returned, so a record the reader parsed but the JSON writer cannot
     write is answered here, as HTTP 503 ``records.read_failed``, not as an unhandled
-    500. The projection holds no value of the record and is not affected.
+    500. The check covers both bodies: the PROV-O projection copies a ``created`` that
+    parses as ISO-8601 verbatim, and ``datetime.fromisoformat`` accepts any one
+    character between the date and the time, a lone surrogate included.
     """
     store = getattr(runtime, "records_store", None)
     if store is None:
@@ -141,14 +143,15 @@ async def read_record(
         return _read_failure("Record document unavailable", "records.read_failed", 503)
     if entry is None:
         return _read_failure("Not found or access denied", "records.not_found", 404)
+    body = entry
     if format == _PROV_JSONLD_FORMAT:
-        return project_record_frontmatter(
+        body = project_record_frontmatter(
             entry.get("path") or path, entry.get("frontmatter") or {}
         )
-    if not _writes(entry):  # BF-940 slice 3 (F7-1): the body is written after this returns; a record the writer cannot write is answered here
+    if not _writes(body):  # BF-940 slice 3 (F7-1): the body, a record or its projection, is written after this returns; a body the writer cannot write is answered here
         logger.warning("Records document serialisation failed; document unavailable; returning HTTP 503")
         return _read_failure("Record document unavailable", "records.read_failed", 503)
-    return entry
+    return body
 
 
 @router.post("/captains-log")
@@ -336,6 +339,9 @@ async def get_backlinks(
         return _read_failure("backlink lookup failed", "knowledge_browser.backlinks_failed")
     if result is None:
         return _read_failure("Not found in index", "knowledge_browser.not_found", 404)
+    if not _writes(result):  # BF-940 slice 3 (F7-1): a reference carries a tag or a topic slug, frontmatter values, written after this returns
+        logger.warning("Knowledge Browser backlinks cannot be written as JSON; results unavailable; returning HTTP 500")
+        return _read_failure("backlink lookup failed", "knowledge_browser.backlinks_failed")
     return result
 
 
@@ -400,5 +406,8 @@ async def get_records_timeline(
         logger.warning("Knowledge Browser timeline assembly failed; results unavailable; returning HTTP 500")
         return _read_failure("timeline assembly failed", "knowledge_browser.timeline_failed")
     if result is None:
+        return _read_failure("timeline assembly failed", "knowledge_browser.timeline_failed")
+    if not _writes(result):  # BF-940 slice 3 (F7-1): a bucket's day and its department keys are frontmatter values, written after this returns
+        logger.warning("Knowledge Browser timeline cannot be written as JSON; results unavailable; returning HTTP 500")
         return _read_failure("timeline assembly failed", "knowledge_browser.timeline_failed")
     return result
