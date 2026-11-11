@@ -188,7 +188,6 @@ def test_every_route_of_the_module_is_classified():
     assert {key for key, kind in _ROUTES.items() if kind == "holds a record value"} == _DRIVEN, "a route that holds a record value is not driven by the class below"
 
 
-@pytest.mark.xfail(reason="BF-940 slice 3 M2: not built", raises=AssertionError, strict=True)
 class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
     @pytest.mark.parametrize(("value", "marker"), _UNWRITABLE)
     async def test_the_read_route_answers_a_record_the_writer_cannot_write_with_the_controlled_503(self, tmp_path, caplog, value, marker):

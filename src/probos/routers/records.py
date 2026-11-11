@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import TypeAdapter
 
 from probos.knowledge.provo import project_record_frontmatter
 from probos.routers.deps import get_runtime
@@ -25,6 +26,45 @@ def _read_failure(message: str, code: str, status_code: int = 500) -> JSONRespon
         {"error": message, "availability": failed_read(message, code, status_code)},
         status_code=status_code,
     )
+
+
+# BF-940 slice 3 (#1686, F7-1): FastAPI writes what a handler returns as JSON after the handler has returned, outside the handler's
+# own error boundary, so a record the reader parsed but the writer cannot write (a mapping nested too deeply, bytes that are not
+# UTF-8, a value that holds itself) was an unhandled HTTP 500. ``TypeAdapter(Any).dump_json`` is the call FastAPI 0.136.1 makes for a
+# handler annotated ``-> Any``; asking it here, before the handler returns, says whether the response can be written. What it writes
+# is discarded: a handler still returns its own body, so a body the writer could write is sent exactly as it was sent before.
+_JSON_WRITER = TypeAdapter(Any)
+
+
+def _writes(body: Any) -> bool:
+    """Whether the JSON writer can write ``body``; ``PydanticSerializationError`` is a ``ValueError``."""
+    try:
+        _JSON_WRITER.dump_json(body)
+    except (ValueError, RecursionError):
+        return False
+    return True
+
+
+def _writable(records: list[Any], key: str, route: str) -> list[Any]:
+    """The records of a listing that the JSON writer can write, in order; the others are left out and logged by path, never by value.
+
+    A listing's body holds a record two levels below its top (``{key: [record]}``), so each record is tried at that depth: the writer
+    stops at a depth, and a record the read route can write is left out here when the body around it is two levels deeper.
+    """
+    if _writes({key: records}):
+        return records
+    kept: list[Any] = []
+    left_out: list[Any] = []
+    for record in records:
+        if _writes({key: [record]}):
+            kept.append(record)
+        else:
+            left_out.append(record)
+    logger.warning(
+        "%s: %d record(s) the JSON writer cannot write are left out of the listing; paths=%r; returning the rest",
+        route, len(left_out), [record.get("path") for record in left_out[:5]],
+    )
+    return kept
 
 
 @router.get("/stats")
@@ -52,6 +92,7 @@ async def list_records(
         )
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    entries = _writable(entries, "documents", "Records listing")  # BF-940 slice 3 (F7-1)
     return {"documents": entries, "count": len(entries)}
 
 
@@ -72,6 +113,11 @@ async def read_record(
     Read failures retain ``error`` and add ``availability`` with state, code,
     controlled message and retryable. Missing documents remain HTTP 404;
     absent storage is HTTP 503, with disabled reserved for typed config-off.
+
+    BF-940 slice 3 (#1686, F7-1): FastAPI writes the returned document after this
+    function has returned, so a record the reader parsed but the JSON writer cannot
+    write is answered here, as HTTP 503 ``records.read_failed``, not as an unhandled
+    500. The projection holds no value of the record and is not affected.
     """
     store = getattr(runtime, "records_store", None)
     if store is None:
@@ -99,6 +145,9 @@ async def read_record(
         return project_record_frontmatter(
             entry.get("path") or path, entry.get("frontmatter") or {}
         )
+    if not _writes(entry):  # BF-940 slice 3 (F7-1): the body is written after this returns; a record the writer cannot write is answered here
+        logger.warning("Records document serialisation failed; document unavailable; returning HTTP 503")
+        return _read_failure("Record document unavailable", "records.read_failed", 503)
     return entry
 
 
@@ -121,6 +170,7 @@ async def get_captains_log(limit: int = 7, runtime: Any = Depends(get_runtime)) 
     if not runtime._records_store:
         return JSONResponse({"error": "Ship's Records not available"}, status_code=503)
     entries = await runtime._records_store.list_entries("captains-log")
+    entries = _writable(entries, "entries", "Captain's log")  # BF-940 slice 3 (F7-1): before the limit, so the limit counts records it returns
     entries.sort(key=lambda e: e.get("frontmatter", {}).get("created", ""), reverse=True)
     return {"entries": entries[:limit]}
 
@@ -134,6 +184,7 @@ async def list_notebook(callsign: str, runtime: Any = Depends(get_runtime)) -> A
         entries = await runtime._records_store.list_entries(f"notebooks/{callsign}")
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    entries = _writable(entries, "entries", "Notebook listing")  # BF-940 slice 3 (F7-1)
     return {"callsign": callsign, "entries": entries}
 
 
@@ -187,6 +238,7 @@ async def search_records(
         results = await runtime._records_store.search(q, scope=scope, reader_id="captain", directory=directory)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    results = _writable(results, "results", "Records search")  # BF-940 slice 3 (F7-1)
     return {"query": q, "results": results, "count": len(results)}
 
 
@@ -253,6 +305,7 @@ async def browse_records(
         if until and isinstance(created, str) and created and created[:10] > until:
             continue
         filtered.append(e)
+    filtered = _writable(filtered, "documents", "Records browse")  # BF-940 slice 3 (F7-1)
     return {
         "documents": filtered,
         "count": len(filtered),
@@ -318,6 +371,9 @@ async def get_records_graph(
         logger.warning("Knowledge Browser graph assembly failed; results unavailable; returning HTTP 500")
         return _read_failure("graph assembly failed", "knowledge_browser.graph_failed")
     if result is None:
+        return _read_failure("graph assembly failed", "knowledge_browser.graph_failed")
+    if not _writes(result):  # BF-940 slice 3 (F7-1): a node's label is a frontmatter value, written after this returns
+        logger.warning("Knowledge Browser graph cannot be written as JSON; results unavailable; returning HTTP 500")
         return _read_failure("graph assembly failed", "knowledge_browser.graph_failed")
     return result
 
