@@ -403,7 +403,7 @@ class SemanticKnowledgeLayer:
         if topic:
             header += f" \u2014 {topic}"
         if tags:
-            header += f" [{', '.join(tags)}]"
+            header += f" [{', '.join(str(tag) for tag in tags)}]"  # BF-940 slice 2 (L27): a tag may be a number
         doc = f"{header}\n{content[:_RECORD_DOC_CHARS]}"
 
         try:

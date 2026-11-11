@@ -145,7 +145,6 @@ def test_the_notebook_route_writes_a_list_of_tags_as_before(store):
     assert "tags:\n- a\n" in (store.repo_path / "notebooks" / "alice" / "t.md").read_text(encoding="utf-8")
 
 
-@pytest.mark.xfail(reason="BF-940 slice 2 M2: not built", raises=AssertionError, strict=True)
 class TestAFrontmatterTheStoreWritesIsOneTheStoreReads:
     @pytest.mark.parametrize(("slug", "kwargs"), [
         pytest.param("review-nominal", {"metrics": {"sample": (1, 2)}}, id="a-tuple-in-metrics-case-B"),
@@ -211,7 +210,6 @@ class TestAFrontmatterTheStoreWritesIsOneTheStoreReads:
         assert parse_skill_file(path) is not None
 
 
-@pytest.mark.xfail(reason="BF-940 slice 2 M2: not built", raises=AssertionError, strict=True)
 class TestANumericTagReachesTheIndexAndANonListIsRefused:
     @pytest.mark.parametrize("tags", [
         pytest.param([717], id="an-integer"),

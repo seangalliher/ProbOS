@@ -17,7 +17,7 @@ import yaml
 
 from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
-from probos.utils.frontmatter import base_split_frontmatter, split_frontmatter
+from probos.utils.frontmatter import base_split_frontmatter, dump_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -665,16 +665,17 @@ class RecordsStore:
         Returns the relative path of the created file.
 
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
-        the frontmatter **before** ``yaml.dump``. They round-trip through
+        the frontmatter **before** the dump. They round-trip through
         ``_parse_document`` when every value is one YAML's safe loader builds
         (a string, number, boolean, date, or a list or mapping of them), a
         value holding ``---`` included: the frontmatter ends at a line of its
-        own (BF-940, #1686). ``yaml.dump`` writes a tuple or another Python
-        object with a
-        ``!!python/`` tag, which no reader loads (BF-952 L24): a document
-        holding one reads as ``{}``, so at the default ``ship`` classification
-        for every reader, unless a ``---`` before the tag lets the base's
-        earlier cut read (BF-940 A1; L10 of its contract). The AD-1138
+        own (BF-940, #1686). The text is written by
+        :func:`probos.utils.frontmatter.dump_frontmatter` (BF-940 slice 2,
+        L24): a tuple is written as a list, and a value no reader loads (any
+        other Python object: ``yaml.dump`` wrote it with a ``!!python/`` tag,
+        so the document read as ``{}``, at the default ``ship`` classification,
+        whoever its author) raises ``ValueError`` naming the key, before any
+        file is touched. ``tags`` must be a list or a tuple (L27). The AD-1138
         ``frontmatter_json`` sidecar holds them whole only within
         ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
         past it the index stores ``{}``. Any key in
@@ -708,6 +709,8 @@ class RecordsStore:
                     "extra_frontmatter may not set store-owned keys: "
                     + ", ".join(collisions)
                 )
+        if tags and not isinstance(tags, (list, tuple)):  # BF-940 slice 2 (L27): the readers iterate tags and the index joins them
+            raise ValueError("tags must be a list")
 
         # Build frontmatter
         now = datetime.now(timezone.utc).isoformat()
@@ -759,7 +762,7 @@ class RecordsStore:
             frontmatter.update(extra_frontmatter)
 
         # Compose full document
-        fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        fm_yaml = dump_frontmatter(frontmatter)  # BF-940 slice 2 (L24): a tuple is a list; an unreadable value raises
         full_content = f"---\n{fm_yaml}---\n\n{content}"
 
         # Write file
@@ -882,7 +885,7 @@ class RecordsStore:
                 "status": "published",
                 "created": datetime.now(timezone.utc).isoformat(),
             }
-            fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+            fm_yaml = dump_frontmatter(frontmatter)  # BF-940 slice 2 (L24): the one writer function
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f"---\n{fm_yaml}---\n\n# Captain's Log — {today}\n{entry}", encoding="utf-8")
 
@@ -1541,7 +1544,7 @@ class RecordsStore:
         fm["status"] = "published"
         fm["updated"] = datetime.now(timezone.utc).isoformat()
 
-        fm_yaml = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+        fm_yaml = dump_frontmatter(fm)  # BF-940 slice 2 (L24): what safe_load built (an !!omap is a list of tuples) is written readably
         file_path.write_text(f"---\n{fm_yaml}---\n\n{content}", encoding="utf-8")
 
         if self._config.auto_commit:
