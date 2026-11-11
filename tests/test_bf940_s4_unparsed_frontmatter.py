@@ -8,7 +8,8 @@ over ``tmp_path`` with ``~`` moved and hand-made documents; the backfill runs ag
 The class is strict xfail until M2 (each case fails at an ``assert`` of its own body on the unfixed tree, after its premise); the
 module's functions are guards and pass on both trees: they hold what this slice must not change (a document with no frontmatter, an
 empty one or an unclosed opener; a frontmatter the base's cut reads; a constructor error; the scans; the parse and the mapping
-``read_entry`` returns; an update-in-place, which ``seed_manuals`` runs at every boot). A case asserts its premise first (YAML refuses
+``read_entry`` returns; an update-in-place, which ``seed_manuals`` runs at every boot; how deeply nested a document each reader
+parses before ``RecursionError``, which the verdict must not lower: S10). A case asserts its premise first (YAML refuses
 the block, the Captain reads the document, a healthy private note is refused to bob), so "bob is refused" cannot mean the store was
 broken.
 """
@@ -16,6 +17,7 @@ broken.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ import pytest
 import yaml
 
 from probos.config import RecordsConfig
+from probos.knowledge import records_store as records_store_module
 from probos.knowledge.records_store import RecordsStore
 from probos.knowledge.semantic import SemanticKnowledgeLayer
 
@@ -215,6 +218,105 @@ async def test_the_owner_of_a_notebook_directory_reads_such_a_document_at_any_de
         assert path in await _found(store, "alice"), path
 
 
+def _frontier_block(depth: int) -> str:
+    """A frontmatter block nesting ``depth`` block sequences and then ending in a YAML error (an unclosed flow sequence)."""
+    return f"nested:\n{'- ' * depth}deep\nbroken: [unclosed\n"
+
+
+def _frontier_document(depth: int) -> str:
+    """PyYAML's composer recurses while it builds the nest and refuses the block only after it, so a reader that survives the nest
+    reads this document as ``{}``: a document whose frontmatter did not load, nested ``depth`` deep."""
+    return _raw(_frontier_block(depth))
+
+
+async def _padded(pad: int, call: Any) -> Any:
+    """``await call()`` with ``pad`` more coroutine frames beneath it."""
+    if pad:
+        return await _padded(pad - 1, call)
+    return await call()
+
+
+async def _frontier(read: Any, pad: int) -> int:
+    """The deepest ``depth`` for which ``await read(depth)`` is true, by bisection, with ``pad`` frames beneath the call (F1).
+
+    PyYAML's composer recurses about two Python frames for each level a block nests, so whether one frame more beneath a call costs
+    it a nesting level depends on the parity of the stack it is called from, which no case controls. Every reader compared is
+    therefore measured at both parities (``pad`` 0 and 1), and the depth is never a number in this file. The premises fail loudly where
+    the probe finds nothing: the shallow document must read and the one as deep as the recursion limit must not. A ``RecursionError``
+    is "does not read".
+    """
+
+    async def reads(depth: int) -> bool:
+        try:
+            return bool(await _padded(pad, lambda: read(depth)))
+        except RecursionError:
+            return False
+
+    low, high = 2, sys.getrecursionlimit()
+    assert await reads(low), "premise: a shallow document reads"
+    assert not await reads(high), "premise: a document as deep as the recursion limit does not"
+    while high - low > 1:
+        middle = (low + high) // 2
+        if await reads(middle):
+            low = middle
+        else:
+            high = middle
+    return low
+
+
+async def _read_entry_reads(store: RecordsStore, path: str) -> bool:
+    await store.read_entry(path, reader_id="alice")
+    return True
+
+
+async def _list_entries_reads(store: RecordsStore, path: str) -> bool:
+    return path in [entry["path"] for entry in await store.list_entries()]  # the listing leaves out a document it could not read
+
+
+async def _publish_reads(store: RecordsStore, path: str) -> bool:
+    try:
+        await store.publish(path, "captain")
+    except ValueError:  # the refusal of such a document: the parse and the verdict were both reached
+        pass
+    return True
+
+
+async def _update_in_place_reads(store: RecordsStore, path: str) -> bool:
+    await store.write_entry("alice", path, "replacement body", "frontier", classification="private")
+    entry = await store.read_entry(path, reader_id="captain")
+    return entry is not None and entry["frontmatter"].get("revision") == 2  # a RecursionError on the old text is logged and dropped: no revision
+
+
+def _never(raw: str, frontmatter: Any) -> bool:
+    return False
+
+
+@pytest.mark.parametrize("reader", [
+    pytest.param(_read_entry_reads, id="read-entry"),
+    pytest.param(_list_entries_reads, id="list-entries"),
+    pytest.param(_publish_reads, id="publish"),
+    pytest.param(_update_in_place_reads, id="update-in-place"),
+])
+async def test_a_reader_parses_a_document_as_deeply_nested_as_it_did_before_the_verdict(store, monkeypatch, reader):
+    """F1: the verdict must not make a reader stop at a shallower nesting than its own parse. The reference is the same reader with the
+    verdict neutralised (``raising=False``: the base has none, so this guard passes there too); the document nests deep and then ends
+    in a YAML error, so the parse reads it as ``{}`` and the verdict is reached."""
+    path = "notebooks/alice/n.md"
+    with pytest.raises(yaml.YAMLError):
+        yaml.safe_load(_frontier_block(2))
+    assert store._parse_document(_frontier_document(2)) == ({}, _BODY), "premise: a shallow document of this shape reads as {}"
+
+    async def read_at(depth: int) -> bool:
+        _hand_made(store, path, _frontier_document(depth))
+        return await reader(store, path)
+
+    for pad in (0, 1):
+        with monkeypatch.context() as patch:
+            patch.setattr(records_store_module, "_frontmatter_unparsed", _never, raising=False)
+            before = await _frontier(read_at, pad)
+        assert await _frontier(read_at, pad) == before, f"the verdict lowered the nesting this reader reads (pad {pad})"
+
+
 class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
     @pytest.mark.parametrize("block", _REFUSED)
     @pytest.mark.parametrize(("path", "owned"), _PLACES)
@@ -350,3 +452,44 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
         assert await store.read_entry(path, reader_id="bob") is None
         assert path not in await _found(store, "bob")
         assert path in await _found(store, "alice") and path in await _found(store, "captain")
+
+    async def test_the_verdict_loads_the_block_as_deeply_nested_as_the_parse_the_caller_has_just_run(self, store):
+        """F1: called from one frame, ``_parse_document`` and the verdict stop at the same nesting, at both parities of the stack: the
+        verdict is the one reading a caller makes after the parse, from the same frame."""
+        assert hasattr(records_store_module, "_frontmatter_unparsed"), "premise: the verdict is a function of the module"
+        verdict = records_store_module._frontmatter_unparsed
+        with pytest.raises(yaml.YAMLError):
+            yaml.safe_load(_frontier_block(2))
+        assert store._parse_document(_frontier_document(2)) == ({}, _BODY), "premise: a shallow document of this shape reads as {}"
+
+        async def parsed(depth: int) -> bool:
+            store._parse_document(_frontier_document(depth))
+            return True
+
+        async def judged(depth: int) -> bool:
+            return verdict(_frontier_document(depth), {}) is True
+
+        for pad in (0, 1):
+            assert await _frontier(judged, pad) == await _frontier(parsed, pad), f"the verdict stops sooner than the parse (pad {pad})"
+
+    async def test_a_note_libyaml_reads_with_another_author_is_found_by_its_owner_only_where_the_search_loads_with_pyyaml(
+        self, store, monkeypatch,
+    ):
+        """L11, a recorded limit and not a promise: the search's first pass has libyaml's reading of a note PyYAML refuses (a tab after
+        each key). Where that reading names another author, it excludes the owner of the directory though ``read_entry`` gives her the
+        note, and the second reading cannot add her; bob is withheld by both readings and the Captain finds it. A change that lets her
+        find it under libyaml changes the first assertion of the loop on purpose."""
+        path = "notebooks/alice/tabbed.md"
+        block = "author:\tbob\nclassification:\tprivate\n"
+        with pytest.raises(yaml.YAMLError):
+            yaml.safe_load(block)
+        _hand_made(store, path, _raw(block))
+        assert await store.read_entry(path, reader_id="bob") is None
+        own = await store.read_entry(path, reader_id="alice")
+        assert own is not None and own["frontmatter"] == {}, "premise: read_entry gives her the note"
+        assert await store.read_entry(path, reader_id="captain") is not None
+        for loader in (yaml.SafeLoader, records_store_module._RECORDS_YAML_LOADER):  # a host without libyaml, then this host's own
+            monkeypatch.setattr(records_store_module, "_RECORDS_YAML_LOADER", loader)
+            assert (path in await _found(store, "alice")) == (loader is yaml.SafeLoader), loader
+            assert path not in await _found(store, "bob"), loader
+            assert path in await _found(store, "captain"), loader

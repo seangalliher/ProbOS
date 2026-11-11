@@ -742,7 +742,9 @@ async def test_a_record_only_libyaml_reads_is_found_only_where_both_readings_adm
     alice's private note as ``{}`` while the search reads it as private. BF-940 slice 4 (L19): a document whose
     frontmatter PyYAML refuses is private to the owner of its notebook directory, so ``read_entry`` withholds it
     from bob and shows it to alice and the Captain, and the search, with or without libyaml, finds it for the
-    same two and not for bob: the two readers agree. (It was the base's reading, ``ship`` for every reader, which
+    same two and not for bob: the two readers agree on this note, whose author is the owner of its directory (where
+    libyaml's reading names another author the search can miss it for its owner: BF-940 slice 4, L11). (It was the
+    base's reading, ``ship`` for every reader, which
     this test pinned and BF-940 owned.)"""
     store = await _store(tmp_path)
     path = "notebooks/alice/tabbed-private.md"

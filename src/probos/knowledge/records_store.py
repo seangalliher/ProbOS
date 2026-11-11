@@ -314,14 +314,28 @@ def _frontmatter_unparsed(raw: str, frontmatter: Any) -> bool:
 
     ``frontmatter`` is ``_parse_document``'s reading or the search's. A reading that holds something loaded. A document with no
     frontmatter block (no opener, or no closing line: L18) has none to refuse. What is left reads as ``{}``, and only the block
-    says why: it loads to nothing, or YAML refused it (:func:`_block_unparsed`). The block is the one the readers load
+    says why: it loads to nothing, or YAML refused it (the ``YAMLError`` caught below). The block is the one the readers load
     (:func:`probos.utils.frontmatter.split_frontmatter`); where it reads as nothing and the base's cut of the text reads as
     something, the reading holds something and this is ``False`` (A1).
+
+    BF-940 slice 4, round 1 (F1): the block is loaded here, in this frame, and not through :func:`_block_unparsed`. PyYAML's composer
+    recurses about two Python frames for each level a block nests, so a frame between a caller and ``yaml.safe_load`` costs a nesting
+    level at every other stack depth: a document that nests deep and then ends in a YAML error was read by ``_parse_document``, which
+    the caller runs in its own frame, and raised ``RecursionError`` here one level sooner. Loaded from the caller's frame, this call
+    stops at the nesting ``_parse_document``'s does for ``read_entry``, ``list_entries``, ``publish`` and update-in-place, and has two
+    frames to spare below the search's own PyYAML reading (:func:`_search_read_document`, :func:`_search_load_frontmatter`,
+    :func:`_load_frontmatter`). :func:`_block_unparsed` is for :func:`_base_reading_admits`, whose own reading is one frame in too.
     """
     if frontmatter:
         return False
     block, _ = split_frontmatter(raw)
-    return block is not None and _block_unparsed(block)
+    if block is None:  # no frontmatter block (L18): there is none to refuse
+        return False
+    try:
+        yaml.safe_load(block)  # F1: loaded here, in this frame, not through a helper (see the docstring)
+    except yaml.YAMLError:
+        return True
+    return False
 
 
 def _nests_below(block: str, limit: int) -> bool:
@@ -495,7 +509,8 @@ def _search_records(
             continue
         # Classification scope + reader-identity check (BF-679). BF-940 slice 4 (L19): a document whose frontmatter did not load is
         # private to the owner of its notebook directory, so a record only the Captain may read is not found for another reader and
-        # cannot move the scores that reader is shown (A4).
+        # cannot move the scores that reader is shown (A4). A note only libyaml reads (a tab after a key) has libyaml's reading here, so
+        # its owner can be excluded by it where read_entry gives her the note: the second reading withholds more and never gives more (L11).
         if not record_is_readable(
             _unparsed_gate(rel_path) if _frontmatter_unparsed(raw, frontmatter) else frontmatter,
             scope=scope,
@@ -1692,7 +1707,11 @@ class RecordsStore:
         parse reads as ``{}`` (unless the base's earlier cut of it parses and it
         reads as that: A3; BF-940 A1, #1686) and is private to the owner of its
         ``notebooks/<callsign>/`` directory: only that owner, the Captain and a
-        reader that named no identity find it (BF-940 slice 4, L19). A
+        reader that named no identity find it (BF-940 slice 4, L19), the owner
+        only where the search's own reading admits her: it loads with libyaml, so a
+        note only libyaml reads (a tab after a key) has libyaml's reading in the
+        first pass, and an owner whom that reading excludes does not find a note
+        that ``read_entry`` gives her (L11). A
         number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does
