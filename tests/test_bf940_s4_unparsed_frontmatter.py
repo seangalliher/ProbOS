@@ -215,7 +215,6 @@ async def test_the_owner_of_a_notebook_directory_reads_such_a_document_at_any_de
         assert path in await _found(store, "alice"), path
 
 
-@pytest.mark.xfail(reason="BF-940 slice 4 M2: not built", raises=AssertionError, strict=True)
 class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
     @pytest.mark.parametrize("block", _REFUSED)
     @pytest.mark.parametrize(("path", "owned"), _PLACES)

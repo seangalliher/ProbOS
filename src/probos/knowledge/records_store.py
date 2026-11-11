@@ -103,6 +103,26 @@ _IDENTITY_GATED_CLASSIFICATIONS = frozenset({"private", "department"})
 # BF-679: the one reader id with unrestricted read access (``read_entry``'s rule).
 _UNRESTRICTED_READER = "captain"
 
+#: BF-940 slice 4 (L19): the key an entry of ``RecordsStore.list_entries`` carries, set to ``True`` and only then, for a document whose
+#: frontmatter did not load, so that a caller which acts on the document (the semantic backfill) can tell that it reads as ``{}``
+#: because YAML refused its frontmatter and not because it holds none. Owned here; ``knowledge.semantic`` imports it, as it imports
+#: ``_UNRESTRICTED_READER``.
+FRONTMATTER_UNPARSED_KEY = "frontmatter_unparsed"
+
+
+def _unparsed_gate(rel_path: str) -> dict[str, Any]:
+    """BF-940 slice 4 (L19): the frontmatter the access rules read for a document whose own did not load.
+
+    Its classification and its author are unknown, so it is private, and its author is nobody, except under
+    ``notebooks/<callsign>/``, where the notebook's owner is the author. ``None`` equals no reader id (the anonymous ``""``
+    included), so only the owner is its author; the Captain and a reader that named no identity pass the rules as they do for any
+    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the document's path in the
+    repository, as the walk of the search names it and as ``read_entry`` resolves it.
+    """
+    parts = rel_path.split("/")
+    owner = parts[1] if len(parts) >= 3 and parts[0] == "notebooks" else None
+    return {"classification": "private", "author": owner}
+
 
 def record_is_readable(
     frontmatter: dict[str, Any],
@@ -275,6 +295,35 @@ def _load_frontmatter(block: str) -> Any:
         return {}
 
 
+def _block_unparsed(block: str) -> bool:
+    """BF-940 slice 4 (L19): whether ``yaml.safe_load``, the base's call, refuses a frontmatter block with a ``YAMLError``.
+
+    That is the one way a block reads as ``{}`` without holding nothing: broken YAML, or a tag ``safe_load`` refuses (the
+    ``!!python/tuple`` an older ``write_entry`` wrote). A block that loads to nothing (blank, ``[]``) is not refused. Any other error
+    (a constructor's ``ValueError``, a ``RecursionError``) is not caught here: ``read_entry`` raises on it and the search withholds it.
+    """
+    try:
+        yaml.safe_load(block)
+    except yaml.YAMLError:
+        return True
+    return False
+
+
+def _frontmatter_unparsed(raw: str, frontmatter: Any) -> bool:
+    """BF-940 slice 4 (L19): whether the document ``raw``, which a reader read as ``frontmatter``, has a frontmatter that did not load.
+
+    ``frontmatter`` is ``_parse_document``'s reading or the search's. A reading that holds something loaded. A document with no
+    frontmatter block (no opener, or no closing line: L18) has none to refuse. What is left reads as ``{}``, and only the block
+    says why: it loads to nothing, or YAML refused it (:func:`_block_unparsed`). The block is the one the readers load
+    (:func:`probos.utils.frontmatter.split_frontmatter`); where it reads as nothing and the base's cut of the text reads as
+    something, the reading holds something and this is ``False`` (A1).
+    """
+    if frontmatter:
+        return False
+    block, _ = split_frontmatter(raw)
+    return block is not None and _block_unparsed(block)
+
+
 def _nests_below(block: str, limit: int) -> bool:
     """BF-952 A5: whether libyaml parses ``block`` and its collections nest fewer than ``limit`` deep.
 
@@ -334,7 +383,7 @@ def _search_read_document(raw: str) -> tuple[Any, str, str | None]:
 
 
 def _base_reading_admits(
-    block: str, *, scope: str, reader_id: str | None, reader_department: str,
+    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str,
 ) -> bool:
     """BF-952 A5: whether the base's reading of a frontmatter block admits this reader at ``scope``.
 
@@ -342,12 +391,16 @@ def _base_reading_admits(
     record only where it admits the reader too, so no difference between libyaml's reading and the base's, known
     (RK8) or not, can show a reader a record the base's reading withholds (RK15; BF-679). BF-940 A1: ``read_entry`` reads the
     base's cut where the block reads as nothing and the cut reads as something, so this reading does too; the cut is the block
-    up to its first ``---`` (:func:`base_split_frontmatter`; U4 pins it).
+    up to its first ``---`` (:func:`base_split_frontmatter`; U4 pins it). BF-940 slice 4 (L19): where that reading is ``{}`` because
+    YAML refuses the block, the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the document's path in the
+    repository), as ``read_entry`` does.
     """
     try:
         frontmatter = _load_frontmatter(block)
         if not frontmatter:
             frontmatter = _load_frontmatter(block.partition("---")[0]) or frontmatter
+            if not frontmatter and _block_unparsed(block):  # BF-940 slice 4 (L19): the same document read_entry withholds
+                frontmatter = _unparsed_gate(path)
     except Exception:  # A5: read_entry raises on this block (a constructor error, a RecursionError)
         logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
         return False  # A5: the search withholds what read_entry raises on
@@ -440,9 +493,11 @@ def _search_records(
             # (``[]``, ``false``, ``0``, ``''``) is ``{}``, as every reader has read it.
             logger.debug("BF-952: skipping %s, whose frontmatter is not a mapping", rel_path)
             continue
-        # Classification scope + reader-identity check (BF-679)
+        # Classification scope + reader-identity check (BF-679). BF-940 slice 4 (L19): a document whose frontmatter did not load is
+        # private to the owner of its notebook directory, so a record only the Captain may read is not found for another reader and
+        # cannot move the scores that reader is shown (A4).
         if not record_is_readable(
-            frontmatter,
+            _unparsed_gate(rel_path) if _frontmatter_unparsed(raw, frontmatter) else frontmatter,
             scope=scope,
             reader_id=reader_id,
             reader_department=reader_department,
@@ -487,7 +542,7 @@ def _search_records(
         # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
         # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
         if block is not None and not _base_reading_admits(
-            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department, path=result["path"],
         ):
             continue
         results.append(result)
@@ -711,6 +766,10 @@ class RecordsStore:
         because the write path is the same for a first draft and a revision,
         that default is applied to documents authored long before it existed.
         Ignored on create, where there is nothing to preserve.
+
+        BF-940 slice 4 (L19): an update-in-place of a document whose frontmatter did not load (YAML refused it) proceeds as before and
+        replaces it, since the store's own writers and ``seed_manuals`` overwrite by design; its ``created`` time and ``revision``
+        cannot be carried and restart, so a WARNING names the path (the replaced version stays in git history).
         """
         # Validate classification
         if classification not in _CLASSIFICATION_LEVELS:
@@ -747,6 +806,11 @@ class RecordsStore:
             try:
                 existing_raw = file_path.read_text(encoding="utf-8")
                 existing_fm, _ = self._parse_document(existing_raw)
+                if _frontmatter_unparsed(existing_raw, existing_fm):  # BF-940 slice 4 (L19): said, not refused (seed_manuals overwrites)
+                    logger.warning(
+                        "BF-940 slice 4 (L19): %s is rewritten in place and its frontmatter did not load: its created time and revision "
+                        "are not carried, and the replaced version stays in git history", path,
+                    )
                 if "created" in existing_fm:
                     frontmatter["created"] = existing_fm["created"]
                 existing_rev = existing_fm.get("revision", 1)
@@ -1424,6 +1488,11 @@ class RecordsStore:
         """Read a document, enforcing classification access control.
 
         Returns {"frontmatter": {...}, "content": "..."} or None if denied.
+
+        BF-940 slice 4 (L19): a document whose frontmatter did not load (YAML refused it) reads as ``{}`` and is private to the owner of
+        its ``notebooks/<callsign>/`` directory: it is returned to that owner and to the Captain, and denied to every other reader, the
+        anonymous ``""`` included. ``RecordsStore.list_entries`` marks its entry (:data:`FRONTMATTER_UNPARSED_KEY`); this mapping is
+        unchanged.
         """
         file_path = self._safe_path(path)
         if not file_path.exists():
@@ -1434,9 +1503,14 @@ class RecordsStore:
 
         # Classification check — Captain has unrestricted read access
         if reader_id != "captain":
-            doc_class = frontmatter.get("classification", "ship")
-            doc_author = frontmatter.get("author", "")
-            doc_dept = frontmatter.get("department", "")
+            # BF-940 slice 4 (L19): a frontmatter that did not load names no classification, so the document is private to its owner
+            gate = (
+                _unparsed_gate(file_path.relative_to(self._repo_path.resolve()).as_posix())
+                if _frontmatter_unparsed(raw, frontmatter) else frontmatter
+            )
+            doc_class = gate.get("classification", "ship")
+            doc_author = gate.get("author", "")
+            doc_dept = gate.get("department", "")
 
             if doc_class == "private" and reader_id != doc_author:
                 return None
@@ -1476,6 +1550,10 @@ class RecordsStore:
         BF-940 A1 (F1): ``tags`` is matched by equality over the document's own ``tags`` value (:func:`_holds_every_tag`), so a
         document whose ``tags`` hold a nested list, mapping or set, or are a number or nothing, is listed or not by the tags it
         holds and never aborts the listing.
+
+        BF-940 slice 4 (L19): the entry of a document whose frontmatter did not load (YAML refused it) reads ``{}`` as before and carries
+        :data:`FRONTMATTER_UNPARSED_KEY` set to ``True``; no other entry has the key. The listing is not reader-scoped, so it lists such
+        a document for every caller, as it lists a private one.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
@@ -1500,6 +1578,7 @@ class RecordsStore:
                     continue
                 raw = md_file.read_text(encoding="utf-8")
                 fm, _ = self._parse_document(raw)
+                unparsed = _frontmatter_unparsed(raw, fm)  # BF-940 slice 4 (L19)
             except OSError:
                 if strict:  # A5 (O5): a file the walk listed is never "no document", whatever the read's error
                     raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"
@@ -1519,7 +1598,10 @@ class RecordsStore:
             if tags and not _holds_every_tag(fm.get("tags"), tags):  # BF-940 A1 (F1): by equality, so no stored element is hashed
                 continue
 
-            results.append({"path": rel_path, "frontmatter": fm})
+            entry: dict[str, Any] = {"path": rel_path, "frontmatter": fm}
+            if unparsed:
+                entry[FRONTMATTER_UNPARSED_KEY] = True  # BF-940 slice 4 (L19): the one entry that has the key
+            results.append(entry)
 
         return results
 
@@ -1553,13 +1635,21 @@ class RecordsStore:
             return []
 
     async def publish(self, path: str, author: str) -> None:
-        """Promote a document from draft to published status."""
+        """Promote a document from draft to published status.
+
+        BF-940 slice 4 (L19): a document whose frontmatter did not load (YAML refused it) is not published. ``publish`` writes back what
+        it read, which for such a document is ``{}``, so it would replace the author, the classification and the times with a status
+        and the note would read ``ship``. It raises ``ValueError`` naming the path, for the Captain too, and writes nothing.
+        """
         file_path = self._safe_path(path)
         if not file_path.exists():
             raise FileNotFoundError(f"Record not found: {path}")
 
         raw = file_path.read_text(encoding="utf-8")
         fm, content = self._parse_document(raw)
+
+        if _frontmatter_unparsed(raw, fm):
+            raise ValueError(f"The frontmatter of {path} does not load, so it is not published: fix the file first")
 
         if fm.get("author") != author and author != "captain":
             raise PermissionError("Only the author or Captain can publish")
@@ -1599,8 +1689,10 @@ class RecordsStore:
         reader cannot move the scores it is shown. A record whose frontmatter is
         a non-empty YAML list or a truthy scalar, or one YAML's constructor cannot
         build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
-        parse reads as ``{}``, as every reader reads it, unless the base's earlier
-        cut of it parses and it reads as that (A3; BF-940 A1, #1686). A
+        parse reads as ``{}`` (unless the base's earlier cut of it parses and it
+        reads as that: A3; BF-940 A1, #1686) and is private to the owner of its
+        ``notebooks/<callsign>/`` directory: only that owner, the Captain and a
+        reader that named no identity find it (BF-940 slice 4, L19). A
         number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does

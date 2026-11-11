@@ -739,18 +739,22 @@ async def test_the_search_returns_no_record_the_base_reading_withholds(
 @pytest.mark.asyncio
 async def test_a_record_only_libyaml_reads_is_found_only_where_both_readings_admit_it(tmp_path: Path) -> None:
     """A5 (RK8, L28): PyYAML's scanner refuses a tab after a key and libyaml reads it, so ``read_entry`` reads
-    alice's private note as ``{}`` (``ship``) for every reader, as on the base, while the search reads it as
-    private. The search shows it only where both readings admit the reader: to alice and the Captain, not to bob.
-    What ``read_entry`` shows bob is the base's and BF-940's (#1686)."""
+    alice's private note as ``{}`` while the search reads it as private. BF-940 slice 4 (L19): a document whose
+    frontmatter PyYAML refuses is private to the owner of its notebook directory, so ``read_entry`` withholds it
+    from bob and shows it to alice and the Captain, and the search, with or without libyaml, finds it for the
+    same two and not for bob: the two readers agree. (It was the base's reading, ``ship`` for every reader, which
+    this test pinned and BF-940 owned.)"""
     store = await _store(tmp_path)
     path = "notebooks/alice/tabbed-private.md"
     target = store.repo_path / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("---\nauthor:\talice\nclassification:\tprivate\n---\n\nwarp core notes\n", encoding="utf-8")
-    assert (await store.read_entry(path, reader_id="bob"))["frontmatter"] == {}  # the base's reading
+    assert await store.read_entry(path, reader_id="bob") is None
+    own = await store.read_entry(path, reader_id="alice")
+    assert own is not None and own["frontmatter"] == {}  # PyYAML's reading, which read_entry keeps
     assert await _paths(store, "warp", reader_id="alice") == [path]
     assert await _paths(store, "warp", reader_id="captain") == [path]
-    assert await _paths(store, "warp", reader_id="bob") == ([] if _LIBYAML else [path])
+    assert await _paths(store, "warp", reader_id="bob") == []
 
 
 def test_libyaml_is_given_only_a_block_nesting_fewer_than_the_limit_deep() -> None:
