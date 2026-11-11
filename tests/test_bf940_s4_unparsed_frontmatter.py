@@ -338,6 +338,9 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
             assert (path in await _found(store, reader)) == shown, reader
 
     async def test_a_document_withheld_from_a_reader_does_not_move_the_scores_that_reader_is_shown(self, store, tmp_path):
+        """BF-952 A4, L7: a document the first pass reads as ``{}`` (a YAML error here) is private to its owner there too, so it counts toward
+        the rarity, and so the scores, of the readers who may read it only; one that only the second reading withholds can move another
+        reader's (L11)."""
         plain = _make_store(tmp_path / "plain")
         for target in (store, plain):
             _healthy(target, "reports/h1.md", "warp")
@@ -476,10 +479,10 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
     async def test_a_note_libyaml_reads_with_another_author_is_found_by_its_owner_only_where_the_search_loads_with_pyyaml(
         self, store, monkeypatch,
     ):
-        """L11, a recorded limit and not a promise: the search's first pass has libyaml's reading of a note PyYAML refuses (a tab after
-        each key). Where that reading is ``private`` and names another author, it excludes the owner of the directory though ``read_entry`` gives her the
-        note, and the second reading cannot add her; bob is withheld by both readings and the Captain finds it. A change that lets her
-        find it under libyaml changes the first assertion of the loop on purpose."""
+        """L11, a recorded limit and not a promise: under libyaml the search's first pass reads the note below (a tab after each key, which
+        PyYAML refuses) as libyaml's mapping, which is ``private`` and names another author, so it excludes the owner of the directory
+        though ``read_entry`` gives her the note, and the second reading cannot add her; bob is withheld by both readings and the Captain
+        finds it. A change that lets her find it under libyaml changes the first assertion of the loop on purpose."""
         path = "notebooks/alice/tabbed.md"
         block = "author:\tbob\nclassification:\tprivate\n"
         with pytest.raises(yaml.YAMLError):
@@ -503,11 +506,11 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
         are T2's and the scopes are the four labels. The premises show both layers working at each scope: a healthy ``ship`` note is found
         by bob at ``ship`` and ``fleet`` and not below, and a healthy private note of alice's is found by her at every scope and never by
         bob. The first loop holds for a note neither loader reads and for a tab-after-key note naming its directory's owner and
-        ``private``, which libyaml's reading and the stand-in agree on. F4 (round 3, L11): the first pass has libyaml's reading of a note
-        only libyaml reads, and its classification is a ceiling as well, so a tab-after-key note naming ``ship`` is found below ``ship``
-        only where the search loads with PyYAML. The second loop pins that, under a host without libyaml's loader and then this host's own
-        as T13's does, as a limit and not a promise: a change that lets the three readers find it below ``ship`` under libyaml changes its
-        assertion on purpose. Under either loader no one but the three finds it, at any scope."""
+        ``private``, which libyaml's reading and the stand-in agree on. F4 (round 3, L11): the second loop pins the one block it writes, a tab after
+        each key naming ``alice`` and ``ship``: under libyaml the first pass reads it as a ``ship`` mapping, whose classification is a ceiling,
+        so the three readers find it at ``ship`` and ``fleet`` only, and under PyYAML's loader at every scope. It runs under a host without
+        libyaml's loader and then this host's own, as T13's does, as a limit and not a promise: a change that lets the three readers find it
+        below ``ship`` under libyaml changes its assertion on purpose. Under either loader no one but the three finds it, at any scope."""
         owned, tabbed, report = "notebooks/alice/lost.md", "notebooks/alice/tabbed.md", "reports/lost.md"
         for path, block in ((owned, _BROKEN), (tabbed, _TABBED), (report, _BROKEN)):
             with pytest.raises(yaml.YAMLError):

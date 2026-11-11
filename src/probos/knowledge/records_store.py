@@ -508,11 +508,10 @@ def _search_records(
             logger.debug("BF-952: skipping %s, whose frontmatter is not a mapping", rel_path)
             continue
         # Classification scope + reader-identity check (BF-679). BF-940 slice 4 (L19): where this pass reads a document whose frontmatter
-        # did not load as {} (a note neither loader reads) it applies the stand-in, private to the owner of its notebook directory, so a
-        # record only the Captain may read is not found for another reader and cannot move the scores that reader is shown (A4). A note
-        # only libyaml reads (a tab after a key) has libyaml's reading here: the ordinary rules can exclude its owner by its author, or the
-        # Captain and an identity-less search by a classification above the scope (L11), and the note counts toward the scores of the
-        # readers that reading admits (L7). The second reading withholds more and never gives more (L11).
+        # did not load as {} it applies the stand-in, private to the owner of its notebook directory, so a record only the Captain may
+        # read is not found for another reader and cannot move the scores that reader is shown (BF-952 A4). Where it reads the document
+        # as something else, the ordinary rules decide on that reading and nothing more is specified for it (L11). The second reading
+        # withholds more and never gives more (L11).
         if not record_is_readable(
             _unparsed_gate(rel_path) if _frontmatter_unparsed(raw, frontmatter) else frontmatter,
             scope=scope,
@@ -1703,8 +1702,8 @@ class RecordsStore:
         rarity (IDF) of the query terms the record holds over that of all of them,
         between 0 and 1, and it never rises down the list. Rarity is counted only
         over the records this reader may read, so a record withheld from the
-        reader cannot move the scores it is shown (a note only libyaml reads can:
-        L7). A record whose frontmatter is a non-empty YAML list or a truthy
+        reader cannot move the scores it is shown (one that only the second
+        reading withholds can: L7). A record whose frontmatter is a non-empty YAML list or a truthy
         scalar, or one YAML's constructor cannot build (``updated: 2026-13-05``),
         is skipped; one whose frontmatter does not parse (``read_entry`` reads it
         as ``{}``, unless the base's earlier cut of it parses and it reads as that:
@@ -1712,15 +1711,14 @@ class RecordsStore:
         ``notebooks/<callsign>/`` directory (BF-940 slice 4, L19). At any
         ``scope``, with either loader, no reader but that owner, the Captain and a
         reader that named no identity finds it, and no reader that named an
-        identity is shown a note ``read_entry`` withholds from her. Where the first
-        pass reads it as ``{}`` (a note neither loader reads, and every such note
-        where libyaml is not installed) those three find it at every ``scope``, as
-        they find any private note. A note only libyaml reads (a tab after a key)
-        has libyaml's reading in the first pass, so a reader finds it only where the
-        ordinary rules admit her on that reading as well: its ``author`` can exclude
-        the owner, its ``classification`` is a ceiling that can exclude the Captain
-        and a reader that named no identity below it, and a reading that is no
-        mapping excludes everyone (L11). A number in ``title``, ``topic``, ``tags``,
+        identity is shown a note ``read_entry`` withholds from her. The search reads the
+        block of such a record twice and a reader finds it only where both readings
+        admit her: the first pass reads it with the search's own loader (libyaml
+        where BF-952 admits it) and decides what counts toward a term's rarity, the
+        second reading is ``read_entry``'s. Where the first pass reads the note as
+        ``{}`` too, those three find it at every ``scope``, as they find any private
+        note; where it reads something else, nothing more is specified for it
+        (L11). A number in ``title``, ``topic``, ``tags``,
         ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does
