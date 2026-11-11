@@ -477,7 +477,7 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
         self, store, monkeypatch,
     ):
         """L11, a recorded limit and not a promise: the search's first pass has libyaml's reading of a note PyYAML refuses (a tab after
-        each key). Where that reading names another author, it excludes the owner of the directory though ``read_entry`` gives her the
+        each key). Where that reading is ``private`` and names another author, it excludes the owner of the directory though ``read_entry`` gives her the
         note, and the second reading cannot add her; bob is withheld by both readings and the Captain finds it. A change that lets her
         find it under libyaml changes the first assertion of the loop on purpose."""
         path = "notebooks/alice/tabbed.md"
@@ -495,12 +495,19 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
             assert path not in await _found(store, "bob"), loader
             assert path in await _found(store, "captain"), loader
 
-    async def test_the_keyword_search_finds_it_at_every_scope_for_the_captain_the_owner_and_an_identity_less_search_only(self, store):
-        """F3 (round 2, L12): a search's scope is a ceiling on classification, so a document read as private is found at every scope by
-        the readers who may read it, where the ``{}`` it read as before, ``ship``, placed it at ``ship`` and ``fleet`` only. The readers
+    async def test_the_keyword_search_finds_it_at_the_scopes_both_readings_admit_for_the_captain_the_owner_and_an_identity_less_search_only(
+        self, store, monkeypatch,
+    ):
+        """F3 (round 2, L12): a search's scope is a ceiling on classification, so a document that both readings read as private is found
+        at every scope by the readers who may read it, where the ``{}`` it read as before, ``ship``, placed it at ``ship`` and ``fleet`` only. The readers
         are T2's and the scopes are the four labels. The premises show both layers working at each scope: a healthy ``ship`` note is found
         by bob at ``ship`` and ``fleet`` and not below, and a healthy private note of alice's is found by her at every scope and never by
-        bob. The tab-after-key note names its directory's owner, so libyaml's reading and the stand-in agree on it (L11 is T13's)."""
+        bob. The first loop holds for a note neither loader reads and for a tab-after-key note naming its directory's owner and
+        ``private``, which libyaml's reading and the stand-in agree on. F4 (round 3, L11): the first pass has libyaml's reading of a note
+        only libyaml reads, and its classification is a ceiling as well, so a tab-after-key note naming ``ship`` is found below ``ship``
+        only where the search loads with PyYAML. The second loop pins that, under a host without libyaml's loader and then this host's own
+        as T13's does, as a limit and not a promise: a change that lets the three readers find it below ``ship`` under libyaml changes its
+        assertion on purpose. Under either loader no one but the three finds it, at any scope."""
         owned, tabbed, report = "notebooks/alice/lost.md", "notebooks/alice/tabbed.md", "reports/lost.md"
         for path, block in ((owned, _BROKEN), (tabbed, _TABBED), (report, _BROKEN)):
             with pytest.raises(yaml.YAMLError):
@@ -518,3 +525,14 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
                 assert (owned in found) == (reader in ("alice", "captain", None)), (scope, reader)
                 assert (tabbed in found) == (reader in ("alice", "captain", None)), (scope, reader)
                 assert (report in found) == (reader in ("captain", None)), (scope, reader)
+        shipped = "notebooks/alice/tabship.md"
+        block = "author:\talice\nclassification:\tship\n"
+        with pytest.raises(yaml.YAMLError):
+            yaml.safe_load(block)
+        _hand_made(store, shipped, _raw(block, "warp lost body"))
+        for loader in (yaml.SafeLoader, records_store_module._RECORDS_YAML_LOADER):  # a host without libyaml, then this host's own
+            monkeypatch.setattr(records_store_module, "_RECORDS_YAML_LOADER", loader)
+            for scope in ("private", "department", "ship", "fleet"):
+                for reader in ("alice", "bob", "captain", None, ""):
+                    admitted = reader in ("alice", "captain", None) and (loader is yaml.SafeLoader or scope in ("ship", "fleet"))
+                    assert (shipped in await _found(store, reader, scope=scope)) == admitted, (loader, scope, reader)

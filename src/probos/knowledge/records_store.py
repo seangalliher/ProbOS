@@ -507,10 +507,12 @@ def _search_records(
             # (``[]``, ``false``, ``0``, ``''``) is ``{}``, as every reader has read it.
             logger.debug("BF-952: skipping %s, whose frontmatter is not a mapping", rel_path)
             continue
-        # Classification scope + reader-identity check (BF-679). BF-940 slice 4 (L19): a document whose frontmatter did not load is
-        # private to the owner of its notebook directory, so a record only the Captain may read is not found for another reader and
-        # cannot move the scores that reader is shown (A4). A note only libyaml reads (a tab after a key) has libyaml's reading here, so
-        # its owner can be excluded by it where read_entry gives her the note: the second reading withholds more and never gives more (L11).
+        # Classification scope + reader-identity check (BF-679). BF-940 slice 4 (L19): where this pass reads a document whose frontmatter
+        # did not load as {} (a note neither loader reads) it applies the stand-in, private to the owner of its notebook directory, so a
+        # record only the Captain may read is not found for another reader and cannot move the scores that reader is shown (A4). A note
+        # only libyaml reads (a tab after a key) has libyaml's reading here: the ordinary rules can exclude its owner by its author, or the
+        # Captain and an identity-less search by a classification above the scope (L11), and the note counts toward the scores of the
+        # readers that reading admits (L7). The second reading withholds more and never gives more (L11).
         if not record_is_readable(
             _unparsed_gate(rel_path) if _frontmatter_unparsed(raw, frontmatter) else frontmatter,
             scope=scope,
@@ -1701,21 +1703,25 @@ class RecordsStore:
         rarity (IDF) of the query terms the record holds over that of all of them,
         between 0 and 1, and it never rises down the list. Rarity is counted only
         over the records this reader may read, so a record withheld from the
-        reader cannot move the scores it is shown. A record whose frontmatter is
-        a non-empty YAML list or a truthy scalar, or one YAML's constructor cannot
-        build (``updated: 2026-13-05``), is skipped; one whose frontmatter does not
-        parse reads as ``{}`` (unless the base's earlier cut of it parses and it
-        reads as that: A3; BF-940 A1, #1686) and is private to the owner of its
-        ``notebooks/<callsign>/`` directory: only that owner, the Captain and a
-        reader that named no identity find it (BF-940 slice 4, L19), the owner
-        only where the search's own reading admits her: it loads with libyaml, so a
-        note only libyaml reads (a tab after a key) has libyaml's reading in the
-        first pass, and an owner whom that reading excludes does not find a note
-        that ``read_entry`` gives her (L11). The owner, the Captain and a reader that
-        named no identity find it at every ``scope``, as they find any private note,
-        where the ``{}`` it read as before placed it at ``ship`` and ``fleet`` only
-        (L12). A
-        number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
+        reader cannot move the scores it is shown (a note only libyaml reads can:
+        L7). A record whose frontmatter is a non-empty YAML list or a truthy
+        scalar, or one YAML's constructor cannot build (``updated: 2026-13-05``),
+        is skipped; one whose frontmatter does not parse (``read_entry`` reads it
+        as ``{}``, unless the base's earlier cut of it parses and it reads as that:
+        A3; BF-940 A1, #1686) is private to the owner of its
+        ``notebooks/<callsign>/`` directory (BF-940 slice 4, L19). At any
+        ``scope``, with either loader, no reader but that owner, the Captain and a
+        reader that named no identity finds it, and no reader that named an
+        identity is shown a note ``read_entry`` withholds from her. Where the first
+        pass reads it as ``{}`` (a note neither loader reads, and every such note
+        where libyaml is not installed) those three find it at every ``scope``, as
+        they find any private note. A note only libyaml reads (a tab after a key)
+        has libyaml's reading in the first pass, so a reader finds it only where the
+        ordinary rules admit her on that reading as well: its ``author`` can exclude
+        the owner, its ``classification`` is a ceiling that can exclude the Captain
+        and a reader that named no identity below it, and a reading that is no
+        mapping excludes everyone (L11). A number in ``title``, ``topic``, ``tags``,
+        ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does
         not block the event loop; ``scope`` and ``directory`` are checked first, here.
