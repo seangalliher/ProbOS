@@ -225,8 +225,10 @@ async def test_a_private_note_with_three_hyphens_in_its_topic_stays_private_when
     A block that reads as nothing now reads as the base read the text, where the base's cut reads. A tuple with no ``---`` before
     it reads ``{}`` on both trees (L10): not asserted here."""
     store = await _store(tmp_path, monkeypatch)
-    path = await store.write_notebook("alice", "review---nominal", "coolant private body", metrics={"sample": (1, 2)})
-    raw = (store.repo_path / path).read_text(encoding="utf-8")
+    path = "notebooks/alice/review---nominal.md"  # BF-940 slice 2: the writer no longer writes the tag, so the document is hand-made
+    raw = "---\nauthor: alice\nclassification: private\nstatus: draft\ntopic: review---nominal\nmetrics:\n  sample: !!python/tuple\n  - 1\n  - 2\n---\n\ncoolant private body\n"
+    (store.repo_path / "notebooks" / "alice").mkdir(parents=True)
+    (store.repo_path / path).write_text(raw, encoding="utf-8")
     assert "topic: review---nominal" in raw and "!!python/tuple" in raw, "premise: a tag safe_load refuses, after a ---"
     assert await store.read_entry(path, reader_id="bob") is None
     assert await store.search("coolant", reader_id="bob") == []
