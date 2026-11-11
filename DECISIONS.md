@@ -1614,9 +1614,10 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Scope.* `utils/frontmatter.py` (`dump_frontmatter`), the three writers of `RecordsStore` and the skill catalog's rewrite, `write_entry`'s `tags` guard, `semantic.py`'s join, tests. Contract `prompts/bf-940-frontmatter-writer-policy.md`. Slice 2 of #1686.
 - *G0 (scope).* L24 and L27 together (one boundary, one test file); L19 and F7-1 stay in #1686, which stays open (`Refs`). Rejected: L24 alone; L24 with L19 (a read-side visibility decision for the Captain); all four.
 - *G1 (the writer).* `safe_dump` with a read-back check, one function for every writer; a tuple is a list; an object is a `ValueError`. Rejected: a type-walking normaliser; a JSON-native refusal; a read-side loader for `!!python/tuple` (a persisted-format extension and, with `UnsafeLoader`, a code-execution path).
-- *G2 (tags).* A non-list `tags` is refused at `write_entry`; elements are written as given and joined as text by the index. Rejected: converting numbers to text at write; refusing non-text elements.
+- *G2 (tags).* A non-list `tags` is refused at `write_entry`; elements are written as given and joined as text by the index. Rejected: converting numbers to text at write; refusing non-text elements. Review round 1 (F1): `list_entries(tags=...)` matches by equality over the stored value, so a nested element, or a scalar `tags` on disk, cannot abort a filtered listing; refusing non-scalar elements at the writer (a route 400 that reaches no document on disk) and writing a nested element as its `str` stay rejected.
 - *G3 (decided, not built).* L19: a typed parse result, readers withhold from all but the Captain and the path's owner, writers of an existing note refuse (a Captain decision); F7-1: `TypeAdapter(Any).dump_python(mode="json")` inside the route's boundary.
-- *Residual.* L1 to L10 of the contract. *Reversal.* Revert the BF-940 slice 2 commits.
+- *G4 (review round 1).* F1: the tag filter of `list_entries` reads by equality (the reviewer's own smallest fix; no writer, caller, route or other reader changes; the result differs only where it raised). F2: the equivalence of `dump_frontmatter` with `yaml.dump` covers every value `yaml.dump` wrote without a `!!python/` tag; the tuples `safe_load` builds for `!!omap` and `!!pairs` are written as lists.
+- *Residual.* L1 to L14 of the contract. *Reversal.* Revert the BF-940 slice 2 commits.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 

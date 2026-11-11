@@ -4,6 +4,9 @@ Real ``RecordsStore`` over ``tmp_path`` with ``~`` moved, no network. The two cl
 at an ``assert`` of its own body on the unfixed tree, after its premise); the module's functions are guards and pass on both
 trees. A privacy case is one note in a fresh store and asserts first that the author's own search finds it, so "bob does not
 find it" cannot mean the search found nothing at all.
+
+BF-940 A1 (review round 1, F1) adds plain cases after the classes: T15 to T17 fail on the candidate before A1 (a nested element,
+or a scalar ``tags`` on disk, aborted a filtered listing) and pass with it; T18 and T19 are guards that pass on every tree.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from probos.cognitive.skill_catalog import CognitiveSkillCatalog, parse_skill_fi
 from probos.config import RecordsConfig, SystemConfig
 from probos.knowledge.records_store import RecordsStore
 from probos.knowledge.semantic import SemanticKnowledgeLayer
+from probos.recreation.history import read_head_to_head
 from probos.routers.records import router
 
 
@@ -256,3 +260,82 @@ class TestANumericTagReachesTheIndexAndANonListIsRefused:
         with TestClient(_app(store)) as client:
             response = client.post("/api/records/notebooks/alice", json={"topic": "t", "content": "c", "tags": 717})
         assert response.status_code == 400 and "tags must be a list" in response.json()["error"]
+
+
+# BF-940 A1 (review round 1, F1): a document whose ``tags`` hold what ``set()`` cannot hash must not abort a filtered listing.
+_GAMES = "recreation/games/tictactoe"
+_NESTED = [
+    pytest.param((1, 2), id="a-nested-tuple-written-as-a-list"),
+    pytest.param([1, 2], id="a-nested-list"),
+    pytest.param({"a": 1}, id="a-nested-mapping"),
+    pytest.param({1, 2}, id="a-nested-set"),
+]
+
+
+def _game_record(winner: str) -> str:
+    return f"# Game Record: Tictactoe\n\n**Players:** Captain (X) vs Ezri (O)\n**Result:** won \u2014 **{winner}** wins!\n**Moves:** 5\n"
+
+
+async def _paths(store: RecordsStore, **filters: Any) -> list[str]:
+    return [entry["path"] for entry in await store.list_entries(_GAMES, **filters)]
+
+
+@pytest.mark.parametrize("element", _NESTED)
+async def test_a_nested_element_in_tags_does_not_abort_a_filtered_listing(store, element):
+    """The writer accepts a nested element (a tuple is written as a list); the filtered listing must still return its notes."""
+    await store.write_entry("alice", f"{_GAMES}/a.md", "coolant alpha", "a", tags=["game", "tictactoe"])
+    await store.write_entry("alice", f"{_GAMES}/c.md", "coolant gamma", "c", tags=["game"])
+    assert await _paths(store, tags=["game", "tictactoe"], strict=True) == [f"{_GAMES}/a.md"], "premise: the healthy listing is the healthy note"
+    path = await store.write_entry("alice", f"{_GAMES}/b.md", "coolant bravo", "b", tags=["game", "tictactoe", element])
+    own = await store.read_entry(path, reader_id="alice")
+    assert own is not None and own["frontmatter"].get("tags", [])[:2] == ["game", "tictactoe"], "premise: the note reads, with its element"
+    assert "!!python" not in (store.repo_path / path).read_text(encoding="utf-8")
+    assert await _paths(store, tags=["game", "tictactoe"], strict=True) == [f"{_GAMES}/a.md", path]
+    assert await _paths(store, tags=["game"]) == [f"{_GAMES}/a.md", path, f"{_GAMES}/c.md"]
+
+
+@pytest.mark.parametrize("element", _NESTED)
+async def test_the_head_to_head_tally_survives_a_game_record_whose_tags_hold_a_nested_element(store, element):
+    """The same through the consumer that drops a whole tally on one exception (``read_head_to_head``, AD-1358)."""
+    kwargs = {"game_type": "tictactoe", "me": "Captain", "opponent": "Ezri", "reader_id": "captain", "reader_department": ""}
+    await store.write_entry("system", f"{_GAMES}/one.md", _game_record("Captain"), "one", tags=["game", "tictactoe"])
+    healthy = await read_head_to_head(store, **kwargs)
+    assert healthy is not None and (healthy.me_won, healthy.opponent_won, healthy.drawn) == (1, 0, 0), "premise: one game, a tally of one"
+    await store.write_entry("system", f"{_GAMES}/two.md", _game_record("Ezri"), "two", tags=["game", "tictactoe", element])
+    tally = await read_head_to_head(store, **kwargs)
+    assert tally is not None, "one record whose tags hold a nested element must not suppress the tally"
+    assert (tally.me_won, tally.opponent_won, tally.drawn) == (1, 1, 0)
+
+
+@pytest.mark.parametrize("stored", [
+    pytest.param("tags: 717\n", id="an-integer"),
+    pytest.param("tags: 1.5\n", id="a-float"),
+    pytest.param("tags: true\n", id="a-boolean"),
+    pytest.param("tags: 2026-01-01\n", id="a-date"),
+    pytest.param("tags:\n", id="nothing"),
+])
+async def test_a_stored_tags_value_that_is_no_collection_holds_no_tag_and_does_not_abort_the_listing(store, stored):
+    """The same defect for a document already on disk, which only the read side reaches: such a document matches no filter."""
+    await store.write_entry("alice", f"{_GAMES}/a.md", "coolant alpha", "a", tags=["game", "tictactoe"])
+    _hand_made(store, f"{_GAMES}/x.md", f"---\nauthor: alice\nclassification: ship\n{stored}---\n\ncoolant x body\n")
+    assert await _paths(store) == [f"{_GAMES}/a.md", f"{_GAMES}/x.md"], "premise: without a filter both are listed"
+    assert await _paths(store, tags=["game", "tictactoe"]) == [f"{_GAMES}/a.md"]
+
+
+async def test_the_tag_filter_still_requires_every_tag_and_reads_a_set_and_a_missing_key_as_before(store):
+    """Guard: what the filter returned before it still returns (every tag required; a ``!!set`` read; no ``tags`` key matches nothing)."""
+    await store.write_entry("alice", f"{_GAMES}/a.md", "coolant alpha", "a", tags=["game", "tictactoe"])
+    await store.write_entry("alice", f"{_GAMES}/b.md", "coolant bravo", "b", tags=["game"])
+    await store.write_entry("alice", f"{_GAMES}/c.md", "coolant gamma", "c")
+    _hand_made(store, f"{_GAMES}/s.md", "---\nauthor: alice\nclassification: ship\ntags: !!set {game: null, tictactoe: null}\n---\n\ncoolant s body\n")
+    assert await _paths(store, tags=["game", "tictactoe"]) == [f"{_GAMES}/a.md", f"{_GAMES}/s.md"]
+    assert await _paths(store, tags=["game"]) == [f"{_GAMES}/a.md", f"{_GAMES}/b.md", f"{_GAMES}/s.md"]
+    assert await _paths(store, tags=["absent"]) == [] and len(await _paths(store)) == 4
+
+
+def test_the_notebook_route_still_accepts_a_nested_element_in_tags(store):
+    """Guard: the repair is on the read side, so the route's answer for a nested element stays 200 (D6)."""
+    with TestClient(_app(store)) as client:
+        response = client.post("/api/records/notebooks/alice", json={"topic": "t", "content": "c", "tags": ["a", [1, 2]]})
+    assert response.status_code == 200
+    assert "tags:\n- a\n- - 1\n  - 2\n" in (store.repo_path / "notebooks" / "alice" / "t.md").read_text(encoding="utf-8")

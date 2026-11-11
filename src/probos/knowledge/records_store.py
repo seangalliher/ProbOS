@@ -527,6 +527,23 @@ def _contained(path: Path, repo: Path, rel_path: str, reader: str) -> bool:
     return inside
 
 
+def _holds_every_tag(stored: Any, wanted: list[str]) -> bool:
+    """BF-940 A1 (F1): whether a document's ``tags`` value, as its frontmatter loaded it, holds every tag in ``wanted``.
+
+    Membership is by equality over the stored elements, so no element is hashed. ``set(stored)`` raised ``TypeError`` for a
+    nested list, mapping or set (``write_entry`` accepts one, and the notebook route takes one from any JSON client) and for a
+    number, a date or nothing on disk, out of the whole listing, because the filter stands outside the per-file ``try``. A
+    value that is not a collection holds no tag, as a document without ``tags`` holds none. Where
+    ``set(wanted).issubset(set(stored))`` could be computed, this gives its answer, so no listing that returned changes (a
+    string is read by character and a mapping by key, as that call read them; ``write_entry`` refuses both now).
+    """
+    try:
+        held = list(stored)
+    except TypeError:  # a number, a date or nothing is no collection: it holds no tag
+        return False
+    return all(tag in held for tag in wanted)
+
+
 def _markdown_files(search_path: Path, *, strict: bool, pattern: str = "*.md") -> list[Path]:
     """AD-1341 S4 (A4, A5), BF-958, BF-959: every file named ``pattern`` (default ``*.md``) under ``search_path`` by a
     walk that descends no directory link; with ``strict``, or the ``OSError`` that hid one.
@@ -675,7 +692,8 @@ class RecordsStore:
         other Python object: ``yaml.dump`` wrote it with a ``!!python/`` tag,
         so the document read as ``{}``, at the default ``ship`` classification,
         whoever its author) raises ``ValueError`` naming the key, before any
-        file is touched. ``tags`` must be a list or a tuple (L27). The AD-1138
+        file is touched. ``tags`` must be a list or a tuple (L27); its elements are written as given, the index joins them as
+        text and ``list_entries`` matches them by equality (BF-940 A1, F1). The AD-1138
         ``frontmatter_json`` sidecar holds them whole only within
         ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
         past it the index stores ``{}``. Any key in
@@ -1453,6 +1471,10 @@ class RecordsStore:
 
         BF-958: in both modes the walk does not descend a directory junction, and a listed file that resolves outside
         the repository (a link; :meth:`read_entry` refuses it) is skipped. Each is logged at WARNING; neither raises.
+
+        BF-940 A1 (F1): ``tags`` is matched by equality over the document's own ``tags`` value (:func:`_holds_every_tag`), so a
+        document whose ``tags`` hold a nested list, mapping or set, or are a number or nothing, is listed or not by the tags it
+        holds and never aborts the listing.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
@@ -1493,7 +1515,7 @@ class RecordsStore:
                 continue
             if classification and fm.get("classification") != classification:
                 continue
-            if tags and not set(tags).issubset(set(fm.get("tags", []))):
+            if tags and not _holds_every_tag(fm.get("tags"), tags):  # BF-940 A1 (F1): by equality, so no stored element is hashed
                 continue
 
             results.append({"path": rel_path, "frontmatter": fm})

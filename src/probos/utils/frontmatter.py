@@ -68,11 +68,15 @@ def dump_frontmatter(mapping: dict[Any, Any]) -> str:
 
     A document the store writes is a document the store reads. ``yaml.dump`` wrote a tuple, an ``OrderedDict``, a ``frozenset``
     or any other object with a ``!!python/`` tag, which no reader loads: the document read as ``{}``, at the default ``ship``
-    classification, whoever its author. The text here is ``yaml.safe_dump``'s with the arguments the writers used, so it is
-    byte-identical to ``yaml.dump``'s for every value ``safe_load`` builds, a tuple is a list, and an object ``safe_dump``
-    refuses is a ``ValueError``. The text is then loaded once more, because ``safe_dump`` writes what ``safe_load`` refuses (a
-    tuple as a mapping key). A value nested beyond the recursion limit is a ``ValueError`` too. The message names the top-level
-    keys at fault and the error's type, never a value (AD-1140's fail-fast tier); the caller has touched no file yet.
+    classification, whoever its author. The text here is ``yaml.safe_dump``'s with the arguments the writers used. For every
+    value ``yaml.dump`` wrote without a ``!!python/`` tag (every value ``safe_load`` builds that holds no tuple) it is
+    byte-identical to ``yaml.dump``'s. Where ``yaml.dump`` wrote a tag, a tuple is written as a list and an object ``safe_dump``
+    refuses is a ``ValueError``. ``safe_load`` builds a tuple for exactly two tags, ``!!omap`` and ``!!pairs`` (a list of
+    tuples), so a mapping holding one is written as a list of lists: the readers load it, as lists, not as the ordered mapping
+    or the pairs it was (BF-940 A1, F2). The text is then loaded once more, because ``safe_dump`` writes what ``safe_load``
+    refuses (a tuple as a mapping key). A value nested beyond the recursion limit is a ``ValueError`` too. The message names
+    the top-level keys at fault and the error's type, never a value (AD-1140's fail-fast tier); the caller has touched no file
+    yet.
     """
     try:
         return _dump(mapping)

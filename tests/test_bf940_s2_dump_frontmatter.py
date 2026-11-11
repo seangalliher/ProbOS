@@ -44,6 +44,7 @@ def _nested(depth: int) -> Any:
     pytest.param({1: "int key", None: "none key"}, id="keys-that-are-not-text"),
 ])
 def test_a_mapping_the_readers_load_is_written_as_yaml_dump_wrote_it(mapping):
+    """Tuple-free mappings: ``safe_load`` builds a tuple only for ``!!omap`` and ``!!pairs``, and V7 covers those (F2)."""
     assert dump_frontmatter(mapping) == yaml.dump(mapping, default_flow_style=False, sort_keys=False)
 
 
@@ -94,3 +95,17 @@ def test_a_mapping_nested_too_deeply_is_a_value_error_not_a_recursion_error():
 
 def test_an_empty_mapping_is_written_and_read_back():
     assert dump_frontmatter({}) == "{}\n" and yaml.safe_load("{}\n") == {}
+
+
+@pytest.mark.parametrize("tag", ["!!omap", "!!pairs"])
+def test_a_mapping_that_safe_load_builds_with_tuples_is_written_as_lists(tag):
+    """F2: ``safe_load`` builds tuples for these two tags only; ``publish`` and the skill rewrite re-dump what it built."""
+    built = yaml.safe_load(f"metrics: {tag} [{{a: 1}}, {{b: 2}}]\nname: x\n")
+    assert built["metrics"] == [("a", 1), ("b", 2)], "premise: safe_load builds a list of tuples"
+    assert "!!python/tuple" in yaml.dump(built, default_flow_style=False, sort_keys=False), "premise: yaml.dump tagged them"
+    text = dump_frontmatter(built)
+    as_lists = {"metrics": [["a", 1], ["b", 2]], "name": "x"}
+    assert "!!python" not in text and yaml.safe_load(text) == as_lists
+    assert text == yaml.dump(as_lists, default_flow_style=False, sort_keys=False)
+    assert yaml.safe_load(text) != built, "equivalence holds for tuple-free values only: the tuples are lists now"
+    assert dump_frontmatter(yaml.safe_load(text)) == text, "a second rewrite changes nothing"
