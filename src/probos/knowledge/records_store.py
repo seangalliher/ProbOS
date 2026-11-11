@@ -17,7 +17,7 @@ import yaml
 
 from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
-from probos.utils.frontmatter import base_split_frontmatter, split_frontmatter
+from probos.utils.frontmatter import base_split_frontmatter, dump_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -527,6 +527,24 @@ def _contained(path: Path, repo: Path, rel_path: str, reader: str) -> bool:
     return inside
 
 
+def _holds_every_tag(stored: Any, wanted: list[str]) -> bool:
+    """BF-940 A1 (F1): whether a document's ``tags`` value, as its frontmatter loaded it, holds every tag in ``wanted``.
+
+    Membership is by equality over the stored elements, so no element is hashed. ``set(stored)`` raised ``TypeError`` for a
+    nested list, mapping or set (``write_entry`` accepts one; a JSON client of the notebook route can send a list or a
+    mapping, not a set) and for a number, a date or nothing on disk, out of the whole listing, because the filter stands
+    outside the per-file ``try``. A
+    value that is not a collection holds no tag, as a document without ``tags`` holds none. Where
+    ``set(wanted).issubset(set(stored))`` could be computed, this gives its answer, so no listing that returned changes (a
+    string is read by character and a mapping by key, as that call read them; ``write_entry`` refuses both now).
+    """
+    try:
+        held = list(stored)
+    except TypeError:  # a number, a date or nothing is no collection: it holds no tag
+        return False
+    return all(tag in held for tag in wanted)
+
+
 def _markdown_files(search_path: Path, *, strict: bool, pattern: str = "*.md") -> list[Path]:
     """AD-1341 S4 (A4, A5), BF-958, BF-959: every file named ``pattern`` (default ``*.md``) under ``search_path`` by a
     walk that descends no directory link; with ``strict``, or the ``OSError`` that hid one.
@@ -665,16 +683,18 @@ class RecordsStore:
         Returns the relative path of the created file.
 
         AD-1140: ``extra_frontmatter`` merges caller-owned envelope fields into
-        the frontmatter **before** ``yaml.dump``. They round-trip through
+        the frontmatter **before** the dump. They round-trip through
         ``_parse_document`` when every value is one YAML's safe loader builds
         (a string, number, boolean, date, or a list or mapping of them), a
         value holding ``---`` included: the frontmatter ends at a line of its
-        own (BF-940, #1686). ``yaml.dump`` writes a tuple or another Python
-        object with a
-        ``!!python/`` tag, which no reader loads (BF-952 L24): a document
-        holding one reads as ``{}``, so at the default ``ship`` classification
-        for every reader, unless a ``---`` before the tag lets the base's
-        earlier cut read (BF-940 A1; L10 of its contract). The AD-1138
+        own (BF-940, #1686). The text is written by
+        :func:`probos.utils.frontmatter.dump_frontmatter` (BF-940 slice 2,
+        L24): a tuple is written as a list, and a value no reader loads (any
+        other Python object: ``yaml.dump`` wrote it with a ``!!python/`` tag,
+        so the document read as ``{}``, at the default ``ship`` classification,
+        whoever its author) raises ``ValueError`` naming the key, before any
+        file is touched. ``tags`` must be a list or a tuple (L27); its elements are written as given, the index joins them as
+        text and ``list_entries`` matches them by equality (BF-940 A1, F1). The AD-1138
         ``frontmatter_json`` sidecar holds them whole only within
         ``semantic.py``'s 4,000-character cap (``_RECORD_FRONTMATTER_CHARS``);
         past it the index stores ``{}``. Any key in
@@ -708,6 +728,8 @@ class RecordsStore:
                     "extra_frontmatter may not set store-owned keys: "
                     + ", ".join(collisions)
                 )
+        if tags and not isinstance(tags, (list, tuple)):  # BF-940 slice 2 (L27): the readers iterate tags and the index joins them
+            raise ValueError("tags must be a list")
 
         # Build frontmatter
         now = datetime.now(timezone.utc).isoformat()
@@ -759,7 +781,7 @@ class RecordsStore:
             frontmatter.update(extra_frontmatter)
 
         # Compose full document
-        fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        fm_yaml = dump_frontmatter(frontmatter)  # BF-940 slice 2 (L24): a tuple is a list; an unreadable value raises
         full_content = f"---\n{fm_yaml}---\n\n{content}"
 
         # Write file
@@ -882,7 +904,7 @@ class RecordsStore:
                 "status": "published",
                 "created": datetime.now(timezone.utc).isoformat(),
             }
-            fm_yaml = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+            fm_yaml = dump_frontmatter(frontmatter)  # BF-940 slice 2 (L24): the one writer function
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f"---\n{fm_yaml}---\n\n# Captain's Log — {today}\n{entry}", encoding="utf-8")
 
@@ -1450,6 +1472,10 @@ class RecordsStore:
 
         BF-958: in both modes the walk does not descend a directory junction, and a listed file that resolves outside
         the repository (a link; :meth:`read_entry` refuses it) is skipped. Each is logged at WARNING; neither raises.
+
+        BF-940 A1 (F1): ``tags`` is matched by equality over the document's own ``tags`` value (:func:`_holds_every_tag`), so a
+        document whose ``tags`` hold a nested list, mapping or set, or are a number or nothing, is listed or not by the tags it
+        holds and never aborts the listing.
         """
         search_path = self._safe_path(directory) if directory else self._repo_path
         # BF-949 R1: _safe_path resolves, so a directory's paths are taken against the resolved root
@@ -1490,7 +1516,7 @@ class RecordsStore:
                 continue
             if classification and fm.get("classification") != classification:
                 continue
-            if tags and not set(tags).issubset(set(fm.get("tags", []))):
+            if tags and not _holds_every_tag(fm.get("tags"), tags):  # BF-940 A1 (F1): by equality, so no stored element is hashed
                 continue
 
             results.append({"path": rel_path, "frontmatter": fm})
@@ -1541,7 +1567,7 @@ class RecordsStore:
         fm["status"] = "published"
         fm["updated"] = datetime.now(timezone.utc).isoformat()
 
-        fm_yaml = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+        fm_yaml = dump_frontmatter(fm)  # BF-940 slice 2 (L24): what safe_load built (an !!omap is a list of tuples) is written readably
         file_path.write_text(f"---\n{fm_yaml}---\n\n{content}", encoding="utf-8")
 
         if self._config.auto_commit:

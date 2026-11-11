@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from probos.utils.frontmatter import split_frontmatter
+from probos.utils.frontmatter import dump_frontmatter, split_frontmatter
 
 if TYPE_CHECKING:
     from probos.protocols import ConnectionFactory, DatabaseConnection
@@ -805,7 +805,7 @@ class CognitiveSkillCatalog:
         fm["metadata"] = meta
 
         # Write back preserving markdown body
-        new_yaml = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+        new_yaml = dump_frontmatter(fm)  # BF-940 slice 2 (L24): one writer function for every frontmatter
         skill_md.write_text(f"---\n{new_yaml}---{rest}", encoding="utf-8")
 
     async def remove_skill(self, name: str) -> None:
