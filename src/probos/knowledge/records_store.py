@@ -1711,7 +1711,10 @@ class RecordsStore:
         only where the search's own reading admits her: it loads with libyaml, so a
         note only libyaml reads (a tab after a key) has libyaml's reading in the
         first pass, and an owner whom that reading excludes does not find a note
-        that ``read_entry`` gives her (L11). A
+        that ``read_entry`` gives her (L11). The owner, the Captain and a reader that
+        named no identity find it at every ``scope``, as they find any private note,
+        where the ``{}`` it read as before placed it at ``ship`` and ``fleet`` only
+        (L12). A
         number in ``title``, ``topic``, ``tags``, ``department`` or ``author`` is
         scored as text; a boolean is not. At most 20 results. The walk, parse and
         ranking (:func:`_search_records`) run in a worker thread, so a search does

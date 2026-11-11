@@ -1,8 +1,9 @@
 """BF-940 slice 4 (#1686, L19): a document whose frontmatter does not load is private to the owner of its notebook directory.
 
 YAML refused the frontmatter of such a document (broken YAML, or the ``!!python/tuple`` tag an older ``write_entry`` wrote), so every
-reader read it as ``{}``, the default ``ship`` classification: ``read_entry`` and the keyword search handed it to every reader, the
-semantic backfill indexed it as ``ship`` and a Captain's ``publish`` rewrote it with a status and a time only. Real ``RecordsStore``
+reader read it as ``{}``, the default ``ship`` classification: ``read_entry`` handed it to every reader and the keyword search did at
+``ship`` and ``fleet`` (at ``private`` and ``department`` it found it for nobody), the semantic backfill indexed it as ``ship`` and a
+Captain's ``publish`` rewrote it with a status and a time only. Real ``RecordsStore``
 over ``tmp_path`` with ``~`` moved and hand-made documents; the backfill runs against the one collection method it uses, not ChromaDB.
 
 The class is strict xfail until M2 (each case fails at an ``assert`` of its own body on the unfixed tree, after its premise); the
@@ -94,8 +95,8 @@ def _healthy(store: RecordsStore, path: str, body: str, **frontmatter: Any) -> N
     _hand_made(store, path, f"---\n{yaml.safe_dump(values, sort_keys=False)}---\n\n{body}\n")
 
 
-async def _found(store: RecordsStore, reader_id: str | None, query: str = "warp") -> list[str]:
-    return [hit["path"] for hit in await store.search(query, scope="ship", reader_id=reader_id)]
+async def _found(store: RecordsStore, reader_id: str | None, query: str = "warp", scope: str = "ship") -> list[str]:
+    return [hit["path"] for hit in await store.search(query, scope=scope, reader_id=reader_id)]
 
 
 async def _attempt(call: Any) -> tuple[type | None, str]:
@@ -493,3 +494,27 @@ class TestADocumentWhoseFrontmatterDoesNotLoadIsPrivateToItsOwner:
             assert (path in await _found(store, "alice")) == (loader is yaml.SafeLoader), loader
             assert path not in await _found(store, "bob"), loader
             assert path in await _found(store, "captain"), loader
+
+    async def test_the_keyword_search_finds_it_at_every_scope_for_the_captain_the_owner_and_an_identity_less_search_only(self, store):
+        """F3 (round 2, L12): a search's scope is a ceiling on classification, so a document read as private is found at every scope by
+        the readers who may read it, where the ``{}`` it read as before, ``ship``, placed it at ``ship`` and ``fleet`` only. The readers
+        are T2's and the scopes are the four labels. The premises show both layers working at each scope: a healthy ``ship`` note is found
+        by bob at ``ship`` and ``fleet`` and not below, and a healthy private note of alice's is found by her at every scope and never by
+        bob. The tab-after-key note names its directory's owner, so libyaml's reading and the stand-in agree on it (L11 is T13's)."""
+        owned, tabbed, report = "notebooks/alice/lost.md", "notebooks/alice/tabbed.md", "reports/lost.md"
+        for path, block in ((owned, _BROKEN), (tabbed, _TABBED), (report, _BROKEN)):
+            with pytest.raises(yaml.YAMLError):
+                yaml.safe_load(block)
+            _hand_made(store, path, _raw(block, "warp lost body"))
+        _healthy(store, "reports/open.md", "warp open body")
+        _healthy(store, "notebooks/alice/own.md", "warp own body", author="alice", classification="private")
+        assert (await store.read_entry(owned, reader_id="captain"))["frontmatter"] == {}, "premise: the Captain reads it as {}"
+        for scope in ("private", "department", "ship", "fleet"):
+            assert ("reports/open.md" in await _found(store, "bob", scope=scope)) == (scope in ("ship", "fleet")), f"premise: {scope} is a ceiling"
+            assert "notebooks/alice/own.md" in await _found(store, "alice", scope=scope), f"premise: alice finds her private note at {scope}"
+            assert "notebooks/alice/own.md" not in await _found(store, "bob", scope=scope), f"premise: bob does not, at {scope}"
+            for reader in ("alice", "bob", "captain", None, ""):
+                found = await _found(store, reader, scope=scope)
+                assert (owned in found) == (reader in ("alice", "captain", None)), (scope, reader)
+                assert (tabbed in found) == (reader in ("alice", "captain", None)), (scope, reader)
+                assert (report in found) == (reader in ("captain", None)), (scope, reader)
