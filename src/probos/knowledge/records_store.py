@@ -531,8 +531,9 @@ def _holds_every_tag(stored: Any, wanted: list[str]) -> bool:
     """BF-940 A1 (F1): whether a document's ``tags`` value, as its frontmatter loaded it, holds every tag in ``wanted``.
 
     Membership is by equality over the stored elements, so no element is hashed. ``set(stored)`` raised ``TypeError`` for a
-    nested list, mapping or set (``write_entry`` accepts one, and the notebook route takes one from any JSON client) and for a
-    number, a date or nothing on disk, out of the whole listing, because the filter stands outside the per-file ``try``. A
+    nested list, mapping or set (``write_entry`` accepts one; a JSON client of the notebook route can send a list or a
+    mapping, not a set) and for a number, a date or nothing on disk, out of the whole listing, because the filter stands
+    outside the per-file ``try``. A
     value that is not a collection holds no tag, as a document without ``tags`` holds none. Where
     ``set(wanted).issubset(set(stored))`` could be computed, this gives its answer, so no listing that returned changes (a
     string is read by character and a mapping by key, as that call read them; ``write_entry`` refuses both now).
