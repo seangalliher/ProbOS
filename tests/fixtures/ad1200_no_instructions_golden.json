@@ -6,26 +6,26 @@
   "cases": {
     "native/repository/legacy": {
       "requests": [
-        {"bytes": 64070, "sha256": "ff48813bb283d64c3ef6cddd486565b28c4386950123300623ac2f66a0740482"},
-        {"bytes": 64150, "sha256": "38cff2b98f9413cb9b5916e84744e8693966d7d1bffa685e2050efc4cb80a271"}
+        {"bytes": 66057, "sha256": "2297a7428d028d001cd7ef6b10973e8a34cf092d369e09c96e98e0ad39ba2137"},
+        {"bytes": 66137, "sha256": "d679e3cffff07e1d2ca90b18590302b6c32157b0bafe67575ee127913be74663"}
       ],
       "result": {"bytes": 248, "sha256": "86433ca64a8965572777a92881ce0576f891f36201b5e6f722d0506dd7e99898"}
     },
     "native/missing/legacy": {
       "requests": [
-        {"bytes": 64022, "sha256": "1d40a71a64f996eef7d730f52b513653029ff467ce56ea4958675eee695df482"}
+        {"bytes": 66009, "sha256": "94ba7dc3c1608ecd34bddcb5a131aab8388428791aea6d455764a70b3b18c74f"}
       ],
       "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
     },
     "native/unscoped/legacy": {
       "requests": [
-        {"bytes": 64004, "sha256": "c177ebac3b466a64925002571e53ce78d490614683983d374e7c96e7fcec7d56"}
+        {"bytes": 65991, "sha256": "10118e89c58921e46dc734e270c49c5e256e5ed7510b670c57f10a72ff97e3c5"}
       ],
       "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
     },
     "native/installed/legacy": {
       "requests": [
-        {"bytes": 64023, "sha256": "cc4c59a9df1e585213bd31d503e707a59f841952c1e59a7c073ad10fab55ee41"}
+        {"bytes": 66010, "sha256": "997050eb29c1ea55476b851ccfc217bda241b66ebd64ab8d13a65e83bd26010e"}
       ],
       "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
     },
@@ -45,26 +45,26 @@
     },
     "native/repository/structured": {
       "requests": [
-        {"bytes": 64089, "sha256": "879ac3c7ab41cd55b1d0b0279bf380b0bc8f0053a584d12763cbde9826fd9060"},
-        {"bytes": 64353, "sha256": "40a912475a74af35eced12c5217e30d6d99dd21be9222403f29c1f0121e00dc3"}
+        {"bytes": 66076, "sha256": "18033961626b47c2e7e58661372567029a7b223aa83001d38a4e56f9b05bc799"},
+        {"bytes": 66340, "sha256": "4311f097707cafdb4bd6eeeb2b570bead42ca9450ef358f45e94c7c4796f957e"}
       ],
       "result": {"bytes": 248, "sha256": "86433ca64a8965572777a92881ce0576f891f36201b5e6f722d0506dd7e99898"}
     },
     "native/missing/structured": {
       "requests": [
-        {"bytes": 64041, "sha256": "e1a71c6f791177cc8755b49c4feb9b2a9f4238116207b7f54af0972152234d8c"}
+        {"bytes": 66028, "sha256": "6f78989b88f13114f9d1da2cca1e72bf64af1c8f186ad62e0c07062e55c22519"}
       ],
       "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
     },
     "native/unscoped/structured": {
       "requests": [
-        {"bytes": 64023, "sha256": "e30b073a63d9cf245f001763608399742faf5a728fb143f80c68a4335c180ff5"}
+        {"bytes": 66010, "sha256": "95d710a8748ee09b92a1e1a06376c87c3baf91e94a2c4d60992273881517178e"}
       ],
       "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
     },
     "native/installed/structured": {
       "requests": [
-        {"bytes": 64042, "sha256": "cc7ec17aae0b61999fd1ffc9e42a4cc9d3b4f4cf8059af4168701d8add31c30f"}
+        {"bytes": 66029, "sha256": "b2e0d1b9c25c3800ceee9f9933a2077a2d713e13bd7816a81b4573067fe220bd"}
       ],
       "result": {"bytes": 236, "sha256": "db0262d0d3fbbd1260dcf6659791d678d354b2578ba6073eb6c99e226c9d1574"}
     },

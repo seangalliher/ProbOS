@@ -123,9 +123,6 @@ def test_step_routing_drops_a_section_whose_tag_the_step_does_not_list(monkeypat
 
 
 class TestTheCrewKnowWhatTheyMayDoAboutCodeChanges:
-    # BF-936 M1: xfail until M2 writes the orders (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-936 M2 writes the orders")
-
     @pytest.mark.parametrize("agent_type", CREW)
     def test_the_section_is_composed_into_each_crew_members_ship_tier(self, agent_type: str) -> None:
         composed = compose_instructions(agent_type=agent_type, hardcoded_instructions="")
