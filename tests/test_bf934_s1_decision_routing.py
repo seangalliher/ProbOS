@@ -59,8 +59,6 @@ async def test_a_decision_does_not_outlive_its_turn(tmp_path):
 
 
 class TestTheDecisionReachesTheCallThatWritesTheOutput:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S1 M2 builds it")
-
     async def test_a_decided_proposal_and_notebook_are_posted_and_written(self, tmp_path):
         async with world(tmp_path) as w:
             agent, _ = await crew(w, ["proposal", "notebook"], obeys_decision)
@@ -103,8 +101,6 @@ class TestTheDecisionReachesTheCallThatWritesTheOutput:
 
 
 class TestTheBilletText:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S1 M2 builds it")
-
     def test_the_proposal_format_is_the_one_compose_shows(self):
         billets = _built("probos.cognitive.action_billets")
         prior = [SubTaskResult(sub_task_type=SubTaskType.ANALYZE, name="analyze", success=True, result={

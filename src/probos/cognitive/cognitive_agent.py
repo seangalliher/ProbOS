@@ -27,6 +27,7 @@ from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive import context_manifest  # AD-1357
+from probos.cognitive.action_billets import decision_billet  # BF-934
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
 from probos.recreation import history as game_history  # AD-1358 S1
@@ -6319,6 +6320,9 @@ class CognitiveAgent(BaseAgent):
 
         intent = observation.get("intent", "")
 
+        # BF-934: the decision belongs to this triage; a dict that is used again never carries an older one forward.
+        observation.pop("_intended_actions", None)
+
         # --- Inject agent context (same keys as _execute_sub_task_chain) ---
         observation["_agent_id"] = self.id
         observation["_agent_type"] = self.agent_type
@@ -6473,6 +6477,8 @@ class CognitiveAgent(BaseAgent):
 
         # --- Extract intended_actions ---
         intended_actions = self._extract_intended_actions(triage_results)
+        # BF-934: whichever call writes this turn's output reads the decision from here (``decision_billet``).
+        observation["_intended_actions"] = intended_actions
 
         # AD-696: Agentic Oracle retrieval — once per chain (DLog #4)
         if "oracle_query" in intended_actions:
@@ -11490,12 +11496,18 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("")
                 pt_parts.append(introspective_telemetry)
 
+            # BF-934: a triage that decided to file a proposal or write a notebook entry says so here, in place of the closing
+            # default of silence; any other turn keeps the closing it had.
+            _decided = decision_billet(observation.get("_intended_actions"))
             if duty:
                 pt_parts.append("Compose a Ward Room post with your findings (2-4 sentences).")
-                pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
-            else:
+                if not _decided:
+                    pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
+            elif not _decided:
                 pt_parts.append("If something genuinely warrants attention, compose a brief observation (2-4 sentences).")
                 pt_parts.append("Include your justification. Otherwise respond with exactly: [NO_RESPONSE]")
+            if _decided:
+                pt_parts.append(_decided)
             return "\n".join(pt_parts)
 
         parts = [f"Intent: {intent_name}"]
