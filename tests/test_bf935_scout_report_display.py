@@ -6,18 +6,22 @@ the classify, store and notify chain, so showing a report rewrote the day's file
 told the Captain again and marked the names of an earlier failed search as seen. These cases run the real command, intent handler
 and lifecycle on a real ScoutAgent over a temporary data directory, with the model's ``decide`` and the GitHub search replaced: no
 network. The report cases fail on the tree without A1; the two search cases pass on both and keep the new ``decide`` from
-answering a search itself.
+answering a search itself. The A2 cases (review round 2) print through a real Rich console, which the world's own console
+does not (it only collects what it is given): a bracket in a saved or model-written summary raised or vanished before A2.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from rich.console import Console
 
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.process_chains import ProcessChainRegistry
@@ -29,10 +33,10 @@ ALPHA, BETA = "o/alpha", "o/beta"
 NONE_YET = "No scout reports found yet. Run /scout to generate one."
 
 
-def _block(name: str, relevance: int) -> str:
+def _block(name: str, relevance: int, summary: str = "the model's summary") -> str:
     """One classification block as the Scout's instructions ask for it (absorb; composite 4.5 at relevance 5, 4.0 at 4)."""
     return (f"===SCOUT_REPORT===\nREPO: {name}\nSTARS: 120\nURL: https://github.com/{name}\nCLASS: absorb\nRELEVANCE: {relevance}\n"
-            "CREDIBILITY: 4\nRELIABILITY: 4\nSUMMARY: the model's summary\nINSIGHT: the model's insight\n===END===\n")
+            f"CREDIBILITY: 4\nRELIABILITY: 4\nSUMMARY: {summary}\nINSIGHT: the model's insight\n===END===\n")
 
 
 ANSWERS = {  # what a model could answer to the digest it was shown, were it asked
@@ -63,9 +67,9 @@ def _item(name: str) -> dict:
             "license": {"spdx_id": "MIT"}, "topics": ["ai-agents", "rag"], "html_url": f"https://github.com/{name}"}
 
 
-def _classify(context: str) -> str:
+def _classify(context: str, summary: str = "the model's summary") -> str:
     """What a model that classifies every block it is shown answers: one absorb report (composite 4.5) per REPO block."""
-    return "".join(_block(line[6:], 5) for line in context.splitlines() if line.startswith("REPO: "))
+    return "".join(_block(line[6:], 5, summary) for line in context.splitlines() if line.startswith("REPO: "))
 
 
 class _World:
@@ -98,9 +102,12 @@ class _World:
         monkeypatch.setattr(CognitiveAgent, "decide", decide)
         monkeypatch.setattr(ScoutAgent, "_search_github", search)
 
-    def save(self, day: str) -> None:
+    def save(self, day: str, summary: str | None = None) -> None:
+        report = _saved(day)
+        if summary is not None:
+            report["findings"][0]["summary"] = summary
         self.reports.mkdir(parents=True, exist_ok=True)
-        (self.reports / f"{day}.json").write_text(json.dumps(_saved(day), indent=2), encoding="utf-8")
+        (self.reports / f"{day}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     def snapshot(self) -> dict[str, bytes]:
         """Every file of the reports directory, by name; a directory that does not exist is an empty snapshot."""
@@ -175,3 +182,58 @@ async def test_the_duty_search_still_classifies_stores_and_notifies(world):
     result = await world.agent.handle_intent(IntentMessage(intent="proactive_think", params={"duty": duty}, target_agent_id=world.agent.id))
     _the_search_ran(world)
     assert result.success is True and ALPHA in result.result
+
+
+MARKUP_TEXTS = {  # text Rich reads as markup, as a saved or model-written summary may hold it
+    "plain": "A plain summary of the repository.",  # no markup of its own: the digest's own score tags still carry the failure
+    "closing-tag": "Parses BBCode closing tags such as [/b].",  # an unmatched closing tag: Rich raises MarkupError
+    "style-tag": "Styles its output with [bold red]Rich[/bold red] markup.",  # a matched tag: Rich applies the style and drops the tags
+}
+FAILURES = {  # the same two shapes in the message of a failed intent
+    "closing-tag": "the search failed at [/b]",
+    "style-tag": "the search failed at [bold red]step 2[/bold red]",
+}
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _console(*, colour: bool = False) -> tuple[Console, io.StringIO]:
+    """A real Rich console that writes to a buffer; the world's own console is a print lambda, which parses no markup.
+    Nothing wraps (width 400); with colour it writes the ANSI codes a terminal gets, whatever the environment sets."""
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=400, force_terminal=colour, no_color=False,
+                      color_system="standard" if colour else None, legacy_windows=False)
+    return console, buffer
+
+
+@pytest.mark.parametrize("text", MARKUP_TEXTS)
+async def test_the_report_command_prints_the_saved_report_as_text(world, text):
+    world.save(_today(), MARKUP_TEXTS[text])
+    digest = world.agent._load_latest_report()
+    assert digest is not None and MARKUP_TEXTS[text] in digest and "[score: 4.5]" in digest, "premise: the summary and the score tag are in the digest"
+    console, buffer = _console()
+    await cmd_scout(world.runtime, console, "report")
+    assert buffer.getvalue().rstrip() == f"Running scout scout_report...\n{digest}".rstrip(), "Rich read part of the digest as markup"
+
+
+@pytest.mark.parametrize("text", MARKUP_TEXTS)
+async def test_the_search_command_prints_what_the_model_wrote_as_text(world, text):
+    world.found, world.answer = [ALPHA, BETA], lambda context: _classify(context, MARKUP_TEXTS[text])
+    console, buffer = _console()
+    await cmd_scout(world.runtime, console, "")
+    _the_search_ran(world)  # premise: both reports were classified, stored and notified
+    shown = buffer.getvalue()
+    assert shown.startswith("Running scout scout_search...\n") and ALPHA in shown and BETA in shown
+    assert shown.count(MARKUP_TEXTS[text]) == 2 and shown.count("[score: 4.5]") == 2, "Rich read part of the digest as markup"
+
+
+@pytest.mark.parametrize("message", FAILURES)
+async def test_a_failure_whose_message_holds_markup_prints_as_text(world, monkeypatch, message):
+    async def fail(_message: IntentMessage) -> None:
+        raise RuntimeError(FAILURES[message])
+
+    monkeypatch.setattr(world.agent, "handle_intent", fail)
+    console, buffer = _console(colour=True)
+    await cmd_scout(world.runtime, console, "")
+    shown = buffer.getvalue()
+    assert f"Scout error: {FAILURES[message]}" in ANSI.sub("", shown), "Rich read part of the message as markup"
+    assert "\x1b[31mScout error: " in shown, "the failure line is not red"
