@@ -27,7 +27,7 @@ from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive import context_manifest  # AD-1357
-from probos.cognitive.action_accounting import record_declared  # BF-934
+from probos.cognitive.action_accounting import CATEGORY as INTENDED_ACTIONS_CATEGORY, intended_tags, record_declared  # BF-934
 from probos.cognitive.action_billets import decision_billet  # BF-934
 from probos.cognitive.proposal_block import parse_proposal_block  # BF-934
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
@@ -310,10 +310,13 @@ def _build_result_metadata(
         if type(references) is list and references:
             metadata["owned_steps_view_references"] = references[:8]
             break
-    # BF-934 (#1673): the actions the triage intended, bounded, so that the loop that executes the output can account for each of them.
+    # BF-934 (#1673): the registry's tags among the actions the triage intended, each once: the list the decision record holds, so that the loop that executes the output
+    # accounts for the same actions (a cut of the raw list could drop a recognised tag the record kept).
     intended = observation.get("_intended_actions") if isinstance(observation, dict) else None
     if type(intended) is list and intended:
-        metadata["intended_actions"] = [str(tag)[:40] for tag in intended[:16]]
+        decided = intended_tags(intended)
+        if decided:
+            metadata["intended_actions"] = decided
     # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
     # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
     # after every key above and it never takes the room of one of them. It is not
@@ -12090,6 +12093,7 @@ class CognitiveAgent(BaseAgent):
                             corroborating = await event_log.query(
                                 agent_id=ep.agent_ids[0],
                                 limit=1,
+                                exclude_category=INTENDED_ACTIONS_CATEGORY,  # BF-934: an intention or a drop is no record that an action happened
                             )
                             if corroborating:
                                 for evt in corroborating:

@@ -2,7 +2,7 @@
 
 The real think cycle runs end to end (``ProactiveCognitiveLoop._think_for_agent`` into ``CognitiveAgent.handle_intent``: AD-643a's routing, the single call, the
 real extraction, the real Ward Room and Ship's Records on tmp_path). The model double obeys a decision it is shown and otherwise answers ``[NO_RESPONSE]``, the single
-call's default (22 of the issue's 24 cases); the triage's ANALYZE and QUERY handlers are doubles (tests/bf934_world.py). The classes hold the cases the unfixed tree
+call's default (the issue's own cases); the triage's ANALYZE and QUERY handlers are doubles (tests/bf934_world.py). The classes hold the cases the unfixed tree
 fails; the functions before them pass on both, except the pin of A1's constant (``BILLET_TAGS``), which S1's M3 head fails. No BF-934 name is imported at module level. A1
 (review round 1) added two classes at the end, which S1's M3 head fails, and before the first class two controls that pass on both trees and that pin: the billet repeats no
 word of the triage, and a decision belongs to the turn whose triage made it.

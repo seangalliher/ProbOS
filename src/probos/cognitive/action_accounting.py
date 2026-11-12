@@ -56,6 +56,16 @@ def _normalised(intended: Iterable[object]) -> list[str]:
     return list(dict.fromkeys(str(tag).strip().lower() for tag in intended))
 
 
+def intended_tags(intended: Iterable[object]) -> list[str]:
+    """The registry's tags among the actions a triage named, each once, in the order named: the one list that the decision record, the result's metadata and the settlement share.
+
+    A tag the registry does not know is left out. It is the model's own word, which S1's billet never repeats either; it has no evidence, so nothing is ever dropped for it
+    (``unaccounted``); and keeping it would leave the list as long as the model chose to make it. The list is at most ``len(ACTION_TAGS)`` short strings from a closed set, so no
+    recognised action can be pushed out of it and a row that holds it stays far under the EventLog's governed reader's cap of 4096 bytes a row.
+    """
+    return [tag for tag in _normalised(intended) if tag in ACTION_TAGS]
+
+
 def unaccounted(intended: Iterable[object], executed: Sequence[Mapping[str, Any]], reason: str) -> list[dict[str, Any]]:
     """The drop entry of each intended action that nothing in *executed* carried out.
 
@@ -88,16 +98,18 @@ async def record_declared(
     intended: Sequence[object], path: str,
 ) -> None:
     """The decision record: one ``declared`` row when a proactive think's triage intends an action that a block or a post carries out."""
-    tags = _normalised(intended)
+    tags = intended_tags(intended)
     log = getattr(runtime, "event_log", None)
     if intent != "proactive_think" or log is None or not any(ACTION_TAGS.get(tag, ActionTag()).evidence for tag in tags):
         return
     try:
-        await log.log(
+        row_id = await log.log(
             category=CATEGORY, event=DECLARED_EVENT, agent_id=agent_id, agent_type=agent_type,
             detail=f"{callsign} intended {', '.join(tags)} ({path})", correlation_id=intent_id or None,
             data={"intended": tags, "path": path, "intent": intent, "intent_id": intent_id, "callsign": callsign},
         )
+        if row_id is None:  # an EventLog that is not open returns None, it does not raise
+            logger.warning("BF-934: the declared row for %s (%s) was not recorded: the event log returned no row id", callsign, agent_type)
     except Exception:
         logger.warning("BF-934: the declared row for %s (%s) was not recorded", callsign, agent_type, exc_info=True)
 
@@ -124,11 +136,13 @@ async def settle_intended_actions(
         if log is None:
             continue
         try:
-            await log.log(
+            row_id = await log.log(
                 category=CATEGORY, event=DROPPED_EVENT, agent_id=getattr(agent, "id", None), agent_type=agent_type,
                 detail=f"{callsign} intended {drop['action']}: {drop['reason']}", correlation_id=intent_id or None,
                 data={**drop, "intent": "proactive_think", "intent_id": intent_id, "callsign": callsign},
             )
+            if row_id is None:  # an EventLog that is not open returns None, it does not raise
+                logger.warning("BF-934: the dropped row for %s (%s) was not recorded: the event log returned no row id", callsign, agent_type)
         except Exception:
             logger.warning("BF-934: the dropped row for %s (%s) was not recorded", callsign, agent_type, exc_info=True)
     return drops

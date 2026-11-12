@@ -1680,7 +1680,7 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G2 (the sources of truth, recorded before landing as the crew asked).* Decided = the `declared` rows, written where the decision is made and not by the layer that drops the output; posted = Improvement Proposals (Ship's Records for notebooks); dropped = the `dropped` rows. The identity per agent and action is `declared = posted + dropped`; a positive discrepancy is an unexplained loss (the alarm), a negative one an undeclared post (AD-643b).
 - *G3 (the structured drop entry).* `{"type": "action_dropped", "action", "reason"}` (and `by_design` for a notebook the writer declined as a repeat): WARNING for a lost decision, INFO for an observation the gates withheld and for a by-design suppression.
 - *G4 (scope).* Proactive thinks only; the Ward Room notification path is not reconciled (L6).
-- *Residual.* L1, L3, L6, L7, L8, L12, L13, L14 and L16 of the contract. *Reversal.* Revert the BF-934 slice 3 commits.
+- *Residual.* L1, L3, L6, L7, L8, L12, L13, L14, L16, L29 and L30 of the contract. *Reversal.* Revert the BF-934 slice 3 commits.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 

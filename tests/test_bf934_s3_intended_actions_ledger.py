@@ -3,7 +3,7 @@
 Real: the think cycle, the extraction (the Ward Room, its router, Ship's Records, the DM path), the cognitive agent's lifecycle and a real EventLog on tmp_path, which is
 the record the crew reconciles against Improvement Proposals. Doubles (tests/bf934_world.py): the model, the triage's handlers, and a thinker whose ``handle_intent``
 answers the text a model wrote with the ``intended_actions`` metadata the lifecycle would attach. The classes hold the cases the unfixed tree fails; the functions before
-them pass on both. No BF-934 name is imported at module level.
+them pass on both, and so does the control of T18's class (the row that does corroborate). No BF-934 name is imported at module level.
 """
 
 from __future__ import annotations
@@ -11,13 +11,17 @@ from __future__ import annotations
 import importlib
 import logging
 import re
-from unittest.mock import AsyncMock
+import time
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from probos.cognitive.cognitive_agent import _build_result_metadata
+from probos.cognitive.cognitive_agent import _CACHE_HITS, _CACHE_MISSES, _DECISION_CACHES, _build_result_metadata
 from probos.cognitive.sub_tasks.analyze import _build_thread_analysis_prompt, _build_situation_review_prompt
-from probos.types import IntentResult
+from probos.protocols import EventLogQuerySpec
+from probos.types import Episode, IntentMessage, IntentResult
 from tests.bf934_world import NothingIsNovel, crew, obeys_decision, think, thinker, threads, world
 
 PROPOSAL = "[PROPOSAL]\nTitle: Cache the roster\nRationale: The roster is read forty times per cycle.\nAffected Systems: Ward Room\nPriority: low\n[/PROPOSAL]"
@@ -140,12 +144,15 @@ class TestEveryIntendedActionIsCarriedOutOrDropped:
     async def test_an_output_that_fails_to_think_drops_every_action_the_decision_named(self, tmp_path):
         async with world(tmp_path, event_log=True) as w:
             agent = thinker(w, "")
+            calls: list[str] = []
 
             async def failed(intent):
-                return IntentResult(intent_id=intent.id, agent_id=agent.id, success=False, error="llm down", metadata={"intended_actions": ["proposal", "notebook"]})
+                calls.append(intent.id)
+                return IntentResult(intent_id=intent.id, agent_id=agent.id, success=False, error="no decision reached", metadata={"intended_actions": ["proposal", "notebook"]})
 
             agent.handle_intent = failed
             await think(w, agent)
+            assert len(calls) == 1  # a failure the loop does not retry: "llm", "timeout" or "connection" in the text would call it three times, after real sleeps of 0.5 s and 1.5 s (AD-576b)
             assert [(r["data"]["action"], r["data"]["reason"]) for r in await _rows(w, "dropped")] == [("proposal", "think_failed"), ("notebook", "think_failed")]
 
     async def test_a_row_that_cannot_be_written_never_blocks_the_think(self, tmp_path, caplog, monkeypatch):
@@ -243,7 +250,78 @@ class TestTheRegistryAndTheMetadata:
 
     def test_the_lifecycle_carries_the_decision_to_the_caller_bounded(self):
         assert _build_result_metadata({}, {}, {"_intended_actions": ["proposal", "notebook"]}) == {"intended_actions": ["proposal", "notebook"]}
-        assert len(_build_result_metadata({}, {}, {"_intended_actions": ["x" * 90] * 40})["intended_actions"]) == 16
-        assert _build_result_metadata({}, {}, {"_intended_actions": ["x" * 90]})["intended_actions"] == ["x" * 40]
-        for none in ({}, {"_intended_actions": []}, {"_intended_actions": "proposal"}, {"_intended_actions": None}):
+        assert _build_result_metadata({}, {}, {"_intended_actions": ["silent"] * 16 + ["x" * 90] * 24 + ["Proposal ", "proposal"]}) == {"intended_actions": ["silent", "proposal"]}  # A7: the registry's tags, each once
+        for none in ({}, {"_intended_actions": []}, {"_intended_actions": "proposal"}, {"_intended_actions": None}, {"_intended_actions": ["x" * 90] * 40}):
             assert "intended_actions" not in _build_result_metadata({}, {}, none)
+
+
+class TestTheLedgerIsNoEvidenceOfAnActionAndHoldsTheRegistrysTags:
+    @pytest.mark.parametrize("row, verified", [("declared", False), ("dropped", False), ("other", True)])
+    async def test_a_row_of_the_ledger_does_not_corroborate_a_recalled_memory(self, tmp_path, row, verified):
+        accounting = _built("probos.cognitive.action_accounting")
+        async with world(tmp_path, event_log=True) as w:
+            agent, _ = await crew(w, ["proposal"], obeys_decision)
+            if row == "declared":
+                await accounting.record_declared(
+                    w.rt, agent_id=agent.id, agent_type="science_officer", callsign="Kira", intent="proactive_think", intent_id="intent-1", intended=["proposal"], path="single_call")
+            elif row == "dropped":
+                await accounting.settle_intended_actions(w.rt, agent, "intent-1", {"intended_actions": ["proposal"]}, [], "no_response")
+            else:
+                await w.events.log(category="agent_lifecycle", event="wake", agent_id=agent.id, agent_type="science_officer")
+            assert len(await w.events.query(agent_id=agent.id)) == 1  # the premise: that one row is the newest the agent has, and it was written just now
+            episode = Episode(user_input="Did the maintenance proposal go in?", reflection="I filed the maintenance proposal successfully.", timestamp=time.time(),
+                              agent_ids=[agent.id], source="direct")
+            w.rt.episodic_memory = SimpleNamespace(
+                recall_for_agent=AsyncMock(return_value=[episode]), recall_weighted=AsyncMock(return_value=[]), count_for_agent=AsyncMock(return_value=1))
+            question = {"text": "Did the maintenance proposal go in?"}
+            with patch("probos.crew_utils.is_crew_agent", return_value=True):
+                observation = await agent._recall_relevant_memories(
+                    IntentMessage(intent="direct_message", params=question, target_agent_id=agent.id), {"intent": "direct_message", "params": question})
+            assert observation["recent_memories"][0]["verified"] is verified
+            prompt = await agent._build_user_message(observation)  # what the model is shown
+            assert ("[direct | verified]" in prompt) is verified and ("[direct | unverified]" in prompt) is not verified
+
+    @pytest.mark.parametrize("named, kept", [
+        (["silent"] * 16 + ["proposal"], ["silent", "proposal"]),
+        (["x" * 90] * 40 + ["Proposal ", "proposal"], ["proposal"]),
+        ([f"invented_action_{n}_" + "y" * 600 for n in range(12)] + ["proposal"], ["proposal"]),
+    ])
+    async def test_the_declaration_and_the_settlement_receive_the_same_actions_whatever_the_model_wrote(self, tmp_path, named, kept):
+        async with world(tmp_path, event_log=True) as w:
+            agent, _ = await crew(w, named, lambda request: "[NO_RESPONSE]")
+            await think(w, agent)
+            declared = await _rows(w, "declared")
+            assert len(declared) == 1 and declared[0]["data"]["intended"] == kept  # the list the result's metadata carries too, so that the proposal is accounted for below
+            assert [(r["data"]["action"], r["data"]["reason"]) for r in await _rows(w, "dropped")] == [("proposal", "no_response")]
+            now = datetime.now(timezone.utc)
+            batch = await w.events.query_governed(EventLogQuerySpec(
+                start_time=now - timedelta(hours=1), end_time=now + timedelta(minutes=1), category="intended_actions", event="declared", correlation_id=None,
+                agent_id=None, limit=10, order="oldest_first", aggregate="none"))
+            assert batch.truncated is False and [row.data["intended"] for row in batch.rows] == [tuple(kept)]  # what an agent's query tool is shown: the data is not cut
+
+    @pytest.mark.parametrize("writer", ["declared", "dropped"])
+    async def test_a_row_the_event_log_does_not_take_is_said_not_to_be_recorded(self, tmp_path, caplog, writer):
+        accounting = _built("probos.cognitive.action_accounting")
+        async with world(tmp_path, event_log=True) as w:
+            agent = thinker(w, "")
+            await w.events.stop()
+            assert await w.events.log(category="intended_actions", event="declared") is None  # the premise: an EventLog that is not open returns None, it does not raise
+            with caplog.at_level(logging.WARNING, logger="probos.cognitive.action_accounting"):
+                if writer == "declared":
+                    await accounting.record_declared(
+                        w.rt, agent_id=agent.id, agent_type="science_officer", callsign="Kira", intent="proactive_think", intent_id="intent-1", intended=["proposal"], path="single_call")
+                else:
+                    await accounting.settle_intended_actions(w.rt, agent, "intent-1", {"intended_actions": ["proposal"]}, [], "no_response")
+            assert f"the {writer} row for Kira (science_officer) was not recorded" in caplog.text
+
+    async def test_the_world_leaves_the_decision_caches_as_it_found_them(self, tmp_path, monkeypatch):
+        monkeypatch.setitem(_DECISION_CACHES, "bystander", {"key": ({}, 1.0, 2.0)})
+        monkeypatch.setitem(_CACHE_HITS, "bystander", 7)
+        monkeypatch.setitem(_CACHE_MISSES, "bystander", 2)
+        before = (dict(_DECISION_CACHES), dict(_CACHE_HITS), dict(_CACHE_MISSES))
+        async with world(tmp_path) as w:
+            assert not (_DECISION_CACHES or _CACHE_HITS or _CACHE_MISSES)  # the world starts from empty caches
+            agent, _ = await crew(w, ["proposal"], lambda request: "[NO_RESPONSE]")
+            await think(w, agent)
+            assert _CACHE_MISSES  # and the think left its mark in them
+        assert (dict(_DECISION_CACHES), dict(_CACHE_HITS), dict(_CACHE_MISSES)) == before

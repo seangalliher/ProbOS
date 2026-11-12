@@ -117,6 +117,19 @@ class World:
 
 @asynccontextmanager
 async def world(tmp_path: Path, *, event_log: bool = False) -> AsyncIterator[World]:
+    """A started ship (``_ship``), with the three module caches of ``cognitive_agent.py`` emptied for it and put back as they were when it closes, however it closes (A7)."""
+    saved = [(cache, dict(cache)) for cache in (_DECISION_CACHES, _CACHE_HITS, _CACHE_MISSES)]
+    try:
+        async with _ship(tmp_path, event_log=event_log) as w:
+            yield w
+    finally:
+        for cache, before in saved:
+            cache.clear()
+            cache.update(before)
+
+
+@asynccontextmanager
+async def _ship(tmp_path: Path, *, event_log: bool) -> AsyncIterator[World]:
     """A started ship; ``event_log`` adds a real EventLog on tmp_path (slice S3). Everything it opens is closed on exit."""
     _DECISION_CACHES.clear()
     _CACHE_HITS.clear()
