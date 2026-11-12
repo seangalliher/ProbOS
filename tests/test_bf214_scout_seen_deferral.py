@@ -67,7 +67,7 @@ class TestDeferredSeenMarking:
         agent._pending_seen_repos = new_repos
         assert agent._pending_seen_repos == ["foo/bar", "baz/qux"]
 
-    def test_act_marks_seen_on_success(self, tmp_path):
+    def test_act_marks_seen_on_success(self, tmp_path, monkeypatch):
         """act() marks repos as seen when classification produces valid blocks."""
         agent = ScoutAgent.__new__(ScoutAgent)
         agent._pending_seen_repos = ["cool/project", "another/repo"]
@@ -76,7 +76,7 @@ class TestDeferredSeenMarking:
         agent._runtime = None
 
         # Override _data_dir so _seen_file and _reports_dir derive from tmp_path
-        type(agent)._data_dir = property(lambda self: tmp_path)
+        monkeypatch.setattr(type(agent), "_data_dir", property(lambda self: tmp_path))
         # Seed empty seen file
         (tmp_path / "scout_seen.json").write_text("{}", encoding="utf-8")
 
@@ -102,14 +102,14 @@ class TestDeferredSeenMarking:
         assert "cool/project" in seen
         assert "another/repo" in seen
 
-    def test_act_does_not_mark_seen_on_failure(self, tmp_path):
+    def test_act_does_not_mark_seen_on_failure(self, tmp_path, monkeypatch):
         """act() does NOT mark repos as seen when LLM output is garbage."""
         agent = ScoutAgent.__new__(ScoutAgent)
         agent._pending_seen_repos = ["cool/project", "another/repo"]
         agent._repo_metadata = {}
         agent._last_findings = []
         agent._runtime = None
-        type(agent)._data_dir = property(lambda self: tmp_path)
+        monkeypatch.setattr(type(agent), "_data_dir", property(lambda self: tmp_path))
         (tmp_path / "scout_seen.json").write_text("{}", encoding="utf-8")
 
         # Garbage LLM output — no ===SCOUT_REPORT=== blocks
@@ -128,14 +128,14 @@ class TestDeferredSeenMarking:
         assert "cool/project" not in seen
         assert "another/repo" not in seen
 
-    def test_act_marks_seen_when_all_skip(self, tmp_path):
+    def test_act_marks_seen_when_all_skip(self, tmp_path, monkeypatch):
         """act() marks repos as seen when all are classified SKIP (valid response)."""
         agent = ScoutAgent.__new__(ScoutAgent)
         agent._pending_seen_repos = ["boring/project"]
         agent._repo_metadata = {}
         agent._last_findings = []
         agent._runtime = None
-        type(agent)._data_dir = property(lambda self: tmp_path)
+        monkeypatch.setattr(type(agent), "_data_dir", property(lambda self: tmp_path))
         (tmp_path / "scout_seen.json").write_text("{}", encoding="utf-8")
 
         # All SKIP — parse_scout_reports returns [] but ===SCOUT_REPORT=== present
