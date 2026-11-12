@@ -3740,6 +3740,7 @@ class CognitiveAgent(BaseAgent):
         Decision Distillation (AD-272): checks in-memory cache before
         calling LLM. Cache hits return instantly (<1ms, $0).
         """
+        observation.pop("_intended_actions", None)  # BF-934: the key holds this turn's triage or nothing; a dict that is decided on again never carries an older decision in
         if not self._llm_client:
             return {"action": "error", "reason": "No LLM client available"}
 

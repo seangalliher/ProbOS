@@ -3,17 +3,20 @@
 The real think cycle runs end to end (``ProactiveCognitiveLoop._think_for_agent`` into ``CognitiveAgent.handle_intent``: AD-643a's routing, the single call, the
 real extraction, the real Ward Room and Ship's Records on tmp_path). The model double obeys a decision it is shown and otherwise answers ``[NO_RESPONSE]``, the single
 call's default (22 of the issue's 24 cases); the triage's ANALYZE and QUERY handlers are doubles (tests/bf934_world.py). The classes hold the cases the unfixed tree
-fails; the functions before them pass on both. No BF-934 name is imported at module level.
+fails; the functions before them pass on both. No BF-934 name is imported at module level. A1 (review round 1) added two classes at the end, which S1's M3 head
+fails, and controls before the first class: the billet repeats no word of the triage, and a decision belongs to the turn whose triage made it.
 """
 
 from __future__ import annotations
 
 import importlib
+import re
 from unittest.mock import AsyncMock
 
 import pytest
 
 from probos.cognitive.sub_task import SubTaskError, SubTaskResult, SubTaskType
+from probos.cognitive.sub_tasks.analyze import _build_situation_review_prompt, _build_thread_analysis_prompt
 from probos.cognitive.sub_tasks.compose import _build_proactive_compose_prompt
 from tests.bf934_world import BLOCKS, DECIDED, crew, obeys_decision, observation, think, threads, world
 
@@ -56,6 +59,46 @@ async def test_a_decision_does_not_outlive_its_turn(tmp_path):
         reused["_intended_actions"] = ["proposal"]  # what an earlier triage left on a dict that is used again
         await agent.decide(reused)
         assert len(model.requests) == 1 and DECIDED not in model.requests[0].prompt
+
+
+def _offered_tags() -> set[str]:
+    """The tags the two ANALYZE prompts offer for ``intended_actions`` (slice 3's registry test reads the same two prompts)."""
+    offered: set[str] = set()
+    for build in (_build_situation_review_prompt, _build_thread_analysis_prompt):
+        _, user = build({"context": "x", "params": {}, "_agent_type": "science_officer"}, [], "Kira", "science")
+        offered |= set(re.findall(r"[a-z_]+", re.search(r"JSON array from:\s*([a-z_,\s]+)\.", user).group(1)))
+    return offered
+
+
+def test_the_tags_a_billet_names_are_the_six_the_analyze_prompts_offer_for_them():
+    billets = _built("probos.cognitive.action_billets")
+    assert set(billets.BILLET_TAGS) == {"proposal", "notebook", "ward_room_post", "ward_room_reply", "endorse", "dm"}
+    assert set(billets.BILLET_TAGS) <= _offered_tags()
+
+
+async def test_the_routing_function_clears_an_older_decision_itself_when_its_triage_fails(tmp_path):
+    async with world(tmp_path) as w:
+        agent, _ = await crew(w, ["proposal"], obeys_decision)
+        agent._sub_task_executor.execute = AsyncMock(side_effect=SubTaskError("triage timed out"))
+        reused = observation()
+        reused["_intended_actions"] = ["proposal"]  # what an earlier triage left on a dict that is used again
+        assert await agent._execute_chain_with_intent_routing(reused) is None
+        assert "_intended_actions" not in reused
+
+
+async def test_a_decision_with_no_block_leaves_the_message_byte_for_byte_as_it_was(tmp_path):
+    async with world(tmp_path) as w:
+        agent, _ = await crew(w, ["silent"], obeys_decision)
+        agent._build_temporal_context = lambda: ""  # the message carries the clock to the second (AD-502): the comparison must not read it
+        for duty in (None, {"duty_id": "systems_check", "description": "Review systems"}):
+            plain = observation()
+            plain["params"]["duty"] = duty
+            expected = await agent._build_user_message(plain)
+            for intended in ([], ["silent"], ["ward_room_post"], ["oracle_query", "dm"], ["speak_freely"], ["leadership_review"], ["ward_room_lookup", "deadbeef5678"]):
+                decided = observation()
+                decided["params"]["duty"] = duty
+                decided["_intended_actions"] = intended
+                assert await agent._build_user_message(decided) == expected, (duty, intended)
 
 
 class TestTheDecisionReachesTheCallThatWritesTheOutput:
@@ -120,3 +163,56 @@ class TestTheBilletText:
     @pytest.mark.parametrize("intended", [None, [], ["silent"], ["ward_room_post"], ["oracle_query", "dm"], ["speak_freely"]])
     def test_any_other_decision_gets_no_billet(self, intended):
         assert _built("probos.cognitive.action_billets").decision_billet(intended) == ""
+
+
+class TestTheBilletRepeatsNoWordOfTheTriage:
+    async def test_identifiers_the_triage_made_up_do_not_ground_a_reply_that_cites_them(self, tmp_path):
+        made_up = ("deadbeef5678", "feedcafe1234")  # two identifiers a model invented: BF-204 suppresses a reply that cites two the call was not shown
+        async with world(tmp_path) as w:
+            agent, model = await crew(w, ["ward_room_post", "proposal", *made_up], lambda request: f"Noted {made_up[0]} and {made_up[1]} in the roster.")
+            decision = await agent.decide(observation())  # no COMPOSE handler: the chain falls back to the single call, whose reply BF-922 judges
+            prompt = model.requests[0].prompt
+            assert len(model.requests) == 1 and DECIDED in prompt and "[PROPOSAL]" in prompt
+            assert not any(word in prompt for word in made_up)
+            assert decision.get("_suppressed") is True and decision.get("_suppression_reason") == "confabulation_detected"
+            assert decision["llm_output"] == "[NO_RESPONSE]"
+
+    @pytest.mark.parametrize("extra", ["deadbeef5678", "a note about the roster", "ward_room_lookup", "silent", 7])
+    def test_a_tag_that_is_not_one_the_billet_names_changes_nothing(self, extra):
+        billets = _built("probos.cognitive.action_billets")
+        assert billets.decision_billet(["proposal", extra]) == billets.decision_billet(["proposal"])
+
+    def test_the_billet_names_each_decided_tag_by_its_own_constant_in_their_order(self):
+        billets = _built("probos.cognitive.action_billets")
+        billet = billets.decision_billet([" DM", "ward_room_post", "Notebook", "proposal", "frobnicate"])
+        assert "decided to take these actions: proposal, notebook, ward_room_post, dm." in billet and "frobnicate" not in billet
+        assert "You also decided: ward_room_post, dm. Use the formats your standing orders give for them." in billet
+
+
+class TestTheDecisionBelongsToItsTurn:
+    async def test_a_dict_decided_on_again_by_a_turn_with_no_triage_is_not_told_the_older_decision(self, tmp_path):
+        async with world(tmp_path) as w:
+            agent, model = await crew(w, ["proposal"], obeys_decision)
+            agent._sub_task_executor = None  # AD-632f's first gate: no triage runs, so the routing function is never entered
+            reused = observation()
+            reused["_intended_actions"] = ["proposal"]  # what an earlier turn's triage left on a dict that is decided on again
+            await agent.decide(reused)
+            assert len(model.requests) == 1 and DECIDED not in model.requests[0].prompt
+            assert "_intended_actions" not in reused
+
+    async def test_a_decision_cache_hit_leaves_no_older_decision_on_the_dict(self, tmp_path):
+        from probos.cognitive.cognitive_agent import _CACHE_HITS, _CACHE_MISSES, _DECISION_CACHES
+        async with world(tmp_path) as w:
+            try:
+                w.rt.config.cognitive.decision_cache_enabled = True  # BF-864's gate: off by default, on in this ship's config only
+                agent, model = await crew(w, ["proposal"], obeys_decision)
+                await agent.decide(observation())  # the first turn's answer is cached
+                reused = observation()
+                reused["_intended_actions"] = ["proposal"]
+                decision = await agent.decide(reused)
+                assert decision.get("cached") is True and len(model.requests) == 1  # premise: the second turn made no call
+                assert "_intended_actions" not in reused
+            finally:
+                _DECISION_CACHES.clear()
+                _CACHE_HITS.clear()
+                _CACHE_MISSES.clear()
