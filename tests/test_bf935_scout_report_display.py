@@ -8,10 +8,13 @@ and lifecycle on a real ScoutAgent over a temporary data directory, with the mod
 network. The report cases fail on the tree without A1; the two search cases pass on both and keep the new ``decide`` from
 answering a search itself. The A2 cases (review round 2) print through a real Rich console, which the world's own console
 does not (it only collects what it is given): a bracket in a saved or model-written summary raised or vanished before A2.
+The A3 case (review round 3) holds that console to what it promises: it reads nothing, from the environment or the platform,
+that could change what the cases compare.
 """
 
 from __future__ import annotations
 
+import builtins
 import io
 import json
 import re
@@ -198,10 +201,24 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 def _console(*, colour: bool = False) -> tuple[Console, io.StringIO]:
     """A real Rich console that writes to a buffer; the world's own console is a print lambda, which parses no markup.
-    Nothing wraps (width 400); with colour it writes the ANSI codes a terminal gets, whatever the environment sets."""
+    Rich reads the environment and the platform for each setting it is not given; all eight that it reads are given here, so
+    neither changes what a case compares: a line shorter than 400 columns is never wrapped and, with colour, the codes are the
+    ones a terminal gets. ``test_the_display_console_reads_nothing_from_its_surroundings`` sets what Rich reads and checks it."""
     buffer = io.StringIO()
-    console = Console(file=buffer, width=400, force_terminal=colour, no_color=False,
-                      color_system="standard" if colour else None, legacy_windows=False)
+    # Given because Rich would read them: both dimensions together (COLUMNS, LINES, TERM, the terminal: one alone is not enough),
+    # force_terminal (FORCE_COLOR, TTY_COMPATIBLE, isatty), force_jupyter (a notebook kernel), force_interactive (TTY_INTERACTIVE, TERM),
+    # no_color (NO_COLOR), color_system (COLORTERM, TERM) and legacy_windows (the platform).
+    console = Console(
+        file=buffer,
+        width=400,
+        height=25,
+        force_terminal=colour,
+        force_jupyter=False,
+        force_interactive=False,
+        no_color=False,
+        color_system="standard" if colour else None,
+        legacy_windows=False,
+    )
     return console, buffer
 
 
@@ -236,4 +253,51 @@ async def test_a_failure_whose_message_holds_markup_prints_as_text(world, monkey
     await cmd_scout(world.runtime, console, "")
     shown = buffer.getvalue()
     assert f"Scout error: {FAILURES[message]}" in ANSI.sub("", shown), "Rich read part of the message as markup"
+    assert "\x1b[31mScout error: " in shown, "the failure line is not red"
+
+
+RICH_READS = (  # every variable Rich reads when it prints through a Console, in Rich 13 to 15 (UNICODE_VERSION: Rich 14 only); the case clears them all, then sets its own
+    "TERM", "COLUMNS", "LINES", "NO_COLOR", "FORCE_COLOR", "TTY_COMPATIBLE", "TTY_INTERACTIVE", "COLORTERM",
+    "JUPYTER_COLUMNS", "JUPYTER_LINES", "DATABRICKS_RUNTIME_VERSION", "UNICODE_VERSION",
+)
+ENVIRONMENTS = {  # what Rich could read: (the variables set, a notebook kernel's get_ipython, a Windows console without VT support)
+    "unset": ({}, False, False),
+    "dumb-terminal": ({"TERM": "dumb"}, False, False),  # Console.size answers 80 x 25 unless both dimensions are given, and there is no colour
+    "narrow-terminal": ({"COLUMNS": "20", "LINES": "5"}, False, False),
+    "no-colour": ({"NO_COLOR": "1"}, False, False),
+    "forced-colour": ({"FORCE_COLOR": "1", "TTY_INTERACTIVE": "1", "TERM": "xterm-256color", "COLORTERM": "truecolor"}, False, False),
+    "not-a-terminal": ({"TTY_COMPATIBLE": "0"}, False, False),
+    "notebook": ({"JUPYTER_COLUMNS": "20", "JUPYTER_LINES": "5"}, True, False),  # the render would go to the notebook, not to the buffer
+    "old-windows-console": ({}, False, True),  # the width less one, no hyperlinks
+}
+LONG_FAILURE = "the search failed at " + "x" * 130  # 151 characters: wider than a dumb terminal's 80 columns, narrower than the console's 400
+
+
+@pytest.mark.parametrize("environment", ENVIRONMENTS)
+async def test_the_display_console_reads_nothing_from_its_surroundings(world, monkeypatch, environment):
+    variables, notebook, old_windows = ENVIRONMENTS[environment]
+    for name in RICH_READS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in variables.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delattr(builtins, "get_ipython", raising=False)  # a suite run inside a notebook must not change the other surroundings
+    if notebook:
+        monkeypatch.setattr(builtins, "get_ipython", lambda: type("ZMQInteractiveShell", (), {})(), raising=False)
+    monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: old_windows)  # not the real platform's answer
+    for colour in (False, True):
+        console, buffer = _console(colour=colour)
+        assert console.size == (400, 25), f"colour={colour}: a dimension came from the surroundings"
+        assert (console.is_terminal, console.color_system) == (colour, "standard" if colour else None), f"colour={colour}: the terminal or its colours were detected"
+        assert not (console.is_jupyter or console.is_interactive or console.legacy_windows or console.no_color), f"colour={colour}: a notebook, a session, an old Windows console or NO_COLOR was detected"
+        console.print(LONG_FAILURE, markup=False)
+        assert ANSI.sub("", buffer.getvalue()) == LONG_FAILURE + "\n", f"colour={colour}: the line wrapped, or was not written"
+
+    async def fail(_message: IntentMessage) -> None:
+        raise RuntimeError(LONG_FAILURE)
+
+    monkeypatch.setattr(world.agent, "handle_intent", fail)
+    console, buffer = _console(colour=True)
+    await cmd_scout(world.runtime, console, "")
+    shown = buffer.getvalue()
+    assert ANSI.sub("", shown) == f"Running scout scout_search...\nScout error: {LONG_FAILURE}\n", "the failure line wrapped, or lost text"
     assert "\x1b[31mScout error: " in shown, "the failure line is not red"
