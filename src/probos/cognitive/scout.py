@@ -536,6 +536,17 @@ class ScoutAgent(CognitiveAgent):
         self._repo_metadata = {r["full_name"]: r for r in new_repos}
         return result
 
+    async def decide(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """BF-935: ``scout_report`` shows the saved report and does nothing else, so it asks no model.
+
+        ``perceive`` put the report's digest, or the line saying there is none, in the context. A model's answer would only have
+        reached ``act``'s classify, store and notify chain and rewritten the day's report. Every other intent, the duty's search
+        included (``perceive`` renames it ``scout_search``), is decided as before.
+        """
+        if observation.get("intent") == "scout_report":
+            return {"action": "scout_report", "report_text": observation.get("context", "")}
+        return await super().decide(observation)
+
     async def act(self, decision: dict[str, Any]) -> dict[str, Any]:
         """Parse LLM classification, store report, deliver notifications.
 
@@ -543,6 +554,9 @@ class ScoutAgent(CognitiveAgent):
         runs through `SCOUT_REPORT_CHAIN` via `ProcessChainExecutor`. The chain handlers
         are bound methods on this agent so they have access to runtime, paths, and state.
         """
+        # BF-935: scout_report shows the saved report (see decide): nothing is classified, stored or notified
+        if decision.get("intent") == "scout_report":
+            return {"success": True, "result": decision.get("report_text", "")}
         # AD-398/BF-024: pass through conversational responses for 1:1, ward room, and proactive
         # BF-177: Allow duty-triggered proactive_think (scout_report) to reach report generation
         is_duty_triggered = bool(decision.get("duty", {}).get("duty_id"))
