@@ -75,8 +75,6 @@ async def test_control_a_re_reflect_that_keeps_every_block_still_replaces_the_ap
 
 
 class TestNoGateDiscardsAnActionTheOutputCarries:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S2 M2 builds it")
-
     @pytest.mark.parametrize("blocks", [PROPOSAL, NOTEBOOK, f"{PROPOSAL}\n{NOTEBOOK}"])
     async def test_a_withdrawn_observation_does_not_withdraw_a_valid_block(self, tmp_path, blocks):
         async with world(tmp_path) as w:
@@ -148,8 +146,6 @@ class TestNoGateDiscardsAnActionTheOutputCarries:
 
 
 class TestOneReadingOfAProposalBlock:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S2 M2 builds it")
-
     @pytest.mark.parametrize("text, problem", [
         ("Just an observation.", "no_block"),
         ("[PROPOSAL] Title: X Rationale: Y [/PROPOSAL]", "malformed_block"),

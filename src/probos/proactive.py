@@ -41,6 +41,7 @@ from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
+from probos.cognitive.proposal_block import PROPOSAL_PATTERN, parse_proposal_block  # BF-934
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
@@ -232,6 +233,13 @@ def split_notebook_blocks(text: str) -> tuple[str, list[str]]:
     body, trimmed, in order. Saves nothing."""
     bodies = [match.group(3).strip() for match in _NOTEBOOK_PATTERN.finditer(text)]
     return _NOTEBOOK_PATTERN.sub("", text).strip(), [body for body in bodies if body]
+
+
+def carries_actionable_block(text: str) -> bool:
+    """BF-934: whether *text* holds a block the extractor would carry out: a proposal it can file, or a notebook entry with a body.
+
+    An output that withdraws the observation with ``[NO_RESPONSE]`` but still carries one is read for its blocks, not discarded as silence."""
+    return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
 
 # AD-1157: what an agent may select on the tag. ``fleet`` is deliberately
 # absent — a fleet-classified record is level 3 against the ``ship`` scope every
@@ -1409,7 +1417,8 @@ class ProactiveCognitiveLoop:
         # BF-199: Extract text from leaked chain JSON
         from probos.utils.text_sanitize import sanitize_ward_room_text
         response_text = sanitize_ward_room_text(response_text)
-        if not response_text or "[NO_RESPONSE]" in response_text:
+        # BF-934: a withdrawn observation that still carries a valid block is not silence.
+        if not response_text or ("[NO_RESPONSE]" in response_text and not carries_actionable_block(response_text)):
             # Record duty execution even if agent had nothing to report
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
@@ -1484,6 +1493,40 @@ class ProactiveCognitiveLoop:
             self._circuit_breaker.record_event(agent.id, "no_response", "")
             return
 
+        _withdrawn = "[NO_RESPONSE]" in response_text  # BF-934: true only when the output carries a valid block (the gate above); see below
+
+        # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
+        stripped = response_text.lstrip()
+        if stripped.startswith("{") and '"intents"' in stripped[:200]:
+            logger.warning(
+                "BF-172: Suppressed raw intent JSON from %s (%d chars)",
+                agent.agent_type, len(response_text),
+            )
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            return
+
+        # AD-437: Extract and process structured actions from proactive response. BF-934: before the similarity (BF-032) and novelty
+        # (AD-493) gates, which judge the observation that is left, as the Ward Room pipeline's order already does: a block attached
+        # to a repeated observation is carried out, and the repeat is still not posted.
+        cleaned_text, actions_taken = await self._extract_and_execute_actions(
+            agent, response_text
+        )
+        if cleaned_text != response_text:
+            response_text = cleaned_text
+        if _withdrawn:
+            response_text = ""  # BF-934: the withdrawal covers the observation, so only the blocks were carried out; nothing is left to post
+
+        # BF-215: Guard against empty text after tag stripping (BF-203/BF-174)
+        if not response_text.strip():
+            logger.debug(
+                "BF-215: Suppressed empty post from %s after action extraction",
+                agent.agent_type,
+            )
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            return
+
         # BF-032: Skip if too similar to agent's recent posts
         if await self._is_similar_to_recent_posts(agent, response_text):
             logger.debug(
@@ -1509,34 +1552,6 @@ class ProactiveCognitiveLoop:
                     return
             except Exception:
                 logger.debug("AD-493: Novelty gate check failed, allowing post", exc_info=True)
-
-        # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
-        stripped = response_text.lstrip()
-        if stripped.startswith("{") and '"intents"' in stripped[:200]:
-            logger.warning(
-                "BF-172: Suppressed raw intent JSON from %s (%d chars)",
-                agent.agent_type, len(response_text),
-            )
-            if duty and self._duty_tracker:
-                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
-            return
-
-        # AD-437: Extract and process structured actions from proactive response
-        cleaned_text, actions_taken = await self._extract_and_execute_actions(
-            agent, response_text
-        )
-        if cleaned_text != response_text:
-            response_text = cleaned_text
-
-        # BF-215: Guard against empty text after tag stripping (BF-203/BF-174)
-        if not response_text.strip():
-            logger.debug(
-                "BF-215: Suppressed empty post from %s after action extraction",
-                agent.agent_type,
-            )
-            if duty and self._duty_tracker:
-                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
-            return
 
         # AD-573: Record proactive observation to working memory
         try:
@@ -3556,76 +3571,58 @@ class ProactiveCognitiveLoop:
         text = re.sub(note_pattern, '', text, flags=re.DOTALL).strip()
 
         # --- Proposals (AD-412) — all ranks ---
-        proposal_pattern = r'\[PROPOSAL\]\s*\n(.*?)\n\s*\[/PROPOSAL\]'
-        proposal_match = re.search(proposal_pattern, text, re.DOTALL)
-        if proposal_match:
-            proposal_block = proposal_match.group(1)
-
-            # Parse structured fields
-            title = ""
-            rationale = ""
-            affected: list[str] = []
-            priority = "medium"
-
-            in_rationale = False
-            rationale_lines: list[str] = []
-            for line in proposal_block.split('\n'):
-                stripped = line.strip()
-                if stripped.lower().startswith("title:"):
-                    title = stripped[6:].strip()
-                    in_rationale = False
-                elif stripped.lower().startswith("affected systems:"):
-                    raw = stripped[17:].strip()
-                    affected = [s.strip() for s in raw.split(",") if s.strip()]
-                    in_rationale = False
-                elif stripped.lower().startswith("priority:"):
-                    p = stripped[9:].strip().lower()
-                    if p in ("low", "medium", "high"):
-                        priority = p
-                    in_rationale = False
-                elif stripped.lower().startswith("rationale:"):
-                    rest = stripped[10:].strip()
-                    if rest:
-                        rationale_lines.append(rest)
-                    in_rationale = True
-                elif in_rationale:
-                    rationale_lines.append(stripped)
-            rationale = "\n".join(rationale_lines).strip()
-
-            if title and rationale and rt.ward_room_router:
-                try:
-                    from probos.types import IntentMessage
-                    intent = IntentMessage(
-                        intent="propose_improvement",
-                        params={
-                            "title": title,
-                            "rationale": rationale,
-                            "affected_systems": affected,
-                            "priority_suggestion": priority,
-                        },
-                        context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
-                    )
-                    await rt.ward_room_router.handle_propose_improvement(intent, agent)
-                    actions_executed.append({
-                        "type": "proposal",
-                        "title": title,
-                        "priority": priority,
-                    })
-                    logger.debug(
-                        "AD-412: Proposal extracted from %s: %s",
-                        getattr(agent, 'agent_type', 'unknown'), title,
-                    )
-                except Exception:
-                    logger.debug(
-                        "AD-412: Failed to post proposal from %s",
-                        getattr(agent, 'agent_type', 'unknown'), exc_info=True,
-                    )
+        proposal_pattern = PROPOSAL_PATTERN
+        proposal = parse_proposal_block(text)  # BF-934: the one reading of a block, here and in the [NO_RESPONSE] gate
+        _proposer = getattr(agent, 'callsign', '') or getattr(agent, 'agent_type', 'unknown')
+        if proposal.extra_blocks:
+            logger.warning(
+                "BF-934: %d more [PROPOSAL] block(s) from %s are ignored: one proposal is filed per output",
+                proposal.extra_blocks, _proposer,
+            )
+        if proposal.found:
+            reason = proposal.problem
+            if not reason:
+                if not rt.ward_room_router:
+                    reason = "no_router"
+                else:
+                    try:
+                        from probos.types import IntentMessage
+                        intent = IntentMessage(
+                            intent="propose_improvement",
+                            params={
+                                "title": proposal.title,
+                                "rationale": proposal.rationale,
+                                "affected_systems": list(proposal.affected),
+                                "priority_suggestion": proposal.priority,
+                            },
+                            context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
+                        )
+                        posted = await rt.ward_room_router.handle_propose_improvement(intent, agent)
+                        if isinstance(posted, dict) and posted.get("success") is False:
+                            reason = f"router_refused: {posted.get('error', '')}"
+                        else:
+                            actions_executed.append({
+                                "type": "proposal",
+                                "title": proposal.title,
+                                "priority": proposal.priority,
+                            })
+                            logger.debug(
+                                "AD-412: Proposal extracted from %s: %s",
+                                getattr(agent, 'agent_type', 'unknown'), proposal.title,
+                            )
+                    except Exception as exc:
+                        reason = f"post_failed: {type(exc).__name__}"
+                        logger.debug("AD-412: Failed to post proposal from %s", _proposer, exc_info=True)
+            if reason:  # BF-934: a decision that cannot be filed is said, with the agent and why, and recorded as an entry
+                logger.warning("BF-934: proposal from %s (%s) not posted: %s", _proposer, getattr(agent, 'agent_type', 'unknown'), reason)
+                actions_executed.append({"type": "proposal_suppressed", "reason": reason})
         elif re.search(r'\[PROPOSAL\]', text):
             # [PROPOSAL] present but didn't match strict pattern — log for debugging
-            logger.debug(
-                "AD-412: Malformed [PROPOSAL] block from %s — requires newlines between tags",
-                getattr(agent, 'agent_type', 'unknown'),
+            logger.warning(
+                "BF-934: Malformed [PROPOSAL] block from %s — requires newlines between tags",
+                _proposer,
             )
+            actions_executed.append({"type": "proposal_suppressed", "reason": "malformed_block"})
 
         # Strip proposal block from text regardless of submission success.
         # Uses the same strict pattern — if the regex didn't match above,

@@ -365,6 +365,22 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
     "proactive_think",
 })
 
+# AD-643b / BF-934: the marker an output carries for each action the proactive loop executes, in the order they are reported.
+_ACTION_MARKERS: dict[str, re.Pattern[str]] = {
+    "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
+    "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
+    "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
+    "dm": re.compile(r'\[DM\s', re.IGNORECASE),
+    "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
+    "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
+}
+
+
+def _action_markers_in(text: str) -> list[str]:
+    """AD-643b / BF-934: the action tags whose marker *text* carries, in ``_ACTION_MARKERS`` order."""
+    return [tag for tag, pattern in _ACTION_MARKERS.items() if pattern.search(text or "")]
+
+
 # BF-922 (#1639): set on the observation while a single call answers for a chain
 # that returned no decision for a chain intent; ``_decide_via_llm`` then runs the
 # chain's deterministic output checks (BF-191, BF-204) on the reply.
@@ -5978,22 +5994,7 @@ class CognitiveAgent(BaseAgent):
             return []
 
         declared = set(intended_actions)
-        undeclared = []
-
-        markers = {
-            "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
-            "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
-            "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
-            "dm": re.compile(r'\[DM\s', re.IGNORECASE),
-            "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
-            "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
-        }
-
-        for action_tag, pattern in markers.items():
-            if action_tag not in declared and pattern.search(compose_output):
-                undeclared.append(action_tag)
-
-        return undeclared
+        return [tag for tag in _action_markers_in(compose_output) if tag not in declared]
 
     def _build_chain_for_intent(self, observation: dict):
         """AD-632f: Build a SubTaskChain for the given intent type.
@@ -6674,6 +6675,17 @@ class CognitiveAgent(BaseAgent):
                 if r.sub_task_type == SubTaskType.REFLECT and r.success and r.result:
                     new_output = r.result.get("output", "")
                     if new_output:
+                        # BF-934: a rewrite may refine an approved output, never remove an action it carries (silence included).
+                        lost = [
+                            tag for tag in _action_markers_in(original_result.get("llm_output", ""))
+                            if tag not in _action_markers_in(new_output)
+                        ]
+                        if lost:
+                            logger.warning(
+                                "BF-934: AD-643b re-reflect for %s %s would have dropped %s from an approved output; the approved output is kept",
+                                self.agent_type, getattr(self, "callsign", "") or self.agent_type, lost,
+                            )
+                            return original_result
                         logger.info(
                             "AD-643b: Re-reflect updated output for %s",
                             self.agent_type,
