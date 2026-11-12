@@ -42,6 +42,7 @@ from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proact
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
 from probos.cognitive.proposal_block import PROPOSAL_PATTERN, parse_proposal_block  # BF-934
+from probos.cognitive.similarity import jaccard_similarity, text_to_words  # BF-934
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
@@ -240,6 +241,28 @@ def carries_actionable_block(text: str) -> bool:
 
     An output that withdraws the observation with ``[NO_RESPONSE]`` but still carries one is read for its blocks, not discarded as silence."""
     return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
+
+
+#: BF-934: the Jaccard threshold of AD-614's gate on an agent's own repeated DM (``extract_and_execute_dms``), the live precedent for "the same message again".
+_REPEAT_SIMILARITY = 0.6
+
+
+def repeats_own_reply(thread: Any, author_id: str, body: str) -> bool:
+    """BF-934: whether the thread (as ``WardRoomService.get_thread`` returns it) already holds a live post by *author_id* that says what *body* says.
+
+    BF-105's check reads no posts (L2), so a reply repeated on every cycle is caught here, on the thread the reply extractor has already fetched; the posts are
+    persisted, so a restart changes nothing. A thread of another shape is no evidence of a repeat: the check fails open."""
+    try:
+        words = text_to_words(body)
+        stack = list(thread.get("posts", []))
+        while stack:
+            post = stack.pop()
+            stack.extend(post.get("children", []))
+            if post.get("author_id") == author_id and not post.get("deleted") and jaccard_similarity(words, text_to_words(post.get("body", ""))) >= _REPEAT_SIMILARITY:
+                return True
+    except Exception:
+        logger.debug("BF-934: the repeated-reply check failed; the reply is allowed", exc_info=True)
+    return False
 
 # AD-1157: what an agent may select on the tag. ``fleet`` is deliberately
 # absent — a fleet-classified record is level 3 against the ``ship`` scope every
@@ -4096,6 +4119,15 @@ class ProactiveCognitiveLoop:
                 if await self._is_similar_to_recent_posts(agent, reply_body):
                     logger.debug(
                         "BF-105: Suppressed similar reply from %s to thread %s",
+                        agent.agent_type, thread_id[:8],
+                    )
+                    continue
+
+                # BF-934: BF-105's check above reads no posts (L2); the thread fetched here is the evidence. A reply the agent already made
+                # in this thread, by the same words, is not posted again.
+                if repeats_own_reply(thread, agent.id, reply_body):
+                    logger.debug(
+                        "BF-934: Suppressed repeated reply from %s to thread %s",
                         agent.agent_type, thread_id[:8],
                     )
                     continue

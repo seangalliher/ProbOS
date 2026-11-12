@@ -3,17 +3,23 @@
 Real: the think cycle, the action extraction, the Ward Room and its router, and the AD-643b re-reflect through AD-643a's routing. Doubles (tests/bf934_world.py): the triage's
 ANALYZE and QUERY handlers, COMPOSE and REFLECT stand-ins below (no model call), a thinker whose ``handle_intent`` answers the text a model wrote, and a novelty gate that
 finds everything repeated. The classes hold the cases the unfixed tree fails; the functions before them pass on both. No BF-934 name is imported at module level.
+A3 (review round 1) adds four controls before the first class, which pass on both trees (T14 to T17), and two classes at the end, which S2's M3 head fails (T18 to T23): the actions of a
+repeated output (an endorsement, a reply, a proposal) and a re-reflect that keeps the marker and loses the block. The one clock they read is BF-171's reply cooldown, which ``_elapse`` clears.
 """
 
 from __future__ import annotations
 
 import importlib
 import logging
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from probos.cognitive.sub_task import SubTaskResult, SubTaskType
+from probos.mesh.intent import IntentBus
+from probos.substrate.registry import AgentRegistry
+from probos.ward_room_router import WardRoomRouter
 from tests.bf934_world import NothingIsNovel, crew, think, thinker, threads, world
 
 PROPOSAL = "[PROPOSAL]\nTitle: Cache the roster\nRationale: The roster is read forty times per cycle.\nAffected Systems: Ward Room\nPriority: low\n[/PROPOSAL]"
@@ -72,6 +78,74 @@ async def test_control_a_re_reflect_that_keeps_every_block_still_replaces_the_ap
     async with world(tmp_path) as w:
         await _undeclared_proposal(w, f"Roster reads repeat, reworded.\n{PROPOSAL}")
         assert sorted(await threads(w)) == sorted([POSTED, "[Observation] Roster reads repeat, reworded."])
+
+
+async def _worfs_thread(w):
+    """A thread and a post Worf made in the science channel, for Kira to answer or to endorse."""
+    science = await w.ws.get_channel_by_department("science")
+    thread = await w.ws.create_thread(science.id, w.ids["security_officer"], "Coolant audit", "Loop B reads 41 C.", author_callsign="Worf")
+    post = await w.ws.create_post(thread.id, w.ids["security_officer"], "Confirmed at 0300.", author_callsign="Worf")
+    return thread, post
+
+
+def _with_real_trust(w):
+    """The world's router holds a MagicMock for trust; this one holds the loop's own TrustNetwork, so an endorsement's trust signal can be read."""
+    w.rt.ward_room_router = WardRoomRouter(
+        ward_room=w.ws, registry=MagicMock(spec=AgentRegistry), intent_bus=MagicMock(spec=IntentBus), trust_network=w.rt.trust_network,
+        ontology=None, callsign_registry=w.rt.callsign_registry, episodic_memory=None, event_emitter=MagicMock(), event_log=AsyncMock(), config=w.rt.config,
+    )
+    return w.rt.trust_network
+
+
+def _elapse(w):
+    """Stand for the time between two cycles: BF-171's 120 s reply cooldown is the one clock the reply path reads, and no test sleeps."""
+    w.loop._reply_cooldowns.clear()
+
+
+class _ComposeNoRationale(_Compose):
+    async def __call__(self, spec, context, prior):
+        return SubTaskResult(sub_task_type=SubTaskType.COMPOSE, name=spec.name, success=True, result={"output": "Roster reads repeat.\n[PROPOSAL]\nTitle: Cache the roster\n[/PROPOSAL]"})
+
+
+async def test_control_a_flipped_endorsement_still_counts_for_its_author(tmp_path):
+    async with world(tmp_path) as w:
+        trust = _with_real_trust(w)
+        _, post = await _worfs_thread(w)
+        worf = w.ids["security_officer"]
+        alpha, beta = trust.get_or_create(worf).alpha, trust.get_or_create(worf).beta
+        await think(w, thinker(w, f"[ENDORSE {post.id} UP]"))
+        assert trust.get_or_create(worf).alpha > alpha and trust.get_or_create(worf).beta == beta
+        await think(w, thinker(w, f"[ENDORSE {post.id} DOWN]"))
+        assert trust.get_or_create(worf).beta > beta and (await w.ws.get_post(post.id))["net_score"] == -1
+
+
+async def test_control_a_reply_that_says_something_new_is_still_posted(tmp_path):
+    async with world(tmp_path) as w:
+        thread, _ = await _worfs_thread(w)
+        await w.ws.create_post(thread.id, w.ids["security_officer"], "Second reading agrees.", author_callsign="Worf")  # another crew member said it first
+        new = "Loop B should be read again after the purge, not before."
+        for body in ("Second reading agrees.", new):
+            await think(w, thinker(w, f"[REPLY {thread.id}]\n{body}\n[/REPLY]"))
+            _elapse(w)
+        mine = [p["body"] for p in (await w.ws.get_thread(thread.id))["posts"] if p["author_id"] == w.ids["science_officer"]]
+        assert mine == ["Second reading agrees.", new]
+
+
+async def test_control_a_proposal_with_another_title_or_by_another_author_is_still_filed(tmp_path):
+    async with world(tmp_path) as w:
+        worf = SimpleNamespace(id=w.ids["security_officer"], agent_type="security_officer", callsign="Worf")
+        for who, text in ((thinker(w, ""), PROPOSAL), (thinker(w, ""), PROPOSAL.replace("Cache the roster", "Index the roster")), (worf, PROPOSAL)):
+            await w.loop._extract_and_execute_actions(who, text)
+        assert sorted(await threads(w, "Improvement Proposals")) == sorted([POSTED, POSTED, "[Proposal] Index the roster"])
+
+
+async def test_control_a_proposal_the_extractor_never_could_file_does_not_hold_a_rewrite_back(tmp_path):
+    async with world(tmp_path) as w:
+        agent, _ = await crew(w, ["ward_room_post"], lambda request: "[NO_RESPONSE]")
+        agent._sub_task_executor.register_handler(SubTaskType.COMPOSE, _ComposeNoRationale())
+        agent._sub_task_executor.register_handler(SubTaskType.REFLECT, _Reflect("Roster reads repeat, reworded.\n[PROPOSAL]\nTitle: Cache the roster\n[/PROPOSAL]"))
+        await think(w, agent)
+        assert await threads(w) == ["[Observation] Roster reads repeat, reworded."]
 
 
 class TestNoGateDiscardsAnActionTheOutputCarries:
@@ -163,3 +237,69 @@ class TestOneReadingOfAProposalBlock:
         assert (parsed.valid, parsed.found, parsed.title) == (True, True, "Improve dream consolidation")
         assert parsed.rationale == "Dream cycles discard low-weight memories\nthat could still be useful."
         assert (parsed.affected, parsed.priority, parsed.extra_blocks) == (("EpisodicMemory", "DreamEngine"), "high", 1)
+
+
+class TestARepeatedOutputRepeatsNoEffect:
+    async def test_the_ward_room_says_whether_an_endorsement_changed_the_stored_vote(self, tmp_path):
+        async with world(tmp_path) as w:
+            _, post = await _worfs_thread(w)
+            kira = w.ids["science_officer"]
+            votes = [await w.ws.endorse(target_id=post.id, target_type="post", voter_id=kira, direction=d) for d in ("up", "up", "down", "down", "unvote", "unvote")]
+            assert [(v["voter_direction"], v.get("changed")) for v in votes] == [("up", True), ("up", False), ("down", True), ("down", False), ("none", True), ("none", False)]
+
+    async def test_a_repeated_endorsement_earns_its_author_trust_once(self, tmp_path):
+        async with world(tmp_path) as w:
+            trust = _with_real_trust(w)
+            _, post = await _worfs_thread(w)
+            w.loop.set_novelty_gate(NothingIsNovel())  # every observation is a repeat; S2 carries the output's actions out all the same
+            worf = w.ids["security_officer"]
+            start, seen = trust.get_or_create(worf).alpha, []
+            for _ in range(3):
+                await think(w, thinker(w, f"{REPEATED}\n[ENDORSE {post.id} UP]"))
+                seen.append(trust.get_or_create(worf).alpha)
+            assert seen[0] > start  # the first vote counts
+            assert seen[1] == pytest.approx(seen[0]) and seen[2] == pytest.approx(seen[0])  # the repeats do not
+            assert (await w.ws.get_post(post.id))["net_score"] == 1
+
+    async def test_a_reply_repeated_on_every_cycle_is_posted_once(self, tmp_path):
+        async with world(tmp_path) as w:
+            thread, _ = await _worfs_thread(w)
+            w.loop.set_novelty_gate(NothingIsNovel())
+            for _ in range(3):
+                await think(w, thinker(w, f"{REPEATED}\n[REPLY {thread.id}]\nSecond reading agrees.\n[/REPLY]"))
+                _elapse(w)
+            posts = (await w.ws.get_thread(thread.id))["posts"]
+            assert [p["body"] for p in posts if p["author_id"] == w.ids["science_officer"]] == ["Second reading agrees."]
+            assert await threads(w) == ["Coolant audit"]  # the repeated observation itself is still not posted
+
+    async def test_a_proposal_repeated_by_its_author_is_filed_once_and_says_why(self, tmp_path):
+        async with world(tmp_path) as w:
+            w.loop.set_novelty_gate(NothingIsNovel())
+            for _ in range(3):
+                await think(w, thinker(w, f"{REPEATED}\n{PROPOSAL}"))
+            assert await threads(w, "Improvement Proposals") == [POSTED]
+            again = PROPOSAL.replace("Cache the roster", "cache  THE roster")  # the same title as a person reads it
+            _, actions = await w.loop._extract_and_execute_actions(thinker(w, ""), f"Observation.\n{again}")
+            assert {"type": "proposal_suppressed", "reason": "router_refused: Proposal already filed"} in actions and not [a for a in actions if a["type"] == "proposal"]
+            assert await threads(w, "Improvement Proposals") == [POSTED]
+
+    def test_a_thread_of_another_shape_is_no_evidence_of_a_repeat(self):
+        repeats = getattr(_built("probos.proactive"), "repeats_own_reply", None)
+        assert repeats is not None, "repeats_own_reply is built by A3"
+        mine = {"posts": [{"author_id": "kira", "body": "Second reading agrees.", "children": []}]}
+        assert [repeats(t, "kira", "Second reading agrees.") for t in (None, {}, {"posts": None}, mine)] == [False, False, False, True]
+        assert repeats(mine, "worf", "Second reading agrees.") is False  # another author's post is not mine
+        assert repeats({"posts": [{**mine["posts"][0], "deleted": True}]}, "kira", "Second reading agrees.") is False  # a deleted post is not in the thread
+        nested = {"posts": [{"author_id": "worf", "body": "Loop B reads 41 C.", "children": [{"author_id": "kira", "body": "Second reading agrees.", "children": []}]}]}
+        assert repeats(nested, "kira", "Second reading agrees.") is True
+
+
+class TestARewriteKeepsAProposalTheExtractorCanFile:
+    @pytest.mark.parametrize("second", [
+        "Roster reads repeat.\n[PROPOSAL]\nTitle: Cache the roster\nAffected Systems: Ward Room\nPriority: low\n[/PROPOSAL]",  # the Rationale is gone
+        "Roster reads repeat.\n" + PROPOSAL.lower(),  # the marker matches in any case; the extractor reads only [PROPOSAL]
+    ])
+    async def test_a_re_reflect_may_not_leave_a_proposal_the_extractor_cannot_file(self, tmp_path, second):
+        async with world(tmp_path) as w:
+            await _undeclared_proposal(w, second)
+            assert sorted(await threads(w)) == sorted([POSTED, "[Observation] Roster reads repeat."])

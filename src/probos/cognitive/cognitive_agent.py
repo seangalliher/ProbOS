@@ -28,6 +28,7 @@ from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive import context_manifest  # AD-1357
 from probos.cognitive.action_billets import decision_billet  # BF-934
+from probos.cognitive.proposal_block import parse_proposal_block  # BF-934
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
 from probos.recreation import history as game_history  # AD-1358 S1
@@ -379,6 +380,17 @@ _ACTION_MARKERS: dict[str, re.Pattern[str]] = {
 def _action_markers_in(text: str) -> list[str]:
     """AD-643b / BF-934: the action tags whose marker *text* carries, in ``_ACTION_MARKERS`` order."""
     return [tag for tag, pattern in _ACTION_MARKERS.items() if pattern.search(text or "")]
+
+
+def _actions_lost(original: str, rewrite: str) -> list[str]:
+    """BF-934: the action tags *original* carries that *rewrite* does not keep, in ``_ACTION_MARKERS`` order.
+
+    A tag is lost when its marker is gone. A proposal is also lost when the extractor could file the original's block (``parse_proposal_block``) and cannot file the
+    rewrite's: a rewrite that keeps ``[PROPOSAL]`` and drops its Rationale, or writes the tags in lower case, has kept the marker and lost the block. The other tags
+    stay marker-level (L20): their extractors live in modules this one cannot import."""
+    kept = _action_markers_in(rewrite)
+    unfileable = parse_proposal_block(original).valid and not parse_proposal_block(rewrite).valid
+    return [tag for tag in _action_markers_in(original) if tag not in kept or (tag == "proposal" and unfileable)]
 
 
 # BF-922 (#1639): set on the observation while a single call answers for a chain
@@ -6675,11 +6687,8 @@ class CognitiveAgent(BaseAgent):
                 if r.sub_task_type == SubTaskType.REFLECT and r.success and r.result:
                     new_output = r.result.get("output", "")
                     if new_output:
-                        # BF-934: a rewrite may refine an approved output, never remove an action it carries (silence included).
-                        lost = [
-                            tag for tag in _action_markers_in(original_result.get("llm_output", ""))
-                            if tag not in _action_markers_in(new_output)
-                        ]
+                        # BF-934: a rewrite may refine an approved output, never remove an action it carries (silence included), nor leave a proposal it could file unfileable.
+                        lost = _actions_lost(original_result.get("llm_output", ""), new_output)
                         if lost:
                             logger.warning(
                                 "BF-934: AD-643b re-reflect for %s %s would have dropped %s from an approved output; the approved output is kept",
