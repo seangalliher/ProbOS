@@ -7,6 +7,8 @@ A3 (review round 1) adds four controls before the first class, which pass on bot
 repeated output (an endorsement, a reply, a proposal) and a re-reflect that keeps the marker and loses the block. The one clock they read is BF-171's reply cooldown, which ``_elapse`` clears.
 A4 (review round 2) changes what the reply guard calls the same reply (word for word, against the agent's newest post) and where it runs (after the commands the reply carries): one control before the
 first class (T27) and the cases A3's head fails at the end (T24 to T26, T28). The Ward Room pipeline, the second caller of the reply extractor, is built here (``_pipeline``).
+A5 (review round 3) wires what the world left out between the reply and the stored post, the content firewall as ``startup/finalize.py`` wires it (``_with_firewall``), because it puts a label
+before the stored body of a flagged reply: the class at the end (T29 to T35) holds the cases A4's head fails (a flagged reply repeated on every cycle, the stored body read as the body given) and the controls around them.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from probos.cognitive.sub_task import SubTaskResult, SubTaskType
 from probos.mesh.intent import IntentBus
 from probos.recreation.service import RecreationService
 from probos.substrate.registry import AgentRegistry
+from probos.ward_room.content_firewall import ContentFirewall
 from probos.ward_room_pipeline import WardRoomPostPipeline
 from probos.ward_room_router import WardRoomRouter
 from tests.bf934_world import NothingIsNovel, crew, think, thinker, threads, world
@@ -388,3 +391,143 @@ class TestAReplyIsARepeatOnlyWordForWord:
         assert [repeats(thread_of(post("Valve open.", 1)), "kira", text) for text in ("  VALVE\nopen. ", "Valve open", "Valve open. ")] == [True, False, True]  # case and spacing aside, nothing else
         assert repeats(thread_of(post("", 1)), "kira", "") is False and repeats(thread_of(post("Valve open.", 1)), "kira", "   ") is False  # no words, no repeat
         assert repeats(thread_of(post("Valve open.", 1, author="worf")), "kira", "Valve open.") is False  # another author's post is not mine
+
+
+LABEL = "[UNVERIFIED \u2014 "  # what the Ward Room puts before the body of a flagged post; the reasons and "] " follow (messages.py and threads.py hold the dash itself)
+PHANTOM_LABEL = LABEL + "phantom_thread_ref] "
+PURGE = "The purge is complete and Loop B reads 41 C."
+PHANTOM = "As discussed in thread abc12345 the purge is complete and Loop B reads 41 C."  # a thread reference the thread does not hold: flagged phantom_thread_ref
+HEX_AND_PHANTOM = "As discussed in thread abc12345 with refs deadbeef01 and cafebabe02 the purge is complete."  # flagged ungrounded_hex_ids and phantom_thread_ref
+ECHO = PHANTOM_LABEL + PURGE  # a reply that itself begins with a label, as an agent that copies one writes it: not flagged, stored as written
+FLAGGED_ECHO = PHANTOM_LABEL + PHANTOM  # the same, and flagged: stored with two labels
+
+
+def _with_firewall(w) -> None:
+    """The content firewall wired as ``startup/finalize.py`` wires it (the default ``FirewallConfig``, the loop's own TrustNetwork, one firewall for the posts and the threads), and the router
+    holding that TrustNetwork too. The world builds neither, so a test that does not call this stores every body as it was given."""
+    _with_real_trust(w)
+    firewall = ContentFirewall(trust_network=w.rt.trust_network, emit_event_fn=w.rt.emit_event, config=w.rt.config.firewall)
+    w.ws._messages.set_content_firewall(firewall)
+    w.ws._threads.set_content_firewall(firewall)
+
+
+def _strip_label():
+    """The helper A5 builds. Until then this fails at its own assert, as the red run requires (an AttributeError would not)."""
+    strip = getattr(importlib.import_module("probos.ward_room.content_firewall"), "strip_unverified_label", None)
+    assert strip is not None, "strip_unverified_label is built by A5"
+    return strip
+
+
+async def _says(w, caller, thread, post, text) -> None:
+    """One cycle in which Kira's whole output is a ``[REPLY]`` block holding *text*, through the think or through the Ward Room pipeline: the two callers of the reply extractor."""
+    reply = f"[REPLY {thread.id}]\n{text}\n[/REPLY]"
+    if caller == "think":
+        await think(w, thinker(w, reply))
+    else:
+        await _pipeline(w).process_and_post(agent=thinker(w, ""), response_text=reply, thread_id=thread.id, event_type="ward_room_post_created", post_id=post.id)
+
+
+class TestAFlaggedReplyIsStillARepeat:
+    """A5: the content firewall puts ``[UNVERIFIED ...]`` before the stored body of a flagged reply, and the reply about to be posted does not carry it."""
+
+    @pytest.mark.parametrize("caller", ["think", "pipeline"])
+    @pytest.mark.parametrize("said, label", [
+        pytest.param(PURGE, "", id="plain"),
+        pytest.param(PHANTOM, PHANTOM_LABEL, id="one reason"),
+        pytest.param(HEX_AND_PHANTOM, LABEL + "ungrounded_hex_ids, phantom_thread_ref] ", id="two reasons"),
+        pytest.param(ECHO, "", id="label echo"),
+        pytest.param(FLAGGED_ECHO, PHANTOM_LABEL, id="flagged label echo"),
+    ])
+    async def test_a_reply_repeated_on_every_cycle_is_posted_once_whatever_the_firewall_made_of_it(self, tmp_path, caller, said, label):
+        async with world(tmp_path) as w:
+            _with_firewall(w)
+            thread, post = await _worfs_thread(w)
+            counts = []
+            for cycle in range(3):
+                await _says(w, caller, thread, post, said)
+                _elapse(w)
+                mine = await _kiras_replies(w, thread)
+                counts.append(len(mine))
+                if cycle == 0:
+                    assert mine == [label + said]  # first: the stored body carries the label this row says (none, one, or the echo's own), so the test fails here if the wiring stops flagging
+            assert counts == [1, 1, 1]
+
+    @pytest.mark.parametrize("caller", ["think", "pipeline"])
+    async def test_a_flagged_reply_that_changes_a_value_is_still_posted(self, tmp_path, caller):
+        async with world(tmp_path) as w:
+            _with_firewall(w)
+            thread, post = await _worfs_thread(w)
+            changed = PHANTOM.replace("41 C", "49 C")  # the first reply grounds the thread reference, so the second is stored as it was said
+            counts = []
+            for text in (PHANTOM, changed, changed):
+                await _says(w, caller, thread, post, text)
+                _elapse(w)
+                counts.append(len(await _kiras_replies(w, thread)))
+            assert counts == [1, 2, 2]  # the changed value is a new reply and the repeat of it is not
+            assert await _kiras_replies(w, thread) == sorted([PHANTOM_LABEL + PHANTOM, changed])
+
+    @pytest.mark.parametrize("body, label, lowly", [
+        pytest.param(PURGE, "", False, id="plain"),
+        pytest.param(PHANTOM, PHANTOM_LABEL, False, id="one reason"),
+        pytest.param(HEX_AND_PHANTOM, LABEL + "ungrounded_hex_ids, phantom_thread_ref] ", False, id="two reasons"),
+        pytest.param(ECHO, "", False, id="label echo"),
+        pytest.param(FLAGGED_ECHO, PHANTOM_LABEL, False, id="flagged label echo"),
+        pytest.param("  " + FLAGGED_ECHO, PHANTOM_LABEL, False, id="flagged label echo after spaces"),
+        pytest.param("  " + PURGE + "  ", "", False, id="padded"),
+        pytest.param("Line one.\nLine two reads 41 C.\n\nLine four.", "", False, id="multi-line"),
+        pytest.param("Caf\u00e9 \u2014 r\u00e9sum\u00e9 reads 41\u00b0C \u2603", "", False, id="unicode"),
+        pytest.param("[Observation] " + PURGE, "", False, id="bracket-prefixed"),
+        pytest.param(("The purge is complete. " * 300)[:6000], "", False, id="6000 characters"),
+        pytest.param("The system showed 50ms baseline with 200ms spikes and \u00b13.2% variance in throughput.", LABEL + "fabricated_metrics] ", True, id="fabricated metrics"),
+    ])
+    async def test_the_body_the_ward_room_stores_reads_as_the_body_it_was_given(self, tmp_path, body, label, lowly):
+        read = _built("probos.proactive")._as_read
+        async with world(tmp_path) as w:
+            _with_firewall(w)
+            thread, _ = await _worfs_thread(w)
+            kira = w.ids["science_officer"]
+            if lowly:
+                w.rt.trust_network.record_outcome(kira, False)  # the firewall reads a body for fabricated metrics only below 0.45, and a fresh author holds 0.5
+            await w.ws.create_post(thread.id, kira, body, author_callsign="Kira")
+            (stored,) = await _kiras_replies(w, thread)
+            assert stored == label + body  # first: the label is the only change the store makes, and it is there when the firewall flags the body
+            assert read(stored) == read(body)
+
+    async def test_the_label_on_a_thread_body_is_the_one_the_helper_removes(self, tmp_path):
+        async with world(tmp_path) as w:
+            _with_firewall(w)
+            science = await w.ws.get_channel_by_department("science")
+            thread = await w.ws.create_thread(science.id, w.ids["science_officer"], "Purge", PHANTOM, author_callsign="Kira")
+            assert thread.body == PHANTOM_LABEL + PHANTOM  # create_thread is the label's other producer (ward_room/threads.py)
+            assert _strip_label()(thread.body) == PHANTOM
+
+    def test_every_leading_label_goes_and_the_spacing_after_it(self):
+        strip = _strip_label()
+        rows = {
+            "one label": (PHANTOM_LABEL + PURGE, PURGE),
+            "two reasons": (LABEL + "ungrounded_hex_ids, phantom_thread_ref] " + PURGE, PURGE),
+            "two labels": (PHANTOM_LABEL + LABEL + "fabricated_metrics] " + PURGE, PURGE),
+            "two labels on two lines": (PHANTOM_LABEL.strip() + "\n" + LABEL + "fabricated_metrics]\n" + PURGE, PURGE),
+            "a label after spaces": ("  " + PHANTOM_LABEL + PURGE, PURGE),
+            "a label alone": (PHANTOM_LABEL.strip(), ""),
+        }
+        assert {name: strip(given) for name, (given, _) in rows.items()} == {name: want for name, (_, want) in rows.items()}
+
+    def test_nothing_that_is_not_a_leading_label_is_touched(self):
+        strip = _strip_label()
+        kept = [
+            PURGE,
+            "  " + PURGE + "  ",  # no label: the text is returned as it is, spacing included
+            "The purge " + PHANTOM_LABEL + "is complete.",  # a label inside the text
+            "[Observation] " + PURGE,  # another bracket
+            "[UNVERIFIED: no independent corroboration found] " + PURGE,  # social verification's own text: a colon, no dash
+            "[UNVERIFIED - phantom_thread_ref] " + PURGE,  # a hyphen is not the label's dash
+            "[unverified \u2014 phantom_thread_ref] " + PURGE,  # the case is the label's
+            LABEL + "phantom_thread_ref " + PURGE,  # no closing bracket
+        ]
+        assert [strip(text) for text in kept] == kept
+
+    def test_removing_the_labels_twice_changes_nothing(self):
+        strip = _strip_label()
+        for text in (PURGE, PHANTOM_LABEL + PURGE, PHANTOM_LABEL + LABEL + "fabricated_metrics] " + PURGE, PHANTOM_LABEL.strip(), ""):
+            assert strip(strip(text)) == strip(text)

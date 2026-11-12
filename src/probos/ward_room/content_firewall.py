@@ -37,6 +37,20 @@ _FABRICATED_METRIC_RE = re.compile(
 )
 
 
+# BF-934 A5: the label ``MessageStore.create_post`` and ``ThreadManager.create_thread`` put before the body of a flagged post (``[UNVERIFIED``, an em dash, the reasons, ``] ``), and its
+# inverse. The dash is written as an escape. A label is read only when it is the firewall's own: the exact lead-in, and the reasons up to the first ``]``.
+_UNVERIFIED_LABEL = "[UNVERIFIED \u2014 "
+_LEADING_LABELS_RE = re.compile(r"^\s*(?:" + re.escape(_UNVERIFIED_LABEL) + r"[^\]]*\]\s*)+")
+
+
+def strip_unverified_label(body: str) -> str:
+    """*body* without the ``[UNVERIFIED ...]`` labels at its start: the inverse of what ``create_post`` and ``create_thread`` put before a flagged body.
+
+    Every leading label goes, with the spacing after each: a body that itself begins with a label (an agent that copies one) and is then flagged carries two. A body with no label at
+    its start is returned as it is, and a label inside the text is not touched. The firewall's reasons are its own names (``phantom_thread_ref``) and hold no ``]``."""
+    return _LEADING_LABELS_RE.sub("", body)
+
+
 @dataclass
 class ScanResult:
     """Result of a deterministic content scan."""

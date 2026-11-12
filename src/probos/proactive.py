@@ -46,6 +46,7 @@ from probos.cognitive.orientation import OrientationContext, count_agent_episode
 from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
+from probos.ward_room.content_firewall import strip_unverified_label  # BF-934 A5
 
 if TYPE_CHECKING:
     from probos.cognitive.novelty_gate import NoveltyGate
@@ -243,8 +244,11 @@ def carries_actionable_block(text: str) -> bool:
 
 
 def _as_read(text: Any) -> str:
-    """BF-934: *text* as a person reads "the same words": the case and the spacing aside, every other character kept, so a changed number, sign or mark is a changed text."""
-    return " ".join(str(text or "").split()).casefold()
+    """BF-934: *text* as a person reads "the same words": the case and the spacing aside, every other character kept, so a changed number, sign or mark is a changed text.
+
+    A5: the content firewall's ``[UNVERIFIED ...]`` labels at the start are not words the author wrote. ``create_post`` puts one before the stored body of a flagged reply and the text the
+    agent sends has none, so both texts are read without them (``strip_unverified_label``); a reply that itself begins with a label loses it on both sides."""
+    return " ".join(strip_unverified_label(str(text or "")).split()).casefold()
 
 
 def repeats_own_reply(thread: Any, author_id: str, body: str) -> bool:
@@ -254,7 +258,8 @@ def repeats_own_reply(thread: Any, author_id: str, body: str) -> bool:
     persisted, so a restart changes nothing. Equality, not likeness: a threshold on the words fails for a longer reply in which one value changed ("41 C" and
     "49 C" share all but one word), and a changed fact must be posted. Only the newest live post counts, as AD-614's gate on a DM compares the pair's last body:
     a reply the agent took back and now says again has changed the thread. Two newest posts that differ are no evidence, and a reply worded differently is a new
-    reply (L23). A thread of another shape is no evidence of a repeat: the check fails open."""
+    reply (L23). The stored body of a reply the content firewall flagged starts with its ``[UNVERIFIED ...]`` label and the reply about to be posted does not: ``_as_read`` removes the
+    label from both sides (A5), so a flagged reply that is repeated is a repeat. A thread of another shape is no evidence of a repeat: the check fails open."""
     try:
         wanted = _as_read(body)
         own: list[tuple[float, str]] = []
