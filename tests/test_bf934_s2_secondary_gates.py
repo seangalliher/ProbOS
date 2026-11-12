@@ -5,6 +5,8 @@ ANALYZE and QUERY handlers, COMPOSE and REFLECT stand-ins below (no model call),
 finds everything repeated. The classes hold the cases the unfixed tree fails; the functions before them pass on both. No BF-934 name is imported at module level.
 A3 (review round 1) adds four controls before the first class, which pass on both trees (T14 to T17), and two classes at the end, which S2's M3 head fails (T18 to T23): the actions of a
 repeated output (an endorsement, a reply, a proposal) and a re-reflect that keeps the marker and loses the block. The one clock they read is BF-171's reply cooldown, which ``_elapse`` clears.
+A4 (review round 2) changes what the reply guard calls the same reply (word for word, against the agent's newest post) and where it runs (after the commands the reply carries): one control before the
+first class (T27) and the cases A3's head fails at the end (T24 to T26, T28). The Ward Room pipeline, the second caller of the reply extractor, is built here (``_pipeline``).
 """
 
 from __future__ import annotations
@@ -18,7 +20,9 @@ import pytest
 
 from probos.cognitive.sub_task import SubTaskResult, SubTaskType
 from probos.mesh.intent import IntentBus
+from probos.recreation.service import RecreationService
 from probos.substrate.registry import AgentRegistry
+from probos.ward_room_pipeline import WardRoomPostPipeline
 from probos.ward_room_router import WardRoomRouter
 from tests.bf934_world import NothingIsNovel, crew, think, thinker, threads, world
 
@@ -146,6 +150,29 @@ async def test_control_a_proposal_the_extractor_never_could_file_does_not_hold_a
         agent._sub_task_executor.register_handler(SubTaskType.REFLECT, _Reflect("Roster reads repeat, reworded.\n[PROPOSAL]\nTitle: Cache the roster\n[/PROPOSAL]"))
         await think(w, agent)
         assert await threads(w) == ["[Observation] Roster reads repeat, reworded."]
+
+
+async def _kiras_replies(w, thread) -> list[str]:
+    """The bodies of Kira's live posts in *thread*, sorted (the order of two posts made within one clock tick is not the point)."""
+    posts = (await w.ws.get_thread(thread.id))["posts"]
+    return sorted(p["body"] for p in posts if p["author_id"] == w.ids["science_officer"] and not p["deleted"])
+
+
+def _pipeline(w) -> WardRoomPostPipeline:
+    """The Ward Room pipeline, the second caller of the reply extractor, over the world's loop, router and Ward Room."""
+    return WardRoomPostPipeline(
+        ward_room=w.ws, ward_room_router=w.rt.ward_room_router, proactive_loop=w.loop, trust_network=w.rt.trust_network,
+        callsign_registry=w.rt.callsign_registry, config=w.rt.config, runtime=w.rt,
+    )
+
+
+async def test_control_a_reply_that_differs_only_in_case_and_spacing_is_still_a_repeat(tmp_path):
+    async with world(tmp_path) as w:
+        thread, _ = await _worfs_thread(w)
+        for body in ("Second reading agrees.", "SECOND   reading\nagrees."):
+            await think(w, thinker(w, f"[REPLY {thread.id}]\n{body}\n[/REPLY]"))
+            _elapse(w)
+        assert await _kiras_replies(w, thread) == ["Second reading agrees."]
 
 
 class TestNoGateDiscardsAnActionTheOutputCarries:
@@ -303,3 +330,61 @@ class TestARewriteKeepsAProposalTheExtractorCanFile:
         async with world(tmp_path) as w:
             await _undeclared_proposal(w, second)
             assert sorted(await threads(w)) == sorted([POSTED, "[Observation] Roster reads repeat."])
+
+
+class TestAReplyIsARepeatOnlyWordForWord:
+    async def test_a_reply_that_changes_a_value_is_posted(self, tmp_path):
+        async with world(tmp_path) as w:
+            thread, _ = await _worfs_thread(w)
+            first = "Loop B coolant temperature is now 41 C and the purge is complete."
+            second = first.replace("41 C", "49 C")  # the same words but one token: a changed measurement, not a repeat
+            for body in (first, second):
+                await think(w, thinker(w, f"[REPLY {thread.id}]\n{body}\n[/REPLY]"))
+                _elapse(w)
+            assert await _kiras_replies(w, thread) == sorted([first, second])
+
+    async def test_a_reply_the_agent_took_back_is_posted_when_it_comes_back(self, tmp_path):
+        async with world(tmp_path) as w:
+            thread, _ = await _worfs_thread(w)
+            said = ["The valve is open.", "Correction: the valve is closed.", "The valve is open."]  # the last says what the first said, after the thread changed
+            for body in said:
+                await think(w, thinker(w, f"[REPLY {thread.id}]\n{body}\n[/REPLY]"))
+                _elapse(w)
+            assert await _kiras_replies(w, thread) == sorted(said)
+
+    @pytest.mark.parametrize("caller", ["think", "pipeline"])
+    @pytest.mark.parametrize("command", ["[MOVE 5]", "[CHALLENGE @Worf tictactoe]"])
+    async def test_a_repeated_reply_still_carries_out_the_command_it_brings(self, tmp_path, caller, command):
+        async with world(tmp_path) as w:
+            service = w.rt.recreation_service = RecreationService()
+            thread, post = await _worfs_thread(w)
+            if "MOVE" in command:
+                await service.create_game("tictactoe", "Kira", "Worf")  # Kira to move
+            said = "Loop B reads 41 C and the purge window is closed for the rest of the shift."
+            for text in (said, f"{said} {command}"):
+                reply = f"[REPLY {thread.id}]\n{text}\n[/REPLY]"
+                if caller == "think":
+                    await think(w, thinker(w, reply))
+                else:
+                    await _pipeline(w).process_and_post(agent=thinker(w, ""), response_text=reply, thread_id=thread.id, event_type="ward_room_post_created", post_id=post.id)
+                _elapse(w)
+            assert await _kiras_replies(w, thread) == [said]  # the prose is posted once
+            assert [(g["challenger"], g["opponent"], g["moves_count"]) for g in service.get_active_games()] == [("Kira", "Worf", 1 if "MOVE" in command else 0)]  # and the command ran
+
+    def test_only_the_agents_newest_live_post_is_the_one_a_reply_repeats(self):
+        repeats = _built("probos.proactive").repeats_own_reply
+
+        def post(body, at, author="kira", **more):
+            return {"author_id": author, "body": body, "created_at": at, "children": [], **more}
+
+        def thread_of(*posts):
+            return {"posts": list(posts)}
+
+        assert repeats(thread_of(post("Valve open.", 1), post("Valve closed.", 2)), "kira", "Valve open.") is False  # the agent took it back since
+        assert repeats(thread_of(post("Valve closed.", 1), post("Valve open.", 2)), "kira", "Valve open.") is True
+        assert repeats(thread_of(post("Valve open.", 1), post("Valve closed.", 2, deleted=True)), "kira", "Valve open.") is True  # the newest live post is the one that counts
+        assert repeats(thread_of(post("Valve open.", 5), post("Valve closed.", 5)), "kira", "Valve open.") is False  # two newest posts that differ are no evidence
+        assert repeats(thread_of(post("Valve open.", 5), post("Valve open.", 5)), "kira", "Valve open.") is True
+        assert [repeats(thread_of(post("Valve open.", 1)), "kira", text) for text in ("  VALVE\nopen. ", "Valve open", "Valve open. ")] == [True, False, True]  # case and spacing aside, nothing else
+        assert repeats(thread_of(post("", 1)), "kira", "") is False and repeats(thread_of(post("Valve open.", 1)), "kira", "   ") is False  # no words, no repeat
+        assert repeats(thread_of(post("Valve open.", 1, author="worf")), "kira", "Valve open.") is False  # another author's post is not mine

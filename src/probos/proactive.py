@@ -42,7 +42,6 @@ from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proact
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
 from probos.cognitive.proposal_block import PROPOSAL_PATTERN, parse_proposal_block  # BF-934
-from probos.cognitive.similarity import jaccard_similarity, text_to_words  # BF-934
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
@@ -243,23 +242,30 @@ def carries_actionable_block(text: str) -> bool:
     return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
 
 
-#: BF-934: the Jaccard threshold of AD-614's gate on an agent's own repeated DM (``extract_and_execute_dms``), the live precedent for "the same message again".
-_REPEAT_SIMILARITY = 0.6
+def _as_read(text: Any) -> str:
+    """BF-934: *text* as a person reads "the same words": the case and the spacing aside, every other character kept, so a changed number, sign or mark is a changed text."""
+    return " ".join(str(text or "").split()).casefold()
 
 
 def repeats_own_reply(thread: Any, author_id: str, body: str) -> bool:
-    """BF-934: whether the thread (as ``WardRoomService.get_thread`` returns it) already holds a live post by *author_id* that says what *body* says.
+    """BF-934: whether *body* says, word for word, what the newest live post by *author_id* in the thread (as ``WardRoomService.get_thread`` returns it) says.
 
     BF-105's check reads no posts (L2), so a reply repeated on every cycle is caught here, on the thread the reply extractor has already fetched; the posts are
-    persisted, so a restart changes nothing. A thread of another shape is no evidence of a repeat: the check fails open."""
+    persisted, so a restart changes nothing. Equality, not likeness: a threshold on the words fails for a longer reply in which one value changed ("41 C" and
+    "49 C" share all but one word), and a changed fact must be posted. Only the newest live post counts, as AD-614's gate on a DM compares the pair's last body:
+    a reply the agent took back and now says again has changed the thread. Two newest posts that differ are no evidence, and a reply worded differently is a new
+    reply (L23). A thread of another shape is no evidence of a repeat: the check fails open."""
     try:
-        words = text_to_words(body)
+        wanted = _as_read(body)
+        own: list[tuple[float, str]] = []
         stack = list(thread.get("posts", []))
         while stack:
             post = stack.pop()
             stack.extend(post.get("children", []))
-            if post.get("author_id") == author_id and not post.get("deleted") and jaccard_similarity(words, text_to_words(post.get("body", ""))) >= _REPEAT_SIMILARITY:
-                return True
+            if post.get("author_id") == author_id and not post.get("deleted"):
+                own.append((post.get("created_at") or 0.0, _as_read(post.get("body", ""))))
+        newest = max((stamp for stamp, _ in own), default=None)
+        return bool(wanted) and newest is not None and all(text == wanted for stamp, text in own if stamp == newest)
     except Exception:
         logger.debug("BF-934: the repeated-reply check failed; the reply is allowed", exc_info=True)
     return False
@@ -4123,15 +4129,6 @@ class ProactiveCognitiveLoop:
                     )
                     continue
 
-                # BF-934: BF-105's check above reads no posts (L2); the thread fetched here is the evidence. A reply the agent already made
-                # in this thread, by the same words, is not posted again.
-                if repeats_own_reply(thread, agent.id, reply_body):
-                    logger.debug(
-                        "BF-934: Suppressed repeated reply from %s to thread %s",
-                        agent.agent_type, thread_id[:8],
-                    )
-                    continue
-
                 # BF-171 + AD-625: Per-agent per-channel reply cooldown (proficiency-modulated)
                 channel_id = thread_data.get("channel_id", "")
                 if channel_id:
@@ -4183,6 +4180,16 @@ class ProactiveCognitiveLoop:
                 reply_body = _strip_bracket_markers(reply_body)  # BF-174
                 reply_body = withhold_dm_blocks(reply_body, agent_id=agent.id, where="thread reply")  # BF-874
                 if not reply_body:
+                    continue
+
+                # BF-934: BF-105's check above reads no posts (L2); the thread fetched here is the evidence. A reply that says, word for word, what the agent's newest post in
+                # this thread says is not posted again. The check judges the text about to be posted, so it sits after the commands the reply carried (BF-121: a repeated
+                # reply can still bring a new CHALLENGE or MOVE) and after the cleaning above, and before BF-237's budget, which a skipped repeat does not spend.
+                if repeats_own_reply(thread, agent.id, reply_body):
+                    logger.debug(
+                        "BF-934: Suppressed repeated reply from %s to thread %s",
+                        agent.agent_type, thread_id[:8],
+                    )
                     continue
 
                 # BF-237: Enforce single-post budget per pipeline invocation.
