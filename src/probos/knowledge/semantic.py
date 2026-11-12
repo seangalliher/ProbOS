@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from probos.knowledge.records_store import (
+    FRONTMATTER_UNPARSED_KEY,  # BF-940 slice 4 (L19): owned by the store
     _CLASSIFICATION_LEVELS,
     _IDENTITY_GATED_CLASSIFICATIONS,  # BF-679: owned by the store
     _UNRESTRICTED_READER,  # BF-679: owned by the store
@@ -681,6 +682,10 @@ class SemanticKnowledgeLayer:
         honest-degrades per entry: one unreadable record does not abort the
         pass.
 
+        BF-940 slice 4 (L19): a record whose frontmatter did not load (its listing entry carries ``FRONTMATTER_UNPARSED_KEY``) is
+        left out, so a note that is private on disk is never indexed as ``ship``. It stays pending: the next pass indexes it once its
+        frontmatter loads, and the boot logs how many were left out and the first five paths, never a value.
+
         BF-684: **resumable.** The pass skips records the collection already
         holds and spends its budget on ones it does not, so successive boots
         converge on full coverage instead of re-walking the same prefix.
@@ -714,7 +719,15 @@ class SemanticKnowledgeLayer:
             )
             return 0
 
-        paths = [e.get("path", "") for e in entries if e.get("path", "")]
+        # BF-940 slice 4 (L19): a record whose frontmatter did not load reads as {}, so it would be indexed as ``ship`` whatever its text
+        # says. It is left out and the boot says so, by path and never by value; the next pass indexes it once its frontmatter loads.
+        unparsed = [e["path"] for e in entries if e.get("path", "") and e.get(FRONTMATTER_UNPARSED_KEY)]
+        if unparsed:
+            logger.warning(
+                "BF-940 slice 4 (L19): %d record(s) are not indexed because their frontmatter does not load, so their classification "
+                "is unknown; the next pass indexes each once it loads: %s", len(unparsed), ", ".join(unparsed[:5]),
+            )
+        paths = [e.get("path", "") for e in entries if e.get("path", "") and not e.get(FRONTMATTER_UNPARSED_KEY)]
         already = self._indexed_record_paths(paths)
         pending = [p for p in paths if p not in already]
 
