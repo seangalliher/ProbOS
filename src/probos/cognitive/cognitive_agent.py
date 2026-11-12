@@ -27,6 +27,7 @@ from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive import context_manifest  # AD-1357
+from probos.cognitive.action_accounting import record_declared  # BF-934
 from probos.cognitive.action_billets import decision_billet  # BF-934
 from probos.cognitive.proposal_block import parse_proposal_block  # BF-934
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
@@ -309,6 +310,10 @@ def _build_result_metadata(
         if type(references) is list and references:
             metadata["owned_steps_view_references"] = references[:8]
             break
+    # BF-934 (#1673): the actions the triage intended, bounded, so that the loop that executes the output can account for each of them.
+    intended = observation.get("_intended_actions") if isinstance(observation, dict) else None
+    if type(intended) is list and intended:
+        metadata["intended_actions"] = [str(tag)[:40] for tag in intended[:16]]
     # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
     # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
     # after every key above and it never takes the room of one of them. It is not
@@ -6528,6 +6533,13 @@ class CognitiveAgent(BaseAgent):
         # --- Determine if communication chain should fire ---
         _COMM_ACTIONS = frozenset({"ward_room_post", "ward_room_reply", "endorse", "dm"})
         has_comm_action = bool(_COMM_ACTIONS.intersection(intended_actions))
+
+        # BF-934: the decision record, written where the decision is made (a proactive think whose triage intends an action a block or a post carries out).
+        await record_declared(
+            _rt, agent_id=self.id, agent_type=self.agent_type, callsign=getattr(self, "callsign", "") or self.agent_type,
+            intent=intent, intent_id=observation.get("intent_id", ""), intended=intended_actions,
+            path="chain" if has_comm_action and execute_steps else "single_call",
+        )
 
         # AD-1347 S4: a Ward Room record by id, only when an action will use it; a
         # non-communication triage falls through to the single call, which would not render it.

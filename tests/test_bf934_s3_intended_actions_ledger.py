@@ -108,8 +108,6 @@ async def test_a_decision_that_names_no_action_leaves_no_record(tmp_path):
 
 
 class TestEveryIntendedActionIsCarriedOutOrDropped:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S3 M2 builds it")
-
     @pytest.mark.parametrize("tag", [t for t in ACTION_TAGS if t != "ward_room_post"])
     async def test_an_action_the_output_does_not_carry_is_dropped_with_a_reason_and_said(self, tmp_path, caplog, tag):
         async with world(tmp_path, event_log=True) as w:
@@ -190,8 +188,6 @@ class TestEveryIntendedActionIsCarriedOutOrDropped:
 
 
 class TestTheDecisionRecordReconcilesAgainstWhatWasPosted:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S3 M2 builds it")
-
     async def test_decided_equals_posted_plus_dropped_per_agent_and_action(self, tmp_path):
         """The crew's reconciliation, from its three named sources: the decision record (events.db), Improvement Proposals (Ward Room) and the drop rows (events.db)."""
         async with world(tmp_path, event_log=True) as w:
@@ -223,8 +219,6 @@ class TestTheDecisionRecordReconcilesAgainstWhatWasPosted:
 
 
 class TestTheRegistryAndTheMetadata:
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-934 S3 M2 builds it")
-
     def test_the_registry_holds_exactly_the_tags_the_analyze_prompts_offer(self):
         accounting = _built("probos.cognitive.action_accounting")
         offered: set[str] = set()

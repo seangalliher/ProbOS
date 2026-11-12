@@ -41,6 +41,7 @@ from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
+from probos.cognitive.action_accounting import settle_intended_actions  # BF-934
 from probos.cognitive.proposal_block import PROPOSAL_PATTERN, parse_proposal_block  # BF-934
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.cognitive.provenance import iso_utc, record_write_time
@@ -1445,6 +1446,10 @@ class ProactiveCognitiveLoop:
                     "BF-069: Proactive think failed for %s: %s (consecutive failures: %d)",
                     agent.agent_type, error_detail, self._llm_failure_count,
                 )
+            await settle_intended_actions(
+                self._runtime, agent, intent.id, getattr(result, "metadata", None), [],
+                "think_failed" if not (result and result.success) else "no_output",
+            )
             return
 
         response_text = str(result.result).strip()
@@ -1525,6 +1530,7 @@ class ProactiveCognitiveLoop:
                     logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
             # AD-488: Record no-response as event (rapid no-responses can also indicate loops)
             self._circuit_breaker.record_event(agent.id, "no_response", "")
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "no_response")
             return
 
         _withdrawn = "[NO_RESPONSE]" in response_text  # BF-934: true only when the output carries a valid block (the gate above); see below
@@ -1538,6 +1544,7 @@ class ProactiveCognitiveLoop:
             )
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "raw_intent_json")
             return
 
         # AD-437: Extract and process structured actions from proactive response. BF-934: before the similarity (BF-032) and novelty
@@ -1559,6 +1566,7 @@ class ProactiveCognitiveLoop:
             )
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "no_response" if _withdrawn else "empty_after_extraction")
             return
 
         # BF-032: Skip if too similar to agent's recent posts
@@ -1570,6 +1578,7 @@ class ProactiveCognitiveLoop:
             # Still record duty execution if applicable
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "similar_to_recent_post")
             return
 
         # AD-493: Semantic novelty gate — suppress rehashed observations
@@ -1583,6 +1592,7 @@ class ProactiveCognitiveLoop:
                     )
                     if duty and self._duty_tracker:
                         self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+                    await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "not_novel")
                     return
             except Exception:
                 logger.debug("AD-493: Novelty gate check failed, allowing post", exc_info=True)
@@ -1599,7 +1609,9 @@ class ProactiveCognitiveLoop:
             logger.debug("AD-573: Working memory observation record failed", exc_info=True)
 
         # Post to Ward Room — find agent's department channel
-        await self._post_to_ward_room(agent, response_text)
+        if await self._post_to_ward_room(agent, response_text):  # BF-934: True once a thread was created
+            actions_taken.append({"type": "ward_room_post"})
+        await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "not_posted")
         self._last_proactive[agent.id] = time.monotonic()
         # BF-228: Decay failure count instead of hard reset — prevents flap cycles.
         # One success reduces count by 1; requires sustained success to reach operational.
@@ -3088,8 +3100,8 @@ class ProactiveCognitiveLoop:
             logger.debug("Similarity check failed for %s", agent.id, exc_info=True)
             return False
 
-    async def _post_to_ward_room(self, agent: Any, text: str) -> None:
-        """Create a Ward Room thread with the agent's proactive observation."""
+    async def _post_to_ward_room(self, agent: Any, text: str) -> bool:
+        """Create a Ward Room thread with the agent's proactive observation. BF-934: True when a thread was created."""
         rt = self._runtime
 
         # Find agent's department channel
@@ -3116,8 +3128,8 @@ class ProactiveCognitiveLoop:
                     break
 
         if not target_channel:
-            logger.debug("No target channel found for proactive post from %s", agent.agent_type)
-            return
+            logger.warning("BF-934: no channel to post the observation of %s: the observation is not posted", agent.agent_type)
+            return False
 
         # Get callsign
         callsign = ""
@@ -3128,7 +3140,7 @@ class ProactiveCognitiveLoop:
         text = _strip_bracket_markers(text)  # BF-174
         text = withhold_dm_blocks(text, agent_id=agent.id, where="observation")  # BF-874
         if not text:  # BF-874: nothing but DM blocks
-            return
+            return False
         title_text = text.split('\n')[0][:100]
         if len(title_text) < len(text.split('\n')[0]):
             title_text += "..."
@@ -3152,6 +3164,7 @@ class ProactiveCognitiveLoop:
                 self._novelty_gate.record(agent.id, text)
             except Exception:
                 logger.debug("AD-493: Fingerprint recording failed", exc_info=True)
+        return True
 
     async def _extract_and_execute_actions(
         self, agent: Any, text: str,

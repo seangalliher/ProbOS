@@ -103,6 +103,11 @@ _RESOLVED_PAIRS: frozenset[tuple[str, str]] = frozenset({
     ('consensus', 'mcp_invoke_failed'),
     ('consensus', 'write_committed'),
     ('consensus', 'write_failed'),
+    # BF-934 (#1673): a proactive think's triage decision and each intended action nothing carried out, through CATEGORY, DECLARED_EVENT and
+    # DROPPED_EVENT. Best effort: Improvement Proposals and Ship's Records are authoritative for what was posted, and a row that could not be
+    # written is logged at WARNING.
+    ('intended_actions', 'declared'),
+    ('intended_actions', 'dropped'),
     # BF-906 (#1594): crew commissioning, through COMMISSIONED_EVENT. Best effort:
     # ACM's commissioning_records is authoritative, so a missing row is never evidence.
     ('lifecycle', 'crew_commissioned'),
