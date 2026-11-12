@@ -27,6 +27,9 @@ from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.attention import AttentionBid, ContextAssembler, estimate_tokens
 from probos.cognitive import context_manifest  # AD-1357
+from probos.cognitive.action_accounting import CATEGORY as INTENDED_ACTIONS_CATEGORY, intended_tags, record_declared  # BF-934
+from probos.cognitive.action_billets import decision_billet  # BF-934
+from probos.cognitive.proposal_block import parse_proposal_block  # BF-934
 from probos.cognitive.tiered_knowledge import TieredKnowledgeLoader
 from probos.dm_reply import ToolInvocations  # AD-1295 (#1087)
 from probos.recreation import history as game_history  # AD-1358 S1
@@ -307,6 +310,13 @@ def _build_result_metadata(
         if type(references) is list and references:
             metadata["owned_steps_view_references"] = references[:8]
             break
+    # BF-934 (#1673): the registry's tags among the actions the triage intended, each once: the list the decision record holds, so that the loop that executes the output
+    # accounts for the same actions (a cut of the raw list could drop a recognised tag the record kept).
+    intended = observation.get("_intended_actions") if isinstance(observation, dict) else None
+    if type(intended) is list and intended:
+        decided = intended_tags(intended)
+        if decided:
+            metadata["intended_actions"] = decided
     # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
     # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
     # after every key above and it never takes the room of one of them. It is not
@@ -363,6 +373,33 @@ _CHAIN_ELIGIBLE_INTENTS: frozenset[str] = frozenset({
     "ward_room_notification",
     "proactive_think",
 })
+
+# AD-643b / BF-934: the marker an output carries for each action the proactive loop executes, in the order they are reported.
+_ACTION_MARKERS: dict[str, re.Pattern[str]] = {
+    "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
+    "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
+    "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
+    "dm": re.compile(r'\[DM\s', re.IGNORECASE),
+    "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
+    "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
+}
+
+
+def _action_markers_in(text: str) -> list[str]:
+    """AD-643b / BF-934: the action tags whose marker *text* carries, in ``_ACTION_MARKERS`` order."""
+    return [tag for tag, pattern in _ACTION_MARKERS.items() if pattern.search(text or "")]
+
+
+def _actions_lost(original: str, rewrite: str) -> list[str]:
+    """BF-934: the action tags *original* carries that *rewrite* does not keep, in ``_ACTION_MARKERS`` order.
+
+    A tag is lost when its marker is gone. A proposal is also lost when the extractor could file the original's block (``parse_proposal_block``) and cannot file the
+    rewrite's: a rewrite that keeps ``[PROPOSAL]`` and drops its Rationale, or writes the tags in lower case, has kept the marker and lost the block. The other tags
+    stay marker-level (L20): their extractors live in modules this one cannot import."""
+    kept = _action_markers_in(rewrite)
+    unfileable = parse_proposal_block(original).valid and not parse_proposal_block(rewrite).valid
+    return [tag for tag in _action_markers_in(original) if tag not in kept or (tag == "proposal" and unfileable)]
+
 
 # BF-922 (#1639): set on the observation while a single call answers for a chain
 # that returned no decision for a chain intent; ``_decide_via_llm`` then runs the
@@ -3739,6 +3776,7 @@ class CognitiveAgent(BaseAgent):
         Decision Distillation (AD-272): checks in-memory cache before
         calling LLM. Cache hits return instantly (<1ms, $0).
         """
+        observation.pop("_intended_actions", None)  # BF-934: the key holds this turn's triage or nothing; a dict that is decided on again never carries an older decision in
         if not self._llm_client:
             return {"action": "error", "reason": "No LLM client available"}
 
@@ -5976,22 +6014,7 @@ class CognitiveAgent(BaseAgent):
             return []
 
         declared = set(intended_actions)
-        undeclared = []
-
-        markers = {
-            "notebook": re.compile(r'\[NOTEBOOK\s', re.IGNORECASE),
-            "endorse": re.compile(r'\[ENDORSE\s', re.IGNORECASE),
-            "proposal": re.compile(r'\[PROPOSAL\]', re.IGNORECASE),
-            "dm": re.compile(r'\[DM\s', re.IGNORECASE),
-            "ward_room_reply": re.compile(r'\[REPLY\s', re.IGNORECASE),
-            "note": re.compile(r'\[NOTE\s', re.IGNORECASE),  # AD-573c
-        }
-
-        for action_tag, pattern in markers.items():
-            if action_tag not in declared and pattern.search(compose_output):
-                undeclared.append(action_tag)
-
-        return undeclared
+        return [tag for tag in _action_markers_in(compose_output) if tag not in declared]
 
     def _build_chain_for_intent(self, observation: dict):
         """AD-632f: Build a SubTaskChain for the given intent type.
@@ -6319,6 +6342,9 @@ class CognitiveAgent(BaseAgent):
 
         intent = observation.get("intent", "")
 
+        # BF-934: the decision belongs to this triage; a dict that is used again never carries an older one forward.
+        observation.pop("_intended_actions", None)
+
         # --- Inject agent context (same keys as _execute_sub_task_chain) ---
         observation["_agent_id"] = self.id
         observation["_agent_type"] = self.agent_type
@@ -6473,6 +6499,8 @@ class CognitiveAgent(BaseAgent):
 
         # --- Extract intended_actions ---
         intended_actions = self._extract_intended_actions(triage_results)
+        # BF-934: whichever call writes this turn's output reads the decision from here (``decision_billet``).
+        observation["_intended_actions"] = intended_actions
 
         # AD-696: Agentic Oracle retrieval — once per chain (DLog #4)
         if "oracle_query" in intended_actions:
@@ -6508,6 +6536,13 @@ class CognitiveAgent(BaseAgent):
         # --- Determine if communication chain should fire ---
         _COMM_ACTIONS = frozenset({"ward_room_post", "ward_room_reply", "endorse", "dm"})
         has_comm_action = bool(_COMM_ACTIONS.intersection(intended_actions))
+
+        # BF-934: the decision record, written where the decision is made (a proactive think whose triage intends an action a block or a post carries out).
+        await record_declared(
+            _rt, agent_id=self.id, agent_type=self.agent_type, callsign=getattr(self, "callsign", "") or self.agent_type,
+            intent=intent, intent_id=observation.get("intent_id", ""), intended=intended_actions,
+            path="chain" if has_comm_action and execute_steps else "single_call",
+        )
 
         # AD-1347 S4: a Ward Room record by id, only when an action will use it; a
         # non-communication triage falls through to the single call, which would not render it.
@@ -6667,6 +6702,14 @@ class CognitiveAgent(BaseAgent):
                 if r.sub_task_type == SubTaskType.REFLECT and r.success and r.result:
                     new_output = r.result.get("output", "")
                     if new_output:
+                        # BF-934: a rewrite may refine an approved output, never remove an action it carries (silence included), nor leave a proposal it could file unfileable.
+                        lost = _actions_lost(original_result.get("llm_output", ""), new_output)
+                        if lost:
+                            logger.warning(
+                                "BF-934: AD-643b re-reflect for %s %s would have dropped %s from an approved output; the approved output is kept",
+                                self.agent_type, getattr(self, "callsign", "") or self.agent_type, lost,
+                            )
+                            return original_result
                         logger.info(
                             "AD-643b: Re-reflect updated output for %s",
                             self.agent_type,
@@ -11490,12 +11533,18 @@ class CognitiveAgent(BaseAgent):
                 pt_parts.append("")
                 pt_parts.append(introspective_telemetry)
 
+            # BF-934: a triage that decided to file a proposal or write a notebook entry says so here, in place of the closing
+            # default of silence; any other turn keeps the closing it had.
+            _decided = decision_billet(observation.get("_intended_actions"))
             if duty:
                 pt_parts.append("Compose a Ward Room post with your findings (2-4 sentences).")
-                pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
-            else:
+                if not _decided:
+                    pt_parts.append("If nothing noteworthy to report, respond with exactly: [NO_RESPONSE]")
+            elif not _decided:
                 pt_parts.append("If something genuinely warrants attention, compose a brief observation (2-4 sentences).")
                 pt_parts.append("Include your justification. Otherwise respond with exactly: [NO_RESPONSE]")
+            if _decided:
+                pt_parts.append(_decided)
             return "\n".join(pt_parts)
 
         parts = [f"Intent: {intent_name}"]
@@ -12044,6 +12093,7 @@ class CognitiveAgent(BaseAgent):
                             corroborating = await event_log.query(
                                 agent_id=ep.agent_ids[0],
                                 limit=1,
+                                exclude_category=INTENDED_ACTIONS_CATEGORY,  # BF-934: an intention or a drop is no record that an action happened
                             )
                             if corroborating:
                                 for evt in corroborating:

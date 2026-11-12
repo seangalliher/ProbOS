@@ -41,10 +41,13 @@ from probos.duty_schedule import DutyScheduleTracker
 from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proactively
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
+from probos.cognitive.action_accounting import settle_intended_actions  # BF-934
+from probos.cognitive.proposal_block import PROPOSAL_PATTERN, parse_proposal_block  # BF-934
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.cognitive.provenance import iso_utc, record_write_time
 from probos.types import AnchorFrame, IntentMessage, Priority
 from probos.utils import format_duration
+from probos.ward_room.content_firewall import strip_unverified_label  # BF-934 A5
 
 if TYPE_CHECKING:
     from probos.cognitive.novelty_gate import NoveltyGate
@@ -232,6 +235,46 @@ def split_notebook_blocks(text: str) -> tuple[str, list[str]]:
     body, trimmed, in order. Saves nothing."""
     bodies = [match.group(3).strip() for match in _NOTEBOOK_PATTERN.finditer(text)]
     return _NOTEBOOK_PATTERN.sub("", text).strip(), [body for body in bodies if body]
+
+
+def carries_actionable_block(text: str) -> bool:
+    """BF-934: whether *text* holds a block the extractor would carry out: a proposal it can file, or a notebook entry with a body.
+
+    An output that withdraws the observation with ``[NO_RESPONSE]`` but still carries one is read for its blocks, not discarded as silence."""
+    return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
+
+
+def _as_read(text: Any) -> str:
+    """BF-934: *text* as a person reads "the same words": the case and the spacing aside, every other character kept, so a changed number, sign or mark is a changed text.
+
+    A5: the content firewall's ``[UNVERIFIED ...]`` labels at the start are not words the author wrote. ``create_post`` puts one before the stored body of a flagged reply and the text the
+    agent sends has none, so both texts are read without them (``strip_unverified_label``); a reply that itself begins with a label loses it on both sides."""
+    return " ".join(strip_unverified_label(str(text or "")).split()).casefold()
+
+
+def repeats_own_reply(thread: Any, author_id: str, body: str) -> bool:
+    """BF-934: whether *body* says, word for word, what the newest live post by *author_id* in the thread (as ``WardRoomService.get_thread`` returns it) says.
+
+    BF-105's check reads no posts (L2), so a reply repeated on every cycle is caught here, on the thread the reply extractor has already fetched; the posts are
+    persisted, so a restart changes nothing. Equality, not likeness: a threshold on the words fails for a longer reply in which one value changed ("41 C" and
+    "49 C" share all but one word), and a changed fact must be posted. Only the newest live post counts, as AD-614's gate on a DM compares the pair's last body:
+    a reply the agent took back and now says again has changed the thread. Two newest posts that differ are no evidence, and a reply worded differently is a new
+    reply (L23). The stored body of a reply the content firewall flagged starts with its ``[UNVERIFIED ...]`` label and the reply about to be posted does not: ``_as_read`` removes the
+    label from both sides (A5), so a flagged reply that is repeated is a repeat. A thread of another shape is no evidence of a repeat: the check fails open."""
+    try:
+        wanted = _as_read(body)
+        own: list[tuple[float, str]] = []
+        stack = list(thread.get("posts", []))
+        while stack:
+            post = stack.pop()
+            stack.extend(post.get("children", []))
+            if post.get("author_id") == author_id and not post.get("deleted"):
+                own.append((post.get("created_at") or 0.0, _as_read(post.get("body", ""))))
+        newest = max((stamp for stamp, _ in own), default=None)
+        return bool(wanted) and newest is not None and all(text == wanted for stamp, text in own if stamp == newest)
+    except Exception:
+        logger.debug("BF-934: the repeated-reply check failed; the reply is allowed", exc_info=True)
+    return False
 
 # AD-1157: what an agent may select on the tag. ``fleet`` is deliberately
 # absent — a fleet-classified record is level 3 against the ``ship`` scope every
@@ -1403,13 +1446,18 @@ class ProactiveCognitiveLoop:
                     "BF-069: Proactive think failed for %s: %s (consecutive failures: %d)",
                     agent.agent_type, error_detail, self._llm_failure_count,
                 )
+            await settle_intended_actions(
+                self._runtime, agent, intent.id, getattr(result, "metadata", None), [],
+                "think_failed" if not (result and result.success) else "no_output",
+            )
             return
 
         response_text = str(result.result).strip()
         # BF-199: Extract text from leaked chain JSON
         from probos.utils.text_sanitize import sanitize_ward_room_text
         response_text = sanitize_ward_room_text(response_text)
-        if not response_text or "[NO_RESPONSE]" in response_text:
+        # BF-934: a withdrawn observation that still carries a valid block is not silence.
+        if not response_text or ("[NO_RESPONSE]" in response_text and not carries_actionable_block(response_text)):
             # Record duty execution even if agent had nothing to report
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
@@ -1482,6 +1530,43 @@ class ProactiveCognitiveLoop:
                     logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
             # AD-488: Record no-response as event (rapid no-responses can also indicate loops)
             self._circuit_breaker.record_event(agent.id, "no_response", "")
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "no_response")
+            return
+
+        _withdrawn = "[NO_RESPONSE]" in response_text  # BF-934: true only when the output carries a valid block (the gate above); see below
+
+        # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
+        stripped = response_text.lstrip()
+        if stripped.startswith("{") and '"intents"' in stripped[:200]:
+            logger.warning(
+                "BF-172: Suppressed raw intent JSON from %s (%d chars)",
+                agent.agent_type, len(response_text),
+            )
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "raw_intent_json")
+            return
+
+        # AD-437: Extract and process structured actions from proactive response. BF-934: before the similarity (BF-032) and novelty
+        # (AD-493) gates, which judge the observation that is left, as the Ward Room pipeline's order already does: a block attached
+        # to a repeated observation is carried out, and the repeat is still not posted.
+        cleaned_text, actions_taken = await self._extract_and_execute_actions(
+            agent, response_text
+        )
+        if cleaned_text != response_text:
+            response_text = cleaned_text
+        if _withdrawn:
+            response_text = ""  # BF-934: the withdrawal covers the observation, so only the blocks were carried out; nothing is left to post
+
+        # BF-215: Guard against empty text after tag stripping (BF-203/BF-174)
+        if not response_text.strip():
+            logger.debug(
+                "BF-215: Suppressed empty post from %s after action extraction",
+                agent.agent_type,
+            )
+            if duty and self._duty_tracker:
+                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "no_response" if _withdrawn else "empty_after_extraction")
             return
 
         # BF-032: Skip if too similar to agent's recent posts
@@ -1493,6 +1578,7 @@ class ProactiveCognitiveLoop:
             # Still record duty execution if applicable
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "similar_to_recent_post")
             return
 
         # AD-493: Semantic novelty gate — suppress rehashed observations
@@ -1506,37 +1592,10 @@ class ProactiveCognitiveLoop:
                     )
                     if duty and self._duty_tracker:
                         self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
+                    await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "not_novel")
                     return
             except Exception:
                 logger.debug("AD-493: Novelty gate check failed, allowing post", exc_info=True)
-
-        # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
-        stripped = response_text.lstrip()
-        if stripped.startswith("{") and '"intents"' in stripped[:200]:
-            logger.warning(
-                "BF-172: Suppressed raw intent JSON from %s (%d chars)",
-                agent.agent_type, len(response_text),
-            )
-            if duty and self._duty_tracker:
-                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
-            return
-
-        # AD-437: Extract and process structured actions from proactive response
-        cleaned_text, actions_taken = await self._extract_and_execute_actions(
-            agent, response_text
-        )
-        if cleaned_text != response_text:
-            response_text = cleaned_text
-
-        # BF-215: Guard against empty text after tag stripping (BF-203/BF-174)
-        if not response_text.strip():
-            logger.debug(
-                "BF-215: Suppressed empty post from %s after action extraction",
-                agent.agent_type,
-            )
-            if duty and self._duty_tracker:
-                self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
-            return
 
         # AD-573: Record proactive observation to working memory
         try:
@@ -1550,7 +1609,9 @@ class ProactiveCognitiveLoop:
             logger.debug("AD-573: Working memory observation record failed", exc_info=True)
 
         # Post to Ward Room — find agent's department channel
-        await self._post_to_ward_room(agent, response_text)
+        if await self._post_to_ward_room(agent, response_text):  # BF-934: True once a thread was created
+            actions_taken.append({"type": "ward_room_post"})
+        await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "not_posted")
         self._last_proactive[agent.id] = time.monotonic()
         # BF-228: Decay failure count instead of hard reset — prevents flap cycles.
         # One success reduces count by 1; requires sustained success to reach operational.
@@ -3039,8 +3100,8 @@ class ProactiveCognitiveLoop:
             logger.debug("Similarity check failed for %s", agent.id, exc_info=True)
             return False
 
-    async def _post_to_ward_room(self, agent: Any, text: str) -> None:
-        """Create a Ward Room thread with the agent's proactive observation."""
+    async def _post_to_ward_room(self, agent: Any, text: str) -> bool:
+        """Create a Ward Room thread with the agent's proactive observation. BF-934: True when a thread was created."""
         rt = self._runtime
 
         # Find agent's department channel
@@ -3067,8 +3128,8 @@ class ProactiveCognitiveLoop:
                     break
 
         if not target_channel:
-            logger.debug("No target channel found for proactive post from %s", agent.agent_type)
-            return
+            logger.warning("BF-934: no channel to post the observation of %s: the observation is not posted", agent.agent_type)
+            return False
 
         # Get callsign
         callsign = ""
@@ -3079,7 +3140,7 @@ class ProactiveCognitiveLoop:
         text = _strip_bracket_markers(text)  # BF-174
         text = withhold_dm_blocks(text, agent_id=agent.id, where="observation")  # BF-874
         if not text:  # BF-874: nothing but DM blocks
-            return
+            return False
         title_text = text.split('\n')[0][:100]
         if len(title_text) < len(text.split('\n')[0]):
             title_text += "..."
@@ -3103,6 +3164,7 @@ class ProactiveCognitiveLoop:
                 self._novelty_gate.record(agent.id, text)
             except Exception:
                 logger.debug("AD-493: Fingerprint recording failed", exc_info=True)
+        return True
 
     async def _extract_and_execute_actions(
         self, agent: Any, text: str,
@@ -3556,76 +3618,58 @@ class ProactiveCognitiveLoop:
         text = re.sub(note_pattern, '', text, flags=re.DOTALL).strip()
 
         # --- Proposals (AD-412) — all ranks ---
-        proposal_pattern = r'\[PROPOSAL\]\s*\n(.*?)\n\s*\[/PROPOSAL\]'
-        proposal_match = re.search(proposal_pattern, text, re.DOTALL)
-        if proposal_match:
-            proposal_block = proposal_match.group(1)
-
-            # Parse structured fields
-            title = ""
-            rationale = ""
-            affected: list[str] = []
-            priority = "medium"
-
-            in_rationale = False
-            rationale_lines: list[str] = []
-            for line in proposal_block.split('\n'):
-                stripped = line.strip()
-                if stripped.lower().startswith("title:"):
-                    title = stripped[6:].strip()
-                    in_rationale = False
-                elif stripped.lower().startswith("affected systems:"):
-                    raw = stripped[17:].strip()
-                    affected = [s.strip() for s in raw.split(",") if s.strip()]
-                    in_rationale = False
-                elif stripped.lower().startswith("priority:"):
-                    p = stripped[9:].strip().lower()
-                    if p in ("low", "medium", "high"):
-                        priority = p
-                    in_rationale = False
-                elif stripped.lower().startswith("rationale:"):
-                    rest = stripped[10:].strip()
-                    if rest:
-                        rationale_lines.append(rest)
-                    in_rationale = True
-                elif in_rationale:
-                    rationale_lines.append(stripped)
-            rationale = "\n".join(rationale_lines).strip()
-
-            if title and rationale and rt.ward_room_router:
-                try:
-                    from probos.types import IntentMessage
-                    intent = IntentMessage(
-                        intent="propose_improvement",
-                        params={
-                            "title": title,
-                            "rationale": rationale,
-                            "affected_systems": affected,
-                            "priority_suggestion": priority,
-                        },
-                        context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
-                    )
-                    await rt.ward_room_router.handle_propose_improvement(intent, agent)
-                    actions_executed.append({
-                        "type": "proposal",
-                        "title": title,
-                        "priority": priority,
-                    })
-                    logger.debug(
-                        "AD-412: Proposal extracted from %s: %s",
-                        getattr(agent, 'agent_type', 'unknown'), title,
-                    )
-                except Exception:
-                    logger.debug(
-                        "AD-412: Failed to post proposal from %s",
-                        getattr(agent, 'agent_type', 'unknown'), exc_info=True,
-                    )
+        proposal_pattern = PROPOSAL_PATTERN
+        proposal = parse_proposal_block(text)  # BF-934: the one reading of a block, here and in the [NO_RESPONSE] gate
+        _proposer = getattr(agent, 'callsign', '') or getattr(agent, 'agent_type', 'unknown')
+        if proposal.extra_blocks:
+            logger.warning(
+                "BF-934: %d more [PROPOSAL] block(s) from %s are ignored: one proposal is filed per output",
+                proposal.extra_blocks, _proposer,
+            )
+        if proposal.found:
+            reason = proposal.problem
+            if not reason:
+                if not rt.ward_room_router:
+                    reason = "no_router"
+                else:
+                    try:
+                        from probos.types import IntentMessage
+                        intent = IntentMessage(
+                            intent="propose_improvement",
+                            params={
+                                "title": proposal.title,
+                                "rationale": proposal.rationale,
+                                "affected_systems": list(proposal.affected),
+                                "priority_suggestion": proposal.priority,
+                            },
+                            context=f"Proactive proposal from {getattr(agent, 'agent_type', 'unknown')}",
+                        )
+                        posted = await rt.ward_room_router.handle_propose_improvement(intent, agent)
+                        if isinstance(posted, dict) and posted.get("success") is False:
+                            reason = f"router_refused: {posted.get('error', '')}"
+                        else:
+                            actions_executed.append({
+                                "type": "proposal",
+                                "title": proposal.title,
+                                "priority": proposal.priority,
+                            })
+                            logger.debug(
+                                "AD-412: Proposal extracted from %s: %s",
+                                getattr(agent, 'agent_type', 'unknown'), proposal.title,
+                            )
+                    except Exception as exc:
+                        reason = f"post_failed: {type(exc).__name__}"
+                        logger.debug("AD-412: Failed to post proposal from %s", _proposer, exc_info=True)
+            if reason:  # BF-934: a decision that cannot be filed is said, with the agent and why, and recorded as an entry
+                logger.warning("BF-934: proposal from %s (%s) not posted: %s", _proposer, getattr(agent, 'agent_type', 'unknown'), reason)
+                actions_executed.append({"type": "proposal_suppressed", "reason": reason})
         elif re.search(r'\[PROPOSAL\]', text):
             # [PROPOSAL] present but didn't match strict pattern — log for debugging
-            logger.debug(
-                "AD-412: Malformed [PROPOSAL] block from %s — requires newlines between tags",
-                getattr(agent, 'agent_type', 'unknown'),
+            logger.warning(
+                "BF-934: Malformed [PROPOSAL] block from %s — requires newlines between tags",
+                _proposer,
             )
+            actions_executed.append({"type": "proposal_suppressed", "reason": "malformed_block"})
 
         # Strip proposal block from text regardless of submission success.
         # Uses the same strict pattern — if the regex didn't match above,
@@ -4154,6 +4198,16 @@ class ProactiveCognitiveLoop:
                 reply_body = _strip_bracket_markers(reply_body)  # BF-174
                 reply_body = withhold_dm_blocks(reply_body, agent_id=agent.id, where="thread reply")  # BF-874
                 if not reply_body:
+                    continue
+
+                # BF-934: BF-105's check above reads no posts (L2); the thread fetched here is the evidence. A reply that says, word for word, what the agent's newest post in
+                # this thread says is not posted again. The check judges the text about to be posted, so it sits after the commands the reply carried (BF-121: a repeated
+                # reply can still bring a new CHALLENGE or MOVE) and after the cleaning above, and before BF-237's budget, which a skipped repeat does not spend.
+                if repeats_own_reply(thread, agent.id, reply_body):
+                    logger.debug(
+                        "BF-934: Suppressed repeated reply from %s to thread %s",
+                        agent.agent_type, thread_id[:8],
+                    )
                     continue
 
                 # BF-237: Enforce single-post budget per pipeline invocation.
