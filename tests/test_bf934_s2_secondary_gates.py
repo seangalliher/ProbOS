@@ -459,10 +459,13 @@ class TestAFlaggedReplyIsStillARepeat:
             thread, post = await _worfs_thread(w)
             changed = PHANTOM.replace("41 C", "49 C")  # the first reply grounds the thread reference, so the second is stored as it was said
             counts = []
-            for text in (PHANTOM, changed, changed):
+            for cycle, text in enumerate((PHANTOM, changed, changed)):
                 await _says(w, caller, thread, post, text)
                 _elapse(w)
-                counts.append(len(await _kiras_replies(w, thread)))
+                mine = await _kiras_replies(w, thread)
+                counts.append(len(mine))
+                if cycle == 0:
+                    assert mine == [PHANTOM_LABEL + PHANTOM]  # first: the stored body carries the label, so the test fails here, not at the counts, if the wiring stops flagging
             assert counts == [1, 2, 2]  # the changed value is a new reply and the repeat of it is not
             assert await _kiras_replies(w, thread) == sorted([PHANTOM_LABEL + PHANTOM, changed])
 
