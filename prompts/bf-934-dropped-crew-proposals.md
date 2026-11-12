@@ -181,7 +181,7 @@ PY -m pytest tests/test_ad1195_durable_event_seam.py tests/test_ad1195_durable_p
 
 ## 6. Tests
 
-Four new files: `tests/bf934_world.py` (the shared world; no test of its own) and one test module per slice. In each module the functions before the classes pass on both trees; the classes carry `pytest.mark.xfail(raises=AssertionError, strict=True)` until M2 removes the marker. No BF-934 name is imported at module level (a module M2 builds is imported by `_built`, which fails at its own assert until then).
+Four new files: `tests/bf934_world.py` (the shared world; no test of its own) and one test module per slice. In each module the functions before the classes pass on both trees (S1's A1 adds one function before its classes that fails on S1's M3 head: T17, below); the classes carry `pytest.mark.xfail(raises=AssertionError, strict=True)` until M2 removes the marker. No BF-934 name is imported at module level (a module M2 builds is imported by `_built`, which fails at its own assert until then).
 
 ### S1: `tests/test_bf934_s1_decision_routing.py` (22 cases at M2, 34 after A1; 6 pass and 16 xfail at M1)
 
@@ -2476,7 +2476,7 @@ What I ran: `rg -n -e "model calls where|two existing tests|\b550\b|\b730\b|\b89
 | the tests that pin the chain's triggers | D1 row 2; S1's bullet G1 (here and in `DECISIONS.md`): "two existing tests pin the chain's triggers" | one test pins `notebook` out (`test_a_lookup_with_no_communication_action_reads_nothing` pins `['notebook','ward_room_lookup']` to no chain); none pins `proposal` out; `test_comm_actions_defined` is a source scan for the four tags and passes either way (the orchestrator's run on `f25e9a8b`: 50 cases passed with `proposal` added, one failed with `notebook` added too) |
 | the size of the billet | D1 row 1 (+550, +730, +899) and L15 (550 to 899) | 550, 730 and 899 characters, up to 1062 with both blocks and the four chat tags; the user message grows by 389 to 901 (free-form think) and by 482 to 994 (duty think), net of the closing lines it replaces (162 characters for two lines, 69 for one) |
 
-The other statements of the facts that the commands found are true and are left alone: L14 and section 11's CLAIM about Phase 2a (the second ANALYZE is a second call); section 11's measured lengths (`["proposal"]` 730, `["notebook"]` 550, both 899, `["ward_room_post","proposal"]` 833), which A1 does not change because it changes no length for a set with no tag outside the six; D1's statement that the closing line stays for the other sets, which T2 tested for three of them and T18 now tests byte for byte for seven. `PROGRESS.md` states none of the three facts.
+The other statements of the facts that the commands found are true and are left alone: L14 and section 11's CLAIM about Phase 2a (the second ANALYZE is a second call); section 11's measured lengths (`["proposal"]` 730, `["notebook"]` 550, both 899, `["ward_room_post","proposal"]` 833), which A1 does not change because it changes no length for a set with no tag outside the six; D1's statement that the closing line stays for the other sets, which T2 tested for three of them and T18 now tests byte for byte for seven. Before A1, `PROGRESS.md` stated none of the three facts; its new bullet for A1 (A1-12) states the calls and the test protection.
 
 ### 16.5 Tests (S1's file: 12 new cases, 34 in all)
 
