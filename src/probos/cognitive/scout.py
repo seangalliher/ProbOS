@@ -96,6 +96,7 @@ class ScoutFinding:
     language: str = ""
     license: str = ""
     topics: list[str] = field(default_factory=list)
+    matched_topics: list[str] = field(default_factory=list)  # BF-935: the topic searches that returned this repository, in search order
 
     @property
     def composite_score(self) -> float:
@@ -268,6 +269,7 @@ async def _scout_step_enrich_and_filter(ctx: dict[str, Any]) -> dict[str, Any]:
         f.language = meta.get("language", f.language)
         f.license = meta.get("license", f.license)
         f.topics = meta.get("topics", f.topics)
+        f.matched_topics = list(meta.get("matched_topics", f.matched_topics))
 
     filtered = filter_findings(findings, min_relevance=3)
     agent._last_findings = filtered
@@ -287,6 +289,8 @@ async def _scout_step_persist_report(ctx: dict[str, Any]) -> dict[str, Any]:
         "date": date_str,
         "total_classified": total_classified,
         "total_relevant": len(filtered),
+        # BF-935: always written; a report without this key predates the fix
+        "duplicate_listings": getattr(agent, "_duplicate_listings", 0),
         "findings": [asdict(f) for f in filtered],
     }
     report_path.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
@@ -377,6 +381,7 @@ class ScoutAgent(CognitiveAgent):
         self._runtime = kwargs.get("runtime")
         self._last_findings: list[ScoutFinding] = []
         self._pending_seen_repos: list[str] = []  # BF-214: deferred seen marking
+        self._duplicate_listings: int = 0  # BF-935: repeat listings merged in the last search
 
     @property
     def _data_dir(self) -> Path:
@@ -458,25 +463,29 @@ class ScoutAgent(CognitiveAgent):
         seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
         # GitHub search doesn't support OR between topic: qualifiers —
         # each topic needs a separate query.
-        queries = [
-            (f"topic:ai-agents pushed:>{seven_days_ago}", 50),
-            (f"topic:llm-agents pushed:>{seven_days_ago}", 50),
-            (f"topic:multi-agent pushed:>{seven_days_ago}", 50),
-            (f"topic:agent-framework pushed:>{seven_days_ago}", 50),
-            (f"topic:ai-coding pushed:>{seven_days_ago}", 100),
-            (f"topic:code-generation pushed:>{seven_days_ago}", 100),
-        ]
+        searches = (  # (GitHub topic, minimum stars)
+            ("ai-agents", 50),
+            ("llm-agents", 50),
+            ("multi-agent", 50),
+            ("agent-framework", 50),
+            ("ai-coding", 100),
+            ("code-generation", 100),
+        )
 
         seen = _load_seen(self._seen_file)
-        new_repos: list[dict[str, Any]] = []
+        # BF-935: one entry per repository for the whole run: the first listing is kept, in the order first listed,
+        # with the topics of the searches that returned it. A name in `seen` (an earlier run) is skipped as before.
+        entries: dict[str, dict[str, Any]] = {}
+        listings = 0
 
-        for query, min_stars in queries:
-            items = await self._search_github(query, min_stars)
+        for topic, min_stars in searches:
+            items = await self._search_github(f"topic:{topic} pushed:>{seven_days_ago}", min_stars)
             for item in items:
                 full_name = item.get("full_name", "")
                 if full_name in seen:
                     continue
-                new_repos.append({
+                listings += 1
+                entry = {
                     "full_name": full_name,
                     "description": item.get("description", "") or "",
                     "stars": item.get("stargazers_count", 0),
@@ -486,7 +495,18 @@ class ScoutAgent(CognitiveAgent):
                     "license": (item.get("license") or {}).get("spdx_id", ""),
                     "topics": item.get("topics", []),
                     "url": item.get("html_url", ""),
-                })
+                    "matched_topics": [],
+                }
+                kept = entries.setdefault(full_name, entry)
+                if topic not in kept["matched_topics"]:
+                    kept["matched_topics"].append(topic)
+
+        new_repos = list(entries.values())
+        self._duplicate_listings = listings - len(new_repos)
+        logger.info(
+            "Scout: %d listings of %d new repositories from %d searches; %d repeat listings merged",
+            listings, len(new_repos), len(searches), self._duplicate_listings,
+        )
 
         # BF-214: Do NOT save seen here — defer to act() after classification succeeds.
         # Store pending repo names for act() to mark as seen.

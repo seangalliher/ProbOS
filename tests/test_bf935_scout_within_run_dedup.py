@@ -141,9 +141,6 @@ def test_an_older_report_still_loads(scene):
 
 
 class TestARepeatIsMerged:
-    # BF-935 M1: xfail until M2 builds it (M2 removes this line and the next).
-    pytestmark = pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-935 M2 builds it")
-
     @pytest.mark.parametrize("case", CASES)
     async def test_each_repository_is_listed_once_with_its_topics_and_the_repeats_are_counted(self, scene, case):
         found, seen, listed, repeats, topics = CASES[case]
