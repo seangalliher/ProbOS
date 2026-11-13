@@ -98,7 +98,6 @@ def test_reject_still_discards_the_build_in_review() -> None:
     assert world.build.status == "failed"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-937 S1 M2: the route answers not merged, typed (#1678)")
 class TestApprovingABuildInReviewAnswersNotMerged:
     def test_the_answer_is_the_typed_not_merged_result_the_hxi_test_reads(self) -> None:
         world = _world()

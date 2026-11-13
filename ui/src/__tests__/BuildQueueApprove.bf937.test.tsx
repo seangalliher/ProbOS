@@ -14,7 +14,7 @@ import { useStore } from '../store/useStore';
 import type { BuildQueueItem, MissionControlTask, WSEvent } from '../store/types';
 import unavailable from '../../e2e/fixtures/bf937-queue-approve-unavailable.json';
 
-const built = process.env.BF937_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 const APPROVE = '/api/build/queue/approve';
 const HELPER = '../store/buildQueueApprove';
 const realFetch = globalThis.fetch;

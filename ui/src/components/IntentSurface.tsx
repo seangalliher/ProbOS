@@ -30,6 +30,7 @@ import { deriveBridgeState } from './glass/ContextRibbon';
 import { Diamond, Check, XMark, StatusPending, DiamondOpen, Bullseye, ChevronDown, ChevronRight, Warning, Sparkle } from './icons/Glyphs';
 import { AgentAvatarBadge } from './AgentAvatarBadge';
 import { denialNotice, policyDenialOf } from '../chat/policyDenial';
+import { approveQueuedBuild } from '../store/buildQueueApprove';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -2059,13 +2060,7 @@ export function IntentSurface() {
                               cursor: 'pointer',
                             }}
                             onClick={async () => {
-                              try {
-                                await fetch('/api/build/queue/approve', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ build_id: item.id }),
-                                });
-                              } catch { /* ignore */ }
+                              addChatMessage('system', await approveQueuedBuild(item.id));
                             }}
                           >
                             Approve
