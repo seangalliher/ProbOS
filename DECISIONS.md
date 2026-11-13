@@ -1729,6 +1729,22 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G2 (the tests).* The pure function, and a mounted `CrewVRM` over the real `voice.ts` with a fake audio element whose `playing` comes after `play`; the late-frames half of the acceptance is a control because the rhubarb branch already sampled on the audio time.
 - *Residual.* L1 to L7 of the contract (S3). *Reversal.* Revert the BF-931 commits.
 
+### BF-933 slice 1 -- The camera capture loop shares one pending start, a stop cancels it, and ticks skip while an upload is in flight or a 429 pause runs (2026-11-13, #1671)
+
+- *Scope.* `ui/src/hooks/useCameraStream.ts` (module-private state and functions; no export added, so no mock factory of the ten test files that mock the module changes), one new test file. Contract `prompts/bf-933-camera-loop-and-skill-request-poll.md`.
+- *G1 (the guard).* One shared promise plus an epoch that every stop bumps, and a stop also drops the pending start. Rejected: a boolean lock (the second caller returns before the camera exists, and a stop during a start is still lost); a guard in each caller (three callers today, and the hook is the idempotent unit); a session object (a refactor the defect does not need).
+- *G2 (the 429).* Skip ticks until the `Retry-After` deadline, else 1 s, 2 s, 4 s to a 30 s cap; the interval keeps its period; a 200 and a stop reset. Rejected: stopping the camera after N 429s (a visible behaviour change); lowering the frame rate (more state for the same effect).
+- *G3 (the upload).* One at a time, aborted after 10 s (the deadline runs until the answer's body has been read) so a request that never answers cannot hold the guard; an answer that outlives a stop is dropped. Rejected: a skip with no timeout. The capture primitive is unchanged and no offload is claimed: no test can show that one removes a stall that is not identified.
+- *G4 (the fixtures).* Synthetic: a fake camera settled by hand, fake elements, a stubbed fetch, a `Retry-After` of a few seconds; no console line, count or timing from the live call is in any test, comment, tracker line or commit message; this overrides the acceptance lines that asked for live observations as evidence.
+- *Residual.* L1 to L10 of the contract (S1). *Reversal.* Revert the BF-933 slice 1 commits.
+
+### BF-933 slice 2 -- A typed-disabled skill-request queue is read once per lease and stays quiet: pinned, with no source change (2026-11-13, #1671)
+
+- *Scope.* One new test file under `ui/src/store/__tests__/`. No source, no config, no server file. Contract `prompts/bf-933-camera-loop-and-skill-request-poll.md`.
+- *G1 (no change).* The acceptance (learn once from the typed body, stop reading, no repeated console errors, enabled unchanged) is already met on the base, so the slice pins what was unpinned. Rejected: a session-wide memo that skips the read after a typed-disabled answer (it contradicts the pinned rule that re-acquiring a lease refreshes a queue, and a disabled queue can be enabled by a restart the HXI outlives); reading the service-readiness integrations first (a second source of the same fact); warning for `disabled` too.
+- *G2 (the premise).* The issue's console line names the capability queue; the store interpolates the failing queue's name, so that line cannot come from the skill queue.
+- *Residual.* L1 to L4 of the contract (S2). *Reversal.* Delete the test file.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
