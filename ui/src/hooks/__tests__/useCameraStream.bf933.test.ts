@@ -27,7 +27,7 @@ import {
 } from '../useCameraStream';
 import { useCameraStore } from '../../store/useCameraStore';
 
-const built = process.env.BF933_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 
 class FakeTrack {
   stopped = false;
