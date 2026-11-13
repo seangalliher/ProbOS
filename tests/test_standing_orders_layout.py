@@ -499,8 +499,6 @@ def test_brake_handoff_does_not_redefine_frozen() -> None:
 
 # --- the Size findings exemption and its count (AD-1359 follow-up, #1769) ---------
 
-built = pytest.mark.xfail(raises=AssertionError, strict=True)  # M1 of the follow-up; M2 removes it
-
 SIZE_FINDINGS_MARKER = "**Size findings (AD-1359, #1765).**"
 SIZE_COUNT_MARKER = "**Size findings count (AD-1359, #1769).**"
 REVIEW_ROUNDS_HEADING = "\n## Review Rounds and Progress (Standing Order)\n"
@@ -588,7 +586,6 @@ def test_diff_reviewer_profiles_tag_size_findings(profile: Path) -> None:
     assert SIZE_TAG in _text(profile), f"{_rel(profile)} no longer tells the reviewer to tag size findings"
 
 
-@built
 def test_review_summaries_state_the_size_findings_count() -> None:
     """Each item's review summary states how many size findings it had, zero included (#1769): a pull request that
     says nothing cannot be told from one that had none. The sentence has its own paragraph, outside the pinned one."""
