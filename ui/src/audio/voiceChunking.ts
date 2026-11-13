@@ -25,6 +25,9 @@ const _ABBR = '\u0001';
  *
  *  Heuristic (basic-regex v1):
  *   - split on sentence-final punctuation ``[.!?]`` followed by whitespace,
+ *   - (BF-929) also split after that punctuation plus closing quotes or brackets
+ *     when whitespace and then a capital letter or a digit follow, so
+ *     ``He said "done." Next.`` splits and ``"Stop!" he said.`` does not,
  *   - preserve order, trim each chunk, drop empties,
  *   - keep a trailing fragment that has no terminal punctuation,
  *   - do NOT split on a small set of common abbreviations (``Dr.``, ``Mr.`` …),
@@ -50,6 +53,8 @@ export function splitIntoSentences(text: string, maxChunks = 40): string[] {
   const chunks = guarded
     // Insert a split sentinel after terminal punctuation + whitespace.
     .replace(/([.!?]+)\s+/g, `$1${_SPLIT}`)
+    // BF-929: and after terminal punctuation that closing quotes or brackets follow, when the next word starts a sentence.
+    .replace(/([.!?]+["')\]}\u201d\u2019\u00bb]+)\s+(?=["'(\[{\u201c\u2018\u00ab]*[\p{Lu}\p{N}])/gu, `$1${_SPLIT}`)
     .split(_SPLIT)
     // Restore protected abbreviation periods, then trim.
     .map((s) => s.split(_ABBR).join('.').trim())

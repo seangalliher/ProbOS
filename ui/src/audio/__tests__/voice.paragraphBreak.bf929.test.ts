@@ -17,7 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import { splitIntoSentences } from '../voiceChunking';
 
-const built = process.env.BF929_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 
 /** What the call speaks and what Piper receives: the stripped text, and its sentence chunks. */
 async function spoken(text: string): Promise<{ text: string; chunks: string[] }> {

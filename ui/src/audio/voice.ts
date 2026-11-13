@@ -1009,7 +1009,13 @@ export function getCurrentVoiceName(): string {
   return voice?.name || 'Default';
 }
 
-/** AD-718: Strip markdown formatting for cleaner TTS playback. */
+/** AD-718: Strip markdown formatting for cleaner TTS playback.
+ *
+ *  BF-929 (#1667): a paragraph break is a pause, and the text marks it with a period, but only when the
+ *  paragraph does not already end a sentence. A paragraph that ends in ``.``, ``!`` or ``?`` (optionally
+ *  followed by closing quotes or brackets) keeps its own mark and gets one space: the unconditional period
+ *  made ``end.`` into ``end..``, which Piper reads aloud as "dot" (and ``?`` into ``?.``). Trailing spaces
+ *  before the break and a run of blank lines are one pause. An ellipsis and a decimal are left as they are. */
 export function stripMarkdownForSpeech(text: string): string {
   return text
     .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -1019,6 +1025,6 @@ export function stripMarkdownForSpeech(text: string): string {
     .replace(/---+/g, '')
     .replace(/`(.+?)`/g, '$1')
     .replace(/\[(.+?)\]\(.+?\)/g, '$1')
-    .replace(/\n{2,}/g, '. ')
+    .replace(/([.!?]["')\]}\u201d\u2019\u00bb]*)?[ \t]*\n{2,}/g, (_whole: string, end?: string) => (end ? `${end} ` : '. '))
     .trim();
 }
