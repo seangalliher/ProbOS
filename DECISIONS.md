@@ -1713,7 +1713,7 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G1 (where).* The cause is fixed in the stripper, which serves the single-call path and the pipelined path alike, and the splitter learns the one boundary the stripper's stray period used to supply (a closing quote or bracket). Rejected: collapsing `..` in the splitter or at the TTS route (it hides the symptom, cannot tell `..` from a deliberate `...`, leaves `?.` and `".`, and the route is a server edit); replacing the break with a newline (it relies on how the synthesizer treats one, unmeasured); dropping the marker (headings and list items lose their pause).
 - *G2 (the quote rule).* The splitter cuts after sentence punctuation and closers only when a capital letter or a digit follows, so inline dialogue with an attribution is not cut. Rejected: cutting after every closer.
 - *G3 (the fixtures).* Synthetic text only: no crew member's name, thread or live figure is in any test, comment, tracker line or commit message of the batch; this overrides the line of the issue that asked for the live message as the fixture.
-- *Residual.* L1 to L5 of the contract (S1). *Reversal.* Revert the BF-929 commits.
+- *Residual.* L1 to L6 of the contract (S1). *Reversal.* Revert the BF-929 commits.
 
 ### BF-928 -- The first transcript load of a scope in a browser session is history, whatever triggered it (2026-11-12, #1666)
 

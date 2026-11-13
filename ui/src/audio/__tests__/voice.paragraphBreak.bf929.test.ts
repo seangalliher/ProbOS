@@ -90,4 +90,17 @@ describe('BF-929: what must not change', () => {
       'Then "Go." she said.',
     ]);
   });
+
+  it('strips a long run of spaces or tabs in linear time, so a degenerate reply cannot stall the page', async () => {
+    const { stripMarkdownForSpeech } = await import('../voice');
+    for (const run of [' ', '\t']) {
+      const began = performance.now();
+      const stripped = stripMarkdownForSpeech(`Start${run.repeat(50_000)}End`);
+      const elapsed = performance.now() - began;
+      expect(stripped.startsWith('Start')).toBe(true);
+      expect(stripped.endsWith('End')).toBe(true);
+      // The unrepaired expression restarts its scan at every character of the run: about a second at this length.
+      expect(elapsed).toBeLessThan(250);
+    }
+  });
 });
