@@ -260,6 +260,54 @@ describe('BF-933: a tick does not start a capture while the previous upload is i
     await vi.advanceTimersByTimeAsync(1000);
     expect(send).toHaveBeenCalledTimes(2);
   });
+
+  it('a 503 whose body never arrives is cut by the upload deadline, so the camera still stops', async () => {
+    const camera = installCamera();
+    installElements();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_input, init) =>
+        ({
+          status: 503,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+            }),
+        }) as unknown as Response,
+    );
+    await startRunning(camera);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(useCameraStore.getState().active).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(useCameraStore.getState().active).toBe(false);
+    expect(camera.streams[0].released).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a 503 whose body arrives after a stop and a restart does not stop the new loop', async () => {
+    const camera = installCamera();
+    installElements();
+    const body: Array<(value: unknown) => void> = [];
+    let calls = 0;
+    const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      calls += 1;
+      if (calls > 1) return ok();
+      return {
+        status: 503,
+        json: () => new Promise((resolve) => { body.push(resolve); }),
+      } as unknown as Response;
+    });
+    await startRunning(camera, 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await stopCameraStream();
+    await startRunning(camera, 1);
+    body[0]({ error: 'camera_disabled' });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(useCameraStore.getState().active).toBe(true);
+    expect(useCameraStore.getState().error).toBeNull();
+    expect(camera.streams[1].released).toBe(false);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('BF-933: a 429 is honoured', () => {
@@ -405,5 +453,25 @@ describe('BF-933: what must not change', () => {
     expect(send).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(1000);
     expect(send).toHaveBeenCalledTimes(4);
+  });
+
+  it('a 429 that answers after a stop and a restart does not pause the new loop', async () => {
+    const camera = installCamera();
+    installElements();
+    const first: Array<(response: Response) => void> = [];
+    let calls = 0;
+    const send = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      calls += 1;
+      if (calls === 1) return new Promise<Response>((resolve) => { first.push(resolve); });
+      return Promise.resolve(ok());
+    });
+    await startRunning(camera, 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await stopCameraStream();
+    await startRunning(camera, 1);
+    first[0](limited('5'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(send).toHaveBeenCalledTimes(3);
   });
 });

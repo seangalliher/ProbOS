@@ -140,6 +140,8 @@ async function _captureAndUpload() {
 }
 
 async function _captureAndUploadFrame() {
+  // BF-933: the epoch this upload belongs to. Its answer is acted on only while that epoch is the current one.
+  const epoch = _epoch;
   if (!_video || !_canvas || !_sessionId) return;
   if (_video.videoWidth === 0 || _video.videoHeight === 0) return; // not ready yet
   if (document.visibilityState === 'hidden') return; // paused while tab is hidden
@@ -180,14 +182,11 @@ async function _captureAndUploadFrame() {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), FRAME_UPLOAD_TIMEOUT_MS);
   try {
-    let resp: Response;
-    try {
-      resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form, signal: controller.signal });
-    } finally {
-      window.clearTimeout(timeout);
-    }
+    const resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form, signal: controller.signal });
+    if (epoch !== _epoch) return; // a stop came during the upload: the answer is not for the loop that runs now
     if (resp.status === 503) {
       const body = await resp.json().catch(() => ({}));
+      if (epoch !== _epoch) return; // a stop came while the body was read: the same
       useCameraStore.getState().setError(`camera disabled by server: ${body.error ?? 'unknown'}`);
       await stopCameraStream();
       return;
@@ -207,6 +206,9 @@ async function _captureAndUploadFrame() {
     // 413: drop the frame, the next interval tick tries again.
   } catch {
     // Network blip — keep the loop alive; the next frame will retry.
+  } finally {
+    // BF-933: the deadline covers the answer's body too (a 503 whose body never arrives is cut by it).
+    window.clearTimeout(timeout);
   }
 }
 
