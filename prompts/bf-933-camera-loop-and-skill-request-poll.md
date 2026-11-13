@@ -1,7 +1,7 @@
 # BF-933 (#1671): the camera capture loop of one live video call no longer leaks under overlapping starts, honours a 429 and never overlaps its own uploads; the skill-request poll already stops on a typed-disabled store (pinned, no source change); the 5 s freeze and the Three.js copies are named for the orchestrator and the Captain
 
 **Drafted by:** `Architect` (GitHub Copilot fallback; the Claude Code bridge is logged out), 2026-11-13
-**Revised by:** the orchestrator (amendment A1, section 15: the base after the voice batch, the measured gates and mutation rows, eight Killed-by cells of section 9; no block of section 7 changed), 2026-11-13
+**Revised by:** the orchestrator (amendment A1, section 15: the base after the voice batch, the measured gates and mutation rows, eight Killed-by cells of section 9; no block of section 7 changed; amendment A2, section 16: the repair R1 after review round 1, blocks R1-1 to R1-7 in section 7.4, which edit the hook after M2 and add three cases and one clause per tracker), 2026-11-13
 **File in the repository:** `prompts/bf-933-camera-loop-and-skill-request-poll.md` (the orchestrator may rename it). **Answer file:** in three parts, because the contract is too long for one `create` call: `answer-bf933-contract.part1.md` (this header, sections 1 to 6), `answer-bf933-contract.part2.md` (section 7: slices S1 and S2, and 7.3, the orchestrator's dedupe action), `answer-bf933-contract.part3.md` (sections 8 to 14, "Batching", "Not in this issue: for the Captain"). Read them in that order; the labels of section 7 restart in each slice.
 **Status:** ready to build on `origin/main` `f614a31d855e217eec6c826deaffad7572d1f43f` (BF-937's merge) **after the voice batch (BF-928, BF-929, BF-931) has merged**. **Reading tree:** `D:\ProbOS-worktrees\next-read` at `f614a31d855e217eec6c826deaffad7572d1f43f` (clean; read only). **Oracle:** the Architect ran no pytest, no vitest, no UI build and no npm command (a read-only consult). **What I ran instead** (section 11): every SEARCH of section 7 against the LF blobs of the reading tree (occurrences, line start, ASCII); a static comparison of the force-graph stack's `three` imports with the installed r172 (section 3, D7); a count of the duplicate-instance warning in the installed copies and in the one prebuilt `dist` of the main checkout; the existing suites read, case by case, for what they already pin. **What that leaves unchecked (all "expected" below):** every vitest case as a vitest case (the counts), `window === globalThis` under vitest's jsdom (the new tests rely on fake timers reaching `window.setInterval`), `npx tsc -b`, `npm run build`, the ledger regeneration, the broad gate, and everything that needs the live vessel or the Captain's eyes (section "Not in this issue: for the Captain").
 **Base blobs (`f614a31d`):** S1: `ui/src/hooks/useCameraStream.ts` `e560781c1b9f3eb9c307b563616ae1fab07bc30a` (unchanged since `5e3cc991`: `git log 5e3cc991..HEAD -- <path>` prints nothing). S2 edits no source. All slices: `PROGRESS.md` `70cd1044019282b348bba2532acd6bfb2b6369cf`, `DECISIONS.md` `90adc2837c3d2c6d09327e93543eeb0471880fec`, `docs/development/open-ads-report.md` `04562090a74a962b09f61864a667ecb1a62f1b8a`, `docs/development/ad-ledger-snapshot.json` `35de650056f112a17d079fab48f32ddabad939bb` (these four are the blobs the voice contract's A1 measured on `f614a31d`; **the voice batch moves all four before this batch is built**, and every code blob below must be equal). Read, not edited: `ui/src/hooks/__tests__/useCameraStream.test.ts` `a9ea9304f39215f982d367aa40e0fcc0581f4b34`, `ui/src/store/useStore.ts` `d67246cf32182520685b12d2c0b6e909766214c8`, `ui/src/utils/resourceState.ts` `c3a11256629d651f408f01ed258bc6ec9f881309`, `ui/src/store/approvalPolling.ts` `49a25fbd29f7715414d1156e509d10324b55d9c2`, `ui/src/components/skill/SkillRequestPanel.tsx` `bb683ace798aa836b5290a6d7fc8ace0c008aa2c`, `ui/src/__tests__/SkillRequestPanel.test.tsx` `274b18566f626e71a3dfdf5ffdff281113996fd0`, `ui/src/components/approvals/__tests__/ApprovalsInBridge.test.tsx` `6ceb385ce6086b69c1796abd0ba749816a7e2456`, `ui/src/store/__tests__/approvalPolling.test.ts` `af8471083e504a6aa75a5c6f8e5a523793f7951e`, `src/probos/routers/skill_requests.py` `a0a5c7d12e3357d51ac0f88aca0ae8c551256ab9`, `src/probos/routers/readiness.py` `17b72ecf61a9c44bb7b9cd399bf0b277bc4026e7`, `src/probos/routers/perception.py` `83b453f869b970e8422028e86e967e381b42d531`, `ui/package.json` `ffef098d3560217203997ae0c0953e3a29855036`, `ui/package-lock.json` `ee83f90238b536de91bb22dc75bd0aeba0eb1efb`, `ui/vite.config.ts` `c21862f483cd88f4aa08527a934a7bae464e895e`, `.github/workflows/ci.yml` `62ca9c8f4db192fb6648b7cbcf8c6d2cb650b18b`. **`ui/src/components/profile/ProfileChatTab.tsx` (`3ed3ee2a6c738e6fb4c0467c3e5fd920cbc40986` on `f614a31d`) is NOT edited by this batch**, so the voice batch's edits to it (the import at line 58, a block after line 885) cannot collide with a block of mine; neither are `MeetingView.tsx` nor `PerceptionLivePanel.tsx`. None of the three new paths exists (`ui/src/hooks/__tests__/useCameraStream.bf933.test.ts`, `ui/src/store/__tests__/approvalPolling.bf933.test.ts`, `prompts/bf-933-camera-loop-and-skill-request-poll.md`: `Test-Path` printed False for each).
@@ -1131,6 +1131,184 @@ REPLACE:
 
 **Step 6, commit and rollback.** One commit, subject `BF-933 D1: one copy of Three.js, the app aligned up to the force graph's r183 with an override for the rest (#1671)`, body ends `Refs #1671.`; its tracker entries are drafted when it is decided. **Rollback:** `git revert` that commit (it restores both files), then `npm ci`. If Step 5 shows a regression, revert and record D7 row 4 (two copies, with the `Timer` evidence) as the decision.
 
+### 7.4 Repair R1 (S1: the upload's answer; amendment A2)
+
+Review round 1 of S1 found two defects of ordinary reach that the slice introduced: the abort deadline is cleared when the response headers arrive, so a 503 whose body never arrives holds the in-flight guard for good; and the answer of an upload that outlives a stop (and a restart) still writes the new loop's 429 pause, or stops it. These blocks are applied to the tree after S1 M3 and S2 M3, in label order, in one commit, `BF-933 S1 R1`. Every SEARCH occurs exactly once in its file at that point, is ASCII, and starts at a line start except R1-6 and R1-7, which replace one sentence inside a long line with one sentence (a one-line REPLACE, so the `edit` tool's re-indent quirk cannot apply). **R1-1 to R1-3** edit the hook; **R1-4 and R1-5** add three cases to the S1 test file (none takes the marker: it is gone since M2); **R1-6 and R1-7** add one clause to the S1 tracker entries. No export is added; no other file changes.
+
+**R1-1.** `ui/src/hooks/useCameraStream.ts`. The head of `_captureAndUploadFrame`: it remembers the epoch it belongs to.
+SEARCH:
+```
+async function _captureAndUploadFrame() {
+  if (!_video || !_canvas || !_sessionId) return;
+```
+REPLACE:
+```
+async function _captureAndUploadFrame() {
+  // BF-933: the epoch this upload belongs to. Its answer is acted on only while that epoch is the current one.
+  const epoch = _epoch;
+  if (!_video || !_canvas || !_sessionId) return;
+```
+
+**R1-2.** `ui/src/hooks/useCameraStream.ts`. The upload call and the start of the 503 branch: the deadline is no longer cleared when the headers arrive (R1-3 clears it in the outer `finally`), and an answer for a retired epoch is dropped before it writes anything.
+SEARCH:
+```
+  try {
+    let resp: Response;
+    try {
+      resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form, signal: controller.signal });
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    if (resp.status === 503) {
+      const body = await resp.json().catch(() => ({}));
+```
+REPLACE:
+```
+  try {
+    const resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form, signal: controller.signal });
+    if (epoch !== _epoch) return; // a stop came during the upload: the answer is not for the loop that runs now
+    if (resp.status === 503) {
+      const body = await resp.json().catch(() => ({}));
+      if (epoch !== _epoch) return; // a stop came while the body was read: the same
+```
+
+**R1-3.** `ui/src/hooks/useCameraStream.ts`. The end of `_captureAndUploadFrame` (the next line is the one export that follows it): the deadline runs until the answer, body included, has been handled.
+SEARCH:
+```
+  }
+}
+
+export async function startCameraStream(opts?: {
+```
+REPLACE:
+```
+  } finally {
+    // BF-933: the deadline covers the answer's body too (a 503 whose body never arrives is cut by it).
+    window.clearTimeout(timeout);
+  }
+}
+
+export async function startCameraStream(opts?: {
+```
+
+**R1-4.** `ui/src/hooks/__tests__/useCameraStream.bf933.test.ts`. Two cases at the end of the in-flight describe (after the abort case): a 503 whose body never arrives, and a 503 whose body arrives after a stop and a restart.
+SEARCH:
+```
+  });
+});
+
+describe('BF-933: a 429 is honoured', () => {
+```
+REPLACE:
+```
+  });
+
+  it('a 503 whose body never arrives is cut by the upload deadline, so the camera still stops', async () => {
+    const camera = installCamera();
+    installElements();
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_input, init) =>
+        ({
+          status: 503,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+            }),
+        }) as unknown as Response,
+    );
+    await startRunning(camera);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(useCameraStore.getState().active).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(useCameraStore.getState().active).toBe(false);
+    expect(camera.streams[0].released).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a 503 whose body arrives after a stop and a restart does not stop the new loop', async () => {
+    const camera = installCamera();
+    installElements();
+    const body: Array<(value: unknown) => void> = [];
+    let calls = 0;
+    const send = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      calls += 1;
+      if (calls > 1) return ok();
+      return {
+        status: 503,
+        json: () => new Promise((resolve) => { body.push(resolve); }),
+      } as unknown as Response;
+    });
+    await startRunning(camera, 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await stopCameraStream();
+    await startRunning(camera, 1);
+    body[0]({ error: 'camera_disabled' });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(useCameraStore.getState().active).toBe(true);
+    expect(useCameraStore.getState().error).toBeNull();
+    expect(camera.streams[1].released).toBe(false);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('BF-933: a 429 is honoured', () => {
+```
+
+**R1-5.** `ui/src/hooks/__tests__/useCameraStream.bf933.test.ts`. One control at the end of the file: a 429 that answers after a stop and a restart does not pause the new loop.
+SEARCH:
+```
+    expect(send).toHaveBeenCalledTimes(4);
+  });
+});
+```
+REPLACE:
+```
+    expect(send).toHaveBeenCalledTimes(4);
+  });
+
+  it('a 429 that answers after a stop and a restart does not pause the new loop', async () => {
+    const camera = installCamera();
+    installElements();
+    const first: Array<(response: Response) => void> = [];
+    let calls = 0;
+    const send = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      calls += 1;
+      if (calls === 1) return new Promise<Response>((resolve) => { first.push(resolve); });
+      return Promise.resolve(ok());
+    });
+    await startRunning(camera, 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await stopCameraStream();
+    await startRunning(camera, 1);
+    first[0](limited('5'));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+```
+
+**R1-6.** `PROGRESS.md`. One clause of the S1 entry (once; the sentence is inside the `Fix.` bullet).
+SEARCH:
+```
+(the upload is aborted after 10 s so the guard cannot stick)
+```
+REPLACE:
+```
+(the upload is aborted after 10 s, answer body included, so the guard cannot stick, and an answer that outlives a stop is dropped)
+```
+
+**R1-7.** `DECISIONS.md`. One clause of the S1 entry's `G3` bullet (once).
+SEARCH:
+```
+One at a time, aborted after 10 s so a request that never answers cannot hold the guard.
+```
+REPLACE:
+```
+One at a time, aborted after 10 s (the deadline runs until the answer's body has been read) so a request that never answers cannot hold the guard; an answer that outlives a stop is dropped.
+```
+
 ## 8. What this does NOT change
 
 **S1.** The capture primitive (`drawImage`, `toBlob`, the canvas size, the JPEG quality, `_maxDim`) and so the 5 s stall of the issue; `_computeAgentIds`, `forceNextFrame`, `getCameraStream` and the `_streams` map; the 503 branch (a 503 still stops the camera); the visibility pause; the exports of `useCameraStream.ts` (no export is added, so the ten `vi.mock` factories that mock the module, and the one that supplies only `stopCameraStream`, stay valid); every caller (`ProfileChatTab.tsx` and its `?raw` pin at `ProfileChatTab.threadTranscript.test.tsx:605`, `MeetingView.tsx`, `PerceptionLivePanel.tsx`, `CameraPreviewPanel.tsx`, `CameraLiveIndicator.tsx`, `App.tsx`, `CompactApp.tsx`); `useCameraStore.ts` (including `reset()` clearing `error`, L6); `useScreenStream.ts` (L7); `routers/perception.py` and every server file (the 429 and its `Retry-After: 1`, the bucket, `camera_max_fps_server`); the existing `useCameraStream.test.ts`.
@@ -1339,3 +1517,40 @@ Each item is an observation of the running vessel or the Captain's own senses; t
 **Measured ledger movement.** S1 M3 moves BF-933 only (Shipped BF +933, Unaccounted BF -933), the report's `git log` row and the two skipped-line numbers of `PROGRESS.md` (shifted by the 4 lines of the entry); numstat `9 0 DECISIONS.md`, `4 0 PROGRESS.md`, `6 3` the snapshot, `6 6` the report. S2 M3 moves no number (the `git log` row and the two skipped-line numbers only); numstat `7 0`, `4 0`, `3 3`, `3 3`.
 
 **What A1 changes.** The header (a `Revised by` line) and eight cells of section 9. Nothing in sections 1 to 8, nothing in a block.
+
+## 16. Amendment A2 (2026-11-13): repair R1 after review round 1
+
+**Drafted by:** the orchestrator, not the Architect: each change answers a finding that a reviewer reproduced by execution and the oracle reproduced again, so it is mechanical. **Sections 1 to 15 are read with this section; where they differ, this section wins.** The slice files cut from sections 7.1 and 7.2 are unchanged: the repair is one more commit, `BF-933 S1 R1`, that applies section 7.4 on the head after S2 M3.
+
+**The findings** (round 1: one reviewer per slice, on the head `1f60ad9e`):
+
+| # | Slice | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|---|
+| F1 | S1 | A stalled response body holds the upload guard for good. The deadline was cleared when `fetch` resolved (the headers), before the 503 branch awaited `resp.json()`: the camera stayed on and never sent another frame. | ordinary (a network failure) | yes (P2) | fixed: R1-2, R1-3 |
+| F2 | S1 | The answer of an upload that outlived a stop still acted: a 429 wrote the pause of the loop that then ran, and a 503 body that arrived after a restart stopped the new loop. | ordinary (a stop and a restart) | yes (P2) | fixed: R1-1, R1-2 |
+| F3 | S1 | `Retry-After: -1`, or any other string `Date.parse` accepts that is not an HTTP date, reads as advice of 0 s, so the 1 s, 2 s, 4 s fallback is bypassed. | injected-only (the route sends `1`) | no (P3) | recorded: S1 L11 |
+| F4 | S2 | S2-T2 asserts the warning fragment on the first warning only. | injected-only | no (P3) | recorded: S2 L5 |
+
+S2 had no finding that needs a change.
+
+**The repair** (section 7.4; one commit on the tree after S2 M3):
+- **R1-1, R1-2.** `_captureAndUploadFrame` remembers its epoch. The answer is dropped, before it writes `_rateLimited`, `_resumeAtMs`, the error or the stop, when a stop has bumped the epoch since the upload began (checked after the response and again after a 503's body).
+- **R1-2, R1-3.** The abort timer is cleared in an outer `finally`, so the deadline covers the body: a 503 body that never arrives is cut at 10 s, read as `{}`, and the camera stops as for any 503.
+- **R1-4, R1-5.** Three cases (below). **R1-6, R1-7.** One clause in the S1 tracker entries (`PROGRESS.md`, and `DECISIONS.md` G3).
+- No export is added; `ui/package.json` and the lockfile are untouched.
+
+**The new cases** (the S1 file has 22 cases after R1, all passing; none takes the marker, which is gone since M2):
+
+| Case | Kind | Asserts |
+|---|---|---|
+| T12 a 503 whose body never arrives is cut by the upload deadline, so the camera still stops | repair | an answer with status 503 whose `json()` rejects on the request's abort signal: `active` after 1 s; after 11 s not `active`, the stream released, no timer left |
+| T13 a 503 whose body arrives after a stop and a restart does not stop the new loop | repair | the headers first; the body released after `stopCameraStream()` and a second start: `active`, no `error`, the second stream not released, three calls after two more ticks |
+| C8 a 429 that answers after a stop and a restart does not pause the new loop | control | the first upload held and released as a 429 with `Retry-After: 5` after the restart: the next two ticks make the calls three |
+
+**Measured** (the oracle: the A2 contract and R1 applied on S2 M3's scratch commit). The R1 commit changes `DECISIONS.md` (1 1), `PROGRESS.md` (1 1), the test file (68 0) and the hook (8 6); the ledger check stays current, so no regeneration. **G1:** the file `22 passed (22)`. **The new cases against the head before R1** (the hook of S2 M3, the test file of R1): `3 failed | 19 passed (22)`, the three being T12 (`expected true to be false`), T13 (`expected false to be true`) and C8 (`expected "fetch" to be called 3 times, but got 1 times`), each at its own assertion. **Against the base hook** (before BF-933): `14 failed | 8 passed (22)`: the twelve `built` cases, T12 and T13 fail; the seven controls and C8 pass. **G2** `npx vitest run src/hooks`: 9 files, 110 tests (M0 88 + 22); the wide consumer run: 16 files, 258 tests, unchanged; `npx tsc -b` clean.
+
+**Mutation rows after R1.** 31 rows run on the R1 head and **every mutant is killed.** Rows 1 to 3, 6 to 8, 10, 11b, 13a, 16a to 22 and 25 keep the killers of section 9 as A1 corrected them. The others gain the new cases (supersets; no case is lost): row 4 adds C8, T12, T13; row 5 adds C8, T13; row 9 adds T12; rows 11a and 12 add T12; row 13b adds C8, T13; row 14 adds C8, T12, T13; row 15 adds C8; row 23 is killed by T7, T12. **Row 24 is replaced:** the line is now `const resp = await fetch(FRAME_ENDPOINT, { method: 'POST', body: form, signal: controller.signal });`, and the old `resp = ...` line is gone: **24a** the same without `, signal: controller.signal`, killed by T7, T12; **24b** the same with `.finally(() => window.clearTimeout(timeout))` appended to the call (the deadline cleared at the headers again: the defect of F1), killed by T12. **New:** **26** `if (epoch !== _epoch) return; // a stop came during the upload: the answer is not for the loop that runs now` to `if (false) return;`, killed by C8; **27** `if (epoch !== _epoch) return; // a stop came while the body was read: the same` to `if (false) return;`, killed by T13. Row 10's line (`if (epoch !== _epoch) return;`, no comment) still occurs once, because the two new lines carry comments.
+
+**Recorded limits (additions).** **S1 L11.** `_parseRetryAfterMs` accepts any string `Date.parse` reads, so a negative or malformed advice such as `-1` reads as 0 s and the fallback backoff is bypassed; the route sends `Retry-After: 1`, so only a proxy or a changed route reaches it (F3; the fix is to validate the HTTP-date syntax before parsing, with a case). **S2 L5.** S2-T2 asserts the warning fragment on the first warning only (F4; the fix is to assert it on every captured warning).
+
+**What A2 changes.** The header (a `Revised by` clause), section 7.4 (seven blocks) and this section. Nothing in sections 1 to 15 or in a block of 7.1 to 7.3 is edited; the readings above supersede where they differ: section 4's G1 and G2 counts for S1 after R1 (22 cases; `src/hooks` M0 + 22), section 6's case table (three cases more), section 9's rows (above) and section 10's limits.
