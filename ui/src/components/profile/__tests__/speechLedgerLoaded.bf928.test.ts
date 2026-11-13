@@ -14,7 +14,7 @@ import {
   SPEECH_LEDGER_SCOPE_CAP, createSpeechLedger, markScopeSeen, type SpeechLedger,
 } from '../profileTranscript';
 
-const built = process.env.BF928_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 
 function markScopeLoaded(ledger: SpeechLedger, scopeKey: string): boolean {
   const fn = (transcript as unknown as {

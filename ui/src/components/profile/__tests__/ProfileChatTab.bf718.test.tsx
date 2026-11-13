@@ -759,7 +759,7 @@ describe('BF-765 — the claim outlives the mount', () => {
 /** BF-928 (#1666): the first transcript load of a scope is history, whatever triggered it. The cases the unfixed
  *  tree fails are `built`, which is `it.fails` until BF-928 M2 sets it to `it`; with BF928_RUNXFAIL=1 they run as
  *  ordinary cases. The text is synthetic: no crew member's name, thread or live figure. */
-const built = process.env.BF928_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 const THREAD_MESSAGES_URL = /\/api\/threads\/[^/?]+\/messages\?limit=200$/;
 
 /** The thread's first transcript request (the open-time load) hangs until `release()` and then fails with a 503,

@@ -245,6 +245,18 @@ export function markScopeSeen(ledger: SpeechLedger, scopeKey: string): boolean {
   return first;
 }
 
+/** BF-928 (#1666): has a transcript load landed for this scope before? Marks it as loaded and answers true only
+ *  for the first load that lands, whatever triggered it. The speech owner seeds that load (records its rows without
+ *  speaking them), because it is the scope's history arriving at once: ``markScopeSeen`` cannot say so, since the
+ *  speech effect uses it up on its first run, when the list is still empty. A scope the ledger evicted reads as
+ *  never loaded, as it reads as never seen (BF-768). */
+export function markScopeLoaded(ledger: SpeechLedger, scopeKey: string): boolean {
+  const scope = scopeRecord(ledger, scopeKey);
+  const first = !scope.loaded;
+  scope.loaded = true;
+  return first;
+}
+
 /** Canonical AD-914 group rows use thread + message identity. Other rows keep
  *  the legacy role + author + trimmed text fallback described below.
  *
@@ -302,7 +314,7 @@ export function isSpeakableAgentMessage(msg: AgentProfileMessage): boolean {
 function scopeRecord(ledger: SpeechLedger, scopeKey: string): SpeechScope {
   let scope = ledger.scopes.get(scopeKey);
   if (!scope) {
-    scope = { keys: new Set<string>(), seen: false };
+    scope = { keys: new Set<string>(), seen: false, loaded: false };
   } else {
     // Re-insert so Map insertion order is recency order, making the eviction
     // below least-recently-USED rather than least-recently-created.
