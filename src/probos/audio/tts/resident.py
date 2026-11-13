@@ -32,6 +32,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from pathlib import Path
 from typing import IO, Any, Callable, Iterator, TypeVar
 
 from probos.execution.command_env import trusted_command_env
+from probos.utils.step_timing import TimingLines, ms_between
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,8 @@ VOICE_MAX_IN_FLIGHT = 4 * VOICE_EXECUTOR_WORKERS
 PIPER_MAX_RESIDENT = 4
 #: How much of a dead process's stderr its warning quotes.
 _STDERR_TAIL_BYTES = 500
+#: BF-930: a Piper request that takes at least this long (milliseconds) is reported with its steps (log-only).
+SLOW_SYNTHESIS_MS = 750.0
 
 _T = TypeVar("_T")
 
@@ -146,6 +150,9 @@ class PiperWorker:
         self._state = threading.Lock()
         self._running = False
         self._closed = False
+        # BF-930: log-only. When the last request's blocking call started and ended on its thread (``time.perf_counter``).
+        self.thread_started = 0.0
+        self.thread_ended = 0.0
 
     @property
     def alive(self) -> bool:
@@ -157,6 +164,7 @@ class PiperWorker:
         Refused (``closed``) once the worker is closed. When ``close`` came while this
         request ran, the request releases the worker before it returns.
         """
+        self.thread_started = time.perf_counter()  # BF-930: log-only
         with self._state:
             if self._closed:  # closed while this request was queued: start nothing
                 return PiperOutcome(None, "closed")
@@ -164,6 +172,7 @@ class PiperWorker:
         try:
             return self._request(text, timeout)
         finally:
+            self.thread_ended = time.perf_counter()  # BF-930: log-only
             with self._state:
                 self._running = False
                 release = self._closed
@@ -354,6 +363,7 @@ class VoiceSynthesisService:
         # BF-918: evicted workers whose close has not run yet; ``close`` reaches them here.
         self._retiring: set[PiperWorker] = set()
         self._locks: dict[PiperWorkerKey, asyncio.Lock] = {}
+        self._timing = TimingLines(logger)  # BF-930: log-only
 
     @property
     def closed(self) -> bool:
@@ -398,18 +408,24 @@ class VoiceSynthesisService:
                         self._in_flight, self._max_in_flight,
                     )
                 return None
+            t_enter = time.perf_counter()  # BF-930: log-only stamps; the awaits below keep their order
             lock = self._locks.setdefault(key, asyncio.Lock())
             async with lock:
+                t_locked = time.perf_counter()
                 if self._closed:
                     return None
                 worker = await self._claim(key)
                 if worker is None:
                     return None
+                t_claimed = time.perf_counter()
                 loop = asyncio.get_running_loop()
                 self._busy.add(key)
                 try:
+                    cold = not worker.alive
+                    t_submit = time.perf_counter()
                     future = loop.run_in_executor(self.executor, worker.synthesize_blocking, text, timeout)
                     outcome = await future
+                    t_resumed = time.perf_counter()
                 except asyncio.CancelledError:
                     # The caller went away, or shutdown cancelled the request while it was queued.
                     # Close the worker (mid-request on its thread, it is killed and releases itself
@@ -426,6 +442,18 @@ class VoiceSynthesisService:
                     return None
                 finally:
                     self._busy.discard(key)
+                # BF-930: log-only. Where a slow request's time went (milliseconds, monotonic clock).
+                total_ms = ms_between(t_enter, t_resumed)
+                if total_ms >= SLOW_SYNTHESIS_MS:
+                    self._timing.emit(
+                        "BF-930: piper request slow chars=%d voice=%s total_ms=%.0f lock_wait_ms=%.0f claim_ms=%.0f "
+                        "pool_wait_ms=%.0f work_ms=%.0f resume_lag_ms=%.0f cold=%s result=%s in_flight=%d",
+                        len(text), Path(key.model).stem, total_ms, ms_between(t_enter, t_locked),
+                        ms_between(t_locked, t_claimed), ms_between(t_submit, worker.thread_started),
+                        ms_between(worker.thread_started, worker.thread_ended),
+                        ms_between(worker.thread_ended, t_resumed), "yes" if cold else "no",
+                        "ok" if outcome.audio is not None else "failed", self._in_flight,
+                    )
                 if outcome.audio is not None:
                     return outcome.audio
                 if not self._closed:  # a request that shutdown ended is not a piper failure

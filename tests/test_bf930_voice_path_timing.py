@@ -35,11 +35,9 @@ from probos.routers import chat as chat_router_mod
 from probos.routers.deps import get_runtime
 from probos.security.pii_redaction import PIIRedactor
 
-built = (
-    (lambda func: func)
-    if os.environ.get("BF930_RUNXFAIL") == "1"
-    else pytest.mark.xfail(raises=AssertionError, strict=True)
-)
+def built(func):
+    """BF-930 M2: the built cases pass; the marker no longer fails them."""
+    return func
 
 _WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 _WRITE = "BF-930: attachment write slow"
