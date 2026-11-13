@@ -2520,7 +2520,7 @@ AD-482 v1: Self-improvement pipeline (proposal -> approval -> QA -> evolution ->
 | `iteration_cap` | `int` | `5` | ≥ 1, ≤ 20 |  |
 | `evolution_half_life_seconds` | `float` | `2592000.0` | ≥ 1.0 |  |
 | `evolution_collection_name` | `str` | `'self_improvement_lessons'` | — |  |
-| `persistence_root_dir` | `str` | `'src/probos/agents/designed'` | — |  |
+| `persistence_root_dir` | `str` | `''` | — | Where promoted agent source is written. Empty means {data_dir}/promoted-agents. A directory inside the source checkout ProbOS runs from is refused (BF-937, #1678): repository changes go through GitHub. |
 
 ## `memory_budget`
 

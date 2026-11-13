@@ -7,8 +7,9 @@ Three converging concerns in one module:
 * `AgentVersion` dataclass + `AgentVersionStore` track parent-version lineage
   and per-version trust metadata for designed agents.
 * `AgentPersistence` Protocol + `LocalDiskPersistence` default impl write
-  promoted agent source to ``src/probos/agents/designed/{agent_type}_v{N}.py``
-  plus a ``{agent_type}_v{N}.meta.yaml`` sidecar. Git PR creation is the
+  promoted agent source to ``{root}/{agent_type}_v{N}.py`` (``{data_dir}/promoted-agents``
+  unless configured; never inside the source checkout, BF-937) plus a
+  ``{agent_type}_v{N}.meta.yaml`` sidecar. Git PR creation is the
   AD-482h-1 follow-on (subprocess git + GitHub MCP wiring is its own AD).
 * `ShadowDeploymentPolicy` Protocol + `NoOpShadowDeploymentPolicy` default
   ship as Protocol seam. Concrete impl is AD-482i-1 (parallel-pool comparator
@@ -23,6 +24,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Protocol, TYPE_CHECKING
+
+from probos.cognitive.builder_paths import operator_checkout_refusal
 
 if TYPE_CHECKING:
     from probos.cognitive.self_mod import DesignedAgentRecord
@@ -108,28 +111,71 @@ def compute_source_hash(source_code: str) -> str:
     return hashlib.sha256(source_code.encode("utf-8")).hexdigest()[:16]
 
 
+#: BF-937 (#1678): the checkout this module runs from (src/probos/cognitive/self_improvement -> repository), the one
+#: ``builder.py`` and ``routers/build.py`` protect with ``operator_checkout_refusal`` (BF-897). An installed package has no
+#: ``.git`` entry there, and the rule then finds no checkout to protect.
+_CHECKOUT_ROOT = Path(__file__).resolve().parents[4]
+
+#: BF-937 (#1678): the directory under the data directory that promoted agent source goes to when no root is configured.
+PROMOTED_AGENTS_DIRNAME = "promoted-agents"
+
+
+def resolve_promoted_agents_dir(root_dir: str, data_dir: str | Path) -> Path:
+    """BF-937 (#1678): where promoted agent source is written: *root_dir* when set, else ``{data_dir}/promoted-agents``.
+
+    The one place the default is named (the shape of ``probos.config.resolve_records_repo_path``). A relative *root_dir* is
+    relative to the current directory, as ``Path.mkdir`` reads it, and ``~`` is not expanded.
+    """
+    if root_dir:
+        return Path(root_dir)
+    return Path(data_dir) / PROMOTED_AGENTS_DIRNAME
+
+
+def persistence_root_refusal(root_dir: str | Path) -> str | None:
+    """BF-937 (#1678): why promoted agent source must not be written under *root_dir*, or None if it may be.
+
+    A repository change goes through GitHub (AD-1336), so promoted source is never written into the checkout ProbOS runs
+    from. The rule is ``operator_checkout_refusal`` (BF-897) over ``_CHECKOUT_ROOT``: *root_dir* is resolved (links and
+    junctions followed, a relative path against the current directory, case and 8.3 names by file identity) and refused
+    when its nearest ``.git`` entry is the checkout's; a linked worktree has its own and is allowed, and so is a directory
+    outside any checkout. No git command runs. A path that cannot be examined is refused.
+    """
+    if operator_checkout_refusal(root_dir, _CHECKOUT_ROOT) is None:
+        return None
+    return (
+        f"promoted agent source is not written into the source checkout: {str(root_dir)!r} is inside the checkout "
+        f"ProbOS runs from ({_CHECKOUT_ROOT}), or could not be checked against it (BF-937). A repository change goes "
+        "through GitHub (AD-1336). Leave self_improvement.persistence_root_dir empty to use {data_dir}/promoted-agents, "
+        "or name a directory outside the checkout."
+    )
+
+
 class LocalDiskPersistence:
     """AD-482h v1: write promoted agent source to local disk.
 
     Args:
-        root_dir: Directory under which agent files are written. Default
-            ``src/probos/agents/designed`` per roadmap.md:3733.
+        root_dir: Directory under which agent files are written. Required: this class names no location of its own
+            (BF-937: it was ``src/probos/agents/designed``, inside the checkout). A root inside the source checkout is
+            refused with ``ValueError``; a relative root is resolved against the current directory when the object is built.
         clock: Time source for sidecar metadata.
     """
 
     def __init__(
         self,
         *,
-        root_dir: str = "src/probos/agents/designed",
+        root_dir: str,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        self._root = Path(root_dir)
+        refusal = persistence_root_refusal(root_dir)
+        if refusal is not None:
+            raise ValueError(refusal)
+        self._root = Path(root_dir).resolve()
         self._clock = clock
 
     async def promote(self, record: Any, version: AgentVersion) -> str:
         """Write {agent_type}_v{N}.py + sidecar. Tier-2 log-and-degrade.
 
-        Returns the persisted path on success, or "" on failure.
+        Returns the persisted path on success, or "" on failure, or when the root is inside the source checkout (BF-937).
         """
         agent_type = getattr(record, "agent_type", "")
         source_code = getattr(record, "source_code", "")
@@ -137,6 +183,11 @@ class LocalDiskPersistence:
             logger.warning(
                 "AD-482h: promote skipped -- record missing agent_type or source_code",
             )
+            return ""
+        refusal = persistence_root_refusal(self._root)
+        if refusal is not None:
+            # BF-937 (#1678): the root was allowed when this object was built; a link swapped in since is judged now.
+            logger.error("BF-937: LocalDiskPersistence.promote refused for %s: %s", agent_type, refusal)
             return ""
         try:
             self._root.mkdir(parents=True, exist_ok=True)

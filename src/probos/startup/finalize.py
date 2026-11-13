@@ -2642,11 +2642,22 @@ async def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> boo
             ProposalGroundingVerifier,
             SymbolExistenceProvider,
         )
+        from probos.cognitive.self_improvement.versioning import resolve_promoted_agents_dir
     except Exception:
         logger.warning(
             "AD-482: self_improvement package import failed -- skipping wiring",
             exc_info=True,
         )
+        return False
+
+    # BF-937 (#1678): the persistence is built before any store opens, so a root inside the source checkout stops the
+    # wiring here, whole: nothing is opened, attached or half-wired, and the vessel boots without the pipeline.
+    try:
+        agent_persistence = LocalDiskPersistence(
+            root_dir=str(resolve_promoted_agents_dir(cfg.persistence_root_dir, runtime.data_dir)),
+        )
+    except ValueError as exc:
+        logger.error("BF-937: self_improvement is not wired: %s", exc)
         return False
 
     emit = getattr(runtime, "emit_event", None)
@@ -2738,7 +2749,6 @@ async def _wire_self_improvement(*, runtime: Any, config: "SystemConfig") -> boo
             qa_agent_pool = None
 
     agent_version_store = AgentVersionStore(event_emit_fn=emit)
-    agent_persistence = LocalDiskPersistence(root_dir=cfg.persistence_root_dir)
     shadow_deployment_policy = NoOpShadowDeploymentPolicy()
 
     runtime.proposal_store = proposal_store

@@ -3868,8 +3868,11 @@ export const useStore = create<HXIState>((set, get) => ({
           get().addChatMessage('system',
             `Builder started: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}`);
         } else if (item.status === 'reviewing') {
+          // BF-937 (#1678): a build in review is a candidate branch, not a merge: say so, and where its worktree is kept.
+          const kept = item.worktree_path ? ` Candidate branch kept in ${item.worktree_path}.` : '';
           get().addChatMessage('system',
-            `Build ready for review: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}`);
+            `Build ready for review: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''}.${kept}`
+            + ' It is not merged: local merge is unavailable, and delivery comes through GitHub (AD-1336).');
         } else if (item.status === 'merged') {
           get().addChatMessage('system',
             `Build merged: ${item.title}${item.ad_number ? ` (AD-${item.ad_number})` : ''} → ${item.commit_hash.slice(0, 7)}`);
