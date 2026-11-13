@@ -1753,6 +1753,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (public text).* Synthetic fixtures only; no live figure in any test, comment, tracker line or commit message; the acceptance's live numbers are posted on the issue, not in the repository.
 - *Residual.* L1 to L8 of the contract (S1). *Reversal.* Revert the BF-930 slice 1 commits (after reverting slice 2, which imports the helper).
 
+### BF-932 slice 2 -- The Captain-DM reply path logs its own timeline, log-only (2026-11-13, #1670)
+
+- *Scope.* `routers/agents.py` (stamps and one line, after the send), `cognitive/cognitive_agent.py` (stamps and one line, before the model call), `cognitive/concurrency_manager.py` (one trailing field), one test file. Contract `prompts/bf-930-932-voice-and-reply-path-timing.md`.
+- *G1 (shape).* One line per Captain DM at the route and one per HXI DM at the agent, joined by the intent id (an id the message already carries and that crosses the wire); the queue's own line gains the wait. Rejected: stamping the route's time into the intent's parameters (it changes what the agent reads); an always-on loop-lag task (a new component; the named next step if the sum of the lines does not close).
+- *G2 (scope).* The model-call lane and the turn's own calls are out: the issue's window ends at the recall line, before the first model call (enumerated). Per-step lines inside the describe are out: its two unbounded steps are the store lookups S1 already reports.
+- *G3 (public text).* Synthetic fixtures only; no live figure anywhere in the repository.
+- *Residual.* L1 to L8 of the contract (S2). *Reversal.* Revert the BF-932 slice 2 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
