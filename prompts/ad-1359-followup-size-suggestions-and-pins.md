@@ -1,6 +1,7 @@
 # AD-1359 follow-up (#1769): the code review's suggestions reach the build result, the size exemption and its count are pinned and counted (two slices; #1769 stays open for its review point)
 
 **Drafted by:** `Architect` (GitHub Copilot fallback; the Claude Code bridge is logged out), 2026-11-13
+**Revised by:** amendment A1 (section 15: review round 1 of slice 2 found that the suggestions could make the HXI event stream drop the whole terminal event; `_review_suggestions` now bounds the list to 20 items of at most 500 characters and 17 cases run the events through the stream's own finalizer; section 7.3 holds the repair, D8 the decision, and sections 6, 9, 10, 12, 13 and 14 the matching rows and clauses), drafted by the Copilot Architect (fallback; the Claude Code bridge was logged out) and applied by the orchestrator, 2026-11-13
 **File in the repository:** `prompts/ad-1359-followup-size-suggestions-and-pins.md` (the orchestrator may rename it). **Answer file:** in three parts, because the contract is too long for one `create` call: `answer-a1769-contract.part1.md` (this header, sections 1 to 6), `answer-a1769-contract.part2.md` (section 7: slices S1 and S2), `answer-a1769-contract.part3.md` (sections 8 to 14, "Batching", "Not in this issue: for the Captain"). Read them in that order; the labels of section 7 restart in each slice.
 **Status:** ready to build on `origin/main` `0ef819cad2ba03473bbc9b01f51c52501083104d` **after the two earlier batches have merged** (BF-933, pull request #1789, UI only; BF-930/932, Python, log-only timing). **Reading tree:** `D:\ProbOS-worktrees\next-read` at `0ef819cad2ba03473bbc9b01f51c52501083104d` (`git rev-parse HEAD`; `git status --short` printed nothing; read only). **Oracle:** the Architect ran no pytest, no vitest, no build and no script that writes (a read-only consult). **What I ran instead** (section 11): every SEARCH of section 7 against the LF blobs of the reading tree (occurrence, line start, ASCII), the enumerations of every reader of the lines this batch extends or adds, a dry application of the blocks in memory with the mutation Lines counted on the patched text, the pure helper and the paragraph's sentence count evaluated on their own, and the existing harnesses read case by case. **What that leaves unchecked (all "expected" below):** every pytest count and every new case as a pytest case, the mutation rows, the AD ledger regeneration, `scripts/check_architecture_principles.py --check`, the broad gate and the wide run.
 **Base blobs (`0ef819ca`):** S1 edits `tests/test_standing_orders_layout.py` `20bb35d1a34c1dc97cc8b348ed7ad8a3151c19d0` and `.github/agents/orchestrator.agent.md` `37f2ff7ffacc06250d08d7bfa663bacb05f628e5`. S2 edits `src/probos/cognitive/builder.py` `16bc1cbadf53fa4dd30774e60d5b87d5c709890a` and `src/probos/routers/build.py` `6e3daf5814a8a4cc9644433df59cccffef4f1447`. Read, not edited: `src/probos/cognitive/code_reviewer.py` `c8e1a42f8d834a408ab1f5ebc748415d24412232`, `.github/copilot-instructions.md` `e0abb1bca5dbdc4d344ab6976fee48047e89d2ac`, `.github/agents/diff-reviewer.agent.md` `87d3e6c90c108f395db1f3b8ab626f0282021764`, `.claude/agents/claude-diff-reviewer.md` `3f310a2a8565f4e6750b60a77cbd8345ae526659`, `tests/test_code_reviewer.py` `e632bc3b73fbb3edc875ec0700073a58ae81cf32`, `tests/test_builder_agent.py` `ad68d1afd1e506c28aa01840f23f5f3a7d9866e1`, `tests/test_builder_api.py` `34e6758e5b23caf396cf3251469a67fd2ba93ca8`, `tests/test_ad1359_agent_size_rules.py` `9c47c638931091da3db03ac6c51518e9c81cb3e4`, `tests/test_bf904a_failed_build_restore.py` `4e1c8bd3751a8727ea0a481ba15265595ae39d60`, `tests/test_bf904b_sealed_core_observation.py` `f594ec1b5c36326e7ff71f1c6158de63b8cd2bb3`, `tests/test_ad1346_admission_build_test_sink.py` `8b140f68fa547eafc79b8894322ec7385c28008c`, `ui/src/store/types.ts` `64bbe9372315f5cb8721b219bde0eb4eb60bac56`, `ui/src/store/useStore.ts` `d67246cf32182520685b12d2c0b6e909766214c8`. Trackers and generated pair on `0ef819ca`: `PROGRESS.md` `f2cb113fac5247d82c37abd28c09382b3468684f`, `DECISIONS.md` `470dc36fb4f3083518c70b8f795a8923b75d95b6`, `docs/development/open-ads-report.md` `6aabf0f702fbcc38c9386df61fb197f1b8a8c699`, `docs/development/ad-ledger-snapshot.json` `3b6c6bdf1fd86c5dc1e953fcfbaed5008ef1aff0` (**the two earlier batches move all four before this batch is built; every code and profile blob above must still be equal**). **Two paths do not exist** (to be confirmed by `Test-Path` before the build): `tests/test_ad1359_followup_review_suggestions.py` and `prompts/ad-1359-followup-size-suggestions-and-pins.md`.
@@ -101,6 +102,20 @@ The other dev-side size rules (the Claude Builder profile's line, the Diff Revie
 
 **D7. Public text, numbers, ledger.** No crew name, thread id, timestamp, live count or vessel line appears in any test, comment, tracker line, commit message or this contract (the test texts are synthetic; the issue's own measurement is cited by number only, nothing from a vessel). No AD or BF number is allocated: the work is named `AD-1359 follow-up` with the issue number; commit subjects begin with the plain token `AD-1359` (the ledger keys on the base number and keeps each full token as evidence; a suffix such as `AD-1359b` would add a distinct token). **Predicted ledger movement:** none of any number. AD-1359 is `shipped` through five commit subjects already in the snapshot (`"AD-1359": ["git AD-1359"]`); the plain token adds no new evidence string; a PROGRESS head without a status keyword adds a `mentioned` label and a DECISIONS heading a `shipped` label, which changes no rendered row; the ceilings stay AD-1359 and BF-961. The oracle measures it; section 4 gives the diff shape and the hard stop.
 
+**D8 (amendment A1). Part 1: the suggestions are bounded for the event stream, in their one producer.** Review round 1 found that the HXI event stream drops a whole event for one string that is not valid UTF-8 (`ws_event_stream.py:91-104`), one over 65,536 characters, a list over 4,096 items (`:136-155`) or a frame over 262,144 bytes (`:168-181`), and the hub then drops the event (`:392`, `:582`). D3 carried the model's strings unbounded; the key is new, so each such input delivered its event before this batch.
+
+| # | Option | Judgement |
+|---|---|---|
+| 1 | **Bound in `_review_suggestions` (`builder.py`), the one producer of `BuildResult.review_suggestions`: the first 20 non-blank items, each cut to 500 characters ending `...`, each unpaired surrogate replaced by `?`, a trimmed list logged with its counts** | One place serves both events, the cached report and the report's dict; no key, signature, config or message byte changes; the worst case is a constant, so nothing is measured at run time |
+| 2 | Bound at the two emission points in `routers/build.py` | Two places in a file the censuses read; the cached report keeps the unbounded list; the numbers repeat |
+| 3 | Both | Two copies of the numbers; the helper is the only producer (section 15) |
+| 4 | Make the stream lossy | Wrong layer: a strict boundary with hostile-input cases of its own |
+| 5 | Degrade to a count when over budget (the reviewer's "metadata-only") | Needs a new key or a marker element and a run-time measure; option 1 has nothing to degrade |
+
+**The numbers.** 20 items: a review lists a handful (0.5 percent of the stream's 4,096). 500 characters: a sentence of about 80 words (0.8 percent of 65,536). A control character is six bytes of JSON text (`\u0001`), so 20 items of 500 characters are at most **60,083 bytes** in a frame (24 for the key, brackets and leading comma, 20 x 3,002, 19 commas): 23 percent of the 262,144-byte frame. That leaves 202,061 bytes; three strings of 65,536 characters (`review` and two of `review_issues`, the other model-provided fields at the stream's per-string maximum) take 196,614 and the other keys and the envelope about 900: **about 4.8 KB to spare** (case W3 asserts it). **The invariant:** for any value `json` decodes, `_review_suggestions(raw)` is a list of at most 20 exact `str`, each of at most 500 characters and valid UTF-8; in the success payload or the failure report's dict it adds at most 21 nodes (of 20,000) and depth 3 (of 24), so `detach_json_value` accepts it and `_json_text` at `MAX_FRAME_BYTES` accepts every frame whose other fields fit in 202,061 bytes.
+
+Sub-decisions. (a) An unpaired surrogate becomes `?` (the idiom of `capability_triage._clean`) and the rest of the suggestion is kept. (b) An item over 500 characters keeps 497 and ends `...`. (c) The tail is dropped and the count is the kept count: the message's `, Review suggestions: <n>` and the payload agree (n is at most 20); a trimmed list logs one WARNING with the kept and total counts and no model text. (d) No new key, no config: two module constants, changed only together with case W3. (e) The same exposure of `review` and `review_issues` is base behaviour: recorded, not fixed (L9).
+
 ## 4. Milestones and gates
 
 `PY` = `d:/ProbOS/.venv/Scripts/python.exe`. All commands run **from the repository root**, exactly as typed. **Who runs what.** The Builder may run only the focused pytest files named in G1 and G2 (always `-n 0 -p no:randomly`) and the architecture check. **Mine (the orchestrator's):** the broad gate, the mutation campaign, any wide run, the ledger comparison against the measured diff, the pull request.
@@ -163,7 +178,7 @@ The other dev-side size rules (the Claude Builder profile's line, the Diff Revie
 
 K1 fails on the base at its first assert (the marker count is 0), which is an `AssertionError`; no later line can raise on the base.
 
-**S2 (`tests/test_ad1359_followup_review_suggestions.py`, new; 16 cases).** Imports: the existing modules only (`probos.cognitive.builder`, `probos.events`, `pytest`). Fixtures are the BF-904a and BF-904b files' own (`_control_env`, `_git`, `_init_repo`, `_FakeModel`, `_Runtime`, `_route_modules`), copied, not imported (`tests/test_bf904b_sealed_core_observation.py:44-134`, `tests/test_bf904a_failed_build_restore.py:96-130, 237-245, 265-270`). The model is a fake whose every answer is the review's JSON: the code review is the only model call a build without tests makes. `built` is `pytest.mark.xfail(raises=AssertionError, strict=True)`, redefined as a pass-through at M2 (N2-1, the earlier contracts' form). **Every case that could fail on the base fails at an `assert`:** the new key is read with `.get` and the new attribute with `getattr(obj, name, None)`, the helper is looked up with `getattr(builder_module, "_review_suggestions", None)` and asserted present, and no case unpacks a list or reads an index before asserting its length (`_one`). Every case restores what it patches (`monkeypatch`, `patch`); the failure cache is replaced by a dict of the case's own (`monkeypatch.setattr(build_router, "_pending_failures", {})`), so no entry reaches the shared cache. **The Architect could not run the real-git harness** (a read-only consult): it has the shape of the BF-904a and BF-904b helpers it copies, which are in the suite at `0ef819ca` (not run here), and the first assertions of T1 to T3 after the build name what failed (`_one` on the event, the `premise` messages), so the oracle sees at once whether the build reached the route's emission.
+**S2 (`tests/test_ad1359_followup_review_suggestions.py`, new; 16 cases at M1, 33 after R1: the six rows after T9 are the 17 cases amendment A1 adds).** Imports: the existing modules only (`probos.cognitive.builder`, `probos.events`, `pytest`). Fixtures are the BF-904a and BF-904b files' own (`_control_env`, `_git`, `_init_repo`, `_FakeModel`, `_Runtime`, `_route_modules`), copied, not imported (`tests/test_bf904b_sealed_core_observation.py:44-134`, `tests/test_bf904a_failed_build_restore.py:96-130, 237-245, 265-270`). The model is a fake whose every answer is the review's JSON: the code review is the only model call a build without tests makes. `built` is `pytest.mark.xfail(raises=AssertionError, strict=True)`, redefined as a pass-through at M2 (N2-1, the earlier contracts' form). **Every case that could fail on the base fails at an `assert`:** the new key is read with `.get` and the new attribute with `getattr(obj, name, None)`, the helper is looked up with `getattr(builder_module, "_review_suggestions", None)` and asserted present, and no case unpacks a list or reads an index before asserting its length (`_one`). Every case restores what it patches (`monkeypatch`, `patch`); the failure cache is replaced by a dict of the case's own (`monkeypatch.setattr(build_router, "_pending_failures", {})`), so no entry reaches the shared cache. **The Architect could not run the real-git harness** (a read-only consult): it has the shape of the BF-904a and BF-904b helpers it copies, which are in the suite at `0ef819ca` (not run here), and the first assertions of T1 to T3 after the build name what failed (`_one` on the event, the `premise` messages), so the oracle sees at once whether the build reached the route's emission.
 
 | Case | Kind | Asserts |
 |---|---|---|
@@ -176,6 +191,12 @@ K1 fails on the base at its first assert (the marker count is 0), which is an `A
 | T7 the report copies | **built** | `classify_build_failure` returns a report whose `review_suggestions` equals the result's and is a copy |
 | T8 the report's dict | **built** | `BuildFailureReport().to_dict()` holds `review_suggestions == []`, and a set value appears |
 | T9 coercion, 7 cases | **built** | `_review_suggestions`: `None` gives `[]`; a bare string gives that one; `[]` gives `[]`; `["keep", "", "   ", None, 3, {"k": "v"}]` gives `["keep", "3", "{'k': 'v'}"]`; a tuple of two strings gives both; a mapping and a number give `[]` |
+| W1 the stream, 8 cases (A1) | R1 (3 controls) | each decoded review (ids `clean`, `string-at-the-wire-cap`, `items-at-the-wire-cap`, `lone-surrogate`, `string-over-the-wire-cap`, `items-over-the-wire-cap`, `frame-over-the-wire-cap`, `control-characters`) goes through `_review_suggestions` into the success and the failure event built by the real `_execute_build` (the executor patched to return a result holding the list), and `_finalize_frame`, the stream's last gate, returns `accepted` for both. The first three are controls; on S2 M3's source the other five are refused (`wire_string_invalid`, `wire_string_too_long`, `wire_container_too_large`, `wire_json_too_large`, `wire_json_too_large`) |
+| W2 the bounds, 5 cases (A1) | R1 (1 control) | 20 items of 500 characters stay whole (`at-the-caps`); 21 items give the first 20; 501 characters give 497 and `...`; `["a \ud800 b"]` gives `["a ? b"]`; blank and None items spend none of the 20 |
+| W3 the room, 1 case (A1) | R1 | the worst list (100 items of 10,000 control characters, cut to 20 of 500) with `review` of 65,536 characters, two `review_issues` of 65,536 and `test_result` of 600 is accepted by `_finalize_frame`, with about 4.8 KB to spare |
+| W4 the log, 1 case (A1) | R1 | a list inside the bounds logs nothing; 25 items give 20 and one WARNING of `probos.cognitive.builder` saying `kept 20 of 25` |
+| W5 the seam, success, git (A1) | R1 | a real repository, the real executor and review agent over a reply holding an unpaired surrogate, a 65,537-character item and 30 more: the BUILD_SUCCESS payload is accepted by the stream, holds 20 suggestions, and its message ends `, Review suggestions: 20` |
+| W6 the seam, failure, git (A1) | R1 | the same reply and a build that fails after its review: the BUILD_FAILURE data is accepted, and its report and the cached report hold 20 |
 
 T1 to T3 and the cases of T9 are the "what discards a correct result" cases: a correct suggestion list can be lost by a malformed `issues` (ordering), by blank items (dropped on purpose), by a copy missing from the report, and by a payload key missing at the route. T1 and T3 cross each seam in one test (model reply, parse, executor, result, route, payload); T5 to T8 localise a failure the seam cases report.
 
@@ -876,6 +897,213 @@ REPLACE:
 
 **Ledger.** Run G3. The roadmap Bug Tracker is not edited.
 
+### 7.3 Repair R1 (review round 1; amendment A1)
+
+Review round 1 (one reviewer per slice, on the head `360f8acd`) found that the code review's suggestions can make the HXI event stream drop the whole BUILD_SUCCESS or BUILD_FAILURE event (F1, section 15); S1 had no finding. These blocks are applied to the tree after S2 M3, in one commit, `AD-1359 follow-up S2 R1`, in label order. Every SEARCH occurs exactly once in its file at that point, is ASCII and starts at a line start. No tracker, no generated artifact, no config key and no other file changes.
+
+#### S2 R1
+
+**R1-1.** `src/probos/cognitive/builder.py`. Two constants above the helper and a bounded body (D8): the first 20 items, each cut to 500 characters, each unpaired surrogate replaced, a trimmed list logged.
+SEARCH:
+```
+def _review_suggestions(raw: object) -> list[str]:
+    """AD-1359 follow-up (#1769): the code review's ``suggestions`` as a list of non-blank strings.
+
+    ``CodeReviewAgent._parse_review`` copies the model's JSON as given, so the value may be null, a string or a list
+    of anything: a bare string is one suggestion, a None or blank item is dropped, any other item is its text, and
+    any other value is no suggestion. Never raises (the items are what ``json`` decodes).
+    """
+    items = [raw] if isinstance(raw, str) else raw
+    if not isinstance(items, (list, tuple)):
+        return []
+    return [text for text in (str(item).strip() for item in items if item is not None) if text]
+```
+REPLACE:
+```
+#: AD-1359 follow-up (#1769): what the review's suggestions may put into an event. The HXI stream drops a whole event for
+#: one string that is not valid UTF-8 or is over 65,536 characters, for a list over 4,096 items and for a frame over 262,144
+#: bytes (ws_event_stream.py). A suggestion is a sentence: 20 of at most 500 characters are at most 60,083 bytes of JSON
+#: (a control character is six), under a quarter of the frame, so the event's other fields keep room for three strings of
+#: 65,536 characters.
+_SUGGESTION_MAX_ITEMS = 20
+_SUGGESTION_MAX_CHARS = 500
+
+
+def _review_suggestions(raw: object) -> list[str]:
+    """AD-1359 follow-up (#1769): the code review's ``suggestions`` as a short list of short, wire-safe strings.
+
+    ``CodeReviewAgent._parse_review`` copies the model's JSON as given, so the value may be null, a string or a list
+    of anything: a bare string is one suggestion, a None or blank item is dropped, any other item is its text, and
+    any other value is no suggestion. What is kept is bounded by the two constants above: the first 20 items, each cut
+    to 500 characters with a closing ``...``, each unpaired surrogate (valid JSON text that no stream accepts) replaced
+    by ``?``. A list that is trimmed is logged with its counts. Never raises (the items are what ``json`` decodes).
+    """
+    items = [raw] if isinstance(raw, str) else raw
+    if not isinstance(items, (list, tuple)):
+        return []
+    texts = [text for text in (str(item).strip() for item in items if item is not None) if text]
+    if len(texts) > _SUGGESTION_MAX_ITEMS:
+        logger.warning(
+            "AD-1359 follow-up: the code review's suggestions were trimmed: kept %d of %d",
+            _SUGGESTION_MAX_ITEMS, len(texts),
+        )
+    kept: list[str] = []
+    for text in texts[:_SUGGESTION_MAX_ITEMS]:
+        if len(text) > _SUGGESTION_MAX_CHARS:
+            text = text[:_SUGGESTION_MAX_CHARS - 3] + "..."
+        kept.append(text.encode("utf-8", "replace").decode("utf-8"))
+    return kept
+```
+
+**R1-2.** `tests/test_ad1359_followup_review_suggestions.py`. The 17 cases of the R1 rows (W1 to W6) are appended after T9, the file's last lines. They use the stream's own last gate, `_finalize_frame`, imported inside the helper (the hub calls it for every event it publishes; it composes `detach_json_value` and the frame's JSON at `MAX_FRAME_BYTES`).
+SEARCH:
+```
+    assert helper is not None, "the helper does not exist yet"
+    assert helper(raw) == expected
+```
+REPLACE:
+```
+    assert helper is not None, "the helper does not exist yet"
+    assert helper(raw) == expected
+
+
+# --- the event stream (review round 1) ------------------------------------------------------------------------------
+# The HXI stream drops a whole event for one string that is not valid UTF-8 or over 65,536 characters, a list over 4,096
+# items and a frame over 262,144 bytes. The cases above hand the route an accepting MagicMock emitter; these hand its
+# events to the stream's own last gate.
+
+
+def _stream_verdict(event_type: EventType, data: dict[str, Any]) -> str:
+    """``accepted``, or the code the stream's own finalizer refuses *data* with (the hub then drops the whole event)."""
+    from probos.ws_event_stream import WireValueError, _finalize_frame
+
+    try:
+        _finalize_frame(event_type=event_type.value, data=data, timestamp=1.0, generation="0" * 32, sequence=1)
+    except WireValueError as exc:
+        return str(exc)
+    return "accepted"
+
+
+# What a review's JSON can hold, as ``json.loads`` decodes it; the first three are controls the stream accepts as given.
+WIRE_RAWS = [
+    pytest.param(SUGGESTIONS, id="clean"),
+    pytest.param(["s" * 65_536], id="string-at-the-wire-cap"),
+    pytest.param(["s"] * 4_096, id="items-at-the-wire-cap"),
+    pytest.param(json.loads('["Name the size \\ud800 of the change", "second"]'), id="lone-surrogate"),
+    pytest.param(["s" * 65_537], id="string-over-the-wire-cap"),
+    pytest.param(["s"] * 4_097, id="items-over-the-wire-cap"),
+    pytest.param(["s" * 65_536] * 4, id="frame-over-the-wire-cap"),
+    pytest.param(["\x01" * 65_536], id="control-characters"),  # six bytes a character as JSON text: the frame is over, no string is
+]
+# One review that breaks several rules at once: an unpaired surrogate, a string over the cap, and 30 more items.
+HOSTILE = [json.loads('"Name the size \\ud800 of the change"'), "s" * 65_537, *[f"Suggestion number {n}" for n in range(30)]]
+
+
+@pytest.mark.parametrize("raw", WIRE_RAWS)
+async def test_the_terminal_events_reach_the_event_stream_whatever_the_review_suggested(
+    raw: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+    _, build_router = _route_modules()
+    monkeypatch.setattr(build_router, "_pending_failures", {})  # keep the failure out of the shared cache
+    suggestions = helper(raw)
+    rt = _Runtime()
+    committed = _committed()
+    committed.review_suggestions = list(suggestions)
+    with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=committed):
+        await build_router._execute_build("w1", [], _spec(), "unused", rt)
+    success = _one(_events(rt, EventType.BUILD_SUCCESS), "BUILD_SUCCESS event")
+    assert _stream_verdict(EventType.BUILD_SUCCESS, success) == "accepted", "the stream drops the success event"
+    failed = BuildResult(success=False, spec=_spec(), error="Tests failed after 2 fix attempt(s).")
+    failed.review_suggestions = list(suggestions)
+    with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=failed):
+        await build_router._execute_build("w2", [], _spec(), "unused", rt)
+    failure = _one(_events(rt, EventType.BUILD_FAILURE), "BUILD_FAILURE event")
+    assert _stream_verdict(EventType.BUILD_FAILURE, failure) == "accepted", "the stream drops the failure event"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(["s" * 500] * 20, ["s" * 500] * 20, id="at-the-caps"),
+        pytest.param([f"s{n}" for n in range(21)], [f"s{n}" for n in range(20)], id="one-item-over"),
+        pytest.param(["s" * 501], ["s" * 497 + "..."], id="one-character-over"),
+        pytest.param(["a \ud800 b"], ["a ? b"], id="unpaired-surrogate"),
+        pytest.param(
+            ["", "  ", None] * 30 + [f"s{n}" for n in range(25)], [f"s{n}" for n in range(20)], id="blanks-spend-no-budget",
+        ),
+    ],
+)
+def test_the_suggestions_are_bounded_for_the_event_stream(raw: object, expected: list[str]) -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+    assert helper(raw) == expected
+
+
+async def test_the_most_a_review_can_add_leaves_room_for_the_events_other_fields() -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+    _, build_router = _route_modules()
+    rt = _Runtime()
+    result = _committed()
+    result.review_suggestions = helper(["\x01" * 10_000] * 100)  # six bytes a character: the worst a review can send
+    result.review_result = "r" * 65_536  # the other model-provided strings, each at the stream's per-string maximum
+    result.review_issues = ["i" * 65_536] * 2
+    result.test_result = "t" * 600  # the route keeps 500
+    with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=result):
+        await build_router._execute_build("w3", [], _spec(), "unused", rt)
+    payload = _one(_events(rt, EventType.BUILD_SUCCESS), "BUILD_SUCCESS event")
+    assert _stream_verdict(EventType.BUILD_SUCCESS, payload) == "accepted", "three maximal strings no longer fit"
+    assert len(payload["review_suggestions"]) == 20
+
+
+def test_a_trimmed_list_is_logged_with_its_counts_and_a_list_inside_the_bounds_is_not(caplog: pytest.LogCaptureFixture) -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+
+    def notes() -> list[str]:
+        return [record.getMessage() for record in caplog.records if record.name == "probos.cognitive.builder"]
+
+    with caplog.at_level("WARNING", logger="probos.cognitive.builder"):
+        assert helper(["fine", "also fine"]) == ["fine", "also fine"]
+        assert notes() == [], "a list inside the bounds is not logged"
+        assert len(helper([f"s{n}" for n in range(25)])) == 20
+    assert any("kept 20 of 25" in note for note in notes())
+
+
+@needs_git
+async def test_a_hostile_reviews_success_event_reaches_the_event_stream_through_the_real_executor(tmp_path: Path) -> None:
+    _, build_router = _route_modules()
+    repo = _init_repo(tmp_path / "repo")
+    reply = _reply(approved=True, issues=[], suggestions=HOSTILE, summary="Looks fine")
+    rt = _Runtime(_FakeModel(reply))
+    await _approve(build_router, rt, repo, [_modify(TARGET, "x = 1", "x = 2")], "w5")
+    payload = _one(_events(rt, EventType.BUILD_SUCCESS), "BUILD_SUCCESS event")
+    assert payload["commit"], "premise: the build committed"
+    assert _stream_verdict(EventType.BUILD_SUCCESS, payload) == "accepted", "the stream drops the success event"
+    assert len(payload["review_suggestions"]) == 20
+    assert payload["message"].endswith(", Review suggestions: 20")
+
+
+@needs_git
+async def test_a_hostile_reviews_failure_event_reaches_the_event_stream_through_the_real_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, build_router = _route_modules()
+    cache: dict[str, Any] = {}
+    monkeypatch.setattr(build_router, "_pending_failures", cache)  # keep the entry out of the shared cache
+    repo = _init_repo(tmp_path / "repo")
+    reply = _reply(approved=True, issues=[], suggestions=HOSTILE, summary="Looks fine")
+    rt = _Runtime(_FakeModel(reply))
+    await _approve(build_router, rt, repo, [_create(BAD, BROKEN)], "w6")
+    failure = _one(_events(rt, EventType.BUILD_FAILURE), "BUILD_FAILURE event")
+    assert "report" in failure, "premise: the executor reported a failure and the route classified it"
+    assert _stream_verdict(EventType.BUILD_FAILURE, failure) == "accepted", "the stream drops the failure event"
+    assert len(failure["report"]["review_suggestions"]) == 20
+    assert len(cache["w6"]["report"].review_suggestions) == 20
+```
+
 ## 8. What this does NOT change
 
 **S1.** The Size findings paragraph (`orchestrator.agent.md:48`: not one byte; the new paragraph is a separate paragraph after it), the round-three brake paragraph and every `PROCEDURE` needle (the SEARCH of P2-1 is a prefix of the brake's line and the REPLACE keeps it), the Convergence and A-round paragraphs; the constitution (`.github/copilot-instructions.md`: no byte; its 18,000-byte cap test is untouched); both Diff Reviewer profiles; the Claude Builder, Claude Architect and `CLAUDE.md` text; every crew standing order (`config/standing_orders/`), so the AD-1152 golden and the AD-1200 request fingerprints are untouched; `tests/test_ad1359_agent_size_rules.py`; the 18 existing cases of the layout file.
@@ -884,7 +1112,7 @@ REPLACE:
 
 **All.** `config/system.yaml` and every generated reference; the commercial overlay (OSS only; no dependency; no schema change); every tracker but `PROGRESS.md`, `DECISIONS.md` and the AD ledger pair; the roadmap Bug Tracker table; every file the two earlier batches edit (this batch edits none of them except the four tracker and ledger files).
 
-## 9. Mutation rows (each Line occurs once, stripped, in its file on M2's head)
+## 9. Mutation rows (each Line occurs once, stripped, in its file on M2's head; S2 rows 4 and 14 to 22 on R1's head, amendment A1)
 
 **Not run by the Architect** (a read-only consult cannot run pytest). **Every Line below occurs exactly once in the patched file: the Architect checked it by applying the blocks in memory to the LF blobs of `0ef819ca` and counting** (section 11); the oracle repeats the count on the real patched tree. The oracle's campaign: each row's line replaced whole in the built file (S1: the fragment replaced inside the paragraph's single line), the slice's test file run, the file restored and its blob checked. **This table is the campaign of record only for a tree whose files equal the blobs the blocks give on `0ef819ca`** (sha256 of each edited file to be recorded by the oracle); a Builder whose files match does not repeat it; if a file differs, the rows naming it are rerun. The Killed-by cells are the cases I expect to fail; the oracle reports supersets and corrects them. Case labels are section 6's. The paragraph of the orchestrator profile is one line of the file, so each S1 row names a fragment of it that occurs once in the file.
 
@@ -920,8 +1148,8 @@ REPLACE:
 | 1 | B | `result.review_suggestions = _review_suggestions(review.suggestions)` | the line deleted | T1, T2[list], T3 |
 | 2 | B | `items = [raw] if isinstance(raw, str) else raw` | `items = raw` | T9[bare-string] |
 | 3 | B | `if not isinstance(items, (list, tuple)):` | `if False:` | T9[null], T9[mapping], T9[number], T2[null] |
-| 4 | B | `return [text for text in (str(item).strip() for item in items if item is not None) if text]` | the same without `if item is not None` | T9[mixed-items] |
-| 5 | B | the line of row 4 | the same without the trailing ` if text` | T9[mixed-items] |
+| 4 | B | `texts = [text for text in (str(item).strip() for item in items if item is not None) if text]` | the same without `if item is not None` | T9[mixed-items], W2[blanks-spend-no-budget] |
+| 5 | B | the line of row 4 | the same without the trailing ` if text` | T9[mixed-items], W2[blanks-spend-no-budget] |
 | 6 | B | `review_suggestions: list[str] = field(default_factory=list)  # AD-1359 follow-up (#1769): the review's suggestions, approved or not` | the line deleted | T4, T6 (and the success cases of `tests/test_builder_api.py`) |
 | 7 | B | `review_suggestions: list[str] = field(default_factory=list)  # AD-1359 follow-up (#1769): copied from the build result` | the line deleted | T3, T7, T8 (and every `classify_build_failure` case of `tests/test_builder_agent.py`) |
 | 8 | B | `review_suggestions=list(result.review_suggestions),` | `review_suggestions=[],` | T7, T3 |
@@ -930,6 +1158,15 @@ REPLACE:
 | 11 | R | `"review_suggestions": result.review_suggestions,  # AD-1359 follow-up (#1769)` | the line deleted | T1, T5 |
 | 12 | R | `+ (f", Review suggestions: {len(result.review_suggestions)}" if result.review_suggestions else "")` | `+ ""` | T1, T5 |
 | 13 | R | the line of row 12 | `... if True else "")` (the count shown with none) | T4 |
+| 14 | B | `if len(texts) > _SUGGESTION_MAX_ITEMS:` | `if False:` (a trimmed list logs nothing) | W4 |
+| 15 | B | `for text in texts[:_SUGGESTION_MAX_ITEMS]:` | `for text in texts:` (no cap on the count) | W2[one-item-over], W2[blanks-spend-no-budget], W1[items-over-the-wire-cap], W3, W4, W5, W6 |
+| 16 | B | the line of row 15 | `for text in texts[:_SUGGESTION_MAX_ITEMS - 1]:` (one too few) | W2[at-the-caps], W2[one-item-over], W2[blanks-spend-no-budget], W3, W4, W5, W6 |
+| 17 | B | the line of row 15 | `for text in texts[:_SUGGESTION_MAX_ITEMS + 1]:` (one too many) | W2[one-item-over], W2[blanks-spend-no-budget], W3, W4, W5, W6 |
+| 18 | B | `if len(text) > _SUGGESTION_MAX_CHARS:` | `if False:` (no cut) | W2[one-character-over], W1[string-over-the-wire-cap], W1[frame-over-the-wire-cap], W1[control-characters], W3, W5, W6 |
+| 19 | B | `text = text[:_SUGGESTION_MAX_CHARS - 3] + "..."` | `text = text[:_SUGGESTION_MAX_CHARS] + "..."` (503 characters) | W2[one-character-over] |
+| 20 | B | `kept.append(text.encode("utf-8", "replace").decode("utf-8"))` | `kept.append(text)` (an unpaired surrogate stays) | W2[unpaired-surrogate], W1[lone-surrogate], W5, W6 |
+| 21 | B | `_SUGGESTION_MAX_CHARS = 500` | `_SUGGESTION_MAX_CHARS = 5000` | W2[one-character-over], W3 |
+| 22 | B | `_SUGGESTION_MAX_ITEMS = 20` | `_SUGGESTION_MAX_ITEMS = 200` | W2[one-item-over], W2[blanks-spend-no-budget], W3, W4, W5, W6 |
 
 ## 10. Recorded limits
 
@@ -945,7 +1182,7 @@ REPLACE:
 - **L2.** BUILD_SUCCESS is grandfathered in `event_persistence.py` (no durable record): the suggestions' text exists in the live event and, for a failure, in the cached report (the failure cache, `api.py:52-61`); nothing records it later.
 - **L3.** A review skipped after a model error is carried as the one suggestion its producer writes (`code_reviewer.py:114`) and counted like any other; the count cannot tell it from a real suggestion (the payload text says so).
 - **L4.** The Builder's readings: the card shows them collapsed (`IntentSurface.tsx:69`, `:1403`); the Transporter path replaces the prose with a placeholder (`builder.py:2541`: chunked builds have no single report); after approval nothing carries them (`_execute_build` receives file changes only and `BuildResult.llm_output` is set nowhere). Recorded in the comment of "Batching", not changed.
-- **L5.** The suggestions are unbounded in number and length, like `review_issues`; the model's output limit bounds both.
+- **L5 (corrected by amendment A1).** The suggestions are bounded in their producer: at most 20 items of at most 500 characters (D8), so a frame carries at most 60,083 bytes of them. `review` and `review_issues` are not bounded (L9, section 15), and a list of more than 20 keeps the first 20 (L10).
 - **L6.** The success message shows no count of review issues: a rejected review (the soft gate) still reads "Build complete!" with no hint; the payload carries them as before. An independent item, not filed here.
 - **L7.** The TypeScript interface `BuildFailureReport` (`ui/src/store/types.ts:195-216`) does not list the new key (additive on the wire; nothing in the UI reads the review keys).
 - **L8.** Two paths run no review or replace it: the dispatcher passes no `llm_client` (`build_dispatcher.py:230-239`), so its results hold no suggestions and its queue payloads never carried review data; and an `escalation_hook` that returns its own result (`builder.py:3779-3784`; no production caller passes one) replaces the original's fields.
@@ -1038,7 +1275,7 @@ HOLDS: yes (no enumerated test counts a call, an import, a write or a subprocess
 
 - **Internal prior art, adopted.** AD-341's soft gate and the review's fields (`review_result`, `review_issues`: the shape this batch extends); AD-343's failure report and its dict; the BF-904a and BF-904b real-git harnesses, `_FakeModel` and `_Runtime` (the seam tests); the AD-1359 contract and its amendments (the Size findings paragraph, the layout idiom at `test_brake_handoff_does_not_redefine_frozen`); the BF-930/932 contract's conventions (slices, SEARCH rules, tracker anchors, the ledger gate, mutation rows, the marker removed at M2). **Rejected:** section 3. **External:** none consulted.
 - **Blind spots handled.** (1) The model's JSON is copied as given, so `suggestions` can be null, a string or a list of anything: the helper coerces and never raises (T9). (2) A non-string issue makes `"; ".join(review.issues)` raise before `review_issues` is set: the new assignment sits above that line (T2[null]). (3) A skipped review arrives as a suggestion: counted, limit L3. (4) The success message is byte-identical when there is nothing to show (T4). (5) The shared failure cache: each failure case replaces it with its own dict. (6) `probos.api` must load before `probos.routers.build`: `_route_modules` does it. (7) Working copies are CRLF: the pins read LF text through `_text`. (8) The new paragraph against the duplicate-sentence detector, the 27 `PROCEDURE` needles and the brake test: evaluated (section 11). (9) The ledger: a plain `AD-1359` token only; no suffix, no other number. (10) A sentence added to the Size findings paragraph can widen the exemption without touching any pinned text: the sentence count guards it (X1), and the residual (an in-place reword of an unpinned sentence) is L1. (11) A reviewer profile that stops tagging makes the count read zero for the wrong reason: pinned (R). (12) A measurement that no test can observe: the sentence is pinned so it cannot vanish silently (K1), and the review point checks presence before it reads counts.
-- **What discards a correct result.** Blank and None suggestions (dropped on purpose); a rejected review whose `issues` raise (ordering, T2); a report that does not copy the list (T7); a payload that lacks the key (T1, T5); a HXI that reads `message` only and a BUILD_SUCCESS that is not persisted (limits L1, L2); a pull request that states nothing for zero findings (part 3's sentence: "`0` too"); a finding tagged size by one reviewer only (L4 of S1). **Recorded:** S1 L1 to L5, S2 L1 to L8.
+- **What discards a correct result.** The event stream's own bounds (amendment A1: one string that is not valid UTF-8, one over 65,536 characters, a list over 4,096 items or a frame over 262,144 bytes drops the whole terminal event; the first version of this list named the drops on the producer's side only); blank and None suggestions (dropped on purpose); a rejected review whose `issues` raise (ordering, T2); a report that does not copy the list (T7); a payload that lacks the key (T1, T5); a HXI that reads `message` only and a BUILD_SUCCESS that is not persisted (limits L1, L2); a pull request that states nothing for zero findings (part 3's sentence: "`0` too"); a finding tagged size by one reviewer only (L4 of S1). **Recorded:** S1 L1 to L5, S2 L1 to L8.
 
 ## Batching
 
@@ -1069,18 +1306,21 @@ HOLDS: yes (no enumerated test counts a call, an import, a write or a subprocess
 
 **S1.**
 1. `git diff --stat` for S1 M2 shows two paths: the profile and the layout test; the profile diff is added lines only, one paragraph of about 290 characters; the Size findings paragraph, the brake paragraph and the `PROCEDURE` needles are unchanged (`git diff` shows no removed line in the profile).
-2. The count paragraph is separated from the pinned paragraph by a blank line, lies between the heading of Review Rounds and Progress and the next `## ` heading, is ASCII, and its sentence is in no other governed file (the duplicate-sentence test passes; `git grep -F "silence is not a count"` finds one file).
+2. The count paragraph is separated from the pinned paragraph by a blank line, lies between the heading of Review Rounds and Progress and the next `## ` heading, is ASCII, and its sentence is in no other governed file (the duplicate-sentence test passes; `git grep -F "silence is not a count"` finds three files, the profile, the layout test that pins the sentence and this contract, and the query over the governed files finds only the profile; corrected by amendment A1, the first version said one file).
 3. Every text in `SIZE_EXEMPTION_PARTS`, `SIZE_EXEMPTION_SENTENCE`, `CONSTITUTION_SIZE_EXEMPTION` and `SIZE_TAG` is a verbatim substring of the live file it pins and occurs once there; no pin is weaker than its row of section 9 needs.
 4. No byte of the constitution changed; the file keeps its 18,000-byte cap test; no `xfail` or `@built` remains in the layout file after M2.
 5. The cases restore nothing because they patch nothing; each reads working copies through `_text`.
 
 **S2.**
 1. `result.review_suggestions = _review_suggestions(review.suggestions)` sits directly under `result.review_result = review.summary` and above `if not review.approved:`; the other lines of the block, the `except` arm and the soft gate are byte-identical.
-2. `_review_suggestions` is module-level, next to its only caller, takes `object`, returns `list[str]`, adds no import, does no I/O and cannot raise on what `json` decodes; `BuildResult` and `BuildFailureReport` gain one defaulted field each (`field(default_factory=list)`, no shared list); `to_dict` lists the key; `classify_build_failure` copies.
+2. `_review_suggestions` is module-level, next to its only caller, takes `object`, returns `list[str]`, adds no import, does no I/O (it logs one WARNING when it trims a list) and cannot raise on what `json` decodes; it returns at most 20 items of at most 500 characters, each an exact `str` that encodes as UTF-8 (amendment A1); `BuildResult` and `BuildFailureReport` gain one defaulted field each (`field(default_factory=list)`, no shared list); `to_dict` lists the key; `classify_build_failure` copies.
 3. The success message is byte-identical when `review_suggestions` is empty (T4); the payload keeps every old key; the failure message and category logic are untouched.
 4. No `ui/` file, no config, no event type, no `events.py` change; `git diff --stat` for S2 M2 shows three paths (`builder.py`, `routers/build.py`, the test file).
 5. Every `built` case fails at an `assert` on the base (`--runxfail`); T4 passes on the base; the failure cases replace the cache with their own dict; no case names a crew member, a thread or a live figure.
 6. Consumers: nothing reads the changed files by line (section 11); no census counts a call, an import, a write or a subprocess this batch adds.
+7. (A1.) For any decoded JSON value the list `_review_suggestions` returns, merged into the success payload and the failure report's dict, is accepted by `_finalize_frame` (W1, W3, W5, W6); R1's test block alone on S2 M3's source gives `13 failed, 20 passed`, each failure at an `assert` (the 4 controls pass by design); no expected value of T1 to T9 changed; rows 2 to 5 and 14 to 22 of section 9 are killed as stated.
+8. (A1.) The consumers of the list were traced against the stream's own rules: `ws_event_stream.py` (`_bounded_string`, `detach_json_value`, `_json_text`, `_finalize_frame`, both drop paths), `runtime.py` `_emit_event` (night orders, the durable router, NATS `js_publish`, local listeners), `event_persistence.py` (BUILD_SUCCESS and BUILD_FAILURE are grandfathered), the HXI handlers and the resolve route; R1 edits none of them.
+9. (A1.) The bound is in one place: `rg -n "review_suggestions" src` shows one assignment, and the two constants occur only in `_review_suggestions` and their definitions.
 
 **Both.** Public text: no crew name, thread id, timestamp or live figure in any test, comment, tracker line or commit message; the only AD or BF token at the head of a tracker entry or a commit subject is `AD-1359`; M3's `Refs`, never `Closes`; the pull request body states `Size findings: <n>` for each slice.
 
@@ -1088,8 +1328,52 @@ HOLDS: yes (no enumerated test counts a call, an import, a write or a subprocess
 
 1. G1, G2 and G3 of each slice pass as stated in section 4; the oracle's mutation rows and the broad gate (`--label ad1359-followup`) pass; the three config checks are unchanged.
 2. Removing or loosening any condition of the no-review exemption, the constitution's sentence about it or a reviewer profile's size tag fails a named case (S1 E, X1, C1, R); the count sentence is present, outside the pinned paragraph and inside its section (K1).
-3. A review's suggestions reach the build result, the failure report's dict and the success payload, and the success message counts them only when there are any (T1 to T3, T5 to T8); malformed model output is coerced and never raises (T9); the soft gate and `review_issues` are unchanged (T2).
+3. A review's suggestions reach the build result, the failure report's dict and the success payload, and the success message counts them only when there are any (T1 to T3, T5 to T8); malformed model output is coerced and never raises (T9); what is kept is bounded (at most 20 items of at most 500 characters, unpaired surrogates replaced: W2, W4) so that the HXI event stream accepts every terminal event the list rides on, with room for the event's other fields (W1, W3, W5, W6; amendment A1); the soft gate and `review_issues` are unchanged (T2).
 4. Nothing else changes: the success message without suggestions, the existing payload keys, the failure categories, the queue payloads and the dispatcher path (T4 and the existing suites of G2).
 5. #1769 stays open; every M3 says `Refs`; the comment of "Batching" is posted at merge; the review point is run by the orchestrator and decided by the Architect.
 6. No config key is added; the AD ledger pair is the only generated artifact and moves no number (G3); no `?raw` or source-scan test reads an edited file for a line this batch changes (section 11).
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 15. Amendment A1 (2026-11-13): the suggestions are bounded for the event stream (review round 1 of slice 2)
+
+**Drafted by:** the Copilot Architect (fallback; the Claude Code bridge was logged out), applied by the orchestrator. **Sections 1 to 14 are read with this section; where they differ, this section wins.** The repair is two commits on the head after S2 M3 (`360f8acd`): this contract file, then `AD-1359 follow-up S2 R1` (section 7.3; tier STANDARD: one module function and one test file, no executor body, no route). S1 is unchanged (READY in round 1); no tracker, ledger file, config key or `ui/` file changes.
+
+**The findings** (round 1: one reviewer per slice, both on `360f8acd`).
+
+| # | Slice | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|---|
+| F1 | S2 | The suggestions can discard the whole terminal event: the stream refuses one string that is not valid UTF-8 (an unpaired surrogate, which `json.loads` yields from a `\ud800` escape), one over 65,536 characters, a list over 4,096 items or a frame over 262,144 bytes, and the hub drops the event, so the Captain gets no completion notice or failure card. Reproduced by the S2 reviewer (real git build, real hub) and by the orchestrator (the real validators) | ordinary for the unpaired surrogate; injected-only for the size limits at the default output cap (`LLMRequest.max_tokens` 2,048; `llm_max_tokens_standard` null), ordinary above it | yes (P2): the key is new | fixed: S2 R1-1; cases R1-2 |
+| F2 | S1 | None. One clarification: `git grep -F "silence is not a count"` finds three files (the profile, the layout test, this contract); the query over the governed files finds only the profile | - | no | corrected in place (A1-10) |
+| F3 | S2, base | The same exposure in `review` and `review_issues`: the model's summary and issues are assigned unchanged (`builder.py:3563`, `:3573`) and sent (`routers/build.py:508-509`, `builder.py:200-201`); an unpaired surrogate in either is refused with `wire_string_invalid` on the base (the orchestrator's probe) | ordinary for the surrogate | no: base behaviour | recorded: L9, one item of the wave's consolidated follow-up issue (#1754) |
+
+**Why the contract missed it.** Section 11's consumer table lists the readers of the keys and not the transport's acceptance rules, and section 12's list of what discards a correct result named the producer's side only (blank items, a malformed `issues`, a copy, a key), none downstream of a fully successful review. T1 and T3 give the route an accepting `MagicMock` emitter, so no case met `ws_event_stream.py`: each half of the chain was tested and the seam between them was not. R1 adds the cases that cross it (W1, W3, W5, W6) and the clause in section 12.
+
+**The repair** (D8, section 7.3). `_review_suggestions` keeps its signature and coercion (T9's seven expectations are unchanged) and returns at most 20 items of at most 500 characters; the bound sits in the one producer, so the success payload, the failure report, the cached report and the message count inherit it. `routers/build.py`, the report and `ws_event_stream.py` are not edited. No branch measures a frame: the worst case is a constant (60,083 bytes, 23 percent of the frame).
+
+**The cases** (17 added; the S2 file collects 33; expected, not measured). The 4 controls (W1 `clean`, `string-at-the-wire-cap`, `items-at-the-wire-cap`; W2 `at-the-caps`) pass on S2 M3's source and after R1. The other 13 fail on S2 M3's source, each at its first failing `assert` (W1: the stream's verdict, `wire_string_invalid`, `wire_string_too_long`, `wire_container_too_large`, `wire_json_too_large` twice; W2: the equality; W3: `wire_json_too_large`; W4: `len(...) == 20`; W5 and W6: `wire_string_invalid`) and pass after R1-1. R1's test block alone on S2 M3's source: `13 failed, 20 passed`; with R1-1: `33 passed`. None fails at an import or an exception.
+
+**Measured** (the oracle: A1 and R1 on S2 M3's head). G1: the S2 file `33 passed` (`33` collected). The R1 cases against the unrepaired source: `13 failed, 20 passed`; every failure at an `assert`: `13 of 13 are AssertionError (the stream's verdict, the equality, `len(...) == 20` and the room); none is an import or any other exception`. G2: command 1 `376 passed`, command 2 `225 passed`, the architecture check `passed (srp-size=92, layer-import=0, db-connect=30, unowned-task=13)`. W3's spare room: `4,843` bytes under 262,144. R1's diff: `builder.py` `+25 -3`, the test file `+137 -0`. The ledger check after each commit: `current after the contract commit and after R1 (`tests/test_ad1184_ad_ledger.py` 33 passed); no number moves`. **Mutation rows:** rerun rows 2 to 5 and 14 to 22 on the R1 head (rows 1 and 6 to 13 keep their earlier result: their Lines and killers are unchanged): `13 of 13` give the cells of section 9 (11 as drafted: rows 4 and 5 are also killed by `W2[blanks-spend-no-budget]`, because a blank or `None` item that is not filtered out spends a place of the 20, so their cells above are corrected after the oracle's run); `builder.py` sha256 before `7c58ab63a19b77a4334bf3fe79b705f6517df6f5fcdac5ddc889360d0113d2fd (the LF blob at `360f8acd`)`, after `af989bd1e7e802b1f8736f502f1df7bac02fe01b3450bb8ff86b531c037203ad (the LF blob at R1's head)`.
+
+**Recorded limits (additions).**
+- **S2 L9.** `review` (the model's summary) and `review_issues` (a rejected review's issues) reach the success payload and the failure report's dict unbounded and unchecked: one unpaired surrogate, a string over 65,536 characters, a list over 4,096 items, a non-finite float (a JSON `NaN` decodes to one) or a frame over 262,144 bytes drops the whole event. Base behaviour, not a regression; recorded in #1754 (severity P2, reach ordinary for the surrogate). Fix shape: the producer-side bound of D8 where `builder.py:3563` and `:3573` assign the two fields, with a case per field through `_finalize_frame`. This batch no longer adds more than a quarter of a frame to the exposure.
+- **S2 L10.** A review that returns more than 20 non-blank suggestions keeps the first 20 (the payload, the report and the message count agree); the total is in one WARNING of `probos.cognitive.builder`; a suggestion over 500 characters ends `...`. The two numbers are constants of `builder.py`: change them only together with case W3.
+
+**Superseded readings.** The header's estimate for S2 (16 cases) is 33 after R1, and G1 for S2 gives `33 passed`. Section 7.2's P2-5 is the S2 M2 text of the helper; R1-1 replaces it. D3 (b) "coerced at the consumer" includes the bound (D8), and section 2's "one pure helper coerces the model's JSON" reads "coerces and bounds". Section 11's consumer table gains the transport: `ws_event_stream.py:91-230` (refuses strings, lists and frames, and drops whole events), `runtime.py:1939-1985` and `mesh/nats_bus.py:914` (carry the event on), `event_persistence.py:169` and `:176` (do not persist it); none is edited. The comment posted on #1769 at merge says in part (1) that the suggestions are "bounded to 20 items of at most 500 characters"; the pull request body states R1 and the L9 item. Section 5 gains the two commits above.
+
+**Absence Verified (A1)** (2026-11-13, tree `D:\ProbOS-worktrees\a1769-build` at `360f8acd`, read-only).
+
+```
+CLAIM: _review_suggestions is the only producer of BuildResult.review_suggestions, hence of the report's and the event's list
+RUN:   rg -n "review_suggestions" src; rg -n "BuildResult\(|BuildFailureReport\(|\.review_suggestions\s*=" src
+FOUND: one assignment (builder.py:3565, unchanged by R1), one copy (:224), one dict key (:202), two route reads (routers/build.py:510, :516); BuildResult( at builder.py:3302 with keywords success and spec only; BuildFailureReport( at :215
+HOLDS: yes. Positive control: rg -n "review_issues" src finds the analogous lines (builder.py:143, :177, :201, :223, :3573; routers/build.py:509)
+
+CLAIM: nothing between the model's JSON and the wire bounds review or review_issues
+RUN:   rg -n "review\.summary|review\.issues|\.review_result\b|review_issues" src
+FOUND: builder.py:3563 and :3573 assign the model's values unchanged; :200-201 and :222-223 copy them; routers/build.py:508-509 send them
+HOLDS: yes (L9). Positive control: rg -n "_review_suggestions\(" src finds the one bounded path (builder.py:3250, :3565); no such call wraps review.summary or review.issues
+```
+
+**Verified (A1).** The LF copy of the contract has the blob of the file at `360f8acd` (`20fb95cb`); `builder.py` `e37b190c` and the S2 test file `32540046` are `i/lf w/crlf`. Every SEARCH of A1-1 to A1-13, R1-1 and R1-2 occurs once, at a line start, ASCII, on the LF blobs (counted read-only; the apply tool repeats it), and each Line of rows 4 and 14 to 22 occurs once on the patched `builder.py`. The new helper and test block were read, not run.
+
+**What A1 changes.** The header, section 3 (D8), section 6 (the S2 count and six rows), section 9 (the heading, row 4, rows 14 to 22), section 10 (L5), section 12 (one clause), section 13 (S1 property 2, S2 property 2, properties 7 to 9), section 14 (criterion 3), section 7.3 (two blocks) and this section. **What it does not:** no block of 7.1 or 7.2; `routers/build.py`, `ws_event_stream.py`, the report, the trackers, S1 and `ui/`.
