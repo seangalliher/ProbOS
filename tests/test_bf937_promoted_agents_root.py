@@ -65,7 +65,6 @@ async def test_a_root_outside_the_checkout_still_writes(tmp_path: Path) -> None:
     assert "agent_type: foo_agent" in meta and "version: 1" in meta
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="BF-937 S2 M2: persistence refuses a root inside the source checkout (#1678)")
 class TestPersistenceNeverWritesIntoTheSourceCheckout:
     @pytest.mark.parametrize(
         "where",

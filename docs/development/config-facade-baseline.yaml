@@ -53,7 +53,7 @@ surface_counts:
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: 41fef1f6a011eb90dea0f4087dea94e9c293a4826459ea0ebf96ea30a49ee4fd
+canonical_dump_sha256: 5658987ad1ad4a36ec30227ac0788ea77a10aa3e47a483c6d7fc8eb5f81776aa
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -3235,14 +3235,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: bd5e994169a634451e4928a6010863024e13ec969a3b571ce7dae1003f8c482b
+    schema_sha256: 874991ac8416b1cc90e16e07fe0463e01bf6a7fa5ee595dda898e8dfd5726ea3
     fields:
     - {default: 'False', name: enabled}
     - {default: '3', name: qa_pool_size}
     - {default: '5', name: iteration_cap}
     - {default: '2592000.0', name: evolution_half_life_seconds}
     - {default: '''self_improvement_lessons''', name: evolution_collection_name}
-    - {default: '''src/probos/agents/designed''', name: persistence_root_dir}
+    - {default: '''''', name: persistence_root_dir}
   SelfModConfig:
     qualname: SelfModConfig
     bases:
@@ -3427,7 +3427,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 0e8cf01bfebdf993b070bb0754a7fb70ac8a43c906b655503867a0ae4fe71a16
+    schema_sha256: a20888ca2c68e0e8b4d8b4259644b8aacdc526e605a37f805041a8525ae6ccb4
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

@@ -254,7 +254,7 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'ArchiveConfig': {'enabled': 
                                  'iteration_cap': 5,
                                  'evolution_half_life_seconds': 2592000.0,
                                  'evolution_collection_name': 'self_improvement_lessons',
-                                 'persistence_root_dir': 'src/probos/agents/designed'},
+                                 'persistence_root_dir': ''},  # BF-937 (#1678): was 'src/probos/agents/designed'; empty = {data_dir}/promoted-agents
     'SocialVerificationConfig': {   'enabled': True,
                                     'corroboration_threshold': 0.4,
                                     'corroboration_max_agents': 5,

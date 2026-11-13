@@ -1996,7 +1996,7 @@ self_improvement:
   iteration_cap: 5
   evolution_half_life_seconds: 2592000.0
   evolution_collection_name: self_improvement_lessons
-  persistence_root_dir: src/probos/agents/designed
+  persistence_root_dir: ""  # BF-937 (#1678): empty = {data_dir}/promoted-agents; a directory inside the source checkout is refused
 # BF-926 (#1656): inert. No production code acts on this section; enabled: true turns nothing on (#1324).
 memory_budget:
   enabled: true

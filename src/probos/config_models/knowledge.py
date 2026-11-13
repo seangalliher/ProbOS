@@ -462,7 +462,8 @@ class SelfImprovementConfig(BaseModel):
 
     Default-False -- operator opt-in. The pipeline spawns real QA agents, opens a
     new ChromaDB collection, and writes promoted agents to
-    ``src/probos/agents/designed/``. AD-633 / AD-695 default-False precedent.
+    ``{data_dir}/promoted-agents/`` (BF-937: never into the source checkout).
+    AD-633 / AD-695 default-False precedent.
     """
 
     enabled: bool = False
@@ -470,7 +471,13 @@ class SelfImprovementConfig(BaseModel):
     iteration_cap: int = Field(default=5, ge=1, le=20)
     evolution_half_life_seconds: float = Field(default=2592000.0, ge=1.0)  # 30 days
     evolution_collection_name: str = "self_improvement_lessons"
-    persistence_root_dir: str = "src/probos/agents/designed"
+    persistence_root_dir: str = Field(
+        default="",
+        description=(
+            "Where promoted agent source is written. Empty means {data_dir}/promoted-agents. A directory inside the "
+            "source checkout ProbOS runs from is refused (BF-937, #1678): repository changes go through GitHub."
+        ),
+    )
 
 
 class ConsultationConfig(BaseModel):
