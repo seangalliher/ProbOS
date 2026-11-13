@@ -1691,6 +1691,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G4 (the pins).* The AD-1152 golden embeds the native builder's whole composed prompt; it is refreshed by the AD-1359 procedure, one replacement per file, two lines changed. The AD-1200 fixture holds the byte counts and digests of the native builder's requests; its ten values are refreshed by running the test's own capture (the AD-1359 precedent), and each grew by exactly the JSON-escaped length of the added text. Rejected: composing the harness without orders; regenerating the AD-1152 golden from the code under test.
 - *Residual.* L1 to L14 of the contract. *Reversal.* Revert the BF-936 M2 commit (the three files, the two fixtures and the marker's removal together); the tests return to xfail.
 
+### BF-937 slice 1 -- The build-approve route and both HXI call sites say that a build is not merged and where its candidate branch is kept (2026-11-12, #1678)
+
+- *Scope.* `routers/build.py` (`/queue/approve`), `ui/src/store/buildQueueApprove.ts` (new), `IntentSurface.tsx`, `bridge/FullKanban.tsx`, `store/useStore.ts` (the `reviewing` line), `tests/test_dispatch_wiring.py`, tests, one line of `docs/development/deterministic-ship.md`. Contract `prompts/bf-937-legacy-self-modification-leftovers.md`.
+- *G1 (the answer).* HTTP 200, `status: "unavailable"`, `code`, `merged: false`, the branch, the worktree and the commit, and a message; the route calls nothing. Rejected: HTTP 409 or 501 (the router answers 200 everywhere and no consumer reads the status line); a `build_failure` event (it names a failure for a build that is fine, clears an unrelated build's progress, and BF-897 refused it for this route); keeping the call to `approve_and_merge` and typing its text.
+- *G2 (the call sites).* One helper; a chat line in `IntentSurface`, a note under the card in `FullKanban`. Rejected: a hidden or disabled control with a fixed explanation (a static claim that AD-1336 child 6 reverses).
+- *G3 (the seam).* `approve_and_merge` and `merge_to_main` are unchanged and have no production caller until AD-1336 child 6 re-wires them or replaces the queue.
+- *Residual.* L1 to L9 of the contract (S1). *Reversal.* Revert the BF-937 slice 1 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
