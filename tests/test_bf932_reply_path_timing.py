@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -96,7 +95,7 @@ def _runtime(order: list[str], *, perception: bool = True, fail: bool = False, f
     agent.agent_type = "science_officer"
     agent.confidence = 0.7
     runtime.registry.get.return_value = agent
-    runtime.callsign_registry.get_callsign.return_value = "Lynx"
+    runtime.callsign_registry.get_callsign.return_value = "test-callsign"
     result = MagicMock()
     result.result = "Acknowledged."
     result.error = None
@@ -197,19 +196,31 @@ async def test_r6_a_failing_logger_changes_nothing(monkeypatch) -> None:
     real = agents_router.logger
 
     class _Logger:
-        """The route's logger, except that its INFO call raises for a BF-932 line only."""
+        """The route's logger, except that its INFO call raises for a BF-932 line and its DEBUG call for the helper's note of it."""
+
+        def __init__(self) -> None:
+            self.failed = {"info": 0, "debug": 0}
 
         def __getattr__(self, name):
             return getattr(real, name)
 
         def info(self, msg, *args, **kwargs):
             if str(msg).startswith("BF-932:"):
+                self.failed["info"] += 1
                 raise RuntimeError("handler failed")
             return real.info(msg, *args, **kwargs)
 
-    monkeypatch.setattr(agents_router, "logger", _Logger())
+        def debug(self, msg, *args, **kwargs):
+            if str(msg).startswith("BF-930:"):
+                self.failed["debug"] += 1
+                raise RuntimeError("handler failed")
+            return real.debug(msg, *args, **kwargs)
+
+    failing = _Logger()
+    monkeypatch.setattr(agents_router, "logger", failing)
     answer = await _dm(_runtime([]))
     assert answer["response"] == "Acknowledged."
+    assert failing.failed == {"info": 1, "debug": 1}
 
 
 @built
