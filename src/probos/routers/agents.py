@@ -61,6 +61,8 @@ from probos.threads.agent_mode import AGENT_MODE_PLAN
 from probos.routers.deps import get_runtime
 from probos.routers.auth import require_crew_scope, verify_ws_token
 
+from probos.utils.step_timing import emit_line, ms_between
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["agents"])
@@ -2956,6 +2958,10 @@ async def _agent_chat_impl(
     ],
 ) -> dict[str, Any]:
     """The agent-chat handler proper. See `agent_chat` for why it is split."""
+    # BF-932: log-only stamps of the Captain-DM timeline (``time.perf_counter``); one line is written after the send.
+    _t_entry = time.perf_counter()
+    _t_thread = _t_vision = _t_hook0 = _t_hook1 = _t_entry
+    _hook = "skipped"
     agent = runtime.registry.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
@@ -3136,6 +3142,8 @@ async def _agent_chat_impl(
                 "AD-791a: append captain message failed for thread=%s agent=%s",
                 thread.id, agent_id, exc_info=True,
             )
+
+    _t_thread = time.perf_counter()  # BF-932: log-only; the thread-store calls above run synchronously on the event loop
 
     # AD-743: Captain interruption cancels any pending pacing follow-up so the
     # synthesized user-turn doesn't double-fire after a fresh Captain message.
@@ -3455,6 +3463,8 @@ async def _agent_chat_impl(
         )
     )
 
+    _t_vision = time.perf_counter()  # BF-932: log-only
+
     # AD-733a (Wave 171): prepend the agent's current visual context.
     # Confabulation guard (BF-294 lesson): render_for_prompt returns a
     # non-empty "no data" sentinel when the buffer is empty, so the agent
@@ -3475,6 +3485,8 @@ async def _agent_chat_impl(
             if _consumer is not None and getattr(
                 _perception_cfg, "dm_force_describe_enabled", True,
             ):
+                _hook = "ran"  # BF-932: log-only
+                _t_hook0 = time.perf_counter()
                 try:
                     await _consumer.force_describe_current_frame(timeout_s=4.0)
                 except Exception:
@@ -3482,6 +3494,7 @@ async def _agent_chat_impl(
                         "AD-733c-1: force_describe raised for %s",
                         agent_id, exc_info=True,
                     )
+                _t_hook1 = time.perf_counter()
             # AD-733c-2: notify the mode controller of DM activity so the
             # AMBIENT -> ENGAGED transition (and ENGAGED freshness) tracks
             # the real conversational tempo.
@@ -3678,8 +3691,20 @@ async def _agent_chat_impl(
     # is the request was refused. DP 13(c): a refusal must not wear an outage
     # costume. The app-wide handler renders 403; the only ``except Exception``
     # below this point wraps the thread append, so the denial reaches it.
+    _t_send0 = time.perf_counter()  # BF-932: log-only
     result = None if _held_notice else await runtime.intent_bus.send(
         intent, raise_on_denial=True,
+    )
+    _t_send1 = time.perf_counter()
+    # BF-932: one line per Captain DM: where its time went before the agent's turn and during it (milliseconds, monotonic
+    # clock). ``intent`` is the id the agent's own ``BF-932: dm turn`` line carries.
+    emit_line(
+        logger,
+        "BF-932: dm route intent=%s agent=%s thread_ms=%.0f prep_ms=%.0f hook=%s hook_ms=%.0f dispatch_ms=%.0f "
+        "send_ms=%.0f total_ms=%.0f sent=%s",
+        intent.id[:8], agent_id[:12], ms_between(_t_entry, _t_thread), ms_between(_t_thread, _t_vision), _hook,
+        ms_between(_t_hook0, _t_hook1), ms_between(_t_vision, _t_send0) - ms_between(_t_hook0, _t_hook1),
+        ms_between(_t_send0, _t_send1), ms_between(_t_entry, _t_send1), "no" if _held_notice else "yes",
     )
 
     callsign = ""

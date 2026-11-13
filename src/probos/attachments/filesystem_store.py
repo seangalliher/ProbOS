@@ -38,6 +38,7 @@ from probos.attachments.store import (
     ATTACHMENT_ORIGINS,
     AttachmentStoreFullError,
 )
+from probos.utils.step_timing import TimingLines, ms_between
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ _T = TypeVar("_T")
 ATTACHMENT_IO_WORKERS = 4
 #: BF-918 M4: the name prefix of those threads (``probos-attachment-io_0`` ...).
 ATTACHMENT_IO_THREAD_PREFIX = "probos-attachment-io"
+#: BF-930: a write or a lookup that takes at least this long (milliseconds) is reported with its steps (log-only).
+SLOW_STORE_CALL_MS = 250.0
 
 
 async def _finish_cancelled(call: asyncio.Future[Any]) -> None:
@@ -147,6 +150,10 @@ class FilesystemAttachmentStore:
         self._index_path = self._root / ".index.json"
         self._index: dict[str, dict[str, Any]] = self._load_index_sync()
         self._lock = asyncio.Lock()
+        # BF-930: log-only. The call that holds ``_lock`` (each acquirer names itself) and the bounded timing lines.
+        self._lock_holder = ""
+        self._write_lines = TimingLines(logger)
+        self._find_lines = TimingLines(logger)
 
     # ---- BF-918 M4 (#1626): the store's own I/O threads ---------------
 
@@ -325,8 +332,14 @@ class FilesystemAttachmentStore:
         ENOSPC.
         """
         normalized_origin = self._normalize_origin(origin)
+        # BF-930: log-only. What holds the lock as this call arrives, and where this call's own time goes.
+        holder_on_arrival = self._lock_holder if self._lock.locked() else ""
+        t_enter = time.perf_counter()
         async with self._lock:
+            t_locked = time.perf_counter()
+            self._lock_holder = f"write:{normalized_origin}"
             path, present = await self._run(self._locate_sync, content_hash, mime)
+            t_located = time.perf_counter()
             need_write = not present
             if need_write:
                 try:
@@ -343,6 +356,7 @@ class FilesystemAttachmentStore:
                             ex.errno, "attachment store out of space"
                         ) from ex
                     raise
+            t_blob = time.perf_counter()
             # Index update (always: re-touches written_at on idempotent re-write).
             entry = self._index.get(content_hash)
             now = time.time()
@@ -363,6 +377,16 @@ class FilesystemAttachmentStore:
                 entry.setdefault("size_bytes", len(blob))
             # BF-918 M4: still under the lock, so no other call changes the index while it is written.
             await self._run(self._save_index_sync)
+            t_index = time.perf_counter()
+        total_ms = ms_between(t_enter, t_index)
+        if total_ms >= SLOW_STORE_CALL_MS:  # BF-930: log-only; a write that failed raised above and logs nothing
+            self._write_lines.emit(
+                "BF-930: attachment write slow id=%s origin=%s bytes=%d total_ms=%.0f lock_wait_ms=%.0f "
+                "locate_ms=%.0f blob_ms=%.0f index_ms=%.0f behind=%s index_entries=%d",
+                content_hash[:8], normalized_origin, len(blob), total_ms, ms_between(t_enter, t_locked),
+                ms_between(t_locked, t_located), ms_between(t_located, t_blob), ms_between(t_blob, t_index),
+                holder_on_arrival or "none", len(self._index),
+            )
         return path
 
     async def _find(self, content_hash: str) -> Path | None:
@@ -372,9 +396,16 @@ class FilesystemAttachmentStore:
             or not all(c in "0123456789abcdef" for c in content_hash)
         ):
             raise ValueError(f"AD-720: malformed content_hash {content_hash!r}")
+        t_find = time.perf_counter()
         matches = await self._run(
             lambda: list(self._root.glob(f"{content_hash}.*")),
         )
+        find_ms = ms_between(t_find, time.perf_counter())
+        if find_ms >= SLOW_STORE_CALL_MS:  # BF-930: log-only
+            self._find_lines.emit(
+                "BF-930: attachment find slow id=%s find_ms=%.0f index_entries=%d",
+                content_hash[:8], find_ms, len(self._index),
+            )
         return matches[0] if matches else None
 
     async def read(self, content_hash: str) -> bytes:
@@ -404,6 +435,7 @@ class FilesystemAttachmentStore:
         the desired post-state is "not present", which is satisfied.
         """
         async with self._lock:
+            self._lock_holder = "unlink"  # BF-930: log-only
             path = await self._find(content_hash)
             existed = False
             if path is not None:
@@ -447,6 +479,7 @@ class FilesystemAttachmentStore:
         ``written_at``, or its blob could not be removed.
         """
         async with self._lock:
+            self._lock_holder = "reaper_unlink"  # BF-930: log-only
             entry = self._index.get(content_hash)
             if entry is None or entry.get("origin", "chat_attachment") != origin:
                 return None
@@ -482,6 +515,7 @@ class FilesystemAttachmentStore:
         """
         normalized = self._normalize_origin(origin)
         async with self._lock:
+            self._lock_holder = "list_by_origin"  # BF-930: log-only
             rows: list[tuple[str, float]] = []
             for sha, entry in self._index.items():
                 if entry.get("origin", "chat_attachment") == normalized:
@@ -497,6 +531,7 @@ class FilesystemAttachmentStore:
         the index is empty (cold-boot before any write).
         """
         async with self._lock:
+            self._lock_holder = "total_size"  # BF-930: log-only
             if self._index:
                 total = 0
                 for entry in self._index.values():
