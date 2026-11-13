@@ -3247,17 +3247,39 @@ def _check_sealed_path(change_path: str, sealed_globs: tuple[str, ...]) -> None:
 BuilderAgent = SoftwareEngineerAgent
 
 
+#: AD-1359 follow-up (#1769): what the review's suggestions may put into an event. The HXI stream drops a whole event for
+#: one string that is not valid UTF-8 or is over 65,536 characters, for a list over 4,096 items and for a frame over 262,144
+#: bytes (ws_event_stream.py). A suggestion is a sentence: 20 of at most 500 characters are at most 60,083 bytes of JSON
+#: (a control character is six), under a quarter of the frame, so the event's other fields keep room for three strings of
+#: 65,536 characters.
+_SUGGESTION_MAX_ITEMS = 20
+_SUGGESTION_MAX_CHARS = 500
+
+
 def _review_suggestions(raw: object) -> list[str]:
-    """AD-1359 follow-up (#1769): the code review's ``suggestions`` as a list of non-blank strings.
+    """AD-1359 follow-up (#1769): the code review's ``suggestions`` as a short list of short, wire-safe strings.
 
     ``CodeReviewAgent._parse_review`` copies the model's JSON as given, so the value may be null, a string or a list
     of anything: a bare string is one suggestion, a None or blank item is dropped, any other item is its text, and
-    any other value is no suggestion. Never raises (the items are what ``json`` decodes).
+    any other value is no suggestion. What is kept is bounded by the two constants above: the first 20 items, each cut
+    to 500 characters with a closing ``...``, each unpaired surrogate (valid JSON text that no stream accepts) replaced
+    by ``?``. A list that is trimmed is logged with its counts. Never raises (the items are what ``json`` decodes).
     """
     items = [raw] if isinstance(raw, str) else raw
     if not isinstance(items, (list, tuple)):
         return []
-    return [text for text in (str(item).strip() for item in items if item is not None) if text]
+    texts = [text for text in (str(item).strip() for item in items if item is not None) if text]
+    if len(texts) > _SUGGESTION_MAX_ITEMS:
+        logger.warning(
+            "AD-1359 follow-up: the code review's suggestions were trimmed: kept %d of %d",
+            _SUGGESTION_MAX_ITEMS, len(texts),
+        )
+    kept: list[str] = []
+    for text in texts[:_SUGGESTION_MAX_ITEMS]:
+        if len(text) > _SUGGESTION_MAX_CHARS:
+            text = text[:_SUGGESTION_MAX_CHARS - 3] + "..."
+        kept.append(text.encode("utf-8", "replace").decode("utf-8"))
+    return kept
 
 
 async def execute_approved_build(

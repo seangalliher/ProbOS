@@ -289,3 +289,140 @@ def test_the_reviews_suggestions_are_coerced_to_non_blank_strings(raw: object, e
     helper = getattr(builder_module, "_review_suggestions", None)
     assert helper is not None, "the helper does not exist yet"
     assert helper(raw) == expected
+
+
+# --- the event stream (review round 1) ------------------------------------------------------------------------------
+# The HXI stream drops a whole event for one string that is not valid UTF-8 or over 65,536 characters, a list over 4,096
+# items and a frame over 262,144 bytes. The cases above hand the route an accepting MagicMock emitter; these hand its
+# events to the stream's own last gate.
+
+
+def _stream_verdict(event_type: EventType, data: dict[str, Any]) -> str:
+    """``accepted``, or the code the stream's own finalizer refuses *data* with (the hub then drops the whole event)."""
+    from probos.ws_event_stream import WireValueError, _finalize_frame
+
+    try:
+        _finalize_frame(event_type=event_type.value, data=data, timestamp=1.0, generation="0" * 32, sequence=1)
+    except WireValueError as exc:
+        return str(exc)
+    return "accepted"
+
+
+# What a review's JSON can hold, as ``json.loads`` decodes it; the first three are controls the stream accepts as given.
+WIRE_RAWS = [
+    pytest.param(SUGGESTIONS, id="clean"),
+    pytest.param(["s" * 65_536], id="string-at-the-wire-cap"),
+    pytest.param(["s"] * 4_096, id="items-at-the-wire-cap"),
+    pytest.param(json.loads('["Name the size \\ud800 of the change", "second"]'), id="lone-surrogate"),
+    pytest.param(["s" * 65_537], id="string-over-the-wire-cap"),
+    pytest.param(["s"] * 4_097, id="items-over-the-wire-cap"),
+    pytest.param(["s" * 65_536] * 4, id="frame-over-the-wire-cap"),
+    pytest.param(["\x01" * 65_536], id="control-characters"),  # six bytes a character as JSON text: the frame is over, no string is
+]
+# One review that breaks several rules at once: an unpaired surrogate, a string over the cap, and 30 more items.
+HOSTILE = [json.loads('"Name the size \\ud800 of the change"'), "s" * 65_537, *[f"Suggestion number {n}" for n in range(30)]]
+
+
+@pytest.mark.parametrize("raw", WIRE_RAWS)
+async def test_the_terminal_events_reach_the_event_stream_whatever_the_review_suggested(
+    raw: object, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+    _, build_router = _route_modules()
+    monkeypatch.setattr(build_router, "_pending_failures", {})  # keep the failure out of the shared cache
+    suggestions = helper(raw)
+    rt = _Runtime()
+    committed = _committed()
+    committed.review_suggestions = list(suggestions)
+    with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=committed):
+        await build_router._execute_build("w1", [], _spec(), "unused", rt)
+    success = _one(_events(rt, EventType.BUILD_SUCCESS), "BUILD_SUCCESS event")
+    assert _stream_verdict(EventType.BUILD_SUCCESS, success) == "accepted", "the stream drops the success event"
+    failed = BuildResult(success=False, spec=_spec(), error="Tests failed after 2 fix attempt(s).")
+    failed.review_suggestions = list(suggestions)
+    with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=failed):
+        await build_router._execute_build("w2", [], _spec(), "unused", rt)
+    failure = _one(_events(rt, EventType.BUILD_FAILURE), "BUILD_FAILURE event")
+    assert _stream_verdict(EventType.BUILD_FAILURE, failure) == "accepted", "the stream drops the failure event"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param(["s" * 500] * 20, ["s" * 500] * 20, id="at-the-caps"),
+        pytest.param([f"s{n}" for n in range(21)], [f"s{n}" for n in range(20)], id="one-item-over"),
+        pytest.param(["s" * 501], ["s" * 497 + "..."], id="one-character-over"),
+        pytest.param(["a \ud800 b"], ["a ? b"], id="unpaired-surrogate"),
+        pytest.param(
+            ["", "  ", None] * 30 + [f"s{n}" for n in range(25)], [f"s{n}" for n in range(20)], id="blanks-spend-no-budget",
+        ),
+    ],
+)
+def test_the_suggestions_are_bounded_for_the_event_stream(raw: object, expected: list[str]) -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+    assert helper(raw) == expected
+
+
+async def test_the_most_a_review_can_add_leaves_room_for_the_events_other_fields() -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+    _, build_router = _route_modules()
+    rt = _Runtime()
+    result = _committed()
+    result.review_suggestions = helper(["\x01" * 10_000] * 100)  # six bytes a character: the worst a review can send
+    result.review_result = "r" * 65_536  # the other model-provided strings, each at the stream's per-string maximum
+    result.review_issues = ["i" * 65_536] * 2
+    result.test_result = "t" * 600  # the route keeps 500
+    with patch("probos.cognitive.builder.execute_approved_build", new_callable=AsyncMock, return_value=result):
+        await build_router._execute_build("w3", [], _spec(), "unused", rt)
+    payload = _one(_events(rt, EventType.BUILD_SUCCESS), "BUILD_SUCCESS event")
+    assert _stream_verdict(EventType.BUILD_SUCCESS, payload) == "accepted", "three maximal strings no longer fit"
+    assert len(payload["review_suggestions"]) == 20
+
+
+def test_a_trimmed_list_is_logged_with_its_counts_and_a_list_inside_the_bounds_is_not(caplog: pytest.LogCaptureFixture) -> None:
+    helper = getattr(builder_module, "_review_suggestions", None)
+    assert helper is not None, "the helper does not exist"
+
+    def notes() -> list[str]:
+        return [record.getMessage() for record in caplog.records if record.name == "probos.cognitive.builder"]
+
+    with caplog.at_level("WARNING", logger="probos.cognitive.builder"):
+        assert helper(["fine", "also fine"]) == ["fine", "also fine"]
+        assert notes() == [], "a list inside the bounds is not logged"
+        assert len(helper([f"s{n}" for n in range(25)])) == 20
+    assert any("kept 20 of 25" in note for note in notes())
+
+
+@needs_git
+async def test_a_hostile_reviews_success_event_reaches_the_event_stream_through_the_real_executor(tmp_path: Path) -> None:
+    _, build_router = _route_modules()
+    repo = _init_repo(tmp_path / "repo")
+    reply = _reply(approved=True, issues=[], suggestions=HOSTILE, summary="Looks fine")
+    rt = _Runtime(_FakeModel(reply))
+    await _approve(build_router, rt, repo, [_modify(TARGET, "x = 1", "x = 2")], "w5")
+    payload = _one(_events(rt, EventType.BUILD_SUCCESS), "BUILD_SUCCESS event")
+    assert payload["commit"], "premise: the build committed"
+    assert _stream_verdict(EventType.BUILD_SUCCESS, payload) == "accepted", "the stream drops the success event"
+    assert len(payload["review_suggestions"]) == 20
+    assert payload["message"].endswith(", Review suggestions: 20")
+
+
+@needs_git
+async def test_a_hostile_reviews_failure_event_reaches_the_event_stream_through_the_real_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, build_router = _route_modules()
+    cache: dict[str, Any] = {}
+    monkeypatch.setattr(build_router, "_pending_failures", cache)  # keep the entry out of the shared cache
+    repo = _init_repo(tmp_path / "repo")
+    reply = _reply(approved=True, issues=[], suggestions=HOSTILE, summary="Looks fine")
+    rt = _Runtime(_FakeModel(reply))
+    await _approve(build_router, rt, repo, [_create(BAD, BROKEN)], "w6")
+    failure = _one(_events(rt, EventType.BUILD_FAILURE), "BUILD_FAILURE event")
+    assert "report" in failure, "premise: the executor reported a failure and the route classified it"
+    assert _stream_verdict(EventType.BUILD_FAILURE, failure) == "accepted", "the stream drops the failure event"
+    assert len(failure["report"]["review_suggestions"]) == 20
+    assert len(cache["w6"]["report"].review_suggestions) == 20
