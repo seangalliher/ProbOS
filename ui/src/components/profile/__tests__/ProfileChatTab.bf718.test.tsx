@@ -755,3 +755,128 @@ describe('BF-765 — the claim outlives the mount', () => {
     expect(scope!.keys.size).toBeGreaterThan(0);
   });
 });
+
+/** BF-928 (#1666): the first transcript load of a scope is history, whatever triggered it. The cases the unfixed
+ *  tree fails are `built`, which is `it.fails` until BF-928 M2 sets it to `it`; with BF928_RUNXFAIL=1 they run as
+ *  ordinary cases. The text is synthetic: no crew member's name, thread or live figure. */
+const built = it;
+const THREAD_MESSAGES_URL = /\/api\/threads\/[^/?]+\/messages\?limit=200$/;
+
+/** The thread's first transcript request (the open-time load) hangs until `release()` and then fails with a 503,
+ *  as it does when the vessel has only just restarted; every later request goes to the harness's own network. */
+function failTheFirstTranscriptRequest(): { release: () => void; held: () => boolean } {
+  const harnessFetch = globalThis.fetch;
+  let release: (() => void) | null = null;
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (release === null && THREAD_MESSAGES_URL.test(String(input)) && (init?.method ?? 'GET') === 'GET') {
+      return new Promise<Response>((resolve) => {
+        release = () => resolve({ ok: false, status: 503 } as Response);
+      });
+    }
+    return harnessFetch(input, init);
+  }));
+  return { release: () => { release?.(); }, held: () => release !== null };
+}
+
+/** The store outlives a case, and the cases of this block leave four live-frame fields behind (a state diff per case
+ *  found them): the refresh command (T1's greeting names a row that the next case's server does not hold, so the next
+ *  mount's load never lands), the repair epoch (a raised epoch makes the next mount repair its transcript once more)
+ *  and the drop count and log. Each case starts from the store's initial values and leaves them there (A1, A2). */
+function resetLiveFrameState(): void {
+  const initial = useStore.getInitialState();
+  useStore.setState({
+    liveThreadRefresh: initial.liveThreadRefresh,
+    liveRepairEpoch: initial.liveRepairEpoch,
+    liveDropCount: initial.liveDropCount,
+    liveDrops: initial.liveDrops,
+  });
+}
+
+describe('BF-928 -- the first transcript load of a scope is history, whatever triggered it', () => {
+  beforeEach(resetLiveFrameState);
+  afterEach(() => {
+    // Unmount first: a store write under a mounted component re-renders it outside act() and can start a repair.
+    cleanup();
+    resetLiveFrameState();
+  });
+
+  built('speaks only the greeting when the first load that lands is the one its append triggered', async () => {
+    serverMessages = [
+      serverMsg('h1', 'An older reply about the survey.'),
+      serverMsg('h2', 'Another older reply about the readings.'),
+      serverMsg('g1', 'A fresh greeting for this call.'),
+    ];
+    seed({ tts: true });
+    const request = failTheFirstTranscriptRequest();
+    await act(async () => {
+      render(<ProfileChatTab agentId={AGENT_ID} />);
+      await Promise.resolve();
+    });
+    expect(request.held(), 'premise: the open-time load is in flight').toBe(true);
+
+    // The greeting's append arrives while that load is in flight, so its refresh is coalesced behind it...
+    await act(async () => {
+      useStore.setState({ liveThreadRefresh: { threadId: THREAD_ID, requestId: 'g1' } });
+      await Promise.resolve();
+    });
+    // ...the open-time load fails, and the retry that carries the trigger is the first load that lands.
+    await act(async () => {
+      request.release();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(spokenTexts()).toContain('A fresh greeting for this call.');
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(spokenTexts()).toEqual(['A fresh greeting for this call.']);
+    const scope = sharedSpeechLedger().scopes.get(THREAD_ID) as unknown as { loaded?: boolean } | undefined;
+    expect(scope?.loaded, 'the thread scope records its first load').toBe(true);
+  });
+
+  it('still speaks every unclaimed row of a later load that a push triggered', async () => {
+    seed({ tts: true });
+    await mount();
+
+    serverMessages.push(
+      serverMsg('n1', 'The first of two new replies.'),
+      serverMsg('n2', 'The second of two new replies.'),
+    );
+    await act(async () => {
+      useStore.setState({ liveThreadRefresh: { threadId: THREAD_ID, requestId: 'n2' } });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(spokenTexts()).toContain('The second of two new replies.');
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(spokenTexts()).toEqual(['The first of two new replies.', 'The second of two new replies.']);
+  });
+
+  it('speaks nothing when a reconnect repair is the first load that lands', async () => {
+    serverMessages = [serverMsg('h1', 'An older reply about the survey.')];
+    seed({ tts: true });
+    const request = failTheFirstTranscriptRequest();
+    await act(async () => {
+      render(<ProfileChatTab agentId={AGENT_ID} />);
+      await Promise.resolve();
+    });
+    expect(request.held(), 'premise: the open-time load is in flight').toBe(true);
+
+    await act(async () => {
+      useStore.setState({ liveRepairEpoch: useStore.getState().liveRepairEpoch + 1 });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      request.release();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(useStore.getState().threadMessages.has(THREAD_ID)).toBe(true);
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(spokenTexts()).toEqual([]);
+  });
+});

@@ -55,7 +55,7 @@ import {
   selectTranscriptMessages, threadDtoToMessage, buildTranscriptItems,
   groupReplyToMessage,
   admitMessages, claimSpeech, speechScopeKey, speechKeyFor,
-  sharedSpeechLedger, markScopeSeen,
+  sharedSpeechLedger, markScopeSeen, markScopeLoaded,
   captainReplyToMessage,
 } from './profileTranscript';
 import { ModulationIndicator } from './ModulationIndicator';
@@ -882,7 +882,14 @@ export function ProfileChatTab({ agentId, threadId, onArtifactOpen, composerRef 
       // was missed while the socket was down. Seed it. A load driven by a
       // specific appended message is the live arrival this AD exists to speak,
       // so it is deliberately not seeded.
-      if (triggerMessageId === null) speechSeedScopesRef.current.add(targetThreadId);
+      // BF-928 (#1666): except that the first load that lands for a scope is history whatever triggered it. The
+      // first-sight seed is used up on the empty list the effect sees before any transcript lands, and a load
+      // that failed or was superseded never counted, so the first load that lands may be one a pushed message
+      // triggered (a refresh coalesced behind an in-flight one takes the trigger id, `transcriptPendingRef`).
+      // The trigger message is still spoken: its id is in `speechLiveIdsRef`, which `admitMessages` admits
+      // while seeding. Marked first and unconditionally: the `||` below must not skip it.
+      const firstLoadOfScope = markScopeLoaded(speechLedgerRef.current, speechScopeKey(targetThreadId, agentId));
+      if (triggerMessageId === null || firstLoadOfScope) speechSeedScopesRef.current.add(targetThreadId);
     } finally {
       transcriptInFlightRef.current.delete(targetThreadId);
       const requested = transcriptPendingRef.current.has(targetThreadId);
