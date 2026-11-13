@@ -1707,6 +1707,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (the default).* Empty means `{data_dir}/promoted-agents`, the `resolve_records_repo_path` idiom, with the function beside the persistence so that the `probos.config` surface (counted by the facade baseline) does not grow. A config that names a `src/` root with the pipeline on is refused with an ERROR and the pipeline is not wired; it is not migrated.
 - *Residual.* L1 to L10 of the contract (S2). *Reversal.* Revert the BF-937 slice 2 commits and regenerate the two artifacts (the AD-1152 digest returns with the revert of M2).
 
+### BF-929 -- A paragraph break adds a pause marker only when the paragraph does not already end a sentence (2026-11-12, #1667)
+
+- *Scope.* `ui/src/audio/voice.ts` (`stripMarkdownForSpeech`: its body and its comment; no export added, so the wave-close mock-parity check is unchanged), `ui/src/audio/voiceChunking.ts` (`splitIntoSentences`), one new test file. Contract `prompts/bf-928-929-931-voice-call-ui.md`.
+- *G1 (where).* The cause is fixed in the stripper, which serves the single-call path and the pipelined path alike, and the splitter learns the one boundary the stripper's stray period used to supply (a closing quote or bracket). Rejected: collapsing `..` in the splitter or at the TTS route (it hides the symptom, cannot tell `..` from a deliberate `...`, leaves `?.` and `".`, and the route is a server edit); replacing the break with a newline (it relies on how the synthesizer treats one, unmeasured); dropping the marker (headings and list items lose their pause).
+- *G2 (the quote rule).* The splitter cuts after sentence punctuation and closers only when a capital letter or a digit follows, so inline dialogue with an attribution is not cut. Rejected: cutting after every closer.
+- *G3 (the fixtures).* Synthetic text only: no crew member's name, thread or live figure is in any test, comment, tracker line or commit message of the batch; this overrides the line of the issue that asked for the live message as the fixture.
+- *Residual.* L1 to L5 of the contract (S1). *Reversal.* Revert the BF-929 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
