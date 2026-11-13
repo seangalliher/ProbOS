@@ -1722,6 +1722,13 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G2 (the tests).* A mounted seam test over the real component and the BF-718 harness, controls that pin what must not change, and the ledger's own cases. Synthetic text only.
 - *Residual.* L1 to L5 of the contract (S2). *Reversal.* Revert the BF-928 commits.
 
+### BF-931 -- The avatar's heuristic mouth track is sampled on the audio clock, so it stays closed until the voice plays (2026-11-12, #1669)
+
+- *Scope.* `ui/src/audio/lipSyncTrack.ts` (`mouthClockMs`, new), `ui/src/components/profile/CrewVRM.tsx` (the heuristic branch of the frame loop and one import), two new test files. `voice.ts` and the speech event contract are unchanged. Contract `prompts/bf-928-929-931-voice-call-ui.md`.
+- *G1 (the clock).* Consumers sample on the audio element's clock, as the rhubarb branch already does: 0 until the element plays keeps a heuristic track closed (it is all zeros at time 0), so the mouth cannot lead the voice. Rejected: moving the `start` event from `play` to `playing` (it changes the contract of every consumer, the voice suites that emit only `play` pin the old order, and a `pause` before `playing` would end an utterance that never started); a new speech event (nine consumers to audit for the same result); a fixed offset (the latency varies).
+- *G2 (the tests).* The pure function, and a mounted `CrewVRM` over the real `voice.ts` with a fake audio element whose `playing` comes after `play`; the late-frames half of the acceptance is a control because the rhubarb branch already sampled on the audio time.
+- *Residual.* L1 to L7 of the contract (S3). *Reversal.* Revert the BF-931 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
