@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 import * as track from '../lipSyncTrack';
 import { buildHeuristicTrack } from '../lipSyncTrack';
 
-const built = process.env.BF931_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 
 function mouthClockMs(audioMs: number | null, wallMs: number): number {
   const fn = (track as unknown as {

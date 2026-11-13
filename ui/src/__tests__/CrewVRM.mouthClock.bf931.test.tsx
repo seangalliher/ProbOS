@@ -40,7 +40,7 @@ import * as voice from '../audio/voice';
 import { injectLipSyncFrames } from '../audio/useLipSyncCapture';
 import { CrewVRM } from '../components/profile/CrewVRM';
 
-const built = process.env.BF931_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 const AGENT_ID = 'bf931-agent';
 const TEXT = 'Okay, ready when you are.';
 const MOUTH_MORPHS = ['Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O'];
