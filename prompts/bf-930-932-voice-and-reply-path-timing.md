@@ -1,7 +1,7 @@
 # BF-930 (#1668) and BF-932 (#1670): log-only timing of the spoken-reply path and of the Captain-DM reply path, so one live call shows where the time goes (instrumentation only; both issues stay open)
 
 **Drafted by:** `Architect` (GitHub Copilot fallback; the Claude Code bridge is logged out), 2026-11-13
-**Revised by:** the orchestrator (amendment A1, section 15: the file paths the apply tool needs in six label lines, the two new test files made to fail at an assert on the base and the second joined into one block with its `make_agent`, the case counts, five S1 mutation cells, the measured gates, and the S2 limit L9 for `ArchitectAgent.perceive`), 2026-11-13
+**Revised by:** the orchestrator (amendment A1, section 15: the file paths the apply tool needs in six label lines, the two new test files made to fail at an assert on the base and the second joined into one block with its `make_agent`, the case counts, five S1 mutation cells, the measured gates, and the S2 limit L9 for `ArchitectAgent.perceive`; amendment A2, section 16: the repair R1 after review round 1, section 7.3, which guards the helper's DEBUG fallback, skips a request that shutdown ended, adds two S1 cases, extends two, makes a fixture synthetic and drops two unused imports, and corrects L9 in place, because the first version of that limit was false), 2026-11-13
 **File in the repository:** `prompts/bf-930-932-voice-and-reply-path-timing.md` (the orchestrator may rename it). **Answer file:** in three parts, because the contract is too long for one `create` call: `answer-bf930-932-contract.part1.md` (this header, sections 1 to 6), `answer-bf930-932-contract.part2.md` (section 7: slices S1 and S2), `answer-bf930-932-contract.part3.md` (sections 8 to 14, "Batching", "Not in this issue: for the Captain"). Read them in that order; the labels of section 7 restart in each slice.
 **Status:** ready to build on `origin/main` `f614a31d855e217eec6c826deaffad7572d1f43f` (BF-937's merge) **after the two UI-only batches have merged** (the voice batch: BF-928, BF-929, BF-931; then BF-933). **Reading tree:** `D:\ProbOS-worktrees\next-read` at `f614a31d855e217eec6c826deaffad7572d1f43f` (clean: `git status --short` prints nothing; read only). **Oracle:** the Architect ran no pytest, no vitest, no build and no script that writes (a read-only consult). **What I ran instead** (section 11): every SEARCH of section 7 against the LF blobs of the reading tree (30 SEARCHes: each occurs once, at a line start, ASCII); the enumerations of every reader of the lines this batch extends or adds; an AST scan for the model calls of the agent; the existing harnesses read case by case. **What that leaves unchecked (all "expected" below):** every pytest count and every new case as a pytest case, the mutation rows, the AD ledger regeneration, `scripts/check_architecture_principles.py --check`, the broad gate, and everything that needs the live vessel (section "Not in this issue: for the Captain").
 **Base blobs (`f614a31d`):** S1: `src/probos/attachments/filesystem_store.py` `c29e56fe160a4ee4996f653a28c52a424b0fb973`, `src/probos/audio/tts/resident.py` `4abf3f127ad2a334e66fe6dfbead05e41db7354f`, `src/probos/routers/avatars.py` `d34ece50a7b003bc672b86916e3f480b2e7ef234`. S2: `src/probos/routers/agents.py` `04f7fefade334a97f5016a52c973ddf9151f549c`, `src/probos/cognitive/cognitive_agent.py` `62c0f816bd5f1ce766a541abbfc0ccba6b743ae4`, `src/probos/cognitive/concurrency_manager.py` `3b0a9f99389f30ee07a46c8c416f7f1ba19422f9`. Read, not edited: `src/probos/perception/consumer.py` `74aa7f9710ec5a02e73a378c5a6b51884b06dd84`, `src/probos/attachments/store.py` `f663fcec73b5d6f6171af7d8e9557afb35463027`, `tests/test_bf918_tts_latency.py` `387b1a2e32089e7135eeda5f0ab70742b4e9cfcf`, `tests/test_ad672_concurrency_manager.py` `57eed6cca63f85ef12637a6f0a82e71318797360`, `tests/test_ad730_agent_chat_vision.py` `349ea3e5186879c4452221f8c5135c8683678880`, `tests/test_cognitive_agent.py` `76c21809158ef67d3ac082495b83401f8b87ef82`. Trackers and generated pair, as the BF-933 contract measured them on `f614a31d`: `PROGRESS.md` `70cd1044019282b348bba2532acd6bfb2b6369cf`, `DECISIONS.md` `90adc2837c3d2c6d09327e93543eeb0471880fec`, `docs/development/open-ads-report.md` `04562090a74a962b09f61864a667ecb1a62f1b8a`, `docs/development/ad-ledger-snapshot.json` `35de650056f112a17d079fab48f32ddabad939bb` (**the two UI-only batches move all four before this batch is built; every code blob above must still be equal**). **Four paths do not exist** (to be confirmed by `Test-Path` before the build): `src/probos/utils/step_timing.py`, `tests/test_bf930_voice_path_timing.py`, `tests/test_bf932_reply_path_timing.py`, `prompts/bf-930-932-voice-and-reply-path-timing.md`.
@@ -1671,6 +1671,321 @@ REPLACE:
 
 **Ledger.** Run G3. The roadmap Bug Tracker is not edited.
 
+### 7.3 Repair R1 (review round 1; amendment A2)
+
+Review round 1 (one reviewer per slice, on the head `f02d2445`) found that a log handler that fails breaks the call a timing line is written for (F1, found by both reviewers, reproduced by execution), that a request which shutdown ended before its thread ran writes a line whose `resume_lag_ms` is an absolute clock reading (F4), and a fixture that carries a real crew callsign (F2); section 16 lists them, with the limit that was false (F3). These blocks are applied to the tree after S2 M3, in two commits: `BF-930 S1 R1` (the blocks under "S1 R1") and `BF-932 S2 R1` (the blocks under "S2 R1"), each in label order; the labels restart in each slice. Every SEARCH occurs exactly once in its file at that point, is ASCII and starts at a line start. No tracker, no generated artifact and no config key changes.
+
+#### S1 R1
+
+**R1-1.** `src/probos/utils/step_timing.py`. The module docstring says what becomes of the DEBUG note when it fails too.
+SEARCH:
+```
+swallow: a measurement is never a reason for a reply to fail); ``asyncio.CancelledError`` is not an
+``Exception`` and passes through.
+```
+REPLACE:
+```
+swallow: a measurement is never a reason for a reply to fail), and when the DEBUG note fails too (the
+logger is what failed) that is dropped without a trace; ``asyncio.CancelledError`` is not an
+``Exception`` and passes through.
+```
+
+**R1-2.** `src/probos/utils/step_timing.py`. One helper writes the DEBUG note of a dropped line and drops its own failure; `emit_line`'s except arm uses it.
+SEARCH:
+```
+def emit_line(logger: logging.Logger, message: str, *args: object) -> bool:
+    """Write ``message % args`` at INFO. Never raises; True when the line was written."""
+    try:
+        logger.info(message, *args)
+        return True
+    except Exception:
+        logger.debug("BF-930: a timing line failed and was dropped: %s", message, exc_info=True)
+        return False
+```
+REPLACE:
+```
+def _note_dropped(logger: logging.Logger, message: str, *args: object) -> None:
+    """The DEBUG note that a line was dropped, with the exception being handled.
+
+    The logger is what failed, so it may fail here too. That is dropped without a trace (Tier 1, swallow):
+    nothing is left to write to, and a note must never fail the reply it is about.
+    """
+    try:
+        logger.debug(message, *args, exc_info=True)
+    except Exception:
+        pass
+
+
+def emit_line(logger: logging.Logger, message: str, *args: object) -> bool:
+    """Write ``message % args`` at INFO. Never raises; True when the line was written."""
+    try:
+        logger.info(message, *args)
+        return True
+    except Exception:
+        _note_dropped(logger, "BF-930: a timing line failed and was dropped: %s", message)
+        return False
+```
+
+**R1-3.** `src/probos/utils/step_timing.py`. The budget's except arm uses the same helper.
+SEARCH:
+```
+            self._logger.debug("BF-930: a timing budget failed; the line was dropped: %s", message, exc_info=True)
+```
+REPLACE:
+```
+            _note_dropped(self._logger, "BF-930: a timing budget failed; the line was dropped: %s", message)
+```
+
+**R1-4.** `src/probos/audio/tts/resident.py`. A request that shutdown ended is not timed: one refused at the thread's entry never set its end stamp, so its resume lag would be the clock's absolute reading.
+SEARCH:
+```
+                if total_ms >= SLOW_SYNTHESIS_MS:
+```
+REPLACE:
+```
+                # BF-930: a request that shutdown ended is not timed; one refused at the thread's entry set no end stamp.
+                if total_ms >= SLOW_SYNTHESIS_MS and outcome.reason != "closed":
+```
+
+**R1-5.** `tests/test_bf930_voice_path_timing.py`. The unused `import os` is removed.
+SEARCH:
+```
+import logging
+import os
+import re
+```
+REPLACE:
+```
+import logging
+import re
+```
+
+**R1-6.** `tests/test_bf930_voice_path_timing.py`. H5's logger fails at DEBUG too, and the budget's own except arm is reached (a clock that raises); the three calls must each return False and each attempt the note.
+SEARCH:
+```
+def test_h5_a_logger_that_raises_never_reaches_the_caller() -> None:
+    step = _helper()
+
+    class _Broken:
+        def __init__(self) -> None:
+            self.debug_calls: list[bool] = []
+
+        def info(self, *_a, **_k) -> None:
+            raise RuntimeError("handler failed")
+
+        def debug(self, *_a, **kwargs) -> None:
+            self.debug_calls.append(bool(kwargs.get("exc_info")))
+
+    broken = _Broken()
+    assert step.emit_line(broken, "BF-930: probe") is False
+    assert step.TimingLines(broken).emit("BF-930: probe") is False
+    assert broken.debug_calls == [True, True]
+```
+REPLACE:
+```
+def test_h5_a_logger_that_raises_never_reaches_the_caller() -> None:
+    step = _helper()
+
+    class _Broken:
+        """A logger whose handler fails on every call, the DEBUG note of a dropped line included."""
+
+        def __init__(self) -> None:
+            self.debug_calls: list[bool] = []
+
+        def info(self, *_a, **_k) -> None:
+            raise RuntimeError("handler failed")
+
+        def debug(self, *_a, **kwargs) -> None:
+            self.debug_calls.append(bool(kwargs.get("exc_info")))
+            raise OSError("log file unavailable")
+
+    def _failing_clock() -> float:
+        raise RuntimeError("clock failed")
+
+    broken = _Broken()
+    assert step.emit_line(broken, "BF-930: probe") is False
+    assert step.TimingLines(broken).emit("BF-930: probe") is False
+    assert step.TimingLines(broken, clock=_failing_clock).emit("BF-930: probe") is False
+    assert broken.debug_calls == [True, True, True]
+```
+
+**R1-7.** `tests/test_bf930_voice_path_timing.py`. The double of a module logger whose handler cannot write, counting its failures (used by T15).
+SEARCH:
+```
+    monkeypatch.setattr(PiperWorker, "_request", request)
+```
+REPLACE:
+```
+    monkeypatch.setattr(PiperWorker, "_request", request)
+
+
+class _FailingHandlerLogger:
+    """A module logger whose handler cannot write: its INFO and DEBUG calls for a BF-930 line fail, and are counted."""
+
+    def __init__(self, real: logging.Logger) -> None:
+        self._real = real
+        self.failed = {"info": 0, "debug": 0}
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def _call(self, level: str, msg, args, kwargs):
+        if str(msg).startswith("BF-930:"):
+            self.failed[level] += 1
+            raise OSError("log file unavailable")
+        return getattr(self._real, level)(msg, *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        return self._call("info", msg, args, kwargs)
+
+    def debug(self, msg, *args, **kwargs):
+        return self._call("debug", msg, args, kwargs)
+```
+
+**R1-8.** `tests/test_bf930_voice_path_timing.py`. T14: a request that shutdown ended before its thread ran (on a worker that never ran one) writes no line (after T10, which ends with this assertion). The request after it is the control: it is timed, so the machinery was live in the same case.
+SEARCH:
+```
+    assert "piper timed out" in caplog.text
+```
+REPLACE:
+```
+    assert "piper timed out" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_t14_a_request_that_shutdown_ended_before_its_thread_ran_logs_no_timing_line(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(resident, "SLOW_SYNTHESIS_MS", 0.0, raising=False)
+    caplog.set_level(logging.INFO, logger=_VOICE_LOGGER)
+    _stub_request(monkeypatch, delay=0.0)
+    real = PiperWorker.synthesize_blocking
+    calls: list[str] = []
+
+    def synthesize_blocking(self, text, timeout):
+        calls.append(text)
+        if len(calls) == 1:
+            self.close()  # shutdown reaches the worker after the request was queued and before its thread started it
+        return real(self, text, timeout)
+
+    monkeypatch.setattr(PiperWorker, "synthesize_blocking", synthesize_blocking)
+    service = VoiceSynthesisService()
+    try:
+        assert await service.synthesize(_key(), "first", 5.0) is None
+        assert not _lines(caplog, _PIPER)
+        assert await service.synthesize(_key(), "second", 5.0) == b"WAV"
+    finally:
+        service.close()
+    assert len(_lines(caplog, _PIPER)) == 1  # the control: a request that ran is timed, so the machinery was live
+```
+
+**R1-9.** `tests/test_bf930_voice_path_timing.py`. T15, the last case of the file: a log handler that fails fails neither a slow write through the real TTS route nor a slow synthesis; each double must have been reached (the INFO line failed, and so did the DEBUG note of it).
+SEARCH:
+```
+    assert all(PIIRedactor.redact_all(text) == text for text in texts)
+```
+REPLACE:
+```
+    assert all(PIIRedactor.redact_all(text) == text for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_t15_a_log_handler_that_fails_never_fails_a_slow_write_or_a_slow_request(voice_client, monkeypatch) -> None:
+    monkeypatch.setattr(filesystem_store, "SLOW_STORE_CALL_MS", 0.0, raising=False)
+    monkeypatch.setattr(resident, "SLOW_SYNTHESIS_MS", 0.0, raising=False)
+    store_log = _FailingHandlerLogger(filesystem_store.logger)
+    voice_log = _FailingHandlerLogger(resident.logger)
+    monkeypatch.setattr(filesystem_store, "logger", store_log)
+    monkeypatch.setattr(resident, "logger", voice_log)
+    _stub_request(monkeypatch)
+    answer = await voice_client.post("/api/avatars/tts", json={"text": "hello", "defer_visemes": True})
+    assert answer.status_code == 200 and answer.json()["audio_attachment_id"]
+    service = VoiceSynthesisService()
+    try:
+        assert await service.synthesize(_key(), "hello", 5.0) == b"WAV"
+    finally:
+        service.close()
+    for log in (store_log, voice_log):
+        assert log.failed["info"] >= 1 and log.failed["debug"] == log.failed["info"]
+```
+
+#### S2 R1
+
+**R1-1.** `tests/test_bf932_reply_path_timing.py`. The unused `import os` is removed.
+SEARCH:
+```
+import logging
+import os
+import re
+```
+REPLACE:
+```
+import logging
+import re
+```
+
+**R1-2.** `tests/test_bf932_reply_path_timing.py`. The fixture's callsign is synthetic (D8).
+SEARCH:
+```
+    runtime.callsign_registry.get_callsign.return_value = "Lynx"
+```
+REPLACE:
+```
+    runtime.callsign_registry.get_callsign.return_value = "test-callsign"
+```
+
+**R1-3.** `tests/test_bf932_reply_path_timing.py`. R6's logger fails at DEBUG too, for the helper's note of the dropped line, and R6 asserts both failures happened.
+SEARCH:
+```
+async def test_r6_a_failing_logger_changes_nothing(monkeypatch) -> None:
+    real = agents_router.logger
+
+    class _Logger:
+        """The route's logger, except that its INFO call raises for a BF-932 line only."""
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+        def info(self, msg, *args, **kwargs):
+            if str(msg).startswith("BF-932:"):
+                raise RuntimeError("handler failed")
+            return real.info(msg, *args, **kwargs)
+
+    monkeypatch.setattr(agents_router, "logger", _Logger())
+    answer = await _dm(_runtime([]))
+    assert answer["response"] == "Acknowledged."
+```
+REPLACE:
+```
+async def test_r6_a_failing_logger_changes_nothing(monkeypatch) -> None:
+    real = agents_router.logger
+
+    class _Logger:
+        """The route's logger, except that its INFO call raises for a BF-932 line and its DEBUG call for the helper's note of it."""
+
+        def __init__(self) -> None:
+            self.failed = {"info": 0, "debug": 0}
+
+        def __getattr__(self, name):
+            return getattr(real, name)
+
+        def info(self, msg, *args, **kwargs):
+            if str(msg).startswith("BF-932:"):
+                self.failed["info"] += 1
+                raise RuntimeError("handler failed")
+            return real.info(msg, *args, **kwargs)
+
+        def debug(self, msg, *args, **kwargs):
+            if str(msg).startswith("BF-930:"):
+                self.failed["debug"] += 1
+                raise RuntimeError("handler failed")
+            return real.debug(msg, *args, **kwargs)
+
+    failing = _Logger()
+    monkeypatch.setattr(agents_router, "logger", failing)
+    answer = await _dm(_runtime([]))
+    assert answer["response"] == "Acknowledged."
+    assert failing.failed == {"info": 1, "debug": 1}
+```
+
 ## 8. What this does NOT change
 
 **S1.** The attachment store's behaviour: `write`'s order of hops, its idempotence, its origin upgrade rule, the ENOSPC translation, `_run` and its cancellation handling, `_save_index_sync`, `_locate_sync`, the index file, the reaper, `ATTACHMENT_IO_WORKERS`, the `AttachmentStore` Protocol (`store.py`) and every other implementation behind it. The resident synthesizer's behaviour: the per-key lock, `_claim`, the admission bound, the executor and its size, the Piper lifecycle (`_spawn`, `close`, `_release`), the timeout, the degrade paths and their warnings. The TTS route's response body, status codes, validation, the BF-918 deferral of visemes and the `degraded` line (`avatars.py:278`); the lipsync route and its line (`:74`). No change to the browser (`ui/`), to `routers/chat.py` or to the attachment reaper.
@@ -1693,7 +2008,7 @@ REPLACE:
 | 4 | same | `self._suppressed = 0` (second occurrence, in `emit`; the first is in `__init__`) | the line deleted | H3 |
 | 5 | same | `if self._max_lines > 0:` | `if True:` | H4 |
 | 6 | same | `while self._written and now - self._written[0] >= self._window_s:` | `while False:` | H3 |
-| 7 | same | `logger.debug("BF-930: a timing line failed and was dropped: %s", message, exc_info=True)` | `raise` | H5 |
+| 7 | same | `_note_dropped(logger, "BF-930: a timing line failed and was dropped: %s", message)` | `raise` | H5, T15 |
 | 8 | `attachments/filesystem_store.py` | `holder_on_arrival = self._lock_holder if self._lock.locked() else ""` | `holder_on_arrival = ""` | T2 (both) |
 | 9 | same | `self._lock_holder = f"write:{normalized_origin}"` | the line deleted | T2 (write) |
 | 10 | same | `self._lock_holder = "unlink"  # BF-930: log-only` | the line deleted | T2 (unlink) |
@@ -1706,6 +2021,9 @@ REPLACE:
 | 17 | same | `self.thread_ended = time.perf_counter()  # BF-930: log-only` | the line deleted | T7, T13 |
 | 18 | same | `t_locked = time.perf_counter()` | `t_locked = t_enter` | T9 |
 | 19 | `routers/avatars.py` | `attachment_id[:8],` | `"",` | T11, T12 |
+| 20 | `utils/step_timing.py` | `_note_dropped(self._logger, "BF-930: a timing budget failed; the line was dropped: %s", message)` | `raise` | H5 |
+| 21 | same | `pass` | `raise` | H5, T15 |
+| 22 | `audio/tts/resident.py` | `if total_ms >= SLOW_SYNTHESIS_MS and outcome.reason != "closed":` | `if total_ms >= SLOW_SYNTHESIS_MS:` | T14 |
 
 **S2.**
 
@@ -1719,6 +2037,7 @@ REPLACE:
 | 6 | same | `_t_recall = time.perf_counter()` | `_t_recall = _t_perceive` | A1 |
 | 7 | same | `intent.id[:8], self.id[:12], ms_between(_t_perceive, _t_recall),` | the same with `intent.id[8:16]` | A1, R1b |
 | 8 | `cognitive/concurrency_manager.py` | `ms_between(next_intent.queued_at, time.monotonic()),  # BF-932: log-only` | `0.0,  # BF-932: log-only` | C1 |
+| 9 | `utils/step_timing.py` | `pass` | `raise` | R6 |
 
 ## 10. Recorded limits
 
@@ -1902,6 +2221,45 @@ Each item is an operation on, or a measurement of, the running vessel. The build
 
 **Measured mutation rows.** S1, 19 rows: **every mutant is killed**; fifteen rows match section 9 and four (12, 14, 16, 17) are corrected above; row 4 names its occurrence. S2, 8 rows: **all eight give the cells of section 9 exactly.**
 
-**Recorded limit (addition).** **S2 L9.** `ArchitectAgent.perceive` (`cognitive/architect.py:239-305`, a `.complete(` on line 305) calls the model, so for a DM to that agent `perceive_ms` includes a model call. An AST scan of the 45 `perceive` definitions under `src/probos` (positive controls held: 79 `.complete(` calls found outside any `perceive`) finds that one only, so D1's statement that the LLM lane lies outside the window holds for every other crew agent and not for this one. The turn line names the agent (`agent=`), so a reader can set it aside.
+**Recorded limit (addition), withdrawn by amendment A2.** **S2 L9 (the first version of this limit was false; review round 1 found it).** `ArchitectAgent.perceive` (`cognitive/architect.py:239-305`) has a `.complete(` on line 305, but it returns at lines 243-245 for a `direct_message` (`if obs.get("intent") in ("direct_message", "ward_room_notification", "proactive_think"): return obs`), before that line, so a DM never reaches it. An AST scan of the 45 `perceive` definitions under `src/probos` (positive controls held: 79 `.complete(` calls found outside any `perceive`) finds that one only; so D1's statement that the LLM lane lies outside the window holds for every crew agent, `ArchitectAgent` included, and there is no limit to record.
 
 **What A1 changes.** The header (a `Revised by` line), six label lines, the two `N1-1` count remarks, the two test files of section 7 (blocks of code, as described), four cells and one line cell of section 9, and this section. No block of M2 or M3 changed.
+
+## 16. Amendment A2 (2026-11-13): repair R1 after review round 1
+
+**Drafted by:** the orchestrator, not the Architect: each change answers a finding that a reviewer reproduced by execution (F1, F4) or showed by reading and execution (F2, F3), and that the oracle reproduces again, so it is mechanical. **Sections 1 to 15 are read with this section; where they differ, this section wins.** The slice files cut from sections 7.1 and 7.2 are unchanged: the repair is one commit that replaces this contract file and two commits, `BF-930 S1 R1` and `BF-932 S2 R1`, that apply section 7.3 on the head after S2 M3, in that order. Section 9 is read on the R1 head: row 7's Line and Killed-by cell changed (R1-2), and rows 20 to 22 of S1 and row 9 of S2 are new. L9 of section 15 is corrected in place (it is prose, and a false limit in a shipped contract misleads); no block of 7.1 or 7.2 is edited, so the old fixture callsign still stands in 7.2's N1-1 block and in R1-2's SEARCH (a SEARCH names the text it replaces); the repository already holds that string in an existing test and a research note.
+
+**The findings** (round 1: one reviewer per slice, each on its own slice, both on the head `f02d2445`; both said NOT READY):
+
+| # | Slice | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|---|
+| F1 | S1, S2 | A log handler that fails breaks the call the line is written for. The DEBUG fallback of `emit_line` and of `TimingLines.emit` was unguarded, so a failing INFO call raised again from the except arm. Reproduced by the S1 reviewer with a real `logging.FileHandler` on an unavailable directory through the real TTS route (the blob and the index were already written; the reply was HTTP 500 where the base answered 200) and by the S2 reviewer on the DM route (the reply was lost after the send succeeded). | injected-only (a handler that cannot write) | yes (P2) | fixed: S1 R1-1 to R1-3; tests S1 R1-6, R1-7, R1-9 and S2 R1-3 |
+| F2 | S2 | The fixture returned a real crew callsign (D8: fixtures are synthetic). | ordinary | yes (P3) | fixed: S2 R1-2 |
+| F3 | S2 | L9 was false: `ArchitectAgent.perceive` returns at `architect.py:243-245` for a `direct_message`, before its `.complete(` on line 305, so no DM reaches a model call there (executed: 0 model calls for an HXI DM, 1 for a non-conversational control). The error was this contract's A1. | ordinary (a wrong sentence) | inherited (P3) | fixed in place (section 15) |
+| F4 | S1 | A request that shutdown ended before its thread ran (`synthesize_blocking` returns `closed` at its entry, before it sets `thread_ended`) still wrote a `BF-930: piper request slow` line with `work_ms=0` and `resume_lag_ms` the absolute reading of the clock, which the log redactor then replaced by `***-***-****`. | ordinary (a shutdown race) | yes (P2) | fixed: S1 R1-4; test S1 R1-8 |
+| - | both | An unused `import os` in each of the two new test files. | ordinary | no | fixed (deletion only): S1 R1-5, S2 R1-1 |
+
+The S1 reviewer's property 8 (a tracker-number rule) failed only on `BF-918` references the contract itself pins (`PROGRESS.md` and `DECISIONS.md` name the BF they extend): a brief wording, not a defect. Neither reviewer scheduled a finding.
+
+**The repair** (section 7.3).
+- **F1 (S1 R1-1 to R1-3).** One private helper, `_note_dropped`, writes the DEBUG note of a dropped line and drops its own failure (`except Exception: pass`: Tier 1, swallow, justified because the logger is what failed and nothing is left to write to); the two except arms that wrote the note call it. `BaseException` (cancellation) still passes through. Every producer of a line goes through those two arms: `rg -n "emit_line\(|TimingLines\(" src` finds the DM route (`routers/agents.py`), the agent's turn (`cognitive_agent.py`), the store (two `TimingLines`) and the synthesizer (one).
+- **F4 (S1 R1-4).** The synthesizer writes no line for a `closed` outcome. Both producers of it (the entry of `synthesize_blocking`, and `_request` after a spawn that finished once the worker was closed) mean that shutdown ended the request, which the service's own `if not self._closed` arm already treats as no piper failure. L4 of section 10 (a request refused, cancelled or closed before its thread ran writes no line) was already the contract's statement; the code now does it.
+- **F2 (S2 R1-2) and the imports (S1 R1-5, S2 R1-1).** A synthetic callsign; two deleted lines.
+- **No tracker changes.** The tracker texts of both slices claim that a failure while writing a line is swallowed at DEBUG and that no result, order, lock, thread or timeout changes; the repaired code is what makes the first true. The AD ledger check says current after each repair commit.
+
+**The cases** (the S1 file has 21 cases after R1, the S2 file 11; none takes the marker, which is gone since M2).
+
+| Case | Kind | Asserts |
+|---|---|---|
+| S1 H5 (changed) | repair | a logger whose INFO and DEBUG calls both fail: `emit_line`, `TimingLines.emit` and `TimingLines.emit` with a clock that raises (the budget's own except arm) each return False, and each attempted the DEBUG note with the exception (`[True, True, True]`) |
+| S1 T14 | repair | the first request, on a worker closed at its thread's entry, returns None and writes no line; the second request is the control: it is timed, so exactly one line exists at the end |
+| S1 T15 | repair | with the store's and the synthesizer's loggers failing at INFO and at DEBUG for BF-930 lines, the real TTS route answers 200 with an audio id and a synthesis returns its audio; each double's INFO line and DEBUG note failed (the premise) |
+| S2 R6 (changed) | repair | the route's logger fails at INFO for its line and at DEBUG for the helper's note; the reply is unchanged and both failures happened (`{"info": 1, "debug": 1}`) |
+
+**Measured** (the oracle: this contract and R1 applied on S2 M3's scratch commit). The A2 contract commit changes the contract file only. S1 R1 changes `resident.py` (+2 -1), `step_timing.py` (+16 -3) and the S1 test file (+76 -2); S2 R1 changes the S2 test file (+15 -4). The ledger check says current after each. **G1:** the S1 file `21 passed`, the S2 file `11 passed`. **The R1 cases against the unrepaired source** (`step_timing.py` and `resident.py` of S2 M3, the test files of R1): `4 failed, 28 passed`, the four being S1 H5 (a failing DEBUG note escapes), S1 T14 (a line is written for a worker closed at its entry: `resume_lag_ms` is a ten-digit absolute reading), S1 T15 (the real TTS route raises `OSError` through the store's write) and S2 R6 (`RuntimeError`); every other case passes. **G2:** the four pytest commands give `122 passed` (S1's six files: 101 plus the 21), `29 passed`, `244 passed` (S2's nine files: unchanged) and `49 passed`; the architecture check passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`, as at M2); the config checks, the seam check and the store registry check pass unchanged (D5 holds); `tests/test_ad1152_agentic_correlation.py` gives 41 passed.
+
+**Mutation rows after R1.** Run on the R1 head with section 9 as A2 edited it: **S1 22 of 22 rows and S2 9 of 9 rows give exactly the cells of section 9.** Rows 1 to 6 and 8 to 19 of S1 and rows 1 to 8 of S2 keep their killers (the new cases kill none of them). Row 7 of S1 is now the line `_note_dropped(logger, "BF-930: a timing line failed and was dropped: %s", message)` replaced by `raise`, killed by H5 and T15. **New:** S1 20 (the budget's call of the helper replaced by `raise`: H5), S1 21 (the helper's `pass` replaced by `raise`: H5, T15), S1 22 (the closed-outcome condition removed: T14), S2 9 (the helper's `pass` replaced by `raise`: R6).
+
+**Recorded limits (additions).** None. S2 L9 is withdrawn (section 15). L4 of section 10 is now what the code does for a `closed` outcome. S1's tracker residual (L1 to L8) and S2's (L1 to L8) stand.
+
+**What A2 changes.** The header (a `Revised by` clause), L9 in section 15 (in place), section 7.3 (twelve blocks: nine under `S1 R1`, three under `S2 R1`), section 9 (S1 row 7, rows 20 to 22; S2 row 9) and this section. Nothing in sections 1 to 14 and no block of 7.1 or 7.2 is edited; the readings above supersede where they differ: section 4's G1 and G2 counts for S1 after R1 (21 cases; command 1 gives 122), section 6's case table (S1 H5 changed, T14 and T15 added; S2 R6 changed) and section 10's L4 and the withdrawn L9.
