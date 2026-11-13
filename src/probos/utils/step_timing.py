@@ -3,7 +3,8 @@
 These lines say where the time of one call went. They change no result, order, status or timeout of
 what they measure. Durations are milliseconds between two readings of one monotonic clock
 (``time.perf_counter``), never wall time. A failure while writing a line is dropped at DEBUG (Tier 1,
-swallow: a measurement is never a reason for a reply to fail); ``asyncio.CancelledError`` is not an
+swallow: a measurement is never a reason for a reply to fail), and when the DEBUG note fails too (the
+logger is what failed) that is dropped without a trace; ``asyncio.CancelledError`` is not an
 ``Exception`` and passes through.
 """
 
@@ -20,13 +21,25 @@ def ms_between(start: float, end: float) -> float:
     return max(0.0, (end - start) * 1000.0)
 
 
+def _note_dropped(logger: logging.Logger, message: str, *args: object) -> None:
+    """The DEBUG note that a line was dropped, with the exception being handled.
+
+    The logger is what failed, so it may fail here too. That is dropped without a trace (Tier 1, swallow):
+    nothing is left to write to, and a note must never fail the reply it is about.
+    """
+    try:
+        logger.debug(message, *args, exc_info=True)
+    except Exception:
+        pass
+
+
 def emit_line(logger: logging.Logger, message: str, *args: object) -> bool:
     """Write ``message % args`` at INFO. Never raises; True when the line was written."""
     try:
         logger.info(message, *args)
         return True
     except Exception:
-        logger.debug("BF-930: a timing line failed and was dropped: %s", message, exc_info=True)
+        _note_dropped(logger, "BF-930: a timing line failed and was dropped: %s", message)
         return False
 
 
@@ -68,6 +81,6 @@ class TimingLines:
                 message, args = message + " suppressed=%d", (*args, self._suppressed)
                 self._suppressed = 0
         except Exception:
-            self._logger.debug("BF-930: a timing budget failed; the line was dropped: %s", message, exc_info=True)
+            _note_dropped(self._logger, "BF-930: a timing budget failed; the line was dropped: %s", message)
             return False
         return emit_line(self._logger, message, *args)

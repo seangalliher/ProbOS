@@ -444,7 +444,8 @@ class VoiceSynthesisService:
                     self._busy.discard(key)
                 # BF-930: log-only. Where a slow request's time went (milliseconds, monotonic clock).
                 total_ms = ms_between(t_enter, t_resumed)
-                if total_ms >= SLOW_SYNTHESIS_MS:
+                # BF-930: a request that shutdown ended is not timed; one refused at the thread's entry set no end stamp.
+                if total_ms >= SLOW_SYNTHESIS_MS and outcome.reason != "closed":
                     self._timing.emit(
                         "BF-930: piper request slow chars=%d voice=%s total_ms=%.0f lock_wait_ms=%.0f claim_ms=%.0f "
                         "pool_wait_ms=%.0f work_ms=%.0f resume_lag_ms=%.0f cold=%s result=%s in_flight=%d",

@@ -12,7 +12,6 @@ import hashlib
 import importlib
 import importlib.util
 import logging
-import os
 import re
 import time
 from pathlib import Path
@@ -101,6 +100,29 @@ def _stub_request(monkeypatch: pytest.MonkeyPatch, delay: float = 0.03, outcome:
     monkeypatch.setattr(PiperWorker, "_request", request)
 
 
+class _FailingHandlerLogger:
+    """A module logger whose handler cannot write: its INFO and DEBUG calls for a BF-930 line fail, and are counted."""
+
+    def __init__(self, real: logging.Logger) -> None:
+        self._real = real
+        self.failed = {"info": 0, "debug": 0}
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def _call(self, level: str, msg, args, kwargs):
+        if str(msg).startswith("BF-930:"):
+            self.failed[level] += 1
+            raise OSError("log file unavailable")
+        return getattr(self._real, level)(msg, *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        return self._call("info", msg, args, kwargs)
+
+    def debug(self, msg, *args, **kwargs):
+        return self._call("debug", msg, args, kwargs)
+
+
 # --- the helper -------------------------------------------------------------------------------
 
 
@@ -152,6 +174,8 @@ def test_h5_a_logger_that_raises_never_reaches_the_caller() -> None:
     step = _helper()
 
     class _Broken:
+        """A logger whose handler fails on every call, the DEBUG note of a dropped line included."""
+
         def __init__(self) -> None:
             self.debug_calls: list[bool] = []
 
@@ -160,11 +184,16 @@ def test_h5_a_logger_that_raises_never_reaches_the_caller() -> None:
 
         def debug(self, *_a, **kwargs) -> None:
             self.debug_calls.append(bool(kwargs.get("exc_info")))
+            raise OSError("log file unavailable")
+
+    def _failing_clock() -> float:
+        raise RuntimeError("clock failed")
 
     broken = _Broken()
     assert step.emit_line(broken, "BF-930: probe") is False
     assert step.TimingLines(broken).emit("BF-930: probe") is False
-    assert broken.debug_calls == [True, True]
+    assert step.TimingLines(broken, clock=_failing_clock).emit("BF-930: probe") is False
+    assert broken.debug_calls == [True, True, True]
 
 
 # --- the attachment store ---------------------------------------------------------------------
@@ -347,6 +376,31 @@ async def test_t10_the_audio_and_the_degrade_are_unchanged(monkeypatch, caplog) 
     assert "piper timed out" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_t14_a_request_that_shutdown_ended_before_its_thread_ran_logs_no_timing_line(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(resident, "SLOW_SYNTHESIS_MS", 0.0, raising=False)
+    caplog.set_level(logging.INFO, logger=_VOICE_LOGGER)
+    _stub_request(monkeypatch, delay=0.0)
+    real = PiperWorker.synthesize_blocking
+    calls: list[str] = []
+
+    def synthesize_blocking(self, text, timeout):
+        calls.append(text)
+        if len(calls) == 1:
+            self.close()  # shutdown reaches the worker after the request was queued and before its thread started it
+        return real(self, text, timeout)
+
+    monkeypatch.setattr(PiperWorker, "synthesize_blocking", synthesize_blocking)
+    service = VoiceSynthesisService()
+    try:
+        assert await service.synthesize(_key(), "first", 5.0) is None
+        assert not _lines(caplog, _PIPER)
+        assert await service.synthesize(_key(), "second", 5.0) == b"WAV"
+    finally:
+        service.close()
+    assert len(_lines(caplog, _PIPER)) == 1  # the control: a request that ran is timed, so the machinery was live
+
+
 # --- the route ----------------------------------------------------------------------------------
 
 
@@ -430,3 +484,23 @@ async def test_t13_every_new_line_survives_the_log_redactor(voice_client, monkey
     texts = _lines(caplog, "BF-930:") + _lines(caplog, "BF-918: tts route")
     assert len(texts) >= 3  # the route line, the store's write line and the synthesizer's line
     assert all(PIIRedactor.redact_all(text) == text for text in texts)
+
+
+@pytest.mark.asyncio
+async def test_t15_a_log_handler_that_fails_never_fails_a_slow_write_or_a_slow_request(voice_client, monkeypatch) -> None:
+    monkeypatch.setattr(filesystem_store, "SLOW_STORE_CALL_MS", 0.0, raising=False)
+    monkeypatch.setattr(resident, "SLOW_SYNTHESIS_MS", 0.0, raising=False)
+    store_log = _FailingHandlerLogger(filesystem_store.logger)
+    voice_log = _FailingHandlerLogger(resident.logger)
+    monkeypatch.setattr(filesystem_store, "logger", store_log)
+    monkeypatch.setattr(resident, "logger", voice_log)
+    _stub_request(monkeypatch)
+    answer = await voice_client.post("/api/avatars/tts", json={"text": "hello", "defer_visemes": True})
+    assert answer.status_code == 200 and answer.json()["audio_attachment_id"]
+    service = VoiceSynthesisService()
+    try:
+        assert await service.synthesize(_key(), "hello", 5.0) == b"WAV"
+    finally:
+        service.close()
+    for log in (store_log, voice_log):
+        assert log.failed["info"] >= 1 and log.failed["debug"] == log.failed["info"]
