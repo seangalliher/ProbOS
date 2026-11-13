@@ -778,11 +778,26 @@ function failTheFirstTranscriptRequest(): { release: () => void; held: () => boo
   return { release: () => { release?.(); }, held: () => release !== null };
 }
 
+/** The store outlives a case, and the cases of this block leave four live-frame fields behind (a state diff per case
+ *  found them): the refresh command (T1's greeting names a row that the next case's server does not hold, so the next
+ *  mount's load never lands), the repair epoch (a raised epoch makes the next mount repair its transcript once more)
+ *  and the drop count and log. Each case starts from the store's initial values and leaves them there (A1, A2). */
+function resetLiveFrameState(): void {
+  const initial = useStore.getInitialState();
+  useStore.setState({
+    liveThreadRefresh: initial.liveThreadRefresh,
+    liveRepairEpoch: initial.liveRepairEpoch,
+    liveDropCount: initial.liveDropCount,
+    liveDrops: initial.liveDrops,
+  });
+}
+
 describe('BF-928 -- the first transcript load of a scope is history, whatever triggered it', () => {
-  beforeEach(() => {
-    // The store outlives a case: the refresh command an earlier case left (T1's greeting) would be replayed by the
-    // next case's mount and, naming a row that case's server does not hold, would keep its load from landing (A1).
-    useStore.setState({ liveThreadRefresh: null });
+  beforeEach(resetLiveFrameState);
+  afterEach(() => {
+    // Unmount first: a store write under a mounted component re-renders it outside act() and can start a repair.
+    cleanup();
+    resetLiveFrameState();
   });
 
   built('speaks only the greeting when the first load that lands is the one its append triggered', async () => {
