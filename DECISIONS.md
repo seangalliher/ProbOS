@@ -1715,6 +1715,13 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (the fixtures).* Synthetic text only: no crew member's name, thread or live figure is in any test, comment, tracker line or commit message of the batch; this overrides the line of the issue that asked for the live message as the fixture.
 - *Residual.* L1 to L5 of the contract (S1). *Reversal.* Revert the BF-929 commits.
 
+### BF-928 -- The first transcript load of a scope in a browser session is history, whatever triggered it (2026-11-12, #1666)
+
+- *Scope.* `ui/src/components/profile/speechLedgerStore.ts` (the `SpeechScope` record gains `loaded`; the module stays importless), `profileTranscript.ts` (`markScopeLoaded`), `ProfileChatTab.tsx` (`refreshThreadTranscript`: the seed line and the import), tests (a new file and three cases appended to the BF-718 suite). Contract `prompts/bf-928-929-931-voice-call-ui.md`.
+- *G1 (the rule).* The ledger records the first landed load per scope and the speech owner seeds it whatever triggered it; the trigger row is still spoken through the live-id set. This holds however the first landed load became a trigger load (a failed or superseded open-time load, or a push coalesced behind it), which the issue's account and the code both allow and only the code was read. Rejected: keeping first sight from being used on an empty list (a push as the first message of a per-agent buffer must still be spoken, and nothing marks a load there); a per-mount ref (a remount would make the next push-triggered load a first, BF-765); seeding by age (a clock heuristic that swallows a late push).
+- *G2 (the tests).* A mounted seam test over the real component and the BF-718 harness, controls that pin what must not change, and the ledger's own cases. Synthetic text only.
+- *Residual.* L1 to L5 of the contract (S2). *Reversal.* Revert the BF-928 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
