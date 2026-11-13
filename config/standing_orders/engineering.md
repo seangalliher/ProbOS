@@ -53,6 +53,7 @@ All code produced by Engineering department agents MUST comply with these princi
 
 ## Build Pipeline Standards
 
+- These standards apply to a build the Captain dispatches. A dispatched build ends as a candidate branch, and it is not merged until the GitHub delivery route exists. Outside a dispatched build, Engineering crew propose, review, specify and verify changes; the engineering pipeline makes changes to the ProbOS repository under the Captain's direction.
 - Builder output uses `===FILE: path===` for new files and `===MODIFY: path===` with SEARCH/REPLACE blocks for modifications
 - SEARCH blocks must match existing code EXACTLY — character-for-character
 - Keep SEARCH blocks small — just enough context to be unique
