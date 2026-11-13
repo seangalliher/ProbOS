@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from probos.events import EventType
+from probos.utils.step_timing import ms_between
 
 logger = logging.getLogger(__name__)
 
@@ -231,10 +232,11 @@ class ConcurrencyManager:
                     resource_key=next_intent.resource_key,
                 )
                 logger.info(
-                    "AD-672: Promoted queued intent '%s' for agent %s at priority=%d",
+                    "AD-672: Promoted queued intent '%s' for agent %s at priority=%d waited_ms=%.0f",
                     next_intent.intent_type,
                     self._agent_id,
                     next_intent.priority,
+                    ms_between(next_intent.queued_at, time.monotonic()),  # BF-932: log-only
                 )
                 if not next_intent.future.done():
                     next_intent.future.set_result(next_intent.thread_id)

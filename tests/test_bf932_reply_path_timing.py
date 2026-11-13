@@ -24,11 +24,9 @@ from probos.routers.agents import agent_chat
 from probos.security.pii_redaction import PIIRedactor
 from probos.types import IntentDescriptor
 
-built = (
-    (lambda func: func)
-    if os.environ.get("BF932_RUNXFAIL") == "1"
-    else pytest.mark.xfail(raises=AssertionError, strict=True)
-)
+def built(func):
+    """BF-932 M2: the built cases pass; the marker no longer fails them."""
+    return func
 
 _CREW_PATCH = patch("probos.routers.agents.is_crew_agent", return_value=True)
 _ROUTE = "BF-932: dm route"

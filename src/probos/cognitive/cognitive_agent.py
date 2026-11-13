@@ -7605,12 +7605,24 @@ class CognitiveAgent(BaseAgent):
             recreation_turn is None or recreation_turns is None
         ):
             return await self._run_recreation_turn(intent)
+        _t_perceive = time.perf_counter()  # BF-932: log-only stamps of the turn's start
         observation = await self.perceive(intent)
+        _t_recall = time.perf_counter()
         if recreation_turn is not None:
             observation["_recreation_turn"] = recreation_turn
 
         # AD-430c (Pillar 4): Enrich observation with relevant episodic memories
         observation = await self._recall_relevant_memories(intent, observation)
+        if intent.intent == "direct_message" and intent.params.get("from") == "hxi_profile":
+            # BF-932: one line per Captain DM (the HXI route's own marker), keyed by the id the route's line carries.
+            from probos.utils.step_timing import emit_line, ms_between
+
+            emit_line(
+                logger,
+                "BF-932: dm turn intent=%s agent=%s perceive_ms=%.0f recall_ms=%.0f",
+                intent.id[:8], self.id[:12], ms_between(_t_perceive, _t_recall),
+                ms_between(_t_recall, time.perf_counter()),
+            )
 
         # AD-596b: Inject cognitive skill instructions into observation context
         if cognitive_skill_instructions:
