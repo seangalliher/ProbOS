@@ -42,7 +42,10 @@ SUGGESTIONS = ["Delete the unused helper; the spec does not need it", "Name the 
 # The real runner, captured at import: the tests' own git calls go through it.
 _REAL_RUN = subprocess.run
 
-built = pytest.mark.xfail(raises=AssertionError, strict=True)
+
+def built(func):
+    """AD-1359 follow-up M2: the built cases pass; the marker no longer fails them."""
+    return func
 
 
 @pytest.fixture(autouse=True)

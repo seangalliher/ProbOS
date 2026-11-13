@@ -141,6 +141,7 @@ class BuildResult:
     fix_attempts: int = 0
     review_result: str = ""
     review_issues: list[str] = field(default_factory=list)
+    review_suggestions: list[str] = field(default_factory=list)  # AD-1359 follow-up (#1769): the review's suggestions, approved or not
     builder_source: str = "native"  # "native" | "visiting" | "native_harness" (AD-353/546)
     # AD-549: Structured execution metadata. Populated by NativeBuilderHarness with
     # builder_type / iterations / tools_used / compactions / stopped_reason / total_tokens.
@@ -174,6 +175,7 @@ class BuildFailureReport:
     # Review
     review_result: str = ""
     review_issues: list[str] = field(default_factory=list)
+    review_suggestions: list[str] = field(default_factory=list)  # AD-1359 follow-up (#1769): copied from the build result
 
     # Resolution options
     resolution_options: list[dict[str, str]] = field(default_factory=list)
@@ -197,6 +199,7 @@ class BuildFailureReport:
             "fix_descriptions": self.fix_descriptions,
             "review_result": self.review_result,
             "review_issues": self.review_issues,
+            "review_suggestions": self.review_suggestions,
             "resolution_options": self.resolution_options,
         }
 
@@ -218,6 +221,7 @@ def classify_build_failure(result: BuildResult, spec: BuildSpec) -> BuildFailure
         fix_attempts=result.fix_attempts,
         review_result=result.review_result,
         review_issues=list(result.review_issues),
+        review_suggestions=list(result.review_suggestions),
         raw_error=result.error or result.test_result or "",
         cleanup_errors=list(result.metadata.get("cleanup_errors", [])),  # BF-904a A3 (D28)
     )
@@ -3243,6 +3247,19 @@ def _check_sealed_path(change_path: str, sealed_globs: tuple[str, ...]) -> None:
 BuilderAgent = SoftwareEngineerAgent
 
 
+def _review_suggestions(raw: object) -> list[str]:
+    """AD-1359 follow-up (#1769): the code review's ``suggestions`` as a list of non-blank strings.
+
+    ``CodeReviewAgent._parse_review`` copies the model's JSON as given, so the value may be null, a string or a list
+    of anything: a bare string is one suggestion, a None or blank item is dropped, any other item is its text, and
+    any other value is no suggestion. Never raises (the items are what ``json`` decodes).
+    """
+    items = [raw] if isinstance(raw, str) else raw
+    if not isinstance(items, (list, tuple)):
+        return []
+    return [text for text in (str(item).strip() for item in items if item is not None) if text]
+
+
 async def execute_approved_build(
     file_changes: list[dict[str, Any]],
     spec: BuildSpec,
@@ -3544,6 +3561,8 @@ async def execute_approved_build(
                     llm_client=llm_client,
                 )
                 result.review_result = review.summary
+                # AD-1359 follow-up (#1769): set here, above the rejected branch, so nothing there can skip it.
+                result.review_suggestions = _review_suggestions(review.suggestions)
                 if not review.approved:
                     logger.warning(
                         "CodeReviewAgent: review REJECTED -- %s",

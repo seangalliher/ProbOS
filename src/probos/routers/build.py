@@ -507,11 +507,13 @@ async def _execute_build(
                 "test_result": result.test_result[:500] if result.test_result else "",
                 "review": result.review_result,
                 "review_issues": result.review_issues,
+                "review_suggestions": result.review_suggestions,  # AD-1359 follow-up (#1769)
                 "message": (
                     f"\u2b22 Build complete! Branch: {result.branch_name}, "
                     f"Commit: {result.commit_hash}, "
                     f"Files: {len(result.files_written) + len(result.files_modified)}, "
                     f"Tests: {'passed' if result.tests_passed else 'FAILED'}"
+                    + (f", Review suggestions: {len(result.review_suggestions)}" if result.review_suggestions else "")
                 ),
             })
         else:
