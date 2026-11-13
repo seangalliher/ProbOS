@@ -1,7 +1,7 @@
 # BF-928 (#1666), BF-929 (#1667), BF-931 (#1669): the voice and call UI of one live video call: a call no longer reads the thread's history aloud, a spoken paragraph break no longer says "dot", and the avatar's mouth no longer starts before the voice
 
 **Drafted by:** `Architect` (GitHub Copilot fallback; the Claude Code bridge is logged out), 2026-11-13
-**Revised by:** the orchestrator (amendment A1, 2026-11-13, section 15), measured on an oracle over BF-937's merge `f614a31d855e217eec6c826deaffad7572d1f43f` (the blocks applied by tool, every gate of section 4 and every mutation row run): one defect found by running (S2's appended case T3 fails after T1 in file order: a store leak, repaired inside N1-2), the killers of five mutation rows understated, and the ledger movement of the batch different from the in-memory measurement; the Architect's text is otherwise unchanged. Where section 15 and an earlier section differ, section 15 wins; where prose and a block differ, the block wins.
+**Revised by:** the orchestrator (amendment A1, 2026-11-13, section 15), measured on an oracle over BF-937's merge `f614a31d855e217eec6c826deaffad7572d1f43f` (the blocks applied by tool, every gate of section 4 and every mutation row run): one defect found by running (S2's appended case T3 fails after T1 in file order: a store leak, repaired inside N1-2), the killers of five mutation rows understated, and the ledger movement of the batch different from the in-memory measurement; and amendment A2 (2026-11-13, section 15 and the repair R1 of section 7.4) after review round 1 (S3 READY; S1 NOT READY: the paragraph rule rescans every run of spaces, quadratic; S2 NOT READY: the appended cases leave four live-frame fields of the store behind), measured on the same oracle. The Architect's text is otherwise unchanged. Where section 15 and an earlier section differ, section 15 wins; where prose and a block differ, the block wins.
 **Answer file:** in four parts, because the contract is too long for one `create` call: `answer-voice-contract.part1.md` (header, sections 1 to 6), `answer-voice-contract.part2.md` (section 7: slices S1 and S2), `answer-voice-contract.part3.md` (section 7: slice S3; sections 8 to 10), `answer-voice-contract.part4.md` (section 11, section 12, "Batching", "Not in this issue: for the Captain", sections 13 and 14). Read them in that order; the labels of section 7 restart in each slice.
 **Status:** ready to build on `origin/main` `f614a31d855e217eec6c826deaffad7572d1f43f` (BF-937's merge; #1678 closed; A1 measured the base, see section 15). **Reading tree:** `D:\ProbOS-worktrees\next-read` at `54a112e2c73726bda6ab020993036541e4b21bfd` (the Architect's reading base; clean; read only). **Oracle:** the Architect ran no pytest, no vitest and no UI build (a read-only consult); the orchestrator's oracle did (section 15). **What I ran instead** (section 11): every SEARCH of section 7 against the LF blobs of the reading tree (occurrences, line start, ASCII); the three pure test files of section 7 executed (transpiled, under a 40-line stand-in for vitest, nothing written) against the unpatched and the patched sources, which fixes their classification (S1 on the base: 4 pass, 5 expected failures, each failing at its own assertion with the received text quoted in section 6); the stripper and the sentence splitter of S1 evaluated in memory with the seven mutants of section 9; the heuristic track sampled at the times S3 relies on; the whole `ui/src` program, with the new and patched files overlaid in memory, compiled with the TypeScript compiler API (0 diagnostics at M1 and at the head). **What that leaves unchecked (all "expected" below):** every vitest case as a vitest case (the counts), above all the two mounted seam tests (S2's, S3's), `npm run build`, the ledger regeneration, the broad gate, and everything that needs the live vessel (section "Not in this issue: for the Captain").
 **Base blobs (`54a112e2`):** S1: `ui/src/audio/voice.ts` `a248843db9ab7b2ad4711dbccd4a44bce1867839`, `ui/src/audio/voiceChunking.ts` `1133aa1cd61d7e5e30de845c5d66d722604aea8b`. S2: `ui/src/components/profile/speechLedgerStore.ts` `e80a940251e13d7bfff7627e2d3843ed4eaf0244`, `ui/src/components/profile/profileTranscript.ts` `4d3f1c903b783bfb3648227de4bba247584274df`, `ui/src/components/profile/ProfileChatTab.tsx` `3ed3ee2a6c738e6fb4c0467c3e5fd920cbc40986`, `ui/src/components/profile/__tests__/ProfileChatTab.bf718.test.tsx` `317202c9bcfebe9047c696d3b9212cc3085305a3`. S3: `ui/src/audio/lipSyncTrack.ts` `f130440f701b23b8b311b65bed7bbf571b01378c`, `ui/src/components/profile/CrewVRM.tsx` `36bf9f7660953d7862d7703cd4549e348b02efd4`. Read, not edited: `ui/src/audio/useLipSyncCapture.ts` `104e5b4f2a7a0614c85694611e7068868e457586`, `ui/src/audio/__tests__/voice.test.ts` `562686d74c035bfff6f744457e10e6c765e0239d`, `ui/src/audio/__tests__/voiceChunking.test.ts` `d2f9b14285c627091abfe1a7a593ad3a57d0f5af`. All slices: `PROGRESS.md` `f580b10cf4f24b1ea972268e6766da5a0a2b46ee`, `DECISIONS.md` `0e67c4d6e0e47fb0922ef9f6c95cb5f8dbe0b6dd`, `docs/development/open-ads-report.md` `309df79d37f81cec82c9b0efc75ae211dd2beb4a`, `docs/development/ad-ledger-snapshot.json` `e216c74da7cc5890e42aba314ee37800d5848008`. **BF-937 changes `PROGRESS.md`, `DECISIONS.md` and the ledger pair before this batch is built (section "Tracker anchors, and the BF-937 merge" below): those four blobs will differ; every other blob above must be equal.** **A1, measured on `f614a31d`:** the four moved to `PROGRESS.md` `70cd1044019282b348bba2532acd6bfb2b6369cf`, `DECISIONS.md` `90adc2837c3d2c6d09327e93543eeb0471880fec`, `docs/development/open-ads-report.md` `04562090a74a962b09f61864a667ecb1a62f1b8a`, `docs/development/ad-ledger-snapshot.json` `35de650056f112a17d079fab48f32ddabad939bb`; every other blob above is equal (all eleven code and test paths), and none of the five new paths exists.
@@ -95,7 +95,7 @@ Then the batch (at most three, tightly coupled: one gate, one pull request):
 
 | # | Option | Judgement |
 |---|---|---|
-| 1 | Cut after `[.!?]+` and closers only when whitespace and then a capital letter or a digit follow (`\p{Lu}`, `\p{N}`, optional opening quote or bracket before them) (chosen) | Keeps `"Stop!" he said.` in one chunk (measured: unchanged), cuts `done." Next` and `log.) Next`; the build targets ES2020 (`ui/tsconfig.json`), which has `\p{...}` with the `u` flag |
+| 1 | Cut after `[.!?]+` and closers only when whitespace and then a capital letter or a digit follow (`\p{Lu}`, `\p{N}`, optional opening quote or bracket before them) (chosen) | Keeps `"Stop!" he said.` in one chunk (measured: unchanged), cuts `done." Next` and `log.) Next`; the build targets ES2020 (`ui/tsconfig.json`), which has `\p{...}` with the `u` flag. **A2:** the expression is written with one terminal mark, `[.!?]`, not a run: the cut lands at the same place (after the run's last mark; 1,000,000 random strings give the same output as the quantified form, section 15) and a run of marks is not rescanned from every mark (R1-3) |
 | 2 | Cut after every closer | Splits dialogue with an attribution |
 | 3 | Do not change the splitter | The paragraph-ends-a-chunk property fails for the quote and bracket variants the acceptance names |
 
@@ -155,6 +155,8 @@ Then the batch (at most three, tightly coupled: one gate, one pull request):
 - **G2.** `npx vitest run src/audio src/__tests__/CrewVRM src/__tests__/ParametricAvatar.test.tsx src/components/profile/__tests__/MeetingView src/__tests__/CrewAvatarPopout` (the lip-sync suites, the two existing `CrewVRM` suites, and the suites that mock `CrewVRM`). **Expected:** `Tests` = M0 + 9 (6 + 3), 0 failed; record M0 on the branch head, which already holds S1's and S2's cases. Then `npx tsc -b`: clean.
 - **G3.** As S1's, including its measured diff. **A1:** this slice moves no number either (see S2's G3); its report diff is the git-log row and the two skipped-line numbers. After the Diff Reviewer's findings are repaired and the reviewed tree is committed locally (the broad gate stops on an untracked file under `ui/src/` and on a mutation backup file there, `scripts/run_test_gate.py:33-41`, `:69`, `:716-735`, `:795-804`: every new file is committed first, and a mutation campaign restores each file and removes any `.mutbak`, `.mut_bak` or `.mut.bak`): `npm run build` (from `ui/`; `tsc -b && vite build`: clean), the whole `npx vitest run` once on the oracle (CI runs it again), the mutation rows of section 9, and `PY scripts/run_test_gate.py --label bf928-929-931 --receipt logs/gates/bf928-929-931.receipt.json` from the repository root (its preflight runs the ledger, architecture, seam and store checks; **it does not run the UI tests or the UI build**; no config or Python file changes, so its config checks are unaffected). **Harness rule.** No source change made to pass a test, no skip, no loosened assertion; a failing new case at G2, or any existing test failing, goes back to the Architect.
 
+**R1 (amendment A2; after S3 M3).** R1-1 to R1-5 are S1's repair and R1-6 is S2's (section 7.4). **S1:** `npx vitest run src/audio/__tests__/voice.paragraphBreak.bf929.test.ts`: **expected `10 passed (10)`** (every case is an ordinary case after M2; C5 is the tenth). The repaired test file run against the source before R1-1 gives `9 passed | 1 failed` with the failure at `expect(elapsed).toBeLessThan(250)` (measured: about 1.2 s for the run of spaces, so C5 does discriminate). `npx vitest run src/audio`: **expected `Tests` = the count at S3 M3's head + 1** (measured 307, then 308), 0 failed; `npx tsc -b` clean. **S2:** `npx vitest run src/components/profile/__tests__/speechLedgerLoaded.bf928.test.ts src/components/profile/__tests__/ProfileChatTab.bf718.test.tsx`: **expected `5 passed (5)` and `30 passed (30)`**; the S2 G2 command's count is unchanged by R1-6 (831; it adds no case); and S3's G2 count is the S3 M3 count + 1 (390, then 391: it includes `src/audio`). No Python test, no config and no generated artifact: the ledger pair is not regenerated (no tracker entry head changes; `gen_ad_ledger.py --check` stays current). **The orchestrator's gates after R1:** `npm run build`, the whole `npx vitest run` (**with `--maxWorkers=8` on a loaded host**: with the default worker count (one per logical CPU) two or three files that start real Python or wait on timers timed out under load and passed alone, section 15), the mutation rows of section 9 (S1 rows 1 to 9, S2 rows 1 to 6, S3 rows 1 to 6), and the broad gate with the label `bf928-929-931`.
+
 ## 5. Commit messages
 
 - **S1 M1:** `BF-929 M1: tests for a paragraph break adding no pause marker after a finished sentence, xfail until built (#1667)`
@@ -181,6 +183,7 @@ Each issue has exactly one slice, so each M3 is the last slice of its issue and 
 | B4 | 1 | an ellipsis at a paragraph end stays three dots | M2 |
 | B5 | 1 | trailing spaces and a run of blank lines are one pause; no chunk is a lone period | M2 |
 | C1-C4 | 4 | controls: a paragraph without sentence punctuation still gets its period; a decimal and a number-ending paragraph; a single line break and a mid-sentence ellipsis; inline dialogue with a lowercase attribution is not cut | none |
+| C5 | 1 | control (A2, added by R1-4): a run of 50,000 spaces and then of 50,000 tabs, between two words, is stripped in under 250 ms (the repaired expression takes under a millisecond; the one R1-1 repairs takes about 1.2 s for the run of spaces). It passes on the base and on the repaired tree and fails on the tree before R1-1 | none |
 
 **How each xfail case fails on the base** (measured in memory on the unpatched functions): B1 at `expect(text).toBe(...)`, the base returns `...stable.. Two things ... surprise.. That is ...`; B2 returns `done?. Yes!. Good.`; B3 returns `"done.". The second note (see the log.). The last note.`; B4 returns `Wait.... It is fine.` (four dots); B5 returns `First note. . Second note`, whose chunks include a lone `.`.
 
@@ -195,6 +198,8 @@ Each issue has exactly one slice, so each M3 is the last slice of its issue and 
 | T1 | 1 | **the seam:** the open-time transcript request hangs and fails; the greeting's append arrives meanwhile (coalesced); the retry that carries it is the first load that lands: only the greeting is spoken | M2 |
 | T2 | 1 | control: after a first load, one later push-triggered load with two new rows speaks both (the load is not seeded) | none |
 | T3 | 1 | control: a reconnect repair that is the first load that lands speaks nothing | none |
+
+**A2 (isolation of the appended block).** The describe that holds T1 to T3 resets four live-frame fields of the store, `liveThreadRefresh`, `liveRepairEpoch`, `liveDropCount` and `liveDrops`, to the store's initial values before and after every case (R1-6). A1 reset only the first; a state diff per case (section 15) found that T1 and T3 also leave the repair epoch and the drop count and log changed, and a raised epoch makes the next mount repair its transcript once more.
 
 **How each xfail case fails on the base.** L1 to L4 at the call of `markScopeLoaded` (not exported yet), which `it.fails` takes as the expected failure. T1 at `expect(spokenTexts()).toEqual(['A fresh greeting for this call.'])`: the base speaks the two older rows and then the greeting. T2 and T3 pass on the base (they pin what must not change): T2 is what kills the mutant "every load is a first load" (section 9), T3 is the issue's "also cover a reconnect repair".
 
@@ -1164,6 +1169,122 @@ REPLACE:
 
 **Ledger.** Run G3.
 
+### 7.4 Repair R1 (amendment A2): after review round 1, applied on S3 M3's head
+
+Round 1 (section 15, A2) found two defects in what the milestones built: S1's paragraph rule rescans every run of spaces and tabs (quadratic), and S2's appended cases leave four live-frame fields of the store behind. R1 repairs both and one sibling (S1's second cut, the same flaw in the slice's other new regular expression). It is applied after S3 M3, in two commits: the S1 repair (R1-1 to R1-5), then the S2 repair (R1-6). Every SEARCH below occurs exactly once in its file on S3 M3's head, starts at the start of a line and is ASCII; apply the pairs with the `edit` tool one at a time, whole block, in label order. No number of the AD ledger moves and the trackers' entry heads are unchanged, so the ledger is not regenerated.
+
+**R1-1.** `ui/src/audio/voice.ts`. The paragraph rule: a run of two or more spaces or tabs that no paragraph break follows is consumed whole as a second alternative, and the callback returns it unchanged, so the scan never restarts inside a run (once; ASCII). The expression has no look-behind, which would need Safari 16.4.
+SEARCH:
+```
+    .replace(/([.!?]["')\]}\u201d\u2019\u00bb]*)?[ \t]*\n{2,}/g, (_whole: string, end?: string) => (end ? `${end} ` : '. '))
+```
+REPLACE:
+```
+    .replace(/([.!?]["')\]}\u201d\u2019\u00bb]*)?(?:[ \t]*\n{2,}|[ \t]{2,})/g, (whole: string, end?: string) => (!whole.includes('\n') ? whole : end ? `${end} ` : '. '))
+```
+
+**R1-2.** `ui/src/audio/voice.ts`. The doc comment says why (the last line of the comment, once; ASCII).
+SEARCH:
+```
+ *  before the break and a run of blank lines are one pause. An ellipsis and a decimal are left as they are. */
+```
+REPLACE:
+```
+ *  before the break and a run of blank lines are one pause. An ellipsis and a decimal are left as they are.
+ *  A run of two or more spaces or tabs that no break follows is matched whole by the expression's second
+ *  alternative and returned unchanged: that keeps the scan from restarting inside the run, which costs time
+ *  quadratic in its length, and this text is stripped on the page's own thread. */
+```
+
+**R1-3.** `ui/src/audio/voiceChunking.ts`. The second cut takes one terminal mark instead of a run of them: the cut is the same (a run is cut after its last mark) and a run is not rescanned from every mark (once; ASCII).
+SEARCH:
+```
+    // BF-929: and after terminal punctuation that closing quotes or brackets follow, when the next word starts a sentence.
+    .replace(/([.!?]+["')\]}\u201d\u2019\u00bb]+)\s+(?=["'(\[{\u201c\u2018\u00ab]*[\p{Lu}\p{N}])/gu, `$1${_SPLIT}`)
+```
+REPLACE:
+```
+    // BF-929: and after terminal punctuation that closing quotes or brackets follow, when the next word starts a sentence.
+    // One terminal mark is enough (a run of marks is cut at the same place, after its last one); a quantified mark here would rescan the run from every mark.
+    .replace(/([.!?]["')\]}\u201d\u2019\u00bb]+)\s+(?=["'(\[{\u201c\u2018\u00ab]*[\p{Lu}\p{N}])/gu, `$1${_SPLIT}`)
+```
+
+**R1-4.** `ui/src/audio/__tests__/voice.paragraphBreak.bf929.test.ts`. C5: a long run of spaces or tabs is stripped in linear time. It is a control (it passes on the base and on the repaired tree and fails on the tree R1-1 repairs). The last four lines of the file are the SEARCH (once; ASCII).
+SEARCH:
+```
+      'Then "Go." she said.',
+    ]);
+  });
+});
+```
+REPLACE:
+```
+      'Then "Go." she said.',
+    ]);
+  });
+
+  it('strips a long run of spaces or tabs in linear time, so a degenerate reply cannot stall the page', async () => {
+    const { stripMarkdownForSpeech } = await import('../voice');
+    for (const run of [' ', '\t']) {
+      const began = performance.now();
+      const stripped = stripMarkdownForSpeech(`Start${run.repeat(50_000)}End`);
+      const elapsed = performance.now() - began;
+      expect(stripped.startsWith('Start')).toBe(true);
+      expect(stripped.endsWith('End')).toBe(true);
+      // The unrepaired expression restarts its scan at every character of the run: about a second at this length.
+      expect(elapsed).toBeLessThan(250);
+    }
+  });
+});
+```
+
+**R1-5.** `DECISIONS.md`. S1's entry names its recorded limits (L6 is new, section 10), once; ASCII.
+SEARCH:
+```
+- *Residual.* L1 to L5 of the contract (S1). *Reversal.* Revert the BF-929 commits.
+```
+REPLACE:
+```
+- *Residual.* L1 to L6 of the contract (S1). *Reversal.* Revert the BF-929 commits.
+```
+
+**R1-6.** `ui/src/components/profile/__tests__/ProfileChatTab.bf718.test.tsx`. S2's appended describe starts every case from the store's initial live-frame values and leaves them there: the helper, a `beforeEach` that calls it and an `afterEach` that unmounts the component first and then calls it, replace A1's `beforeEach` (once; ASCII). The five lines of the old hook and the describe line are the SEARCH.
+SEARCH:
+```
+describe('BF-928 -- the first transcript load of a scope is history, whatever triggered it', () => {
+  beforeEach(() => {
+    // The store outlives a case: the refresh command an earlier case left (T1's greeting) would be replayed by the
+    // next case's mount and, naming a row that case's server does not hold, would keep its load from landing (A1).
+    useStore.setState({ liveThreadRefresh: null });
+  });
+```
+REPLACE:
+```
+/** The store outlives a case, and the cases of this block leave four live-frame fields behind (a state diff per case
+ *  found them): the refresh command (T1's greeting names a row that the next case's server does not hold, so the next
+ *  mount's load never lands), the repair epoch (a raised epoch makes the next mount repair its transcript once more)
+ *  and the drop count and log. Each case starts from the store's initial values and leaves them there (A1, A2). */
+function resetLiveFrameState(): void {
+  const initial = useStore.getInitialState();
+  useStore.setState({
+    liveThreadRefresh: initial.liveThreadRefresh,
+    liveRepairEpoch: initial.liveRepairEpoch,
+    liveDropCount: initial.liveDropCount,
+    liveDrops: initial.liveDrops,
+  });
+}
+
+describe('BF-928 -- the first transcript load of a scope is history, whatever triggered it', () => {
+  beforeEach(resetLiveFrameState);
+  afterEach(() => {
+    // Unmount first: a store write under a mounted component re-renders it outside act() and can start a repair.
+    cleanup();
+    resetLiveFrameState();
+  });
+```
+
+**Commit messages of R1.** `BF-929 R1: the paragraph rule and the splitter's second cut no longer rescan a run, with a control for a long run of spaces (#1667)`, body ending `Refs #1667.`; and `BF-928 R1: the appended cases start from and leave the store's initial live-frame fields (#1666)`, body ending `Refs #1666.`. The amendment itself is committed first, as `BF-928, BF-929, BF-931 (#1666, #1667, #1669): amendment A2 to the build contract after review round 1: the paragraph rule and the splitter's second cut no longer rescan a run, and the appended cases leave the store as they found it`.
+
 ## 8. What this does NOT change
 
 **S1.** `speakResponse`, `_prepareServerSpeech` and the whole of the TTS path of `voice.ts`; every other `.replace` of `stripMarkdownForSpeech` (bold, italic, headings, bullets, rules, code, links), including the one whose pattern holds a non-ASCII bullet; the abbreviation guard, the `maxChunks` merge and the first cut of `splitIntoSentences`, and `runPrefetchQueue`; `routers/avatars.py` and every server file (no server-side collapse of a doubled period); the exports of `voice.ts` (the wave-close precheck's mock-parity check, which diffs them against the `vi.mock` factories of 45 test files, stays green); `useMeetingVoice.ts` and `meetingVoice.ts` (they pass `stripMarkdownForSpeech` through unchanged).
@@ -1176,19 +1297,21 @@ REPLACE:
 
 ## 9. Mutation rows (each Line occurs once, stripped, in its file on M2's head)
 
-The S1 rows were run in memory (section 11): the patched stripper and splitter evaluated with the line replaced and the nine cases of N1-1 rerun as plain assertions; each was killed by exactly the cases named. A Builder whose files match section 7's blocks does not repeat the campaign: these are the campaign of record for the base tree `54a112e2` plus slices S1, S2 and S3 as written; if a file differs, rerun the rows that name it. The S2 and S3 rows were **not** run by the Architect (no UI test can run in a read-only consult). **A1: the orchestrator ran all three slices' rows on the oracle** (each row's line replaced whole in the built file, the slice's new test files run with vitest's JSON reporter, the file restored and its blob checked): 19 rows, every one killed, no mutant survived, and each row's killers are the cases the cells below name; the cells marked A1 differ from the first text, which understated them (the killers are a superset).
+The S1 rows were run in memory (section 11): the patched stripper and splitter evaluated with the line replaced and the nine cases of N1-1 rerun as plain assertions; each was killed by exactly the cases named. A Builder whose files match section 7's blocks does not repeat the campaign: these are the campaign of record for the base tree `54a112e2` plus slices S1, S2 and S3 as written; if a file differs, rerun the rows that name it. The S2 and S3 rows were **not** run by the Architect (no UI test can run in a read-only consult). **A1: the orchestrator ran all three slices' rows on the oracle** (each row's line replaced whole in the built file, the slice's new test files run with vitest's JSON reporter, the file restored and its blob checked): 19 rows, every one killed, no mutant survived, and each row's killers are the cases the cells below name; the cells marked A1 differ from the first text, which understated them (the killers are a superset). **A2:** after the repair R1 the orchestrator reran all three slices' rows on the repaired oracle (section 15): the Lines of S1 rows 1 and 6 are the repaired lines (R1-1, R1-3), and S1 rows 8 and 9 are new.
 
 **S1 (file `ui/src/audio/voice.ts`, then `ui/src/audio/voiceChunking.ts`).**
 
 | # | Line (stripped) | Mutate to | Killed by |
 |---|---|---|---|
-| 1 | `.replace(/([.!?]["')\]}\u201d\u2019\u00bb]*)?[ \t]*\n{2,}/g, (_whole: string, end?: string) => (end ? `${end} ` : '. '))` | `.replace(/\n{2,}/g, '. ')` | B1, B2, B3, B4, B5 |
+| 1 | `.replace(/([.!?]["')\]}\u201d\u2019\u00bb]*)?(?:[ \t]*\n{2,}\|[ \t]{2,})/g, (whole: string, end?: string) => (!whole.includes('\n') ? whole : end ? `${end} ` : '. '))` (A2: with the second alternative R1-1 adds) | `.replace(/\n{2,}/g, '. ')` | B1, B2, B3, B4, B5 |
 | 2 | the row 1 line | the same with `: '. ')` changed to `: ' ')` | C1, C2 |
 | 3 | the row 1 line | the same without `[ \t]*` | B5 |
 | 4 | the row 1 line | the same with `[.!?]` changed to `[.]` | B2 |
 | 5 | the row 1 line | the same with the closers class emptied (`([.!?])?`) | B3 |
-| 6 | `.replace(/([.!?]+["')\]}\u201d\u2019\u00bb]+)\s+(?=["'(\[{\u201c\u2018\u00ab]*[\p{Lu}\p{N}])/gu, `$1${_SPLIT}`)` | the line deleted | B3 (the chunks of the quote and bracket variants) |
+| 6 | `.replace(/([.!?]["')\]}\u201d\u2019\u00bb]+)\s+(?=["'(\[{\u201c\u2018\u00ab]*[\p{Lu}\p{N}])/gu, `$1${_SPLIT}`)` (A2: with the single terminal mark R1-3 gives it) | the line deleted | B3 (the chunks of the quote and bracket variants) |
 | 7 | the row 6 line | the same without the `(?=...)` look-ahead | C4 |
+| 8 | the row 1 line | the same without the second alternative (`\|[ \t]{2,}` removed; A2, new) | C5 |
+| 9 | the row 6 line | the same with the single mark `[.!?]` made `[.!?]+` again (A2, new; **an equivalent mutant**: the output is the same, only the cost differs) | none: no case kills it, because the base's first cut, `([.!?]+)\s+`, is quadratic on the same input and masks the cost (S1 L6); the oracle's probe measures it (section 15) |
 
 **S2 (measured, A1; files `ui/src/components/profile/ProfileChatTab.tsx` and `profileTranscript.ts`).**
 
@@ -1223,6 +1346,7 @@ Not tabulated, for the cap: the scope-key expression of S2 beyond row 3, the com
 - **L3.** The splitter's closing-quote rule needs a capital letter or a digit after the closer (with an optional opening quote or bracket): `"Go." she said.` stays one chunk, and a paragraph that ends in `."` and is followed by a lowercase-initial paragraph is not cut there. `\p{Lu}` and `\p{N}` need an engine with Unicode property escapes (the build targets ES2020).
 - **L4.** The TTS text changes for every reply that has a paragraph ending in a period, `!`, `?`, an ellipsis or a closer: that is the fix, stated because it is every such reply. The stray period after a closer that the old text produced is gone.
 - **L5.** No audio was heard: the tests prove the text and the chunks. Whether Piper no longer says "dot" is the Captain's check (the last section).
+- **L6.** (A2) The splitter's first cut, `([.!?]+)\s+` (the base's, not edited by this batch), costs time quadratic in the length of a run of terminal punctuation with no whitespace after it: measured on the base with a node probe, about 0.2 s for 16,000 consecutive marks and 0.8 to 1 s for 32,000. The slice's second cut had the same shape; R1-3 makes it linear (one mark instead of a run), so the slice adds no super-linear cost, but it cannot remove the base's. No case pins the second cut's linearity: the first cut masks it on the same input (section 9, row 9). A reply of tens of thousands of consecutive punctuation marks is a degenerate generation, not a reply; recorded for one follow-up under #1754 that fixes the first cut together with a timing case over `splitIntoSentences`.
 
 **S2.**
 
@@ -1318,7 +1442,7 @@ HOLDS: yes
 
 - **Internal prior art, adopted.** BF-283 (the audio clock for the rhubarb schedule, which S3 extends to the heuristic track); BF-918 and its M5 (deferred visemes, the heuristic schedule until the frames arrive, `final` on `end`); BF-718, BF-765 and BF-768 (the speech claim, its module-scoped ledger, its bound: S2 adds one field to the same record so that it is evicted with the rest); AD-1071 (the sentence splitter and the single-call fallback); AD-1291 (`dropped` as the precedent for an additive speech event, considered and not used); BF-655 (balanced `start` and `end`, which moving `start` would break); BF-937's contract (the `it.fails` marker with an env switch, the module read through a cast so a new export's test loads before the export exists, SEARCH rules, the tracker-anchor and generated-artifact checks); AD-748 (the wave-close precheck's mock parity, which fixes "no new export in `voice.ts`"). **Rejected:** section 3. **External:** none consulted.
 - **Blind spots handled.** (1) Removing the stray period also removes the only thing that made a paragraph ending in `."` or `.)` a chunk boundary: the acceptance's closing-quote variant would have passed `no ..` and failed `each paragraph ends a chunk`; hence the splitter rule, with a capital-or-digit look-ahead so dialogue with an attribution is not cut (measured). (2) The same line also made a lone `.` chunk (trailing spaces before the break) and a fourth dot after an ellipsis: fixed by the same regex, with cases. (3) `voice.ts` must gain no export or the wave-close precheck fails 45 mock factories; the contract adds the regex to the existing function. (4) For S2 the `||` in the speech effect is not the only short circuit: in the new component line, `markScopeLoaded` is called first and unconditionally, so an untriggered load still marks the scope (a mutant that put it on the right of the `||` would make the next push-triggered load a "first": T2 kills it). (5) "Seed the first load" is only safe because the trigger row is protected by `liveIds` (`admitMessages`), which the BF-718 suite already pins; the new test names that row. (6) The first landed load can be a trigger load by a failed load plus a coalesced trigger, a path the code allows and the issue's account suggests; no existing test builds it, so the mounted test does, from the component's own paths and the harness's own network, not from a mock of the component. (7) For S3, `sample(0)` is already all zeros, so the audio clock needs no "not started" sentinel beyond `0`; the function still guards non-finite and negative values (a fake `<audio>` without a `currentTime` would give NaN). (8) The audio clock stands still when the audio stalls; recorded (S3 L1). (9) `ParametricAvatar` is a capsule that scales with a fake amplitude curve, not a mouth: out of scope, recorded (S3 L3). (10) The mounted S3 test cannot rely on a real `performance.now`, so it spies on it and restores it; and it cannot rely on React's scheduler seeing a frozen clock as a failure (the clock only moves when the test moves it).
-- **What discards a correct result.** S1: a paragraph that ends in `."` and is followed by a lowercase-initial paragraph is not cut at the boundary (S1 L3); a paragraph ending in a colon or U+2026 still gets `. ` (L1). S2: a live reply other than the trigger inside the first landed load is claimed silently (S2 L1). S3: while the audio stalls the mouth holds its viseme (S3 L1); the mouth may lead by the output device's own latency (S3 L2). **Recorded:** S1 L1 to L5, S2 L1 to L5, S3 L1 to L7.
+- **What discards a correct result.** S1: a paragraph that ends in `."` and is followed by a lowercase-initial paragraph is not cut at the boundary (S1 L3); a paragraph ending in a colon or U+2026 still gets `. ` (L1). S2: a live reply other than the trigger inside the first landed load is claimed silently (S2 L1). S3: while the audio stalls the mouth holds its viseme (S3 L1); the mouth may lead by the output device's own latency (S3 L2). **Recorded:** S1 L1 to L6 (L6 is A2's), S2 L1 to L5, S3 L1 to L7.
 
 ## Batching
 
@@ -1358,11 +1482,12 @@ Each item is an operation on, or a measurement of, the running vessel or the Cap
 **S1.**
 
 1. `stripMarkdownForSpeech`: exactly one `.replace` changed (the paragraph rule) and its doc comment; the other seven `.replace` lines and `.trim()` are byte-identical; name, signature and the single export unchanged; the diff of `voice.ts` adds no `export` (the wave-close precheck diffs `voice.ts`'s exports against 45 mock factories).
-2. The regex has no nested quantifier (an optional group, then `[ \t]*`, then `\n{2,}`): linear time on a long text with many spaces and newlines; the callback returns `end + ' '` or `'. '`.
+2. The regex has no nested quantifier (an optional group, then an alternation: `[ \t]*` and `\n{2,}`, or `[ \t]{2,}`): **A2: linear time on a long run of spaces or tabs.** The first text claimed linear time without a measurement and was wrong: the match restarted at every character of a run (quadratic: about 0.5 s for 32,000 spaces). The second alternative consumes a run of two or more spaces or tabs that no break follows, whole, and the callback returns it unchanged (`!whole.includes('\n')`), so the scan never restarts inside a run; it has no look-behind (which would need Safari 16.4: the build's default target list includes Safari 14, and esbuild turns such a literal into `new RegExp(...)`, which throws when it runs). Verify by running: 32,000 and 64,000 spaces and tabs, with and without a newline after them, in well under a millisecond or two; ordinary prose (single spaces) no slower than the unrepaired expression by more than a small factor; and the same output as the unrepaired expression on a spread of small inputs with spaces, tabs, newlines, terminal marks, closers, no-break spaces and carriage returns (the oracle's differential probe: 1,900,000 random strings over four alphabets and 25 fixtures, no difference). The callback returns `end + ' '` or `'. '` for a break.
 3. `splitIntoSentences`: the first cut is untouched; the second follows it and uses `_SPLIT`; flags `gu`; the look-ahead requires a capital letter or a digit (after optional opening quotes or brackets); the abbreviation guard and `maxChunks` are untouched; the eight inputs of `voiceChunking.test.ts` give the same chunks.
 4. M1: the file imports nothing new; the five `built` cases fail at their own `expect` (the stripped text or the chunks), never at an import; N2-1 removes the marker only.
 5. No file of the slice holds a crew member's name, a thread id, a live figure or a live sentence (read the whole diff for the words of the issues).
 6. (A1) The ledger pair's diff moves no number but BF-928, BF-929 and BF-931 (all three at S1 M3: the contract commit's subject names them), the report's git-log row and the two skipped-line numbers of PROGRESS.md; no other number's row moved.
+7. (A2, the repair R1, S1) R1-1 changes only the paragraph rule's expression (a second alternative) and its callback (one condition), and R1-2 adds a sentence to its doc comment; R1-3 changes only `[.!?]+` to `[.!?]` in the second cut (and adds one comment line); the output of both is unchanged on every input (verify with your own differential run, not only the oracle's: random strings over terminal marks, closers, quotes, spaces, tabs, newlines, letters and digits); no export is added; C5 (R1-4) fails on the tree before R1-1 and passes after it, and its 250 ms bound leaves a margin of at least two orders of magnitude over the repaired expression; the whole S1 file passes. R1-5 changes only the number of recorded limits in S1's DECISIONS entry.
 
 **S2.**
 
@@ -1371,7 +1496,7 @@ Each item is an operation on, or a measurement of, the running vessel or the Cap
 3. The ProfileChatTab `?raw` suites' assertions still hold (section 6): none names the import line or the seed line, and the new text has no emoji.
 4. M1: the appended block adds three cases after the last describe, one helper that only intercepts the thread's first transcript GET, and (A1) one `beforeEach` that resets `liveThreadRefresh`; it changes no existing line of the file; `built` fails at `expect(spokenTexts()).toEqual([...])` with the two older rows in the received value; the two controls pass on the base; N2-2 removes the marker only.
 5. T1's ledger assertion reads `loaded` through a cast so M1 type-checks before the field exists.
-6. (A1) The appended describe's `beforeEach` resets only `liveThreadRefresh` (the one store field T1 leaves behind); T3 passes after T1 in file order, and the first load of each case is built from that case's own network, not from the store.
+6. (A1, A2) The appended describe starts every case from the store's initial `liveThreadRefresh`, `liveRepairEpoch`, `liveDropCount` and `liveDrops` and leaves them there (R1-6: a `beforeEach` that calls one helper, and an `afterEach` that unmounts the component and then calls it: the unmount comes first because a store write under a mounted component re-renders it outside `act()`, which prints an `act(...)` warning for each case and can start a repair); T3 passes after T1 in file order, and the first load of each case is built from that case's own network, not from the store. **A2: A1's text said `liveThreadRefresh` was the only field T1 leaves behind, which was wrong** (review round 1; a state diff per case shows T1 leaves `liveDropCount`, `liveDrops` and `liveThreadRefresh` changed and T3 leaves `liveRepairEpoch` changed). Verify by your own state diff per case, not only the oracle's: after each of the three cases and its `afterEach`, those four fields equal the store's initial values, and no other field outside `seed()`'s keys is changed; the whole BF-718 file passes in file order and in reverse case order. R1-6 changes only the helper and the two hooks of the appended describe.
 
 **S3.**
 
@@ -1382,8 +1507,8 @@ Each item is an operation on, or a measurement of, the running vessel or the Cap
 ## 14. Acceptance criteria
 
 - G1, G2 and G3 of each slice pass as stated and the batch gates are green with a receipt (`logs/gates/bf928-929-931.receipt.json`); the UI evidence is each slice's vitest commands, `npx tsc -b`, `npm run build` and CI's `ui-tests`.
-- **#1667 BF-929.** A paragraph break adds a pause marker only when the paragraph does not already end in `.`, `!` or `?` (optionally followed by closing quotes or brackets); a doubled period is never produced; an ellipsis and a decimal are preserved (B1 to B5, C1 to C4). The stripped text and the `splitIntoSentences` chunks of the synthetic fixture contain no `..` and each paragraph still ends a chunk (B1, B3). **The fixture is synthetic, not the live message: this overrides that line of the issue's acceptance (decision D5).**
-- **#1666 BF-928.** The first transcript load of a scope in a browser session is seeded whatever triggered it, except for the trigger message, which is still spoken (T1); BF-718's guarantees hold (T2, T3 and the whole existing suite); a reconnect repair is covered (T3 and the existing repair case). No existing test pins the defect.
+- **#1667 BF-929.** A paragraph break adds a pause marker only when the paragraph does not already end in `.`, `!` or `?` (optionally followed by closing quotes or brackets); a doubled period is never produced; an ellipsis and a decimal are preserved (B1 to B5, C1 to C4). A long run of spaces or tabs is stripped in linear time (C5, A2). The stripped text and the `splitIntoSentences` chunks of the synthetic fixture contain no `..` and each paragraph still ends a chunk (B1, B3). **The fixture is synthetic, not the live message: this overrides that line of the issue's acceptance (decision D5).**
+- **#1666 BF-928.** The first transcript load of a scope in a browser session is seeded whatever triggered it, except for the trigger message, which is still spoken (T1); BF-718's guarantees hold (T2, T3 and the whole existing suite); a reconnect repair is covered (T3 and the existing repair case). The appended cases leave no live-frame field of the store behind (R1-6, A2). No existing test pins the defect.
 - **#1669 BF-931.** In the deferred path the mouth schedule is anchored to the audio's playback: no mouth movement before `playing` (V1: the fake's `playing` is due 300 ms after `play()`, the issue's own example, and the mouth is closed at 100, 200 and 299 ms) and the heuristic follows `currentTime` (V2); deferred visemes that arrive after playback started are sampled on the audio time (V3, already true: a control). V2's late start is 400 ms, not 300, because the fixture's heuristic track is open at 300 ms on the wall clock and V2 must be a case the base fails.
 - No crew member's name, thread id or live figure appears in any test, comment, tracker line, commit message or in this contract.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -1406,3 +1531,23 @@ Each item is an operation on, or a measurement of, the running vessel or the Cap
 - **Absence, re-run on the head.** No Python test and no script reads an edited file: the tests that name `ui/src/audio` read `modulation_manifest.json`, `voiceModulation.ts` and `silero-vad.ts` (none edited), and `scripts/wave-close-precheck.ps1` names `ui/src/audio/voice.ts` for its export parity, which this batch does not change (no export is added).
 
 **What A1 changes.** In the header: the provenance line, Status, the base-blob line, and the paragraphs "Tracker anchors, and the BF-937 merge" and "Which text describes the head" (each gains a sentence marked A1). Section 4: G3 of S1 (the measured movement), S2 and S3 (they move no number). Section 7: S2's N1-2 (the `beforeEach`). Section 9: the introduction, the S2 and S3 headings and five cells. Section 10: S3 L6's note. Section 13: S1 property 6, S2 properties 4 and 6. This section. **Not changed:** sections 1 to 3, 5, 6, 8, 11 and 12, "Batching", "Not in this issue", and every other pair and new file of the three slices; nothing under `src/` and no Python or config file.
+
+### A2 (2026-11-13): review round 1: the paragraph rule's quadratic scan, the appended block's remaining store leak, and one sibling
+
+**Drafted by:** the orchestrator, not the Architect: each change below follows a reviewer's finding that was reproduced here before any repair, or a measurement, so it is mechanical. The round-2 reviewers' briefs name this section and section 7.4 first.
+
+**Round 1.** Three reviewers (`gpt-6.1-sol`, one per slice, in parallel, each in its own copy) reviewed the head of the batch, `a4f8e67c8d4aedda4e2e126d090ffa9f583671b0` (S1 `fcccba0f`, `2faf90be`, `8e5fc5e3`; S2 `a15818dd`, `2faf80c6`, `137d851f`; S3 `ff129d23`, `97439fe9`, `a4f8e67c`; over BF-937's merge `f614a31d`). **S3: READY**, no finding. **S1: NOT READY**: one finding, P2, ordinary reach, a regression. **S2: NOT READY**: one finding, P3, ordinary test execution, a regression in test isolation. Both were reproduced before any repair:
+
+1. **S1: the paragraph rule rescans every run of spaces or tabs.** The expression `([.!?]closers*)?[ \t]*\n{2,}` can start at any position (its first group is optional). From the first character of a run of n spaces or tabs that no paragraph break follows, `[ \t]*` scans the rest of the run before `\n{2,}` fails; the engine then starts again from the second character, and so on: time quadratic in the length of the run. The base's `.replace(/\n{2,}/g, '. ')` was linear. Reproduced on the exact expression with a node probe: 8,000, 16,000 and 32,000 spaces took 38, 131 and 542 ms (tabs, and a run followed by a single newline, the same), against 0.01 to 0.04 ms for the base; the reviewer measured 2.1 s for 64,000 spaces against 0.19 ms. Every production caller strips the text on the page's own thread before it queues the speech, so a long run (a degenerate generation can produce one) stalls the page; the server's later length limit does not help. The first text of section 13 (S1 property 2) said "linear time" and had not been measured.
+2. **S2: the appended cases still leave store state behind.** A state diff per case (the file run on the oracle with a hook pair that records the keys each case changed) shows T1 leaving `liveDropCount`, `liveDrops` and `liveThreadRefresh` changed and T3 leaving `liveRepairEpoch` (and the drop count and log) changed; the values also arrive non-zero from the file's earlier cases (at the end of T1: epoch 2, drop count 27). A raised epoch makes the next mount repair its transcript once more (the reviewer measured 2 transcript requests where a clean store gives 1). A1's text said `liveThreadRefresh` was the only field left behind.
+3. **A sibling, found while reproducing 1.** The second cut of the splitter (S1 M2, P2-4) has the same shape on a run of terminal punctuation: `[.!?]+` followed by one or more closers is retried from every mark of a run when no closer follows (a probe: 49, 200 and 770 to 1,170 ms for 8,000, 16,000 and 32,000 periods). The base's own first cut, `([.!?]+)\s+`, costs the same on the same input, so the class is pre-existing (S1 L6), but the second cut is this slice's new code.
+
+**The repair (section 7.4).** R1-1 and R1-2 give the paragraph rule a second alternative, `[ \t]{2,}`, which consumes a run of two or more spaces or tabs that no break follows, whole, and make the callback return such a run unchanged (`!whole.includes('\n')`), so the scan never restarts inside a run; R1-3 makes the splitter's second cut take one terminal mark instead of a run (a run is cut after its last mark either way); R1-4 adds C5, a control that strips 50,000 spaces and 50,000 tabs in under 250 ms; R1-5 corrects the number of recorded limits in S1's DECISIONS entry; R1-6 replaces A1's `beforeEach` in S2's appended describe with a helper that resets the four fields to the store's initial values before every case, and after every case once the component is unmounted (a first form of R1-6 reset them in `afterEach` while the component was still mounted: the write re-rendered it outside `act()` and printed an `act(...)` warning for each of the three cases, which the stderr sections of the audited runs showed, 40 output sections against 37 before; unmounting first removes them). R1 is applied after S3 M3 and committed separately from the milestones; the milestones and their reviews stand as built.
+
+**The choice of R1-1.** The reviewer proposed a look-behind, `(?<![ \t])` before `[ \t]*` (smallest; its output equals the unrepaired expression's on 400,000 random strings, and it takes 0.05 to 0.5 ms for 8,000 to 64,000 spaces). It was not taken. No source file under `ui/src` uses a look-behind (a search found none), the build has no `build.target` and Vite 6's default target list includes Safari 14, and the production bundle built from that variant carried the expression as `new RegExp(...)` (esbuild converts a literal the target cannot parse, so that an old browser does not fail at load): it throws when it runs on a browser without look-behind (Safari before 16.4), so the stripper, and with it speech, would have failed there where the base worked. R1-1 has no look-behind. A variant whose second alternative was `[ \t]+` (every single space a match) was also rejected: the same output, but about eight times the cost on ordinary prose.
+
+**Differential evidence** (probes outside the repository, deterministic random strings; none of them is a test of the repository): the repaired paragraph rule gives the same output as the unrepaired one on 1,900,000 random strings over four alphabets (terminal marks, closers, quotes, spaces, tabs, newlines, letters and digits; with no-break spaces, carriage returns and em spaces; a whitespace-heavy alphabet; lengths up to 16, 24, 30 and 40) and on 25 hand-written fixtures, among them `a\n\n  \n\nb`, `a\n   \n\nb`, `   \n\nfoo` and `a  \n  \n\nb`; the splitter's second cut with one terminal mark gives the same output as the cut with a run on 1,000,000 random strings (the two cuts in order, and the second alone). Cost: the repaired paragraph rule takes 0.01 to 0.33 ms for 8,000 to 64,000 spaces or tabs (with and without a newline after them) and about 0.03 ms for 7,000 characters of prose (0.030 ms for the unrepaired one); the splitter's second cut takes 0.04 to 0.13 ms for 8,000 to 32,000 periods, where the cut with a run takes 49 to 770 ms. The first cut is the base's and is not changed (S1 L6).
+
+**Measured on the repaired oracle** (nothing was measured on the real tree): S1 G1 `10 passed (10)`; `src/audio` 29 files, 307 tests before R1 and 308 after (M0 + 1); the repaired test file against the source before R1-1 gives `9 passed | 1 failed`, the failure being C5 at `expect(elapsed).toBeLessThan(250)` (1,232 ms for the run of spaces): C5 discriminates. `npx tsc -b` clean. S2: the new file `5 passed (5)`, the BF-718 file `30 passed (30)`, G2 76 files and 831 tests (unchanged by R1-6, which adds no case). S3 G2: 43 files, 390 tests before R1 and 391 after. `npm run build` clean. The whole `npx vitest run` with `--maxWorkers=8`: 372 files, 4,308 passed and 1 skipped (one test more than before R1). The mutation rows of section 9 (S1 rows 1 to 9, S2 rows 1 to 6, S3 rows 1 to 6): every killer set equals the cells, row 8 is killed by C5 alone and row 9, the equivalent mutant, by no case. The store audit (the BF-718 file with the hook pair): after each appended case and its `afterEach`, the epoch, the drop count and the refresh command are `0`, `0` and `null`; before R1-6 they were `2`, `27` and the greeting's command after T1, `2`, `27` and the push's command after T2, and `3`, `28` and `null` after T3. The output of that audited run has 37 sections (`stdout |` and `stderr |` headers), as at `a4f8e67c`, and no `act(...)` warning; the first form of R1-6 (both resets in `afterEach` before the component was unmounted: vitest runs a describe's `afterEach` before the file's own `afterEach(cleanup)`) gave 40 sections and one warning for each of the three cases. The BF-718 file passes in five shuffled orders (`--sequence.shuffle.tests` with `--sequence.seed` 1, 7, 42, 1234 and 99999: `30 passed (30)` each, no warning). **Run the whole suite with `--maxWorkers=8` on a loaded host:** with the default worker count (one per logical CPU) each of the three whole-suite runs made with it timed out in two or three files that start a real Python process or wait on timers (`IntentSurface.bf812`, `ConsultedEvidence`, `voice.prefetch.bf918`, `voice.testGate`), and those files passed alone and with 8 workers; CI's `ui-tests` runs the whole suite on its own runner.
+
+**What A2 changes.** In the header: the provenance line. Section 3: D2b's first row (the single terminal mark). Section 4: the R1 gate paragraph. Section 6: S1's table (C5) and S2's isolation paragraph. Section 7: the new section 7.4 (R1-1 to R1-6 and the commit messages). Section 9: the introduction and S1's rows 1 and 6 (the repaired lines), 8 and 9 (new). Section 10: S1 L6. Section 12: the count of recorded limits. Section 13: S1 properties 2 and 7 (new), S2 property 6. Section 14: the acceptance of #1667 and #1666. This section. **Not changed:** every block of sections 7.1 to 7.3 (built, reviewed and committed as they were), sections 1, 2, 5, 8 and 11, "Batching" and "Not in this issue"; nothing under `src/`, no Python or config file, no number of the AD ledger (the trackers' entry heads do not change).
