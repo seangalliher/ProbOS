@@ -14,7 +14,6 @@ methods read ``self.id`` and ``self.callsign``; ``PROMOTION_POST_RUNXFAIL=1`` ru
 
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -28,11 +27,9 @@ from probos.types import AgentState
 from probos.ward_room import WardRoomService
 from probos.ward_room_router import WardRoomRouter
 
-built = (
-    (lambda func: func)
-    if os.environ.get("PROMOTION_POST_RUNXFAIL") == "1"
-    else pytest.mark.xfail(raises=AssertionError, strict=True)
-)
+def built(func):
+    """The built cases pass; the marker no longer fails them."""
+    return func
 
 _AGENT_ID = "test-id"
 _AGENT_TYPE = "test-agent"
