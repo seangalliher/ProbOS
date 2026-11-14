@@ -1761,6 +1761,22 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (public text).* Synthetic fixtures only; no live figure anywhere in the repository.
 - *Residual.* L1 to L8 of the contract (S2). *Reversal.* Revert the BF-932 slice 2 commits.
 
+### AD-1359 follow-up slice 1 -- The size exemption is pinned by layout tests and each item's review summary states its size findings count (2026-11-13, #1769)
+
+- *Scope.* `tests/test_standing_orders_layout.py` (15 cases), `.github/agents/orchestrator.agent.md` (one paragraph under Review Rounds and Progress). Contract `prompts/ad-1359-followup-size-suggestions-and-pins.md`.
+- *G1 (what is pinned).* The orchestrator's Size findings paragraph: each condition of its no-review exemption and its carve-out for a size finding that breaks something, the exclusion clause, the review-round-only sentence, and the paragraph's sentence count (a sentence added is a decision made in the test); the constitution's sentence about the same exemption; the reviewers' size tag. Rejected: pinning the whole paragraph (it fails on a benign reword), pinning the exemption sentence alone, and pinning the other dev-side size rules (part 2 asks for the exemption).
+- *G2 (the count).* One sentence in a paragraph of its own after the Size findings paragraph: `Size findings: <n>`, zero stated, each finding named by how it ended. It lies outside the pinned paragraph; the constitution and the reviewer profiles need no matching word (the reviewers already tag size; the orchestrator writes the summary). Review point after ten pull requests: if every count is zero, the Architect decides whether the Size checklist item stays.
+- *G3 (public text).* No crew name, thread id, timestamp or live figure in any test, comment, tracker line or commit message of the batch.
+- *Residual.* L1 to L5 of the contract (S1). *Reversal.* Revert the slice 1 commits.
+
+### AD-1359 follow-up slice 2 -- The code review's suggestions are carried on the build result, the failure report and the success event (2026-11-13, #1769)
+
+- *Scope.* `cognitive/builder.py` (two fields, one helper, one assignment, one copy, one dict key), `routers/build.py` (one payload key, one message tail), one test file. Contract `prompts/ad-1359-followup-size-suggestions-and-pins.md`.
+- *G1 (shape).* `review_suggestions: list[str]` beside `review_issues` on `BuildResult` and `BuildFailureReport`, the same key in the failure report's dict and in the success payload; the success message gains `, Review suggestions: <n>` only when n is above zero, so a message without suggestions is byte-identical. Rejected: a typed readings block in the Builder's format and a card for it (an LLM-facing format and UI for text that already reaches the approval card); posting to the Ward Room (it couples the builder to an author identity); retracting the standing-order lines (it undoes the crew side).
+- *G2 (safety).* The assignment precedes the rejected-review branch, so a malformed `issues` cannot skip it; the helper never raises; the soft gate is unchanged (a rejected review still commits). A review skipped after a model error is carried as the one suggestion its producer writes and is counted like any other.
+- *G3 (readings).* The Builder's report reaches the Captain as `llm_output` on the generated-code event, shown in the approval card before approval; the Transporter path replaces it with a placeholder, and the build result never carried it. Recorded, not changed.
+- *Residual.* L1 to L8 of the contract (S2). *Reversal.* Revert the slice 2 commits.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.

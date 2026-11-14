@@ -28,6 +28,7 @@ import re
 import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
 from probos.repository_instructions import (
@@ -494,6 +495,109 @@ def test_brake_handoff_does_not_redefine_frozen() -> None:
     brake = orchestrator.split(marker, 1)[1].split("\n\n", 1)[0]
     assert "in one of two forms and no other" in brake, "the paragraph under test is not the handoff clause"
     assert not re.search(r"\bfrozen\b", brake, re.IGNORECASE), "the brake paragraph uses 'frozen' again"
+
+
+# --- the Size findings exemption and its count (AD-1359 follow-up, #1769) ---------
+
+SIZE_FINDINGS_MARKER = "**Size findings (AD-1359, #1765).**"
+SIZE_COUNT_MARKER = "**Size findings count (AD-1359, #1769).**"
+REVIEW_ROUNDS_HEADING = "\n## Review Rounds and Progress (Standing Order)\n"
+SIZE_FINDINGS_SENTENCES = 7  # the paragraph's sentences; one added anywhere can widen the exemption
+
+# One entry per condition of the Size findings paragraph's no-review exemption, and its carve-out. A repair that
+# deletes only what this change added and nothing uses skips a review round, so dropping or loosening any entry
+# widens the one rule that skips a review. Each text occurs once in the paragraph.
+SIZE_EXEMPTION_PARTS: tuple[tuple[str, str], ...] = (
+    ("carve-out", "unless the extra code breaks something"),
+    ("only-repair", "When a deletion is the round's only repair"),
+    ("exempt-set", "removes only imports, or bindings whose value makes no call,"),
+    ("added-by-this-change", "that this change added"),
+    ("unreferenced", "and nothing references"),
+    ("plus-lines", "every deleted line is a `+` line of the candidate's diff"),
+    (
+        "git-grep",
+        "a repo-wide `git grep` for each deleted name, config, docs and tests included, finds no other use",
+    ),
+    ("focused-tests", "run the focused tests and start no further review round"),
+    (
+        "delta-review",
+        "A deleted `def`, class, decorator or call, an import marked `noqa` or inside a `try`, and any other size "
+        "repair, such as reverting a change to neighbouring code, gets a delta review, which counts as a round.",
+    ),
+    (
+        "review-rounds-only",
+        "The exemption covers review-round repairs only: a repair after a failed gate or CI follows the brake below.",
+    ),
+)
+SIZE_EXEMPTION_SENTENCE = (
+    "When a deletion is the round's only repair and removes only imports, or bindings whose value makes no call, "
+    "that this change added and nothing references (every deleted line is a `+` line of the candidate's diff, and a "
+    "repo-wide `git grep` for each deleted name, config, docs and tests included, finds no other use), run the "
+    "focused tests and start no further review round."
+)
+CONSTITUTION_SIZE_EXEMPTION = (
+    "One review-round repair needs no re-review: a size repair that only deletes unreferenced imports or "
+    "call-free bindings the change added (**Size findings** in `.github/agents/orchestrator.agent.md`)."
+)
+SIZE_TAG = "Tag each size finding **size**, so the orchestrator can apply its Size findings rule."
+DIFF_REVIEWER_PROFILES = (
+    _AGENTS_DIR / "diff-reviewer.agent.md",
+    _REPO_ROOT / ".claude" / "agents" / "claude-diff-reviewer.md",
+)
+SIZE_COUNT_SENTENCE = (
+    "The review summary of each item or slice in its pull request states `Size findings: <n>`, the findings tagged "
+    "**size** under the rule above (`0` too: silence is not a count), and names each: deleted in round <k>, deleted "
+    "without re-review, or filed."
+)
+
+
+def _size_findings_paragraph() -> str:
+    """The orchestrator's Size findings paragraph: the text after its marker up to the next blank line."""
+    orchestrator = _text(ORCHESTRATOR)
+    assert orchestrator.count(SIZE_FINDINGS_MARKER) == 1, "the Size findings paragraph moved or was duplicated"
+    return orchestrator.split(SIZE_FINDINGS_MARKER, 1)[1].split("\n\n", 1)[0].strip()
+
+
+@pytest.mark.parametrize(
+    ("label", "text"), SIZE_EXEMPTION_PARTS, ids=[label for label, _ in SIZE_EXEMPTION_PARTS],
+)
+def test_size_findings_keeps_each_condition_of_the_no_review_exemption(label: str, text: str) -> None:
+    assert text in _size_findings_paragraph(), f"the Size findings paragraph lost or changed its {label} condition"
+
+
+def test_size_findings_exemption_sentence_is_verbatim_and_the_paragraph_adds_no_other_sentence() -> None:
+    paragraph = _size_findings_paragraph()
+    assert SIZE_EXEMPTION_SENTENCE in paragraph, "the exemption sentence changed"
+    sentences = [sentence for sentence in _SENTENCE_END.split(paragraph) if sentence]
+    assert len(sentences) == SIZE_FINDINGS_SENTENCES, (
+        f"the Size findings paragraph has {len(sentences)} sentences, not {SIZE_FINDINGS_SENTENCES}: a sentence "
+        "added here can widen the exemption, so change this test on purpose"
+    )
+
+
+def test_constitution_states_the_size_exemption() -> None:
+    assert CONSTITUTION_SIZE_EXEMPTION in _text(CONSTITUTION), "the constitution's size-exemption sentence changed"
+
+
+@pytest.mark.parametrize("profile", DIFF_REVIEWER_PROFILES, ids=[path.name for path in DIFF_REVIEWER_PROFILES])
+def test_diff_reviewer_profiles_tag_size_findings(profile: Path) -> None:
+    """The orchestrator's size rules and its count apply to findings a reviewer tags size."""
+    assert profile.is_file(), f"{_rel(profile)} is missing"
+    assert SIZE_TAG in _text(profile), f"{_rel(profile)} no longer tells the reviewer to tag size findings"
+
+
+def test_review_summaries_state_the_size_findings_count() -> None:
+    """Each item's review summary states how many size findings it had, zero included (#1769): a pull request that
+    says nothing cannot be told from one that had none. The sentence has its own paragraph, outside the pinned one."""
+    orchestrator = _text(ORCHESTRATOR)
+    assert orchestrator.count(SIZE_COUNT_MARKER) == 1, "the count paragraph is missing, moved or duplicated"
+    count = orchestrator.split(SIZE_COUNT_MARKER, 1)[1].split("\n\n", 1)[0].strip()
+    assert count == SIZE_COUNT_SENTENCE, "the count sentence changed"
+    assert orchestrator.count(REVIEW_ROUNDS_HEADING) == 1, "premise: the section heading is unique"
+    start = orchestrator.index(REVIEW_ROUNDS_HEADING)
+    end = orchestrator.index("\n## ", start + len(REVIEW_ROUNDS_HEADING))
+    assert start < orchestrator.index(SIZE_COUNT_MARKER) < end, "the count paragraph is outside its section"
+    assert "Size findings: <n>" not in _size_findings_paragraph(), "the count sentence is inside the pinned paragraph"
 
 
 # ── pointers and the retired profiles ──────────────────────────────
