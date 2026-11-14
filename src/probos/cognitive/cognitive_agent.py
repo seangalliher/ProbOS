@@ -2856,8 +2856,8 @@ class CognitiveAgent(BaseAgent):
 
         try:
             agent_type = getattr(self, "agent_type", "")
-            agent_id = getattr(self, "_agent_id", agent_type)
-            callsign = getattr(self, "_callsign", agent_type)
+            agent_id = self.id  # D5-R1 (#1754): the agent's own id; its type is not an id
+            callsign = self.callsign or agent_type  # the type only for an agent with no callsign
 
             # Post to appropriate channel
             department = ""
@@ -2976,8 +2976,8 @@ class CognitiveAgent(BaseAgent):
         preconditions_text = "\n".join(f"  - {p}" for p in procedure.preconditions) if procedure.preconditions else "  (none)"
         postconditions_text = "\n".join(f"  - {p}" for p in procedure.postconditions) if procedure.postconditions else "  (none)"
 
-        callsign = getattr(self, "_callsign", agent_type)
-        agent_id = getattr(self, "_agent_id", agent_type)
+        callsign = self.callsign or agent_type  # F-529 (#1523): as the promotion request reads it
+        agent_id = self.id  # F-529 (#1523): the agent's own id, not its type
 
         body = (
             f"**[TEACHING] Procedure: {procedure.name}**\n\n"
