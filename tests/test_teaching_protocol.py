@@ -91,8 +91,8 @@ def _make_cognitive_agent(**overrides):
     agent.state = AgentState.ACTIVE
     agent.trust_score = defaults.get("trust_score", 0.9)
     agent._trust_score = defaults.get("trust_score", 0.9)
-    agent._callsign = defaults.get("callsign", "LaForge")
-    agent._agent_id = defaults.get("id", "agent-teacher-001")
+    # No private _callsign or _agent_id: a CognitiveAgent has neither, and the promotion and teaching posts read
+    # self.callsign and self.id (tests/test_promotion_post_identity.py drives a real agent through both).
     return agent
 
 
