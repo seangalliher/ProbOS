@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
+# #1794: how much of an agent's own reply its @-mention fan-out episode
+# indexes (the reflection). 600 is the cap the group fan-out applies as
+# shipped (memory.group_reflection_max_chars with enrichment enabled in
+# config/system.yaml), so a reply is indexed to the same length whichever
+# fan-out stored it.
+_MENTION_REFLECTION_MAX_CHARS = 600
+
 
 @router.post("/chat")
 async def chat(
@@ -355,42 +362,52 @@ async def chat(
             episodic_memory = getattr(runtime, "episodic_memory", None)
             if episodic_memory is not None:
                 t_end_fanout = time.monotonic()
-                dream_adapter = getattr(runtime, "dream_adapter", None)
+                # #1794: ONE Episode construction, no adapter branch.
+                # DreamAdapter.build_episode reads only the dag, results and
+                # reflection keys, so on a started vessel (which has an
+                # adapter) the old branch stored an episode with no owner, a
+                # dag frame and none of the reply. Same shape as the group
+                # fan-out (AD-933a, routers/thread_fanout.py).
+                from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+                from probos.types import AnchorFrame, Episode
                 for reply in per_agent_replies:
                     if not _is_genuine_agent_turn(reply):
                         continue
                     try:
                         episode_input = f"@{reply.callsign} {remaining_message}"
-                        if dream_adapter is not None:
-                            episode = dream_adapter.build_episode(
-                                episode_input,
-                                {"response": reply.text, "agent_ids": [reply.agent_id]},
-                                t_start_fanout,
-                                t_end_fanout,
-                            )
-                        else:
-                            from probos.types import AnchorFrame, Episode
-                            episode = Episode(
-                                timestamp=time.time(),
-                                user_input=episode_input,
-                                dag_summary={},
-                                outcomes=[],
-                                agent_ids=[reply.agent_id],
-                                duration_ms=(t_end_fanout - t_start_fanout) * 1000,
-                                source="multi_agent_chat",  # AD-719 distinct tag
-                                anchors=AnchorFrame(
-                                    channel="chat",
-                                    trigger_type="at_mention_fanout",
-                                ),
-                            )
-                        # AD-791g / AD-933a TRAP: anchor the episode to the
-                        # shared main-chat thread AFTER the if/else so BOTH
-                        # branches are reached. ``dream_adapter.build_episode``
-                        # returns a channel="dag" AnchorFrame that does NOT set
-                        # chat_thread_id, so augmenting only the else-branch
-                        # AnchorFrame would silently drop the id in production
-                        # (where a dream_adapter exists). Episode + AnchorFrame
-                        # are BOTH frozen dataclasses, so we rebuild via
+                        # The owner is the agent's sovereign id where its slot
+                        # has a certificate, the slot id otherwise.
+                        owner_id = resolve_sovereign_id_from_slot(
+                            reply.agent_id, runtime.identity_registry,
+                        )
+                        speaker = reply.callsign or owner_id
+                        episode = Episode(
+                            timestamp=time.time(),
+                            user_input=episode_input,
+                            dag_summary={},
+                            outcomes=[{
+                                "intent": "direct_message",
+                                "success": True,
+                                "response": reply.text[:500],
+                                "callsign": reply.callsign,
+                                "source": "multi_agent_chat",
+                            }],
+                            agent_ids=[owner_id],
+                            duration_ms=(t_end_fanout - t_start_fanout) * 1000,
+                            # AD-977 parity: index the agent's own reply, so
+                            # its episode is findable by its words, not only
+                            # by the Captain's.
+                            reflection=f"{speaker} said: {reply.text[:_MENTION_REFLECTION_MAX_CHARS]}",
+                            source="multi_agent_chat",  # AD-719 distinct tag
+                            anchors=AnchorFrame(
+                                channel="chat",
+                                trigger_type="at_mention_fanout",
+                                participants=["captain", speaker],
+                            ),
+                        )
+                        # AD-791g: anchor the episode to the shared main-chat
+                        # thread. Episode + AnchorFrame are BOTH frozen
+                        # dataclasses, so we rebuild via
                         # ``dataclasses.replace`` rather than assign in place.
                         # Gated on store-presence → episode is left untouched
                         # (stays chat_thread_id="") when absent, byte-identical

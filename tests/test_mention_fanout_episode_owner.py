@@ -10,13 +10,12 @@ These cases drive the route with a REAL ``DreamAdapter``, a REAL ``EpisodicMemor
 identity registry double that maps slot ids to sovereign ids, and read back what was stored; one case recalls each
 episode as its owner, by the words of the reply.
 
-Synthetic fixtures only. The cases marked ``built`` fail on the base at their own assert and pass once the route
-builds the Episode itself; ``MENTION_FANOUT_RUNXFAIL=1`` runs them as plain cases.
+Synthetic fixtures only. The cases marked ``built`` failed on the base at their own assert and pass now that the
+route builds the Episode itself; the marker is a no-op, kept as documentation of which cases the base fails.
 """
 
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, Mock
@@ -30,11 +29,9 @@ from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.routers.chat import chat
 from probos.threads import MAIN_CHAT_THREAD_ID, ChatThreadStore
 
-built = (
-    (lambda func: func)
-    if os.environ.get("MENTION_FANOUT_RUNXFAIL") == "1"
-    else pytest.mark.xfail(raises=AssertionError, strict=True)
-)
+def built(func):
+    """The built cases pass; the marker no longer fails them."""
+    return func
 
 _CAPTAIN_TEXT = "status report please"
 _LONG_REPLY = "y" * 700
