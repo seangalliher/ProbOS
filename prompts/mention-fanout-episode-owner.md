@@ -1102,7 +1102,7 @@ The orchestrator applied every block of section 7 by tool to a scratch tree (the
 
 ## 16. Amendment A2 (2026-11-14): review round 1 triaged, no code change
 
-Review round 1 (a Diff Reviewer on `gpt-6.1-sol`, candidate `e5a40255`) found four P2 items, all marked ordinary reach, two of them regressions. The Architect decided that none needs a code change: each comes from a consumer this change does not alter, and a sibling path already shows it. For an owner-scoped reader, the base left no agent an episode of its own (its episodes had no owner: B3); the candidate leaves one to each agent whose episode the storage gate admits, which is every agent unless sibling episodes are near-duplicates (L12). An unscoped reader is a separate case (L12, amended by A3). A2 records them; all four are also recorded on #1523 as one comment, and no issue is filed.
+Review round 1 (a Diff Reviewer on `gpt-6.1-sol`, candidate `e5a40255`) found four P2 items, all marked ordinary reach, two of them regressions. The Architect decided that none needs a code change: each comes from a consumer this change does not alter, and a sibling path already shows it. For an owner-scoped reader, the base left no agent an episode of its own (its episodes had no owner: B3); the candidate's episodes belong to their replying agents, so such a reader finds the ones that persist. Whether one persists is up to the store's gates, which apply to it as to any other owned episode (L4, L12), so a reply can be left without an episode. An unscoped reader is a separate case (L12, amended by A3). A2 records them; all four are also recorded on #1523 as one comment, and no issue is filed.
 
 | Finding | What it measured | Decision | Where |
 |---|---|---|---|
