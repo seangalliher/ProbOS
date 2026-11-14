@@ -1800,7 +1800,7 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G2 (the owner).* The agent's sovereign id through `resolve_sovereign_id_from_slot` (the slot id where the slot has no certificate); a test recalls the episode by that id. The group-chat fan-out still stores the raw slot id; not changed here.
 - *G3 (the text and the frame).* `reflection = "<callsign> said: <reply[:600]>"`, the group fan-out's shipped cap as a module constant rather than its `group_` config key; the outcome's `response` keeps 500 characters, as the group fan-out's does; participants are `captain` and the callsign (the frame's field holds callsigns).
 - *G4 (stored episodes).* No backfill: an ownerless fan-out episode holds the Captain's words but not the reply, so an owner added later would give the agent a memory of a question with no answer. The count on a copy of a vessel's data goes to the Architect and is not published.
-- *Residual.* L1 to L11 of the contract. *Reversal.* Revert the three commits of the slice, M3 then M2 then M1; episodes stored meanwhile stay valid (owned, with the reply).
+- *Residual.* L1 to L14 of the contract. L12 to L14, from the first review, are the shared storage gate's owner-blind near-duplicate check, the dream replay's edge under the sovereign id and the front-truncated reply without the tool-failure facts; each is also true of a sibling path and is recorded on #1523. *Reversal.* Revert the slice's commits after the contract, newest first (the review commit, M3, M2, M1); episodes stored meanwhile stay valid (owned, with the reply).
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
