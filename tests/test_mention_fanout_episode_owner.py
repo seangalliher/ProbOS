@@ -23,11 +23,13 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 from probos.cognitive.episodic import EpisodicMemory
+from probos.config import DmAgenticConfig
 from probos.crew_profile import CallsignRegistry
 from probos.dream_adapter import DreamAdapter
 from probos.mesh.pre_intent_auth import IntentAuthorizationDenied
 from probos.routers.chat import chat
 from probos.threads import MAIN_CHAT_THREAD_ID, ChatThreadStore
+from probos.types import episode_ran_in_plan_mode
 
 def built(func):
     """The built cases pass; the marker no longer fails them."""
@@ -130,15 +132,25 @@ async def memory(tmp_path):
     await mem.stop()
 
 
-def _runtime(tmp_path: Any, memory: EpisodicMemory, bus: _Bus) -> Any:
-    """Every attribute the fan-out reads, set to a real object or a double above; a REAL ``DreamAdapter``."""
+def _runtime(
+    tmp_path: Any, memory: EpisodicMemory, bus: _Bus, *,
+    store_type: type[ChatThreadStore] = ChatThreadStore, modes: bool | None = None,
+) -> Any:
+    """Every attribute the fan-out reads, set to a real object or a double above; a REAL ``DreamAdapter``.
+
+    ``modes`` arms the plan-mode gate (#1794 A5): ``True`` or ``False`` sets a real ``DmAgenticConfig`` with the
+    loop on and agent modes on or off; ``None`` keeps the mock config, which never arms it (the flags must be an
+    exact ``True``).
+    """
     identity = _IdentityRegistry()
     runtime = MagicMock()
+    if modes is not None:
+        runtime.config.dm_agentic = DmAgenticConfig(enabled=True, agent_modes_enabled=modes)
     runtime.callsign_registry = _callsign_registry()
     runtime.intent_bus = bus
     runtime.episodic_memory = memory
     runtime.identity_registry = identity
-    runtime.chat_thread_store = ChatThreadStore(tmp_path / "chat_threads.db")
+    runtime.chat_thread_store = store_type(tmp_path / "chat_threads.db")
     runtime.dream_adapter = DreamAdapter(
         dream_scheduler=None,
         emergent_detector=None,
@@ -236,3 +248,75 @@ async def test_a_refused_or_failed_reply_stores_no_episode(tmp_path, memory) -> 
     statuses = {r["callsign"]: r["status"] for r in response["per_agent_replies"]}
     assert statuses == {"TestAlpha": "", "TestBravo": "refused", "TestCharlie": "delivery_failed"}
     assert [ep.user_input for ep in await memory.recent(k=50)] == [f"@TestAlpha {_CAPTAIN_TEXT}"]
+
+
+# -- #1794 A5: plan mode (AD-1156 A-4) ------------------------------------------------------------------------
+
+
+class _MainThreadUnreadable(ChatThreadStore):
+    """The real store, except that reading the main-chat thread raises, so a mode read there cannot be confirmed."""
+
+    def get_thread(self, thread_id: str) -> Any:
+        if thread_id == MAIN_CHAT_THREAD_ID:
+            raise RuntimeError("test: main-chat thread read failed")
+        return super().get_thread(thread_id)
+
+
+class _SeedFails(ChatThreadStore):
+    """The real store, except that appending to the main-chat thread raises, so the route drops its main thread."""
+
+    def append_message(self, thread_id: str, **kwargs: Any) -> Any:
+        if thread_id == MAIN_CHAT_THREAD_ID:
+            raise RuntimeError("test: main-chat append failed")
+        return super().append_message(thread_id, **kwargs)
+
+
+def _plan_on_own_thread(store: ChatThreadStore, callsign: str) -> None:
+    """The Captain's ``/mode plan`` on the agent's own one-to-one thread (its default thread)."""
+    thread = store.get_or_create_default_for_agent(_slot(callsign), callsign)
+    store.set_agent_mode(thread.id, "plan", changed_by="captain")
+
+
+async def _marked_by_owner(memory: EpisodicMemory) -> dict[str, bool]:
+    return {owner: episode_ran_in_plan_mode(ep) for owner, ep in (await _fanout_episodes_by_owner(memory)).items()}
+
+
+async def test_a_turn_held_on_an_unreadable_main_thread_is_marked_as_plan_modes(tmp_path, memory) -> None:
+    """G1, A-9 through the route: with modes on, a main-chat thread that cannot be read holds every turn, so every
+    episode carries the marker; the replies and the episodes themselves are kept."""
+    response = await _fan_out(_runtime(tmp_path, memory, _Bus(), store_type=_MainThreadUnreadable, modes=True))
+    assert response["thread_id"] == MAIN_CHAT_THREAD_ID, "premise: the seed held, so each turn ran on the main thread"
+    assert [r["status"] for r in response["per_agent_replies"]] == ["", "", ""]
+
+    assert await _marked_by_owner(memory) == {_owner(callsign): True for callsign in _CREW}
+
+
+async def test_an_ordinary_turn_on_the_main_thread_is_not_marked(tmp_path, memory) -> None:
+    """G2: with modes on, the main-chat thread carries no record (it has no participant), so no turn is marked and
+    dreaming still learns from these episodes."""
+    response = await _fan_out(_runtime(tmp_path, memory, _Bus(), modes=True))
+    assert response["thread_id"] == MAIN_CHAT_THREAD_ID, "premise: the seed held"
+
+    assert await _marked_by_owner(memory) == {_owner(callsign): False for callsign in _CREW}
+
+
+async def test_after_a_failed_seed_each_turn_follows_its_agents_own_mode(tmp_path, memory) -> None:
+    """G3: with no main thread, each agent runs its turn under its own thread's mode; only the agent whose thread
+    is in plan mode has its episode marked."""
+    runtime = _runtime(tmp_path, memory, _Bus(), store_type=_SeedFails, modes=True)
+    _plan_on_own_thread(runtime.chat_thread_store, "TestAlpha")
+    response = await _fan_out(runtime)
+    assert response["thread_id"] is None, "premise: the seed failed, so each turn ran on its agent's own thread"
+
+    assert await _marked_by_owner(memory) == {
+        _owner("TestAlpha"): True, _owner("TestBravo"): False, _owner("TestCharlie"): False,
+    }
+
+
+async def test_with_agent_modes_off_no_turn_is_marked(tmp_path, memory) -> None:
+    """G4, default-off: with agent modes off the gate never opens, even over a plan record."""
+    runtime = _runtime(tmp_path, memory, _Bus(), store_type=_SeedFails, modes=False)
+    _plan_on_own_thread(runtime.chat_thread_store, "TestAlpha")
+    await _fan_out(runtime)
+
+    assert await _marked_by_owner(memory) == {_owner(callsign): False for callsign in _CREW}

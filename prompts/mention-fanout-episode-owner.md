@@ -899,7 +899,7 @@ The oracle's campaign: replace each row's line whole in the built file, run the 
 - **L3. Shapley values and trust deltas are no longer attached** to these episodes. The adapter copied `_last_shapley_values`, the most recent consensus's (`dream_adapter.py:390-391`), and the trust events since `t_start` (`:394-405`), which this route passed as a `time.monotonic()` reading (`chat.py:158`). The new episode carries neither, as the branch without an adapter did. Not measured: what those fields held on the base for these episodes.
 - **L4. The episodic store's per-agent gates now apply to these episodes** (read, not tested). The hourly cap of 20 per agent and the 30-minute near-duplicate check (Jaccard 0.8) both return early for an episode with no owner (`episodic.py:1374-1376`, `:3300-3301`, `:3326-3327`). On a started vessel these episodes were therefore exempt; now they count toward and are subject to both. The shadow admission check at store (`:2018`) is now handed an id; its comment says it blocks nothing.
 - **L5. The reply is now in the indexed text.** The embedded document includes the reflection (`episodic.py:4433-4458`), so a reader that searches the whole store, not one agent's records, can find it, as it can a group reply. Measured by review round 1 (F3): a query by the reply's words finds the owned episode, but the Oracle's episode projection carries only `user_input` (`cognitive/oracle_service.py:989`, `:1007`), as it does for every episode. Not changed here; recorded on #1523.
-- **L6. Not measured (#1794):** whether the agent's own handling of the `direct_message` intent also stores an episode of the same exchange. This slice stores exactly one fan-out episode per genuine reply, as before.
+- **L6. Not measured (#1794):** whether the agent's own handling of the `direct_message` intent also stores an episode of the same exchange. This slice stores exactly one fan-out episode per genuine reply, as before. Since A5, each record that exists is classified for plan mode: the agent's own record from the agent's read (`cognitive/cognitive_agent.py:4947`, `:4968`, `:12789`), and the route's record from the route's two reads of the same thread (L15).
 - **L7. The single-mention path is unchanged.** The fan-out runs only for two or more mentions (`chat.py:157`). The single-mention path's comment says it writes no episode (`:448-449`); that is a comment, not verified here.
 - **L8. The test's identity registry is a double** whose only method is `get_by_slot`. The production `AgentIdentityRegistry.get_by_slot` has the same signature (`identity.py:787`), but the real registry is not exercised.
 - **L9. The cap is a constant.** If `memory.group_reflection_max_chars` is reconfigured, the two fan-outs' caps differ.
@@ -1136,3 +1136,84 @@ REPLACE:
 ## 17. Amendment A3 (2026-11-14): review round 2 triaged, no code change
 
 Review round 2 (`gpt-6.1-sol`, a delta of `e5a40255..b694b31f`) found that L12 and section 16 said the base's rows were unrecallable; an unscoped reader (`IntrospectionAgent._why`) found them (P2), and section 16 contradicted L12's survivor count (P3). Both are corrected by P5-2 to P5-4. The loss belongs to the shared gate: it is owner-blind, and the group fan-out on main reaches it independently, with a lower trigger. The Architect filed it as #1798 (the fix: compare only episodes with the same owner) instead of adding a route-level opt-out, which would change a public signature, turn off dedupe for this route only and leave the group fan-out exposed. L12 moves from #1523 to #1798; L13 and L14 stay on #1523. The route, the tests, the mutation rows and the trackers are unchanged. Gates: those A2 names. Round 3 is a delta review of this commit: the `file:line` citations of P5-2, and that the threshold arithmetic matches `storage_gate.py` and `similarity.py:17`.
+
+## 18. Amendment A5 (2026-11-14): the broad gate's census (F5); a plan-mode marker on the fan-out's episode; two censuses extended
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14. (A4 was a one-sentence correction inside section 16; it has no section of its own.)
+
+*Finding.* The broad gate on `870c29fe` failed the learning census, `tests/test_ad1156_plan_mode_learning.py::test_every_direct_message_episode_a_plan_mode_turn_can_write_is_classified` (`:905-963`). M2's outcome dict (`"intent": "direct_message"`) made `routers/chat.py::chat` a producer of a direct-message episode, and the base stored `outcomes=[]`. That census requires every producer to carry `EPISODE_PLAN_MODE_KEY`, unless it is a group turn.
+
+This is a real defect, not only a census gap. The fan-out's intent sends no `is_group_chat`, so the agent reads its turn's mode (`cognitive_agent.py:4947-4968`). That read is on the main-chat thread while the seed holds, and on the agent's own default thread when the seed fails (`cognitive_agent.py:1000-1027`; `chat.py:200`). A plan record on that own thread governs the turn, and so does an unreadable main thread (A-9, `agent_mode.py:200-226`). Without the marker, dreaming would learn from that turn as work done (`dreaming._outcome_evidence`).
+
+The repair's gate calls also make the route a reader under the A-9 reader census, `tests/test_ad1156_plan_mode_scope.py::test_every_read_that_decides_a_turns_mode_names_its_agent` (`:1210-1254`; `_READER_CALLS` at `:1212-1225`). The orchestrator's oracle, on a tree with A5's first draft applied, reported it failing with two unlisted items: `('routers/chat.py', 'open_plan_mode_reply_gate'): 1` and `('routers/chat.py', 'open_plan_mode_session_gate'): 1`. Its check that every reader names its agent passed: the reply gate names its agent by keyword, and the session gate by its third positional argument.
+
+*Decision.* The route marks its episode from the existing gates, opened per recipient before the send and asked after the answer:
+- with the seed held, `open_plan_mode_reply_gate(runtime, store, <main thread>, agent_id=<slot>)`, the one-to-one route's gate;
+- with the seed failed, `open_plan_mode_session_gate(runtime, runtime.chat_thread_store, <slot>, <callsign>)`, the CLI session's gate for a send without a thread.
+
+A recipient whose gate `withholds()` is added to a local set, and its outcome carries `EPISODE_PLAN_MODE_KEY: True`. Two censuses gain entries, and neither assertion changes:
+- the learning census's list gains `("routers/chat.py", "chat")`; its invariant `producers - marked == {fanout}` is unchanged;
+- `_READER_CALLS` gains the route's two gate calls, one each; its assertions `unnamed == []` and `found == _READER_CALLS` are unchanged.
+
+Rejected:
+- storing no episode for a governed turn (it loses the memory the marker exists to keep);
+- exempting the route (its turn can be governed);
+- removing the outcome dict (it reverses D4 and the outcome checks in B2 and B4, and the marker would have nowhere to live);
+- setting the plan floor, `AGENT_MODE_FLOOR_PARAM`, or pinning the thread id on the intent (that changes what the agent does; outside #1794).
+
+Default-off holds: both gates return `None`, reading nothing, unless `dm_agentic.enabled` and `agent_modes_enabled` are an exact `True` and a store exists (`agent_mode.py:157-166`, `:450`, `:509`).
+
+*Limit.*
+- **L15. The route's marker comes from its own two reads, not the agent's.** They read the same thread for the same agent, but they are separate reads, as in the one-to-one route and the session. If the store answers one and not the other, the marker follows the route's reads. Every hold path marks, so the error is toward marking: an ordinary turn marked by a hold is kept as memory and not learned from. When the seed has failed, the session gate may create the agent's default thread, as the agent's own turn would (BF-698's third source). A recipient named twice is marked if either of its turns was governed.
+
+*Tests (+4 cases, plus two census edits).*
+- G1 `test_a_turn_held_on_an_unreadable_main_thread_is_marked_as_plan_modes`
+- G2 `test_an_ordinary_turn_on_the_main_thread_is_not_marked`
+- G3 `test_after_a_failed_seed_each_turn_follows_its_agents_own_mode`
+- G4 `test_with_agent_modes_off_no_turn_is_marked`
+
+The two census edits are the learning census's list (E11) and `_READER_CALLS` (E16). There is no case for "a plan record on the main thread": the only writer refuses a thread whose participants are not exactly one (`threads/__init__.py:555-556`), and the main thread has none.
+
+*Mutation rows (not run by the Architect; each line occurs once, stripped, in `chat.py` after A5).*
+
+| # | Line (stripped) | Mutate to | Expected killed by |
+|---|---|---|---|
+| 16 | `_plan_governed.add(resolved["agent_id"])` | `pass` | G1, G3 |
+| 17 | `**({EPISODE_PLAN_MODE_KEY: True} if reply.agent_id in _plan_governed else {}),` | `**({EPISODE_PLAN_MODE_KEY: True} if False else {}),` | G1, G3 |
+| 18 | same line | `**({EPISODE_PLAN_MODE_KEY: True} if True else {}),` | G2, G3, G4 |
+| 19 | `if plan_gate is not None and plan_gate.withholds():` | `if plan_gate is not None:` | G2, G3 |
+| 20 | `runtime, _main_thread_store, _main_thread,` | `runtime, _main_thread_store, None,` | G2 |
+| 21 | `runtime, getattr(runtime, "chat_thread_store", None),` | `runtime, None,` | G3 |
+| 22 | `_main_thread = _main_thread_store.get_or_create_system_thread(` | `_main_thread_store.get_or_create_system_thread(` | G2 |
+| 23 | the learning census edit (E11) reverted | | the learning census case (a required edit, not a mutant) |
+| 24 | the reader census edit (E16) reverted | | `test_ad1156_plan_mode_scope.py::test_every_read_that_decides_a_turns_mode_names_its_agent` at `found == _READER_CALLS` (a required edit, not a mutant) |
+
+*Gates.*
+- Focused, `-n 0`:
+  - this slice's files: `tests/test_mention_fanout_episode_owner.py`, `tests/test_ad719_episodic_writes.py`, `tests/test_ad791g_main_chat_thread.py`, `tests/test_bf813_denial_consumers.py`, `tests/test_ad719_chat_fanout.py`, `tests/test_ad791a_chat_threads_wiring.py`;
+  - the six test files that name the plan-mode gate symbols, among them `tests/test_ad1156_plan_mode_learning.py` and `tests/test_ad1156_plan_mode_scope.py`;
+  - the route's group and file-sharing consumers: `tests/test_ad914_group_chat_fanout.py`, `tests/test_ad916_chat_file_sharing.py`, `tests/test_ad935_group_reactivity.py`, `tests/test_ad948_group_intent_tag_strip.py`;
+  - the scanners of `src` or of this route's text: `tests/test_bf791_bf792_bypass_egress.py`, `tests/test_ad1248_slice_b.py`, `tests/test_ad680_public_runtime_api.py`, `tests/test_bf925_guard_names.py`.
+- Rows 16 to 24.
+- Then the receipted broad gate, in full, with nothing else running on the host. F6 (`test_bf893_process_tree.py`) was load: it passed three times alone, and the earlier run had overlapping pytest runs.
+
+*Review.* Round 5 is a delta review of the A5 commit. It covers:
+- the gate API it uses (`agent_mode.py:157-166`, `:200-226`, `:338-359`, `:400-405`, `:436-464`, `:491-522`);
+- the agreement of its reads with the agent's (`cognitive_agent.py:952-1027`, `:4947-4968`);
+- both censuses: the learning census (`tests/test_ad1156_plan_mode_learning.py:905-963`) and the reader census (`tests/test_ad1156_plan_mode_scope.py:1210-1254`);
+- default-off.
+
+Neither census changes its assertions; each gains entries, as its own text prescribes ("A new producer fails here until it is marked"; "A reader added later must name its agent and be added here"). The reviewer runs both census tests and the focused set above.
+
+*Verified (2026-11-14, tree `870c29fe`).*
+- `chat.py`: `:176` (the store), `:180` (the seed's call, return not captured), `:200` (the store dropped), `:202-206`, `:228` (the one `_IntentMessage(`), `:293-296` (the one `_rendered = (`), `:371-372`, `:388-394` (the outcome).
+- `types.py`: `:804` `EPISODE_PLAN_MODE_KEY: str = "plan_mode"`; `:807-821`.
+- `agent_mode.py`: `:436` and `:491` (the gates); `:522` (the session gate's own call of the reply gate, already counted in `_READER_CALLS`). The callers are `routers/agents.py:3676` and `experience/commands/session.py:128`. The session marks at `session.py:184`.
+- `threads/__init__.py`: `:1277` returns `ChatThread`; `:1208-1236` looks up the default thread by participants only.
+- `tests/test_ad1156_plan_mode_scope.py`: `:1212-1225` (`_READER_CALLS`; `("routers/agents.py", "open_plan_mode_reply_gate"): 1` at `:1223`); `:1246-1249` (the session gate is named by three or more positional arguments); `:1253-1254`.
+
+*Absence verified.*
+- CLAIM: before A5, `chat.py` names no plan-mode symbol. RUN: Grep `open_plan_mode|agent_mode|AGENT_MODE_FLOOR_PARAM|EPISODE_PLAN_MODE_KEY|_plan_governed|plan_gate|_main_thread\b` in `src/probos/routers/chat.py`. FOUND: none. HOLDS.
+- CLAIM: the test doubles cannot break the seed. RUN: Grep `self\.get_thread\(` in `threads/__init__.py`. FOUND: `:393`, `:401`, `:507`, `:652`, `:714`, `:761`, `:866`, `:979`, `:1005`, `:1035`, `:1057`, none inside `get_or_create_system_thread` (`:1277-1340`) or `append_message` (`:1369+`). HOLDS.
+- CLAIM: exactly two censuses scan `src` for the plan-mode symbols A5 touches. RUN (the orchestrator's): Grep of `tests/` for `open_plan_mode_reply_gate|open_plan_mode_session_gate|open_plan_mode_replay_gate|EPISODE_PLAN_MODE_KEY|plan_mode_governed_turn|\.withholds\(`. FOUND: six files. Two scan `src` for these symbols: `test_ad1156_plan_mode_learning.py:905-963` and `test_ad1156_plan_mode_scope.py:1210-1254`. A third scan of `src`, `test_ad1326_procedure_challenger.py:2317`, lists the procedure ledger's writers and importers, not the gates. HOLDS.
+- CLAIM: only the two census tests use the edited lists. RUN: Grep of the repository (excluding `logs/`) for `_READER_CALLS`, `test_every_direct_message_episode_a_plan_mode_turn_can_write_is_classified` and `test_every_read_that_decides_a_turns_mode_names_its_agent`. FOUND: `test_ad1156_plan_mode_scope.py:1212`, `:1228`, `:1233`, `:1254`; `test_ad1156_plan_mode_learning.py:905`. HOLDS.
