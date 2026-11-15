@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import secrets
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -169,7 +173,29 @@ class FileWriterAgent(BaseAgent):
                 logger.warning("BF-911 FileWriterAgent refused operation=commit_write reason_code=protected_write_refused")
                 return {"success": False, "error": refused}
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, encoding="utf-8")
+            # BF-974 (#1805): never truncate in place. Write a sibling temporary file and replace the target in one
+            # step, so a crash mid-write leaves the old file whole. The target is the real path the old in-place
+            # write followed, so a link is still written through, not replaced.
+            target = Path(os.path.realpath(p))
+            temp = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+            try:
+                kept_mode: int | None = stat.S_IMODE(os.stat(target).st_mode)
+            except FileNotFoundError:
+                kept_mode = None
+            # The os.fdopen text layer below translates newlines once, as write_text does.
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if kept_mode is not None:
+                    os.chmod(temp, kept_mode)
+                os.replace(temp, target)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(temp)  # the temporary file this call created; the error is raised on
+                raise
             return {
                 "success": True,
                 "path": str(p.resolve()),
