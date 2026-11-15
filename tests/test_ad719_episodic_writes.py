@@ -34,9 +34,10 @@ async def chat_client(tmp_path):
             async def stop(self):
                 return None
         rt.episodic_memory = _StubEpisodic()
-    # Force the dream_adapter off so the loop takes the explicit Episode
-    # construction branch (deterministic source tag).
-    rt.dream_adapter = None
+    # #1794: the runtime's dream_adapter is left as start() built it. The
+    # route no longer reads it (one Episode construction, no branch), so
+    # these cases run the production shape; forcing it to None used to hide
+    # the ownerless episode that the adapter branch stored.
     app = create_app(rt)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -124,6 +125,6 @@ async def test_fanout_episode_source_tag_distinct(chat_client):
         pytest.skip("No live agents resolved on this runtime — no fan-out episodes written")
     for call in fanout_calls:
         episode = call.args[0]
-        # dream_adapter is forced None in the fixture so this path constructs
-        # Episode directly with the AD-719 distinct source tag.
+        # #1794: the route constructs the Episode itself with the AD-719
+        # distinct source tag, whether or not the runtime has an adapter.
         assert str(episode.source) == "multi_agent_chat"
