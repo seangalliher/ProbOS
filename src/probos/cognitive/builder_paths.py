@@ -85,6 +85,12 @@ def _canonical(part: str) -> str:
     return _HFS_IGNORABLE.sub("", part).rstrip(" .").upper()
 
 
+def is_reserved_device_name(part: str) -> bool:
+    """BF-968 (#1799): whether one path component is a Windows device name (``NUL``, ``con.md``, ``AUX .txt``),
+    compared in canonical form: the rule ``builder_write_refusal`` applies to each component, for other writers."""
+    return _RESERVED.match(_canonical(part)) is not None
+
+
 # AD-1344 (#1596): the constitution's path components, as written and in canonical form.
 _CONSTITUTION_RELATIVE_PARTS = tuple(CONSTITUTION_RELATIVE_PATH.split("/"))
 _CONSTITUTION_PARTS = tuple(_canonical(part) for part in _CONSTITUTION_RELATIVE_PARTS)
