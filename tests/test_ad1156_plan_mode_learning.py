@@ -952,6 +952,10 @@ def test_every_direct_message_episode_a_plan_mode_turn_can_write_is_classified()
         ("experience/commands/session.py", "handle_message"),
         fanout,
         ("federation/bridge.py", "forward_direct_message"),
+        # #1794 A5: the @-mention fan-out's episode holds the reply as a
+        # direct_message outcome. Its turn sends no is_group_chat, so it reads a
+        # mode, and the route marks it from the same gate the session uses.
+        ("routers/chat.py", "chat"),
     }
     assert set(builders) - producers == {("federation/bridge.py", "forward_direct_message")}
     assert producers - marked == {fanout} and fanout in group_turns

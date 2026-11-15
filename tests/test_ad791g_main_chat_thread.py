@@ -73,10 +73,13 @@ def _make_callsign_registry() -> CallsignRegistry:
 
 class _FakeDreamAdapter:
     """Returns a channel="dag" Episode with NO chat_thread_id — the exact
-    shape of the real ``dream_adapter.build_episode`` (dream_adapter.py:410).
-    The AD-933a regression guard: the fan-out must post-mutate the anchor
-    AFTER the if/else so this branch's id is set too.
+    shape of the real ``dream_adapter.build_episode`` (dream_adapter.py:410),
+    except that it copies ``agent_ids``, which the real one never reads.
+    #1794: the fan-out no longer calls it (one Episode construction, no
+    branch), so it counts its calls and Test 4 asserts there are none.
     """
+
+    calls = 0
 
     def build_episode(
         self,
@@ -87,6 +90,7 @@ class _FakeDreamAdapter:
     ):
         from probos.types import AnchorFrame, Episode
 
+        self.calls += 1
         return Episode(
             timestamp=time.time(),
             user_input=text,
@@ -112,8 +116,11 @@ def _make_fanout_runtime(
     reply_text: str = "Acknowledged.",
 ):
     """MagicMock runtime for the fan-out path: real ChatThreadStore + real
-    CallsignRegistry; AsyncMock intent_bus + episodic store; dream_adapter
-    forced to None so the else-branch (real Episode) runs deterministically.
+    CallsignRegistry; AsyncMock intent_bus + episodic store. #1794: the route
+    no longer reads dream_adapter (one Episode construction), so it stays
+    None only to keep this runtime's shape. identity_registry is None because
+    the route now resolves each owner through it, and a MagicMock registry
+    hands back a mock certificate: with None the slot id is the owner.
     """
     runtime = MagicMock()
     runtime.callsign_registry = _make_callsign_registry()
@@ -123,6 +130,7 @@ def _make_fanout_runtime(
     runtime.episodic_memory = MagicMock()
     runtime.episodic_memory.store = AsyncMock()
     runtime.dream_adapter = None
+    runtime.identity_registry = None
     runtime.chat_thread_store = (
         ChatThreadStore(tmp_path / "chat_threads.db") if with_store else None
     )
@@ -266,8 +274,8 @@ async def test_fanout_membership_fixed_implicit(tmp_path) -> None:
 
 # ──────────────────────────────────────────────────────────────────
 # Test 4 — THE AD-933a REGRESSION GUARD: episode anchored on BOTH the
-# else-branch (dream_adapter=None) AND the build_episode branch (fake
-# dream_adapter returns channel="dag", no chat_thread_id).
+# runtime without an adapter AND with one. #1794: the route no longer
+# calls build_episode, so both store the chat Episode the route builds.
 # ──────────────────────────────────────────────────────────────────
 
 
@@ -289,8 +297,9 @@ async def test_fanout_episode_anchored_both_branches(tmp_path) -> None:
         assert ep.anchors.chat_thread_id == MAIN_CHAT_THREAD_ID
         assert ep.anchors.channel == "chat"
 
-    # build_episode branch: fake dream_adapter returns a channel="dag"
-    # AnchorFrame with NO chat_thread_id. The post-mutation AFTER the
+    # An adapter present (the production shape). History: the route once
+    # called its build_episode, whose AnchorFrame had NO chat_thread_id, so
+    # the post-mutation AFTER the
     # if/else must still set the id — augmenting only the else-branch
     # AnchorFrame would silently drop it here (AD-933a).
     runtime2 = _make_fanout_runtime(tmp_path / "b")
@@ -304,12 +313,17 @@ async def test_fanout_episode_anchored_both_branches(tmp_path) -> None:
     )
     stored2 = [c.args[0] for c in runtime2.episodic_memory.store.call_args_list]
     assert len(stored2) == 2
+    # #1794: the adapter is present and is never called.
+    assert runtime2.dream_adapter.calls == 0
     for ep in stored2:
         assert ep.anchors is not None
         assert ep.anchors.chat_thread_id == MAIN_CHAT_THREAD_ID
-        # Proves the episode came from build_episode (dag-shaped), so the
+        # #1794: this asserted channel == "dag" until the route stopped
+        # calling build_episode, so it pinned the defect (an episode with no
+        # owner, a dag frame and none of the reply). A chat frame with the
+        # adapter present proves the anchor's
         # post-mutation reached the production branch — not just the else.
-        assert ep.anchors.channel == "dag"
+        assert ep.anchors.channel == "chat"
 
 
 # ──────────────────────────────────────────────────────────────────
