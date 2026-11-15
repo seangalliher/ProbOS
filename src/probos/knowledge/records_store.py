@@ -124,6 +124,15 @@ def effective_classification(value: object) -> str:
     return "private"
 
 
+def _author_identity(value: object) -> str | None:
+    """BF-969 (#1800): the reader id a record's ``author`` value admits. The value when it is a non-empty ``str``;
+    otherwise ``None``, which equals no reader id (the anonymous ``""`` included), as :func:`_unparsed_gate`'s ``None``
+    author does. Never raises."""
+    if type(value) is str and value:
+        return value
+    return None
+
+
 def _unparsed_gate(rel_path: str) -> dict[str, Any]:
     """BF-940 slice 4 (L19): the frontmatter the access rules read for a document whose own did not load.
 
@@ -174,6 +183,8 @@ def record_is_readable(
     * ``""`` — **anonymous reader**. The identity layer runs with an empty
       author, so identity-gated classifications are withheld. This is the
       fail-closed state the Oracle uses for a caller it cannot identify.
+      BF-969 (#1800): an author that is empty or not a ``str`` is nobody
+      (:func:`_author_identity`), so ``""`` is never a record's author.
     * ``"captain"`` — unrestricted, per ``read_entry``.
     * anything else — an author/department identity, matched against the
       record's ``author`` / ``department`` frontmatter.
@@ -200,7 +211,8 @@ def record_is_readable(
     if doc_class not in _IDENTITY_GATED_CLASSIFICATIONS:
         return True
 
-    doc_author = frontmatter.get("author", "")
+    # BF-969 (#1800): an empty or non-str author is nobody, so it admits no reader, "" included.
+    doc_author = _author_identity(frontmatter.get("author"))
     if reader_id == doc_author:
         return True
     if doc_class == "department":
@@ -1540,7 +1552,7 @@ class RecordsStore:
             )
             # BF-966 (#1797): a classification that is not exactly one of the four labels is private.
             doc_class = effective_classification(gate.get("classification", "ship"))
-            doc_author = gate.get("author", "")
+            doc_author = _author_identity(gate.get("author"))  # BF-969 (#1800): an empty or non-str author is nobody
             doc_dept = gate.get("department", "")
 
             if doc_class == "private" and reader_id != doc_author:

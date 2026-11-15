@@ -68,8 +68,9 @@ def build_records_scope_filter(
 
     BF-679: ``reader_id`` is tri-state and the distinction is load-bearing.
     ``None`` means *identity not specified* and applies the scope level only;
-    ``""`` means an **anonymous** reader and runs the identity layer with an
-    empty author, so the identity-gated classifications are withheld. Before
+    ``""`` means an **anonymous** reader: it is nobody's author, so it gets no
+    author clause (BF-969, #1800), and the identity-gated classifications are
+    withheld but for a ``department`` record of its own department. Before
     BF-679 an empty string took the ``None`` branch, which is how
     ``build_records_scope_filter("ship")`` came to hand every agent's
     ``private`` notebook to every other agent through Oracle Tier 2.
@@ -118,7 +119,9 @@ def build_records_scope_filter(
     clauses: list[dict[str, Any]] = []
     if open_labels:
         clauses.append({"classification": {"$in": open_labels}})
-    if gated_labels:
+    # BF-969 (#1800): the anonymous reader "" is nobody's author, so it gets no author clause; a note stored with
+    # author "" then matches no reader by authorship, as record_is_readable and read_entry read it.
+    if gated_labels and reader_id:
         clauses.append({"$and": [
             {"classification": {"$in": gated_labels}},
             {"author": reader_id},

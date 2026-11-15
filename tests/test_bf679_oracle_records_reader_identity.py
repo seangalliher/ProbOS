@@ -556,16 +556,20 @@ class TestFilterShape:
                         query_texts=["reactor"], n_results=4, where=where,
                     )
 
-    def test_anonymous_reader_emits_the_identity_layer(self) -> None:
-        """The one-line defect: ``""`` used to take the unrestricted branch."""
+    def test_anonymous_reader_is_given_the_open_labels_only(self) -> None:
+        """The one-line defect: ``""`` used to take the unrestricted branch. BF-969 (#1800): it is nobody's
+        author, so it gets no author clause (it was ``{"author": ""}``, which admitted a note with no author).
+        With no department it is given the open labels only. Renamed from ``..._emits_the_identity_layer``."""
         where = build_records_scope_filter("ship", reader_id="")
 
-        assert "$or" in where
-        assert {"classification": {"$in": ["ship"]}} in where["$or"]
-        assert {"$and": [
-            {"classification": {"$in": ["private", "department"]}},
-            {"author": ""},
-        ]} in where["$or"]
+        assert where != build_records_scope_filter("ship", reader_id=None)
+        assert where == {"classification": {"$in": ["ship"]}}
+        assert build_records_scope_filter(
+            "ship", reader_id="", reader_department="engineering",
+        ) == {"$or": [
+            {"classification": {"$in": ["ship"]}},
+            {"$and": [{"classification": "department"}, {"department": "engineering"}]},
+        ]}
 
     def test_unspecified_reader_keeps_the_scope_only_filter(self) -> None:
         """``None`` is the pre-BF-679 contract, preserved for AD-1138 callers."""
@@ -573,13 +577,11 @@ class TestFilterShape:
 
         assert where == {"classification": {"$in": ["private", "department", "ship"]}}
 
-    def test_anonymous_reader_at_private_scope_stays_flat(self) -> None:
-        """Only one clause survives, so it must not be wrapped in a 1-element $or."""
-        where = build_records_scope_filter("private", reader_id="")
-
-        assert where == {"$and": [
-            {"classification": {"$in": ["private"]}}, {"author": ""},
-        ]}
+    def test_anonymous_reader_at_private_scope_admits_nothing(self) -> None:
+        """BF-969 (#1800): at ``private`` scope the only clause was ``{"author": ""}``, which is gone, so nothing
+        is admitted and the caller skips the query (``None``; ``SemanticKnowledgeLayer.search`` does). Renamed
+        from ``..._stays_flat``."""
+        assert build_records_scope_filter("private", reader_id="") is None
 
 
 # ---------------------------------------------------------------------------
