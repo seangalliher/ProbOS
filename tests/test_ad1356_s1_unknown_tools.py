@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
-from probos.capability_request import requests_for_work_item
+from probos.agent_work_runner import CarriedResults, approval_payload
+from probos.capability_request import action_dedup_key, is_action_tool_id, requests_for_work_item
 from probos.cognitive import agentic_dispatch
 from probos.cognitive.agentic_dispatch import (
     CONFINED_CALL_FILED,
@@ -159,3 +160,22 @@ async def test_an_ambiguous_name_goes_to_the_gate_as_the_model_sent_it() -> None
     executor, asked, recorded = _confined(frozenset({"event_log_query"}), CONFINEMENT_FILED, alias)
     assert (await executor.invoke("forge-1", alias, {})).error == CONFINED_CALL_FILED
     assert asked == [alias] and recorded == []
+
+
+# UT6
+def test_an_id_the_payload_pattern_refuses_is_filed_and_kept_under_its_alias() -> None:
+    """BF-982 (round 1): a registered id the action payload's tool-id pattern refuses (65 characters, or a ``/``) is
+    filed under the provider alias the model was shown, as before BF-982, and the recorder keeps its result under the
+    key the gate computes for it. An id the pattern accepts is filed as it is."""
+    params = {"query": "drift budget"}
+    for registered in ("mcp:docs:" + "s" * 56, "mcp:docs:search/web"):
+        alias = llm_function_name(registered)
+        assert (is_action_tool_id(registered), is_action_tool_id(alias)) == (False, True)  # premise
+        payload = approval_payload(registered, params, "wi-1")
+        assert payload is not None and payload["tool_id"] == alias
+        carried = CarriedResults()
+        carried.recorder("wi-1")("forge-1", registered, params, ToolResult(output="found"))
+        [entry] = carried.for_agent("wi-1", "forge-1")
+        key = action_dedup_key(agent_id="forge-1", payload=payload, work_item_id="wi-1")
+        assert (entry.tool_id, entry.key) == (alias, key)
+    assert approval_payload(CANONICAL, params, "wi-1")["tool_id"] == CANONICAL

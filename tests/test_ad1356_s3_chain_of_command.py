@@ -22,7 +22,7 @@ import pytest
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
 from probos.api_models import CapabilityRequestDecideRequest
 from probos.approval_authority import ApprovalAuthorityStore
-from probos.capability_request import requests_for_work_item
+from probos.capability_request import is_action_tool_id, requests_for_work_item
 from probos.cognitive.agentic_dispatch import _McpTool
 from probos.cognitive.swe_harness.tool_call import llm_function_name
 from probos.delegated_approvals import AUDIT_CATEGORY, DeciderRole, DelegatedApprovalService, Refusal, RequestClass
@@ -228,14 +228,17 @@ async def test_a_filed_path_read_stays_with_the_captain_after_read_roots_are_set
 
 
 # CC5
-@pytest.mark.parametrize("case", ["open", "confirm", "reaped"])
+@pytest.mark.parametrize("case", ["open", "confirm", "reaped", "len65", "slash"])
 async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, case: str) -> None:
     """An OPEN MCP tool is elevated: LaForge approves forge-1's call and it runs. A CONFIRM tool is critical, and so is
     an OPEN tool no longer registered when its call is decided: LaForge is refused, and after the Captain's approval
-    the item finishes with the bridge never asked."""
+    the item finishes with the bridge never asked. BF-982 (round 1): an OPEN tool whose registered id the action
+    payload's tool-id pattern refuses (65 characters, or a ``/``) is filed under its alias, as before BF-982, so the
+    call is critical: LaForge is refused, and after the Captain's approval it runs once and the item finishes."""
     bridge = _Bridge()
+    name = {"len65": "s" * 56, "slash": "search/web"}.get(case, "search")
     tool = _McpTool(
-        bridge=bridge, server_url="docs", server_name="docs", server_id="srv-docs", tool_name="search", name="search",
+        bridge=bridge, server_url="docs", server_name="docs", server_id="srv-docs", tool_name=name, name=name,
         description="Search the relay docs.", input_schema={"type": "object"},
         server_default_risk="confirm" if case == "confirm" else "open", risk_store=None,
         consensus_invoke=AsyncMock(), authorize=lambda agent_id: True,
@@ -243,6 +246,9 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
     query = {"query": "drift budget"}
     # BF-982 (#1817): a model is shown an mcp: tool only under its provider alias, so the script calls the alias.
     alias = llm_function_name(tool.tool_id)
+    unfiled = case in ("len65", "slash")  # BF-982 (round 1): the payload pattern refuses the registered id
+    assert (is_action_tool_id(tool.tool_id), is_action_tool_id(alias)) == (not unfiled, True)  # premise
+    filed = alias if unfiled else tool.tool_id
     script = [_call(alias, query, "c1"), _final("Waiting."), _call(alias, query, "c2"), _final(ANSWER)]
     async with _rig(tmp_path, script) as rig:
         rig.tools.register(
@@ -251,7 +257,10 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
         async with _chain(rig) as (service, _audit, _told):
             item_id = await _self_task(rig, "Look up the drift budget")
             request = await _parked_on(rig, item_id)
-            assert request.payload["tool_id"] == tool.tool_id  # BF-982: filed under the registered id, not the alias
+            # BF-982: the registered id, not the alias; round 1: the alias when the payload pattern refuses the id
+            assert (request.payload["tool_id"], request.rationale) == (
+                filed, f"agent work {item_id[:8]} called {filed}, a call that needs approval",
+            )
             if case == "reaped":
                 assert rig.tools.unregister(tool.tool_id)
             outcome = await _decide(service, "laforge-1", request.id)
@@ -260,6 +269,12 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
                 await _pump(rig)
                 await _finished(rig, item_id)
                 assert bridge.asked == [("docs", "search", query)] and _seen(rig, DOCS)
+            elif unfiled:
+                assert outcome.refusal is Refusal.CAPTAIN_RESERVED
+                await _captain_approves(rig, request.id)
+                await _finished(rig, item_id)
+                assert bridge.asked == [("docs", name, query)] and _seen(rig, DOCS)
+                assert len(requests_for_work_item(rig.requests, item_id)) == 1  # the resumed call matched its approval
             else:
                 assert outcome.refusal is Refusal.CAPTAIN_RESERVED
                 await _captain_approves(rig, request.id)

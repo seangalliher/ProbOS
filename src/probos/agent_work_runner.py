@@ -57,6 +57,7 @@ from probos.capability_request import (
     AGENT_WORK_SCOPE_PREFIX,
     action_dedup_key,
     agent_work_call,
+    is_action_tool_id,
     requests_for_work_item,
     validate_action_payload,
 )
@@ -167,9 +168,20 @@ def agent_work_approval(request: Any) -> dict[str, Any] | None:
 
 
 def approval_payload(tool_id: Any, params: Any, work_item_id: str) -> dict[str, Any] | None:
-    """The AD-1154 ``action`` payload that asks for one call, or None when the call cannot be recorded."""
+    """The AD-1154 ``action`` payload that asks for one call, or None when the call cannot be recorded.
+
+    BF-982 (round 1): a ``tool_id`` that ``is_action_tool_id`` refuses (an ``mcp:`` id longer than 64 characters, or
+    one holding a character such as ``/``) is recorded under its provider alias (``llm_function_name``): the name the
+    model was shown, and the one such a call was filed under before BF-982. The alias is not an ``mcp:`` id, so the
+    call is critical and the Captain decides it. An alias that is refused too (an upper-case name) is not recorded, as
+    before. The gate's key, admissions and rationale and the recorder's key all read the payload's id.
+    """
     if type(tool_id) is not str or type(params) is not dict:
         return None
+    if not is_action_tool_id(tool_id):
+        from probos.cognitive.swe_harness.tool_call import llm_function_name  # loaded only for such an id
+
+        tool_id = llm_function_name(tool_id)
     recorded = {key: value for key, value in params.items() if key not in APPROVAL_UNRECORDED_PARAMS}
     return validate_action_payload({
         "tool_id": tool_id, "action": APPROVAL_ACTION, "params": recorded,
@@ -733,7 +745,9 @@ class AgentWorkRunner:
             if self._requests.count_pending_sync(agent_id) >= self._max_pending:
                 return CONFINEMENT_REFUSED
             request = await self._requests.file_action_request(
-                agent_id, payload, rationale=f"agent work {work_item_id[:8]} called {tool_id}, a call that needs approval",
+                agent_id, payload,
+                # BF-982 (round 1): the id the call is filed under, never a registered id the payload pattern refuses
+                rationale=f"agent work {work_item_id[:8]} called {payload['tool_id']}, a call that needs approval",
                 work_item_id=work_item_id,
             )
             if request is None or not getattr(request, "id", ""):
