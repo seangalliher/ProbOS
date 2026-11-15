@@ -28,7 +28,7 @@ from probos.config import RecordsConfig
 from probos.knowledge.records_store import RecordsStore, record_is_readable
 from probos.knowledge.semantic import SemanticKnowledgeLayer
 
-_BUILT: frozenset[str] = frozenset()
+_BUILT: frozenset[str] = frozenset({"#1797"})
 
 
 def until_built(issue: str) -> Any:

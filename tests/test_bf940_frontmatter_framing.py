@@ -290,7 +290,7 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
     @pytest.mark.parametrize(("raw", "frontmatter", "body", "readers"), [
         pytest.param(
             "---\nauthor: alice\nclassification: private --- inline\nstatus: nominal\n---\nwarp notes\n",
-            {"author": "alice", "classification": "private --- inline", "status": "nominal"}, "warp notes", {"alice", "bob"},
+            {"author": "alice", "classification": "private --- inline", "status": "nominal"}, "warp notes", {"alice"},
             id="then-a-key-and-a-rule",
         ),
         pytest.param(
@@ -314,7 +314,9 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
         private note. Where the whole block loads (the 1st, 3rd and 4th) the inline marker now ends nothing and the shape reads to
         its closing line, as here (L3); where it does not (the 2nd, prose after a key) the shape reads as the base read it (A1).
         Each is asserted through ``_parse_document``, ``read_entry`` and the search for alice and for bob, as BF-952's T20 asserted
-        it (F2): the readers listed are the ones shown the record. No writer in the repository makes such a document."""
+        it (F2): the readers listed are the ones shown the record. No writer in the repository makes such a document.
+        BF-966 (#1797) amends L3 for the 1st: its classification, ``private --- inline``, is not one of the four labels,
+        so it is read as private and bob is refused it. The repeated-key half of L3 (the 3rd) is unchanged."""
         store = await _store(tmp_path, monkeypatch)
         path = "notebooks/alice/framing.md"
         (store.repo_path / "notebooks" / "alice").mkdir(parents=True)

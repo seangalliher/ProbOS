@@ -22,6 +22,7 @@ from probos.knowledge.records_store import (
     _CLASSIFICATION_LEVELS,
     _IDENTITY_GATED_CLASSIFICATIONS,  # BF-679: owned by the store
     _UNRESTRICTED_READER,  # BF-679: owned by the store
+    effective_classification,  # BF-966 (#1797): owned by the store; the index applies the keyword readers' rule
 )
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,13 @@ def build_records_scope_filter(
     the installed version): a flat multi-key ``where`` raises ``Expected where
     to have exactly one operator``, and ``$and``/``$or`` require **at least
     two** expressions. So a lone predicate is always emitted flat.
+
+    BF-966 (#1797): the index holds only the four labels, because
+    :meth:`SemanticKnowledgeLayer.index_record` normalises through
+    ``effective_classification``. A stored odd label would match none of the
+    ``$in`` lists below and so be withheld from every reader, stricter than
+    ``private``. No ``$nin`` clause is added: behind the normalisation it is
+    dead code, and it could only loosen.
 
     Returns:
         A ``where`` dict, or ``None`` when the scope admits nothing — callers
@@ -379,11 +387,11 @@ class SemanticKnowledgeLayer:
 
         ``classification`` travels into ChromaDB metadata so retrieval can
         enforce scope in the query itself (see
-        :func:`build_records_scope_filter`). An unrecognised classification is
-        normalised to ``\"private\"`` \u2014 level 0, matching the
-        ``_CLASSIFICATION_LEVELS.get(doc_class, 0)`` default in
-        ``RecordsStore.search`` \u2014 so an odd label is never silently treated as
-        broadly readable.
+        :func:`build_records_scope_filter`). BF-966 (#1797): a classification
+        that is not exactly one of the four labels, of any type, is indexed as
+        ``private`` through ``records_store.effective_classification``, the rule
+        the keyword readers apply, with a WARNING. So the index holds only the
+        four labels, and an odd label is never treated as broadly readable.
 
         The document ID is derived from ``path``, so re-writing a record
         upserts in place rather than accumulating stale copies.
@@ -392,13 +400,16 @@ class SemanticKnowledgeLayer:
         if col is None:
             return
 
-        if classification not in _CLASSIFICATION_LEVELS:
+        # BF-966 (#1797): the keyword readers' rule. It never raises, so a list or a mapping is indexed as
+        # private instead of raising out of the backfill (which left the note keyword-only).
+        effective = effective_classification(classification)
+        if effective != classification:
             logger.warning(
                 "AD-1138: record %s has unknown classification %r; indexing it as "
                 "'private' so scope filtering stays conservative",
                 path, classification,
             )
-            classification = "private"
+        classification = effective
 
         header = path
         if topic:
