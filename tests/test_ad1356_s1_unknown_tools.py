@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
 from probos.agent_work_runner import CarriedResults, approval_payload
 from probos.capability_request import action_dedup_key, is_action_tool_id, requests_for_work_item
@@ -179,3 +181,19 @@ def test_an_id_the_payload_pattern_refuses_is_filed_and_kept_under_its_alias() -
         key = action_dedup_key(agent_id="forge-1", payload=payload, work_item_id="wi-1")
         assert (entry.tool_id, entry.key) == (alias, key)
     assert approval_payload(CANONICAL, params, "wi-1")["tool_id"] == CANONICAL
+
+
+# UT7
+def test_a_name_with_no_utf8_form_is_not_filed_or_kept() -> None:
+    """BF-982 (round 2): a name holding a lone surrogate (a model's JSON can decode to one) has no provider alias,
+    because ``llm_function_name`` hashes its UTF-8 bytes. ``approval_payload`` answers None for it, as before round 1,
+    so the gate files nothing and the recorder keeps nothing; neither raises."""
+    params = {"query": "drift budget"}
+    for sent in ("mcp:docs:" + "\ud800", "\ud800"):
+        assert not is_action_tool_id(sent)  # premise: the payload pattern refuses it
+        with pytest.raises(UnicodeEncodeError):  # premise: it has no alias
+            llm_function_name(sent)
+        assert approval_payload(sent, params, "wi-1") is None
+        carried = CarriedResults()
+        carried.recorder("wi-1")("forge-1", sent, params, ToolResult(output="found"))
+        assert carried.for_agent("wi-1", "forge-1") == ()

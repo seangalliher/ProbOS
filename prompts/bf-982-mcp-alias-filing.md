@@ -3,9 +3,10 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-15
 **Status:** ready to build on `origin/main` `799869715f` (tree `33f1b1b79ce8`). **Owning issue:** #1817. Commits say `Refs #1817.`
 **Dependencies:** none. It is the prerequisite of #1796 (BF-965, its section 6, L5) and is built first in the same wave: its own commits, its own reviews, one PR and one broad gate for both. No pair here anchors on a line that #1796's contract (v1p3c) anchors on (section 7.4).
-**Estimated tests:** 4 new (UT3 to UT6 in `tests/test_ad1356_s1_unknown_tools.py`), 0 removed, 2 functions changed (UT2; CC5 of `tests/test_ad1356_s3_chain_of_command.py`, 5 cases after R1).
-**Size:** a production change of a few lines in one function, plus one docstring sentence; R1 (review round 1, D7) adds a few lines to `approval_payload` and one predicate; the rest is tests and trackers.
+**Estimated tests:** 5 new (UT3 to UT7 in `tests/test_ad1356_s1_unknown_tools.py`), 0 removed, 2 functions changed (UT2; CC5 of `tests/test_ad1356_s3_chain_of_command.py`, 5 cases after R1).
+**Size:** a production change of a few lines in one function, plus one docstring sentence; R1 (review round 1, D7) adds a few lines to `approval_payload` and one predicate; R2 (review round 2, D8) adds a three-line guard to `approval_payload` and rewords one comment; the rest is tests and trackers.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-15 (R1: review round 1, findings F1 to F3)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-15 (R2: review round 2, findings G1 to G4)
 
 ## 1. Problem
 
@@ -22,7 +23,7 @@ UT2 of `tests/test_ad1356_s1_unknown_tools.py` (`:97`, `assert asked == ["hull_s
 
 ## 2. Solution overview
 
-Under a confinement, keep one id, `confined_id`, for the confinement's three uses: the set check, `refuse_or_admit` and `record_admitted`. It is the id S1.1's existing `_resolve_tool_id` call answers, when that answer is not None (after S1.1's refusal, a non-None answer is always registered). An ambiguous name (None), a call with no registry and a non-str name keep the name as sent. Then one call is filed, kept (BF-947's key) and approved under one id, whatever name the model used, and `filed_call_tier` reads the tool's own tier.
+Under a confinement, keep one id, `confined_id`, for the confinement's three uses: the set check, `refuse_or_admit` and `record_admitted`. It is the id S1.1's existing `_resolve_tool_id` call answers, when that answer is not None (after S1.1's refusal, a non-None answer is always registered). An ambiguous name (None), a call with no registry and a non-str name keep the name as sent. Then one call is filed, kept (BF-947's key) and approved under one id, whatever name the model used, and `filed_call_tier` reads the tool's own tier. (R1, D7: when the action payload's tool-id pattern refuses the registered id, the runner files the alias instead, so that call stays critical, as on the base.)
 
 Rejected:
 - Teaching `filed_call_tier` aliases. The filed id, the carried key and the admission key would still differ between an alias call and an id call.
@@ -35,11 +36,12 @@ Rejected:
 |---|---|---|
 | D1 | Resolve once, where S1.1 already resolves; `confined_id` feeds the set check, the gate and `record_admitted` | One call, one id, through filing, the carried key and the approval. No second resolution is added |
 | D2 | Out of scope: `_plan_mode_tool_ids`, `_deferred_schemas.withhold_call`, `_park_or_admit`, the browser checks and the base call keep the name as sent; `denied_tools` and AD-856's log record the id the `ToolPermissionDenied` carries, unchanged (L3) | `PLAN_MODE_TOOL_IDS` (`agent_mode.py:68-83`) holds only provider-valid ids, so an alias and its id get the same answer. `withhold_call` already maps an id to its alias (`tool_manifest.py:325`). `_park_or_admit` acts only on `"browser"` (`agentic_dispatch.py:230`, `:1233`), which is provider-valid. The base call resolves the name itself (`executor.py:634`). Changing them changes the name plan mode, the inbox and the base call are given, and fixes no defect |
-| D3 | Requests filed under an alias before this change: accepted as recorded limit L1, with no test | It fails closed. A pending alias request is decided as critical. Once fulfilled, the resumed call is filed again under the registered id and decided by its tier. A fulfilled alias request admits nothing, and a denied one still cancels the item (`agent_work_runner.py:273-302`). Nothing runs unapproved or twice. Such requests exist only where `mcp.agent_tools_enabled` (default False, `config.py:2797`) was on. Handling them would change BF-947's exact-key admission (a governance control). A test that asserts the second filing would make the limit the contract |
+| D3 | Requests filed under an alias before this change, for a registered id the action payload's tool-id pattern accepts: accepted as recorded limit L1, with no test | It fails closed. A pending alias request is decided as critical. Once fulfilled, the resumed call is filed again under the registered id and decided by its tier. A fulfilled alias request admits nothing, and a denied one still cancels the item (`agent_work_runner.py:273-302`). Nothing runs unapproved or twice. Such requests exist only where `mcp.agent_tools_enabled` (default False, `config.py:2797`) was on. Handling them would change BF-947's exact-key admission (a governance control). A test that asserts the second filing would make the limit the contract. For an id the pattern refuses (D7), the resumed call is filed under the alias again, so a request filed under the alias is matched and admits it once, as on the base |
 | D4 | Severity Medium; ordinary reach (not injected) when `mcp.agent_tools_enabled` is on; fail-closed over-restriction | Every MCP call from agent work is filed under its alias, because the model is shown only the alias. No call runs that should not. AD-1356 S3's delegation does nothing for MCP tools. It blocks #1796 |
 | D5 | UT2's alias assertion changes in M1, with the fix | It asserted the defect. Moving it with the fix keeps every commit green, and the reason is recorded inline |
 | D6 | The regression test is CC5 in place (alias script, plus the filed id checked in all three cases); the unit tests UT3 to UT5 are appended to the S1 file | CC5 crosses the seam through the real executor, gate, stores and service. UT3 catches the `record_admitted` mutant, which CC5 cannot: the item ends and its carried results are dropped. No new file, so #1796's census does not change |
 | D7 | Review round 1 (F1): a registered id the action payload's tool-id pattern (`capability_request._TOOL_ID_RE`, `^[a-z0-9_:.-]{1,64}$`) refuses is filed under its provider alias, as on the base. `approval_payload` makes the swap through `is_action_tool_id`, the one predicate `validate_action_payload` also reads; the gate's rationale names the filed id. New cases: CC5 `[len65]` and `[slash]`, and UT6 | Without it, M1 regressed every MCP id longer than 64 characters, or holding a character the alias removes: the base filed such a call (critical, for the Captain) and M1 refused it unfiled (`CONFINED_CALL_NOT_FILED`). The runner owns the filing rule, so the swap is there, not in the confinement, which would otherwise have to know one gate's payload shape. The alias is a pure function of the id, so the gate's key, the admissions, the recorder's key and the rationale agree. The rationale never shows a remote string the pattern refuses. Rejected: widening the pattern for an exact `mcp:` id (a persisted and wire shape with a UI mirror and a security purpose; its own item, L6) |
+| D8 | Review round 2 (G1): `approval_payload` catches `UnicodeEncodeError` around `llm_function_name` and answers None, as before R1, for a name with no alias: one holding a lone surrogate, which has no UTF-8 form. New test UT7 | R1 sent every id the pattern refuses through `llm_function_name`, which hashes the id's UTF-8 bytes, so a lone surrogate (a model's JSON can decode to one) raised out of the gate and the recorder: fail closed through the confinement, but logged as an unexpected failure. A call reaches the gate with such a name only when the executor has no registry (with one, S1.1 refuses it as unregistered), so it is injected-only. `UnicodeEncodeError` is the only exception `llm_function_name` raises for a `str`. Rejected: an ASCII check (it refuses a non-ASCII, encodable id that R1 files under its alias, as the base did); `surrogatepass` in `llm_function_name` (it changes the shared alias the provider offer reads); a broad `except` (it would hide a defect) |
 
 ## 4. Milestones and commits
 
@@ -55,6 +57,9 @@ Rejected:
 - **R1** (review round 1, D7): `src/probos/capability_request.py`, `src/probos/agent_work_runner.py`, the two test files, this contract, `PROGRESS.md` and `DECISIONS.md`, then the ledger pair regenerated as in M3.
   Subject: `Agent-work runner files a call whose registered id the payload pattern refuses under its alias`
   Body: one paragraph from D7, then `Refs #1817.`
+- **R2** (review round 2, D8): `src/probos/agent_work_runner.py`, `src/probos/cognitive/agentic_dispatch.py` (one comment), `tests/test_ad1356_s1_unknown_tools.py`, this contract, `PROGRESS.md` and `DECISIONS.md`, then the ledger pair regenerated as in M3.
+  Subject: `Approval payload answers None for a tool name with no UTF-8 form, as before the alias fallback`
+  Body: one paragraph from D8, then `Refs #1817.`
 
 No subject carries an `AD-` or `BF-` token, or a word GitHub reads as a closing keyword (`close`, `fix` or `resolve`, in any form; the orchestrator's message scans reject them). Never `git add -A`; stage the named files only.
 
@@ -74,7 +79,7 @@ No subject carries an `AD-` or `BF-` token, or a word GitHub reads as a closing 
 | any name, no registry | not called | not run | the name as sent | unchanged |
 | non-str | not called | not run | the value as sent | unchanged (the runner refuses it) |
 
-R1 (D7): when `confined_id` is a registered id the action payload's tool-id pattern refuses, the runner's gate and recorder file and keep the call under `llm_function_name(confined_id)`, as the base did, and only the Captain decides it. When the alias is refused too (an upper-case name), the call is refused unfiled, as on the base (L6).
+R1 (D7): when `confined_id` is a registered id the action payload's tool-id pattern refuses, the runner's gate and recorder file and keep the call under `llm_function_name(confined_id)`, as the base did, and only the Captain decides it. When the alias is refused too (an upper-case name), the call is refused unfiled, as on the base (L6). R2 (D8): a name with no alias (one holding a lone surrogate; it reaches the gate only with no registry) is refused unfiled and kept by nothing, as on the base, and nothing raises.
 
 ## 7. The contract
 
@@ -350,11 +355,17 @@ REPLACE:
 
 The orchestrator appends a `*Mutation campaign of record.*` bullet to this entry after section 8.3.
 
+P3-1 and P3-2 are M3's text, kept as written because later pairs search it: R1-31 (the PROGRESS line), R1-32 (Scope), R1-33 (D2), R1-34 (the head of Rejected, which D7 now precedes), R1-35 (Rejected) and R1-36 (Reversal), then R2's PROGRESS and DECISIONS pairs. Read the entry as those pairs leave it, and never apply P3-1 or P3-2 without them. As written above: P3-2's D2 is false (`denied_tools` and AD-856's log record the id the `ToolPermissionDenied` carries, `getattr(exc, "tool_id", tool_id)`, not the name the model used; corrected by R1-33); P3-2's Rejected bullet is false (the whole-body change would alter the name plan mode, the inbox and the base call are given, not `denied_tools`; corrected by R1-35); P3-2's D3 and P3-1's matching sentence hold only for an id the payload pattern accepts (corrected by R2); P3-2's Scope names UT3 to UT5 (now UT3 to UT7, R1-32 and R2). Section 7.1's embedded comment ("filed_call_tier reads the tool's own tier") is M1's text, which R2-2 searches and corrects.
+
 Then run `d:/ProbOS/.venv/Scripts/python.exe scripts/gen_ad_ledger.py` and stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md`.
 
 ### 7.6 R1 (review round 1, D7), on `c3d90e0f`
 
 The pairs are in commit R1: `is_action_tool_id` (capability_request), which `validate_action_payload` now reads; `approval_payload` swapping a refused id for its alias; the gate's rationale naming the filed id; CC5 `[len65]` and `[slash]` with their premise and a filed-id and rationale assertion on every case; UT6. #1796 (v1p3d) has no pair on `agent_work_runner.py` or `capability_request.py`. R1's CC5 pairs leave P0-259's four lines unchanged, and R1's import pairs leave P0-257's two lines unchanged. The S1 file's import pair and UT6 do not touch P2-34 or P2-35. The new CC5 cases inherit P0-259's offer (`OfferedMcpTools(tool.tool_id)`; `MCPDispatchOffer._valid_tool_id` admits any `mcp:{server}:{tool}`), so #1796 needs no new pair. Its expected counts move: S1 +1, S3 +2, and the `-k "mcp or ad1019"` set +2.
+
+### 7.7 R2 (review round 2, D8), on `1673c94c`
+
+The pairs are in commit R2: `approval_payload` catches `UnicodeEncodeError` around `llm_function_name` and answers None; the BF-982 comment in `_invoke_reserved_body` names R1's alias filing; `import pytest` and UT7 in the S1 file; this contract, `PROGRESS.md` and `DECISIONS.md`. #1796 has no pair on `agent_work_runner.py`; its `agentic_dispatch.py` pairs (P2-13 to P2-17) do not reach the BF-982 comment; its S1 pairs (P2-34, P2-35) are in UT1, away from the import line and the end of the file. Its expected counts move: S1 +1 (UT7); the `-k "mcp or ad1019"` set does not move (UT7's name and module match neither).
 
 ## 8. Gates (the orchestrator runs all of them; the Builder runs none)
 
@@ -370,7 +381,7 @@ Record each file's count. `tests/test_ad1356_s1_unknown_tools.py` holds 2 cases 
 ### 8.2 Focused check on the built tree
 
 The same two commands. Expected:
-- `tests/test_ad1356_s1_unknown_tools.py`: 6 passed (base 2, plus UT3 to UT6).
+- `tests/test_ad1356_s1_unknown_tools.py`: 7 passed (base 2, plus UT3 to UT7).
 - `tests/test_ad1356_s3_chain_of_command.py`: its base count plus 2 (CC5 `[len65]` and `[slash]`, R1), all passed.
 - Every other file: its base count, all passed. CC5's five cases pass.
 - The `-k "mcp or ad1019"` set: the base count plus 2 (CC5's two R1 cases), 0 failed. No other new test name or module matches `mcp` or `ad1019`.
@@ -384,17 +395,18 @@ Selector for every row: `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test
 
 | Row | Original (whole stripped line, after M1) | Mutant | Expected killers |
 |---|---|---|---|
-| MU1 (record resolved, gate not) | `refusal = await confinement.refuse_or_admit(agent_id, confined_id, params)` | `refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)` | UT2 `assert asked == ["hull_survey", "ops:hull:survey"]`; UT3 `assert asked == [CANONICAL, CANONICAL]`; CC5 x3 `assert request.payload["tool_id"] == tool.tool_id` |
+| MU1 (record resolved, gate not) | `refusal = await confinement.refuse_or_admit(agent_id, confined_id, params)` | `refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)` | UT2 `assert asked == ["hull_survey", "ops:hull:survey"]`; UT3 `assert asked == [CANONICAL, CANONICAL]`; CC5 `[open]`, `[confirm]`, `[reaped]` at the filed-id and rationale assertion (R1) |
 | MU2 (gate resolved, record not) | `confinement.record_admitted(agent_id, confined_id, admitted_params, result)` | `confinement.record_admitted(agent_id, tool_id, admitted_params, result)` | UT3 `assert recorded == [(CANONICAL, None), (CANONICAL, None)]` (CC5 cannot catch it: the item ends and its carried results are dropped) |
 | MU3 (direct set on the alias) | `if confinement is not None and confined_id not in confinement.tool_ids:` | `if confinement is not None and tool_id not in confinement.tool_ids:` | UT4 `assert result.error is None` (the gate files it: `CONFINED_CALL_FILED`) |
 | MU4 (never resolves) | `confined_id = resolved` | `pass` | UT2, UT3, UT4, CC5 x3 (`[open]` also at `outcome.refusal`) |
 | MU5 (resolves an ambiguous name) | `if resolved is not None:` (the new one; the S1.1 line reads `if resolved is not None and self._registry.get(resolved) is None:`) | `if True:` | UT5 `assert asked == [alias] and recorded == []` (asked is `[None]`) |
-| R0 (base product file, R1 tests) | `src/probos/cognitive/agentic_dispatch.py` restored from `799869715f` | -- | 6 fail: UT2, UT3, UT4, CC5 `[open]`, `[confirm]`, `[reaped]` (each at the filed-id assertion); UT5, UT6, CC5 `[len65]` and `[slash]` pass (the base gate sees the alias, which the pattern accepts) |
+| R0 (base product file, R2 tests) | `src/probos/cognitive/agentic_dispatch.py` restored from `799869715f` | -- | 6 fail: UT2, UT3, UT4, CC5 `[open]`, `[confirm]`, `[reaped]` (each at the filed-id assertion); UT5, UT6, UT7, CC5 `[len65]` and `[slash]` pass (the base gate sees the alias, which the pattern accepts; UT7 never reaches the confinement) |
 | MU6 (never swaps; `agent_work_runner.py`) | `if not is_action_tool_id(tool_id):` | `if False:` | UT6 `assert payload is not None and payload["tool_id"] == alias`; CC5 `[len65]`, `[slash]` at `_parked_on` (nothing is filed) |
 | MU7 (always swaps; `agent_work_runner.py`) | `if not is_action_tool_id(tool_id):` | `if True:` | UT6 `assert approval_payload(CANONICAL, params, "wi-1")["tool_id"] == CANONICAL`; CC5 `[open]`, `[confirm]`, `[reaped]` at the filed-id and rationale assertion |
 | MU8 (rationale names the sent id; `agent_work_runner.py`) | `rationale=f"agent work {work_item_id[:8]} called {payload['tool_id']}, a call that needs approval",` | `rationale=f"agent work {work_item_id[:8]} called {tool_id}, a call that needs approval",` | CC5 `[len65]`, `[slash]` at the filed-id and rationale assertion |
-| MU9 (predicate ignores the pattern; `capability_request.py`) | `return type(tool_id) is str and _TOOL_ID_RE.fullmatch(tool_id) is not None` | `return type(tool_id) is str` | UT6 premise; CC5 `[len65]`, `[slash]` premise |
-| R1r (M3's runner, R1's other files) | `src/probos/agent_work_runner.py` restored from `c3d90e0f` | -- | 3 fail: UT6, CC5 `[len65]`, `[slash]` (the round-1 regression) |
+| MU9 (predicate ignores the pattern; `capability_request.py`) | `return type(tool_id) is str and _TOOL_ID_RE.fullmatch(tool_id) is not None` | `return type(tool_id) is str` | UT6 premise; UT7 premise; CC5 `[len65]`, `[slash]` premise |
+| R1r (M3's runner, R2's other files) | `src/probos/agent_work_runner.py` restored from `c3d90e0f` | -- | 3 fail: UT6, CC5 `[len65]`, `[slash]` (the round-1 regression); UT7 passes (M3's runner never computes an alias) |
+| MU10 (the guard catches nothing; `agent_work_runner.py`) | `except UnicodeEncodeError:  # BF-982 (round 2): a lone surrogate has no alias; not recorded, as before` | `except LookupError:  # BF-982 (round 2): a lone surrogate has no alias; not recorded, as before` | UT7 at `assert approval_payload(sent, params, "wi-1") is None` (the call raises `UnicodeEncodeError`: the round-2 regression) |
 
 Record each row as KILLED (by the named assertion, or name the one that fired), SURVIVED or INVALID. Any survivor stops the slice for Architect triage.
 
@@ -408,12 +420,13 @@ Once for the wave, on its final committed head (#1796's contract, section 3, lab
 2. In `_invoke_reserved_body`, one name, `confined_id`, reaches all three confinement uses (the set check, `refuse_or_admit`, `record_admitted`). It differs from the name sent only when `_resolve_tool_id` answered a non-None id, and S1.1's refusal of an unregistered id still runs first, unchanged.
 3. No other use of the name changes: plan mode, `withhold_call`, the browser checks, `_park_or_admit` and the base call still receive `tool_id`. `denied_tools` and the AD-856 log record `getattr(exc, "tool_id", tool_id)`, the id the `ToolPermissionDenied` carries (the registered id when the registry or `_McpTool` refuses), as on the base.
 4. Every fail-closed path answers as before: a non-str name, a call with no registry, an unregistered name (UT1 and UT2's first half) and an ambiguous name (UT5).
-5. Each consumer of the confinement's id receives the registered id for an alias call, and they agree with one another. The consumers are: the runner's gate (`agent_work_runner.py:716-743`: `_recovery_read`, `approval_payload`, `action_dedup_key`, the carried lookup, the admissions, `file_action_request` and its rationale); the recorder (`:136-152`); `filed_call_tier` (`delegated_approvals.py:187`, `effect_tiers.py:114-126`); and the carried line of `task_text` (`:218`). BF-947's admission key and carried key are computed on the same id the gate filed.
-6. The tests cross the seam: CC5 runs the alias through the real executor, gate, stores and AD-1213 service; `[open]` is decided by the chief, its bridge is asked once, and all three cases check the filed id. No assertion was weakened, and no `skip`, `xfail` or retry was added. UT2's changed line states inline why.
+5. Each consumer of the confinement's id receives the registered id for an alias call (R1: the runner's gate and recorder then file and key it under the alias when the payload pattern refuses the id, property 9), and they agree with one another. The consumers are: the runner's gate (`agent_work_runner.py:716-743`: `_recovery_read`, `approval_payload`, `action_dedup_key`, the carried lookup, the admissions, `file_action_request` and its rationale); the recorder (`:136-152`); `filed_call_tier` (`delegated_approvals.py:187`, `effect_tiers.py:114-126`); and the carried line of `task_text` (`:218`). BF-947's admission key and carried key are computed on the same id the gate filed.
+6. The tests cross the seam: CC5 runs the alias through the real executor, gate, stores and AD-1213 service; `[open]` is decided by the chief, its bridge is asked once, and every case (five after R1) checks the filed id. No assertion was weakened, and no `skip`, `xfail` or retry was added. UT2's changed line states inline why.
 7. The pairs of #1796's contract (P0-257 to P0-259, P2-34, P2-35, P2-13 to P2-17) still match exactly once on the built tree (section 7.4).
 8. Comments cite no line numbers; the files are ASCII with LF line endings; every SEARCH matched exactly once at its turn; the tracker entries describe the diff.
 9. R1: `validate_action_payload` accepts exactly what it accepted (its tool-id check is `is_action_tool_id`, the same pattern), so the UI mirror (`ui/src/store/capabilityApprovals.ts`) and its fixture rows need no change. `approval_payload` returns a payload under the id when the pattern accepts it; under `llm_function_name(id)` when it refuses the id and accepts the alias; and None otherwise. No payload or rationale ever holds an id the pattern refuses. The gate's payload, key, carried lookup, admissions, filing and rationale, and the recorder's key, read one `payload["tool_id"]`, so a resumed call is admitted by the request it was filed under (CC5 `[len65]` and `[slash]` finish with one request).
 10. R1: a call filed under the alias is critical (`filed_call_tier` of a non-`mcp:` id gives `tool_tier`'s answer for an unlisted id), so only the Captain decides it, as on the base; no call runs unapproved.
+11. R2: for a `str` the pattern refuses and `llm_function_name` cannot alias (a lone surrogate), `approval_payload` answers None and the gate and the recorder raise nothing, as on the base; the only new handler is `except UnicodeEncodeError` around `llm_function_name`; every payload R1 returned is unchanged. The `agentic_dispatch.py` change is comment-only. UT7 fails on `1673c94c` and passes on R2.
 
 ## 10. Verified Against Codebase (2026-11-15, `799869715f`, tree `33f1b1b79ce8`)
 
@@ -470,7 +483,7 @@ DECISIONS.md:1908 (AD-1356 S3 and S4), 1911 ("OPEN elevated"), 1919 (BF-947 head
 PROGRESS.md:1 "# ProbOS Progress" (1 occurrence)
 ```
 
-**Expected `git diff --stat`:**
+**Expected `git diff --stat` (M1 to M3; R1 and R2 add `prompts/bf-982-mcp-alias-filing.md`, `src/probos/agent_work_runner.py` and `src/probos/capability_request.py` (R1), and grow the two test files, `agentic_dispatch.py` (R2, one comment) and the trackers):**
 
 ```
  DECISIONS.md                              | ~10 +
@@ -522,23 +535,35 @@ R1 absence (2026-11-15):
 - CLAIM: no #1796 (v1p3d) pair touches `agent_work_runner.py`, `capability_request.py` or the CC5 lines R1 edits. RUN: Grep `agent_work_runner|approval_payload|capability_request` and `drift budget|bridge\.asked|_parked_on|Look up the|is_action_tool_id` in `logs/b982r1/contract-b2.v1p3d.lf.md`. FOUND: no pair or anchor on either. HOLDS: yes.
 - CLAIM: no test pins the rationale or validator line R1 changes. RUN: Grep `a call that needs approval|called \{tool_id\}` in `*.py`; Grep `_TOOL_ID_RE` in the repo. FOUND: CC1 at `:136` only (`list_files`); `_TOOL_ID_RE` only at `capability_request.py:79, 216` and a comment at `continue_or_ask.py:100`. HOLDS: yes.
 
+R2 verified against `1673c94c` (2026-11-15):
+- `src/probos/cognitive/swe_harness/tool_call.py:64-71`: `llm_function_name` runs `_LLM_NAME_RE.fullmatch`, then `hashlib.sha256(tool_id.encode("utf-8"))`, `re.sub`, `strip` and a slice; only the strict UTF-8 encode can raise for a `str`, and only `UnicodeEncodeError`, for a lone surrogate.
+- `src/probos/agent_work_runner.py`: 138 the recorder's `approval_payload`; 170-189 `approval_payload` (181 `if not is_action_tool_id(tool_id):`, 184 `tool_id = llm_function_name(tool_id)`); 192-204 `_recovery_read` (False for any name but `read_file`); 734 the gate's `approval_payload`.
+- `src/probos/cognitive/agentic_dispatch.py:844-847`: the BF-982 comment ("filed_call_tier reads the tool's own tier").
+- `tests/test_ad1356_s1_unknown_tools.py`: 11 `from typing import Any`; 14-15 `CarriedResults, approval_payload` and `is_action_tool_id`; 27 `llm_function_name`; 29 `ToolResult`; 181 UT6's last line (1 occurrence); no `import pytest`.
+- `logs/b982r1/probe-surrogate-out.txt`: for `"mcp:docs:" + "\ud800"` and `"\ud800"`, main and `c3d90e0f` answer None and `1673c94c` raises `UnicodeEncodeError`.
+
+R2 absence (2026-11-15):
+- CLAIM: `approval_payload` has no caller in src beyond the gate and the recorder. RUN: Grep `approval_payload\(` in `src`. FOUND: `agent_work_runner.py:138, 170 (def), 734`. HOLDS: yes.
+- CLAIM: no other `src` comment is left false by R1. RUN: Grep `BF-982` in `src`. FOUND: `agent_work_runner.py:173, 175, 749`, `capability_request.py:95`, `agentic_dispatch.py:347, 844`; only 844-847 overstates (R2-2). HOLDS: yes.
+- CLAIM: no #1796 pair anchors on a line R2 edits. RUN: Grep `BF-982: the id|resolves to, so one call|tool's own|executor below keep` and the `tests/test_ad1356_s1` pair labels in `logs/b982r1/contract-b2.v1p3d.lf.md`. FOUND: no anchor; S1 pairs P2-34 and P2-35 (UT1) only. HOLDS: yes for v1p3d; the orchestrator's tool confirms v1p3f.
+
 ## 11. What this does NOT change, and recorded limits
 
 Out of scope:
 - `filed_call_tier`, `tool_tier` and the tier tables;
-- the runner's gate, recorder and admissions, except R1's filing id and rationale (D7);
+- the runner's gate, recorder and admissions, except R1's filing id and rationale (D7) and R2's None for a name with no alias (D8);
 - the action payload's tool-id pattern, `validate_action_payload`'s accepted set and its UI mirror (L6);
 - plan mode, AD-1189, AD-1154, the browser checks, the base call, `denied_tools`;
 - the loop (#1796);
 - `_resolve_tool_id` itself.
 
 Recorded limits:
-- **L1.** A request filed under an alias before this change is not matched by the resumed call (D3). It costs one extra decision, and nothing runs unapproved or twice. Live state was not checked.
+- **L1.** For a registered id the action payload's tool-id pattern accepts, a request filed under its alias before this change is not matched by the resumed call (D3). It costs one extra decision, and nothing runs unapproved or twice. For an id the pattern refuses (D7, L6), the resumed call is filed under the alias again, so such a request is matched, as on the base. Live state was not checked.
 - **L2.** The gate and the base call each resolve the name (`_invoke_reserved_body`, then `_invoke_once`). A registry change during the gate's await can make the base call answer "ambiguous" or "not found" for a call the gate admitted. It can also run a different tool. If the registered tool is replaced by one whose own id is the alias string, `llm_function_name_claimants` counts it (`t == name`), and the base call runs it while the gate and the recorder saw the registered id. Pre-existing (the base does the same) and injected-only: an `mcp:` id holds a colon and an alias never does, so only code that registers an alias-shaped id during the await reaches it. Follow-up (the wave's one): pin the admitted id through execution, or refuse a call whose resolution changed.
 - **L3.** `denied_tools` and AD-856's log record the id the `ToolPermissionDenied` carries (`getattr(exc, "tool_id", tool_id)`): the registered id when the registry or `_McpTool` refuses, and the name sent only when the exception carries none. Unchanged by this slice.
 - **L4.** The carried-results line of `task_text` now names the id the call was filed under (the registered id, or the alias for one the payload pattern refuses, R1), as its "Tool named:" line already does. A repeat under either name gets the same key and is answered.
-- **L5.** Not run here: the Architect ran no test, of M1 to M3 or of R1. If UT3 or UT4 returns an error from the executor for a reason other than the confinement, or CC5 `[len65]` or `[slash]` fails anywhere but a premise, filed-id or tier assertion, stop and report.
-- **L6.** R1 restores the base for a registered id the action payload's tool-id pattern (`^[a-z0-9_:.-]{1,64}$`) refuses: the call is filed under its alias, and the Captain decides it whatever its AD-1019b risk. When the alias is refused too, because the name holds an upper-case letter, the call is refused unfiled and the item ends (`CONFINED_CALL_NOT_FILED`), on the base as here. MCP tool names are case-sensitive and may run to 128 characters (SEP-986, the 2025-11-25 spec), so both are reachable whenever `mcp.agent_tools_enabled` is on. They are pre-existing and their own item, an independently reachable defect outside the wave's one follow-up: file an exact `mcp:` id under a pattern that admits its spec-valid names, moving `validate_action_payload`, the UI mirror (`ui/src/store/capabilityApprovals.ts`) and the shared fixture rows together. No test pins either limit.
+- **L5.** Not run here: the Architect ran no test, of M1 to M3, of R1 or of R2. If UT3 or UT4 returns an error from the executor for a reason other than the confinement, CC5 `[len65]` or `[slash]` fails anywhere but a premise, filed-id or tier assertion, or UT7 fails at a premise, stop and report.
+- **L6.** R1 restores the base for a registered id the action payload's tool-id pattern (`^[a-z0-9_:.-]{1,64}$`) refuses: the call is filed under its alias, and the Captain decides it whatever its AD-1019b risk. When the alias is refused too, because the name holds an upper-case letter, the call is refused unfiled and the item ends (`CONFINED_CALL_NOT_FILED`), on the base as here. MCP tool names are case-sensitive and may run to 128 characters (SEP-986, the 2025-11-25 spec), so both are reachable whenever `mcp.agent_tools_enabled` is on. They are pre-existing and their own item, an independently reachable defect outside the wave's one follow-up: file an exact `mcp:` id under a pattern that admits its spec-valid names, moving `validate_action_payload`, the UI mirror (`ui/src/store/capabilityApprovals.ts`) and the shared fixture rows together. CC5 `[len65]` and `[slash]` pin the first limit (filed under the alias, refused to the chief, approved by the Captain, run once under one request); no test pins the upper-case refusal.
 
 ## 12. Prior art and blind spots
 
@@ -546,11 +571,12 @@ This is a ProbOS plumbing fix with no outside analogue, so no external search wa
 - **Internal, absorbed:** BF-754 and BF-757 (the alias and the refusal of ambiguous names, `executor.py:560-606`); AD-1356 S1.1 (the existing resolution point); BF-947 (the exact-key admission, kept exact).
 - **Blind spots found:** UT2 asserted the defect (moved in M1). CC5 cannot catch a `record_admitted` mutant, because carried results are dropped when the item ends, so UT3 does. Requests filed before the change (L1). The double resolution (L2).
 - **Found by review round 1:** the filing pattern refuses ids the alias had sanitised (F1; D7, L6); the second resolution can run a substituted tool (F2, L2); a denial's id comes from the exception (F3, L3). External, for L6 only: MCP tool names are case-sensitive and run to 128 characters (https://modelcontextprotocol.io/seps/986-specify-format-for-tool-names); absorbed as a limit, and the pattern change is deferred to its own item.
+- **Found by review round 2:** R1's alias call raised for a name with no UTF-8 form (G1; D8, UT7); R1 left D3, L1, L6 and the `_invoke_reserved_body` comment overstating, and P3-2's D2 and Rejected text uncorrected in the contract (G2 to G4; section 7.5's note, R2-2).
 
 ## 13. Acceptance criteria
 
 1. Section 8.2's counts on the built tree, and CC5 5 of 5 passed three times serially.
-2. MU1 to MU9 are killed, each by the named assertion (or the one that fired is recorded); R0 shows its 6 failures and R1r its 3, all on one recorded tree.
+2. MU1 to MU10 are killed, each by the named assertion (or the one that fired is recorded); R0 shows its 6 failures and R1r its 3, all on one recorded tree.
 3. The diff is exactly the expected `--stat` files.
 4. One canonical broad gate with a receipt.
 5. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

@@ -174,14 +174,18 @@ def approval_payload(tool_id: Any, params: Any, work_item_id: str) -> dict[str, 
     one holding a character such as ``/``) is recorded under its provider alias (``llm_function_name``): the name the
     model was shown, and the one such a call was filed under before BF-982. The alias is not an ``mcp:`` id, so the
     call is critical and the Captain decides it. An alias that is refused too (an upper-case name) is not recorded, as
-    before. The gate's key, admissions and rationale and the recorder's key all read the payload's id.
+    before; nor, since round 2, is an id with no alias (one holding a lone surrogate, which has no UTF-8 form). The
+    gate's key, admissions and rationale and the recorder's key all read the payload's id.
     """
     if type(tool_id) is not str or type(params) is not dict:
         return None
     if not is_action_tool_id(tool_id):
         from probos.cognitive.swe_harness.tool_call import llm_function_name  # loaded only for such an id
 
-        tool_id = llm_function_name(tool_id)
+        try:
+            tool_id = llm_function_name(tool_id)
+        except UnicodeEncodeError:  # BF-982 (round 2): a lone surrogate has no alias; not recorded, as before
+            return None
     recorded = {key: value for key, value in params.items() if key not in APPROVAL_UNRECORDED_PARAMS}
     return validate_action_payload({
         "tool_id": tool_id, "action": APPROVAL_ACTION, "params": recorded,

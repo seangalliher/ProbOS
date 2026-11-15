@@ -843,8 +843,10 @@ class _DispatchGuardMixin:
         admitted_params = params  # BF-947: what the gate was asked, for record_admitted
         # BF-982: the id the confinement's set, gate and record see. A provider alias (the only name a model is shown
         # for an mcp: tool) becomes the registered id it resolves to, so one call is filed, kept and approved under one
-        # id and filed_call_tier reads the tool's own tier. Plan mode, deferred schemas, the browser checks and the
-        # executor below keep the name the model sent: each answers an alias and its id alike or resolves it itself.
+        # id and filed_call_tier reads the tool's own tier; the runner's gate files the alias instead when the action
+        # payload's tool-id pattern refuses the id (approval_payload). Plan mode, deferred schemas, the browser checks
+        # and the executor below keep the name the model sent: each answers an alias and its id alike or
+        # resolves it itself.
         confined_id = tool_id
         # AD-1356 S1.1: under a confinement, when the executor has a registry, a str tool id that resolves to no
         # registered tool is refused here, before the confinement's set and gate, so it is never filed. An ambiguous
