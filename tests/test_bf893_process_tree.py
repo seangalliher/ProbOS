@@ -600,14 +600,17 @@ async def test_run_command_timeout_ends_the_grandchild(tmp_path: Path, spawner: 
     assert control.output["exit_code"] == 0
     assert await asyncio.to_thread(_appears, control_marker, 3), "control: the grandchild never wrote its marker"
 
+    # BF-981: 7.0 s for cmd.exe, the root and the grandchild to start before the timeout (preventive: this 4.0 s
+    # window has no recorded failure; a PowerShell start chain failed a 3.0 s window under gate load). The
+    # grandchild still outlives the timeout by 3 s, and the window spans its whole sleep.
     marker = tmp_path / "marker"
     result = await tool.invoke(
-        {"command": _spawner_command(spawner, marker, 7, powershell=False), "timeout": 4.0},
+        {"command": _spawner_command(spawner, marker, 10, powershell=False), "timeout": 7.0},
     )
-    assert result.error == "run_command timed out after 4.0s"
+    assert result.error == "run_command timed out after 7.0s"
     assert _started(marker).exists(), "premise: the grandchild did not exist when the timeout fired"
     assert not marker.exists(), "premise: the grandchild had already written its marker when the timeout fired"
-    assert not await asyncio.to_thread(_appears, marker, 10), _SURVIVED
+    assert not await asyncio.to_thread(_appears, marker, 11), _SURVIVED
 
 
 @pytest.mark.timeout(90)
@@ -626,21 +629,30 @@ async def test_shell_agent_timeout_ends_the_grandchild(tmp_path: Path, spawner: 
     assert control["data"]["exit_code"] == 0
     assert await asyncio.to_thread(_appears, control_marker, 3), "control: the grandchild never wrote its marker"
 
-    agent.DEFAULT_TIMEOUT = 4.0
+    # BF-981: 7.0 s for PowerShell, the root and the grandchild to start before the timeout (preventive, as in the
+    # run_command test); the grandchild outlives the timeout by 3 s, and the window spans its whole sleep.
+    agent.DEFAULT_TIMEOUT = 7.0
     marker = tmp_path / "marker"
-    result = await agent._run_command(_spawner_command(spawner, marker, 7, powershell=_ON_WINDOWS))
-    assert result == {"success": False, "error": "Command timed out after 4.0s"}
+    result = await agent._run_command(_spawner_command(spawner, marker, 10, powershell=_ON_WINDOWS))
+    assert result == {"success": False, "error": "Command timed out after 7.0s"}
     assert _started(marker).exists(), "premise: the grandchild did not exist when the timeout fired"
     # The worker enforces the shared deadline itself: its communicate() budget ends at that deadline, it kills the
     # tree and only then returns its own timeout result. The caller's wait_for is a later backstop (deadline +
     # WORKER_TEARDOWN_GRACE), so the tree is already gone when this call returns; the whole window is still
     # polled for a marker that must never come.
-    assert not await asyncio.to_thread(_appears, marker, 10), _SURVIVED
+    assert not await asyncio.to_thread(_appears, marker, 11), _SURVIVED
 
 
 @pytest.mark.timeout(90)
-async def test_red_team_rerun_timeout_ends_the_grandchild(tmp_path: Path, spawner: Path) -> None:
-    """The red team's re-run ends the grandchild when it times out (limit ``_RERUN_TIMEOUT_S``, 5 s). Kills M16."""
+async def test_red_team_rerun_timeout_ends_the_grandchild(
+    tmp_path: Path, spawner: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The red team's re-run ends the grandchild when it times out. Kills M16.
+
+    The limit is ``_RERUN_TIMEOUT_S``: 5 s in production, 7.0 s here (BF-981, preventive: PowerShell, the root and
+    the grandchild start inside it under gate load; the same start chain failed a 3.0 s window).
+    """
+    monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 7.0)
     # Control: left alone, the grandchild finishes inside the limit and writes its marker.
     control_marker = tmp_path / "control"
     control = await asyncio.to_thread(
@@ -655,7 +667,7 @@ async def test_red_team_rerun_timeout_ends_the_grandchild(tmp_path: Path, spawne
     marker = tmp_path / "marker"
     rerun = await asyncio.to_thread(
         RedTeamAgent._run_verify_sync,
-        _spawner_command(spawner, marker, 8, powershell=_ON_WINDOWS), build_command_env(),
+        _spawner_command(spawner, marker, 10, powershell=_ON_WINDOWS), build_command_env(),
     )
     assert rerun is None
     assert _started(marker).exists(), "premise: the grandchild did not exist when the timeout fired"
@@ -756,13 +768,13 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
         )
         await _beats_until_ended(control_marker, control, lambda result: result.get("success") is True)
 
-        # Test: a 4.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time,
-        # with 3.0 s left for PowerShell, the root, the grandchild and two beats (BF-913, preventive: this 2.0 s window
-        # has no recorded failure; the late-worker test's 1.0 s, the same shape, failed under gate load).
+        # Test: an 8.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in
+        # time, with 7.0 s left for PowerShell, the root, the grandchild and two beats (BF-981: 3.0 s failed under
+        # gate load, "the grandchild did not exist when the call ended"; BF-913 had raised it from 2.0 s).
         # The teardown grace is cut to 0.5 s so that 1.0 s of pickup delay outlasts it, as a delay over the production
         # 5 s would: a worker that kept a fresh full budget instead of the shared deadline then ends after the
         # caller's backstop, which reports the timeout while the command still runs.
-        agent.DEFAULT_TIMEOUT = 4.0
+        agent.DEFAULT_TIMEOUT = 8.0
         agent.WORKER_TEARDOWN_GRACE = 0.5
         async with _ContendedCall(heartbeats=(marker,)) as contended:
             call = contended.submit(
@@ -772,7 +784,7 @@ async def test_shell_agent_worker_started_late_leaves_no_descendant_when_the_tim
             assert not _started(marker).exists(), "premise: the command started while the executor was still held"
             contended.release()
             result = await asyncio.wait_for(call, timeout=15)
-            assert result == {"success": False, "error": "Command timed out after 4.0s"}
+            assert result == {"success": False, "error": "Command timed out after 8.0s"}
             await _assert_silent_after_the_call(marker)
     finally:
         _stop_heartbeat(control_marker)
@@ -786,14 +798,15 @@ async def test_shell_agent_late_worker_reports_at_the_deadline_not_the_backstop(
     """A worker picked up late reports the timeout at the shared deadline, not at the caller's backstop.
 
     The slot ends the tree at the backstop anyway, so the heartbeat stops before the call returns whichever budget
-    the worker runs on; what the single deadline changes is WHEN the report arrives. The deadline is 4.0 s and the
-    executor is held for 1.0 s, which leaves 3.0 s for PowerShell, the root, the grandchild and two beats (BF-913:
-    1.0 s did not hold under load). A worker whose own budget restarted at pickup would end its tree, and the call
-    would report, no earlier than 5.0 s (1.0 s held plus 4.0 s); the bound 4.7 s lies between that and the 4.0 s
-    deadline. The grace is 6.0 s (backstop at 10 s), later than both.
+    the worker runs on; what the single deadline changes is WHEN the report arrives. The deadline is 9.0 s and the
+    executor is held for 2.0 s, which leaves 7.0 s for PowerShell, the root, the grandchild and two beats (BF-913:
+    1.0 s did not hold under load; BF-981: the same chain failed a 3.0 s window). A worker whose own
+    budget restarted at pickup would end its tree, and the call would report, no earlier than 11.0 s (2.0 s held
+    plus 9.0 s); the bound 10.0 s lies 1.0 s from that and 1.0 s from the deadline. The grace is 6.0 s (backstop at
+    15 s), later than both.
     """
     agent = ShellCommandAgent(pool="shell")
-    agent.DEFAULT_TIMEOUT = 4.0
+    agent.DEFAULT_TIMEOUT = 9.0
     agent.WORKER_TEARDOWN_GRACE = 6.0
     marker = tmp_path / "marker"
     try:
@@ -802,14 +815,14 @@ async def test_shell_agent_late_worker_reports_at_the_deadline_not_the_backstop(
             call = contended.submit(
                 agent._run_command(_spawner_command(beater, marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
             )
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(2.0)
             assert not _started(marker).exists(), "premise: the command started while the executor was still held"
             contended.release()
             await _heartbeat_is_running(marker, call)
             result = await asyncio.wait_for(call, timeout=15)
             elapsed = time.monotonic() - started
-            assert result == {"success": False, "error": "Command timed out after 4.0s"}
-            assert elapsed < 4.7, "the call reported after the shared deadline (a budget restarted at pickup?)"
+            assert result == {"success": False, "error": "Command timed out after 9.0s"}
+            assert elapsed < 10.0, "the call reported after the shared deadline (a budget restarted at pickup?)"
             await _assert_silent_after_the_call(marker)
     finally:
         _stop_heartbeat(marker)
@@ -868,11 +881,11 @@ async def test_red_team_rerun_started_late_leaves_no_descendant_when_the_timeout
         )
         await _beats_until_ended(control_marker, control, lambda verdict: verdict.verified is True)
 
-        # Test: a 4.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in time,
-        # with 3.0 s left for the start (BF-913, preventive, as in the shell agent's test). The teardown grace is cut
-        # to 0.5 s for the reason given there: a re-run whose budget restarted at pickup would return at 5.0 s or
-        # later, after the backstop (4.5 s), whose verdict is "Verification error: ", not the worker's.
-        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 4.0)
+        # Test: an 8.0 s deadline; the executor's only thread is held for 1.0 s, so the worker starts late but in
+        # time, with 7.0 s left for the start (BF-981, as in the shell agent's test). The teardown grace is cut to
+        # 0.5 s for the reason given there: a re-run whose budget restarted at pickup would return at 9.0 s or
+        # later, after the backstop (8.5 s), whose verdict is "Verification error: ", not the worker's.
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 8.0)
         monkeypatch.setattr("probos.agents.red_team._RERUN_TEARDOWN_GRACE_S", 0.5)
         async with _ContendedCall(heartbeats=(marker,)) as contended:
             call = contended.submit(

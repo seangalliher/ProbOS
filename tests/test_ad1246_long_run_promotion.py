@@ -473,8 +473,11 @@ async def test_m2_bf733_cancel_kills_the_long_child_and_the_report_is_true(
     beat_file = tmp_path / "beats.txt"
     runtime = _run_python_runtime(
         scratch=tmp_path / "scratch", max_runtime_seconds=600.0,
+        # BF-981: the watchdog's 3.0 s (was 1.0 s) counts from the promotion, when the reporter arms
+        # _PromotedRunSupervisor; it leaves the premise below 2.5 s to see a beat and still ends the run long
+        # before its 50 beats (at least 4.9 s of sleeps) can finish.
         dm_agentic=DmAgenticConfig(
-            enabled=True, promote_to_task_after_seconds=0.6, promoted_run_deadline_seconds=1.0,
+            enabled=True, promote_to_task_after_seconds=0.6, promoted_run_deadline_seconds=3.0,
         ),
         work_items=store, threads=threads,
     )
@@ -489,9 +492,13 @@ async def test_m2_bf733_cancel_kills_the_long_child_and_the_report_is_true(
         promoted = items[0]
         assert ack == _ACK_TEMPLATE.format(work_item_id=promoted.id)
 
-        # Premise: the long child is still running after the acknowledgement.
-        await asyncio.sleep(0.5)
-        assert _beats(beat_file) > beats_at_ack
+        # Premise: the long child is still running after the acknowledgement. BF-981: polled, not read after a
+        # fixed 0.5 s (a loaded gate found no beat 1.1 s into the turn, 0 > 0). The 2.5 s limit ends before the
+        # watchdog's 3.0 s, so a child too slow to start fails here instead of passing the stop check vacuously.
+        try:
+            await _wait_until(lambda: _beats(beat_file) > beats_at_ack, timeout=2.5)
+        except asyncio.TimeoutError:
+            pytest.fail("premise: the long child wrote no beat after the acknowledgement")
 
         await _drain_owned_tasks_through_cancellation(agent._promoted_turn_tasks)
         beats_at_report = _beats(beat_file)
