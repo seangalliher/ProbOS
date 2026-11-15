@@ -168,7 +168,7 @@ def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
     kinds = Counter(_kind(cover) for cover in FILE_WRITE_FILES.values())
     assert kinds == {"Pending M3e4d": 3, "System": 68, "OutsideRuntime": 2}, kinds
     assert Counter(name for _path, _scope, _line, name in file_write_points()) == {
-        # #1805: commit_write's one-step write: write_text -1; unlink, replace, open (O_CREAT), fdopen ("w") +1 each.
+        # #1805: commit_write's one-step write: write_text -1; unlink, replace and open (its "x" create) +1 each.
         "write_text": 58,
         "write_bytes": 7,
         "unlink": 67,
@@ -179,7 +179,7 @@ def test_every_file_with_a_file_write_is_a_row_and_every_row_is_one() -> None:
         "replace": 25,
         "rename": 2,
         "open": 17,
-        "fdopen": 11,
+        "fdopen": 10,
         "write": 2,
         "link": 4,
         "write_new": 3,

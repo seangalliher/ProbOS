@@ -177,15 +177,18 @@ class FileWriterAgent(BaseAgent):
             # step, so a crash mid-write leaves the old file whole. The target is the real path the old in-place
             # write followed, so a link is still written through, not replaced.
             target = Path(os.path.realpath(p))
-            temp = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+            # #1805 A1: a fixed-length name (21 characters), whatever the length of the target's name.
+            temp = target.with_name(f".{secrets.token_hex(8)}.tmp")
             try:
                 kept_mode: int | None = stat.S_IMODE(os.stat(target).st_mode)
             except FileNotFoundError:
                 kept_mode = None
-            # The os.fdopen text layer below translates newlines once, as write_text does.
-            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            # "x" creates the file exclusively and leaves no raw descriptor to leak. It is opened before the try below,
+            # so a name already taken removes nothing this call did not create. Its text layer translates newlines once,
+            # as write_text does.
+            handle = open(temp, "x", encoding="utf-8")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                with handle:
                     handle.write(content)
                     handle.flush()
                     os.fsync(handle.fileno())

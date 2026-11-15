@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import secrets
 import stat
 from pathlib import Path
 from types import SimpleNamespace
@@ -247,6 +249,17 @@ async def test_an_older_name_that_is_not_one_file_in_notes_is_not_read(home, tit
 
 
 @until_built("#1799")
+@pytest.mark.parametrize("control", ["\x80", "\x85", "\x9f"], ids=["U+0080", "U+0085", "U+009F"])
+async def test_an_older_name_holding_a_c1_control_is_not_read(home, control):
+    """Review round 1, F3: a C1 control (U+0080 to U+009F) is a control character, so the older name is refused."""
+    title = f"x{control}y"
+    (_notes(home) / f"{title}.md").write_text(_BODY, encoding="utf-8")
+    bus, obs = await _read(title, _DiskBus())
+    assert bus.read_paths == [f"{_notes_dir()}/x-y.md"]
+    assert obs["fetched_content"] == f"Note '{title}' not found."
+
+
+@until_built("#1799")
 async def test_an_unreadable_reduced_name_does_not_fall_back_to_the_older_one(home):
     bus, _obs = await _read("Caf\u00e9")
     assert bus.read_paths == [f"{_notes_dir()}/caf-.md"]
@@ -329,6 +342,48 @@ async def test_a_write_through_a_link_replaces_the_linked_file(tmp_path):
     assert link.is_symlink() and real.read_text(encoding="utf-8") == "new\n"
 
 
+async def test_a_target_whose_name_is_255_characters_is_written(tmp_path):
+    """Review round 1, F1: the temporary name adds nothing to the target's, so any name the host holds is written."""
+    target = tmp_path / ("n" * 252 + ".md")
+    try:
+        target.write_text("old\n", encoding="utf-8")
+    except OSError:
+        pytest.skip("this host cannot create a 255-character name here")
+    result = await FileWriterAgent.commit_write(str(target), _BODY)
+    assert result == {"success": True, "path": str(target.resolve()), "size": len(_BODY)}
+    assert target.read_text(encoding="utf-8") == _BODY
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == [target.name]
+
+
+@until_built("#1805")
+async def test_a_taken_temporary_name_fails_the_write_and_removes_nothing(tmp_path, monkeypatch):
+    """Review round 1, F2: the temporary file is created exclusively; a name already taken is not this call's."""
+    target, taken = tmp_path / "list.json", tmp_path / f".{'0' * 16}.tmp"
+    target.write_bytes(b'[{"text": "stored"}]\n')
+    taken.write_bytes(b"not this call's\n")
+    monkeypatch.setattr(secrets, "token_hex", lambda nbytes: "0" * (2 * nbytes))
+    result = await FileWriterAgent.commit_write(str(target), "[]")
+    assert result["success"] is False
+    assert target.read_bytes() == b'[{"text": "stored"}]\n' and taken.read_bytes() == b"not this call's\n"
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == sorted([target.name, taken.name])
+
+
+@until_built("#1805")
+async def test_a_failed_sync_keeps_the_old_bytes_and_leaves_no_temp_file(tmp_path, monkeypatch):
+    """Review round 1, F2: a failure while the temporary file is open closes it, so it is removed (on Windows too)."""
+    target = tmp_path / "list.json"
+    target.write_bytes(b'[{"text": "stored"}]\n')
+
+    def _refuse(fd: int) -> None:
+        raise OSError("simulated sync failure")
+
+    monkeypatch.setattr(os, "fsync", _refuse)
+    result = await FileWriterAgent.commit_write(str(target), "[]")
+    assert result == {"success": False, "error": "simulated sync failure"}
+    assert target.read_bytes() == b'[{"text": "stored"}]\n'
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["list.json"]
+
+
 @until_built("#1805")
 async def test_a_save_request_naming_dot_dot_lands_in_notes_through_one_replace(home, monkeypatch):
     """The cross-seam case: request -> decide -> act -> note_file -> the real commit_write -> one replace in notes/."""
@@ -348,5 +403,7 @@ async def test_a_save_request_naming_dot_dot_lands_in_notes_through_one_replace(
     assert _outside_notes(home) == [] and _in_notes(home) == ["escape.md"]
     assert (notes / "escape.md").read_text(encoding="utf-8") == _BODY
     home_real = home.resolve()
-    assert [(Path(dst).resolve(), Path(src).name.startswith(".escape.md.") and src.endswith(".tmp"))
+    # A1: the temporary name is a dot, 16 hex digits and ".tmp", beside the target.
+    assert [(Path(dst).resolve(), Path(src).parent.resolve() == notes.resolve()
+             and re.fullmatch(r"\.[0-9a-f]{16}\.tmp", Path(src).name) is not None)
             for src, dst in moves if home_real in Path(dst).resolve().parents] == [((notes / "escape.md").resolve(), True)]

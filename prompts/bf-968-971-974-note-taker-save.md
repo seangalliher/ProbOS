@@ -1,6 +1,7 @@
 # Note-taker save: note names stay inside the notes folder, only a save request saves, commit_write replaces in one step -- #1799, #1802, #1805, one batch
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14: amendment A1 (section 10a), the repair of review round 1.
 **File in the repository:** `prompts/bf-968-971-974-note-taker-save.md`. No commit subject or tracker line of this batch carries an `AD-` or `BF-` token, or this file's name (section 5).
 **Status:** ready to build on `origin/main` after #1794 merges. Read on `5275d008`. #1794 edits `routers/chat.py` and its own tests only, so the five files below do not move; the trackers move, but their anchors stay.
 **Dependencies:** none in code. **Numbers:** #1799 is BF-968, #1802 is BF-971 and #1805 is BF-974 (`gh issue view`). Nothing is allocated here.
@@ -45,8 +46,8 @@
   Save answers `success False` when the name is refused; read shows "not found".
   Compatibility, read only: when the reduced name is refused or its read answers MISSING, read tries `legacy_note_file`, the name the base read (`title.replace(" ", "-").lower()`, `.md` appended). That name is refused if it holds `/`, `\`, `:` or a control character, and otherwise passes the same device-name and backstop checks. A note saved under such a name before this change is still found by its title; save always writes the reduced name.
 - **M2b (#1802):** `decide` returns `{**super_decision, "requested_action": <params action, stripped, lower-cased, default "list">}`. It returns a new dict, so a cached decision is never mutated. `act` saves only when `requested_action == "save"`. Otherwise it returns the model's text, writes nothing and logs at INFO.
-- **M2c (#1805):** `commit_write` writes a sibling `.<name>.<16 hex>.tmp` file and replaces the target with `os.replace`.
-  - The temp file: `O_CREAT|O_EXCL`, mode `0o666` under umask, the existing target's mode copied onto it, written, flushed and fsynced.
+- **M2c (#1805):** `commit_write` writes a sibling `.<16 hex>.tmp` file (21 characters, whatever the target's name; A1) and replaces the target with `os.replace`.
+  - The temp file: created exclusively by `open(temp, "x", encoding="utf-8")` (`O_CREAT|O_EXCL`, mode `0o666` under umask, no raw descriptor; A1), the existing target's mode copied onto it, written, flushed and fsynced.
   - The target is `realpath(p)`, so a link is still written through, not replaced.
   - On any exception the temp file is unlinked and the old failure shape returned.
   - The write stays inside `commit_write`, so the AD-1344 census keeps a mechanically checked guarded row.
@@ -888,11 +889,12 @@ The orchestrator closes the three issues after the gate.
 - **L1 (#1799).** Letters outside ASCII are lost in a saved name (`cafe` with an accent becomes `caf-.md`). A note saved before this change under such a name is still read by its title through `legacy_note_file`, unless that name holds `/`, `\`, `:` or a control character. A save that names it writes a new file under the reduced name, which the title then reads; the older file stays and still shows in the list. Name length is not capped; an over-long name fails at the OS, and save answers failure.
 - **L2 (#1799).** A note file that is a link out of the folder is refused on save and shows as not found on read. A notes folder that is itself a link is followed. The folder is not a sandbox against links a user places inside it.
 - **L3 (#1802).** A save request whose decomposed intent omits `action` no longer saves. The procedure fallback (`cognitive_agent.py:7989-7991`) calls `act` without `decide`, so a save there is declined, which is the safe direction.
-- **L4 (#1805).** The parent directory is not fsynced. A hard crash between the write and the replace leaves a hidden `.tmp` sibling, which is never read as the list. With concurrent writers the last one wins, as before.
+- **L4 (#1805).** The parent directory is not fsynced. A hard crash between the write and the replace leaves a hidden `.tmp` sibling, which is never read as the list. So does a failure inside `open` after it has created the file (A1: the codec is fixed, so only memory exhaustion while the text layer is built), because `open` stands before the `try` that removes the file. With concurrent writers the last one wins, as before.
 - **L5 (#1805, Windows).** A read-only target fails as before, and its temporary copy, made read-only, may remain. A replace onto a file another process holds open fails where an in-place write might have succeeded.
-- **L6.** Mutation rows 6, 15, 16 and 18 can be killed only where symlinks or POSIX modes exist, and row 14 only on Windows. Row 17 is removed (an equivalent mutant). Record each row that cannot be measured on the host as such; do not treat it as killed.
+- **L6.** Mutation rows 6, 15 and 16 can be killed only where symlinks or POSIX modes exist, row 14 only on Windows, and row 24 only where the host holds a 255-character name under `tmp_path`. Row 17 is removed (an equivalent mutant). Record each row that cannot be measured on the host as such; do not treat it as killed.
+- **L7 (#1805, A1).** The temporary name is 21 characters, so a target whose name is shorter gets a temporary path longer than its own by up to the difference. On a Windows host without long paths, a target whose full path lies within that margin of 260 fails where the base wrote. Any random sibling name has this cost for short names, and the one-step replace needs a sibling.
 
-## 7. Mutation rows (each line occurs once, stripped, in its file after M2c; expected, not measured)
+## 7. Mutation rows (each line occurs once, stripped, in its file after A1; expected, not measured)
 
 | # | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -909,16 +911,18 @@ The orchestrator closes the three issues after the gate.
 | 11 | same | same | `return {**decision, "requested_action": "save"}` | not-a-save (all four) |
 | 12 | file_writer | `os.replace(temp, target)` | `p.write_text(content, encoding="utf-8")` (#1805's named mutation) | failed-replace, write-bytes, chain |
 | 13 | same | `os.unlink(temp)  # the temporary file this call created; the error is raised on` | `pass` | failed-replace |
-| 14 | same | `with os.fdopen(fd, "w", encoding="utf-8") as handle:` | `with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:` | write-bytes (Windows only) |
+| 14 | same | `handle = open(temp, "x", encoding="utf-8")` | `handle = open(temp, "x", encoding="utf-8", newline="")` (A1) | write-bytes (Windows only) |
 | 15 | same | `os.chmod(temp, kept_mode)` | `pass` | mode (POSIX) |
 | 16 | same | `target = Path(os.path.realpath(p))` | `target = p` | link-write (symlink hosts) |
 | 17 | removed | equivalent mutant: the O_BINARY flag changed no byte written through os.fdopen (oracle, Windows, 2026-11-14), so the flag was removed from P2c-2 | | |
-| 18 | file_writer | `fd = os.open(temp, os.O_WRONLY \| os.O_CREAT \| os.O_EXCL, 0o666)` | `0o666` -> `0o600` | mode (POSIX) |
+| 18 | file_writer | `handle = open(temp, "x", encoding="utf-8")` | `"x"` -> `"w"` (A1) | taken-name |
 | 19 | organizer | `if read is None or read.status is ReadStatus.MISSING:` | `if read is None:` | older-name (all three) |
 | 20 | same | same | `if True:` | reduced-first; no-fallback |
 | 21 | same | same | `if read is None or read.status is not ReadStatus.FOUND:` | no-fallback |
 | 22 | same | `if legacy is not None and legacy != path:` | `if legacy is not None:` | plain-miss-once |
-| 23 | same | `if _LEGACY_NOTE_NAME_REFUSED.search(legacy):` | `if False:` | older-name-refused drive-relative, stream (dot-dot is also refused by the backstop) |
+| 23 | same | `if _LEGACY_NOTE_NAME_REFUSED.search(legacy):` | `if False:` | older-name-refused drive-relative, stream (dot-dot is also refused by the backstop); older-name-C1 (all three) |
+| 24 | file_writer | `temp = target.with_name(f".{secrets.token_hex(8)}.tmp")` | `temp = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")` (A1, F1) | 255-name (hosts that hold the name) |
+| 25 | organizer | `_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f-\x9f]")` | `_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f]")` (A1, F3) | older-name-C1 (all three) |
 
 ## 8. What this does NOT change
 
@@ -947,7 +951,7 @@ Name the consumer for each property and confirm it accepts the change.
 
    **Consumers:** `_mesh_write_file` -> `FileWriterAgent.commit_write` (`organizer_agents.py:43-53`, `file_writer.py:150`) on save, and `read_stored_list` (`stored_list.py:38`) on read. Both receive the same string shape as before.
 2. **#1802.** Every path from the model's JSON to `_mesh_write_file` in `NoteTakerAgent.act` passes the `requested_action == "save"` check. **Consumer:** `CognitiveAgent.handle_intent` (`cognitive_agent.py:7650` `decide`, `:7813` `act`) carries the key. Confirm that the fallback at `:7989-7991` declines a save.
-3. **#1805.** On every exit after `mkdir`, either the target was replaced whole and no temp file remains, or the target is untouched and the temp file was removed (L4 and L5 excepted). The result dict keeps its old keys and shapes. **Consumers:** the three callers (`organizer_agents.py:52`, `productivity_agents.py:111`, `runtime.py:4994`) and the stored-list reader (`stored_list.py:54-69`).
+3. **#1805.** On every exit after `mkdir`, either the target was replaced whole and no temp file remains, or the target is untouched and the temp file was removed (L4 and L5 excepted). A temporary name already taken fails the write and removes nothing. No raw descriptor exists, and the temp file's handle is closed before any unlink or replace. The temporary name is `.<16 hex>.tmp` whatever the target's name (A1). The result dict keeps its old keys and shapes. **Consumers:** the three callers (`organizer_agents.py:52`, `productivity_agents.py:111`, `runtime.py:4994`) and the stored-list reader (`stored_list.py:54-69`).
 4. **Censuses.** The changed rows and counts follow the scanners (`test_ad1344...:837-851`, `fixtures/ad1346_file_write_census.py:83-101`); no row is loosened.
 5. **Paperwork.** The text is ASCII, and the tracker lines and subjects carry no `AD-` or `BF-` token.
 
@@ -957,7 +961,7 @@ Name the consumer for each property and confirm it accepts the change.
   - `../x.md`, `..\x.md`, `a/../../x.md`, an absolute path, `C:x.md` and `C:\x\evil.md` each become one file inside `notes/` with a real `HOME`.
   - A device name or an empty name is refused, and a link out of the folder is refused.
   - A `..` title reads only inside `notes/`.
-  - A note saved under an older name (an accented letter, an apostrophe, a plus sign) is still read by its title. The reduced name is read first, and an older name holding a separator or a colon is never read.
+  - A note saved under an older name (an accented letter, an apostrophe, a plus sign) is still read by its title. The reduced name is read first, and an older name holding a separator, a colon or a control character (C0, DEL or C1 U+0080 to U+009F; A1) is never read.
   - `my-note.md` still saves to `notes/my-note.md`.
   - Rows 1+6 together fail the tests.
 - **#1802:**
@@ -969,8 +973,216 @@ Name the consumer for each property and confirm it accepts the change.
   - A normal write gives the bytes `write_text` gives and the same keys.
   - The mode is kept (POSIX).
   - Row 12 fails the failed-replace case.
+  - A1: a target whose name is 255 characters is written and read back with no leftover, where the host holds the name. A temporary name already taken fails the write and removes nothing. A failed sync keeps the old bytes and leaves no temp file.
 - **The chain case passes.** It runs a save request with a `..` filename from `handle_intent` through to one replace into `notes/` and leaves no temp file.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 10a. Amendment A1: review round 1 (2026-11-14)
+
+Round 1 (`gpt-6.1-sol`) found three defects on the M2c head `0b7d69d4`, and the orchestrator reproduced each. A1 repairs all three in one commit after M2c. Blocks A1-1 to A1-8 apply after P2c-5, in label order. The code blocks of P2a (the legacy-name class), P2c-2, P2c-3, P2c-4 and M1's chain assertion stay as M2a, M2c and M1 built them; A1 supersedes the lines it replaces. The prose A1 made false is edited in place: section 2 (M2c), L4, L6, L7, section 7, property 3 and the acceptance criteria.
+
+| Finding | Reach | Decision |
+|---|---|---|
+| F1 (P2, regression) | ordinary | Fixed (A1-1). The temporary name is `.<16 hex>.tmp`, 21 characters whatever the target's, so every name the host holds is written (the base `.<name>.<16 hex>.tmp` failed at 234 to 255 characters). A bounded prefix of the target's name is rejected: the name is never read back, so the prefix adds nothing. L7 records the path-length cost for short names. |
+| F2 (P2, regression) | injected only | Fixed (A1-1), because it is a regression against the base. `open(temp, "x", encoding="utf-8")` creates the file exclusively with no raw descriptor. Closing the descriptor in an `except` around `os.fdopen` is rejected: a real failure inside `io.open` closes it already, so that close could hit another thread's descriptor. `open` stands before the `try`, so a taken name removes nothing this call did not create; L4 records the one gap. |
+| F3 (P3, predates) | ordinary | Fixed (A1-2). The class is `[/\\:\x00-\x1f\x7f-\x9f]`, which covers every character of Unicode category Cc. "Control character" in section 2, L1 and property 1 means that category. U+00A0 is not a control and is still read. |
+
+**Commit.** Subject `Note-taker save A1: a constant-length temporary name, no raw descriptor, C1 controls refused (#1799, #1805)`, then `Refs #1799, #1805.` Both scans of section 5 print nothing: no message uses the word "fixed", even in a compound, because the second scan matches it at a hyphen.
+
+**Gate GA1 (focused; expected, not measured).** `PY -m pytest tests/test_note_taker_save.py tests/test_ad1344_constitution_write_refusal.py tests/test_ad1346_admission_file_write_census.py tests/test_file_writer.py tests/test_bf961_unreadable_stored_list.py -q -n 0 -p no:randomly -rs`, then `PY -P scripts/check_architecture_principles.py --check`. Expect 0 failed; the new file gains 6 cases (255-name 1, older-name-C1 3, taken-name 1, failed-sync 1). On a host with long paths enabled, the 255-name case passes and does not skip. WF1's counter changes only `fdopen` (11 -> 10); T35 gains one `_GUARDED` row, for `open`. If another count differs, stop and report to the Architect.
+
+**Mutation campaign.** It runs once, on the A1 head, as the campaign of record (section 7, rows 12 to 16, 18 and 23 to 25 among them).
+
+**A1-1** (`src/probos/agents/file_writer.py`: the temporary file)
+SEARCH:
+```
+            temp = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+            try:
+                kept_mode: int | None = stat.S_IMODE(os.stat(target).st_mode)
+            except FileNotFoundError:
+                kept_mode = None
+            # The os.fdopen text layer below translates newlines once, as write_text does.
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+```
+REPLACE:
+```
+            # #1805 A1: a fixed-length name (21 characters), whatever the length of the target's name.
+            temp = target.with_name(f".{secrets.token_hex(8)}.tmp")
+            try:
+                kept_mode: int | None = stat.S_IMODE(os.stat(target).st_mode)
+            except FileNotFoundError:
+                kept_mode = None
+            # "x" creates the file exclusively and leaves no raw descriptor to leak. It is opened before the try below,
+            # so a name already taken removes nothing this call did not create. Its text layer translates newlines once,
+            # as write_text does.
+            handle = open(temp, "x", encoding="utf-8")
+            try:
+                with handle:
+```
+
+**A1-2** (`src/probos/agents/utility/organizer_agents.py`: the C1 controls)
+SEARCH:
+```
+_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f]")
+```
+REPLACE:
+```
+_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f-\x9f]")
+```
+
+**A1-3** (`tests/test_ad1344_constitution_write_refusal.py`: T35's `open` row)
+SEARCH:
+```
+    # #1805: commit_write replaces its target from a sibling temporary file; os.open and os.fdopen are not census writes.
+    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", "os.replace"): _GUARDED,
+```
+REPLACE:
+```
+    # #1805: commit_write creates a sibling temporary file (open "x") and replaces its target with it; both are guarded.
+    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", "open"): _GUARDED,
+    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", "os.replace"): _GUARDED,
+```
+
+**A1-4** (`tests/test_ad1346_admission_file_write_census.py`: WF1's counts)
+SEARCH:
+```
+        # #1805: commit_write's one-step write: write_text -1; unlink, replace, open (O_CREAT), fdopen ("w") +1 each.
+        "write_text": 58,
+        "write_bytes": 7,
+        "unlink": 67,
+        "rmtree": 13,
+        "copy2": 2,
+        "copyfile": 1,
+        "copytree": 1,
+        "replace": 25,
+        "rename": 2,
+        "open": 17,
+        "fdopen": 11,
+```
+REPLACE:
+```
+        # #1805: commit_write's one-step write: write_text -1; unlink, replace and open (its "x" create) +1 each.
+        "write_text": 58,
+        "write_bytes": 7,
+        "unlink": 67,
+        "rmtree": 13,
+        "copy2": 2,
+        "copyfile": 1,
+        "copytree": 1,
+        "replace": 25,
+        "rename": 2,
+        "open": 17,
+        "fdopen": 10,
+```
+
+**A1-5** (`tests/test_note_taker_save.py`: imports)
+SEARCH:
+```
+import os
+import stat
+from pathlib import Path
+```
+REPLACE:
+```
+import os
+import re
+import secrets
+import stat
+from pathlib import Path
+```
+
+**A1-6** (`tests/test_note_taker_save.py`: older-name-C1)
+SEARCH:
+```
+@until_built("#1799")
+async def test_an_unreadable_reduced_name_does_not_fall_back_to_the_older_one(home):
+```
+REPLACE:
+```
+@until_built("#1799")
+@pytest.mark.parametrize("control", ["\x80", "\x85", "\x9f"], ids=["U+0080", "U+0085", "U+009F"])
+async def test_an_older_name_holding_a_c1_control_is_not_read(home, control):
+    """Review round 1, F3: a C1 control (U+0080 to U+009F) is a control character, so the older name is refused."""
+    title = f"x{control}y"
+    (_notes(home) / f"{title}.md").write_text(_BODY, encoding="utf-8")
+    bus, obs = await _read(title, _DiskBus())
+    assert bus.read_paths == [f"{_notes_dir()}/x-y.md"]
+    assert obs["fetched_content"] == f"Note '{title}' not found."
+
+
+@until_built("#1799")
+async def test_an_unreadable_reduced_name_does_not_fall_back_to_the_older_one(home):
+```
+
+**A1-7** (`tests/test_note_taker_save.py`: 255-name, taken-name, failed-sync)
+SEARCH:
+```
+@until_built("#1805")
+async def test_a_save_request_naming_dot_dot_lands_in_notes_through_one_replace(home, monkeypatch):
+```
+REPLACE:
+```
+async def test_a_target_whose_name_is_255_characters_is_written(tmp_path):
+    """Review round 1, F1: the temporary name adds nothing to the target's, so any name the host holds is written."""
+    target = tmp_path / ("n" * 252 + ".md")
+    try:
+        target.write_text("old\n", encoding="utf-8")
+    except OSError:
+        pytest.skip("this host cannot create a 255-character name here")
+    result = await FileWriterAgent.commit_write(str(target), _BODY)
+    assert result == {"success": True, "path": str(target.resolve()), "size": len(_BODY)}
+    assert target.read_text(encoding="utf-8") == _BODY
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == [target.name]
+
+
+@until_built("#1805")
+async def test_a_taken_temporary_name_fails_the_write_and_removes_nothing(tmp_path, monkeypatch):
+    """Review round 1, F2: the temporary file is created exclusively; a name already taken is not this call's."""
+    target, taken = tmp_path / "list.json", tmp_path / f".{'0' * 16}.tmp"
+    target.write_bytes(b'[{"text": "stored"}]\n')
+    taken.write_bytes(b"not this call's\n")
+    monkeypatch.setattr(secrets, "token_hex", lambda nbytes: "0" * (2 * nbytes))
+    result = await FileWriterAgent.commit_write(str(target), "[]")
+    assert result["success"] is False
+    assert target.read_bytes() == b'[{"text": "stored"}]\n' and taken.read_bytes() == b"not this call's\n"
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == sorted([target.name, taken.name])
+
+
+@until_built("#1805")
+async def test_a_failed_sync_keeps_the_old_bytes_and_leaves_no_temp_file(tmp_path, monkeypatch):
+    """Review round 1, F2: a failure while the temporary file is open closes it, so it is removed (on Windows too)."""
+    target = tmp_path / "list.json"
+    target.write_bytes(b'[{"text": "stored"}]\n')
+
+    def _refuse(fd: int) -> None:
+        raise OSError("simulated sync failure")
+
+    monkeypatch.setattr(os, "fsync", _refuse)
+    result = await FileWriterAgent.commit_write(str(target), "[]")
+    assert result == {"success": False, "error": "simulated sync failure"}
+    assert target.read_bytes() == b'[{"text": "stored"}]\n'
+    assert sorted(entry.name for entry in tmp_path.iterdir()) == ["list.json"]
+
+
+@until_built("#1805")
+async def test_a_save_request_naming_dot_dot_lands_in_notes_through_one_replace(home, monkeypatch):
+```
+
+**A1-8** (`tests/test_note_taker_save.py`: the chain case pins the fixed-length name and its folder)
+SEARCH:
+```
+    assert [(Path(dst).resolve(), Path(src).name.startswith(".escape.md.") and src.endswith(".tmp"))
+            for src, dst in moves if home_real in Path(dst).resolve().parents] == [((notes / "escape.md").resolve(), True)]
+```
+REPLACE:
+```
+    # A1: the temporary name is a dot, 16 hex digits and ".tmp", beside the target.
+    assert [(Path(dst).resolve(), Path(src).parent.resolve() == notes.resolve()
+             and re.fullmatch(r"\.[0-9a-f]{16}\.tmp", Path(src).name) is not None)
+            for src, dst in moves if home_real in Path(dst).resolve().parents] == [((notes / "escape.md").resolve(), True)]
+```
 
 ## 11. Verified Against Codebase (2026-11-14, read-only tree `D:\ProbOS-worktrees\next-read2` at `origin/main` `5275d00874799d68536fef2a7ff27c7bc44cda65`)
 

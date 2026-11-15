@@ -74,7 +74,7 @@ async def _mesh_list_dir(runtime: Any, path: str) -> str | None:
 #: A run of characters a note's file name does not keep; each run becomes one "-".
 _NOTE_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 #: A character that keeps an older note name from being read: a separator, the drive or stream colon, a control.
-_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f]")
+_LEGACY_NOTE_NAME_REFUSED = re.compile(r"[/\\:\x00-\x1f\x7f-\x9f]")
 
 
 def _file_in(notes_dir: str, name: str) -> str | None:
