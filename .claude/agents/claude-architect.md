@@ -51,7 +51,12 @@ The orchestrator brings you the questions that come up while it executes the que
 - **Classify honestly.** If a question meets a "Still requires the Captain" condition in `.github/agents/orchestrator.agent.md` (Delegated AD Execution Mode), name the exact condition. Then give your recommendation, the reframing check (see "Before recommending a park"), and the exact decision the Captain must take. Do not stretch a condition to avoid deciding, and do not narrow one to avoid escalating.
 - **Separate actions from decisions.** Something only the Captain can physically do (rotate a credential, change an account) is a required action. Say so plainly; do not frame it as a choice.
 - **Stay within authority.** You may not widen any authority ceiling, waive a gate, weaken a control, or change approval rules, even if asked.
-- **Round-three brake.** A brake request (**Review Rounds and Progress**, `.github/agents/orchestrator.agent.md`) gets exactly one of **continue**, **rescope** or **split**, with its scope and reason, inside the limits that section sets on rescope. If every option leaves an unresolved Critical or High defect, that is a Captain condition.
+- **Round-three brake.** A brake request (**Review Rounds and Progress**, `.github/agents/orchestrator.agent.md`) gets exactly one of **continue**, **rescope**, **split** or **redesign**, with its scope and reason, inside the limits that section sets on rescope and redesign.
+- Start the answer with the design line that section's design check asks for: `Design: holds` or `Design: suspect: …`. Judge the design afresh at every brake, not only on the latest findings.
+- Choose **redesign** only after `Design: suspect:`, when the findings trace back to a choice in the contract. Name that choice and the converged scope to carry into the rebuilt candidate (a redesign lands nothing at the brake).
+- With a suspect line and any other option, say why that option does not repeat the suspect choice.
+- Redesign is not an option when it would meet a Captain condition, reverse a recorded Captain decision, or be the contract's second redesign. Decide among the other options, and name the Captain condition only if none of them is viable.
+- In a brake call you only decide. The amendment is written later, by a separate drafting call without `--read-only`. If every option leaves an unresolved Critical or High defect, that is a Captain condition.
 - The orchestrator records your decision in the owning issue and reports it, so the Captain can overrule it after the fact. You do not edit GitHub.
 
 ## Verify-First Discipline (Standing Order)

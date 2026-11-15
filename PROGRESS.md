@@ -1,5 +1,14 @@
 # ProbOS Progress
 
+**Design check at the round-three brake (2026-11-14) -- the brake now also asks whether the contract's design is the cause, and offers a fourth option, redesign; no AD or BF number.**
+- **Base.** The round-three brake (2026-10-15) asked the Architect for one of continue, rescope or split. BF-940 (#1686) took four slices and two brakes, both decided `continue`. The brakes settled the contract's text and deferred the code options for its two readings of a document to #1754. Neither recorded a design check.
+- **Change.** In `.github/agents/orchestrator.agent.md`, **Review Rounds and Progress**, every brake answer starts with `Design: holds` or `Design: suspect: …`, recorded in the owning issue.
+  - **redesign** is allowed only after a suspect line. It lands nothing at the brake; a separate drafting bridge call writes the amendment.
+  - The rebuilt candidate, the converged work plus the amended design, gets one more round as a continue does, never a fresh count.
+  - Redesign is removed from the options when it would meet a Captain condition, reverse a Captain decision, or be a contract's second redesign. The issue is parked only when no option remains.
+  - `.claude/agents/claude-architect.md` says how to answer.
+  - `tests/test_standing_orders_layout.py` pins both sides naming all four options and the design line, and pins the brake paragraph's own option list and the redesign round cap.
+
 **Promoted-turn resume cases give each segment the deadline its role needs (2026-11-13), GATE-F3 of #1754 -- a pause of the host of about a second in a segment a case needs alive no longer ends the case.**
 - **Base.** The resume cases of `tests/test_bf887_continue_resumes_the_promoted_turn.py` armed a real watchdog (1.0 s, or 2.5 s) for every segment of a case. The deadline is read when a segment starts, so it also bounded the older segment the case needs alive: a pause of about 0.9 s (the resumed-pass case) or 1.3 s (the older-segment cases) let the watchdog stop it, and the case failed (sections 15 and 16 of the contract record how). Seen on loaded CI and gate hosts; no production line was involved.
 - **Change (tests only).** The cases assign the rig's own deadline between segments: 600 s for a segment the case needs alive, the short one only for the segment the real watchdog must stop (the resumed pass; the older segment of the two watchdog cases, 6.0 s, after the approval). State orders the case: it asserts the first segment parked and holds the next pass before it approves, and which watchdog fired. The fixed 1.0 s head start is gone. The acceptance is an injected pause of twice the old deadline (in the first segment after its ask is filed, and inside the approval): the old cases must fail in the shape the logs show and the new ones pass; the probe is not committed, and its measured result is in sections 15 and 16 of the contract `prompts/gate-f3-segment-deadlines.md`. Refs #1754.
