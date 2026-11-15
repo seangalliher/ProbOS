@@ -110,6 +110,29 @@ _UNRESTRICTED_READER = "captain"
 FRONTMATTER_UNPARSED_KEY = "frontmatter_unparsed"
 
 
+def effective_classification(value: object) -> str:
+    """BF-966 (#1797): the classification the access rules apply to a stored ``value``. Never raises.
+
+    ``value`` itself when it is exactly one of the four labels of ``_CLASSIFICATION_LEVELS`` (a ``str``, compared as
+    written: no case-folding, no stripping); ``"private"`` for anything else (a misspelling, a case variant, a list, a
+    mapping, a number, a bool, ``None``), as ``security.classification`` reads an unknown source label as the most
+    restrictive. The caller applies its own default for a missing key first (``frontmatter.get("classification",
+    "ship")``). ``knowledge.semantic`` imports it, so the index and the keyword readers apply one rule.
+    """
+    if type(value) is str and value in _CLASSIFICATION_LEVELS:
+        return value
+    return "private"
+
+
+def _author_identity(value: object) -> str | None:
+    """BF-969 (#1800): the reader id a record's ``author`` value admits. The value when it is a non-empty ``str``;
+    otherwise ``None``, which equals no reader id (the anonymous ``""`` included), as :func:`_unparsed_gate`'s ``None``
+    author does. Never raises."""
+    if type(value) is str and value:
+        return value
+    return None
+
+
 def _unparsed_gate(rel_path: str) -> dict[str, Any]:
     """BF-940 slice 4 (L19): the frontmatter the access rules read for a document whose own did not load.
 
@@ -143,9 +166,11 @@ def record_is_readable(
     Two layers compose:
 
     * **Scope level** (always applied) — a record is admissible when
-      ``level(classification) <= level(scope)``. An unrecognised record
-      classification defaults to level ``0`` and an unrecognised ``scope`` to
-      level ``2``.
+      ``level(classification) <= level(scope)``. BF-966 (#1797): a record
+      classification that is not exactly one of the four labels (of any type)
+      reads as ``private`` (:func:`effective_classification`), so it is
+      identity-gated too; a missing one is ``ship``. An unrecognised ``scope``
+      is level ``2``.
     * **Reader identity** — mirrors :meth:`RecordsStore.read_entry`:
       ``private`` needs authorship, ``department`` needs a matching department
       or authorship. Strictly stricter than the scope level, never looser.
@@ -158,6 +183,8 @@ def record_is_readable(
     * ``""`` — **anonymous reader**. The identity layer runs with an empty
       author, so identity-gated classifications are withheld. This is the
       fail-closed state the Oracle uses for a caller it cannot identify.
+      BF-969 (#1800): an author that is empty or not a ``str`` is nobody
+      (:func:`_author_identity`), so ``""`` is never a record's author.
     * ``"captain"`` — unrestricted, per ``read_entry``.
     * anything else — an author/department identity, matched against the
       record's ``author`` / ``department`` frontmatter.
@@ -171,22 +198,21 @@ def record_is_readable(
     paths is the BF-679 requirement, and of the two behaviours the closed one
     is the safe one to converge on.
     """
-    doc_class = frontmatter.get("classification", "ship")
-    # A non-str classification takes the same level-0 default ``search`` has
-    # always applied; the explicit type check additionally survives an
-    # unhashable value rather than raising out of the scan, and keeps such a
-    # record out of the identity-gated set (it is not one of the four labels).
-    is_labelled = type(doc_class) is str
-    doc_level = _CLASSIFICATION_LEVELS.get(doc_class, 0) if is_labelled else 0
-    if doc_level > _CLASSIFICATION_LEVELS.get(scope, 2):
+    # BF-966 (#1797): a classification that is not exactly one of the four labels
+    # (a misspelling, a case variant, a list, a number, null) is read as private,
+    # so it is identity-gated; a missing one is ship. The helper never raises, so
+    # an unhashable value cannot end the scan.
+    doc_class = effective_classification(frontmatter.get("classification", "ship"))
+    if _CLASSIFICATION_LEVELS[doc_class] > _CLASSIFICATION_LEVELS.get(scope, 2):
         return False
 
     if reader_id is None or reader_id == _UNRESTRICTED_READER:
         return True
-    if not is_labelled or doc_class not in _IDENTITY_GATED_CLASSIFICATIONS:
+    if doc_class not in _IDENTITY_GATED_CLASSIFICATIONS:
         return True
 
-    doc_author = frontmatter.get("author", "")
+    # BF-969 (#1800): an empty or non-str author is nobody, so it admits no reader, "" included.
+    doc_author = _author_identity(frontmatter.get("author"))
     if reader_id == doc_author:
         return True
     if doc_class == "department":
@@ -1524,8 +1550,9 @@ class RecordsStore:
                 _unparsed_gate(file_path.relative_to(self._repo_path.resolve()).as_posix())
                 if _frontmatter_unparsed(raw, frontmatter) else frontmatter
             )
-            doc_class = gate.get("classification", "ship")
-            doc_author = gate.get("author", "")
+            # BF-966 (#1797): a classification that is not exactly one of the four labels is private.
+            doc_class = effective_classification(gate.get("classification", "ship"))
+            doc_author = _author_identity(gate.get("author"))  # BF-969 (#1800): an empty or non-str author is nobody
             doc_dept = gate.get("department", "")
 
             if doc_class == "private" and reader_id != doc_author:

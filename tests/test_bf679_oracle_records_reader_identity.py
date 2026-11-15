@@ -246,6 +246,38 @@ class TestPathParity:
 
         assert keyword == semantic
 
+    @pytest.mark.parametrize("reader_id", _ALL_READERS)
+    @pytest.mark.parametrize("department", _ALL_DEPARTMENTS)
+    async def test_hand_made_notes_are_admitted_alike_after_a_backfill(
+        self, records, layer, reader_id: str | None, department: str,
+    ) -> None:
+        """BF-966 (#1797) and BF-969 (#1800): hand-made notes with an unrecognised classification, and private or
+        department notes with no author, are admitted alike by the keyword predicate and the ChromaDB filter once the
+        backfill has indexed them. The premise comes first: on the base the list-valued note raised out of
+        ``index_record``, so the backfill left it keyword-only, where every reader read it."""
+        records.set_semantic_indexer(layer)
+        await _seed(records)
+        hand_made = {
+            "reports/hand-misspelt.md": "author: alice\ndepartment: engineering\nclassification: privte",
+            "reports/hand-list.md": "author: alice\ndepartment: engineering\nclassification: [private]",
+            "reports/hand-null.md": "author: alice\ndepartment: engineering\nclassification: null",
+            "reports/hand-number.md": "author: alice\ndepartment: engineering\nclassification: 3",
+            "reports/hand-private-no-author.md": "department: engineering\nclassification: private",
+            "reports/hand-private-empty-author.md": 'author: ""\ndepartment: engineering\nclassification: private',
+            "reports/hand-department-no-author.md": "department: engineering\nclassification: department",
+        }
+        for path, frontmatter in hand_made.items():
+            (records.repo_path / path).write_bytes(
+                f"---\n{frontmatter}\n---\n\nreactor notes kept by hand\n".encode("utf-8"),
+            )
+        await layer.reindex_records(records)
+        assert "reports/hand-list.md" in await _semantic_paths(layer, None), "premise: the list-valued note is indexed"
+
+        keyword = await _keyword_paths(records, reader_id, department)
+        semantic = await _semantic_paths(layer, reader_id, department)
+
+        assert keyword == semantic
+
     @pytest.mark.parametrize(
         "agent_id", ["", "captain", "agent-alice", "agent-bob", "agent-erin", "ghost"],
     )
@@ -524,16 +556,20 @@ class TestFilterShape:
                         query_texts=["reactor"], n_results=4, where=where,
                     )
 
-    def test_anonymous_reader_emits_the_identity_layer(self) -> None:
-        """The one-line defect: ``""`` used to take the unrestricted branch."""
+    def test_anonymous_reader_is_given_the_open_labels_only(self) -> None:
+        """The one-line defect: ``""`` used to take the unrestricted branch. BF-969 (#1800): it is nobody's
+        author, so it gets no author clause (it was ``{"author": ""}``, which admitted a note with no author).
+        With no department it is given the open labels only. Renamed from ``..._emits_the_identity_layer``."""
         where = build_records_scope_filter("ship", reader_id="")
 
-        assert "$or" in where
-        assert {"classification": {"$in": ["ship"]}} in where["$or"]
-        assert {"$and": [
-            {"classification": {"$in": ["private", "department"]}},
-            {"author": ""},
-        ]} in where["$or"]
+        assert where != build_records_scope_filter("ship", reader_id=None)
+        assert where == {"classification": {"$in": ["ship"]}}
+        assert build_records_scope_filter(
+            "ship", reader_id="", reader_department="engineering",
+        ) == {"$or": [
+            {"classification": {"$in": ["ship"]}},
+            {"$and": [{"classification": "department"}, {"department": "engineering"}]},
+        ]}
 
     def test_unspecified_reader_keeps_the_scope_only_filter(self) -> None:
         """``None`` is the pre-BF-679 contract, preserved for AD-1138 callers."""
@@ -541,13 +577,11 @@ class TestFilterShape:
 
         assert where == {"classification": {"$in": ["private", "department", "ship"]}}
 
-    def test_anonymous_reader_at_private_scope_stays_flat(self) -> None:
-        """Only one clause survives, so it must not be wrapped in a 1-element $or."""
-        where = build_records_scope_filter("private", reader_id="")
-
-        assert where == {"$and": [
-            {"classification": {"$in": ["private"]}}, {"author": ""},
-        ]}
+    def test_anonymous_reader_at_private_scope_admits_nothing(self) -> None:
+        """BF-969 (#1800): at ``private`` scope the only clause was ``{"author": ""}``, which is gone, so nothing
+        is admitted and the caller skips the query (``None``; ``SemanticKnowledgeLayer.search`` does). Renamed
+        from ``..._stays_flat``."""
+        assert build_records_scope_filter("private", reader_id="") is None
 
 
 # ---------------------------------------------------------------------------
@@ -627,15 +661,35 @@ class TestRecordIsReadable:
     def test_missing_classification_defaults_to_ship(self) -> None:
         assert record_is_readable({}, scope="ship", reader_id="") is True
 
-    def test_unknown_classification_takes_the_level_zero_default(self) -> None:
-        """Byte-identical to the pre-BF-679 inline check in ``search``."""
+    def test_unknown_classification_is_private_and_identity_gated(self) -> None:
+        """BF-966 (#1797): an unrecognised label reads as ``private``. It is still level 0, so a reader that
+        named no identity reads it at every scope; it is now identity-gated, so the anonymous reader is refused
+        it and its author is not. Renamed from ``..._takes_the_level_zero_default``, whose "byte-identical to
+        search" no longer holds."""
         assert record_is_readable(
             {"classification": "top-secret"}, scope="private", reader_id=None,
         ) is True
-
-    def test_unhashable_classification_does_not_raise(self) -> None:
         assert record_is_readable(
-            {"classification": ["private"]}, scope="ship", reader_id="",
+            {"classification": "top-secret", "author": "alice"}, scope="ship", reader_id="",
+        ) is False
+        assert record_is_readable(
+            {"classification": "top-secret", "author": "alice"}, scope="ship", reader_id="alice",
+        ) is True
+
+    def test_unhashable_classification_is_private_and_does_not_raise(self) -> None:
+        """BF-966 (#1797): a list is not one of the four labels, so it reads as ``private``: an authored note is
+        refused to the anonymous reader (which it was not: level 0 and not identity-gated), read by its author, and
+        still read by a reader that named no identity. The note has an author so this case tests #1797 alone; the
+        authorless note is #1800's (``test_bf966_unrecognised_classification.py``, ``private-no-author``).
+        Renamed from ``..._does_not_raise``."""
+        assert record_is_readable(
+            {"classification": ["private"], "author": "alice"}, scope="ship", reader_id="",
+        ) is False
+        assert record_is_readable(
+            {"classification": ["private"], "author": "alice"}, scope="ship", reader_id="alice",
+        ) is True
+        assert record_is_readable(
+            {"classification": ["private"], "author": "alice"}, scope="ship", reader_id=None,
         ) is True
 
     def test_unknown_scope_defaults_to_ship_level(self) -> None:

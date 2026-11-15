@@ -1821,6 +1821,18 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (the write).* A sibling `.<16 hex>.tmp` file, created exclusively, and `os.replace`, inside `commit_write`, so the write-site census lists both, `open` and `os.replace`, as guarded rows. Rejected: a temporary name that embeds the target's (names of 234 to 255 characters fail), a `.bak` copy (an extra visible file with no retention rule) and `mkstemp` (new files would be created private). Deferred: one shared atomic-write helper for the other replace sites.
 - *Residual.* L1 to L7 of the contract. *Reversal.* Revert the batch's commits in reverse order; files written meanwhile stay valid.
 
+### Ship's Records: a classification that is not one of the four labels is private, and a note with no author has no author (2026-11-15, #1797, #1800)
+
+- *Scope.* `knowledge/records_store.py` (`effective_classification`, `_author_identity`; `record_is_readable`; `RecordsStore.read_entry`) and `knowledge/semantic.py` (`index_record`; the anonymous reader's clauses in `build_records_scope_filter`); one new test file; two existing test files updated with inline reasons.
+- *G1 (the label).* An unrecognised value is anything that is not exactly one of the four label strings, with no case-folding. It reads as private, with the reader-identity rules, as `security/classification.py` already reads an unknown source label. A missing key stays `ship`. One public helper serves the three readers and the index, so the copies cannot drift apart again. Rejected:
+  - patching each reader in place (three copies, which is how the paths came to disagree);
+  - `read_entry` calling `record_is_readable` (it would also change `read_entry`'s documented department rule);
+  - a `$nin` clause in the filter (dead code behind the index's normalisation, and it could only loosen).
+
+  This amends limit L3 of the frontmatter-framing work (#1686) for its unrecognised half only.
+- *G2 (the author).* An author that is empty or not a string equals no reader id, as the stand-in for an unparsed frontmatter already makes it. The anonymous reader gets no author clause in the filter. Deferred: refusing an empty author in `write_entry`, which would not reach a hand-made note.
+- *Residual.* L1 to L7 of the contract. *Reversal.* Revert the batch's commits in reverse order; no stored data changes.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
