@@ -75,7 +75,7 @@ async def test_an_unregistered_tool_is_refused_not_filed_and_never_counts_toward
 async def test_only_a_confined_call_to_an_unregistered_id_is_refused_before_the_gate() -> None:
     """Without a confinement the registry answers as before (#1214). Under one, an unregistered id is refused without
     asking the gate, and the refusal is a never-ran policy outcome; a registered tool outside the set, by its id or by
-    its provider alias, is put to the gate."""
+    its provider alias, is put to the gate, under its registered id either way (BF-982)."""
     registry = ToolRegistry()
     registry.register(_Probe("hull_survey"))
     registry.register(_Probe("ops:hull:survey"))
@@ -94,7 +94,9 @@ async def test_only_a_confined_call_to_an_unregistered_id_is_refused_before_the_
     alias = llm_function_name("ops:hull:survey")
     for tool_id in ("hull_survey", alias):
         assert (await executor.invoke("forge-1", tool_id, {})).error == CONFINED_CALL_FILED
-    assert asked == ["hull_survey", alias]
+    # BF-982 (#1817): the gate is asked under the registered id the alias resolves to. This line asserted the alias
+    # itself, which pinned the defect: a call filed under the alias is classified critical whatever the tool's tier.
+    assert asked == ["hull_survey", "ops:hull:survey"]
     assert UNREGISTERED_TOOL_REFUSAL in agentic_dispatch._NEVER_RAN_REFUSALS
     assert classify_tool_fault_error(UNREGISTERED_TOOL_REFUSAL) == "permission_denied"
     assert not is_capability_gap(UNREGISTERED_TOOL_REFUSAL) and "search_capabilities" in UNREGISTERED_TOOL_REFUSAL

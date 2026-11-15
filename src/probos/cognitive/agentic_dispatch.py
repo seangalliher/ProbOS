@@ -344,6 +344,8 @@ class ToolCallConfinement:
     (not filed). Enforced in the executor's invoke after AD-1356 S1.1's refusal of a tool id the registry does not
     hold, and before plan mode and the AD-1154 browser inbox, so the decision is made at the tool call, never by
     reading the plan. BF-947: ``record``, when set, is handed results of admitted calls (``record_admitted``).
+    BF-982: ``tool_ids``, ``gate`` and ``record`` see the registered id a provider alias resolves to; an ambiguous
+    name, or any name when the executor has no registry, is passed as the model sent it.
     """
 
     tool_ids: frozenset[str]
@@ -839,6 +841,11 @@ class _DispatchGuardMixin:
         confinement = self._confinement
         confined_admission = False
         admitted_params = params  # BF-947: what the gate was asked, for record_admitted
+        # BF-982: the id the confinement's set, gate and record see. A provider alias (the only name a model is shown
+        # for an mcp: tool) becomes the registered id it resolves to, so one call is filed, kept and approved under one
+        # id and filed_call_tier reads the tool's own tier. Plan mode, deferred schemas, the browser checks and the
+        # executor below keep the name the model sent: each answers an alias and its id alike or resolves it itself.
+        confined_id = tool_id
         # AD-1356 S1.1: under a confinement, when the executor has a registry, a str tool id that resolves to no
         # registered tool is refused here, before the confinement's set and gate, so it is never filed. An ambiguous
         # name (``_resolve_tool_id`` answers None) goes on to the gate.
@@ -847,8 +854,10 @@ class _DispatchGuardMixin:
             if resolved is not None and self._registry.get(resolved) is None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(ToolResult(error=UNREGISTERED_TOOL_REFUSAL), "confinement_refused")
-        if confinement is not None and tool_id not in confinement.tool_ids:
-            refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)
+            if resolved is not None:
+                confined_id = resolved
+        if confinement is not None and confined_id not in confinement.tool_ids:
+            refusal = await confinement.refuse_or_admit(agent_id, confined_id, params)
             if refusal is not None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(refusal, "confinement_refused")
@@ -929,7 +938,7 @@ class _DispatchGuardMixin:
                 output=_with_disposition(result.output, " ".join(dispositions)),
             )
         if confined_admission and confinement is not None:
-            confinement.record_admitted(agent_id, tool_id, admitted_params, result)
+            confinement.record_admitted(agent_id, confined_id, admitted_params, result)
         return result
 
 
