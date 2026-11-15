@@ -758,7 +758,10 @@ _RESTORE = "BF-904a restore: writes back bytes a build saved before its first wr
 _VAULT = "the credential vault's own file (constructor-injected)"
 _RECORDINGS = "expired recordings under the recordings directory"
 _WRITE_SITES: dict[tuple[str, str, str], str] = {
-    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", ".write_text"): _GUARDED,
+    # #1805: commit_write creates a sibling temporary file (open "x") and replaces its target with it; both are guarded.
+    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", "open"): _GUARDED,
+    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", "os.replace"): _GUARDED,
+    ("src/probos/agents/file_writer.py", "FileWriterAgent.commit_write", "os.unlink"): "the temporary sibling this call created, removed when its write or replace fails",
     ("src/probos/agents/http_fetch.py", "HttpFetchAgent._record_to_profile", ".save"): "a domain-profile store record, not a file path",
     ("src/probos/agents/utility/avatar_agents.py", "AvatarRendererAgent.act", "os.replace"): "the avatar store; the target is <agent_id>.vrm, not a .md file",
     ("src/probos/cognitive/builder.py", "_restore_pre_build_files", ".rmdir"): _RESTORE,

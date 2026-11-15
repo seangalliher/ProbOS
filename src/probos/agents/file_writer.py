@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import secrets
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -169,7 +173,32 @@ class FileWriterAgent(BaseAgent):
                 logger.warning("BF-911 FileWriterAgent refused operation=commit_write reason_code=protected_write_refused")
                 return {"success": False, "error": refused}
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, encoding="utf-8")
+            # BF-974 (#1805): never truncate in place. Write a sibling temporary file and replace the target in one
+            # step, so a crash mid-write leaves the old file whole. The target is the real path the old in-place
+            # write followed, so a link is still written through, not replaced.
+            target = Path(os.path.realpath(p))
+            # #1805 A1: a fixed-length name (21 characters), whatever the length of the target's name.
+            temp = target.with_name(f".{secrets.token_hex(8)}.tmp")
+            try:
+                kept_mode: int | None = stat.S_IMODE(os.stat(target).st_mode)
+            except FileNotFoundError:
+                kept_mode = None
+            # "x" creates the file exclusively and leaves no raw descriptor to leak. It is opened before the try below,
+            # so a name already taken removes nothing this call did not create. Its text layer translates newlines once,
+            # as write_text does.
+            handle = open(temp, "x", encoding="utf-8")
+            try:
+                with handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if kept_mode is not None:
+                    os.chmod(temp, kept_mode)
+                os.replace(temp, target)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(temp)  # the temporary file this call created; the error is raised on
+                raise
             return {
                 "success": True,
                 "path": str(p.resolve()),

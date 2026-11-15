@@ -786,6 +786,8 @@ class TestUtilityPersistence:
         agent._NOTES_DIR = str(notes_dir)
 
         decision = {
+            # #1802: the note-taker saves only for a save request; decide() sets this key.
+            "requested_action": "save",
             "llm_output": json.dumps({
                 "action": "save",
                 "filename": "test-note.md",
