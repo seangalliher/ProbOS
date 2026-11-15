@@ -138,10 +138,11 @@ SHARED_RULES = (
 )
 
 # The review-rounds section: its owner is O; C, CLAUDE.md and the Architect's profile point to it by name,
-# and both sides of the round-three brake name the same three options.
+# and both sides of the round-three brake name the same four options and the same design line.
 ARCHITECT_PROFILE = _REPO_ROOT / ".claude" / "agents" / "claude-architect.md"
 REVIEW_ROUNDS = "Review Rounds and Progress"
-BRAKE_OPTIONS = ("**continue**", "**rescope**", "**split**")
+BRAKE_OPTIONS = ("**continue**", "**rescope**", "**split**", "**redesign**")
+BRAKE_DESIGN_LINES = ("`Design: holds`", "`Design: suspect:")
 
 _POINTER = re.compile(r"`((?:\.github|\.claude|docs|scripts)/[^`\s]*\.(?:md|py))`")
 # Local role profiles that exist only in a developer's checkout (.claude/ is gitignored).
@@ -469,7 +470,7 @@ def test_constitution_keeps_the_shared_rules() -> None:
 
 def test_review_rounds_pointers_and_brake_options_agree() -> None:
     """C, CLAUDE.md and claude-architect.md point to the review-rounds section by name
-    instead of restating it, and both sides of the round-three brake name the same options."""
+    instead of restating it, and both sides of the round-three brake name the same options and design line."""
     pointers = (CONSTITUTION, CLAUDE_MD, ARCHITECT_PROFILE)
     absent = [_rel(path) for path in (ORCHESTRATOR, *pointers) if not path.is_file()]
     assert not absent, f"files are missing: {absent}"
@@ -484,6 +485,11 @@ def test_review_rounds_pointers_and_brake_options_agree() -> None:
         _rel(ARCHITECT_PROFILE): [option for option in BRAKE_OPTIONS if option not in architect],
     }
     assert not any(missing.values()), f"brake options the two sides do not share: {missing}"
+    lines = {
+        _rel(ORCHESTRATOR): [line for line in BRAKE_DESIGN_LINES if line not in orchestrator],
+        _rel(ARCHITECT_PROFILE): [line for line in BRAKE_DESIGN_LINES if line not in architect],
+    }
+    assert not any(lines.values()), f"brake design lines the two sides do not share: {lines}"
 
 
 def test_brake_handoff_does_not_redefine_frozen() -> None:
@@ -495,6 +501,44 @@ def test_brake_handoff_does_not_redefine_frozen() -> None:
     brake = orchestrator.split(marker, 1)[1].split("\n\n", 1)[0]
     assert "in one of two forms and no other" in brake, "the paragraph under test is not the handoff clause"
     assert not re.search(r"\bfrozen\b", brake, re.IGNORECASE), "the brake paragraph uses 'frozen' again"
+
+
+def test_brake_states_the_redesign_rules() -> None:
+    """The brake paragraph lists all four options and gates redesign on a suspect design line; the design check
+    gives a rebuilt candidate one more round (never a fresh count, which would undo the brake), lands nothing at
+    the brake, drafts the amendment outside the read-only call, and removes redesign, not the item, when it would
+    need the Captain. The Architect's profile states the same answer rules. Text pins: they catch a dropped or
+    reworded rule, not a misread one."""
+    orchestrator, architect = _text(ORCHESTRATOR), _text(ARCHITECT_PROFILE)
+    brake = orchestrator.split("**Round-three brake (Captain, 2026-10-15).**", 1)[1].split("\n\n", 1)[0]
+    missing = [option for option in BRAKE_OPTIONS if option not in brake]
+    assert not missing, f"options the brake paragraph does not list: {missing}"
+    assert "**redesign** (only after a `Design: suspect:` line" in brake
+    assert "the first review of a redesign's rebuilt candidate allows one more round; any later round needs a new decision" in brake
+    assert "Ask for the design line first" in brake, "the brake request no longer asks for the design line"
+    marker = "**Design check at the brake (Captain, 2026-11-14).**"
+    assert orchestrator.count(marker) == 1, "the design check moved or was duplicated"
+    check = orchestrator.split(marker, 1)[1].split("\nWhy: ", 1)[0]
+    for rule in (
+        "The answer starts with one line, `Design: holds` or `Design: suspect:",
+        "must say why that option does not repeat the suspect choice",
+        "redesign lands nothing now",
+        "without `--read-only`",
+        "does not get a fresh count",
+        "Remove redesign from the options",
+        "be the second redesign of the same contract",
+        "Park the issue only when no viable option remains",
+    ):
+        assert rule in check, f"the design check no longer says: {rule!r}"
+    for rule in (
+        "Start the answer with the design line",
+        "Choose **redesign** only after `Design: suspect:`",
+        "say why that option does not repeat the suspect choice",
+        "Redesign is not an option when it would meet a Captain condition, reverse a recorded Captain decision, "
+        "or be the contract's second redesign",
+        "separate drafting call without `--read-only`",
+    ):
+        assert rule in architect, f"claude-architect.md no longer says: {rule!r}"
 
 
 # --- the Size findings exemption and its count (AD-1359 follow-up, #1769) ---------
