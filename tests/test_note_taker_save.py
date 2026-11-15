@@ -30,7 +30,7 @@ from probos.cognitive import builder_paths
 from probos.cognitive.llm_client import MockLLMClient
 from probos.types import IntentMessage, IntentResult, LLMRequest, LLMResponse, Priority
 
-_BUILT: frozenset[str] = frozenset({"#1799"})
+_BUILT: frozenset[str] = frozenset({"#1799", "#1802"})
 
 
 def until_built(issue: str) -> Any:

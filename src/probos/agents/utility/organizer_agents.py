@@ -181,7 +181,7 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
                     legacy = legacy_note_file(notes_dir, requested)
                     if legacy is not None and legacy != path:
                         read = await read_stored_list(self._runtime, legacy)
-                # BF-961: a note that cannot be read shows as not found, as before; what the model then answers can still save a note (L5)
+                # BF-961: a note that cannot be read shows as not found, as before (BF-971: a read request never saves a note)
                 content = read.text if read is not None else ""
                 if content:
                     obs["fetched_content"] = f"Note '{title}':\n{content}"
@@ -222,6 +222,12 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
 
         return obs
 
+    async def decide(self, observation: dict) -> dict:
+        """BF-971 (#1802): carry the requested action to ``act``, which saves only for a save request."""
+        decision = await super().decide(observation)
+        params = observation.get("params") or {}
+        return {**decision, "requested_action": str(params.get("action") or "list").strip().lower()}
+
     async def act(self, decision: dict) -> dict:
         if decision.get("action") == "error":
             return {"success": False, "error": decision.get("reason")}
@@ -233,6 +239,13 @@ class NoteTakerAgent(_BundledMixin, CognitiveAgent):
             try:
                 data = json.loads(llm_output)
                 if isinstance(data, dict) and data.get("action") == "save":
+                    if decision.get("requested_action") != "save":
+                        # BF-971: the model answered "save" to a request that was not a save; nothing is written
+                        logger.info(
+                            "BF-971: NoteTakerAgent declined a save: the request was %r, not a save",
+                            str(decision.get("requested_action"))[:40],
+                        )
+                        return {"success": True, "result": llm_output}
                     notes_dir = os.path.expanduser(self._NOTES_DIR)
                     filename = str(data.get("filename") or "untitled.md")
                     path = note_file(notes_dir, filename)  # BF-968: one file directly in the notes folder
