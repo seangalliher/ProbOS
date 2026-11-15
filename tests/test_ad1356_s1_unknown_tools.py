@@ -15,6 +15,7 @@ from probos.capability_request import requests_for_work_item
 from probos.cognitive import agentic_dispatch
 from probos.cognitive.agentic_dispatch import (
     CONFINED_CALL_FILED,
+    CONFINEMENT_ADMIT,
     CONFINEMENT_FILED,
     UNREGISTERED_TOOL_REFUSAL,
     DispatchToolExecutor,
@@ -100,3 +101,61 @@ async def test_only_a_confined_call_to_an_unregistered_id_is_refused_before_the_
     assert UNREGISTERED_TOOL_REFUSAL in agentic_dispatch._NEVER_RAN_REFUSALS
     assert classify_tool_fault_error(UNREGISTERED_TOOL_REFUSAL) == "permission_denied"
     assert not is_capability_gap(UNREGISTERED_TOOL_REFUSAL) and "search_capabilities" in UNREGISTERED_TOOL_REFUSAL
+
+
+# BF-982 (#1817): a registered id the provider rejects, so a model is shown only its alias (llm_function_name).
+CANONICAL = "ops:hull:survey"
+
+
+def _confined(
+    tool_ids: frozenset[str], verdict: str, *also: str,
+) -> tuple[DispatchToolExecutor, list[Any], list[Any]]:
+    """An executor over a registry holding ``CANONICAL`` and ``also``, confined to ``tool_ids``. The gate answers
+    ``verdict`` and notes each id it is asked; ``record`` notes each id it is handed with the result's error."""
+    registry = ToolRegistry()
+    for tool_id in (CANONICAL, *also):
+        registry.register(_Probe(tool_id))
+    executor = DispatchToolExecutor(registry=registry)
+    asked: list[Any] = []
+    recorded: list[Any] = []
+
+    async def gate(agent_id: str, tool_id: Any, params: Any) -> str:
+        asked.append(tool_id)
+        return verdict
+
+    def record(agent_id: str, tool_id: Any, params: Any, result: ToolResult) -> None:
+        recorded.append((tool_id, result.error))
+
+    executor.confine_calls(ToolCallConfinement(tool_ids, gate, record=record))
+    return executor, asked, recorded
+
+
+# UT3
+async def test_an_alias_call_is_gated_and_recorded_under_the_registered_id() -> None:
+    """BF-982: by its alias or by its id, an admitted call reaches the gate and ``record_admitted`` under the registered
+    id, so the runner files it, keeps its result (BF-947's key) and admits its approval under one id."""
+    executor, asked, recorded = _confined(frozenset({"event_log_query"}), CONFINEMENT_ADMIT)
+    for name in (llm_function_name(CANONICAL), CANONICAL):
+        assert (await executor.invoke("forge-1", name, {})).error is None
+    assert asked == [CANONICAL, CANONICAL]
+    assert recorded == [(CANONICAL, None), (CANONICAL, None)]
+
+
+# UT4
+async def test_an_alias_of_a_tool_in_the_direct_set_runs_without_the_gate() -> None:
+    """BF-982: the direct-set check reads the registered id too, so the alias runs directly; nothing is asked or
+    recorded."""
+    executor, asked, recorded = _confined(frozenset({CANONICAL}), CONFINEMENT_FILED)
+    result = await executor.invoke("forge-1", llm_function_name(CANONICAL), {})
+    assert result.error is None
+    assert asked == [] and recorded == []
+
+
+# UT5
+async def test_an_ambiguous_name_goes_to_the_gate_as_the_model_sent_it() -> None:
+    """BF-982 keeps AD-1356 S1.1's rule for a name two registered tools would be offered under (``_resolve_tool_id``
+    answers None): it is put to the gate as sent, and filing it runs nothing."""
+    alias = llm_function_name(CANONICAL)
+    executor, asked, recorded = _confined(frozenset({"event_log_query"}), CONFINEMENT_FILED, alias)
+    assert (await executor.invoke("forge-1", alias, {})).error == CONFINED_CALL_FILED
+    assert asked == [alias] and recorded == []

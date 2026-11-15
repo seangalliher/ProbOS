@@ -24,6 +24,7 @@ from probos.api_models import CapabilityRequestDecideRequest
 from probos.approval_authority import ApprovalAuthorityStore
 from probos.capability_request import requests_for_work_item
 from probos.cognitive.agentic_dispatch import _McpTool
+from probos.cognitive.swe_harness.tool_call import llm_function_name
 from probos.delegated_approvals import AUDIT_CATEGORY, DeciderRole, DelegatedApprovalService, Refusal, RequestClass
 from probos.routers.capability_requests import decide_capability_request, fulfil_on_approval
 from probos.security.audit import AuditLog
@@ -240,7 +241,9 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
         consensus_invoke=AsyncMock(), authorize=lambda agent_id: True,
     )
     query = {"query": "drift budget"}
-    script = [_call(tool.tool_id, query, "c1"), _final("Waiting."), _call(tool.tool_id, query, "c2"), _final(ANSWER)]
+    # BF-982 (#1817): a model is shown an mcp: tool only under its provider alias, so the script calls the alias.
+    alias = llm_function_name(tool.tool_id)
+    script = [_call(alias, query, "c1"), _final("Waiting."), _call(alias, query, "c2"), _final(ANSWER)]
     async with _rig(tmp_path, script) as rig:
         rig.tools.register(
             tool, provider="AD-1019c", tags=[tool.tool_id, "mcp"], default_permissions=dict.fromkeys(RANKS, "read"),
@@ -248,6 +251,7 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
         async with _chain(rig) as (service, _audit, _told):
             item_id = await _self_task(rig, "Look up the drift budget")
             request = await _parked_on(rig, item_id)
+            assert request.payload["tool_id"] == tool.tool_id  # BF-982: filed under the registered id, not the alias
             if case == "reaped":
                 assert rig.tools.unregister(tool.tool_id)
             outcome = await _decide(service, "laforge-1", request.id)
