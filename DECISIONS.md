@@ -1831,7 +1831,7 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 
   This amends limit L3 of the frontmatter-framing work (#1686) for its unrecognised half only.
 - *G2 (the author).* An author that is empty or not a string equals no reader id, as the stand-in for an unparsed frontmatter already makes it. The anonymous reader gets no author clause in the filter. Deferred: refusing an empty author in `write_entry`, which would not reach a hand-made note.
-- *Residual.* L1 to L6 of the contract. *Reversal.* Revert the batch's commits in reverse order; no stored data changes.
+- *Residual.* L1 to L7 of the contract. *Reversal.* Revert the batch's commits in reverse order; no stored data changes.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 

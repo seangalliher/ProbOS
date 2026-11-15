@@ -3,8 +3,10 @@
 #1797: a classification that is not exactly one of the four labels (private, department, ship, fleet) -- a misspelling,
 a case variant, a value with a blank, a list, a number, a bool, null, a mapping -- is read as private, with the
 reader-identity rules applied, by ``RecordsStore.read_entry``, ``RecordsStore.search`` and ``record_is_readable``;
-``SemanticKnowledgeLayer.index_record`` indexes a list or a mapping as private, with a WARNING, instead of raising. A
-missing key is still ship; a reader that named no identity (None) and the Captain still read such a note.
+``SemanticKnowledgeLayer.index_record`` indexes a list, a mapping or a str subclass as private, with a WARNING,
+instead of raising. A missing key is still ship. A reader that named no identity (None) still reads such a note
+through ``record_is_readable`` and the search; ``read_entry`` takes a ``str`` reader and answers such a note as it
+answers a genuine private note, None included. The Captain reads it on all three paths.
 #1800: a private or department note whose author is missing or empty is refused to the anonymous reader "" on the same
 three paths; the Captain still reads it, and its own department still reads a department note.
 
@@ -145,6 +147,24 @@ async def test_a_reader_that_named_no_identity_still_reads_an_unrecognised_class
     assert path in [hit["path"] for hit in await store.search("warp", reader_id=None)]
 
 
+@pytest.mark.parametrize(("kind", "line"), _UNRECOGNISED)
+async def test_read_entry_answers_an_unrecognised_classification_as_it_answers_a_private_note(
+    store: RecordsStore, kind: str, line: str,
+) -> None:
+    """#1797 (round 1, A1): ``read_entry`` gives a note with an unrecognised label the answer it gives alice's genuine
+    private note, for ``None``, bob and the anonymous reader. ``read_entry`` takes a ``str`` reader and no ``src`` call
+    passes ``None`` (contract L7), so this pins the parity, not the ``None`` answer. On the base all three read it."""
+    private = _note(store, f"parity-private-{kind}", f"{_ALICE}\nclassification: private")
+    for reader in ("bob", ""):
+        assert await store.read_entry(private, reader_id=reader) is None, f"premise: {reader!r}"
+    odd = _note(store, f"parity-odd-{kind}", f"{_ALICE}\n{line}")
+    readers: tuple[Any, ...] = (None, "bob", "")
+    for reader in readers:
+        refused_private = await store.read_entry(private, reader_id=reader) is None
+        refused_odd = await store.read_entry(odd, reader_id=reader) is None
+        assert refused_odd == refused_private, repr(reader)
+
+
 @pytest.mark.parametrize(("kind", "line", "readers"), [
     pytest.param("private", "classification: private", {"alice", "captain"}, id="private"),
     pytest.param("department", "classification: department", {"alice", "carol", "captain"}, id="department"),
@@ -176,6 +196,46 @@ async def test_index_record_indexes_a_list_or_a_mapping_as_private_with_a_warnin
                 path=path, content=_BODY, classification=value, author="alice", department="engineering",
             )
         except TypeError as exc:
+            raised = exc
+    assert raised is None, f"index_record raised {raised!r}"
+    rows = await layer.search("warp", types=["records"], limit=10, records_scope="ship")
+    stored = [(row.get("metadata") or {}).get("classification") for row in rows
+              if (row.get("metadata") or {}).get("path") == path]
+    assert stored == ["private"]
+    assert [record for record in caplog.records
+            if record.levelno == logging.WARNING and path in record.getMessage()], "a WARNING names the path"
+
+
+class _UncomparableLabel(str):
+    """A ``str`` subclass whose equality raises: a classification value that cannot be compared."""
+
+    __hash__ = str.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        raise ValueError("an uncomparable label")
+
+    def __ne__(self, other: object) -> bool:
+        raise ValueError("an uncomparable label")
+
+
+@pytest.mark.parametrize("text", [pytest.param("privte", id="misspelt"), pytest.param("ship", id="spells-a-label")])
+async def test_index_record_indexes_an_uncomparable_str_subclass_as_private_with_a_warning(
+    layer: SemanticKnowledgeLayer, caplog: pytest.LogCaptureFixture, text: str,
+) -> None:
+    """#1797 (round 1, A1): the index tells an exact label from anything else by identity, so it never calls the input's
+    own comparison. On M3 ``effective != classification`` called this subclass's ``__ne__``, which raised before the
+    upsert. Only an exact ``str`` is a label, so the subclass is private even when it spells ``ship``."""
+    value = _UncomparableLabel(text)
+    with pytest.raises(ValueError):
+        bool("private" != value)  # premise: comparing this value raises
+    path = f"reports/index-uncomparable-{text}.md"
+    raised: BaseException | None = None
+    with caplog.at_level(logging.WARNING, logger="probos.knowledge.semantic"):
+        try:
+            await layer.index_record(
+                path=path, content=_BODY, classification=value, author="alice", department="engineering",
+            )
+        except ValueError as exc:
             raised = exc
     assert raised is None, f"index_record raised {raised!r}"
     rows = await layer.search("warp", types=["records"], limit=10, records_scope="ship")

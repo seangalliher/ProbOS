@@ -404,9 +404,11 @@ class SemanticKnowledgeLayer:
             return
 
         # BF-966 (#1797): the keyword readers' rule. It never raises, so a list or a mapping is indexed as
-        # private instead of raising out of the backfill (which left the note keyword-only).
+        # private instead of raising out of the backfill (which left the note keyword-only). The helper returns
+        # the input itself for an exact label and the literal "private" otherwise, so identity tells them apart
+        # without calling the input's own comparison (a str subclass's __ne__ may raise).
         effective = effective_classification(classification)
-        if effective != classification:
+        if effective is not classification:
             logger.warning(
                 "AD-1138: record %s has unknown classification %r; indexing it as "
                 "'private' so scope filtering stays conservative",

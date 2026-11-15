@@ -814,6 +814,14 @@ REPLACE:
 
 **Ledger.** Run G3. No AD or BF number moves. The roadmap Bug Tracker is not edited.
 
+### A1 (round-1 review, 2026-11-15)
+
+Round 1 (`gpt-6.1-sol`) raised two P2 findings, both injected-only. The Architect's decisions:
+- **F1 (`read_entry(path, None)`): by design, no code change.** #1797 reads an unrecognised label as private, and `read_entry` now answers it exactly as it answers a genuine private note, for every reader. Its `None` answer (refused where an author is named) is the private note's answer on the base too; `read_entry` takes a `str` reader and no caller passes `None` (section 11, A1). An explicit `None` branch would return every genuine private and department note to `None` (a looser access check and a signature change); a branch for unrecognised labels only would make them more open than private (row 17). Pinned by a parity control; recorded as L7.
+- **F2 (`index_record`): changed.** The index compared the input with `!=`, which runs a `str` subclass's own `__ne__`. It now tests identity: `effective_classification` returns the input itself for an exact label and the literal `"private"` otherwise, so `effective is not classification` holds exactly when the input is not an exact label, and the input's comparison is never called. This supersedes the `if effective != classification:` line of P2a's `semantic.py` pair.
+- The new file's module docstring is restated for `None` (A1-2); its copy in N1-1 above is the M1 record.
+- **Gates (A1):** the new file gives 42 passed (30 + 10 + 2); G2 gives 879 passed (867 + 12), `test_bf679...` 106; the architecture check; G3. Mutation rows to rerun: 11, 16 and 17. No other row's line or killer changes.
+
 ## 5. Commit messages
 
 Every body ends with its `Refs` paragraph, and the committing agent's trailer paragraph comes after it. No subject contains an `AD-` or `BF-` token or this file's name. No message uses a closing keyword in any form: close, closes, closed, fix, fixes, fixed, resolve, resolves or resolved. Do not write "fail closed" or "fixed-length"; write "refuses", "is denied" or "private by default".
@@ -825,6 +833,7 @@ Every body ends with its `Refs` paragraph, and the committing agent's trailer pa
 | M2a | `Records reader gates M2a: a classification that is not one of the four labels is read as private on every reader path (#1797)` | `Refs #1797.` |
 | M2b | `Records reader gates M2b: a note with no author admits no reader by authorship, the anonymous reader included (#1800)` | `Refs #1800.` |
 | M3 | `Records reader gates M3: trackers and ledger (#1797, #1800)` | `Refs #1797, #1800.` |
+| A1 | `Records reader gates A1: the index tells an exact label by identity, and read_entry answers an odd label as a private note (#1797)` | `Refs #1797.` |
 
 Checked by hand against both scans: no subject above holds `clos`, `fix` or `resolv`.
 
@@ -842,8 +851,9 @@ The orchestrator closes both issues after the gate.
 - **L4 (#1800).** An author of only blanks (`" "`) is still an author. Only an empty or non-`str` author is nobody.
 - **L5 (#1800).** A department note with no `department` frontmatter is still returned by `read_entry` to a reader that has no department, where `record_is_readable` and search refuse it (`records_store.py:165-172`, unchanged).
 - **L6 (both).** The archive promotion reads as `""` (`archive_promotion.py:68`). It is now refused an odd-labelled note and an authorless private or department note. Both were already withheld from the archive (`archive_store.py:93`, ship and fleet only), and the refusal path is the one any private note takes (`archive_promotion.py:315-321`, `:372-375`).
+- **L7 (both; A1).** `read_entry` takes a `str` reader (`records_store.py:1527`), and no `src` call passes `None` (section 11, A1). Called with `None` anyway, it compares `None` with the note's author. It refuses a note whose author is named: a genuine private note, as on the base, and now an unrecognised label, which gets that same answer. It returns a private or department note whose author is missing or empty, as it already returned a note whose frontmatter did not load (`_unparsed_gate`'s `None` author); on the base it refused those, because the author defaulted to `""`. The predicate and the search admit every level-0 note to `None` (scope level only), so `read_entry`'s `None` answer is not the predicate's. No follow-up item: the input is outside the signature and has no producer.
 
-## 7. Mutation rows (each line occurs once, stripped, in its file after M2b; expected, not measured)
+## 7. Mutation rows (each line occurs once, stripped, in its file after A1; expected, not measured)
 
 | # | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -857,11 +867,13 @@ The orchestrator closes both issues after the gate.
 | 8 | records_store | `return "private"` | `return "department"` (issue M7) | matrix (all ten: carol) |
 | 9 | same | `if type(value) is str and value in _CLASSIFICATION_LEVELS:` | the line `if value is None: return "ship"` inserted above it (issue M8) | matrix `null` |
 | 10 | same | `return "private"` | `return "fleet"` | none-reader (scope private); matrix |
-| 11 | semantic | `if effective != classification:` | `if False:` | index (the WARNING) |
+| 11 | semantic | `if effective is not classification:` | `if False:` | index (the WARNING); index (uncomparable, the WARNING) |
 | 12 | records_store | `doc_author = _author_identity(frontmatter.get("author"))` | `doc_author = frontmatter.get("author", "")` (#1800's named mutation) | authorless (search, predicate) |
 | 13 | same | `doc_author = _author_identity(gate.get("author"))  # BF-969 (#1800): an empty or non-str author is nobody` | `doc_author = gate.get("author", "")` | authorless (read_entry) |
 | 14 | same | `if type(value) is str and value:` | `if type(value) is str:` | authorless (all three) |
 | 15 | semantic | `if gated_labels and reader_id:` | `if gated_labels:` | `..._is_given_the_open_labels_only`; `..._at_private_scope_admits_nothing`; parity (reader "") |
+| 16 | semantic | `if effective is not classification:` | `if effective != classification:` (round-1 F2) | index (uncomparable, both) |
+| 17 | records_store | `doc_class = effective_classification(gate.get("classification", "ship"))` | `doc_class = effective_classification(gate.get("classification", "ship")) if reader_id is not None else gate.get("classification", "ship")` (round-1 F1, a `None` branch for odd labels only) | read_entry parity (`None`, all ten) |
 
 ## 8. What this does NOT change
 
@@ -886,14 +898,14 @@ Name the consumer for each property and confirm that it accepts the change.
 
 1. **The label.** For every value, `effective_classification` returns one of the four labels and never raises. It returns the value exactly when it is a `str` equal to a label.
    - **Consumers:** `record_is_readable` (`records_store.py:127`), `read_entry`, and `index_record` (via the import at `semantic.py:20-25`).
-2. **The keyword paths.** A note with an unrecognised label is admitted only to `None`, `"captain"` and its author (subject to scope level 0). The search still returns nothing `read_entry` withholds (the framing work's L11, BF-952 A5).
+2. **The keyword paths.** A note with an unrecognised label is admitted only to `"captain"` and its author, and on the predicate and the search also to `None` (scope level only; the note is level 0). `read_entry` takes a `str` reader; it answers an unrecognised label exactly as it answers a genuine private note, for every reader, `None` included (L7). The search still returns nothing `read_entry` withholds from a `str` reader (the framing work's L11, BF-952 A5).
    - **Consumers:** `_base_reading_admits` (`records_store.py:399-423`) and the scan at `:515-521`.
-3. **The author.** An author that is empty or not a `str` admits no reader by authorship on all three paths. `None`, the Captain and the department clause are unchanged.
+3. **The author.** An author that is empty or not a `str` admits no `str` reader by authorship on all three paths. The Captain and the department clause are unchanged, and so is `None` on the predicate and the search. `read_entry` called with `None` (outside its signature) now returns such a note, as it returns an unparsed one (L7).
    - **Consumers:**
      - `SemanticKnowledgeLayer.search` skips a `None` filter (`semantic.py:518-528`);
      - the archive reader `""` (`archive_promotion.py:68`, `:315-321`, `:372-375`);
      - the route `GET /api/records/documents/{path}` (`routers/records.py:102`, `:136`).
-4. **The index.** It stores only the four labels and WARNs when the stored label differs from the input. It does not raise on a classification.
+4. **The index.** It stores only the four labels and WARNs exactly when the input is not an exact label (an identity test, A1). It never calls the input's own comparison, so it does not raise on a classification, a `str` subclass whose `!=` raises included.
    - **Consumers:** `reindex_records` (`semantic.py:756-771`) and `build_records_scope_filter`.
 5. **The tests.**
    - No assertion is loosened, and each changed existing case states its reason inline.
@@ -906,11 +918,11 @@ Name the consumer for each property and confirm that it accepts the change.
 
 - **#1797:**
   - The ten unrecognised values admit alice and the Captain, and refuse bob, carol and `""`, through `read_entry`, `search(scope="ship")` and `record_is_readable(scope="ship")`. The premise is asserted first.
-  - `reader_id=None` reads such a note at every scope and finds it by search.
+  - `reader_id=None` reads such a note at every scope through the predicate and finds it by search; `read_entry` gives such a note a genuine private note's answer for `None`, bob and `""` (A1).
   - The four labels and a missing key read as before.
-  - `index_record` with a list or a mapping does not raise, indexes as private and WARNs.
+  - `index_record` with a list, a mapping or a `str` subclass whose comparison raises does not raise, indexes as private and WARNs.
   - Parity holds after a backfill.
-  - Rows 1 to 11 each fail a named test.
+  - Rows 1 to 11, 16 and 17 each fail a named test.
 - **#1800:**
   - The three authorless notes are refused to `""` on all three paths and still returned to the Captain.
   - The department note is still read by its department.
@@ -956,6 +968,14 @@ tests: test_bf679...:527-550, :630-639, :234-251; test_bf940_frontmatter_framing
   - Beyond these: a hand-made or hand-edited file, and a note without the key. `routers/records.py:205` calls `write_notebook`.
   - HOLDS: yes.
 - CLAIM: `tests/test_bf966_*` does not exist. RUN: Glob `tests/test_bf96[69]*`. FOUND: none.
+
+**A1 (2026-11-15, candidate head `ca7211714874a7fbb2a10986fa378944d7a91823`):**
+- `semantic.py:408-409`: `effective = effective_classification(classification)`, `if effective != classification:`, the only comparison of the raw input. RUN: `rg "effective != classification|effective is not classification"`. FOUND: `semantic.py:409` and this contract only.
+- `records_store.py:113-124` (`effective_classification` returns `value` itself for an exact label and the literal `"private"` otherwise, so identity tells them apart); `:127-133` (`_author_identity`); `:1524-1564` (`read_entry`, `reader_id: str` at `:1527`; `:1558` `if doc_class == "private" and reader_id != doc_author:`).
+- CLAIM: no `src` call passes `None` to `read_entry`. RUN: `rg -A2 "\.read_entry\(" src`. FOUND: 14 calls: `"system"` (`commands_gap.py:60`, `proactive.py:4001`, `dreaming.py:951`, `:1067`, `routers/gaps.py:30`); `"captain"` (`backlinks.py:273`); `_UNRESTRICTED_READER` (`semantic.py:765`); `callsign` (`proactive.py:2901`, `:2983`); `_RECORDS_READER_ID = "_diagnostic_context_system"` (`diagnostic_context.py:414`, `:26`); `ARCHIVE_READER` (`archive_promotion.py:315`, `:372`); `reader_id: str` (`recreation/history.py:198`, `:163`); the route's `reader: str = "captain"` (`routers/records.py:136`). HOLDS: yes.
+- CLAIM: no test calls `read_entry` with `None`. RUN: `rg "read_entry\([^)]*None" tests`. FOUND: none; `test_bf940_s4_unparsed_frontmatter.py:526-540` passes `None` to the search only. HOLDS: yes.
+- `index_record` callers: `records_store.py:911-914` (`write_entry`, a validated label) and `semantic.py:770-773` (`reindex_records`, parsed YAML, never a `str` subclass).
+- Round-1 probe (orchestrator): `logs/b3r1/probe-base.txt`, `logs/b3r1/probe-head.txt`; head rows `genuine-private` and the six unrecognised kinds are identical for `read_entry`.
 
 ## 12. Prior Art and Blind Spots
 
