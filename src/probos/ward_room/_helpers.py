@@ -52,6 +52,7 @@ async def check_and_alert_cascade_risk(
     post_body: str,
     channel_id: str,
     peer_matches: list[dict],
+    identity_registry: Any = None,  # BF-963 (#1793): the registry the posts' episodes were stored with
 ) -> None:
     """Check cascade confabulation risk and raise its Bridge alert (AD-567f).
 
@@ -72,6 +73,7 @@ async def check_and_alert_cascade_risk(
             post_body=post_body,
             channel_id=channel_id,
             peer_matches=peer_matches,
+            identity_registry=identity_registry,
         )
         if cascade and bridge_alerts:
             import dataclasses
