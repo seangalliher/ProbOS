@@ -1160,7 +1160,7 @@ _BUILT: frozenset[str] = frozenset({"#1803", "#1806"})
 
 ### M3: trackers and ledger
 
-Replace `DATE` with M3's date. No line carries an `AD-` or `BF-` token or this contract's file name.
+Replace `DATE` with M3's date. No line this milestone adds carries an `AD-` or `BF-` token or this contract's file name; P3-2's anchor heading is an existing line, kept.
 
 **P3-1** (`PROGRESS.md`). The anchor is the title line and the blank line after it; the earlier batches' entries stay below this one.
 SEARCH:
@@ -1230,7 +1230,8 @@ In the measured sets, neither W1 nor W2 alone kills R9[package], and neither W2 
 Name the consumer for each property and confirm that it accepts the change.
 
 1. **Same answers.**
-   - Every search returns, for any input, what the base returned. In every engine path, a policy check runs only on a worker thread.
+   - Every search returns, for any input, what the base returned, except `list_files` past its cap (D3: it stops, and the output gains `truncated` and `note`).
+   - Each match's policy check runs on a worker thread: every `permits` call of `ReadFloor` or `code_search._ReadFloor`, and list_files' per-match `resolve_read_path` call. These stay on the loop: the root path's check (`resolve_for_runtime` at `file_search.py:131` and `code_search.py:146` on the base; the `relative_base` call at `tools.py:578` in list_files), the roots list_files composes before its walk, and the floor `act` builds for its engines (`code_search.py:155`), whose construction asks about no path.
    - The rg path's subprocess and `check_at` stay on the loop.
    - **Consumers:** `test_bf908...:638`, `:716` and `:757` (the floor build counts and order); `:791` (the same exception object); `test_bf895...:186-226` (`_search_rg` awaited and `_search_python` sync); `test_ad1346_admission_effect_census.py:389`.
 2. **Thread safety (D1).** Verify that a worker thread writes no shared state other than logging, the lock-guarded once-flag and the cache of a `code_search._ReadFloor` that one thread at a time uses.
@@ -1239,12 +1240,12 @@ Name the consumer for each property and confirm that it accepts the change.
    - `truncated` appears only when one more exists, and an untruncated output equals `{"files": [...]}`.
    - **Consumer:** `test_bf948...:208`.
 4. **The rule (D6 to D8).**
-   - `_names_running_code` reads nothing.
+   - `_names_running_code` calls no filesystem function: `_document_parts` and `_canonical` work on the text (`builder_paths.py:83-85`, `:269-278` on the base).
    - It is called on the written and the resolved form inside the existing try block, adding no `Path.resolve`, `os.stat` or `os.scandir` call.
    - All eight sites reach it through the one function.
    - **Consumers:** `test_bf943...:586-693` (stage injections), `:59-64` (the callers census), `:539-545` (the stat-name scan).
-5. **No regression for writers.** A path neither in the package nor a `.env` file that the loader reads, nor at a writer's root, is judged as before. **Consumers:** the neighbour controls of `test_bf943...` and R11/R12.
-6. **Paperwork.** ASCII text; no `AD-` or `BF-` token in a subject or tracker line; both scans of section 5 are clean.
+5. **No regression for writers.** A path that is not in the package, not a `.env` file the start-up loader reads and not a `.env` file at a writer's root gets the same decision as on the base; a refused document's text now also names environment files (P2b-2). **Consumers:** the neighbour controls of `test_bf943...` (`:183`, `:195`) and R11/R12.
+6. **Paperwork.** ASCII text; no `AD-` or `BF-` token in a commit subject or in a tracker line this batch adds; both scans of section 5 are clean.
 
 ## 10. Acceptance criteria
 
@@ -1254,7 +1255,10 @@ Name the consumer for each property and confirm that it accepts the change.
   - The list cap holds (S4, with N6 failing it).
   - `ReadFloor(None)` logs once (S5; N7 and N8 each fail it).
 - **#1806:**
-  - The package refusal: write_file and edit_file with `probos/security/x.py`, `probos/cognitive/builder_paths.py` and the absolute package path are refused with `reason_code=captain_document_refused` (R1, R2, R3).
+  - The package refusal:
+    - The rule refuses `probos/security/x.py`, `probos/cognitive/builder_paths.py` and the absolute path of the real package's `builder_paths.py`, rooted at the real `<checkout>/src` (R1).
+    - edit_file refuses the real `builder_paths.py` and logs `reason_code=captain_document_refused` (R2).
+    - write_file and edit_file refuse a file in the stand-in package by its absolute and its relative path (R3).
   - The other writers: commit_write, docx_create and the other sites are refused (R3, R4).
   - `.env` where the loader and the writer's root reach it (R9, R9b, R10).
   - Controls: R11, R12.
@@ -1352,6 +1356,6 @@ REPRODUCED 2026-11-16 on e0843f4f by the orchestrator: the documents-list, write
   - No web search: these are fixes to ProbOS plumbing. `docs/research/reference-projects.md` was not consulted, under the bug-fix exemption.
 - **Blind spots found:**
   - `<checkout>/src/.env` takes precedence over `<checkout>/.env` (D7).
-  - The native build loop reaches the live package (D10).
+  - On the base, the native build loop's write_file and edit_file reached the live package (D10).
   - Focused runs in a worktree without `PYTHONPATH` import the main checkout's package (D6).
   - Share spellings (L7) and hard links (L4).
