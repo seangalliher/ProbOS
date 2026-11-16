@@ -1852,6 +1852,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (reply channel).* New reply episodes store the channel id. Stored ones keep the name; a form rule in the comparison was rejected, because it would also move the dream, records and metrics consumers of the independence score.
 - *Rollout.* No new flag: `social_verification.cascade_enabled` and the Bridge alert's cooldown and mute already bound it. *Residual.* L1 to L8 of the contract. *Reversal.* Revert the batch's commits in reverse order.
 
+### File and code search off the event loop; agent writers kept out of the running vessel's code (2026-11-16, #1803, #1806)
+
+- *Scope.* `security/file_access.py`, `agents/file_search.py`, `agents/code_search.py`, `cognitive/swe_harness/tools.py` (list_files), `cognitive/builder_paths.py`; one new test file.
+- *G1 (search).* Each search's walk and policy checks move into `asyncio.to_thread`; the policy is unchanged, and admission's subprocess check stays on the loop. A cancelled search's worker runs to the end of its walk. Rejected: a semaphore or a dedicated executor (a primitive shared across event loops, or a pool to shut down).
+- *G2 (list cap).* At most 20,000 matches are examined, refused ones included; `truncated` and `note` appear only when one more match exists, so an untruncated listing keeps its shape.
+- *G3 (running code).* The package directory is the running module's own; it is compared by the rule's canonical parts, as written and after links are followed. A `.env` file is refused where the start-up loader looks (the package directory and every directory above it) and, as a documents entry, at the writer's root. Rejected: `src/` as an entry (it would refuse a user's own working-directory `src`), and protecting only the rule's modules. Deferred: second names (hard links) of a package file.
+- *Rollout.* No flag; the rule adds refusals and rewords the Captain's documents rule's refusal text to name environment files. *Residual.* L1 to L8 of the contract. *Reversal.* Revert the batch's commits in reverse order.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
