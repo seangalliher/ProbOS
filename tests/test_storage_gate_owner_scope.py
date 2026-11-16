@@ -33,8 +33,9 @@ from tests.test_mention_fanout_episode_owner import (
     _slot,
 )
 
-# M1: each built case fails on the base at its own assert; M2 replaces this marker with a no-op.
-built = pytest.mark.xfail(strict=True, reason="#1798: the gate compares across owners until M2")
+def built(func):
+    """The built cases failed on the base at their own assert and pass now; the marker is a no-op."""
+    return func
 
 _ANCHOR = AnchorFrame(channel="chat", trigger_type="group_fanout", participants=["captain"])
 _TEXT = "coolant loop two reads warm at the pump bearing after the morning sweep"
