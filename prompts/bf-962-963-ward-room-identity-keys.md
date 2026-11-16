@@ -121,7 +121,7 @@
 | `get_department(`, `_AGENT_DEPARTMENTS` | `test_standing_orders.py:137-154`, `test_ad910...:55-64`, `test_ad521...:170`, `test_science_team.py:374-386`, `test_ad429e...:93-171` | Table and function untouched; two of them in G2a |
 | `populate_ward_room_department` | `test_ad1270e2f_knowledge_models.py:198` (default dump golden; also reads the baseline at `:369-378`) | P2a-5; in G2a with the facade, reference and reader checks |
 | `\b(1886\|1896\|1885\|1895)\b`, `field_definitions`, `canonical_dump_leaves`, `canonical_dump_sha256`, the base digests `5658987a`, `25d606ac`, `a20888ca` (also over `scripts/` and `src/`) | `test_ad1270e1_config_facade.py:1571` (`field_definitions == 1886`; comments `:1549`, `:1570`). `:252` and `:1180` compute the digest and pin no value. `test_ad1270e2f...:474` (OrientationConfig bounds 0) is unaffected. None in `scripts/` or `src/` | P2a-7; in G2a |
-| `default_config_sha256`, `observation_sha256`, `ad1152_agentic_off_golden` (added by A2; run 2026-11-16 on `2b7cb330`) | `tests/fixtures/ad1152_agentic_off_golden.json:15`, `:17`, read only by `tests/test_ad1152_agentic_correlation.py` (`GOLDEN_PATH` `:52`; the digest `:528`; asserted `:542-544`, `:597-598`); `docs/development/agentic-event-correlation.md:133` links it and pins no value | R2-1, R2-2; in G2a |
+| `default_config_sha256`, `observation_sha256`, `ad1152_agentic_off_golden` (added by A2; run 2026-11-16 on `2b7cb330`) | `tests/fixtures/ad1152_agentic_off_golden.json:15`, `:17`, read by `tests/test_ad1152_agentic_correlation.py` (`GOLDEN_PATH` `:52`; the digest `:528`; asserted `:542-544`, `:597-598`); `docs/development/agentic-event-correlation.md:133` links it, and the same document records the original capture's observation digest `3a95dbc8...` at `:145` and `:264` (also `DECISIONS.md:2611` at `221705d7`), which differs from the golden's `observation_sha256` at `1e39221f` (`fffb4e90...`); neither document's digest line is in the batch's diff | R2-1, R2-2; in G2a |
 | `parse_agent_id`, `get_agent_department`, `substrate.identity` imports, `rglob("*.py")` scanners (62 files; the identity, layer, guard and census ones read) | `test_layer_boundaries.py` (substrate imports nothing new; `ward_room` is unranked, `:16-27`); `test_ad1346_identity_service.py:463-500` (censuses `IdentityRef` only) | No edit; in G2a or G2b |
 | `check_cascade_risk`, `check_and_alert_cascade_risk`, `SocialVerificationService`, `recall` doubles, `side_effect` | three files: real service, `recall` returns all or `[:k]`; `assert_not_awaited` at `test_bf920...:269` (disabled path, returns first) | No edit; arithmetic for BF-921's three cases in section 6 (L5) |
 | `resolve_sovereign_id_from_slot`, `identity_registry` | `test_bf103_episode_id_mismatch.py:103-360` (signature presence), `test_bf138...:16` | No edit; in G2b |
@@ -959,7 +959,7 @@ Expected arithmetic:
   - `identity_service.py`;
   - stored episodes.
 - **Config:** `populate_watch_section` and `populate_event_log_window` stay; no other key moves.
-- **Tests:** of the existing files, only `test_ad1270e2f_knowledge_models.py` (P2a-5) and `test_ad1270e1_config_facade.py` (P2a-7) are edited, and one fixture, `tests/fixtures/ad1152_agentic_off_golden.json`, has its two digests refreshed (R2, A2). No other pinned value moves (consumer search, section 3, and A2's second search).
+- **Tests:** of the existing files, `test_ad1270e2f_knowledge_models.py` (P2a-5) and `test_ad1270e1_config_facade.py` (P2a-7) are edited, and one fixture, `tests/fixtures/ad1152_agentic_off_golden.json`, has its two digests refreshed (R2, A2); `git diff --stat 1e39221f 221705d7 -- tests/` lists the golden, the two M2a test files and the new file. The digests of the default dump that move are named in A2's second search.
 - **Elsewhere:** `ui/`; the commercial overlay; every tracker except `PROGRESS.md`, `DECISIONS.md` and the ledger pair; the roadmap Bug Tracker.
 
 ## 9. Diff Reviewer (`gpt-6.1-sol`): properties to verify
@@ -1153,56 +1153,60 @@ HOLDS: yes
 
 **Mutation.** No row is added. The golden is a test input, and these three cases are its detectors; the measured red above is the record that the base pin fails on the head.
 
-**Second search (2026-11-16, on `2b7cb330`).**
+**Second search (2026-11-16; amended in round 3).** Each FOUND gives the count or the output of the command above it, at the commit it names; where it adds a reading, the reading is in parentheses or after a colon. The Grep-tool runs and the `rg` runs are at `221705d7`, whose `tests/` differs from `2b7cb330`'s only in the golden's lines 15 and 17.
 ```
-CLAIM: the AD-1152 fixture is the only test pin of a digest of the default config dump, and the only pins of
-       OrientationConfig's fields that the removal moves are the two M2a edits
-       (test_ad1270e2f_knowledge_models.py, P2a-5; test_ad1270e1_config_facade.py, P2a-7)
+CLAIM: the removal moves two pinned digests of the default SystemConfig dump: canonical_dump_sha256 in the
+       facade baseline (regenerated by C2a-1; section 2 lists the other baseline values it regenerates,
+       among them two schema digests) and default_config_sha256 in the AD-1152 golden (R2-2; R2-1
+       refreshes observation_sha256, whose observation contains it)
+RUN:   git grep -n -E "1143f7a52db9ebe8|5658987ad1ad4a36" 1e39221f -- . ':!prompts'
+FOUND: 2 lines: docs/development/config-facade-baseline.yaml:56 (canonical_dump_sha256, compared at
+       scripts/check_config_facade.py:1662-1664, error facade-canonical-dump, which
+       test_ad1270e1_config_facade.py::test_check_is_green_on_the_committed_baseline runs through --check);
+       tests/fixtures/ad1152_agentic_off_golden.json:17 (default_config_sha256)
+RUN:   git grep -n -E "63daa23879986cb3|db581b6542a1d80d" 221705d7 -- . ':!prompts'
+FOUND: 2 lines, in the same two files
 RUN:   git grep -n -E "default_config_sha256|ad1152_agentic_off_golden" 2b7cb330 -- . ':!prompts'
-FOUND: 4 lines: fixture :17; test_ad1152_agentic_correlation.py:52, :528; agentic-event-correlation.md:133 (a link)
-RUN:   rg -c "(sha256|md5|blake2|digest).*(dump|config|Config)|(dump|config|Config).*(sha256|hexdigest)" tests/
-FOUND: 14 files: ablation/sigma_report.py, fixtures/ad1152_agentic_off_golden.json, test_ad1135_setup_chain.py,
-       test_ad1135_setup_cli.py, test_ad1152_agentic_correlation.py, test_ad1192_owned_steps_store.py,
-       test_ad1196_did_key_binding.py, test_ad1270e1_config_facade.py, test_ad1328_s1_policy_evaluation.py,
-       test_ad1328_s1_policy_models.py, test_ad1328_s2a_gate.py, test_ad1328_s2a_startup_and_doctor.py,
-       trials/catalog.py, trials/data/catalog_v1.yaml. The matched lines are:
-       - ad1152: the fixture's pin (:17) and the test's digest (:528);
-       - ad1135: a written config file's bytes hashed before and after in one test (setup_chain.py:340, :351;
-         setup_cli.py:673-674 `_digest(path)` over `path.read_bytes()`, used at :690-695, :784-791);
-       - ad1192: digests of step-evidence and commitment model dumps (:495, :548, :3025);
-       - ad1196: a generic `sha256(json.dumps(value))` helper (:234);
-       - ad1270e1: `facade.digest(...)` (:252, :1180), and `schema_sha256` set to zeros (:1086, :1148);
-       - ad1328: `policy_digest` of `CommandPolicyConfig` (command_policy.py:1870), with the expectation
-         computed in the test (test_ad1328_s1_policy_models.py:609-615);
-       - trials/catalog.py:77, catalog_v1.yaml:32: the key name `config_sha256` in a required-fingerprint list;
-       - ablation/sigma_report.py:365: a docstring line (`config_fingerprint` must match).
-       None pins a digest of the default SystemConfig dump against a constant, except ad1152.
-RUN:   Grep "hashlib.sha256|hexdigest" in tests/test_ad1185_config_profiles.py (outside the 14: its hash spans lines)
-FOUND: `_canonical_sha` :96-107 and the fresh-process probe's `canon` :122-127 hash the SystemConfig dump;
-       they are compared in pairs (:400), never against a constant (docstring :99-102)
+FOUND: 4 lines: golden :17; test_ad1152_agentic_correlation.py:52, :528; agentic-event-correlation.md:133 (a link)
+RUN:   rg -n "(sha256|md5|blake2|digest).*(dump|config|Config)|(dump|config|Config).*(sha256|hexdigest)" tests/
+FOUND: 36 lines in 14 files: ablation/sigma_report.py, fixtures/ad1152_agentic_off_golden.json,
+       test_ad1135_setup_chain.py, test_ad1135_setup_cli.py, test_ad1152_agentic_correlation.py,
+       test_ad1192_owned_steps_store.py, test_ad1196_did_key_binding.py, test_ad1270e1_config_facade.py,
+       test_ad1328_s1_policy_evaluation.py, test_ad1328_s1_policy_models.py, test_ad1328_s2a_gate.py,
+       test_ad1328_s2a_startup_and_doctor.py, trials/catalog.py, trials/data/catalog_v1.yaml.
+       The lines are not listed here; the by-value searches above carry the CLAIM.
+RUN:   Grep "_canonical_sha|canon\b|hexdigest" in tests/test_ad1185_config_profiles.py (outside the 14)
+FOUND: 7 lines: :96 and :107 (_canonical_sha), :123 and :127 (canon), :131 and :132 (calls of canon),
+       :400 (_canonical_sha(load_profile("minimal")) == _canonical_sha(SystemConfig()))
 RUN:   Grep "OrientationConfig|populate_watch_section|populate_event_log_window|\"orientation\"" in tests/
-FOUND: test_ad1270e2f_knowledge_models.py:73, :100, :192-199, :474 (in G2a); test_bf941...:23, :33;
-       test_orientation.py:20; the new file :37, :320-321. The rest: test_ad1270_chamber_module_ids.py:39 and
-       test_ad507_curriculum.py:69, :156, :178 (`list_by_phase` / `delivery_phase="orientation"`);
-       test_ad486_birth_chamber.py:93, :164, :352, :385 (holodeck and curriculum phase);
-       test_bf148_knowledge_update.py:74 (a text assertion); test_wave127_priority4_cleanup.py:35
-       (`phase_multipliers["orientation"]`). None reads OrientationConfig.
+FOUND: 22 lines in 9 files: test_ad1270e2f_knowledge_models.py:73, :100, :192, :198, :199, :474 (in G2a);
+       test_bf941_fresh_start_window.py:23, :33; test_orientation.py:20; the new file :37, :320, :321;
+       and 10 lines in 5 files ("orientation" as a phase name, a text check or a key):
+       test_ad1270_chamber_module_ids.py:39; test_ad507_curriculum.py:69, :156, :178;
+       test_ad486_birth_chamber.py:93, :164, :352, :385; test_bf148_knowledge_update.py:74;
+       test_wave127_priority4_cleanup.py:35
 RUN:   rg -n "populate_ward_room_department" tests/ src/ config/ docs/ scripts/ -g '!*.json'
 FOUND: 5 lines: test_ad1270e1_config_facade.py:1571 and test_ad1270e2f_knowledge_models.py:197 (comments the
        M2a edits add); test_ward_room_identity_keys.py:320, :321, :323 (the new file)
 RUN:   rg -n "\.orientation\b" tests/ -g '*.py'
-FOUND: 35 lines. Besides imports of the module probos.cognitive.orientation, the config uses are:
-       `config.orientation.enabled = False` (ad1273, ad1340, ad423c, ad490, ad600);
-       `config.orientation.warm_boot_orientation` (bf235 :114, :195);
-       `cfg.orientation.proactive_supplement = False` (test_orientation.py:252);
-       whole-section assignments (test_ad576_llm_unavailability.py:433; test_proactive.py:172, = None);
-       the new file :322-323. None pins a field set.
+FOUND: 35 lines in 15 files (not listed here)
 RUN:   Grep "populate_|default_config_sha256|canonical_dump" in ui/
-FOUND: none
-HOLDS: the AD-1152 fixture is the only digest pin the removal moves; OrientationConfig's defaults and the field
-       count are pinned only in the two M2a edits; the gate's other 54041 cases passed on the head
+FOUND: 0 lines
+HOLDS: the by-value searches find the base's two digests of the default dump in the two places the CLAIM
+       names, and the candidate updates both (C2a-1, R2-2); the gate on 2b7cb330 had 3 failures, all G1's,
+       and 54041 passed
 ```
 
-**For the next contracts.** When a config field is added, removed or re-defaulted, the consumer search covers `default_config_sha256`, `observation_sha256` and `ad1152_agentic_off_golden`, and the focused set includes `tests/test_ad1152_agentic_correlation.py`. A removed or re-defaulted field refreshes the fixture's lines 15 and 17 by measurement, with the one-key difference shown. An added field gets a `pop` in the test with its default asserted.
+**For the next contracts.** When a config field is added, removed or re-defaulted, the consumer search covers `default_config_sha256`, `observation_sha256` and `ad1152_agentic_off_golden`, it searches by value for the base's digests of the default dump (the golden's `default_config_sha256` and the facade baseline's `canonical_dump_sha256`), and the focused set includes `tests/test_ad1152_agentic_correlation.py`. A removed or re-defaulted field refreshes the fixture's lines 15 and 17 by measurement, with the one-key difference shown. An added field gets a `pop` in the test with its default asserted.
 
 **Captain.** None: a test pin is refreshed with a measured one-key difference and a diffed precedent; no control, flag or production behaviour moves.
+
+### Round 3 of review (2026-11-16): findings R3-1 to R3-3
+
+**Revised by** `claude-architect`. Edited in place: A2's row of the consumer-search table (section 3), section 8's Tests line, A2's second search and A2's note for the next contracts. The repair narrows or removes claims; it adds no test, golden, source or tracker change.
+
+| # | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|
+| R3-1 | A2's second search called the golden the only digest pin the removal moves. The facade baseline's `canonical_dump_sha256` (`docs/development/config-facade-baseline.yaml:56`, `5658987a...` to `db581b65...`) moves too; C2a-1 regenerates it (section 2). | ordinary | yes (P3, R2's prose) | repaired in round 3: the CLAIM names both, from a search by value |
+| R3-2 | The pattern search over `tests/` said "The matched lines are:" and listed some of its 36 lines in 14 files. | ordinary | yes (P3, R2's prose) | repaired in round 3: the count and file list stay, the line list goes |
+| R3-3 | A2's row of the consumer-search table said `agentic-event-correlation.md:133` "links it and pins no value"; the document records the original capture's observation digest at `:145` and `:264`. | ordinary | yes (P3, R2's prose) | repaired in round 3: the row names that digest |
