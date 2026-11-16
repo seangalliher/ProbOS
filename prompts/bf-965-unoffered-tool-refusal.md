@@ -1,6 +1,7 @@
 # Unoffered tool refusal: the agentic loop refuses any tool call outside the request's offer, on every route -- #1796, one batch
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16 (R1: review round 1, findings F1 and F2; section 4, R1). R1 adds eight cases to the new file (24 after R1) and one public function, `without_never_ran_refusals`.
 **File in the repository:** `prompts/bf-965-unoffered-tool-refusal.md`. No commit subject or tracker line of this batch carries an `AD-` or `BF-` token, or this file's name (section 5).
 **Status:** M0 to M3 build on the head of BF-982 (#1817, section 6, L5), which is built, reviewed and committed first in the same wave, on `origin/main` after batch 1 (#1799, #1802, #1805), #1794 and batch 3 merge. One PR and one broad gate cover both (section 3). Batch 1 and #1794 touch no file this batch edits; the trackers move but their anchors stay. **M0's and M2-F's pairs arrived in parts, and all of Part 3 is in: M0 is N0-1 and P0-2 to P0-259; M2 is P2-1 to P2-47 (P2-1 to P2-23 the guard and the new file, P2-24 onward M2-F).** Part 1 (2026-11-15) holds P0-2 to P0-58 and P2-24 to P2-28. Part 2 holds P0-59 to P0-110 and P2-29. Part 3 holds 3a-1 (P0-111 to P0-208, P2-30 to P2-35), 3a-2 (stage-3 files: P0-209 to P0-242, P2-36 to P2-40), 3b (D-MCP: P0-243 to P0-254, P2-41 to P2-47) and 3c (P0-255 to P0-259: `test_ad1190` and `test_ad1356_s3_chain_of_command`). The Builder starts M0 once BF-982's commits are on the wave branch (head `137a9326`), P0-255 to P0-259 still apply exactly once on that head, and the orchestrator's census rerun on the M2 tree reads only the four failures that predate this change (two in `test_ad1316_real_effect_routes`, two in `ablation/test_sigma_harness_structural`).
 **Dependencies:** one in code, BF-982 (#1817, section 6, L5), built first in the same wave on its own commits: under a confinement, the agent-work gate receives the id the executor resolves, not the provider alias the model called. Without it the three CC5 cases of `test_ad1356_s3_chain_of_command.py` fail at G2. **Number:** #1796 is BF-965 (`gh issue view 1796`). Nothing is allocated here.
@@ -28,7 +29,7 @@ See #1796 ("Problem", "Evidence"). Re-derived on `5275d008`:
 | The offer changes inside the run | AD-1240 reader `:1706-1710`; BF-755 refresh `:2265-2288` (after execution, so from the next step) | Holds |
 | Only two loops; one call constructor | `AgenticLoop(` only at `agentic_dispatch.py:4121`, `native_builder.py:139`; `ToolCallRequest(` only at `llm_client.py:2428` | Holds |
 | *New:* the route's failure list keeps never-ran refusals | `agentic_dispatch.py:4364-4370` builds `tool_failures` from the executed pairs, not from `_defect_outcome`; an unoffered name renders `UNKNOWN_TOOL_LABEL` (`reply_value.py:58-66`, `:106-128`) | A2 as filed cannot hold (D3) |
-| *New:* the native builder's fault observer sees raw results | `native_builder.py:181-185` passes `outcome=agentic_result`; `classify_tool_fault_error` (`agentic_dispatch.py:2148-2165`) decides what is noise (`fault_detection.py:32-35`) | A required addition (P2-15) |
+| *New:* the native builder's fault observer sees raw results | `native_builder.py:181-185` passes `outcome=agentic_result`; `classify_tool_fault_error` (`agentic_dispatch.py:2148-2165`) decides what is noise (`fault_detection.py:32-35`) | A required addition (P2-15). R1: P2-15 reaches only the cross-turn lane, because `collect_tool_fault_batch` counts a same-run defect before its noise filter, so the native observer now reads the run through the DM route's strip (D7) |
 | *New:* tests call the private methods directly | `_execute_one_tool(` is called at `test_ad1187_agent_work_pull.py:1032,1047`, `test_ad1224_durable_tool_start.py:870`, `test_ad1261_authority_domain.py:958,1300` | Required edits (M2-F) |
 
 ## 2. Solution and decisions
@@ -39,6 +40,7 @@ See #1796 ("Problem", "Evidence"). Re-derived on `5275d008`:
 - **D4 (AD-1189).** `ToolManifestOffer.loadable_names()` returns `(withheld & last_built) - presented`. That is empty until a build arms the offer, because `_withheld` is set only on arming (`tool_manifest.py:259-263`). `request()` reuses it. `_run_reserved` passes `also_offered` only when a manifest offer exists, so the unarmed constructor keywords that `test_ad1189...:77-89` pins are unchanged.
 - **D5 (comments that M2 makes stale).** The plan-mode comment (`agentic_dispatch.py:3600-3602`) and the `withhold_call` docstring (`tool_manifest.py:320-321`) say that the executor resolves unoffered names. Both are updated to say the loop refuses them first and the guards stay as defence in depth.
 - **D6 (commit order).** M0 (helper and offer-only fixture edits, no behaviour change) -> M1 (new tests, xfail) -> M2 (guard, T4, M2-F) -> M3 (trackers). The T4 rewrite and the private-caller edits must ride with M2: on the base the loop has no refusal for T4 to assert, and `_execute_one_tool` rejects an `offered=` keyword.
+- **D7 (R1, review round 1).** D3's "never defect or fault evidence" needs the strip on every fault observer, not the classification alone: `collect_tool_fault_batch` takes `same_run = detect_tool_defect(outcome)` (`fault_detection.py:266`) before its noise filter (`:315`). The native builder now passes `without_never_ran_refusals(agentic_result)`, the public name R1 gives the strip the DM route applies (`agentic_dispatch.py:4372`, `:4437`). A call whose tool name is not a `str` is refused like any unoffered name, before `in offered` hashes it (the idiom of `agentic_loop.py:730`, `:746`). Rejected: importing the private strip into `native_builder.py` (cross-module private access); moving the strip into `collect_tool_fault_batch` or `observe_completed_tool_run` (a shared public function's behaviour changes for every caller, and the fault layer would need the dispatch layer's refusal texts or a new parameter).
 - **Rejected or deferred:**
   - An executor-side allowlist: it would refuse the AD-1240 reader, miss the native builder, and see neither the refresh nor the alias as shown (issue Seam). Rejected.
   - Echoing the requested name, or listing the available tools, in the refusal: the name is attacker-chosen text in the injection case, and the model already has its list. A constant text also keeps the exact-match `_NEVER_RAN_REFUSALS` contract. Rejected.
@@ -57,7 +59,7 @@ See #1796 ("Problem", "Evidence"). Re-derived on `5275d008`:
   - Then set `$env:UNOFFERED_REFUSAL_RUNXFAIL = "1"`, run the file alone, and `Remove-Item Env:UNOFFERED_REFUSAL_RUNXFAIL`. Every xfail case fails at its own `assert`: none at an import, a fixture or a call.
   - An XPASS is a FAIL; report it to the Architect.
 - **G2 (M2):**
-  - The new file at `-n 0 -p no:randomly`: **16 passed, 0 xfailed** (expected).
+  - The new file at `-n 0 -p no:randomly`: **16 passed, 0 xfailed** (expected). After R1: **24 passed** (expected).
   - Then, at the repository's default parallelism with `-p no:randomly`: `tests/test_bf943_captain_document_write_refusal.py`, the 70 test files of the consumer census below, and every file that M0 or M2-F edits: 0 failed. A failure under parallel runs is rerun at `-n 0` before it is reported. The wave adds no file to this set: BF-982 adds no test file, `test_ad1356_s1_unknown_tools` is in the census and `test_ad1356_s3_chain_of_command` is an M0 file. G0's base counts are taken on BF-982's final head (after its review repairs R1 and R2), where `test_ad1356_s1_unknown_tools` holds 7 cases, not 2, and `test_ad1356_s3_chain_of_command` holds 10 (its CC5 has five cases).
   - Then `PY -P scripts/check_architecture_principles.py --check`.
   - **Consumer census** (`tests/`): ablation/test_ad1324_tier_choice_ablation, ablation/test_ad1320_budget_awareness_ablation, ablation/test_ad1322_economic_judgment_ablation, test_ad1142_crew_child_compaction, test_ad1146_multiturn_messages, test_ad1147_parallel_tools, test_ad1148_tool_result_bounds, test_ad1151_durable_tool_outputs, test_ad1152_agentic_correlation, test_ad1153_browser_agentic_loop, test_ad1154_approval_inbox, test_ad1156_plan_execute_mode, test_ad1156_plan_mode_containment, test_ad1164_continue_or_ask, test_ad1174_live_tool_progress, test_ad1187_agent_work_pull, test_ad1189_deferred_tool_schemas, test_ad1190_delegation_tree_budget, test_ad1192_owned_steps_dm, test_ad1200_repository_instruction_wire, test_ad1205_fault_paths, test_ad1208_cost_bounded_turns, test_ad1224_durable_tool_start, test_ad1239_mcp_before_the_browser, test_ad1240_tool_result_delivery, test_ad1261_authority_domain, test_ad1279_fault_finds_its_trace, test_ad1316_governed_effect_broker, test_ad1316_real_effect_routes, test_ad1320_agentic_budget_awareness, test_ad1322_economic_judgment_integration, test_ad1324_audit_terminal, test_ad1324_fail_closed, test_ad1324_loop_tier_choice, test_ad1324_redo_iterations, test_ad1324_terminal_context, test_ad1341_s2_inherited_label, test_ad1343_agent_stop_runs, test_ad1346_admission_effect_census, test_ad1346_admission_subprocess_plumbing, test_ad1346_admission_ticket_offers, test_ad1346_admission_ticket_sinks, test_ad1356_s1_unknown_tools, test_ad545_agentic_loop, test_bf680_token_usage_fallback, test_bf697_agentic_final_text_on_max_iterations, test_bf731_captain_llm_lane, test_bf755_mid_turn_tool_discovery, test_bf901_s1_token_accounting, test_bf946_read_only_delivery_failures, test_browser_session_lifecycle, test_issue1421_http_fetch_safe_methods, test_ad546_native_builder_harness, test_ad1126_verified_finalization, test_ad1246_long_run_promotion, test_ad1241_mcp_offer_budget, test_ad1191_delegation_wire, test_ad1257_defect_follows_failure, test_ad1356_s2_tool_effect_table, test_ad856_agentic_dispatch, test_bf948_list_files_read_policy, test_ad1072_agentic_tools, test_ad1258_self_knowledge, test_ad1356_s1_recovery_reads, test_ad859a_agentic_executor, test_bf900_dispatch_claim_keeps_the_park, test_ad1325_completion_chain, test_bf947_multi_call_agent_work, test_ad1323_continue_extension_seam, test_ad1162_captain_session_binding (each `.py`; the last 17 are the stage-3 files of the 2026-11-15 census that fail or hold an inert case; `ablation/test_sigma_harness_structural` stays out: its failure predates this change).
@@ -5344,6 +5346,18 @@ REPLACE:
 
 **Ledger.** Run G3. No AD or BF number moves. The roadmap Bug Tracker is not edited.
 
+### R1: review round 1 (F1, F2), on `73b4d8c9`
+
+The pairs are in commit R1 (R1-1 to R1-23): `without_never_ran_refusals` in `agentic_dispatch.py`; the native builder's import and observer call; the type test in `_execute_one_tool`; two imports and eight cases in the new file; this contract; `PROGRESS.md`; `DECISIONS.md`. R1b records the campaign and regenerates the ledger pair.
+- **F1 (P2, a regression of M2, native harness on).** P2-15 made the refusal noise for the cross-turn lane only. `collect_tool_fault_batch` takes `same_run` (`fault_detection.py:266`) before its noise filter (`:315`), and `native_builder.py:181-185` (M3) handed the observer the raw run, so two refusals of one tool filed an open fault and a `FAULT_REPORTED` event for a tool that never ran. R1 hands it `without_never_ran_refusals(agentic_result)` (D7).
+- **F2 (P2, a regression of M2, injected input only).** `if use.tool_call.name not in offered:` raised `TypeError` for a list or a dict name (`llm_client.py:2428-2430` passes the provider's value unchecked), outside `_execute_one_tool`'s error handling, so the turn failed; the base answered such a call with an item error and ran its siblings. R1 refuses a non-`str` name with the same text; its consumers already took a non-`str` name with an error result of this shape on the base (section 9, property 10).
+- **The base's twin.** On the base a name the registry does not hold, called twice on the native route, filed a fault (the orchestrator's probe). Its text is the registry's not-found error (`tools/registry.py:416`, `:485`), not a never-ran refusal (`UNREGISTERED_TOOL_REFUSAL` is produced only under a confinement, `agentic_dispatch.py:860`), so the DM route's strip did not remove it either. Since M2 the loop refuses that name before the executor; with R1 neither route files it. Intended (D3); pinned by `[unregistered-twice]`. What stays is L6.
+- **Embedded text.** P2-12's REPLACE, N1-1's file, P3-1 and P3-2 stay as M2 and M3 wrote them, so every SEARCH stays valid for a rebuild from this contract; R1's pairs are the correction. This header, section 1's row, D7, G2 and sections 6 to 12 are edited in place.
+- **Other readers in `run_build`.** `final_text`, `iterations`, the `tool_calls` names (`tools_used`), `stopped_reason`, `total_tokens` and `token_source` keep the raw result: none is defect evidence, and `tools_used` reports what the model called, as on M3 and the base.
+- **Expected after R1 (not measured).** The new file: 24 passed. On M3, `[unoffered-twice]`, `[unregistered-twice]`, `[list]` and `[dict]` fail; R1-control, `[unoffered-once]`, `[none]` and `[int]` pass on both. Focused, 0 failed: the new file, `test_ad546_native_builder_harness`, `test_ad1205_fault_paths`, `test_ad1205_fault_observer`, `test_ad1189_deferred_tool_schemas`, `test_ad1147_parallel_tools`, `test_ad1240_tool_result_delivery`; then the architecture check. Campaign: section 7's 19 rows, the new file only (baseline 24 passed).
+- **Non-ASCII.** `native_builder.py:204` (M3) holds a non-ASCII character, outside R1's SEARCH texts.
+- **Shared contract.** None changes: one public function is added; no existing signature, return shape, persisted or wire format changes. Round 2 is a delta review of `73b4d8c9..R1b`.
+
 ## 5. Commit messages
 
 Every body ends with `Refs #1796.`; the committing agent's trailer paragraph comes after it. No subject contains an `AD-` or `BF-` token. No message uses a closing keyword in any form: close, closes, closed, fix, fixes, fixed, resolve, resolves or resolved.
@@ -5352,6 +5366,8 @@ Every body ends with `Refs #1796.`; the committing agent's trailer paragraph com
 - M1: `Unoffered tool refusal M1: tests for the refusal on every route, xfail until built (#1796)`
 - M2: `Unoffered tool refusal M2: the agentic loop refuses a tool outside the request's offer (#1796)`
 - M3: `Unoffered tool refusal M3: trackers and ledger (#1796)`
+- R1: `Unoffered tool refusal R1: the native fault observer skips refused calls, and a non-text tool name is refused (#1796)`
+- R1b: `Unoffered tool refusal R1b: mutation campaign of record and ledger (#1796)`
 
 With `BASE` = the `origin/main` commit the batch is built on, both scans must print nothing:
 - `git log --format=%B BASE..HEAD | rg -n -i "\bClos[e]s\b"`
@@ -5365,25 +5381,33 @@ With `BASE` = the `origin/main` commit the batch is built on, both scans must pr
 - **L4.** Mutation rows 5 and 6 mutate code next to the check (the BF-755 refresh, the reader in the set) to show that A6 and A7 read the live offer. The mutants named in A9 ("run the gate first") and A10 ("fire the event before the check") are not one-line mutants; row 1 is their killer of record.
 - **L5 (prerequisite BF-982, #1817: same wave and PR, its own commits, built first).** The AD-1356 S3 agent-work gate files a call under the name the model called (`agentic_dispatch.py:808`, `:850-851`; `agent_work_runner.py:722`). A model is shown an MCP tool only under its provider alias (`llm_function_name`), so on the base every MCP call from agent work is filed under the alias, and `filed_call_tier` (`effect_tiers.py:114-115`) makes it critical whatever its AD-1019b risk, against DECISIONS.md's AD-1356 S3 entry (OPEN is elevated). `test_ad1356_s3_chain_of_command.py` CC5 passed only because its script called the canonical id, which no model is shown and which this batch's exact match refuses (A5). BF-982 passes the resolved id to the confinement's set check, gate and `record_admitted`, and moves CC5's script to the alias; P0-259 then offers that alias. After it, CC5 `[reaped]` records one inert refusal: the resumed call names an adapter no longer registered, so it is not offered; on the base S1.1 refuses the same call.
 
-## 7. Mutation rows (each line occurs once, stripped, in its file after M2; run only the new file; expected, not measured)
+- **L6.** Outside a confinement, a name that is still in the offer but that the registry no longer holds (a tool removed after its request was built) is answered by the registry's not-found error, which is fault evidence on both routes, as on the base. Unchanged; considered, deferred.
+
+## 7. Mutation rows (each line occurs once, stripped, in its file after R1; run only the new file; expected, not measured)
+
+Rows 1 to 15 as run on M2 (the campaign of record in DECISIONS.md) read row 1's line as `if use.tool_call.name not in offered:`. R1 puts the type test in front, so rows 1, 3 and 4 are restated on R1's line, and rows 16 to 19 are R1's. "R1-control", "R1-native" and "R1-text" are `test_r1_the_native_route_files_one_fault_for_a_real_repeated_failure`, `test_r1_the_native_route_files_no_fault_for_refusals` and `test_r1_a_name_that_is_not_text_is_refused_and_its_sibling_runs`.
 
 | # | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
-| 1 | agentic_loop | `if use.tool_call.name not in offered:` | `if False:` | A1, A3, A4, A5, A6, A8, A9, A10, A11, also-offered |
+| 1 | agentic_loop | `if type(use.tool_call.name) is not str or use.tool_call.name not in offered:` | `if False:` | A1, A3, A4, A5, A6, A8, A9, A10, A11, also-offered; R1-native (all three), R1-text (all four) |
 | 2 | same | `offered = _offered_tool_names(req.tools, self._also_offered, agent_id)` | `offered = _offered_tool_names(req.tools, None, agent_id)` | A8, also-offered |
-| 3 | same | row 1's line | `if use.tool_call.name not in offered and use.tool_call.name not in PARALLEL_SAFE_TOOL_IDS:` | A4 |
-| 4 | same | row 1's line | `if __import__("probos.cognitive.swe_harness.tool_call", fromlist=["llm_function_name"]).llm_function_name(use.tool_call.name) not in offered:` | A5 |
+| 3 | same | row 1's line | `if type(use.tool_call.name) is not str or (use.tool_call.name not in offered and use.tool_call.name not in PARALLEL_SAFE_TOOL_IDS):` | A4 |
+| 4 | same | row 1's line | `if type(use.tool_call.name) is not str or __import__("probos.cognitive.swe_harness.tool_call", fromlist=["llm_function_name"]).llm_function_name(use.tool_call.name) not in offered:` | A5 |
 | 5 | same | `tools = refreshed` | `pass` | A6 |
 | 6 | same | row 2's line | `offered = _offered_tool_names([d for d in req.tools or [] if (d.get("function") or {}).get("name") != "read_file"], self._also_offered, agent_id)` | A7 |
 | 7 | same | `agent_id[:12], tool_record_identity(use.tool_call.name), iteration,` | `agent_id[:12], use.tool_call.name, iteration,` | A11 |
 | 8 | same | `loadable = frozenset()` | `raise` | also-offered |
-| 9 | same | `return ToolCallResult(id=use.tool_call.id, output=UNOFFERED_TOOL_REFUSAL, is_error=True)` | `... is_error=False)` | A1, A2, A4, A5, A8 |
-| 10 | same | row 9's line | `return ToolCallResult(id="", output=UNOFFERED_TOOL_REFUSAL, is_error=True)` | A5, A11 |
-| 11 | agentic_dispatch | `UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): the loop refused a tool outside the offer` | `# mutated` | constants case; A2 (`tool_defect`) |
+| 9 | same | `return ToolCallResult(id=use.tool_call.id, output=UNOFFERED_TOOL_REFUSAL, is_error=True)` | `... is_error=False)` | A1, A2, A4, A5, A8; R1-native (all three), R1-text (all four) |
+| 10 | same | row 9's line | `return ToolCallResult(id="", output=UNOFFERED_TOOL_REFUSAL, is_error=True)` | A5, A11; R1-native (all three), R1-text (all four) |
+| 11 | agentic_dispatch | `UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): the loop refused a tool outside the offer` | `# mutated` | constants case; A2 (`tool_defect`); R1-native `[unoffered-twice]`, `[unregistered-twice]` |
 | 12 | same | `UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): a refused unoffered call is not a fault` | `# mutated` | constants case |
 | 13 | same | `_loop_kwargs["also_offered"] = manifest_offer.loadable_names` | `pass` | A8 |
 | 14 | tool_manifest | `return (self._withheld & self._last_built) - self._presented` | `return self._withheld - self._presented` | loadable-names |
 | 15 | same | same | `return self._withheld & self._last_built` | loadable-names |
+| 16 | native_builder | `fault_observer, outcome=without_never_ran_refusals(agentic_result),` | `fault_observer, outcome=agentic_result,` | R1-native `[unoffered-twice]`, `[unregistered-twice]` |
+| 17 | agentic_dispatch | `return _without_deferred_schema_refusals(agentic_result)` | `return agentic_result` | R1-native `[unoffered-twice]`, `[unregistered-twice]` |
+| 18 | agentic_loop | row 1's line | `if use.tool_call.name not in offered:` | R1-text `[list]`, `[dict]` |
+| 19 | agentic_loop | row 1's line | `if type(use.tool_call.name) is str and use.tool_call.name not in offered:` | R1-text (all four) |
 
 ## 8. What this does NOT change
 
@@ -5391,7 +5415,7 @@ With `BASE` = the `origin/main` commit the batch is built on, both scans must pr
   - `DispatchToolExecutor` and its guards; `ToolExecutor._resolve_tool_id` (BF-754);
   - `ToolRegistry.check_and_invoke`; `correlate_tool_outcomes` and `_project_tool_invocations`;
   - the BF-755 refresh and the AD-1240 delivery code;
-  - `NativeBuilderHarness`;
+  - `NativeBuilderHarness`, except R1's one change: its fault observer reads the run without never-ran refusals, as the DM route's does (D7);
   - plan mode, confinement and AD-1154 behaviour for offered tools.
 - **Config:** no key and no flag.
 - **Elsewhere:** `ui/`; the commercial overlay; every tracker except `PROGRESS.md`, `DECISIONS.md` and the ledger pair; the roadmap Bug Tracker.
@@ -5420,12 +5444,14 @@ Name the consumer for each property and confirm it accepts the change.
    - `denied_tools` is untouched, so the AD-855 capability-gap path gets nothing.
    - **Consumers:**
      - `_without_deferred_schema_refusals`: drops the refusal, so neither `tool_defect` nor the DM route's fault observer sees it.
-     - `classify_tool_fault_error`: returns `permission_denied`, which is noise for the native builder's raw observer.
+     - `classify_tool_fault_error`: returns `permission_denied`, which is noise only for the cross-turn lane of `collect_tool_fault_batch`; its same-run count is taken before that filter, so (R1, D7) the native builder hands its observer `without_never_ran_refusals(agentic_result)`, as the DM route hands its own the strip.
      - The DM route's `_run_reserved` failure list: shows the unknown label.
 7. **Privacy and compatibility.**
    - No log line carries the raw name; `tool_record_identity` without a catalog is opaque.
    - `also_offered` defaults to `None`, and `AgenticLoop` gains no method.
 8. **Paperwork.** The text is ASCII; tracker lines and subjects carry no `AD-` or `BF-` token.
+9. **R1 (F1): one strip for every fault observer.** `observe_completed_tool_run` has two production callers (`agentic_dispatch.py:4436`; `native_builder.py`, `run_build`), and both pass a run without never-ran refusals. `without_never_ran_refusals` returns `_without_deferred_schema_refusals`'s value unchanged, the same object when nothing was refused, so a native run with no refusal is observed exactly as on M3 (the native cases of `test_ad1205_fault_paths.py`). Every other reader in `run_build` keeps the raw result. **Consumers:** `collect_tool_fault_batch` (`_DefectEvidence` carries the two lists it reads); `FaultReportStore`.
+10. **R1 (F2): a non-text name is refused, not hashed.** `type(...) is not str` is tested first, as at `agentic_loop.py:730` and `:746`, so only a `str` reaches `in offered`; a `None` or an int is refused as on M3. The refused call keeps its id and the base's error-result shape. **Consumers:** `tool_record_identity` (any type, never raises); `build_tool_result_messages` (reads the result only); `correlate_tool_outcomes`, `_project_tool_invocations`, `detect_tool_defect` and `collect_tool_fault_batch` (each skips a non-`str` name); the strip (matches by output text).
 
 ## 10. Acceptance criteria
 
@@ -5433,7 +5459,9 @@ Name the consumer for each property and confirm it accepts the change.
 - **A12:** T4 is updated in place with its reason inline (P2-22) and is not deleted.
 - **A13:** the refusal text does not match `_CAPABILITY_GAP_RE` (control case).
 - **A14:** every fixture edit follows the M0 rule. No test turns the rule off, and none is skipped or loosened.
-- Rows 1, 2 and 9 of section 7 fail the new file.
+- **A15 (R1, F1):** on the native route, refused calls file no fault and no `FAULT_REPORTED` event, once or twice, for a registered tool outside the offer or a name the registry does not hold; an offered tool that really fails twice with one error still files one (control).
+- **A16 (R1, F2):** a call whose tool name is `None`, an int, a list or a dict gets the refusal text as an error result under its own id, and its offered sibling runs.
+- Rows 1, 2 and 9 of section 7 fail the new file. Rows 16 to 19 fail it too (R1).
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 11. Verified Against Codebase (2026-11-14, read-only tree `D:\ProbOS-worktrees\next-read2` at `origin/main` `5275d00874799d68536fef2a7ff27c7bc44cda65`)
@@ -5484,16 +5512,26 @@ PROGRESS.md:1-2 title and blank line; DECISIONS.md:1796 anchor heading
 - **Claim:** outside startup, only the dispatch and the correction projection read `config.mcp.agent_tools_enabled` or `runtime.mcp_workbench`. **Run:** Grep `src/probos` for `agent_tools_enabled` and for `mcp_workbench`. **Found:** `agentic_dispatch.py:3094,3103`; `crew_verifier.py:1056,1144,1145`; `startup/finalize.py:5053,5112` (wiring); otherwise docstrings and type references. **Holds.**
 - **Claim:** no other `_McpWorkbench` user in `test_ad1126` runs a correction loop. **Run:** Grep the file for `_McpWorkbench\(` and `WorkItemAgenticExecutor\(`. **Found:** `:6788`, `:6916`, `:6979` in `test_session_correction_projects_static_mesh_mcp_and_runtime_tools` (`:6757`, no executor); `:7870` in the source-defect case (`:7837`), which fails before its model runs. **Holds.**
 
+**R1 verified against `73b4d8c9` (2026-11-16, read-only).**
+- `native_builder.py:8-12` the import from `agentic_dispatch`; `:179-185` `observe_completed_tool_run(fault_observer, outcome=agentic_result, ...)`; `:189-206` the other readers; `:204` non-ASCII.
+- `agentic_dispatch.py:333-337` `_NEVER_RAN_REFUSALS`; `:860` the only `UNREGISTERED_TOOL_REFUSAL` producer (under a confinement); `:2161-2179` `classify_tool_fault_error`; `:2190-2223` `_without_deferred_schema_refusals` (the same object when nothing was refused, `:2215-2216`); `:2346-2348` `_project_tool_invocations` skips a non-`str` name; `:4372` `_defect_outcome`; `:4397-4399` `detect_tool_defect(_defect_outcome, ...)`; `:4436-4443` `observe_completed_tool_run(..., outcome=_defect_outcome, ...)`.
+- `fault_detection.py:266` `same_run = detect_tool_defect(outcome, ...)`; `:273-285` a non-`str` name is skipped as uncorrelatable; `:308-309` `same_run_count`; `:315` the noise filter; `:345` `same_run` kept at count >= 2; `:457-471` `observe_completed_tool_run` calls `collect_tool_fault_batch`.
+- `fault_report.py:376` `detect_tool_defect` reads only `str` names; `:584-596` `FaultReportStore(db_path, connection_factory, emit_event)`; `:950` `list_open`; `:980` `_emit_fault` passes the `EventType` member. `tools/registry.py:416`, `:485` `Tool '...' not found`.
+- `agentic_loop.py:730`, `:746` `type(name) is str` before a set membership; `:2631-2642` the check and the refusal; `:2938-2947` the base's item error for a raising call; `:927-939` `build_tool_result_messages` reads only the result. `dm/reply_value.py:119-121` `correlate_tool_outcomes` skips a non-`str` name. `llm_client.py:2428-2430` `name=fn.get("name", "")`. `tools/executor.py:300-325` `tool_record_identity` (no catalog: opaque, any type).
+- **Absence.** Claim: no `without_never_ran_refusals` exists. Run: Grep `_without_deferred_schema_refusals|without_never_ran_refusals` over the repository, `logs/` excluded. Found: the private name only (`agentic_dispatch.py:2190`, `:4372`; `test_ad1189_deferred_tool_schemas.py:2493`; two prompts). Holds.
+- **Absence.** Claim: `observe_completed_tool_run` has two production callers. Run: Grep `observe_completed_tool_run\(` over `src`. Found: `agentic_dispatch.py:4436`, `native_builder.py:181`, and the definition (`fault_detection.py:457`). Holds. In `tests`, only `test_ad1205_fault_observer.py:570`, `:691` call it, directly; none patches the native module's name.
+- **Absence.** Claim: no test pins the base's `unhashable` item-error text for a tool name. Run: Grep `tests` for `unhashable`. Found: `test_ad1147_parallel_tools.py:218` (partition only: it asserts sequential, not a loop result) and unrelated stores. Holds.
+
 ## 12. Prior Art and Blind Spots
 
 - **Internal.** The refusal follows the voice and consumers of the AD-1156 plan-mode refusal, AD-1356 S1.1's unregistered-tool refusal and AD-1189's deferred-schema refusal (all in `_NEVER_RAN_REFUSALS`). The DM reply's label is AD-1248 DD-1a.
 - **External (LangGraph, reviewed 2026-11-14).** `ToolNode` answers an invalid tool name with an error tool message, "Error: {requested_tool} is not a valid tool, try one of [...]".
   - Adopted: the error-result shape. The model sees it and the run goes on.
   - Rejected: echoing the name and listing the tools (D2's last bullet).
-  - A reported LangChain.js case where an invalid name crashed before error handling is why this check sits before every side effect and cannot raise.
+  - A reported LangChain.js case where an invalid name crashed before error handling is why this check sits before every side effect and cannot raise. On M3 it could: a list or a dict name raised `TypeError` at the membership test (F2); R1 tests the type first.
 - **Blind spots.**
   1. The 54-file census misses runs driven through `WorkItemAgenticExecutor`, `NativeBuilderHarness` or the agents (70 more files match those names), so the oracle must cover the whole suite, and the oracle reports tests that pass while the refusal fired (inert cases), not only failures.
-  2. The native builder's raw fault observation (P2-15).
+  2. The native builder's raw fault observation (P2-15, completed by R1: P2-15 reached only the cross-turn lane, D7).
   3. Private direct callers (Category C).
   4. Request goldens (Category D).
   5. The AD-1295 attempted record (L3).

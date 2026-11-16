@@ -2631,9 +2631,11 @@ class AgenticLoop:
         BF-965 (#1796): a call whose name is not in ``offered`` is refused first, as
         an error result the model sees, before the AD-1240 invocation context, the
         STARTED event, fault capture and the executor. Exact match: an offered
-        provider alias passes, the canonical id it stands for does not.
+        provider alias passes, the canonical id it stands for does not. R1: a name
+        that is not text is refused before it is hashed (the provider's JSON value
+        is unchecked; a list or a dict would raise outside the error handling).
         """
-        if use.tool_call.name not in offered:
+        if type(use.tool_call.name) is not str or use.tool_call.name not in offered:
             logger.info(
                 "BF-965: refused a call to a tool outside the offer agent=%s tool=%s "
                 "iteration=%d; it did not run",

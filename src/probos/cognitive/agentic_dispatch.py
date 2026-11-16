@@ -2223,6 +2223,18 @@ def _without_deferred_schema_refusals(agentic_result: Any) -> Any:
     )
 
 
+def without_never_ran_refusals(agentic_result: Any) -> Any:
+    """BF-965 (#1796): the public name of the strip above, for a route outside this module.
+
+    A fault observer reads a run through it, so a call answered by a
+    ``_NEVER_RAN_REFUSALS`` text never counts toward a defect. The fault
+    classification alone is not enough: ``collect_tool_fault_batch`` takes its
+    same-run defect before its noise filter. The DM route applies the strip in
+    ``run``; the native builder calls this.
+    """
+    return _without_deferred_schema_refusals(agentic_result)
+
+
 def _duplicate_tool_ids(items: Any) -> set[str]:
     """AD-1295: ids appearing more than once in ``items``, by ``.id``.
 

@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 import probos.cognitive.swe_harness.agentic_loop as loop_module
+import probos.cognitive.swe_harness.native_builder as native_module
 from probos.cognitive import agentic_dispatch
 from probos.cognitive.agentic_dispatch import (
     CONFINED_CALL_NOT_FILED,
@@ -42,6 +43,7 @@ from probos.cognitive.swe_harness.tool_call import (
 from probos.cognitive.swe_harness.tools import WriteFileTool, register_native_swe_tools
 from probos.dm_reply import UNKNOWN_TOOL_LABEL
 from probos.events import EventType
+from probos.fault_report import FaultReportStore
 from probos.tools.protocol import ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMRequest, LLMResponse
@@ -416,3 +418,92 @@ def test_loadable_names_follow_the_latest_build_and_what_was_presented_in_full()
     manifest.present(definitions, keep_full=frozenset())
     manifest.commit_presentation()
     assert loadable() == frozenset({"heavy_b"})  # shown in full: now in the request's own tools
+
+
+class _FailingProbe(_Probe):
+    """A registered tool that runs and answers the same error on every call."""
+
+    async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+        self.calls += 1
+        return ToolResult(error="probe backend exploded: connection reset by peer")
+
+
+async def _native_fault_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *steps: list[ToolCallRequest] | str,
+) -> tuple[_Model, list[Any], list[Any], dict[str, _Probe]]:
+    """R1 (F1): one native build on the real registry, executor and fault store.
+
+    ``failing_probe`` is in the build offer and fails on every call; ``spare_probe`` is registered, outside the offer,
+    and would succeed. Returns the model, the open faults, the ``FAULT_REPORTED`` events and the probes.
+    """
+    registry = _dm_registry()
+    probes: dict[str, _Probe] = {"failing_probe": _FailingProbe("failing_probe"), "spare_probe": _Probe("spare_probe")}
+    for probe in probes.values():
+        registry.register(probe)
+    monkeypatch.setattr(native_module, "_HARNESS_TOOL_IDS_BUILD", [*native_module._HARNESS_TOOL_IDS_BUILD, "failing_probe"])
+    events: list[Any] = []
+    store = FaultReportStore(str(tmp_path / "faults.db"), emit_event=lambda event, payload: events.append(event))
+    await store.start()
+    try:
+        model = _Model(*steps)
+        harness = NativeBuilderHarness(
+            runtime=SimpleNamespace(emit_event=lambda *a, **k: None, fault_report_store=store), llm_client=model,
+            tool_executor=DispatchToolExecutor(registry=registry), tool_registry=registry,
+        )
+        result = await harness.run_build(BuildSpec(title="t", description="d"), work_dir=str(tmp_path))
+        assert result["metadata"]["stopped_reason"] == "complete"
+        open_faults = store.list_open()
+    finally:
+        await store.stop()
+    return model, open_faults, [event for event in events if event == EventType.FAULT_REPORTED], probes
+
+
+async def test_r1_the_native_route_files_one_fault_for_a_real_repeated_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R1 (F1) control: an offered tool that runs and fails twice with one error files one fault, so the rig sees a filing."""
+    script = [[_call("failing_probe", "r1-0")], [_call("failing_probe", "r1-1")], "done"]
+    model, open_faults, reported, probes = await _native_fault_run(tmp_path, monkeypatch, *script)
+    assert "failing_probe" in _names(model.requests[0].tools)  # premise: offered
+    assert probes["failing_probe"].calls == 2
+    assert [(fault.tool_id, fault.occurrences) for fault in open_faults] == [("failing_probe", 1)]
+    assert len(reported) == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "calls"), [("spare_probe", 2), ("spare_probe", 1), ("ghost_probe", 2)],
+    ids=["unoffered-twice", "unoffered-once", "unregistered-twice"],
+)
+async def test_r1_the_native_route_files_no_fault_for_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, calls: int,
+) -> None:
+    """R1 (F1): a refused call never ran, so the native observer files nothing however often one tool is refused.
+
+    On M3 the observer read the raw run, and two refusals with one text were a same-run defect. On the base a name the
+    registry does not hold, called twice, filed a fault from its not-found error; the loop now refuses that name too.
+    """
+    script = [[_call(name, f"r1-{index}")] for index in range(calls)]
+    model, open_faults, reported, probes = await _native_fault_run(tmp_path, monkeypatch, *script, "done")
+    assert name not in _names(model.requests[0].tools)  # premise: outside the build offer
+    assert all(probe.calls == 0 for probe in probes.values())
+    for index in range(calls):
+        assert f"[tool_result:r1-{index} error=True]\n{_TEXT}" in model.requests[index + 1].prompt
+    assert open_faults == [] and reported == []
+
+
+@pytest.mark.parametrize("name", [None, 5, ["alpha"], {"name": "alpha"}], ids=["none", "int", "list", "dict"])
+async def test_r1_a_name_that_is_not_text_is_refused_and_its_sibling_runs(name: Any) -> None:
+    """R1 (F2): the provider's JSON value reaches the loop unchecked; a non-text name gets the refusal, never a ``TypeError``.
+
+    On M3 a list or a dict raised ``TypeError`` out of ``run`` at the offer check, so the turn failed before the sibling
+    ran; the base answered it with an item error.
+    """
+    registry = ToolRegistry()
+    alpha = _Probe("alpha")
+    tools = [tool_registration_to_llm_definition(registry.register(alpha))]
+    assert _names(tools) == {"alpha"}  # premise: the sibling's tool is offered
+    model = _Model([ToolCallRequest(name=name, arguments={}, id="r1-odd"), _call("alpha", "r1-ok")], "done")
+    result = await _run(AgenticLoop(llm_client=model, tool_executor=DispatchToolExecutor(registry=registry)), tools)
+    assert [(r.id, r.is_error) for r in result.tool_results] == [("r1-odd", True), ("r1-ok", False)]
+    assert result.tool_results[0].output == _TEXT
+    assert alpha.calls == 1 and result.stopped_reason == "complete" and len(model.requests) == 2
