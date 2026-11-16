@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-15
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16: the orchestrator's oracle findings F1 (MU8's killers) and F2 (line cites batch 4 moves).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16: review round 1 findings F1 (the gate's guarantee stated for stored episodes) and F2 (the campaign bullet); section 14.
 **Status:** ready to build on the merge of batch 4 (#1792, #1793; head `2b7cb330`, tree `d837f4cf`). Every anchor was read on `76ce0974` (tree `94a967f3`, equal to `a02d218e`'s tree), except the lines in `config/system.yaml`, `docs/development/config-reference.md` and `DECISIONS.md`, which batch 4 moves; those were re-read on `2b7cb330`. Batch 4 changes none of the product or test files this contract edits or runs (`git diff --stat a02d218e 2b7cb330`). **Owning issue:** #1798 (BF-967, already allocated). Commits say `Refs #1798.` This contract is saved as `prompts/storage-gate-owner-scope.md`.
 **Dependencies:** #1794 (merged as `aee4a43c`). S2 imports that slice's route harness, `tests/test_mention_fanout_episode_owner.py`.
 **Estimated tests:** 10 new tests in a new file, `tests/test_storage_gate_owner_scope.py`: 6 `built` tests and 4 controls. No tests removed or changed.
@@ -35,7 +36,7 @@ Each fingerprint carries an owner key: `frozenset(episode.agent_ids)`. `_check_n
 Rejected designs:
 - **A deque per owner.** It would reach fingerprints older than the last 50 writes, so it rejects episodes the base accepted. Its memory would also grow with the number of owner sets (D2).
 - **Scoping by the first agent id**, as the store's per-agent checks do. A shared episode would reject an episode of one of its owners (D1).
-- **A config flag.** The change only admits more episodes and keeps no state. A flag would add a config field to a census and to the config reference, with no reason to switch back (D6).
+- **A config flag.** The gate's decision differs from the base's only for an episode the base rejected as a near-duplicate (D2), and the change keeps no state. A flag would add a config field to a census and to the config reference, with no reason to switch back (D6).
 
 ## 3. Decisions
 
@@ -46,7 +47,7 @@ Rejected designs:
 | D3 | **The contradiction check is not scoped.** Its docstring records why. | It only logs at INFO and never changes the decision (`storage_gate.py:92-107`), so it cannot cost an episode. One visible effect: alike episodes of different owners used to be rejected as near-duplicates before this check ran. They now reach it, so it can log more often (L3). |
 | D4 | **Nothing is persisted or rebuilt.** The event payload is unchanged. | `_recent` is created only in `__init__` and appended only by `_record_fingerprint`. `StorageGate` is built only at `startup/cognitive_services.py:318`. `EPISODE_REJECTED` keeps its four keys (`storage_gate.py:228-233`). Its only other listings are the enum (`events.py:394`) and the persistence list (`event_persistence.py:237`). No code reads the fingerprint's shape outside the class (Absence Verified). |
 | D5 | **The decision record:** the storage gate's entry in `DECISIONS.md` (`:6591-6596` on `2b7cb330`; the issue cites `:6528-6534` on `5275d008`) is left as written. Its "recent window (50 episodes) for dedup" stays true. A new entry goes directly after it. No config reference or baseline changes. | `docs/development/config-reference.md:2591-2601` (on `2b7cb330`) lists the five fields, which are unchanged. The class grows from 11 to 12 methods, under `SRP_MAX_DIRECT_METHODS = 15` (`scripts/check_architecture_principles.py:188`). |
-| D6 | **No flag and no staged default.** This is inside the delegated envelope. | It is reversible (revert, no state) and backward-compatible (no config, schema or payload change). It does exactly what the issue asks. It keeps episodes the base rejected, and only those (D2). The storage gate is a quality filter. The store's security gate is separate (`episodic.py:2118-2129`) and unchanged, so no security, governance or audit control is weakened. |
+| D6 | **No flag and no staged default.** This is inside the delegated envelope. | It is reversible (revert, no state) and backward-compatible (no config, schema or payload change). It does exactly what the issue asks. The gate's decision differs from the base's only for an episode the base rejected as a near-duplicate (D2). The storage gate is a quality filter. The store's security gate is separate (`episodic.py:2118-2129`) and unchanged, so no security, governance or audit control is weakened. |
 
 ## 4. Milestones and commits
 
@@ -405,10 +406,10 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**The storage gate compares an episode only with recent episodes of the same owners, so an agent keeps its own episode when another agent's is alike (2026-11-15), #1798.**
+**The storage gate compares an episode only with recent episodes of the same owners, so another agent's alike episode no longer makes the gate reject an agent's own (2026-11-15), #1798.**
 - **Base.** `EpisodicMemory.store` consults a write-time storage gate. Its near-duplicate check rejected an episode alike (word Jaccard 0.95 or more) to any of the last 50 fingerprints, whoever owned them, and the store then skipped it. Agents who replied alike in one fan-out lost all but the first episode. The orchestrator measured this on the @-mention route: three identical 95-word replies stored one episode.
 - **Change.** Each fingerprint carries its owner key, the set of the episode's `agent_ids`, and the check reads only fingerprints with an equal key. An agent's own repeat is still rejected. Another agent's alike episode no longer rejects it. An episode with several owners compares only with the same set, and an ownerless one only with ownerless ones. The window stays one deque of 50 shared by every writer, so a same-owner comparison reaches what it reached before and the gate never rejects an episode the base accepted. The contradiction check still reads every owner's fingerprints; it only logs. No config field, event payload or persisted state changes. `tests/test_storage_gate_owner_scope.py` adds ten cases, two of them through the real store with the shipped settings: the group fan-out's episode shape, and the @-mention route.
-- **Limits.** Where agents write alike, each now keeps its own copy, so the store holds more rows. The store's per-agent hourly cap and 30-minute duplicate check, which run after the gate, still apply. The group fan-out keys its episodes by slot id and the @-mention fan-out by sovereign id, so one agent's episodes from the two routes are compared as two owners. The decisions are in DECISIONS.md; the contract is `prompts/storage-gate-owner-scope.md`.
+- **Limits.** The gate's guarantee covers its decisions, not what the store keeps. The store's per-agent hourly cap and 30-minute duplicate check run after the gate and count or compare the episodes already stored for that agent, so an episode the gate now admits can make a later episode of the same agent skip where the base stored it, and the stored total can be lower than the base's. The group fan-out keys its episodes by slot id and the @-mention fan-out by sovereign id, so one agent's episodes from the two routes are compared as two owners. The decisions are in DECISIONS.md; the contract is `prompts/storage-gate-owner-scope.md`.
 ```
 
 **P3-2** (`DECISIONS.md`: entry directly after the storage gate's own entry)
@@ -432,8 +433,8 @@ REPLACE:
 - *G1 (the owner key).* `frozenset(agent_ids)`, compared by equality. One owner compares with that owner's fingerprints; several owners with the same set, in any order; an ownerless episode with ownerless ones. Rejected: the first id only, as the store's per-agent checks use it (a shared episode would reject one of its owners' own); a subset rule (it saves only rows an owner already holds, and needs a special case for the empty key).
 - *G2 (the window).* One deque of `recent_window`, shared by every writer and filtered by owner. For the same sequence of evaluations it holds the same episodes as before, and each comparison the new check makes, the old one made too, so the gate never rejects an episode the base accepted. Rejected: a deque per owner (it reaches fingerprints older than the last 50 writes, so it rejects episodes the base accepted, and its memory grows with the number of owner sets).
 - *G3 (the contradiction check).* Not scoped. It only logs and never changes the decision, so it cannot cost an episode. Alike episodes of different owners now reach it instead of being rejected first, so it can log more often.
-- *G4 (no flag).* The change only keeps episodes the base rejected as another owner's near-duplicate, and nothing is persisted: fingerprints live in memory and a restart clears them.
-- *Residual.* Owner ids are not one scheme across writers (slot id for the group fan-out, sovereign id for the @-mention fan-out), so one agent's episodes from the two routes do not compare. Stored volume rises where agents write alike. *Reversal.* Revert M3, M2 and M1; episodes stored meanwhile stay valid.
+- *G4 (no flag).* The gate's decision differs from the base's only for an episode the base rejected as a near-duplicate, and nothing is persisted: fingerprints live in memory and a restart clears them.
+- *Residual.* Owner ids are not one scheme across writers (slot id for the group fan-out, sovereign id for the @-mention fan-out), so one agent's episodes from the two routes do not compare. The store's per-agent hourly cap and 30-minute duplicate check run after the gate and count or compare the episodes already stored for that agent, so an episode the gate now admits can make a later episode of the same agent skip where the base stored it, and the stored total can be lower than the base's. *Reversal.* Revert the commits of #1798; episodes stored meanwhile stay valid.
 
 ### BF-245: NATS Test Isolation Strategy (2026-04-27)
 ```
@@ -506,7 +507,7 @@ Record each row as KILLED (by the named case, or name the case that fired), SURV
 
 ### 8.4 Broad gate
 
-Once, on the committed M3 head: `scripts/run_test_gate.py --label storage-gate-owner-scope --receipt logs/gates/storage-gate-owner-scope.receipt.json`. Search cannot reach full-runtime tests that boot `init_cognitive_services`; the shipped gate is wired there (`cognitive_services.py:314-322`). By D2 such a test can only see more episodes stored, never fewer. Only a test that counted a cross-owner rejection would fail.
+Once, on the committed head after the last repair: `scripts/run_test_gate.py --label storage-gate-owner-scope --receipt logs/gates/storage-gate-owner-scope.receipt.json`. Search cannot reach full-runtime tests that boot `init_cognitive_services`; the shipped gate is wired there (`cognitive_services.py:314-322`). By D2 the gate there rejects no episode the base accepted, but the store's per-agent checks read what is stored (L2), so such a test could count more stored episodes than on the base, or fewer.
 
 ## 9. Diff Reviewer: properties to verify
 
@@ -584,8 +585,8 @@ Each claim below was checked by a Grep-tool search on this tree.
 ## 11. What this does NOT change, and recorded limits
 
 - **Not changed:** `similarity.py`, `episodic.py`, the threshold, the utility floor and score, the config fields, the event payload, the store's per-agent checks, the store's security gate, and the recall anomaly gate (#1680).
-- **L1.** Owner ids are not one scheme across writers. The group fan-out stores the slot id (`thread_fanout.py:1115`). The @-mention fan-out stores the sovereign id (DECISIONS.md, #1794 entry, G2). So one agent's episodes from the two routes are two owners and do not compare. This keeps more episodes, never fewer.
-- **L2.** Stored volume rises where agents write alike. Each agent's growth is still bounded by the store's hourly cap and 30-minute duplicate check, which run after the gate. An agent can now reach the hourly cap sooner, because its own alike episodes now count.
+- **L1.** Owner ids are not one scheme across writers. The group fan-out stores the slot id (`thread_fanout.py:1115`). The @-mention fan-out stores the sovereign id (DECISIONS.md, #1794 entry, G2). So one agent's episodes from the two routes are two owners and do not compare.
+- **L2.** D2's guarantee is about the gate's decisions, not about what the store keeps. The store's per-agent hourly cap (`_is_rate_limited`, 20 an hour) and 30-minute duplicate check (`_is_duplicate_content`, Jaccard 0.8 against the stored documents) run after the gate and count or compare the episodes already stored for that agent (`episodic.py:1374-1376`, `:3298-3352`). So an episode the gate now admits can make a later episode of the same agent skip where the base stored it, and the stored total can be lower than the base's. The orchestrator measured both checks with a real store and the shipped gate. Duplicate check, four episodes: agent B's, agent A's identical one, then two more of A's, each alike A's first at the store's 0.8 on the document's words and unlike each other; the base stores 3 rows, this change 2. Hourly cap, 23 episodes: B's, A's identical one, then 21 more of A's, each alike nothing; A's 21st episode is stored on the base and skipped here, and both store 21 rows. The duplicate check lowered the total; the cap did not. S1 and S2 store each agent's alike reply.
 - **L3.** Alike episodes of different owners now reach the contradiction check, which can log more INFO lines. The decision is unchanged.
 - **L4.** A fingerprint is still recorded for an episode the gate rejects (`:73`, `:84`) or the store later skips (`episodic.py:2145-2152`). This is unchanged.
 - **L5.** An `agent_ids` element that cannot be hashed would make `frozenset` raise. The store's handler then admits the episode (`episodic.py:2111-2116`), as it does for any gate error. `agent_ids` is typed `list[str]`. No test covers this.
@@ -608,10 +609,19 @@ Each claim below was checked by a Grep-tool search on this tree.
 
 ## 13. Acceptance criteria
 
-- Two agents' word-identical episodes are both stored (MU1). An agent's own identical repeat is still rejected as `near_duplicate`, and `EPISODE_REJECTED` still carries `agent_ids` (MU2, MU8). Ownerless episodes compare only with ownerless ones (MU3).
+- Two agents' word-identical episodes are both accepted by the gate (MU1). An agent's own identical repeat is still rejected as `near_duplicate`, and `EPISODE_REJECTED` still carries `agent_ids` (MU2, MU8). Ownerless episodes compare only with ownerless ones (MU3).
 - Through the real store with the shipped settings:
   - the group fan-out's shape with a 40-word trigger and identical short replies stores 3 episodes (S1);
   - the @-mention route with three identical 95-word replies stores 3 owner-keyed episodes (S2).
 - `recent_count` says it counts every owner's fingerprints. `snapshot` is unchanged.
 - Every mutation row is KILLED and R0 fails exactly the six `built` cases.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+## 14. Review round 1 (2026-11-16)
+
+Round 1 read the M3 commit `6d098b2c` (tree `f1c4cc1d`) and found no implementation defect. The repair edits text in place (sections 2, 3, 8.4, 11 and 13, and the P3-1 and P3-2 blocks) and changes no code or test.
+
+| # | Milestone | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|---|
+| F1 | M3 and this contract | P3. Section 8.4, L1, L2 and the tracker lines extended the gate's guarantee to stored episodes. The store's per-agent checks count or compare what is stored, so an episode the gate now admits can make a later episode of the same agent skip. The orchestrator measured it with a real store and the shipped gate: in the duplicate case, with four episodes, the base stores 3 rows and this change 2; in the cap case, with 23 episodes, agent A's 21st is stored on the base and skipped here, and both store 21 rows. | ordinary | yes (paperwork) | Text only: each store-level sentence is pruned or limited to the gate's decisions, and L2 records the interaction. No code change: the later episodes are skipped by the store's own per-agent checks, which this change does not touch. |
+| F2 | M3 | P3. The DECISIONS entry lacked the `*Mutation campaign of record.*` bullet that P3-2's note asks for. | ordinary | yes (paperwork) | Appended from the campaign the orchestrator ran on `6d098b2c`. |
