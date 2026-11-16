@@ -1758,7 +1758,7 @@ async def test_strict_event_emitter_failure_omits_exception_prose(
         ).run(
             system_prompt="strict",
             user_message="run",
-            tools=[],
+            tools=[*offer("SENTINEL_EVENT_TOOL")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             context={"agent_id": "selected-agent-canary"},
         )
 
@@ -1851,7 +1851,7 @@ async def test_strict_async_event_emitter_failure_is_consumed_safely(
             ).run(
                 system_prompt="strict",
                 user_message="run",
-                tools=[],
+                tools=[*offer("SENTINEL_ASYNC_TOOL")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
                 context={"agent_id": "selected-agent-canary"},
             )
             await asyncio.sleep(0)
