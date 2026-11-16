@@ -618,7 +618,11 @@ def test_native_builder_and_continue_or_ask_are_untouched_negative_pins() -> Non
     # AD-1240 (#1239): native_builder.py now assigns the workspace-results slot and merges the delivery
     # context (7 added lines); the protected property (no budget_awareness in this file) is unchanged.
     # The blob before AD-1240 was 764d0f86d2fc339e83ec8f3a71cc3631c26876b3.
-    rel, blob = "cognitive/swe_harness/native_builder.py", "24179141cc441e31e176227fc767b39b950ac976"
+    # #1796 (review round 1): run_build hands its fault observer the run without
+    # never-ran refusals (one import, one call argument, a four-line comment); the
+    # protected property (no budget_awareness in this file) is unchanged.
+    # The blob before #1796 was 24179141cc441e31e176227fc767b39b950ac976.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "6641aa6aa67c91244efc6189d7044397bd46eaf1"
     data = (_SRC / rel).read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == blob, rel
     assert b"budget_awareness" not in data
