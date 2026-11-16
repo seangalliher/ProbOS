@@ -396,7 +396,6 @@ class OrientationConfig(BaseModel):
     warm_boot_orientation: bool = True
     proactive_supplement: bool = True
     populate_watch_section: bool = True
-    populate_ward_room_department: bool = True
     populate_event_log_window: bool = True
 
 

@@ -1944,7 +1944,6 @@ orientation:
   warm_boot_orientation: true
   proactive_supplement: true
   populate_watch_section: true
-  populate_ward_room_department: true
   populate_event_log_window: true
 social_verification:
   enabled: true

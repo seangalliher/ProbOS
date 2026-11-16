@@ -2439,7 +2439,6 @@ AD-567g: Cognitive re-localization configuration.
 | `warm_boot_orientation` | `bool` | `True` | — |  |
 | `proactive_supplement` | `bool` | `True` | — |  |
 | `populate_watch_section` | `bool` | `True` | — |  |
-| `populate_ward_room_department` | `bool` | `True` | — |  |
 | `populate_event_log_window` | `bool` | `True` | — |  |
 
 ## `social_verification`

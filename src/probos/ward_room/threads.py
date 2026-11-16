@@ -211,6 +211,7 @@ class ThreadManager:
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
             peer_matches=peer_matches,
+            identity_registry=self._identity_registry,
         )
 
     async def _check_echo_trace(

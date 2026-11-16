@@ -129,6 +129,7 @@ class MessageStore:
             author_id=author_id, author_callsign=author_callsign,
             post_body=post_body, channel_id=channel_id,
             peer_matches=peer_matches,
+            identity_registry=self._identity_registry,
         )
 
     async def _check_echo_trace(
@@ -356,7 +357,7 @@ class MessageStore:
                     source="direct",
                     anchors=AnchorFrame(
                         channel="ward_room",
-                        channel_id=channel_name,
+                        channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, as a thread episode stores it
                         thread_id=thread_id,
                         trigger_type="ward_room_reply",
                         participants=[author_callsign or author_id],
@@ -408,7 +409,7 @@ class MessageStore:
                     source="direct",
                     anchors=AnchorFrame(
                         channel="ward_room",
-                        channel_id=channel_name,
+                        channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, not its name
                         thread_id=thread_id,
                         trigger_type="peer_repetition",
                         trigger_agent=top_match["author_callsign"],

@@ -68,6 +68,41 @@ class ProvenanceValidationResult:
 
 _ALLOWED_DETAIL_KEYS = frozenset({"episode_a", "episode_b", "reason", "weight"})
 
+#: BF-963 (#1793): the episodes one cascade recall holds for each distinct author
+#: id (the post's and each matched peer's): the k=3 each peer's recall used to have.
+_RECALL_PER_OWNER = 3
+
+
+def _owner_keys(author_id: str, identity_registry: Any) -> frozenset[str]:
+    """BF-963 (#1793): the ids an episode of ``author_id`` can be stored under.
+
+    The Ward Room stores a post's episode under
+    ``resolve_sovereign_id_from_slot(author_id, identity_registry)``: the
+    certificate id when the registry maps the slot. An episode stored before
+    the certificate (or a group-chat fan-out episode) keeps the slot id, so
+    both are kept. An empty id owns nothing.
+    """
+    if not author_id:
+        return frozenset()
+    try:
+        from probos.cognitive.episodic import resolve_sovereign_id_from_slot
+
+        return frozenset({author_id, resolve_sovereign_id_from_slot(author_id, identity_registry)})
+    except Exception:
+        logger.debug("BF-963: owner key lookup failed for %s", author_id, exc_info=True)
+        return frozenset({author_id})
+
+
+def _owned_by(episodes: list[Any], keys: frozenset[str]) -> list[Any]:
+    """BF-963 (#1793): the episodes, in order, whose owners include one of ``keys``."""
+    return [ep for ep in episodes if any(key in (getattr(ep, "agent_ids", None) or []) for key in keys)]
+
+
+def _union_by_id(first: list[Any], second: list[Any]) -> list[Any]:
+    """BF-963 (#1793): ``first``, then each episode of ``second`` whose id ``first`` does not hold."""
+    held = {ep.id for ep in first}
+    return [*first, *(ep for ep in second if ep.id not in held)]
+
 
 def _same_thread(anchors_a: Any, anchors_b: Any) -> bool:
     """BF-920: True when both anchor frames name the same non-empty thread."""
@@ -516,11 +551,16 @@ class SocialVerificationService:
         channel_id: str,
         *,
         peer_matches: list[dict[str, Any]] | None = None,
+        identity_registry: Any = None,
     ) -> CascadeRiskResult | None:
         """Proactive cascade detection on Ward Room posts.
 
         Called after AD-506b peer similarity detection to check if
         similar posts lack independent anchor evidence.
+
+        BF-963 (#1793): ``identity_registry`` is the one the Ward Room stored
+        the posts' episodes with; each author id is matched to an episode's
+        owners as given and as the certificate id it maps to.
         """
         # BF-920: cascade_enabled is this check's off switch (it had no reader).
         if not peer_matches or not self._config.cascade_enabled:
@@ -535,6 +575,27 @@ class SocialVerificationService:
         earliest_ts = float("inf")
         source_agent = author_callsign
 
+        # BF-963 (#1793): the pool is the recall of k=3 that used to run once for
+        # each peer (it answered the same episodes every time), then each episode
+        # of one recall large enough for _RECALL_PER_OWNER episodes of each
+        # distinct author id that the first does not hold. Hybrid recall fuses
+        # rankings that grow with k, so a wider recall need not hold a narrower
+        # one's episodes; the union keeps every episode the base's recall held.
+        owners = {match.get("author_id", "") for match in peer_matches} | {author_id}
+        owners.discard("")
+        keys = {owner: _owner_keys(owner, identity_registry) for owner in owners}
+        recalled: list[Any] = []
+        try:
+            recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER)
+        except Exception:
+            logger.debug("AD-567f: cascade recall failed", exc_info=True)
+        if len(owners) > 1:
+            try:
+                wide = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER * len(owners))
+                recalled = _union_by_id(recalled, wide)
+            except Exception:
+                logger.debug("BF-963: wide cascade recall failed", exc_info=True)
+
         for match in peer_matches:
             match_author = match.get("author_id", "")
             match_callsign = match.get("author_callsign", match_author)
@@ -543,13 +604,9 @@ class SocialVerificationService:
             if match_callsign not in affected_agents:
                 affected_agents.append(match_callsign)
 
-            # Look up peer's episodes matching the post
+            # Look up peer's episodes matching the post (BF-963: by both keys)
             try:
-                peer_episodes = await self._episodic.recall(post_body, k=3)
-                peer_episodes = [
-                    ep for ep in peer_episodes
-                    if match_author in getattr(ep, "agent_ids", [])
-                ]
+                peer_episodes = _owned_by(recalled, keys.get(match_author, frozenset()))
                 matched_episodes.extend(peer_episodes)
 
                 for ep in peer_episodes:
@@ -565,12 +622,7 @@ class SocialVerificationService:
 
         # Also include author's own episodes
         try:
-            author_episodes = await self._episodic.recall(post_body, k=3)
-            author_episodes = [
-                ep for ep in author_episodes
-                if author_id in getattr(ep, "agent_ids", [])
-            ]
-            matched_episodes.extend(author_episodes)
+            matched_episodes.extend(_owned_by(recalled, keys.get(author_id, frozenset())))
         except Exception:
             logger.debug("AD-567f: cascade author lookup failed")
 
