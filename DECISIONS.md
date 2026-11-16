@@ -6595,6 +6595,16 @@ The callback is **synchronous** (Tier-2 log-and-degrade — a ToolRegistry write
 **Rationale:** EpisodicMemory.store() previously relied on BF-039 rate limiting and simple post-hoc lifecycle cleanup. StorageGate adds a deterministic, no-IO, no-LLM write-time utility boundary before persistence so low-value and redundant memories do not dilute recall quality.
 **Status:** Implemented
 
+### The storage gate compares an episode only with recent episodes of the same owners (2026-11-15, #1798)
+
+- *Scope.* `cognitive/storage_gate.py`: the fingerprint's owner key, the near-duplicate check's owner filter and two docstrings. One new test file, `tests/test_storage_gate_owner_scope.py`. No config, event or schema change. Contract `prompts/storage-gate-owner-scope.md`. The entry above, the gate's own, stays as written: its window of 50 for dedup is unchanged.
+- *Cause.* The near-duplicate check compared an episode with the last 50 fingerprints of every writer, and a fingerprint held no owner. So an agent's episode was rejected, and not stored, when another agent's recent episode was alike. The store's own per-agent checks are scoped to one owner.
+- *G1 (the owner key).* `frozenset(agent_ids)`, compared by equality. One owner compares with that owner's fingerprints; several owners with the same set, in any order; an ownerless episode with ownerless ones. Rejected: the first id only, as the store's per-agent checks use it (a shared episode would reject one of its owners' own); a subset rule (it saves only rows an owner already holds, and needs a special case for the empty key).
+- *G2 (the window).* One deque of `recent_window`, shared by every writer and filtered by owner. For the same sequence of evaluations it holds the same episodes as before, and each comparison the new check makes, the old one made too, so the gate never rejects an episode the base accepted. Rejected: a deque per owner (it reaches fingerprints older than the last 50 writes, so it rejects episodes the base accepted, and its memory grows with the number of owner sets).
+- *G3 (the contradiction check).* Not scoped. It only logs and never changes the decision, so it cannot cost an episode. Alike episodes of different owners now reach it instead of being rejected first, so it can log more often.
+- *G4 (no flag).* The change only keeps episodes the base rejected as another owner's near-duplicate, and nothing is persisted: fingerprints live in memory and a restart clears them.
+- *Residual.* Owner ids are not one scheme across writers (slot id for the group fan-out, sovereign id for the @-mention fan-out), so one agent's episodes from the two routes do not compare. Stored volume rises where agents write alike. *Reversal.* Revert M3, M2 and M1; episodes stored meanwhile stay valid.
+
 ### BF-245: NATS Test Isolation Strategy (2026-04-27)
 **Decision:** Disable real NATS in tests via module-level env var override in conftest.py rather than per-worker stream name suffixing or xdist serialization.
 **Rationale:** The problem is test-only; production code should not carry per-worker complexity. Tests that verify NATS behavior use MockNATSBus directly. Integration tests (ProbOSRuntime.start()) do not need real NATS to validate their concerns. See also: AD-637 (NATS foundation), BF-232 (recreate_stream pattern).
