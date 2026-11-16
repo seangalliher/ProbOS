@@ -23,10 +23,12 @@ from probos.agents.file_writer import FileWriterAgent
 from probos.cognitive import builder_paths, standing_orders
 from probos.cognitive.agentic_dispatch import DispatchToolExecutor
 from probos.cognitive.swe_harness import tools as swe_tools
+from probos.cognitive.swe_harness.agentic_loop import UNOFFERED_TOOL_REFUSAL, AgenticLoop
+from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, ToolUseBlock, tool_registration_to_llm_definition
 from probos.cognitive.swe_harness.tools import EditFileTool, WriteFileTool, register_native_swe_tools
 from probos.skill_framework import DocxAgent, PptxAgent, XlsxAgent
 from probos.tools.registry import ToolRegistry
-from probos.types import IntentMessage
+from probos.types import IntentMessage, LLMResponse
 from tests.posix_stat import _posix_stat
 from tests.test_ad1344_constitution_write_refusal import _CHANNEL_SUFFIXES, _build, _callee, _calls, _dir_link, _source, _tracked
 
@@ -207,30 +209,46 @@ async def test_a_native_build_still_modifies_a_document_in_its_worktree(checkout
     assert (checkout / member).read_text(encoding="utf-8") == "x v2\n" and member in commit.await_args.args[0]
 
 
-async def test_a_lieutenants_unoffered_write_file_call_reaches_the_tool_on_the_dm_route(
+async def test_a_lieutenants_unoffered_write_file_call_is_refused_by_the_loop_on_the_dm_route(
     checkout: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T4, acceptance 1 and the severity: the DM route's executor runs a registered tool the model was never offered.
+    """T4, acceptance 1 and the severity, updated for #1796: the DM route refuses a registered tool the model was never offered.
 
-    The route builds ``DispatchToolExecutor(registry=)`` with no confinement and offers only the Captain's grants; the loop's call passes no
-    ``required``, so ``check_and_invoke`` asks for READ, and the rank matrix gives a lieutenant WRITE. A pass on both trees (it is about the
-    route, not the rule); if it fails the route is closed and P3-1 says Medium.
+    The route builds ``DispatchToolExecutor(registry=)`` with no confinement and offers only the Captain's grants. Before #1796 this case
+    called the executor directly and showed it writing: the registry resolves any registered tool the rank permits. #1796 put the offer
+    check in the loop every model-named call passes through, so the case drives the loop as ``_run_reserved`` composes it, offers
+    ``read_file`` only, and asserts the call is refused before ``WriteFileTool.invoke``. It passes only once #1796 is built.
     """
     registry = ToolRegistry()
     register_native_swe_tools(registry, SimpleNamespace())
     reached: list[str] = []
     real = WriteFileTool.invoke
+    target = str(checkout / "docs" / "dm.md")
 
     async def spy(self, params, context=None):  # type: ignore[no-untyped-def]
         reached.append(params["path"])
         return await real(self, params, context)
 
+    class _Model:
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def complete(self, request, **kwargs):  # type: ignore[no-untyped-def]
+            self.prompts.append(request.prompt)
+            if len(self.prompts) == 1:
+                call = ToolCallRequest(name="write_file", arguments={"path": target, "content": "x"}, id="t4-write")
+                return LLMResponse(content="", tokens_used=1, content_blocks=[ToolUseBlock(tool_call=call)])
+            return LLMResponse(content="done", tokens_used=1, content_blocks=[TextBlock(text="done")])
+
     monkeypatch.setattr(WriteFileTool, "invoke", spy)
-    target = str(checkout / "docs" / "dm.md")
-    result = await DispatchToolExecutor(registry=registry).invoke(
-        agent_id="lt-1", tool_id="write_file", params={"path": target, "content": "x"},
-        agent_department="engineering", agent_rank="lieutenant", context={})
-    assert reached == [target] and result.success, result.error
+    model = _Model()
+    loop = AgenticLoop(llm_client=model, tool_executor=DispatchToolExecutor(registry=registry))
+    result = await loop.run(
+        system_prompt="", user_message="", tools=[tool_registration_to_llm_definition(registry.get("read_file"))],
+        context={"agent_id": "lt-1", "department": "engineering", "rank": "lieutenant"})
+    assert reached == [] and result.stopped_reason == "complete"
+    assert result.tool_results[0].is_error and result.tool_results[0].output == UNOFFERED_TOOL_REFUSAL
+    assert f"[tool_result:t4-write error=True]\n{UNOFFERED_TOOL_REFUSAL}" in model.prompts[1]
 
 
 def test_census_the_captains_channels_do_not_consult_the_rule() -> None:

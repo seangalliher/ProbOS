@@ -35,6 +35,7 @@ from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.swe_harness.agentic_loop import (
     AGENTIC_DEFAULT_TIER,
+    UNOFFERED_TOOL_REFUSAL,
     AgenticBudgetAwarenessState,
 )
 from probos.cognitive.swe_harness.result_offload import workspace_delivery_context  # AD-1240
@@ -332,6 +333,7 @@ CONFINEMENT_ANSWERED = "answered"  # BF-947
 _NEVER_RAN_REFUSALS: frozenset[str] = frozenset({
     _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,
     CONFINED_CALL_ANSWERED, UNREGISTERED_TOOL_REFUSAL,
+    UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): the loop refused a tool outside the offer
 })
 
 
@@ -344,6 +346,8 @@ class ToolCallConfinement:
     (not filed). Enforced in the executor's invoke after AD-1356 S1.1's refusal of a tool id the registry does not
     hold, and before plan mode and the AD-1154 browser inbox, so the decision is made at the tool call, never by
     reading the plan. BF-947: ``record``, when set, is handed results of admitted calls (``record_admitted``).
+    BF-982: ``tool_ids``, ``gate`` and ``record`` see the registered id a provider alias resolves to; an ambiguous
+    name, or any name when the executor has no registry, is passed as the model sent it.
     """
 
     tool_ids: frozenset[str]
@@ -839,6 +843,13 @@ class _DispatchGuardMixin:
         confinement = self._confinement
         confined_admission = False
         admitted_params = params  # BF-947: what the gate was asked, for record_admitted
+        # BF-982: the id the confinement's set, gate and record see. A provider alias (the only name a model is shown
+        # for an mcp: tool) becomes the registered id it resolves to, so one call is filed, kept and approved under one
+        # id and filed_call_tier reads the tool's own tier; the runner's gate files the alias instead when the action
+        # payload's tool-id pattern refuses the id (approval_payload). Plan mode, deferred schemas, the browser checks
+        # and the executor below keep the name the model sent: each answers an alias and its id alike or
+        # resolves it itself.
+        confined_id = tool_id
         # AD-1356 S1.1: under a confinement, when the executor has a registry, a str tool id that resolves to no
         # registered tool is refused here, before the confinement's set and gate, so it is never filed. An ambiguous
         # name (``_resolve_tool_id`` answers None) goes on to the gate.
@@ -847,8 +858,10 @@ class _DispatchGuardMixin:
             if resolved is not None and self._registry.get(resolved) is None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(ToolResult(error=UNREGISTERED_TOOL_REFUSAL), "confinement_refused")
-        if confinement is not None and tool_id not in confinement.tool_ids:
-            refusal = await confinement.refuse_or_admit(agent_id, tool_id, params)
+            if resolved is not None:
+                confined_id = resolved
+        if confinement is not None and confined_id not in confinement.tool_ids:
+            refusal = await confinement.refuse_or_admit(agent_id, confined_id, params)
             if refusal is not None:
                 strict_log("confinement", "confinement_refused")
                 return refuse(refusal, "confinement_refused")
@@ -929,7 +942,7 @@ class _DispatchGuardMixin:
                 output=_with_disposition(result.output, " ".join(dispositions)),
             )
         if confined_admission and confinement is not None:
-            confinement.record_admitted(agent_id, tool_id, admitted_params, result)
+            confinement.record_admitted(agent_id, confined_id, admitted_params, result)
         return result
 
 
@@ -2154,6 +2167,7 @@ def classify_tool_fault_error(error: Any) -> str | None:
             _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
             CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED, CONFINED_CALL_ANSWERED,  # AD-1347 S3, BF-947
             UNREGISTERED_TOOL_REFUSAL,  # AD-1356 S1.1
+            UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): a refused unoffered call is not a fault
             "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
@@ -2207,6 +2221,18 @@ def _without_deferred_schema_refusals(agentic_result: Any) -> Any:
         ],
         tool_results=kept,
     )
+
+
+def without_never_ran_refusals(agentic_result: Any) -> Any:
+    """BF-965 (#1796): the public name of the strip above, for a route outside this module.
+
+    A fault observer reads a run through it, so a call answered by a
+    ``_NEVER_RAN_REFUSALS`` text never counts toward a defect. The fault
+    classification alone is not enough: ``collect_tool_fault_batch`` takes its
+    same-run defect before its noise filter. The DM route applies the strip in
+    ``run``; the native builder calls this.
+    """
+    return _without_deferred_schema_refusals(agentic_result)
 
 
 def _duplicate_tool_ids(items: Any) -> set[str]:
@@ -3597,9 +3623,11 @@ class WorkItemAgenticExecutor:
             ]
         # AD-1156: plan mode narrows the offer to its allowlist and arms the
         # matching invoke-time guard -- one decision, two consequences (BF-690).
-        # The guard is what holds for a tool the model names without being
-        # offered it, because the registry resolves every REGISTERED tool; it
-        # refuses before a call is resolved, parked (AD-1154) or run. Filtered
+        # BF-965: the loop refuses a tool the model names without being offered
+        # it before any executor sees the call; this guard stays as defence in
+        # depth, because the registry resolves every REGISTERED tool and a direct
+        # executor call is checked against no offer. It refuses before a call is
+        # resolved, parked (AD-1154) or run. Filtered
         # after every block has contributed, so a tool added to the union later
         # is withheld until it is classified, not offered by default.
         if plan_mode_tool_ids is not None:
@@ -3986,6 +4014,11 @@ class WorkItemAgenticExecutor:
         # AD-1189: an armed manifest needs the same seam; both off => no kwarg.
         if (mcp_offer_armed and mcp_offer is not None) or manifest_offer is not None:
             _loop_kwargs["refresh_tools"] = _refresh_tools
+        # BF-965: a withheld, loadable tool is named only inside load_tools, so the
+        # loop's offer check admits it and the AD-1189 guard answers the call. Unarmed
+        # => no kwarg, so a loop double pinning the unarmed keywords is unchanged.
+        if manifest_offer is not None:
+            _loop_kwargs["also_offered"] = manifest_offer.loadable_names
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
         # flag off the loop builds the AD-545 flattened prompt verbatim. Read

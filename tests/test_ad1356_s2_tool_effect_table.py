@@ -30,6 +30,7 @@ from probos.tools.effect_tiers import (
     routine_tool_ids,
     tool_tier,
 )
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
 from tests.test_ad1240_workspace_results import make_store
 from tests.test_ad1347_s1_agent_work import REASON
 from tests.test_ad1347_s3_execution import _call, _final, _pump, _rig, _seen, _thread_in
@@ -61,6 +62,8 @@ async def _native(rig: Any, tmp_path: Path, *, read_roots: list[Path]) -> Any:
     rig.runtime.config = rig.runtime.config.model_copy(update={"execution": execution, "security_infra": security})
     rig.runtime.workspace_results = store
     assert register_native_swe_tools(rig.tools, rig.runtime) == 12
+    for tool_id in ("read_file", "list_files", "codebase_query"):  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
+        await rig.permissions.issue_grant("forge-1", tool_id, ToolPermission.READ)
     await store.start()
     return store
 

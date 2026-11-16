@@ -34,7 +34,7 @@ from probos.capability_request import requests_for_work_item
 from probos.cognitive.agentic_dispatch import CONFINED_CALL_ANSWERED, WorkItemAgenticExecutor
 from probos.config import AgentWorkConfig
 from probos.routers.capability_requests import decide_capability_request
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolPermission, ToolResult
 from probos.types import LLMRequest
 from tests.test_ad1347_s1_agent_work import REASON, STOP_REASON
 from tests.test_ad1347_s3_execution import (
@@ -271,6 +271,7 @@ async def test_another_claimant_is_not_given_the_first_claimants_results(tmp_pat
         await _decide(rig, second.id, approve=True)
         released = await rig.store.get_work_item(item_id)
         assert released is not None and (released.status, released.assigned_to) == ("open", None)
+        await rig.permissions.issue_grant("laforge-1", "hull_survey", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
         assert (await rig.runner.claim("laforge-1", item_id))[0] == "claimed"
         await _pump(rig)
         shown = _shown(rig.llm.requests[5])

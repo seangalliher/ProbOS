@@ -2264,10 +2264,15 @@ async def test_real_discovery_withdrawal_releases_pins_only_after_successful_ass
         assert environment.bridge.invocations == [
             ("offline", "tool_000", {"value": "authorized-control"}),
         ]
+        # BF-965 (#1796): with no failure, the refresh withdrew the alias from the offer, so the loop refuses the call
+        # before the adapter's authority recheck is reached: no tool event, and the model sees the refusal. With a
+        # failed refresh the alias stays offered and the adapter denies it as before.
+        withdrawn = failure == "none"
+        assert (loop_module.UNOFFERED_TOOL_REFUSAL in _history(request)) is withdrawn
         assert [
             payload["is_error"] for event, payload in environment.events
             if event == "AGENTIC_TOOL_CALL_COMPLETED" and payload["tool_id"] == alias
-        ] == [False, True]
+        ] == ([False] if withdrawn else [False, True])
         return None
 
     llm = _BoundaryLLM(step)
@@ -2935,6 +2940,7 @@ async def test_correction_missing_search_denial_is_not_recreated_or_upgraded(
         assert index == 1
         assert "missing-search-control" in request.prompt
         assert "[tool_result:missing-search-denial error=True]" in request.prompt
+        assert loop_module.UNOFFERED_TOOL_REFUSAL in request.prompt  # BF-965 (#1796): the unoffered search tool is refused by the loop.
         assert MCP_DISPATCH_OFFER_CONTEXT_KEY not in environment.probe.calls[0][1]
         return None
 
@@ -2943,7 +2949,7 @@ async def test_correction_missing_search_denial_is_not_recreated_or_upgraded(
 
     _assert_script(environment, llm, 2)
     assert outcome.stopped_reason == "complete"
-    assert outcome.denied_tools == ["find_mcp_tool"]
+    assert outcome.denied_tools == []  # BF-965 (#1796): a call the loop refused is not a denial; AD-855 files nothing.
     assert factories == []
     assert projection.tool_registry.get("find_mcp_tool") is denied_definition
     assert environment.registry.get("find_mcp_tool") is source_definition
@@ -2983,13 +2989,14 @@ async def test_correction_discovery_never_upgrades_frozen_adapter_denial(
             return [_call(alias, "frozen-denial", value="must-not-invoke")]
         assert index == 2
         assert "[tool_result:frozen-denial error=True]" in request.prompt
+        assert loop_module.UNOFFERED_TOOL_REFUSAL in request.prompt  # BF-965 (#1796): the frozen alias is never offered, so the loop refuses it.
         return None
 
     llm = _BoundaryLLM(step)
     outcome = await _run_correction(projection, llm)
 
     _assert_script(environment, llm, 3)
-    assert outcome.stopped_reason == "complete" and outcome.denied_tools
+    assert outcome.stopped_reason == "complete" and outcome.denied_tools == []  # BF-965 (#1796): a refusal is not a denial.
     assert isinstance(environment.bridge, _SearchBridge) and environment.bridge.invocations == []
     assert environment.events == []
     _assert_trace(environment, outcome, 3)
@@ -3032,6 +3039,7 @@ async def test_correction_malformed_discovered_metadata_is_not_installed_or_invo
             return [_call(alias, "malformed-denial", value="must-not-invoke")]
         assert index == 2
         assert "[tool_result:malformed-denial error=True]" in request.prompt
+        assert loop_module.UNOFFERED_TOOL_REFUSAL in request.prompt  # BF-965 (#1796): uninstalled metadata is never offered, so the loop refuses it.
         return None
 
     llm = _BoundaryLLM(step)

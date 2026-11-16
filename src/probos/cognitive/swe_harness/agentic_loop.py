@@ -73,7 +73,7 @@ from probos.repository_instructions import (
     merge_instruction_observations,
 )
 from probos.tools.delegation_evidence import MESSAGE_OMISSION_MARKER, evidence_frame
-from probos.tools.executor import recording_identity, tool_recording_scope
+from probos.tools.executor import recording_identity, tool_record_identity, tool_recording_scope
 from probos.tools.protocol import ToolResult, ToolResultPresentation
 from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS
 from probos.types import LLMRequest
@@ -170,6 +170,17 @@ PARALLEL_SAFE_TOOL_IDS: frozenset[str] = frozenset(
 # in tests/test_ad1147_parallel_tools.py keeps the two in step.
 PARALLEL_TOOL_CALLS_DEFAULT = 3
 PARALLEL_TOOL_CALLS_MAX = 16
+
+# BF-965 (#1796): the model-facing refusal of a call that names a tool outside the
+# request's offer. Error-shaped and final, in the AD-1154 voice; it names no tool,
+# must not match ``_CAPABILITY_GAP_RE`` (``probos.cognitive.decomposer``) and is
+# never defect evidence (``agentic_dispatch._NEVER_RAN_REFUSALS``).
+UNOFFERED_TOOL_REFUSAL: str = (
+    "That call names a tool that is not in your current tool list, so it was "
+    "refused and did not run. Call only the tools in your list, by the names it "
+    "gives. If this step needs another tool, finish what your tools allow and "
+    "name the step and the tool it needs."
+)
 
 # AD-1148 / DD-3: truncation is visible to the model. The marker states that
 # content was elided and how much, so the agent can re-query more narrowly
@@ -1284,6 +1295,36 @@ def _delivery_stop(
     return None
 
 
+def _offered_tool_names(
+    tools: list[dict[str, Any]] | None,
+    also_offered: Callable[[], frozenset[str]] | None,
+    agent_id: str,
+) -> frozenset[str]:
+    """BF-965 (#1796): the names one step may call, matched later by exact string.
+
+    The ``function.name`` of each definition in the request that produced the
+    response, plus the AD-1189 loadable names when ``also_offered`` is set. A
+    failing ``also_offered`` costs the loadable names, never the offer.
+    """
+    names: set[str] = set()
+    for definition in tools or ():
+        function = definition.get("function") if isinstance(definition, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        if isinstance(name, str) and name:
+            names.add(name)
+    if also_offered is None:
+        return frozenset(names)
+    try:
+        loadable = frozenset(name for name in also_offered() if type(name) is str)
+    except Exception:
+        logger.warning(
+            "BF-965: the loadable tool names for agent %s could not be read; this "
+            "step admits only the tools its request offered", agent_id[:12], exc_info=True,
+        )
+        loadable = frozenset()
+    return frozenset(names) | loadable
+
+
 def _observe_completion_spend(
     observer: Any,
     result: AgenticResult,
@@ -1355,6 +1396,7 @@ class AgenticLoop:
             [LLMRequest, LLMResponse, Any, int, str], Any
         ] | None = None,
         workspace_results: WorkspaceResults | None = None,
+        also_offered: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         self._llm = llm_client
         self._executor = tool_executor
@@ -1430,6 +1472,10 @@ class AgenticLoop:
             LoopTierSteps(tier_controller, estimate_context=_estimate_context_tokens, is_tier1=is_tier_1_tool_call)
             if tier_controller is not None else None
         )
+        # BF-965: the AD-1189 names of withheld tools, shown only inside the load_tools
+        # definition and admitted beside each request's offer. None (every caller
+        # without an armed manifest) admits the request's offer alone.
+        self._also_offered = also_offered
         # AD-1240: None (every caller that injects no owner) keeps legacy delivery.
         # The assignment goes through the slot, so an invalid owner is refused here.
         if workspace_results is not None:
@@ -2120,8 +2166,13 @@ class AgenticLoop:
                     delivery_remaining,
                     self._max_iter - counted_iterations - (1 if _counts_toward_max_iterations(tool_uses) else 0),
                 )
+            # BF-965 (#1796): the names this step may call are the offer of the request that
+            # produced the response (an AD-1324 floor re-issue keeps its tools), with the
+            # AD-1189 loadable names; read once per step, matched exactly.
+            offered = _offered_tool_names(req.tools, self._also_offered, agent_id)
             tool_results = await self._execute_tool_uses(
                 tool_uses,
+                offered=offered,
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
@@ -2413,6 +2464,7 @@ class AgenticLoop:
         self,
         tool_uses: list[ToolUseBlock],
         *,
+        offered: frozenset[str],
         agent_id: str,
         iteration: int,
         context: dict[str, Any],
@@ -2446,7 +2498,7 @@ class AgenticLoop:
         if not self._parallel_tool_calls_enabled:
             return [
                 await self._execute_one_tool(
-                    use, agent_id=agent_id, iteration=iteration, context=context,
+                    use, offered=offered, agent_id=agent_id, iteration=iteration, context=context,
                     **({"fault_capture": fault_capture} if fault_capture is not None else {}),
                     **(
                         {"delivery_run": delivery_run, "delivery_remaining": delivery_remaining}
@@ -2470,6 +2522,7 @@ class AgenticLoop:
                 async with semaphore:
                     return await self._execute_one_tool(
                         tool_uses[index],
+                        offered=offered,
                         agent_id=agent_id,
                         iteration=iteration,
                         context=context,
@@ -2530,6 +2583,7 @@ class AgenticLoop:
         for index in sequential_indices:
             by_index[index] = await self._execute_one_tool(
                 tool_uses[index],
+                offered=offered,
                 agent_id=agent_id,
                 iteration=iteration,
                 context=context,
@@ -2552,6 +2606,7 @@ class AgenticLoop:
         self,
         use: ToolUseBlock,
         *,
+        offered: frozenset[str],
         agent_id: str,
         iteration: int,
         context: dict[str, Any],
@@ -2572,7 +2627,21 @@ class AgenticLoop:
         authority to recover it is refused BEFORE it starts, as an
         :class:`InvocationRefusal` (a control record, not a producer outcome):
         no executor call, no event, no hook and no observer ever sees it.
+
+        BF-965 (#1796): a call whose name is not in ``offered`` is refused first, as
+        an error result the model sees, before the AD-1240 invocation context, the
+        STARTED event, fault capture and the executor. Exact match: an offered
+        provider alias passes, the canonical id it stands for does not. R1: a name
+        that is not text is refused before it is hashed (the provider's JSON value
+        is unchecked; a list or a dict would raise outside the error handling).
         """
+        if type(use.tool_call.name) is not str or use.tool_call.name not in offered:
+            logger.info(
+                "BF-965: refused a call to a tool outside the offer agent=%s tool=%s "
+                "iteration=%d; it did not run",
+                agent_id[:12], tool_record_identity(use.tool_call.name), iteration,
+            )
+            return ToolCallResult(id=use.tool_call.id, output=UNOFFERED_TOOL_REFUSAL, is_error=True)
         correlation = (
             {
                 "run_id": run_id,

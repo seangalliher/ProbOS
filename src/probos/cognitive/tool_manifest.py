@@ -270,6 +270,15 @@ class ToolManifestOffer:
         """True while a requested definition the latest build assembles is not presented."""
         return bool((self._requested - self._presented) & self._last_built)
 
+    def loadable_names(self) -> frozenset[str]:
+        """BF-965: withheld names the latest build assembles and has not shown in full.
+
+        The ``load_tools`` definition lists them by name only, so the agentic loop
+        admits a call to one beside the request's offer and :meth:`withhold_call`
+        answers it. Empty until a build arms the offer (nothing is withheld before).
+        """
+        return (self._withheld & self._last_built) - self._presented
+
     def request(self, *, names: list[str] | None, query: str | None) -> dict[str, Any]:
         """Request withheld definitions the latest build assembles, by name or by query."""
         if names is not None and (
@@ -282,7 +291,7 @@ class ToolManifestOffer:
             type(query) is not str or len(query) > _QUERY_CHARS_LIMIT
         ):
             raise ValueError("load_tools query must be a bounded string")
-        loadable = (self._withheld & self._last_built) - self._presented
+        loadable = self.loadable_names()
         requested: list[str] = []
         available: list[str] = []
         unknown: list[str] = []
@@ -317,8 +326,9 @@ class ToolManifestOffer:
     def withhold_call(self, name: str) -> bool:
         """True, and request the definition, for a call to a still-withheld tool.
 
-        A withheld name the latest build no longer assembles is not refused here:
-        the executor resolves it as it resolves any name outside the offer.
+        A withheld name the latest build no longer assembles is not refused here.
+        It is not in :meth:`loadable_names`, so the agentic loop refuses it first as
+        a name outside the offer (BF-965).
         """
         if not self._armed or type(name) is not str:
             return False

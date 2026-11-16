@@ -88,6 +88,15 @@ _THREAD_ID_MAX = 64
 #: contract instead of forwarding a value that will be rejected outright.
 THREAD_ID_MAX_CHARS: int = _THREAD_ID_MAX
 
+
+def is_action_tool_id(tool_id: Any) -> bool:
+    """True when ``tool_id`` is a str the action payload's tool-id pattern accepts (``validate_action_payload``).
+
+    BF-982 (round 1): ``agent_work_runner.approval_payload`` reads it to file a call whose registered id it refuses
+    under the provider alias instead."""
+    return type(tool_id) is str and _TOOL_ID_RE.fullmatch(tool_id) is not None
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS capability_requests (
     id TEXT PRIMARY KEY,
@@ -213,7 +222,7 @@ def validate_action_payload(payload: Any) -> dict[str, Any] | None:
     session_id = payload["session_id"]
     thread_id = payload["thread_id"]
 
-    if type(tool_id) is not str or _TOOL_ID_RE.fullmatch(tool_id) is None:
+    if not is_action_tool_id(tool_id):
         return None
     if type(action) is not str or _ACTION_RE.fullmatch(action) is None:
         return None

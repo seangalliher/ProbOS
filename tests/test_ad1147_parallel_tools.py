@@ -36,6 +36,7 @@ from probos.cognitive.swe_harness.tool_call import (
 from probos.config import AgenticDispatchConfig, AgenticLoopConfig
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 
 _MUTATING_TOOL_IDS = ("run_python", "write_file", "edit_file", "run_command")
 
@@ -161,7 +162,7 @@ async def _run(
     result = await loop.run(
         system_prompt="sys",
         user_message="do it",
-        tools=[],
+        tools=[*offer(*names)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "agent-1"},
     )
     return client, executor, result
@@ -520,7 +521,7 @@ async def test_cancellation_propagates_and_reaps_in_flight_tools() -> None:
         loop.run(
             system_prompt="sys",
             user_message="go",
-            tools=[],
+            tools=[*offer("web_search", "read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
             context={"agent_id": "agent-1"},
         )
     )
@@ -552,7 +553,7 @@ async def test_cancellation_is_not_folded_into_an_error_result() -> None:
         loop.run(
             system_prompt="sys",
             user_message="go",
-            tools=[],
+            tools=[*offer("web_search", "read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
             context={"agent_id": "agent-1"},
         )
     )

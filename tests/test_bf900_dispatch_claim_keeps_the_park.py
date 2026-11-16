@@ -49,7 +49,7 @@ from probos.execution.command_escalation import (
 )
 from probos.execution.command_gate import CommandPolicyGate
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.types import AgentMeta, AgentState, IntentMessage, IntentResult
 from probos.workforce import WorkItemStore
@@ -303,6 +303,7 @@ async def wired(tmp_path: Path) -> AsyncIterator[_Wired]:
     # Captain-only: an ensign resolves to no access, so the call raises ToolPermissionDenied (test_ad856:217).
     registry.register(restricted, provider="test", default_permissions={"captain": "full"})
     registry.set_permission_store(perms)
+    await perms.issue_grant(AGENT, RESTRICTED, ToolPermission.NONE)  # #1796: the loop runs only offered tools; a grant offers it, and a NONE grant leaves the registry's rank-gate denial (this case's subject) unchanged.
     router = _RecordingRouter()
     runtime = _Runtime(
         work_item_router=router,

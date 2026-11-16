@@ -60,6 +60,7 @@ from probos.tools.registry import ToolPermissionDenied
 from probos.mesh.intent import IntentBus, MeshEffectOutcomeUnknown
 from probos.mesh.signal import SignalManager
 from probos.types import IntentMessage, LLMResponse
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1147_parallel_tools import _CapturingClient, _RecordingEmit
 from tests.test_ad1191_delegation_wire import (
     _LLM as _DelegationLLM,
@@ -1548,7 +1549,7 @@ async def test_repeated_model_action_reuses_unknown_operation(
     loop_result = await loop.run(
         system_prompt="strict",
         user_message="repeat",
-        tools=[],
+        tools=[*offer("opaque_mutation")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         context={"agent_id": "selected-agent-canary"},
     )
 
@@ -1626,7 +1627,7 @@ async def test_permission_refusal_correlation_reaches_strict_attachment(
         ).run(
             system_prompt="strict",
             user_message="deny",
-            tools=[],
+            tools=[*offer("denied_tool")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered; the registry's denial (this case's subject) is unchanged.
             context={"agent_id": "selected-agent-canary", "rank": "ensign"},
         )
     correlation = result.tool_results[0].effect_correlation
@@ -1757,7 +1758,7 @@ async def test_strict_event_emitter_failure_omits_exception_prose(
         ).run(
             system_prompt="strict",
             user_message="run",
-            tools=[],
+            tools=[*offer("SENTINEL_EVENT_TOOL")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             context={"agent_id": "selected-agent-canary"},
         )
 
@@ -1850,7 +1851,7 @@ async def test_strict_async_event_emitter_failure_is_consumed_safely(
             ).run(
                 system_prompt="strict",
                 user_message="run",
-                tools=[],
+                tools=[*offer("SENTINEL_ASYNC_TOOL")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
                 context={"agent_id": "selected-agent-canary"},
             )
             await asyncio.sleep(0)
@@ -2744,7 +2745,7 @@ async def test_delegation_binding_ack_loss_reuses_one_parent_operation(
     ).run(
         system_prompt="strict",
         user_message="delegate twice",
-        tools=[],
+        tools=[*offer("delegate_task")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         context={"agent_id": "selected-agent-canary"},
     )
 
@@ -3210,7 +3211,7 @@ async def test_reservation_failure_propagates_without_completion_event(
         await loop.run(
             system_prompt="strict",
             user_message="reserve",
-            tools=[],
+            tools=[*offer("web_search")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             context={"agent_id": "selected-agent-canary"},
         )
     assert not any(name == "AGENTIC_TOOL_CALL_COMPLETED" for name, _ in events)

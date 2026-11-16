@@ -22,6 +22,7 @@ from probos.cognitive.swe_harness.tool_call import result_delivery
 from probos.execution.workspace_results import TOOL_RESULT_THRESHOLD_BYTES
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1240_tool_result_delivery import (
     _AGENT_ID,
     _RawTool,
@@ -166,7 +167,7 @@ async def test_an_oversized_read_only_result_comes_back_as_an_error_and_a_narrow
     llm = _NarrowingLLM("event_log_query", rows)
     async with _started(runtime):
         result = await _loop(llm, executor, runtime, structured=structured).run(
-            system_prompt="", user_message="", tools=[], context=context,
+            system_prompt="", user_message="", tools=[*offer("event_log_query")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         )
     assert result.stopped_reason == "complete" and result.final_text == "done"
     assert tool.limits == [rows, 5] and len(llm.requests) == 3
@@ -189,7 +190,7 @@ async def test_a_failed_delivery_still_ends_the_run_for_a_producer_that_is_not_r
     _withhold_reader(runtime, monkeypatch)
     llm = _NarrowingLLM("fixture_result", 100)
     async with _started(runtime):
-        result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[], context=context)
+        result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[*offer("fixture_result")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     assert result.stopped_reason == "error" and result.error == "reader_unavailable"
     assert result.final_text == "Result delivery failed (reader_unavailable)."
     assert tool.limits == [100] and len(llm.requests) == 1
@@ -214,7 +215,7 @@ async def test_a_recovery_read_over_the_bound_comes_back_naming_the_bound_and_a_
     runtime.tool_registry.register(producer)
     llm = _ReadBackLLM(list(limits))
     async with _started(runtime):
-        result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[], context=context)
+        result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[*offer("event_log_query", "read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
     assert result.stopped_reason == "complete" and len(llm.requests) == requests and producer.calls == 1
     assert result_delivery(result.tool_results[0]).status == "workspace"
     assert result_delivery(result.tool_results[-1]).status == "recovered" and llm.frames[-1] == "L" * 6000
@@ -240,7 +241,7 @@ async def test_a_promised_read_whose_authority_is_lost_still_ends_the_run(
     runtime.tool_registry.register(producer)
     llm = _ReadBackLLM([4096], before_read=lambda: _withhold_reader(runtime, monkeypatch))
     async with _started(runtime):
-        result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[], context=context)
+        result = await _loop(llm, executor, runtime).run(system_prompt="", user_message="", tools=[*offer("event_log_query", "read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
     assert result.stopped_reason == "error" and result.error == "reference_unavailable"
     assert result.final_text == "Result delivery failed (reference_unavailable)."
     assert len(llm.requests) == 2 and len(result.tool_calls) == 2 and len(result.tool_results) == 1
@@ -253,7 +254,7 @@ async def _frame_length(owned: Path) -> int:
     runtime.tool_registry.register(_EventLogShaped())
     async with _started(runtime):
         result = await _loop(_NarrowingLLM("event_log_query", 100), executor, runtime, bound=900).run(
-            system_prompt="", user_message="", tools=[], context=context,
+            system_prompt="", user_message="", tools=[*offer("event_log_query")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         )
     delivery = result_delivery(result.tool_results[0])
     assert delivery.status == "workspace"
@@ -276,7 +277,7 @@ async def test_a_fresh_frame_exactly_at_the_bound_is_delivered(tmp_path: Path) -
     llm = _NarrowingLLM("event_log_query", 100)
     async with _started(runtime):
         result = await _loop(llm, executor, runtime, bound=length).run(
-            system_prompt="", user_message="", tools=[], context=context,
+            system_prompt="", user_message="", tools=[*offer("event_log_query")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         )
     delivery = result_delivery(result.tool_results[0])
     assert delivery.status == "workspace" and len(delivery.presentation) == length
@@ -295,7 +296,7 @@ async def test_a_fresh_frame_one_over_the_bound_comes_back_as_an_error(tmp_path:
     llm = _NarrowingLLM("event_log_query", 100)
     async with _started(runtime):
         result = await _loop(llm, executor, runtime, bound=length - 1).run(
-            system_prompt="", user_message="", tools=[], context=context,
+            system_prompt="", user_message="", tools=[*offer("event_log_query")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         )
     delivery = result_delivery(result.tool_results[0])
     assert delivery.status == "failed" and delivery.code == "delivery_frame_too_large"
@@ -323,7 +324,7 @@ async def test_each_failed_delivery_logs_one_content_free_warning_naming_its_sit
     caplog.set_level(logging.WARNING, logger=_OFFLOAD_LOGGER)
     async with _started(runtime):
         result = await _loop(_NarrowingLLM("event_log_query", 100), executor, runtime, bound=bound).run(
-            system_prompt="", user_message="", tools=[], context=context,
+            system_prompt="", user_message="", tools=[*offer("event_log_query")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         )
     assert result_delivery(result.tool_results[0]).code == code  # premise: the case failed as named
     warnings = [

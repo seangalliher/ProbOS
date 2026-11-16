@@ -22,12 +22,15 @@ import pytest
 from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
 from probos.api_models import CapabilityRequestDecideRequest
 from probos.approval_authority import ApprovalAuthorityStore
-from probos.capability_request import requests_for_work_item
+from probos.capability_request import is_action_tool_id, requests_for_work_item
 from probos.cognitive.agentic_dispatch import _McpTool
+from probos.cognitive.swe_harness.tool_call import llm_function_name
 from probos.delegated_approvals import AUDIT_CATEGORY, DeciderRole, DelegatedApprovalService, Refusal, RequestClass
 from probos.routers.capability_requests import decide_capability_request, fulfil_on_approval
 from probos.security.audit import AuditLog
 from probos.tools.effect_tiers import TIER_CRITICAL, filed_call_tier
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
+from tests.offered_tools import OfferedMcpTools  # #1796: a dispatch run offers an MCP adapter only through AD-1241.
 from tests.test_ad1347_s1_agent_work import RANKS, REASON
 from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _pump, _rig, _seen, _thread_in
 from tests.test_ad1356_s2_tool_effect_table import NOTES, _native, _notes, _self_task
@@ -163,6 +166,8 @@ async def test_a_chiefs_own_elevated_call_and_another_departments_chief_leave_it
         store = await _native(rig, tmp_path, read_roots=[notes.parent])
         try:
             async with _chain(rig) as (service, _audit, _told):
+                # #1796: the loop runs only offered tools; a dispatch run offers its granted tools, and LaForge runs this.
+                await rig.permissions.issue_grant("laforge-1", "list_files", ToolPermission.READ)
                 origin = await _thread_in(rig, "engineering", "forge-1")
                 created = await rig.service.create_self_task(
                     "laforge-1", title="List the relay notes", description="", reason=REASON,
@@ -227,27 +232,44 @@ async def test_a_filed_path_read_stays_with_the_captain_after_read_roots_are_set
 
 
 # CC5
-@pytest.mark.parametrize("case", ["open", "confirm", "reaped"])
+@pytest.mark.parametrize("case", ["open", "confirm", "reaped", "len65", "slash"])
 async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, case: str) -> None:
     """An OPEN MCP tool is elevated: LaForge approves forge-1's call and it runs. A CONFIRM tool is critical, and so is
     an OPEN tool no longer registered when its call is decided: LaForge is refused, and after the Captain's approval
-    the item finishes with the bridge never asked."""
+    the item finishes with the bridge never asked. BF-982 (round 1): an OPEN tool whose registered id the action
+    payload's tool-id pattern refuses (65 characters, or a ``/``) is filed under its alias, as before BF-982, so the
+    call is critical: LaForge is refused, and after the Captain's approval it runs once and the item finishes."""
     bridge = _Bridge()
+    name = {"len65": "s" * 56, "slash": "search/web"}.get(case, "search")
     tool = _McpTool(
-        bridge=bridge, server_url="docs", server_name="docs", server_id="srv-docs", tool_name="search", name="search",
+        bridge=bridge, server_url="docs", server_name="docs", server_id="srv-docs", tool_name=name, name=name,
         description="Search the relay docs.", input_schema={"type": "object"},
         server_default_risk="confirm" if case == "confirm" else "open", risk_store=None,
         consensus_invoke=AsyncMock(), authorize=lambda agent_id: True,
     )
     query = {"query": "drift budget"}
-    script = [_call(tool.tool_id, query, "c1"), _final("Waiting."), _call(tool.tool_id, query, "c2"), _final(ANSWER)]
+    # BF-982 (#1817): a model is shown an mcp: tool only under its provider alias, so the script calls the alias.
+    alias = llm_function_name(tool.tool_id)
+    unfiled = case in ("len65", "slash")  # BF-982 (round 1): the payload pattern refuses the registered id
+    assert (is_action_tool_id(tool.tool_id), is_action_tool_id(alias)) == (not unfiled, True)  # premise
+    filed = alias if unfiled else tool.tool_id
+    script = [_call(alias, query, "c1"), _final("Waiting."), _call(alias, query, "c2"), _final(ANSWER)]
     async with _rig(tmp_path, script) as rig:
         rig.tools.register(
             tool, provider="AD-1019c", tags=[tool.tool_id, "mcp"], default_permissions=dict.fromkeys(RANKS, "read"),
         )
+        # #1796: the loop runs only offered tools, and a dispatch run offers an MCP adapter only through its AD-1241 offer.
+        rig.runtime.mcp_workbench = OfferedMcpTools(tool.tool_id)
+        rig.runtime.config = rig.runtime.config.model_copy(
+            update={"mcp": rig.runtime.config.mcp.model_copy(update={"agent_tools_enabled": True})},
+        )
         async with _chain(rig) as (service, _audit, _told):
             item_id = await _self_task(rig, "Look up the drift budget")
             request = await _parked_on(rig, item_id)
+            # BF-982: the registered id, not the alias; round 1: the alias when the payload pattern refuses the id
+            assert (request.payload["tool_id"], request.rationale) == (
+                filed, f"agent work {item_id[:8]} called {filed}, a call that needs approval",
+            )
             if case == "reaped":
                 assert rig.tools.unregister(tool.tool_id)
             outcome = await _decide(service, "laforge-1", request.id)
@@ -256,6 +278,12 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
                 await _pump(rig)
                 await _finished(rig, item_id)
                 assert bridge.asked == [("docs", "search", query)] and _seen(rig, DOCS)
+            elif unfiled:
+                assert outcome.refusal is Refusal.CAPTAIN_RESERVED
+                await _captain_approves(rig, request.id)
+                await _finished(rig, item_id)
+                assert bridge.asked == [("docs", name, query)] and _seen(rig, DOCS)
+                assert len(requests_for_work_item(rig.requests, item_id)) == 1  # the resumed call matched its approval
             else:
                 assert outcome.refusal is Refusal.CAPTAIN_RESERVED
                 await _captain_approves(rig, request.id)

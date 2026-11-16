@@ -29,8 +29,9 @@ from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, T
 from probos.cognitive.turn_cost import TurnCostBudget
 from probos.config import DmAgenticConfig
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
+from tests.offered_tools import offer, offer_scripted  # #1796: the loop runs only offered tools.
 
 MARKER = "Budget notice"
 BUDGET = 1000
@@ -105,7 +106,7 @@ async def run(
         max_iterations=kwargs.pop("max_iterations", 20), **extra, **kwargs,
     )
     result = await loop.run(
-        system_prompt="You are Ezri.", user_message="Research.", tools=[],
+        system_prompt="You are Ezri.", user_message="Research.", tools=[*offer_scripted(responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     return result, client, tools
@@ -551,7 +552,7 @@ async def test_two_pass_seam_shares_state_through_real_executor_and_loop() -> No
     # Pass 1: a real loop crosses 50% (1,100 of 2,048) and stops at max_iterations.
     client1, tools1 = Client([write(1100)]), Tools()
     loop = AgenticLoop(llm_client=client1, tool_executor=tools1, max_iterations=1, **budget.loop_kwargs())
-    first = await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "a"})
+    first = await loop.run(system_prompt="s", user_message="u", tools=[*offer("write_file")], context={"agent_id": "a"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     budget.record(first)
     assert first.stopped_reason == "max_iterations"
     assert awareness.used_thresholds == frozenset({0.5}) and awareness.transition_count == 1
@@ -570,10 +571,12 @@ async def test_two_pass_seam_shares_state_through_real_executor_and_loop() -> No
     executor = agentic_dispatch.WorkItemAgenticExecutor(llm_client=client2)
     import unittest.mock as mock
 
+    runtime = _executor_runtime()
+    await runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     with mock.patch.object(AgenticLoop, "__init__", _spy):
         outcome = await executor.run(
             agent_id="counselor-ezri", instructions="You are Ezri.", task_text="Go on.",
-            runtime=_executor_runtime(), max_iterations=5, **budget.loop_kwargs(),
+            runtime=runtime, max_iterations=5, **budget.loop_kwargs(),
         )
     assert captured == [awareness] and captured[0] is awareness
     assert outcome.stopped_reason == "complete"
@@ -615,7 +618,11 @@ def test_native_builder_and_continue_or_ask_are_untouched_negative_pins() -> Non
     # AD-1240 (#1239): native_builder.py now assigns the workspace-results slot and merges the delivery
     # context (7 added lines); the protected property (no budget_awareness in this file) is unchanged.
     # The blob before AD-1240 was 764d0f86d2fc339e83ec8f3a71cc3631c26876b3.
-    rel, blob = "cognitive/swe_harness/native_builder.py", "24179141cc441e31e176227fc767b39b950ac976"
+    # #1796 (review round 1): run_build hands its fault observer the run without
+    # never-ran refusals (one import, one call argument, a four-line comment); the
+    # protected property (no budget_awareness in this file) is unchanged.
+    # The blob before #1796 was 24179141cc441e31e176227fc767b39b950ac976.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "6641aa6aa67c91244efc6189d7044397bd46eaf1"
     data = (_SRC / rel).read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == blob, rel
     assert b"budget_awareness" not in data

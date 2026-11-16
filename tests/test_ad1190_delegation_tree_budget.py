@@ -52,9 +52,10 @@ from probos.tools.delegation_budget import (
 )
 from probos.tools.delegation_evidence import DelegatedToolResult
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMResponse
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 _DELEGATED_KEYS = {"delegated", "to", "result", "stopped_reason"}
 _BUDGET_LOGGER = "probos.tools.delegation_budget"
@@ -236,7 +237,14 @@ def _runtime(
     return runtime
 
 
+async def _offer_probe(runtime: SimpleNamespace) -> None:
+    """#1796: a dispatch run offers its agent's granted tools, so every agent here is granted the probe its script calls."""
+    for agent_id in ("parent", "child", "grandchild"):
+        await runtime.tool_permission_store.issue_grant(agent_id, "probe", ToolPermission.READ)
+
+
 async def _parent(runtime: SimpleNamespace, llm: Any) -> WorkItemAgenticOutcome:
+    await _offer_probe(runtime)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     return await WorkItemAgenticExecutor(llm_client=llm).run(
         agent_id="parent", instructions="parent instructions", task_text="delegate the work",
         runtime=runtime, thread_id="thread", max_iterations=6,
@@ -1093,6 +1101,7 @@ def _offered(request: Any) -> list[str]:
 async def _run_child(
     runtime: Any, llm: Any, extra_context: dict[str, Any],
 ) -> WorkItemAgenticOutcome:
+    await _offer_probe(runtime)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     return await WorkItemAgenticExecutor(llm_client=llm).run(
         agent_id="child", instructions="child instructions", task_text="child task",
         runtime=runtime, thread_id="thread", max_iterations=2, extra_context=extra_context,
@@ -1624,8 +1633,9 @@ async def _loop_run(
         llm_client=client, tool_executor=tools,
         max_iterations=max_iterations, token_budget=token_budget,
     )
+    # #1796: the loop runs only offered tools, so the calls a script makes are offered; a script with none offers nothing.
     return await loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={"agent_id": "a1"},
+        system_prompt="sys", user_message="task", tools=offer_scripted(responses), context={"agent_id": "a1"},
     )
 
 
