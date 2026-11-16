@@ -29,8 +29,9 @@ from probos.cognitive.swe_harness.tool_call import TextBlock, ToolCallRequest, T
 from probos.cognitive.turn_cost import TurnCostBudget
 from probos.config import DmAgenticConfig
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
+from tests.offered_tools import offer, offer_scripted  # #1796: the loop runs only offered tools.
 
 MARKER = "Budget notice"
 BUDGET = 1000
@@ -105,7 +106,7 @@ async def run(
         max_iterations=kwargs.pop("max_iterations", 20), **extra, **kwargs,
     )
     result = await loop.run(
-        system_prompt="You are Ezri.", user_message="Research.", tools=[],
+        system_prompt="You are Ezri.", user_message="Research.", tools=[*offer_scripted(responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     return result, client, tools
@@ -551,7 +552,7 @@ async def test_two_pass_seam_shares_state_through_real_executor_and_loop() -> No
     # Pass 1: a real loop crosses 50% (1,100 of 2,048) and stops at max_iterations.
     client1, tools1 = Client([write(1100)]), Tools()
     loop = AgenticLoop(llm_client=client1, tool_executor=tools1, max_iterations=1, **budget.loop_kwargs())
-    first = await loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "a"})
+    first = await loop.run(system_prompt="s", user_message="u", tools=[*offer("write_file")], context={"agent_id": "a"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     budget.record(first)
     assert first.stopped_reason == "max_iterations"
     assert awareness.used_thresholds == frozenset({0.5}) and awareness.transition_count == 1
@@ -570,10 +571,12 @@ async def test_two_pass_seam_shares_state_through_real_executor_and_loop() -> No
     executor = agentic_dispatch.WorkItemAgenticExecutor(llm_client=client2)
     import unittest.mock as mock
 
+    runtime = _executor_runtime()
+    await runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     with mock.patch.object(AgenticLoop, "__init__", _spy):
         outcome = await executor.run(
             agent_id="counselor-ezri", instructions="You are Ezri.", task_text="Go on.",
-            runtime=_executor_runtime(), max_iterations=5, **budget.loop_kwargs(),
+            runtime=runtime, max_iterations=5, **budget.loop_kwargs(),
         )
     assert captured == [awareness] and captured[0] is awareness
     assert outcome.stopped_reason == "complete"

@@ -44,6 +44,7 @@ from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItemStore
 from tests import test_ad1125_room_bound_execution as room
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1258_self_knowledge import _OfferSysProxy
 
 
@@ -355,9 +356,14 @@ async def _off_observation(
             parallel_tool_calls_enabled=parallel, structured_tool_messages=parallel,
         )
         result = await loop.run(
-            system_prompt="sys", user_message="task", tools=[], context=context,
+            system_prompt="sys", user_message="task", tools=[*offer("read_page")], context=context,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
             on_run_started=callbacks.append,
         )
+        # #1796: the offer was added after this capture. Each request carried exactly it; the captured requests carried
+        # none, so that value is restored and every other byte stays compared with the golden.
+        assert [request["request"]["tools"] for request in client.requests] == [offer("read_page")] * 2
+        for request in client.requests:
+            request["request"]["tools"] = []
         assert result.stopped_reason == "complete" and result.total_tokens == 18
         assert len(tools.calls) == 2 and len(client.requests) == 2
         assert callbacks == [tools.calls[0]["context"]["_agentic_run_id"]]
@@ -702,7 +708,7 @@ async def test_concurrent_same_instance_duplicate_ids_reach_runtime_listener() -
     runtime.add_event_listener(unrelated.append, ["irrelevant"])
     tasks = [
         asyncio.create_task(loop.run(
-            system_prompt=name, user_message="task", tools=[], context=incoming,
+            system_prompt=name, user_message="task", tools=[*offer("read_page")], context=incoming,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
             on_run_started=callbacks[name].append,
         ))
         for name in callbacks
@@ -788,7 +794,7 @@ async def test_original_indices_preserve_order_ceiling_and_mutation_barrier(
         tools, parallel_tool_calls_enabled=parallel, max_parallel_tool_calls=bound,
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={"agent_id": "a"},
+        system_prompt="sys", user_message="task", tools=[*offer("write_file", "read_page", "unknown")], context={"agent_id": "a"},  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
     ))
     try:
         await asyncio.wait_for(started.wait(), 3)
@@ -816,7 +822,7 @@ async def test_nested_same_instance_tool_run_keeps_parent_identity() -> None:
             self.calls.append(_snapshot(kwargs))
             if kwargs["params"]["label"] == "outer:first":
                 nested_results.append(await loop.run(
-                    system_prompt="inner", user_message="nested", tools=[],
+                    system_prompt="inner", user_message="nested", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
                     context=kwargs["context"], on_run_started=nested_ids.append,
                 ))
             return ToolResult(output=kwargs["params"]["label"])
@@ -824,7 +830,7 @@ async def test_nested_same_instance_tool_run_keeps_parent_identity() -> None:
     tools = _NestedTools()
     loop, _, events = _listened_loop(_PerRunClient(), tools)
     result = await loop.run(
-        system_prompt="outer", user_message="task", tools=[],
+        system_prompt="outer", user_message="task", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         context={"agent_id": "same"}, on_run_started=outer_ids.append,
     )
     assert result.final_text == "done:outer" and nested_results[0].final_text == "done:inner"
@@ -855,7 +861,7 @@ async def test_reentrant_callbacks_and_delayed_emission_capture_run_locals() -> 
             if name == "outer":
                 start("callback")
         pending_runs.append(asyncio.create_task(loop.run(
-            system_prompt=name, user_message=name, tools=[], context=incoming,
+            system_prompt=name, user_message=name, tools=[*offer("read_page")], context=incoming,  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
             on_run_started=observed,
         )))
 
@@ -912,7 +918,7 @@ async def test_iteration_source_qualifies_only_accumulated_prefix(
             LLMResponse(content="done", tokens_used=third),
         ]), _ToolRecorder(),
     )
-    result = await loop.run(system_prompt="sys", user_message="task", tools=[], context={})
+    result = await loop.run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     iterations = [event["data"] for event in events if event["type"] == LOOP_EVENTS[0]]
     assert [data["token_source"] for data in iterations] == prefix
     assert iterations[0]["total_tokens"] == 0
@@ -935,7 +941,7 @@ async def test_tool_failures_keep_pairable_identity(parallel: bool, error: str) 
         _ScriptedClient([_tool_turn("a", "b"), LLMResponse(content="done", tokens_used=2)]),
         _FailedTools(), parallel_tool_calls_enabled=parallel,
     )
-    result = await loop.run(system_prompt="sys", user_message="task", tools=[], context={})
+    result = await loop.run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     assert result.stopped_reason == "complete" and all(item.is_error for item in result.tool_results)
     assert len(result.tool_results) == 2
     assert all(e["data"]["is_error"] for e in events if e["type"] == LOOP_EVENTS[2])
@@ -959,7 +965,7 @@ async def test_exit_boundaries_preserve_existing_event_cardinality(case: str) ->
     )
     ids: list[str] = []
     result = await loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={},
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={},  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         on_run_started=ids.append,
     )
     assert len(ids) == 1
@@ -999,7 +1005,7 @@ async def test_cancelled_executing_and_queued_calls_emit_no_fake_completion(boun
         parallel_tool_calls_enabled=True, max_parallel_tool_calls=bound,
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={},
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={},  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     ))
     try:
         await asyncio.wait_for(entered.wait(), 3)
@@ -1037,7 +1043,7 @@ async def test_sink_failures_do_not_change_execution(sink: str) -> None:
     )
     ids: list[str] = []
     result = await loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={}, on_run_started=ids.append,
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={}, on_run_started=ids.append,  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     )
     outcomes = await asyncio.gather(*tuple(loop._tasks), return_exceptions=True)
     assert result.stopped_reason == "complete" and result.total_tokens == 9 and len(ids) == 1
@@ -1118,7 +1124,7 @@ async def test_enabled_run_identity_reaches_real_tool_records_without_changing_i
         ids: list[str] = []
         for name in ("first", "second"):
             result = await loop.run(
-                system_prompt=name, user_message="task", tools=[],
+                system_prompt=name, user_message="task", tools=[*offer("read_page")],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
                 context={"agent_id": "same", "_agentic_run_id": "inherited"},
                 on_run_started=ids.append,
             )

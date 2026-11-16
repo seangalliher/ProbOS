@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 from tests.test_ad1324_loop_tier_choice import DIRECTIVE, Client, Tools, answer, controller, read
 
 
@@ -22,7 +23,7 @@ async def run(responses: list[Any], ctl: Any = None, **kw: Any) -> tuple[Any, Cl
     extra = {"tier_controller": ctl} if ctl is not None else {}
     loop = AgenticLoop(llm_client=client, tool_executor=tools, tier="fast", **extra, **kw)
     result = await asyncio.wait_for(  # an unbounded redo fails here instead of hanging
-        loop.run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "ezri"}), 10,
+        loop.run(system_prompt="s", user_message="u", tools=[*offer_scripted(responses)], context={"agent_id": "ezri"}), 10,  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
     )
     return result, client, tools
 

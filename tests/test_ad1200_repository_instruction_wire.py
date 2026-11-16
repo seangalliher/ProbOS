@@ -30,6 +30,7 @@ from probos.tools.permissions import ToolPermissionStore
 from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 
 _ROOT = Path(__file__).resolve().parents[1]
 _GOLDEN = _ROOT / "tests" / "fixtures" / "ad1200_no_instructions_golden.json"
@@ -732,7 +733,7 @@ async def test_shared_loop_nested_and_concurrent_runs_keep_observations_local(
 
     async def run(label: str) -> Any:
         return await loop.run(
-            system_prompt="BASE", user_message=label, tools=[],
+            system_prompt="BASE", user_message=label, tools=[*offer("read_file")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             context={"agent_id": _AGENT, "rank": "lieutenant"},
         )
 
@@ -787,7 +788,7 @@ async def test_cancelled_loop_drops_guidance_before_next_run(tmp_path: Path) -> 
         structured_tool_messages=True,
     )
     task = asyncio.create_task(loop.run(
-        system_prompt="BASE", user_message="cancel", tools=[],
+        system_prompt="BASE", user_message="cancel", tools=[*offer("read_file")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": _AGENT, "rank": "lieutenant"},
     ))
     try:

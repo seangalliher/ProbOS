@@ -66,6 +66,7 @@ from probos.crew_utils import CREW_EXECUTION_KEYS
 from probos.tools.protocol import Tool, ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.workforce import WorkItem
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 
 # Distinct sentinels at each end so "head AND tail survived" is provable, with a
 # body long enough that the two slices cannot overlap.
@@ -192,7 +193,7 @@ async def _run_loop(
     result = await loop.run(
         system_prompt="sys",
         user_message="do it",
-        tools=[],
+        tools=[*offer_scripted(client.responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
         context={"agent_id": "agent-1"},
     )
     return client, result
@@ -304,7 +305,7 @@ async def test_tool_results_are_captured_in_request_order_across_iterations() ->
         tool_executor=_ScriptedExecutor(["o1", "o2", "o3"]),  # type: ignore[arg-type]
     )
     result = await loop.run(
-        system_prompt="sys", user_message="go", tools=[], context={"agent_id": "a"}
+        system_prompt="sys", user_message="go", tools=[*offer_scripted(client.responses)], context={"agent_id": "a"}  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     )
 
     assert [c.id for c in result.tool_calls] == ["c1", "c2", "c3"]

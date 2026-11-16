@@ -41,7 +41,7 @@ from probos.execution.long_runs import (
 from probos.security.audit import AuditLog
 from probos.startup.shutdown import shutdown
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolPermission, ToolResult
 from probos.tools.registry import ToolRegistry
 
 _FINAL_TEXT = "LONG-RUN-DONE-7f3a"
@@ -409,6 +409,7 @@ async def test_m1_grant_reaches_the_tool_only_from_a_promotable_turn(
         runtime.chat_thread_store = None
     probe = _GrantProbe()
     runtime.tool_registry.register(probe)
+    await runtime.tool_permission_store.issue_grant("conversation-agent", "grant_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     agent = _conversational_agent(runtime, _ScriptedLLM("grant_probe", {}))
     try:
         await asyncio.wait_for(_conversation(agent, thread_id), timeout=15)
@@ -788,6 +789,7 @@ async def _run_with_extra_context(
     """The real ``WorkItemAgenticExecutor.run`` boundary, called the way a direct turn calls it."""
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 
+    await runtime.tool_permission_store.issue_grant("conversation-agent", "grant_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     return await asyncio.wait_for(
         WorkItemAgenticExecutor(llm_client=llm).run(
             agent_id="conversation-agent", instructions="Test instructions.",

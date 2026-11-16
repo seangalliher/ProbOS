@@ -65,10 +65,11 @@ from probos.tools.browser.actions import classify_action
 from probos.tools.browser.session import BrowserSession
 from probos.tools.browser.tool import _AGENT_ACTIONS, BrowserTool
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from probos.workforce import WorkItem
 
+from tests.offered_tools import offer_scripted  # #1796: the loop runs only offered tools.
 from tests.test_ad706_browser_tool import _FakePage, _make_session_factory
 
 
@@ -208,6 +209,7 @@ async def _fifteen_fetch_turn(monkeypatch: Any, tmp_path: Any, cfg: DmAgenticCon
         agent._conversational_agentic_will_run = (
             lambda obs: CognitiveAgent._conversational_agentic_will_run(agent, obs)
         )
+        await agent._runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
         text = await CognitiveAgent._maybe_run_conversational_agentic(
             agent,
             {"intent": "direct_message", "params": {}},
@@ -430,7 +432,7 @@ async def _run_loop(
     result = await loop.run(
         system_prompt="You are Ezri.",
         user_message="Research the packages.",
-        tools=[],
+        tools=[*offer_scripted(responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     return result, executor
@@ -1685,7 +1687,7 @@ async def _run_gated_loop(executor: Any, responses: list[_LoopResponse], **loop_
     return await loop.run(
         system_prompt="You are the engineer.",
         user_message="Finish the payment.",
-        tools=[],
+        tools=[*offer_scripted(responses)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "agent-a", "department": "engineering", "rank": "commander"},
     )
 
@@ -1876,6 +1878,7 @@ async def _answer_at_the_budget_turn(
     hold = asyncio.Event() if promoted else None
     work_items, threads = _FakeWorkItemStore(), _FakeThreadStore()
     runtime = _fetch_runtime(registry, store, cfg)
+    await runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     observation: dict[str, Any] = {"intent": "direct_message", "params": {}}
     if promoted:
         runtime.work_item_store = work_items
@@ -2107,6 +2110,7 @@ async def test_f1_armed_empty_answer_at_the_budget_keeps_the_cost_stop(
     monkeypatch.setattr(agentic_dispatch.WorkItemAgenticExecutor, "run", _recording_run)
     llm = _EmptyAnswerLLM(_N_FETCH, answer=answer)
     agent = _real_dm_agent(_fetch_runtime(registry, store, cfg), llm)
+    await agent._runtime.tool_permission_store.issue_grant("counselor-ezri", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     try:
         decision = await agent._decide_via_llm(
             {"intent": "direct_message", "params": {"text": "Tabulate the fifteen packages."}},

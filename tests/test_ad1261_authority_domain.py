@@ -26,6 +26,7 @@ from probos.ontology.models import Post
 from probos.tools.executor import ToolExecutor
 from probos.tools.protocol import ToolPermission, ToolResult, ToolResultPresentation
 from probos.tools.self_query_tool import SELF_QUERY_OPTIONAL_DOMAINS, SelfQueryTool
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from tests.test_ad1260_wellness_domain import (
     _FakeCatalogTool, _FakeRuntime, _NoLiveLLM, _SUBJECT, _OTHER, _PRIVATE, _PEER,
     _OMISSION_NOTICE,
@@ -1043,7 +1044,7 @@ async def test_loop_r2_retained_text_reaches_next_request_without_third_represen
         llm_client=client, tool_executor=executor, structured_tool_messages=structured,
         tool_result_max_chars=6000, max_iterations=2,
     ).run(
-        system_prompt="SYS", user_message="Read explicit self domains.", tools=[],
+        system_prompt="SYS", user_message="Read explicit self domains.", tools=[*offer("self_query")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": _SUBJECT, "department": identity.department, "rank": identity.rank},
         fault_capture=capture,
     )
@@ -1347,7 +1348,7 @@ async def test_loop_r2_pre_hook_refusal_without_retention_reaches_next_request_u
         llm_client=client, tool_executor=executor, structured_tool_messages=structured,
         tool_result_max_chars=6000, max_iterations=2,
     ).run(
-        system_prompt="SYS", user_message="Read explicit self domains.", tools=[],
+        system_prompt="SYS", user_message="Read explicit self domains.", tools=[*offer("self_query")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": _SUBJECT}, fault_capture=capture,
     )
 

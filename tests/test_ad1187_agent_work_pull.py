@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from probos.protocols import DatabaseConnection
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, AgenticResult, truncate_tool_output
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 from probos.cognitive.swe_harness.tool_call import (
     TextBlock, ToolCallRequest, ToolUseBlock, render_tool_output,
 )
@@ -961,7 +962,7 @@ async def test_loop_presentation_overwrites_forged_context_and_preserves_next_re
         tool_result_max_chars=cap,
     )
 
-    result = await loop.run(system_prompt="SYS", user_message="Task", tools=[], context=context)
+    result = await loop.run(system_prompt="SYS", user_message="Task", tools=[*offer(tool_id)], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
 
     assert len(client.requests) == 2
     assert context["_tool_result_presentation"] is forged
@@ -988,7 +989,7 @@ async def test_loop_concurrent_presentations_are_invocation_local(structured: bo
     ]
     tasks = [
         asyncio.create_task(loop.run(
-            system_prompt="SYS", user_message="Task", tools=[], context={"agent_id": "agent-a"},
+            system_prompt="SYS", user_message="Task", tools=[*offer("claim_work_item")], context={"agent_id": "agent-a"},  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         ))
         for loop in loops
     ]
@@ -1011,7 +1012,7 @@ async def test_loop_presentation_exact_render_fit_and_frozen_carrier() -> None:
     executor = _PresentationExecutor(value)
     client = _ScriptedClient([_call_response("discover_work_items", {}), _final_response()])
     loop = AgenticLoop(llm_client=client, tool_executor=executor, tool_result_max_chars=len(plain))
-    await loop.run(system_prompt="SYS", user_message="Task", tools=[], context={"agent_id": "agent-a"})
+    await loop.run(system_prompt="SYS", user_message="Task", tools=[*offer("discover_work_items")], context={"agent_id": "agent-a"})  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     carrier = executor.contexts[0]["_tool_result_presentation"]
     assert carrier.render_complete(value) == plain
     assert truncate_tool_output(plain, max_chars=len(plain)) == plain
@@ -1062,7 +1063,7 @@ async def test_loop_other_tools_keep_existing_context() -> None:
 
     client = _ScriptedClient([_call_response("other_tool", {}), _final_response()])
     result = await AgenticLoop(llm_client=client, tool_executor=_OtherExecutor()).run(
-        system_prompt="SYS", user_message="Task", tools=[], context=context,
+        system_prompt="SYS", user_message="Task", tools=[*offer("other_tool")], context=context,  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     )
     assert result.tool_results[0].output == "ordinary"
     assert context == {"agent_id": "agent-a", "_tool_result_presentation": "unchanged"}
@@ -1094,7 +1095,7 @@ async def _invoke_pull(
         structured_tool_messages=structured, tool_result_max_chars=cap,
     ).run(
         system_prompt="Choose work; read the ownership receipt.", user_message="Task",
-        tools=[], context={
+        tools=[*offer(tool_id)], context={  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             "agent_id": "agent-a", "department": "science", "rank": "ensign",
             **(context or {}),
         },
@@ -1727,7 +1728,7 @@ async def test_pull_invalid_actual_loop_bounds_refuse_before_mutation(
         llm_client=client, tool_executor=ToolExecutor(registry=tool_runtime.tool_registry),
         tool_result_head_chars=-1,
     ).run(
-        system_prompt="SYS", user_message="Task", tools=[],
+        system_prompt="SYS", user_message="Task", tools=[*offer(tool_id)],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": "agent-a", "department": "science", "rank": "ensign"},
     )
     assert result.tool_results[0].is_error is True
@@ -2259,7 +2260,7 @@ async def test_provider_failure_after_commit_recovers_by_exact_id_replay(
         llm_client=client, tool_executor=ToolExecutor(registry=tool_runtime.tool_registry),
         structured_tool_messages=True,
     ).run(
-        system_prompt="SYS", user_message="Task", tools=[],
+        system_prompt="SYS", user_message="Task", tools=[*offer("claim_work_item")],  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         context={"agent_id": "agent-a", "department": "science", "rank": "ensign"},
     )
     assert result.error is not None

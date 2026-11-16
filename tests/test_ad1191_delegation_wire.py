@@ -37,7 +37,7 @@ from probos.tools.delegation_evidence import (
     MESSAGE_OMISSION_MARKER,
 )
 from probos.tools.permissions import ToolPermissionStore
-from probos.tools.protocol import ToolResult, ToolType
+from probos.tools.protocol import ToolPermission, ToolResult, ToolType
 from probos.tools.publish_finding_tool import FindingToolResult, PublishFindingTool
 from probos.tools.registry import ToolRegistry
 
@@ -770,6 +770,7 @@ async def test_raw_post_hook_does_not_promote_dictionary_or_metadata_authority(t
     runtime = _runtime(tmp_path, llm)
     forged = _ForgedPublication()
     runtime.tool_registry.register(forged, provider="local-test")
+    await runtime.tool_permission_store.issue_grant("child", "publish_finding", ToolPermission.WRITE)  # #1796: the loop runs only offered tools; publish_finding is offered by its own block, which asks for WRITE.
     result = await runtime.delegator.invoke(
         {"task": "child task", "to": "Child"}, {"agent_id": "parent", "thread_id": "thread"},
     )
@@ -887,6 +888,7 @@ async def test_child_cancellation_propagates_without_terminal_evidence_or_leakin
     runtime = _runtime(tmp_path, llm)
     blocking = _BlockingTool()
     runtime.tool_registry.register(blocking, provider="local-test")
+    await runtime.tool_permission_store.issue_grant("child", "blocking_probe", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     running = asyncio.create_task(_parent(runtime, llm))
     try:
         await asyncio.wait_for(

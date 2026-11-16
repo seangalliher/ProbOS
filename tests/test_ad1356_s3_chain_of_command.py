@@ -29,6 +29,8 @@ from probos.delegated_approvals import AUDIT_CATEGORY, DeciderRole, DelegatedApp
 from probos.routers.capability_requests import decide_capability_request, fulfil_on_approval
 from probos.security.audit import AuditLog
 from probos.tools.effect_tiers import TIER_CRITICAL, filed_call_tier
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
+from tests.offered_tools import OfferedMcpTools  # #1796: a dispatch run offers an MCP adapter only through AD-1241.
 from tests.test_ad1347_s1_agent_work import RANKS, REASON
 from tests.test_ad1347_s3_execution import ANSWER, _call, _final, _pump, _rig, _seen, _thread_in
 from tests.test_ad1356_s2_tool_effect_table import NOTES, _native, _notes, _self_task
@@ -164,6 +166,8 @@ async def test_a_chiefs_own_elevated_call_and_another_departments_chief_leave_it
         store = await _native(rig, tmp_path, read_roots=[notes.parent])
         try:
             async with _chain(rig) as (service, _audit, _told):
+                # #1796: the loop runs only offered tools; a dispatch run offers its granted tools, and LaForge runs this.
+                await rig.permissions.issue_grant("laforge-1", "list_files", ToolPermission.READ)
                 origin = await _thread_in(rig, "engineering", "forge-1")
                 created = await rig.service.create_self_task(
                     "laforge-1", title="List the relay notes", description="", reason=REASON,
@@ -253,6 +257,11 @@ async def test_an_mcp_call_takes_its_tier_from_its_ad1019b_risk(tmp_path: Path, 
     async with _rig(tmp_path, script) as rig:
         rig.tools.register(
             tool, provider="AD-1019c", tags=[tool.tool_id, "mcp"], default_permissions=dict.fromkeys(RANKS, "read"),
+        )
+        # #1796: the loop runs only offered tools, and a dispatch run offers an MCP adapter only through its AD-1241 offer.
+        rig.runtime.mcp_workbench = OfferedMcpTools(tool.tool_id)
+        rig.runtime.config = rig.runtime.config.model_copy(
+            update={"mcp": rig.runtime.config.mcp.model_copy(update={"agent_tools_enabled": True})},
         )
         async with _chain(rig) as (service, _audit, _told):
             item_id = await _self_task(rig, "Look up the drift budget")

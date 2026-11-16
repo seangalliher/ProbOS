@@ -72,6 +72,7 @@ from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
 from probos.work_item_steps import OwnedExecutionLease, OwnedStepExecutionPermit
 from probos.workforce import WorkItemStore
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 
 pytestmark = pytest.mark.asyncio
 
@@ -613,7 +614,7 @@ async def test_window_exhausting_child_goes_from_error_to_complete_on_the_gate()
     off_client = _ScriptedClient(**common)
     off = await _loop(
         off_client, _BulkToolExecutor(output_chars=2000), max_iterations=20
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     on_client = _ScriptedClient(**common)
     on = await _loop(
@@ -622,7 +623,7 @@ async def test_window_exhausting_child_goes_from_error_to_complete_on_the_gate()
         max_iterations=20,
         compactor=SessionCompactor(),
         compaction_threshold=2500,
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert off.stopped_reason == "error"
     assert "context_length_exceeded" in off.error
@@ -643,7 +644,7 @@ async def test_compaction_does_not_convert_a_max_iterations_stop(
         max_iterations=6,
         compactor=SessionCompactor(),
         compaction_threshold=1500,
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.stopped_reason == "max_iterations"
     assert result.iterations == 6
@@ -669,7 +670,7 @@ async def test_high_cumulative_spend_with_a_short_history_never_compacts() -> No
         max_iterations=10,
         compactor=compactor,
         compaction_threshold=5_000,
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.iterations == 10
     # Spend crossed the threshold many times over...
@@ -696,7 +697,7 @@ async def test_compaction_fires_only_when_occupancy_re_crosses(
         max_iterations=12,
         compactor=compactor,
         compaction_threshold=3_000,
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.iterations == 12
     # Each turn adds ~1000 estimated tokens, the replacement resets occupancy to
@@ -715,7 +716,7 @@ async def test_large_history_with_small_spend_does_compact() -> None:
         max_iterations=5,
         compactor=compactor,
         compaction_threshold=2_000,
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert compactor.calls
     assert compactor.calls[0]["budget_tokens"] == 2_000
@@ -792,7 +793,7 @@ async def test_a_group_larger_than_the_threshold_warns_and_continues(
             max_iterations=4,
             compactor=compactor,
             compaction_threshold=2_000,
-        ).run(system_prompt="sys", user_message="task", tools=[], context={})
+        ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.stopped_reason in {"complete", "max_iterations"}
     warning = next(
@@ -839,7 +840,7 @@ async def test_a_misbehaving_compactor_does_not_stop_the_run(
             max_iterations=4,
             compactor=_RecordingCompactor(replacement=[]),
             compaction_threshold=1_000,
-        ).run(system_prompt="sys", user_message="task", tools=[], context={})
+        ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.stopped_reason == "complete"
 
@@ -855,7 +856,7 @@ async def test_a_raising_compactor_keeps_the_previous_messages(
             max_iterations=4,
             compactor=compactor,
             compaction_threshold=1_000,
-        ).run(system_prompt="sys", user_message="task", tools=[], context={})
+        ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.stopped_reason == "complete"
     assert compactor.calls
@@ -1027,7 +1028,7 @@ async def test_token_budget_is_threaded_to_the_loop_and_stops_it() -> None:
         _BulkToolExecutor(output_chars=8),
         max_iterations=10,
         token_budget=4096,
-    ).run(system_prompt="sys", user_message="task", tools=[], context={})
+    ).run(system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={})  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
 
     assert result.stopped_reason == "token_budget"
     assert result.total_tokens >= 4096

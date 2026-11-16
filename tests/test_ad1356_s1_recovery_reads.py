@@ -17,6 +17,7 @@ from probos.agent_work import AgentWorkCreated, AgentWorkOrigin
 from probos.agent_work_runner import _recovery_read
 from probos.capability_request import requests_for_work_item
 from probos.cognitive.swe_harness.tools import register_native_swe_tools
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
 from tests.test_ad1240_workspace_results import _capture, make_store
 from tests.test_ad1347_s1_agent_work import REASON
 from tests.test_ad1347_s3_execution import _call, _final, _pump, _rig, _seen, _thread_in
@@ -32,6 +33,7 @@ async def _workspace(rig: Any, tmp_path: Path) -> Any:
     rig.runtime.config = rig.runtime.config.model_copy(update={"execution": execution})
     rig.runtime.workspace_results = store
     assert register_native_swe_tools(rig.tools, rig.runtime) == 12
+    await rig.permissions.issue_grant("forge-1", "read_file", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     await store.start()
     return store
 

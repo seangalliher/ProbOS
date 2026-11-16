@@ -44,6 +44,7 @@ from probos.cognitive.crew_verifier import (
     SessionVerificationRound,
     SubtaskVerifier,
 )
+from probos.cognitive.mcp_workbench import MCPDispatchOffer  # #1796: a correction offers MCP tools only through its source's AD-1241 offer.
 from probos.config import SystemConfig
 from probos.events import EventType
 from probos.notifications import NotificationQueue
@@ -6309,8 +6310,9 @@ class _ProjectionMetadataTool(_RecordingTool):
         description: str,
         input_schema: dict[str, Any],
         output_schema: dict[str, Any],
+        tool_type: ToolType = ToolType.MCP_SERVER,  # #1796: an offered search tool is UTILITY_AGENT, as the real one is.
     ) -> None:
-        super().__init__(tool_id, tool_type=ToolType.MCP_SERVER)
+        super().__init__(tool_id, tool_type=tool_type)
         self._projection_name = name
         self._projection_description = description
         self._projection_input_schema = input_schema
@@ -6361,9 +6363,26 @@ class _McpWorkbench:
         self.tool_ids = list(tool_ids)
         self.calls: list[str] = []
 
-    def dispatch_tool_ids(self, agent_id: str) -> list[str]:
+    def dispatch_tool_ids(
+        self, agent_id: str, *, candidate_ids: Sequence[str] | None = None,
+    ) -> list[str]:
+        if candidate_ids is not None:
+            # #1796: the AD-1241 selection a run's offer reads, as MCPWorkbench.dispatch_tool_ids gives it: the search
+            # tool plus the supplied candidates this source holds. ``calls`` counts only the projection's snapshot read.
+            return ["find_mcp_tool", *(
+                tool_id for tool_id in dict.fromkeys(candidate_ids)
+                if tool_id != "find_mcp_tool" and tool_id in self.tool_ids
+            )]
         self.calls.append(agent_id)
         return list(self.tool_ids)
+
+    async def create_dispatch_offer(self, agent_id: str, *, preload_limit: int) -> MCPDispatchOffer:
+        # #1796: the loop runs only offered tools, and a correction offers find_mcp_tool only through its source's
+        # AD-1241 offer (crew_verifier._SessionMcpToolIds). Nothing is preloaded: no adapter is registered here.
+        return MCPDispatchOffer(self, agent_id, preload_limit=preload_limit)
+
+    def accepts_dispatch_offer(self, offer: MCPDispatchOffer, agent_id: str) -> bool:
+        return type(offer) is MCPDispatchOffer and offer.belongs_to(self, agent_id)
 
 
 class _PublicationBarrierConnection(_ControlledConnection):
@@ -7420,7 +7439,7 @@ async def test_session_correction_find_mcp_tool_source_registration_executes_wit
     find_tool = _RecordingTool(
         "find_mcp_tool",
         output={"discovery": "source-backed-mcp-result"},
-        tool_type=ToolType.MCP_SERVER,
+        tool_type=ToolType.UTILITY_AGENT,  # #1796: the loop runs only offered tools; an offered search tool is UTILITY_AGENT.
     )
     runtime.tool_registry.register(
         find_tool,
@@ -7642,6 +7661,7 @@ async def test_session_correction_find_mcp_registration_valid_string_boundaries_
         description=four_byte_character * 32_768,
         input_schema={"type": "object", "query": four_byte_character * 1_024},
         output_schema={"type": "object", "result": four_byte_character * 1_024},
+        tool_type=ToolType.UTILITY_AGENT,  # #1796: the loop runs only offered tools; an offered search tool is UTILITY_AGENT.
     )
     runtime.tool_registry.register(
         source_tool,

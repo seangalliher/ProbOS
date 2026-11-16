@@ -43,6 +43,7 @@ from probos.economic_calibration import (
     SpendPriceSnapshot,
 )
 from probos.threads import ChatThreadStore
+from probos.tools.protocol import ToolPermission  # #1796: a dispatch run offers its granted tools.
 from probos.workforce import (
     CrewSessionParentCreate,
     WorkItemStore,
@@ -199,6 +200,7 @@ async def _production_owned_case(
         registry,
         calibration_enabled=calibration_enabled,
     )
+    await runtime.tool_permission_store.issue_grant("agent-1", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     worker = WorkItemAgenticExecutor(llm_client=client)
     agent = SimpleNamespace(
         id="agent-1",
@@ -1128,6 +1130,7 @@ async def test_production_observer_direct_executor_floor_redo_captures_distinct_
         assert responses[1].content.strip()
         client = _FakeModelClient(responses)
         runtime = _production_runtime(store, registry)
+        await runtime.tool_permission_store.issue_grant("agent-1", "http_fetch", ToolPermission.READ)  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
         organ = EconomicJudgmentOrgan()
         CognitiveSpine(SimpleNamespace(id="agent-1")).attach_organ(organ)
         hook = organ.open_turn_hook()

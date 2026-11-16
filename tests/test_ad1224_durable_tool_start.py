@@ -38,7 +38,8 @@ from probos.tools.executor import (
     wire_durable_tool_records,
     wire_tool_invocation_hooks,
 )
-from probos.tools.protocol import ToolResult
+from probos.tools.protocol import ToolPermission, ToolResult
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 
 _SECRET = "sk-live-511dd0ec-DO-NOT-LOG-THIS-VALUE"
 _ERROR_MARKER = "CONSUMER_VISIBLE_SECRET_71c4"
@@ -608,9 +609,9 @@ async def test_agentic_loop_mints_a_run_id_per_run(open_log: _LogFactory) -> Non
     llm = _DispatchLLM("read_file")
     loop = AgenticLoop(llm_client=llm, tool_executor=executor)
     caller_context = {"agent_id": "swe", "department": "engineering"}
-    await loop.run(system_prompt="s", user_message="u", tools=[], context=caller_context)
+    await loop.run(system_prompt="s", user_message="u", tools=[*offer("read_file")], context=caller_context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     llm.calls = 0
-    await loop.run(system_prompt="s", user_message="u", tools=[], context=caller_context)
+    await loop.run(system_prompt="s", user_message="u", tools=[*offer("read_file")], context=caller_context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     rows = await _rows(log, EventType.TOOL_STARTED.value)
     run_ids = {row["data"]["run_id"] for row in rows}
     assert len(rows) == 2
@@ -959,6 +960,16 @@ def _dispatch_runtime(*, registry: Any, event_log: Any, perm_store: Any = None) 
     )
 
 
+async def _offering_store(agent_id: str, *tool_ids: str) -> Any:
+    """#1796: a dispatch run offers the tools its agent is granted, so a test grants the tools its scripted model calls."""
+    from probos.tools.permissions import ToolPermissionStore
+
+    store = ToolPermissionStore()
+    for tool_id in tool_ids:
+        await store.issue_grant(agent_id, tool_id, ToolPermission.READ)
+    return store
+
+
 async def _run_dispatch(*, log: Any, hang: bool) -> tuple[asyncio.Task[Any], _DispatchTool]:
     from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
     from probos.tools.registry import ToolRegistry
@@ -969,7 +980,7 @@ async def _run_dispatch(*, log: Any, hang: bool) -> tuple[asyncio.Task[Any], _Di
     registry.register(tool, provider="test")
     task = asyncio.create_task(WorkItemAgenticExecutor(llm_client=_DispatchLLM("dispatch_probe")).run(
         agent_id="counselor-001", instructions="Test instructions.", task_text="use the probe",
-        runtime=_dispatch_runtime(registry=registry, event_log=log),
+        runtime=_dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("counselor-001", "dispatch_probe")),  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
         department="counseling", rank="ensign", thread_id="thread-bf731",
     ))
     try:
@@ -1028,6 +1039,7 @@ async def test_dispatch_run_denied_tool_closes_its_own_pairing(open_log: _LogFac
     registry.register(tool, provider="test", default_permissions={"captain": "full"})
     perm_store = ToolPermissionStore()
     registry.set_permission_store(perm_store)
+    await perm_store.issue_grant("counselor-001", "dispatch_probe", ToolPermission.NONE)  # #1796: the loop runs only offered tools; a grant offers it, and a NONE grant leaves the registry's rank-gate denial (this case's subject) unchanged.
     outcome = await WorkItemAgenticExecutor(llm_client=_DispatchLLM("dispatch_probe")).run(
         agent_id="counselor-001", instructions="Test instructions.", task_text="use the probe",
         runtime=_dispatch_runtime(registry=registry, event_log=log, perm_store=perm_store),
@@ -1062,7 +1074,7 @@ async def test_dispatch_executor_preserves_hook_set_and_bus_frequency(
             return await super().invoke(*args, **kwargs)
 
     monkeypatch.setattr(dispatch_module, "DispatchToolExecutor", _Counting)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("counselor-001", "dispatch_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.emit_event = lambda event, _payload: emitted.append(event)
     await dispatch_module.WorkItemAgenticExecutor(llm_client=_DispatchLLM("dispatch_probe")).run(
         agent_id="counselor-001", instructions="Test instructions.", task_text="use the probe",
@@ -1592,7 +1604,7 @@ async def test_active_exhausted_loop_is_not_readmitted_after_257_other_runs(open
             return SimpleNamespace(content_blocks=blocks, content="done" if not blocks else "", tokens_used=1)
 
     parent = asyncio.create_task(AgenticLoop(llm_client=_ParentLLM(), tool_executor=executor).run(
-        system_prompt="s", user_message="u", tools=[], context={"agent_id": "parent"},
+        system_prompt="s", user_message="u", tools=[*offer("read_file")], context={"agent_id": "parent"},  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
     ))
     try:
         await asyncio.wait_for(parked.wait(), timeout=10)
@@ -1602,7 +1614,7 @@ async def test_active_exhausted_loop_is_not_readmitted_after_257_other_runs(open
         assert sum(row["event"] == EventType.TOOL_RECORD_BUDGET_EXHAUSTED.value for row in before) == 1
         for index in range(257):
             outcome = await AgenticLoop(llm_client=_DispatchLLM("read_file"), tool_executor=executor).run(
-                system_prompt="s", user_message="u", tools=[], context={"agent_id": f"other-{index}"},
+                system_prompt="s", user_message="u", tools=[*offer("read_file")], context={"agent_id": f"other-{index}"},  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             )
             assert outcome.error == ""
         resume.set()
@@ -1819,7 +1831,7 @@ async def test_overlapping_parallel_bodies_keep_durable_chain_and_pairing(
         result = await asyncio.wait_for(AgenticLoop(
             llm_client=_BatchLLM(names), tool_executor=first_executor,
             parallel_tool_calls_enabled=True, max_parallel_tool_calls=2,
-        ).run(system_prompt="s", user_message="u", tools=[], context={"agent_id": "parallel-agent"}), timeout=15)
+        ).run(system_prompt="s", user_message="u", tools=[*offer(*names)], context={"agent_id": "parallel-agent"}), timeout=15)  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         assert result.error == ""
         assert len(result.tool_calls) == len(result.tool_results) == 2
         assert all(not tool_result.is_error for tool_result in result.tool_results)
@@ -2002,7 +2014,7 @@ async def test_conversational_agent_uses_real_dispatch_registry_and_durable_log(
         on_invoke=_inside_tool, error=tool_error,
     )
     registry.register(tool)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("conversation-agent", "dispatch_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.config.dm_agentic = DmAgenticConfig(enabled=True)
     runtime.work_item_store = store
     runtime.chat_thread_store = threads
@@ -2049,7 +2061,7 @@ async def test_crew_outer_loop_passes_real_work_item_provenance_to_dispatch(
     registry = ToolRegistry()
     tool = _DispatchTool("dispatch_probe", entered=asyncio.Event(), hang=False)
     registry.register(tool)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("crew-agent", "dispatch_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.work_item_store = store
     runtime.chat_thread_store = threads
     crew = CrewTaskExecutor(
@@ -2113,7 +2125,7 @@ async def test_promoted_conversational_continuation_links_late_work_item(
     registry = ToolRegistry()
     registry.register(first_tool)
     registry.register(later_tool)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("conversation-agent", "dispatch_probe", "post_promotion_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.config.dm_agentic = DmAgenticConfig(enabled=True, promote_to_task_after_seconds=0.01)
     runtime.work_item_store = store
     runtime.chat_thread_store = threads
@@ -2234,7 +2246,7 @@ async def test_promoted_interrupted_tool_reopens_with_unique_run_link(
     registry = ToolRegistry()
     registry.register(first_tool)
     registry.register(later_tool)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("conversation-agent", "dispatch_probe", "post_promotion_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.config.dm_agentic = DmAgenticConfig(enabled=True, promote_to_task_after_seconds=0.01)
     runtime.work_item_store = store
     runtime.chat_thread_store = threads
@@ -2461,7 +2473,7 @@ async def test_promotion_diagnostic_failures_preserve_registry_chain(
     )
     if outcome == "loto":
         assert registry.acquire_lock("dispatch_probe", "other-agent", reason="test lock")
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("diagnostic-agent", "dispatch_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools (the registry holds no store, so denied/loto stay denied).
     provider_calls: list[str] = []
     runs: list[str] = []
     observer_awaited: list[str] = []
@@ -2552,7 +2564,7 @@ async def test_diagnostic_cancellation_propagates_without_a_synthetic_completion
     with pytest.raises(asyncio.CancelledError):
         await WorkItemAgenticExecutor(llm_client=_DispatchLLM("dispatch_probe")).run(
             agent_id="agent-1", instructions="Test instructions.", task_text="use the probe",
-            runtime=_dispatch_runtime(registry=registry, event_log=log), **kwargs,
+            runtime=_dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("agent-1", "dispatch_probe")), **kwargs,  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
         )
     assert calls == (["provider", "provider"] if callback == "completion_provider" else [callback])
     assert tool.calls == int(callback == "completion_provider")
@@ -2601,7 +2613,7 @@ async def test_promotion_link_diagnostic_boundaries_preserve_execution_and_repor
     tool = _DispatchTool("dispatch_probe", entered=asyncio.Event(), hang=False, on_invoke=_block)
     registry = ToolRegistry()
     registry.register(tool)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("diagnostic-agent", "dispatch_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.work_item_store = store
     runtime.chat_thread_store = threads
     original_create = store.create_work_item
@@ -2794,7 +2806,7 @@ async def test_promotion_provenance_is_inert_without_event_log(
 
     tool = _DispatchTool("dispatch_probe", entered=asyncio.Event(), hang=False, on_invoke=_body)
     registry.register(tool)
-    runtime = _dispatch_runtime(registry=registry, event_log=None)
+    runtime = _dispatch_runtime(registry=registry, event_log=None, perm_store=await _offering_store("conversation-agent", "dispatch_probe"))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.work_item_store = store
     runtime.chat_thread_store = threads
     if route in {"factories", "durable_wiring", "legacy_wiring"}:
@@ -2986,7 +2998,7 @@ async def test_promotion_provenance_isolated_between_turns_and_passes(
         return await original_create(**kwargs)
 
     monkeypatch.setattr(store, "create_work_item", _create_after_overlap)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("conversation-agent", *(name for label in labels for name in names[label])))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.config.dm_agentic = DmAgenticConfig(
         enabled=True, max_iterations=2, continue_or_ask_enabled=True,
         continue_or_ask_max_passes=2, promote_to_task_after_seconds=0.01,
@@ -3154,7 +3166,7 @@ async def test_promotion_link_samples_run_at_publication(
         return await original_create(**kwargs)
 
     monkeypatch.setattr(store, "create_work_item", _create_during_continuation)
-    runtime = _dispatch_runtime(registry=registry, event_log=log)
+    runtime = _dispatch_runtime(registry=registry, event_log=log, perm_store=await _offering_store("conversation-agent", *tools))  # #1796: the loop runs only offered tools; a dispatch run offers its granted tools.
     runtime.config.dm_agentic = DmAgenticConfig(
         enabled=True, max_iterations=2, continue_or_ask_enabled=True,
         continue_or_ask_max_passes=2, promote_to_task_after_seconds=0.01,
@@ -3268,7 +3280,7 @@ async def test_loop_run_observer_receives_only_actual_valid_identity_before_exec
     if case != "omitted_observer":
         kwargs["on_run_started"] = None if case == "none_observer" else _observe
     result = await AgenticLoop(llm_client=_ObservedLLM("dispatch_probe"), tool_executor=executor).run(
-        system_prompt="Test instructions.", user_message="Use the probe", tools=[], context=context,
+        system_prompt="Test instructions.", user_message="Use the probe", tools=[*offer("dispatch_probe")], context=context,  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
         **kwargs,
     )
     assert result.error == "" and result.final_text == "done" and tool.calls == 1

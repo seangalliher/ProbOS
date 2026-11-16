@@ -49,6 +49,7 @@ from probos.cognitive.swe_harness.tool_call import (
 )
 from probos.tools.protocol import ToolResult
 from probos.types import LLMRequest, LLMResponse
+from tests.offered_tools import offer  # #1796: the loop runs only offered tools.
 
 pytestmark = pytest.mark.asyncio
 
@@ -117,7 +118,7 @@ def _loop(client: Any, executor: Any, **kwargs: Any) -> AgenticLoop:
 
 async def _run(loop: AgenticLoop) -> AgenticResult:
     return await loop.run(
-        system_prompt="sys", user_message="task", tools=[], context={"agent_id": "a1"}
+        system_prompt="sys", user_message="task", tools=[*offer("read_page")], context={"agent_id": "a1"}  # #1796: the loop runs only offered tools, so the scripted calls' tool is offered.
     )
 
 

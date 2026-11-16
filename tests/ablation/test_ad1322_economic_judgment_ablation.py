@@ -27,6 +27,7 @@ from probos.cognitive.economic_judgment_organ import EconomicJudgmentOrgan
 from probos.cognitive.spine import CognitiveSpine
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
 
+from tests.offered_tools import offer, offer_scripted  # #1796: the loop runs only offered tools.
 from tests.test_ad1320_agentic_budget_awareness import Client, Resp, Tools, answer, fetch, write
 
 MARKER = "Economic note"
@@ -55,7 +56,7 @@ async def _arm(script: list[Resp], *, treated: bool) -> dict[str, Any]:
         extra["inner_loop_hook"] = hook
     loop = AgenticLoop(llm_client=client, tool_executor=tools, max_iterations=20, **extra)
     result = await loop.run(
-        system_prompt="You are Ezri.", user_message="Go.", tools=[],
+        system_prompt="You are Ezri.", user_message="Go.", tools=[*offer_scripted(script)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     verified = result.stopped_reason == "complete" and VERIFY in tools.calls
@@ -126,7 +127,7 @@ async def test_ablation_concurrent_turns_on_one_organ_match_solo_runs() -> None:
         hook.open_run(turn_key=key, value_band="minor", stakes="high", tier="standard", budget=1000)
         loop = AgenticLoop(llm_client=client, tool_executor=Tools(), max_iterations=20,
                            inner_loop_hook=hook)
-        await loop.run(system_prompt="You are Ezri.", user_message="Go.", tools=[],
+        await loop.run(system_prompt="You are Ezri.", user_message="Go.", tools=[*offer_scripted(script)],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
                        context={"agent_id": "counselor-ezri"})
         return [r.system_prompt or "" for r in client.requests]
 
@@ -288,7 +289,7 @@ async def _acceptance_goal(
     result = await loop.run(
         system_prompt="You are Ezri.",
         user_message=f"Complete {goal.name}.",
-        tools=[],
+        tools=[*offer("http_fetch", "write_file")],  # #1796: the loop runs only offered tools, so the scripted calls' tools are offered.
         context={"agent_id": "counselor-ezri"},
     )
     client.assert_exhausted()
