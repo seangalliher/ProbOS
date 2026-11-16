@@ -4,6 +4,12 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16
+**Revision R2 (2026-11-16, after review round 1).** Review round 1 found three things, and R2 answers each:
+- write_file and edit_file gave the documents rule's refusal without their refusal mark (`tools/protocol.py:99-115`), so two identical refusals in one run were a tool defect to both fault detectors. The base did the same for BF-943's documents; this batch adds refusals that a build model reaches by a relative `probos/...` path (D10). R2 marks the documents rule's refusal at both sites (D14, P-R2-1, P-R2-2), adds R14 with rows W6 and W7, and records the constitution and protected-configuration refusals at those sites as L9.
+- D2 put the subprocess between code search's two worker calls; it comes before both.
+- `_LoopProbe.run` used `asyncio.ensure_future`; it now uses `asyncio.create_task`.
+The copy in N1-1 carries R2's test changes. The orchestrator applied R2's pairs by tool on a scratch tree (base `ecec9031`, tree `dca4f150`) and measured G-R2 and the 15 mutation rows on a Windows host whose volume makes no 8.3 names; the measured values are in section 4's G-R2 and in 7b.
 **Revision (2026-11-16, three rounds).** The orchestrator applied every pair and the new file by tool on a scratch tree (base `e0843f4f`, tree `2e8120b8`) and ran G1, G2a, G2b and the 13 mutation rows on a Windows host whose volume makes no 8.3 names. This revision puts those measured values in place of the expected ones, restates the Status line and the section 11 heading, and writes out M2b's commit paragraph. It corrects these statements:
 - section 4's `test_bf908` count;
 - the config search in Absence Verified;
@@ -24,7 +30,7 @@ The code changes are those six places, in comments, docstrings and one test cons
 **Status:** ready to build on `origin/main` once batch 4 (#1792, #1793) and #1798 have merged. The Architect read the code on `2b7cb330` (tree `d837f4cf`). The base is batch 4's final head, `e0843f4f` (tree `2e8120b8`). `git diff --name-only 2b7cb330 e0843f4f` lists `DECISIONS.md`, `prompts/bf-962-963-ward-room-identity-keys.md` and `tests/fixtures/ad1152_agentic_off_golden.json`, and each base blob below is the same at `e0843f4f` (orchestrator, 2026-11-16). #1798 (`storage_gate.py`, its new test file and its tracker entries) merges first and edits none of the source or test files this contract names. Its tracker entries move `PROGRESS.md` and `DECISIONS.md`, whose anchors here are text, not line numbers (M3).
 **Dependencies:** batch 1 (#1799, #1802, #1805, merged `250a70d5`) is in the base: `builder_paths.is_reserved_device_name` and `file_writer.commit_write`'s temporary-file write. **Numbers:** #1803 is BF-972 and #1806 is BF-975. Nothing is allocated here.
 **Builder:** `claude-sonnet-5.5`, at most about 150 tool calls per milestone. Search first, then read the range. The Builder runs no pytest; the orchestrator runs every gate. **Diff Reviewer:** `gpt-6.1-sol` (section 9).
-**Tests (measured 2026-11-16 by the orchestrator on a Windows host whose volume makes no 8.3 names, `-n 0 -p no:randomly`):** one new file, `tests/test_search_threads_and_running_code.py`, with 44 cases on Windows. At M1: 8 passed, 1 skipped and 35 xfailed. The skip is R8, which skips on a volume that makes no 8.3 names. It skipped here, has run nowhere yet, and is not in the measured sets. No existing test is edited and none is removed.
+**Tests (measured 2026-11-16 by the orchestrator on a Windows host whose volume makes no 8.3 names, `-n 0 -p no:randomly`):** one new file, `tests/test_search_threads_and_running_code.py`, with 44 cases on Windows through M3; R2 adds R14's six, for 50 (measured at R2: 49 passed, 1 skipped). At M1: 8 passed, 1 skipped and 35 xfailed. The skip is R8, which skips on a volume that makes no 8.3 names. It skipped here, has run nowhere yet, and is not in the measured sets. No existing test is edited and none is removed.
 
 **Base blobs (read on `2b7cb330`; the orchestrator found each one the same at `e0843f4f`, 2026-11-16).**
 
@@ -60,7 +66,7 @@ The code changes are those six places, in comments, docstrings and one test cons
   - `captain_document_write_refusal` gets one predicate, `_names_running_code`, called on the path as written and once resolved, in the try block that already judges both forms.
   - It refuses a path at or below the running package directory, and a `.env` file in that directory or in any directory above it.
   - `".env"` is added to `CAPTAIN_DOCUMENT_PATHS`, so the writer's root and the running checkout hold it too.
-  - The eight sites, their reason code and their log lines are unchanged.
+  - The eight sites, their reason code and their log lines are unchanged; write_file and edit_file give the rule's refusal after their refusal mark (D14, R2).
 - **Rejected:**
   - A semaphore or a dedicated executor for searches. A module-level asyncio primitive is shared across event loops, and a dedicated pool needs a shutdown lifecycle. L2 records the residual.
   - Adding `"src/"` to `CAPTAIN_DOCUMENT_PATHS` (the issue's option b): it would refuse a user's own `<cwd>/src`.
@@ -73,18 +79,19 @@ The code changes are those six places, in comments, docstrings and one test cons
 | # | Question | Decision and evidence |
 |---|---|---|
 | D1 | Thread safety | `resolve_read_path` (`:312`) reads its arguments, the filesystem and module constants (`_PROTECTED_LEAF_KEYS`, compiled patterns); its per-call state is one `_OnDisk` (`:370`). In `file_access.py` a search for `lru_cache` and `_windows_file_api(` gives 5 lines on `e0843f4f`: the import (`:53`), the cached `_windows_file_api` (`:796-797`) and its two calls (`:823`, `:847`), on the instruction reader, not on this path. `ReadFloor` sets three attributes in `__init__` (`:658-660`; `_permitted` may be `None`) and reads them in `permits` (`:662-673`). `code_search._ReadFloor._decided` (`:343`) is written by one thread at a time. The floor `act` builds on the loop goes to worker calls that run one after another: the rg parse, then the Python engine if rg's output does not parse. Each final-check floor is built inside its own worker call. `reader_spelling`'s docstring says it calls no filesystem function (`:203`). A search for `lru_cache`, `global ` and `threading` in `file_walk.py` and in `safe_regex.py` gives 0 lines in each on `e0843f4f`. Logging is thread-safe. Admission's `check_at` stays on the loop (`code_search.py:198`); the parse after the subprocess moves |
-| D2 | One `to_thread` per search, cancellation and the executor | file_search, list_files and code search's Python path make one call each (code search's Python engine and its final check share the call). Code search's rg path makes two: the parse with its floor check (inside `_search_rg`), then the final check. `act` awaits the subprocess between them, and `_search_rg` must still return the unchecked result that `test_bf908...:391` compares. A cancelled search's thread runs to the end of its walk and its result is dropped. `iter_files` stops at 20,000 files (`file_walk.py:47`, `:186`), list_files gets a 20,000-match cap, and the Python engine also stops at `max_results` (at most 5,000, `code_search.py:128`). File search with `include_ignored=true` uses a raw `rglob` with no cap, as on the base (L1). The default executor is Python's `ThreadPoolExecutor` default (`min(32, cpu_count + 4)` workers, from the Python documentation). `git grep -n set_default_executor e0843f4f -- src` gives 1 line, `audio/tts/resident.py:20`, a line of that module's docstring. The searches share the pool with the other `src` calls into it (count and pattern in L2), so many concurrent broad searches can delay them, while the loop itself stays live |
+| D2 | One `to_thread` per search, cancellation and the executor | file_search, list_files and code search's Python path make one call each (code search's Python engine and its final check share the call). Code search's rg path makes two, in this order: `_search_rg` awaits the subprocess on the loop and then makes the first (the parse with its floor check, `_rg_result`), and `act` makes the second (the final check, `_final_check`) on the result `_search_rg` returned. `_search_rg` must still return the unchecked result that `test_bf908...:391` compares. A cancelled search's thread runs to the end of its walk and its result is dropped. `iter_files` stops at 20,000 files (`file_walk.py:47`, `:186`), list_files gets a 20,000-match cap, and the Python engine also stops at `max_results` (at most 5,000, `code_search.py:128`). File search with `include_ignored=true` uses a raw `rglob` with no cap, as on the base (L1). The default executor is Python's `ThreadPoolExecutor` default (`min(32, cpu_count + 4)` workers, from the Python documentation). `git grep -n set_default_executor e0843f4f -- src` gives 1 line, `audio/tts/resident.py:20`, a line of that module's docstring. The searches share the pool with the other `src` calls into it (count and pattern in L2), so many concurrent broad searches can delay them, while the loop itself stays live |
 | D3 | list_files cap | `_LIST_FILES_MAX_MATCHES = DEFAULT_MAX_FILES` (20,000), read at call time. It counts glob matches examined, refused ones included. When a further match exists, the listing stops and the output gains `"truncated": True` and a `"note"`: `list_files stopped after examining 20000 matches; at least one more match was not examined. Narrow the pattern or the path.` The number left out is not known without the walk the cap avoids, so the note says "at least one more" (L8). A listing that is not truncated stays exactly `{"files": [...]}` (`test_bf948...:208` pins that shape; S4's control). `output_schema` and the description are unchanged, so the tool-definition goldens do not move (`ad1179_tool_definition_golden.json:37`; `ad1152_agentic_off_golden.json:845`, the same line at `e0843f4f`). `test_ad1179_tool_schema_golden.py` and `test_ad1152_agentic_correlation.py` were among the 30 other files of G2a (1246 passed, 27 skipped at the base and at M2a) |
 | D4 | `ReadFloor(None)` warns once | The module-level `_NO_RUNTIME_WARNED` flag is set under the `threading.Lock` `_NO_RUNTIME_LOCK`, so a floor built on a worker thread and one built on the loop log once between them. A test resets it with `monkeypatch.setattr(file_access, "_NO_RUNTIME_WARNED", False)`. Message: `BF-972: read policy without a runtime; operator read_roots not applied (the floor still applies)`. `code_search._ReadFloor` is its own class and does not warn (L3) |
 | D5 | Acceptance test | `_LoopProbe` (section 7). The wrapped policy check records on every call whether it ran on the loop's thread (`asyncio.get_running_loop()` raises in a worker thread). Its first call waits up to 10 s on a `threading.Event` that only a coroutine on the loop sets. In a worker thread the wait ends at the next 5 ms tick. On the loop it cannot end early, because the setter cannot run. The probe therefore tells the two apart by which thread runs the check, not by a duration. The 10 s is a ceiling only a broken build reaches |
 | D6 | Package directory | `_RUNNING_PACKAGE = Path(__file__).resolve().parents[1]` in `builder_paths.py`, which equals `Path(probos.__file__).resolve().parent` (R0 pins it; R0 passed at G2b) without a module-level `import probos`. For a checkout it is `<checkout>/src/probos`; for an editable install, the `src/probos` its `.pth` names; for an installed package, `site-packages/probos`. This host's venv `.pth` holds `D:\ProbOS\src` (`__editable__.probos-0.1.0.pth`), so a run without `PYTHONPATH` imports `D:\ProbOS\src\probos`; the gate sets `PYTHONPATH` to the worktree's `src` (`run_test_gate.py:818`). Comparison uses `_document_parts` on both sides, as `_names_a_document` does: upper-case canonical form, a `:` stream suffix dropped from each component, trailing dots and spaces dropped, and the extended-length and `\\?\UNC\` prefixes removed. Both the written form (`os.path.abspath`) and the resolved form (`_resolve`) are judged. A link into the package is meant to be caught on the resolved form, because `_resolve` follows links. R6 passed at G2b on Windows, where it makes a junction; its symlink form runs on other systems and has not run here. A short 8.3 name is meant to be caught there too, because `_resolve` expands existing parts; R8, its case, skipped here and has run nowhere yet. A share spelling (`\\localhost\D$\...`) is not compared by identity, as with the documents (L7) |
 | D7 | `.env`: where | (a) In the package directory or in any directory above it: the directories `load_dotenv()` searches when the vessel starts from `__main__.py`, nearest first (it loads the first `.env` found, so `<checkout>/src/.env` would replace `<checkout>/.env`). (b) At the writer's root and the running checkout, through the new `CAPTAIN_DOCUMENT_PATHS` entry: the working directory for `file_writer` and the office writers (the debugger and interactive start), and `<checkout>/src` for write_file and edit_file. A `.env` in a subdirectory, or in a tree that is neither of these, is not refused (R11): the start-up `load_dotenv()` does not search it. Because (a) also covers `<checkout>/.env`, the issue's mutation "removing step 2 fails the .env test" is killed by the writer-root case (R10; W3 measured) |
-| D8 | The eight sites, checked | `tools.py:1069` (write_file, root `_PROJECT_ROOT`), `:1166` (edit_file, same root): `ToolResult(error=...)` and log `reason_code=captain_document_refused`. `file_writer.py:120` (propose_write) and `:167` (commit_write), root `Path.cwd()`: a `{"success": False, "error": ...}` dict. `skill_framework.py:214` (docx_create), `:274` (docx_revise), `:429` (pptx_create), `:562` (xlsx_update), root `Path.cwd()`: `raise PermissionError(refused)`. Each passes the path it will write and returns or raises the rule's text, so one change to the rule reaches all eight. R3 and R4 drive all eight on a package path. No site is edited |
+| D8 | The eight sites, checked | `tools.py:1069` (write_file, root `_PROJECT_ROOT`), `:1166` (edit_file, same root): `ToolResult(error=...)` and log `reason_code=captain_document_refused`. `file_writer.py:120` (propose_write) and `:167` (commit_write), root `Path.cwd()`: a `{"success": False, "error": ...}` dict. `skill_framework.py:214` (docx_create), `:274` (docx_revise), `:429` (pptx_create), `:562` (xlsx_update), root `Path.cwd()`: `raise PermissionError(refused)`. Each passes the path it will write and returns or raises the rule's text, so one change to the rule reaches all eight. R3 and R4 drive all eight on a package path. No site is edited at M2b; R2 prefixes write_file's and edit_file's answer to the rule with their refusal mark (D14) |
 | D9 | Control | R12: a temporary `tree/src/probos/` outside the package, with the working directory in `tree`; commit_write, docx_create and write_file write into it |
 | D10 | Self-build | Not confirmed as the question was put. `native_builder.py:47-57` offers the registered `write_file` and `edit_file` to the build loop, and its relative paths land under the live `<checkout>/src` (`tools.py:247-250`). Before this change, a build model's `edit_file("probos/...")` reached the running package; now it is refused, as BF-943 already refuses documents for that loop. Build worktrees default to `<repo>.parent/ProbOS-builders` (`worktree_manager.py:44`), outside the package, and the build's file blocks are applied there through `builder_write_refusal` (`test_bf943...:205-209`, T3), so a build in its worktree is unchanged (L6) |
-| D11 | What an agent sees | Package and `.env` cases (a): `Captain document write refused (BF-943, BF-975): '<path>' is in the running vessel's code (the probos package directory) or is a .env file it loads at start, which an agent does not write; code and its environment change through a build the Captain reviews`. Writer-root `.env` (b): BF-943's text, which now names environment files too. The log reason code stays `captain_document_refused` at every site |
+| D11 | What an agent sees | Package and `.env` cases (a): `Captain document write refused (BF-943, BF-975): '<path>' is in the running vessel's code (the probos package directory) or is a .env file it loads at start, which an agent does not write; code and its environment change through a build the Captain reviews`. Writer-root `.env` (b): BF-943's text, which now names environment files too. write_file and edit_file give either text after `write_file refused: ` or `edit_file refused: ` (D14). The log reason code stays `captain_document_refused` at every site |
 | D12 | Persisted state, config, flags | No config field. The search `max_files\|list_files` in `config.py`, `config_models/` and `config/` gives 1 line, `config_models/experience.py:318`: a description string that names `list_files` among tools, not a field. This batch edits no facade baseline, config reference or profile, and persists nothing. The rule's changes are new refusals and BF-943's reworded text (P2b-2) |
-| D13 | Order | M1 holds both issues' tests as strict xfail. M2a builds #1803 (four source files) and adds `"#1803"` to `_BUILT`. M2b builds #1806 (`builder_paths.py` only) and adds `"#1806"`. M3 does the trackers. Only M2a edits `swe_harness/tools.py`; #1806's design adds no call there. Each milestone is green on its own |
+| D13 | Order | M1 holds both issues' tests as strict xfail. M2a builds #1803 (four source files) and adds `"#1803"` to `_BUILT`. M2b builds #1806 (`builder_paths.py` only) and adds `"#1806"`. M3 does the trackers. M2a edits `swe_harness/tools.py` for #1803; #1806's design adds no call there, and R2 marks the documents rule's refusal at its two sites there (D14). Each milestone is green on its own |
+| D14 | The refusal mark (review round 1) | A `ToolResult.error` that starts with the tool's own id and ` refused: ` is its policy answering, and both detectors skip it (`tools/protocol.py:99-115`; `fault_report.py:401`, `fault_detection.py:296`). write_file and edit_file returned the documents rule's text unmarked (`tools.py:1101-1104` and `:1198-1201` at `ecec9031`). Two identical refusals in one run were therefore a same-run defect, counted at `fault_detection.py:308-309` before the noise filter at `:312-317`, and the cross-turn lane took the text as category `other`. The base did this for documents; D10 makes the refusal reachable by a build model's relative `probos/...` path. Both sites now return `f"write_file refused: {refused}"` or `f"edit_file refused: {refused}"`, written as a literal like `read_file`'s (`:472`) and `list_files`'s (`:621`). The rule's text follows the mark unchanged, and the substring checks listed in section 4 still hold. The AD-1344 and BF-911 refusals at the same sites stay unmarked (L9). Rejected: marking all three refusals (that changes two shipped refusals the finding did not name; L9). Also rejected: marking inside the rule (six of its eight callers are not tools and have no tool id) |
 
 ## 4. Milestones and gates
 
@@ -129,6 +136,7 @@ The code changes are those six places, in comments, docstrings and one test cons
 | `asyncio.to_thread` patched | `test_ad818a*`: `episodic` only | None |
 | `_RESERVED`, `is_reserved_device_name` | `test_note_taker_save.py` | Untouched; in G2b |
 | `ui/`: tests that spawn Python | `ui/e2e/live-tool-progress.spec.ts:36`, `ui/e2e/consulted-evidence.spec.ts:5`, `ui/playwright.approval-ui.config.ts:55`, `ui/src/...ApprovalWave.test.tsx:725`, `ui/src/__tests__/helpers/issue1375Bridge.ts:3` and `consultedEvidenceBridge.ts:2` | The ui sources name four fixtures (`tests/fixtures/ad1174_progress_bridge.py`, `approval_ui_bridge.py`, `consulted_evidence_bridge.py`, `issue1375_work_state_bridge.py`). They name no changed module or tool (Absence Verified: 0 lines). Three of their lines import `swe_harness.tool_call` or `swe_harness.agentic_loop`, and `swe_harness/tool_call.py:20` imports `swe_harness.tools`, so these fixtures load the `tools.py` that M2a changes. No change to them |
+| The write_file/edit_file refusal text (D14, R2) | Run on `ecec9031`, before R2. Readers of the mark: `is_caller_input_error` at `fault_report.py:401` and `fault_detection.py:296`, the only two calls in `src`. Readers of the error's start: the pattern `["'](write_file\|edit_file) (failed\|refused)` gives 2 lines in `src` (the failure texts at `tools.py:1142` and `:1271`) and, in `tests`, `test_bf911...:644-645` (the failure texts). Refusal checks in tests are substrings: `test_bf943...:120`, `:725`, `:740`, `:749`, `:760`, `:774`; `test_ad1344...:469`; this file's cases R2 to R4. `effect_broker.py:920-928` reads only whether an error is present. The model sees the marked text through `ToolCallResult.from_tool_result` | The mark goes before the text, and nothing that reads the text changes. In G-R2 |
 
 ## 5. Commit messages
 
@@ -140,6 +148,8 @@ Every body ends with its `Refs` paragraph, followed by the committing agent's tr
   `The documents rule in builder_paths gains one predicate, _names_running_code, judged on the path as written and on the path after links are followed, in the try block that already judges both forms. It refuses a path at or below the running package directory, taken from the module's own location, and a .env file in that directory or in a directory above it, where load_dotenv() looks at start; .env also joins CAPTAIN_DOCUMENT_PATHS, so a writer's own root holds it. Both sides are compared by the rule's canonical parts. The eight writer sites, their reason code and their log lines are unchanged.`
   Do not paraphrase D6 to D11 into a message: their wording uses the banned verb's past participle.
 - M3: `Search threads and running code M3: trackers and ledger (#1803, #1806)`, then `Refs #1803, #1806.`
+- R2: `Search threads and running code R2: write_file and edit_file mark the documents rule's refusal as the policy's answer (#1803, #1806)`, then this paragraph as written, then `Refs #1803, #1806.`:
+  `write_file and edit_file gave the documents rule's refusal without their refusal mark, so two identical refusals in one run counted as a tool defect, and a build model now meets that refusal when its write_file or edit_file call names the running package. Both now answer write_file refused: or edit_file refused: before the rule's unchanged text. The constitution and protected-configuration refusals at the same two tools stay as they were and are recorded. A new case drives both tools into both fault detectors beside a genuine failure. The contract now orders code search's two worker calls after the subprocess, and the new test's loop probe uses create_task.`
 
 With `BASE` = the `origin/main` commit the batch is built on, both scans must print nothing:
 - `git log --format=%B BASE..HEAD | rg -n -i "\bClos[e]s\b"`
@@ -157,6 +167,7 @@ The orchestrator closes both issues after the gate.
 - **L6.** The native build loop's write_file and edit_file are denied a path at or below the running package, as written or after links are followed (D10); L4 and L7 apply to them.
 - **L7.** A share or device spelling of the package is not compared by identity, as with the documents. `self_improvement/versioning.py` (BF-937) and `run_command` are outside the rule.
 - **L8.** A truncated listing says that at least one more match exists, not how many.
+- **L9.** write_file and edit_file still give the constitution refusal (AD-1344) and the protected-configuration refusal (BF-911) without their refusal mark, as on the base (`tools.py:1097-1100`, `:1105-1108`, `:1194-1197`, `:1202-1205`), so two identical such refusals in one run still count as a tool defect (orchestrator, 2026-11-16: two identical results of the real `write_file`, one for the constitution file `config/standing_orders/federation.md` by its absolute path and one for `credential_vault.json`, each fed to `detect_tool_defect` and `collect_tool_fault_batch`, gave a defect and a same-run defect on the base and on `ecec9031`). The constitution file is named at `standing_orders.py:110-111` and BF-911's credential file names are at `file_access.py:74-77`. Recorded for the wave's follow-up issue.
 
 ## 7. The contract
 
@@ -173,12 +184,13 @@ The SEARCH text is LF and ASCII. It starts at a line start and matches once in i
 broad search does not hold the event loop; list_files stops after a cap of glob matches and says so; a read policy composed
 with no runtime warns once per process. #1806: the Captain's documents rule, at all eight writer sites, also refuses a path
 at or below the running package directory, as written or once resolved, and a .env file that load_dotenv() can read.
+write_file and edit_file give that refusal after their own refusal mark, which neither fault detector counts (R14).
 
 Loop liveness (S1 to S3): the policy check is wrapped by ``_LoopProbe``. Every call records whether it ran on the event
 loop's thread; the first call also waits on a threading.Event that only a coroutine on the loop sets. On a worker thread
 the wait ends at the next tick; on the loop's own thread that coroutine cannot run, so the wait reaches ``_WAIT_S`` and
 the case fails at its assert. No case asserts on a duration.
-Writes (R3 to R13): a temporary package stands in for the running one (``builder_paths._RUNNING_PACKAGE``,
+Writes (R3 to R14): a temporary package stands in for the running one (``builder_paths._RUNNING_PACKAGE``,
 ``swe_tools._PROJECT_ROOT`` and the standing-orders directory point into it), so the base tree writes into the temporary
 tree only. R0 to R2 read the real package and write nothing on either tree.
 A case marked ``until_built("#N")`` fails on the base at its own assert; the milestone that builds #N adds it to
@@ -202,9 +214,14 @@ from probos.agents import code_search
 from probos.agents.code_search import CodeSearchAgent
 from probos.agents.file_search import FileSearchAgent
 from probos.cognitive import builder_paths, standing_orders
+from probos.cognitive.agentic_dispatch import classify_tool_fault_error
 from probos.cognitive.swe_harness import tools as swe_tools
-from probos.cognitive.swe_harness.tools import EditFileTool, ListFilesTool
+from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResult
+from probos.cognitive.swe_harness.tools import EditFileTool, ListFilesTool, WriteFileTool
+from probos.fault_detection import collect_tool_fault_batch
+from probos.fault_report import detect_tool_defect
 from probos.security import file_access
+from probos.tools.protocol import is_caller_input_error
 from tests.test_ad1344_constitution_write_refusal import _dir_link
 from tests.test_bf943_captain_document_write_refusal import _call, _office_file, _tree
 
@@ -252,7 +269,7 @@ class _LoopProbe:
         self.answered.append(event.wait(_WAIT_S))
 
     async def run(self, awaitable: Any) -> Any:
-        task = asyncio.ensure_future(awaitable)
+        task = asyncio.create_task(awaitable)
         while not task.done():
             for event in list(self._pending):
                 event.set()
@@ -605,6 +622,55 @@ def test_r13_the_refusal_names_the_running_code_and_the_reviewed_build(vessel: S
     """R13 (kills W1)."""
     reason = _rule(str(vessel.package / "x.py"), vessel.work) or ""
     assert "running vessel's code" in reason and "a build the Captain reviews" in reason, reason
+
+
+def _outcome(tool_id: str, *results: Any) -> SimpleNamespace:
+    """The loop's pairs for *tool_id*'s results, through the adapter it uses (as ``test_bf948...``'s ``_pairs``)."""
+    calls = [ToolCallRequest(name=tool_id, arguments={}, id=f"c{n}") for n in range(len(results))]
+    pairs = [ToolCallResult.from_tool_result(f"c{n}", result, 0.0) for n, result in enumerate(results)]
+    assert all(  # premise: the adapter carries each error verbatim as an error
+        pair.is_error is True and pair.output == result.error for pair, result in zip(pairs, results, strict=True)
+    )
+    return SimpleNamespace(tool_calls=calls, tool_results=pairs)
+
+
+def _disk_full(*_args: Any, **_kwargs: Any) -> Path:
+    raise OSError("disk quota exceeded")
+
+
+@until_built("#1806")
+@pytest.mark.parametrize("given", ["probos/security/file_access.py", ".env", "CODEOWNERS"], ids=["package", "dotenv", "document"])
+@pytest.mark.parametrize("tool_id", ["write_file", "edit_file"])
+async def test_r14_a_refusal_carries_the_tools_mark_and_is_no_tool_defect(
+    vessel: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tool_id: str, given: str,
+) -> None:
+    """R14 (kills W6, W7): write_file and edit_file answer the documents rule's refusal of a package path, the writer-root
+    ``.env`` and a document as ``<tool id> refused: <the rule's text>``. Two identical refusals in one run give neither
+    detector a defect; two identical genuine failures of the same tool beside them still do (the premise and the control)."""
+    tool = WriteFileTool(SimpleNamespace()) if tool_id == "write_file" else EditFileTool(SimpleNamespace())
+    edit = {"content": "AMENDED\n"} if tool_id == "write_file" else {"old_text": "v1", "new_text": "AMENDED"}
+    before = _tree(vessel.root)
+    refused = [await tool.invoke({"path": given, **edit}) for _ in range(2)]
+    assert _tree(vessel.root) == before
+    error = refused[0].error or ""
+    assert refused[1].error == error, "premise: two identical results"
+    assert error.startswith(f"{tool_id} refused: Captain document write refused (BF-943"), error
+    assert is_caller_input_error(tool_id, error)
+    monkeypatch.setattr(swe_tools, "_resolve_path", _disk_full)
+    failed = [await tool.invoke({"path": str(vessel.work / "ok.py"), **edit}) for _ in range(2)]
+    assert [r.error for r in failed] == [f"{tool_id} failed: disk quota exceeded"] * 2, "premise: a genuine failure"
+    alone = detect_tool_defect(_outcome(tool_id, *failed))
+    assert alone is not None and alone.count == 2, "premise: two identical genuine failures are a defect"
+    assert detect_tool_defect(_outcome(tool_id, *refused)) is None
+    only = collect_tool_fault_batch(_outcome(tool_id, *refused), classify_error=classify_tool_fault_error)
+    assert only.tools == () and only.same_run is None, only
+    both = _outcome(tool_id, *refused, *failed)
+    defect = detect_tool_defect(both)
+    assert defect is not None and (defect.tool_id, defect.error_text, defect.count) == (tool_id, failed[0].error, 2)
+    batch = collect_tool_fault_batch(both, classify_error=classify_tool_fault_error)
+    [evidence] = batch.tools
+    assert evidence.defect is not None and evidence.defect.error_text == failed[0].error and evidence.mixed is False
+    assert batch.same_run is not None and batch.same_run.error_text == failed[0].error
 ```
 
 ### M2a (#1803)
@@ -1158,6 +1224,45 @@ REPLACE:
 _BUILT: frozenset[str] = frozenset({"#1803", "#1806"})
 ```
 
+### R2 (#1806, after review round 1): the refusal mark
+
+This section implements D14. R2's test changes are in N1-1's copy above:
+- the added imports;
+- a docstring sentence;
+- `asyncio.create_task` in `_LoopProbe.run`;
+- `_outcome`, `_disk_full` and R14.
+
+The Architect wrote this section against the candidate tree `dca4f150` on 2026-11-16; the orchestrator applied it by tool and measured G-R2 and rows W6 and W7.
+
+**P-R2-1** (`src/probos/cognitive/swe_harness/tools.py`: write_file)
+SEARCH:
+```
+                logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
+                return ToolResult(error=refused)
+```
+REPLACE:
+```
+                logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
+                return ToolResult(error=f"write_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
+```
+
+**P-R2-2** (edit_file)
+SEARCH:
+```
+                logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
+                return ToolResult(error=refused)
+```
+REPLACE:
+```
+                logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
+                return ToolResult(error=f"edit_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
+```
+
+**G-R2:**
+- Run with `-n 0 -p no:randomly`: the new file, then `test_bf943_captain_document_write_refusal.py`, `test_ad1344_constitution_write_refusal.py`, `test_bf911_protected_config_write_refusal.py`, `test_bf948_list_files_read_policy.py`, `test_ad1205_fault_paths.py`, `test_ad546_native_builder_harness.py`, `test_ad1356_s2_tool_effect_table.py`, `test_ad544_native_tools.py`, `test_ad1316_real_effect_routes.py`.
+- Measured 2026-11-16 (same host as above): the new file at R2 **49 passed, 1 skipped** (R8); the nine other files **1164 passed, 3 skipped** in total at `ecec9031` and at R2, the same at both (the skips are `test_bf943...` on a volume that makes no 8.3 names and two POSIX cases of `test_ad1316...`).
+- Then W6 and W7 (7b).
+
 ### M3: trackers and ledger
 
 Replace `DATE` with M3's date. No line this milestone adds carries an `AD-` or `BF-` token or this contract's file name; P3-2's anchor heading is an existing line, kept.
@@ -1174,7 +1279,7 @@ REPLACE:
 
 **File and code search ask the read policy off the event loop, and agent writers are denied the running vessel's code (DATE), #1803 #1806.**
 - **Base.** File search, code search and list_files ran their walk and each match's read-policy check inside async handlers, so a broad search held the event loop. list_files had no cap on its glob. The Captain's documents rule refused governance, instruction and manifest files but not the code the vessel runs. write_file roots a relative path at the checkout's src, so a holder could rewrite the package, including the modules that hold the write refusals, and the .env file the vessel loads at start.
-- **Change.** Each search runs its walk, policy checks and sort in a worker thread; code search with rg parses in one and runs its final check in another. What the policy admits is unchanged. list_files examines at most 20,000 glob matches and, when more match, says so in `truncated` and `note`. A read policy built with no runtime logs once per process that operator read_roots are not applied. At all eight writer sites the documents rule also refuses a path at or below the running package directory, as written or after links are followed, and a .env file in that directory or in any directory above it, where the start-up loader looks. `.env` is also in the documents list, so a writer's own root holds it. Builds in their worktrees are unchanged. The native build loop's write_file and edit_file are denied a path at or below the running package, as written or after links are followed. Refs #1803, #1806.
+- **Change.** Each search runs its walk, policy checks and sort in a worker thread; code search with rg parses in one and runs its final check in another. What the policy admits is unchanged. list_files examines at most 20,000 glob matches and, when more match, says so in `truncated` and `note`. A read policy built with no runtime logs once per process that operator read_roots are not applied. At all eight writer sites the documents rule also refuses a path at or below the running package directory, as written or after links are followed, and a .env file in that directory or in any directory above it, where the start-up loader looks. `.env` is also in the documents list, so a writer's own root holds it. Builds in their worktrees are unchanged. The native build loop's write_file and edit_file are denied a path at or below the running package, as written or after links are followed. write_file and edit_file give that refusal, like the documents refusal, after their own refusal mark, so neither fault detector counts a refused write as a broken tool; their constitution and protected-configuration refusals are unchanged and recorded. Refs #1803, #1806.
 
 ```
 
@@ -1190,8 +1295,8 @@ REPLACE:
 - *Scope.* `security/file_access.py`, `agents/file_search.py`, `agents/code_search.py`, `cognitive/swe_harness/tools.py` (list_files), `cognitive/builder_paths.py`; one new test file.
 - *G1 (search).* Each search's walk and policy checks move into `asyncio.to_thread`; the policy is unchanged, and admission's subprocess check stays on the loop. A cancelled search's worker runs to the end of its walk. Rejected: a semaphore or a dedicated executor (a primitive shared across event loops, or a pool to shut down).
 - *G2 (list cap).* At most 20,000 matches are examined, refused ones included; `truncated` and `note` appear only when one more match exists, so an untruncated listing keeps its shape.
-- *G3 (running code).* The package directory is the running module's own; it is compared by the rule's canonical parts, as written and after links are followed. A `.env` file is refused where the start-up loader looks (the package directory and every directory above it) and, as a documents entry, at the writer's root. Rejected: `src/` as an entry (it would refuse a user's own working-directory `src`), and protecting only the rule's modules. Deferred: second names (hard links) of a package file.
-- *Rollout.* No flag; the rule adds refusals and rewords the Captain's documents rule's refusal text to name environment files. *Residual.* L1 to L8 of the contract. *Reversal.* Revert the batch's commits in reverse order.
+- *G3 (running code).* The package directory is the running module's own; it is compared by the rule's canonical parts, as written and after links are followed. A `.env` file is refused where the start-up loader looks (the package directory and every directory above it) and, as a documents entry, at the writer's root. Rejected: `src/` as an entry (it would refuse a user's own working-directory `src`), and protecting only the rule's modules. Deferred: second names (hard links) of a package file. write_file and edit_file give the rule's refusal after their own refusal mark (`write_file refused: `), so neither fault detector counts it as a tool defect; their constitution and protected-configuration refusals stay unmarked (L9).
+- *Rollout.* No flag; the rule adds refusals and rewords the Captain's documents rule's refusal text to name environment files. *Residual.* L1 to L9 of the contract. *Reversal.* Revert the batch's commits in reverse order.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 ```
@@ -1210,18 +1315,20 @@ REPLACE:
 | N6 | same | `if examined >= _LIST_FILES_MAX_MATCHES:` | `if False:` | S4 |
 | N7 | `file_access.py` | `if runtime is None:` | `if False:` | S5 (0 records) |
 | N8 | same | `if _NO_RUNTIME_WARNED:` | `if False:` | S5 (2 records) |
-| W1 | `builder_paths.py` | `if parts[: len(top)] == top:` | `if False:` | R1 (3), R2, R3 (6), R4 (2), R5 (5), R6, R7, R13: 20 cases. R6 and R7 also need the prefix check; W4 and W5 each disable one call site. R8 skipped, so it is not in the measured set |
+| W1 | `builder_paths.py` | `if parts[: len(top)] == top:` | `if False:` | R1 (3), R2, R3 (6), R4 (2), R5 (5), R6, R7, R13, R14[write_file-package], R14[edit_file-package]: 22 cases. R6 and R7 also need the prefix check; W4 and W5 each disable one call site. R8 skipped, so it is not in the measured set |
 | W2 | same | `return len(parts) >= 2 and parts[-1] == _DOTENV_KEY and parts[:-1] == top[: len(parts) - 1]` | `return False` | R9[src], R9b |
 | W3 | same | `".env",  # BF-975 (#1806): the environment file load_dotenv() reads at start (__main__.py), at a writer's own root` | delete the line | R10 |
 | W4 | same | `if _names_running_code(resolved):  # BF-975 (#1806): the running code, once resolved (a link into it)` | `if False:` | R6. R8 skipped, so it is not in the measured set |
 | W5 | same | `if _names_running_code(Path(os.path.abspath(target))):  # BF-975 (#1806): the running code, as written` | `if False:` | R7 |
+| W6 | `tools.py` | `return ToolResult(error=f"write_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it` | `return ToolResult(error=refused)` | R14[write_file-package], R14[write_file-dotenv], R14[write_file-document] (3) |
+| W7 | same | `return ToolResult(error=f"edit_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it` | `return ToolResult(error=refused)` | R14[edit_file-package], R14[edit_file-dotenv], R14[edit_file-document] (3) |
 
-In the measured sets, neither W1 nor W2 alone kills R9[package], and neither W2 nor W3 alone kills R9[checkout]: each case is covered by two rules. The campaign runs the new file alone.
+In the measured sets, neither W1 nor W2 alone kills R9[package], and neither W2 nor W3 alone kills R9[checkout]: each case is covered by two rules. The campaign runs the new file alone. R2 added W6 and W7 after review round 1, and the orchestrator re-measured all 15 rows at R2 (a scratch tree at `ecec9031` with R2's pairs applied, the same host; 50 cases, 49 passed and 1 skipped unmutated): each original line occurs once, no row survives, and each row is killed by exactly the cases shown; W1's killed set is the earlier 20 cases and R14's two package cases.
 
 ## 8. What this does NOT change
 
 - What the read policy admits or refuses; `directory_list`; `resolve_for_runtime`; `code_search._ReadFloor`'s composition and cache.
-- The eight writer sites, their log lines and reason codes; `builder_write_refusal`; AD-548's hook; the effect broker's authority.
+- The eight writer sites' log lines and reason codes, and six of the sites entirely; write_file and edit_file change only their answer to the documents rule, which gains their refusal mark (D14). `builder_write_refusal`; AD-548's hook; the effect broker's authority; the AD-1344 and BF-911 refusal texts (L9).
 - `output_schema`, the description and the input schema of list_files.
 - Config, profiles, the facade baseline, the config reference, `ui/` and the commercial overlay. No existing test file is edited.
 
@@ -1246,6 +1353,11 @@ Name the consumer for each property and confirm that it accepts the change.
    - **Consumers:** `test_bf943...:586-693` (stage injections), `:59-64` (the callers census), `:539-545` (the stat-name scan).
 5. **No regression for writers.** A path that is not in the package, not a `.env` file the start-up loader reads and not a `.env` file at a writer's root gets the same decision as on the base; a refused document's text now also names environment files (P2b-2). **Consumers:** the neighbour controls of `test_bf943...` (`:183`, `:195`) and R11/R12.
 6. **Paperwork.** ASCII text; no `AD-` or `BF-` token in a commit subject or in a tracker line this batch adds; both scans of section 5 are clean.
+7. **The refusal mark (D14).**
+   - write_file's and edit_file's answer to the documents rule is `<tool id> refused: ` followed by the rule's unchanged text.
+   - Their AD-1344 and BF-911 answers and every failure text (`write_file failed:`, `edit_file failed:`, `File not found:`) stay unmarked.
+   - Two identical marked refusals in one run give neither detector a defect, while two identical failures beside them still do.
+   - **Consumers:** `fault_report.detect_tool_defect` (`:401`); `fault_detection.collect_tool_fault_batch` (`:296`, before `:308-309` and `:312-317`); their feeders `native_builder.py:186-191`, `agentic_dispatch.py:4409` and `:4450`; the model's transcript (`tool_call.py:696`); `effect_broker.py:920-928`; the substring checks in `test_bf943...`, `test_ad1344...` and this file's cases R2 to R4; `test_bf911...:644-645`.
 
 ## 10. Acceptance criteria
 
@@ -1263,6 +1375,7 @@ Name the consumer for each property and confirm that it accepts the change.
   - `.env` where the loader and the writer's root reach it (R9, R9b, R10).
   - Controls: R11, R12.
   - Mutations: W1 fails the package cases, W2 the `.env` above the package, W3 the writer-root `.env`.
+  - The mark (D14): write_file and edit_file answer a package path, the writer-root `.env` and a document with their refusal mark. Two such answers are no tool defect to either detector, while two genuine failures beside them are (R14). W6 and W7 each fail R14 for their tool.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 11. Verified Against Codebase (the Architect read these lines 2026-11-16 on `2b7cb33001a64681c6d30e526fd0af6247d1c659`, tree `d837f4cf`, in the read-only scratch tree `G:\rev-tmp-b4r2\cand`; they were re-checked 2026-11-16 on `e0843f4f`, tree `2e8120b8`, by the orchestrator and the Architect, as the last lines of the block list)
@@ -1319,6 +1432,15 @@ Re-checked 2026-11-16 by the Architect:
   git show e0843f4f:src/probos/substrate/safe_regex.py | grep -c -E "lru_cache|global |threading"  -> 0
   Grep "ReadFloor|_ReadFloor|_within_floor|_search_python|_search_rg" tests/test_bf908_floor_and_children.py
     (a worktree copy that git diff --name-only e0843f4f HEAD does not list)                        -> 19 lines
+Read 2026-11-16 by the Architect on ecec9031 (tree dca4f150) for R2:
+  tools.py:1056 tool_id "write_file"  :1097-1108 the three refusals  :1142 write_file failed:  :83 _PROJECT_ROOT  :249 def _resolve_path
+  tools.py:1148 tool_id "edit_file"   :1194-1205 the three refusals  :1267 File not found:  :1271 edit_file failed:
+  tools.py:472 f"read_file refused: {exc}"   :621 f"list_files refused: {exc}"
+  protocol.py:99-103 POLICY_REFUSAL_MARK = " refused: "   :106-115 is_caller_input_error
+  fault_report.py:398-401 skip   fault_detection.py:296 skip, :308-309 same_run count, :312-317 noise filter, :331-346 ToolFaultBatch
+  native_builder.py:189, agentic_dispatch.py:4450 classify_error=classify_tool_fault_error; agentic_dispatch.py:2161, :4409
+  tool_call.py:670 ToolCallRequest, :680 ToolCallResult, :696 from_tool_result   effect_broker.py:920-928 error is not None only
+  file_access.py:74-77 PROTECTED_LEAF_NAMES   code_search.py act: to_thread(_final_check, ...); _search_rg: to_thread(_rg_result, ...) after the subprocess
 ```
 
 ## Absence Verified (2026-11-16)
@@ -1341,6 +1463,12 @@ CLAIM: no ui-spawned fixture names a changed module or tool
   :274 (swe_harness.agentic_loop) and consulted_evidence_bridge.py:32 (swe_harness.tool_call). swe_harness/tool_call.py:20
   imports swe_harness.tools, so these fixtures load the tools.py that M2a changes.
 CLAIM: to_thread is not patched for these modules  RUN: Grep setattr(...to_thread tests   FOUND: test_ad818a*/a2 (episodic)   HOLDS
+CLAIM: nothing in src reads the start of a write_file or edit_file error (R2)
+  RUN:   git grep -n -E "[\"'](write_file|edit_file) (failed|refused)" ecec9031 -- src/probos; git grep -n is_caller_input_error ecec9031 -- src/probos
+  FOUND: 2 lines for the first, both producers of failure texts: tools.py:1142, :1271. 6 lines for the second: fault_detection.py:24 (import), :296 (call); fault_report.py:49 (import), :360 (docstring), :401 (call); protocol.py:106 (definition)   HOLDS
+CLAIM: no test compares the documents rule's refusal text whole, or builds the unmarked return (R2)
+  RUN:   git grep -n -E "(write_file|edit_file) (failed|refused)" ecec9031 -- tests; git grep -n -E "Captain document|captain_document_refused" ecec9031 -- tests; git grep -n "error=refused" ecec9031 -- tests
+  FOUND: 2 lines for the first (test_bf911:644-645, failure prefixes by startswith); 4 lines for the second (test_ad1189_deferred_tool_schemas.py:789, an unrelated page title; test_bf943:71, an assert message; :776, a log line; this file :282, a log line); 0 for the third. The refusal checks in test_bf943, test_ad1344 and test_bf911 are substring checks (_BF in, _AD in): test_bf943:120, :725, :740, :749, :760, :774; test_ad1344:469   HOLDS
 REPRODUCED 2026-11-16 on e0843f4f by the orchestrator: the documents-list, writes-into-a-package, config, new-names, patched-to_thread and set_default_executor searches above.
 ```
 
@@ -1359,3 +1487,4 @@ REPRODUCED 2026-11-16 on e0843f4f by the orchestrator: the documents-list, write
   - On the base, the native build loop's write_file and edit_file reached the live package (D10).
   - Focused runs in a worktree without `PYTHONPATH` import the main checkout's package (D6).
   - Share spellings (L7) and hard links (L4).
+  - Found by review round 1, not by this contract: write_file and edit_file gave the documents rule's refusal unmarked, so the fault detectors counted it as a broken tool; this batch added refusals that a build model reaches by a relative `probos/...` path (D14). The two sibling refusals at those sites are L9.

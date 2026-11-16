@@ -4,12 +4,13 @@
 broad search does not hold the event loop; list_files stops after a cap of glob matches and says so; a read policy composed
 with no runtime warns once per process. #1806: the Captain's documents rule, at all eight writer sites, also refuses a path
 at or below the running package directory, as written or once resolved, and a .env file that load_dotenv() can read.
+write_file and edit_file give that refusal after their own refusal mark, which neither fault detector counts (R14).
 
 Loop liveness (S1 to S3): the policy check is wrapped by ``_LoopProbe``. Every call records whether it ran on the event
 loop's thread; the first call also waits on a threading.Event that only a coroutine on the loop sets. On a worker thread
 the wait ends at the next tick; on the loop's own thread that coroutine cannot run, so the wait reaches ``_WAIT_S`` and
 the case fails at its assert. No case asserts on a duration.
-Writes (R3 to R13): a temporary package stands in for the running one (``builder_paths._RUNNING_PACKAGE``,
+Writes (R3 to R14): a temporary package stands in for the running one (``builder_paths._RUNNING_PACKAGE``,
 ``swe_tools._PROJECT_ROOT`` and the standing-orders directory point into it), so the base tree writes into the temporary
 tree only. R0 to R2 read the real package and write nothing on either tree.
 A case marked ``until_built("#N")`` fails on the base at its own assert; the milestone that builds #N adds it to
@@ -33,9 +34,14 @@ from probos.agents import code_search
 from probos.agents.code_search import CodeSearchAgent
 from probos.agents.file_search import FileSearchAgent
 from probos.cognitive import builder_paths, standing_orders
+from probos.cognitive.agentic_dispatch import classify_tool_fault_error
 from probos.cognitive.swe_harness import tools as swe_tools
-from probos.cognitive.swe_harness.tools import EditFileTool, ListFilesTool
+from probos.cognitive.swe_harness.tool_call import ToolCallRequest, ToolCallResult
+from probos.cognitive.swe_harness.tools import EditFileTool, ListFilesTool, WriteFileTool
+from probos.fault_detection import collect_tool_fault_batch
+from probos.fault_report import detect_tool_defect
 from probos.security import file_access
+from probos.tools.protocol import is_caller_input_error
 from tests.test_ad1344_constitution_write_refusal import _dir_link
 from tests.test_bf943_captain_document_write_refusal import _call, _office_file, _tree
 
@@ -83,7 +89,7 @@ class _LoopProbe:
         self.answered.append(event.wait(_WAIT_S))
 
     async def run(self, awaitable: Any) -> Any:
-        task = asyncio.ensure_future(awaitable)
+        task = asyncio.create_task(awaitable)
         while not task.done():
             for event in list(self._pending):
                 event.set()
@@ -436,3 +442,52 @@ def test_r13_the_refusal_names_the_running_code_and_the_reviewed_build(vessel: S
     """R13 (kills W1)."""
     reason = _rule(str(vessel.package / "x.py"), vessel.work) or ""
     assert "running vessel's code" in reason and "a build the Captain reviews" in reason, reason
+
+
+def _outcome(tool_id: str, *results: Any) -> SimpleNamespace:
+    """The loop's pairs for *tool_id*'s results, through the adapter it uses (as ``test_bf948...``'s ``_pairs``)."""
+    calls = [ToolCallRequest(name=tool_id, arguments={}, id=f"c{n}") for n in range(len(results))]
+    pairs = [ToolCallResult.from_tool_result(f"c{n}", result, 0.0) for n, result in enumerate(results)]
+    assert all(  # premise: the adapter carries each error verbatim as an error
+        pair.is_error is True and pair.output == result.error for pair, result in zip(pairs, results, strict=True)
+    )
+    return SimpleNamespace(tool_calls=calls, tool_results=pairs)
+
+
+def _disk_full(*_args: Any, **_kwargs: Any) -> Path:
+    raise OSError("disk quota exceeded")
+
+
+@until_built("#1806")
+@pytest.mark.parametrize("given", ["probos/security/file_access.py", ".env", "CODEOWNERS"], ids=["package", "dotenv", "document"])
+@pytest.mark.parametrize("tool_id", ["write_file", "edit_file"])
+async def test_r14_a_refusal_carries_the_tools_mark_and_is_no_tool_defect(
+    vessel: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tool_id: str, given: str,
+) -> None:
+    """R14 (kills W6, W7): write_file and edit_file answer the documents rule's refusal of a package path, the writer-root
+    ``.env`` and a document as ``<tool id> refused: <the rule's text>``. Two identical refusals in one run give neither
+    detector a defect; two identical genuine failures of the same tool beside them still do (the premise and the control)."""
+    tool = WriteFileTool(SimpleNamespace()) if tool_id == "write_file" else EditFileTool(SimpleNamespace())
+    edit = {"content": "AMENDED\n"} if tool_id == "write_file" else {"old_text": "v1", "new_text": "AMENDED"}
+    before = _tree(vessel.root)
+    refused = [await tool.invoke({"path": given, **edit}) for _ in range(2)]
+    assert _tree(vessel.root) == before
+    error = refused[0].error or ""
+    assert refused[1].error == error, "premise: two identical results"
+    assert error.startswith(f"{tool_id} refused: Captain document write refused (BF-943"), error
+    assert is_caller_input_error(tool_id, error)
+    monkeypatch.setattr(swe_tools, "_resolve_path", _disk_full)
+    failed = [await tool.invoke({"path": str(vessel.work / "ok.py"), **edit}) for _ in range(2)]
+    assert [r.error for r in failed] == [f"{tool_id} failed: disk quota exceeded"] * 2, "premise: a genuine failure"
+    alone = detect_tool_defect(_outcome(tool_id, *failed))
+    assert alone is not None and alone.count == 2, "premise: two identical genuine failures are a defect"
+    assert detect_tool_defect(_outcome(tool_id, *refused)) is None
+    only = collect_tool_fault_batch(_outcome(tool_id, *refused), classify_error=classify_tool_fault_error)
+    assert only.tools == () and only.same_run is None, only
+    both = _outcome(tool_id, *refused, *failed)
+    defect = detect_tool_defect(both)
+    assert defect is not None and (defect.tool_id, defect.error_text, defect.count) == (tool_id, failed[0].error, 2)
+    batch = collect_tool_fault_batch(both, classify_error=classify_tool_fault_error)
+    [evidence] = batch.tools
+    assert evidence.defect is not None and evidence.defect.error_text == failed[0].error and evidence.mixed is False
+    assert batch.same_run is not None and batch.same_run.error_text == failed[0].error

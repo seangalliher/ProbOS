@@ -1101,7 +1101,7 @@ class WriteFileTool:
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: write_file
             if refused is not None:
                 logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"write_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: write_file
             if refused is not None:
                 logger.warning("BF-911 WriteFileTool refused operation=write_file reason_code=protected_write_refused")
@@ -1198,7 +1198,7 @@ class EditFileTool:
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: edit_file
             if refused is not None:
                 logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"edit_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: edit_file
             if refused is not None:
                 logger.warning("BF-911 EditFileTool refused operation=edit_file reason_code=protected_write_refused")
