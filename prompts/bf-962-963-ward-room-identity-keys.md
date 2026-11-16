@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14: the orchestrator's oracle findings F1 to F3 (C2a-1's complete list; the `extra` search narrowed to what it finds; P2a-7, the pinned field count).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16: review round 1, finding F1 (section 13, Amendment A1).
 **File in the repository:** `prompts/bf-962-963-ward-room-identity-keys.md`. No commit subject or tracker line in this batch carries an `AD-` or `BF-` token or this file's name (section 5).
 **Status:** ready to build on `origin/main` once #1794 and batches 1 to 3 have merged. Read on `5275d008`. None of those batches edits the source or test files below. Only the trackers move, and their anchors are text, not line numbers (M3).
 **Dependencies:** none in code. **Numbers:** #1792 is BF-962 and #1793 is BF-963 (`gh issue view`). Nothing is allocated here. The AD ceiling is AD-1359 (`scripts/ad_ceiling.py`, all three sources) and is stated for the record only.
@@ -67,8 +68,8 @@
   - **Thresholds.** `social_verification.py:592-601` is unchanged.
 - **D2: the global `recall(post_body, k=3)` cannot hold every peer's matching episode.**
   - It answers the same top three for every peer. A post can carry up to 40 matched rows (two `LIMIT 20` queries, `threads.py:45`, `:65`), and the risk rule calls 3 peers high (`:596`). So even at three peers plus the author, four owners compete for three slots, and other agents' episodes also compete.
-  - Decision: one recall with `k = 3 * (distinct author ids, the post's included)`, bounded at 123. Each peer's episodes are then taken from that pool by both keys. Duplicates stay exactly as today (L5).
-  - Test: case `mc`, at the production bound of 40 peers, with 3 other agents' episodes stored first.
+  - Decision (as repaired by Amendment A1, section 13): the pool is the base's `recall(post_body, k=3)`, then, when there is more than one distinct author id, each episode of one recall with `k = 3 * (distinct author ids, the post's included)`, bounded at 123, whose id the first does not hold. A wider recall need not hold a narrower one's episodes: with hybrid recall on (`config/system.yaml:137`), `_fuse_dense_sparse` fuses a dense top `k` and a sparse top `3 * k` and cuts to `k` (`episodic.py:3597-3635`); with composite reranking on (off by default, `config.py:980`), the candidate window is `10 * k` (`episodic.py:3494`). The union holds every episode the base's recall held. Each peer's episodes are then taken from that pool by both keys. Duplicates stay exactly as today (L5).
+  - Test: case `mc`, at the production bound of 40 peers, with 3 other agents' episodes stored first; case `mh`, a hybrid-shaped recall whose recall of 12 drops an episode its recall of 3 holds; case `mi`, an episode both recalls hold counts once.
   - Rejected: `recall_for_agent` once per peer. Its relaxed threshold (`episodic.py:3959`) changes what counts as a match, and every cascade test double implements only `recall` (`test_bf920...:60`, `test_social_verification.py:69`, `test_bf921...:243`).
 - **Scope-addition transition rule: departed from.** The issue comment asked the comparison to accept the stored name form.
   - What that rule protects is a pair of a stored (pre-change) reply episode and a thread episode of the same channel, in different threads, less than 60 s apart (`:132`).
@@ -102,7 +103,7 @@
 - **G2b (M2b):**
   - The new file, `tests/test_social_verification.py`, `tests/test_bf920_cross_agent_verification.py`, `tests/test_bf921_counselor_event_delivery.py`, `tests/test_bf103_episode_id_mismatch.py`, `tests/test_ward_room.py`, `tests/test_ad663_provenance_producers.py`, `tests/test_ad1346_admission_store_census.py`, `tests/test_bf925_guard_names.py`, `tests/test_ad1346_identity_service.py` and `tests/test_layer_boundaries.py`.
   - Then `PY -P scripts/check_architecture_principles.py --check`.
-  - Expected: the new file has **13 passed, 0 xfailed**; everything else is clean.
+  - Expected: the new file has **13 passed, 0 xfailed** at M2b and **15 passed** after R1 (section 13); everything else is clean.
 - **G3 (M3):** `PY -P scripts/gen_ad_ledger.py`, then `PY -P scripts/gen_ad_ledger.py --check`, then `PY -m pytest tests/test_ad1184_ad_ledger.py -q -n 0`. No AD or BF number moves. A changed number row is a hard stop.
 
 **Orchestrator:** the oracle (every SEARCH applies exactly once, in label order), the mutation campaign (section 7), then once: `PY scripts/run_test_gate.py --label ward-room-identity-keys --receipt logs/gates/ward-room-identity-keys.receipt.json`.
@@ -909,12 +910,12 @@ The orchestrator closes #1792 after the gate. #1793 stays open with only its rep
 - **L1 (#1792).** Stored episodes keep their empty department; no backfill. An id that is neither registered nor hash-verified, a DID and a callsign give `""`, as before.
 - **L2 (#1792).** The two other sites of the same root cause (the dream, #1523 F-491; capability triage, #1419) are not changed. Each one activates a held behaviour.
 - **L3 (#1793).** Stored reply episodes keep the channel name. A stored reply and a thread episode of the same channel, in different threads less than 60 s apart, still read as different channels. This happens only when both episodes predate the change, or across a restart shorter than 60 s.
-- **L4 (#1793).** Other agents' episodes still compete for the pool. A peer whose matching episode ranks below `3 * owners` others is still missed; the pool is at most 123.
-- **L5 (#1793).** Duplicates are kept as today: a peer matched twice adds its episodes twice. With no registry, or an uncertificated agent, the only change is the pool. Recomputed for BF-921's three cases (`test_bf921...:248`): low, medium and high hold.
+- **L4 (#1793).** Other agents' episodes still compete for the pool. A peer whose matching episode is in neither the recall of three nor the recall of `3 * owners` is still missed; the wider recall holds at most 123.
+- **L5 (#1793).** Duplicates are kept as today: a peer matched twice adds its episodes twice; an episode both recalls hold enters the pool once. With no registry, or an uncertificated agent, the only change is the pool. Recomputed for BF-921's three cases (`test_bf921...:248`): low, medium and high hold (its `[:k]` double's recall of three is a prefix of its wider recall, so the union is the wider recall, as at M2b).
 - **L6 (#1793).** The replay waits for the Captain's copy (D3).
 - **L7 (#1793).** For agents with certificates, a medium or high risk now emits `CASCADE_CONFABULATION_DETECTED`. That produces a Bridge alert (advisory or alert, de-duplicated for 300 s and muteable), a Captain notification where one is wired, and on high the Counselor's messages (`counselor.py:1555-1581`).
 
-## 7. Mutation rows (each line occurs once, stripped, in its file after M2b; expected, not measured)
+## 7. Mutation rows (each line occurs once, stripped, in its file after R1; expected, not measured; rows 7 and 13 to 16 run on the new file only)
 
 | # | File | Line | Mutate to | Killed by |
 |---|---|---|---|---|
@@ -924,17 +925,23 @@ The orchestrator closes #1792 after the gate. #1793 stays open with only its rep
 | 4 | same | `parsed = parse_agent_id(agent_id) if isinstance(agent_id, str) else None` | `parsed = parse_agent_id(agent_id)` | r3_r4 |
 | 5 | `social_verification.py` | `return frozenset({author_id, resolve_sovereign_id_from_slot(author_id, identity_registry)})` | `return frozenset({author_id})` (#1793's named) | ma_md_me, me_mf_mg |
 | 6 | same | same | `return frozenset({resolve_sovereign_id_from_slot(author_id, identity_registry)})` | mb |
-| 7 | same | `recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER * max(len(owners), 1))` | `recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER)` | mc |
+| 7 | same | `wide = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER * len(owners))` | `wide = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER)` | mc |
 | 8 | `_helpers.py` | `identity_registry=identity_registry,` | delete the line | ma_md_me, me_mf_mg |
 | 9 | `threads.py` | `identity_registry=self._identity_registry,` | delete the line | ma_md_me |
 | 10 | `messages.py` | `identity_registry=self._identity_registry,` | delete the line | me_mf_mg |
 | 11 | same | `channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, as a thread episode stores it` | `channel_id=channel_name,` | me_mf_mg, mf_mg |
 | 12 | same | `channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, not its name` | `channel_id=channel_name,` | me_mf_mg, mf_mg |
+| 13 | `social_verification.py` | `recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER)` | `recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER * max(len(owners), 1))` (M2b's one recall) | mh |
+| 14 | same | `recalled = _union_by_id(recalled, wide)` | `recalled = wide` | mh |
+| 15 | same | `if len(owners) > 1:` | `if False:` | mc |
+| 16 | same | `return [*first, *(ep for ep in second if ep.id not in held)]` | `return [*first, *second]` | mi |
 
 Expected arithmetic:
 - Row 11: 4 of 10 pairs become independent, giving 0.4 and a low risk where high is expected.
 - Row 12: 2 of 10, giving 0.2 and a medium risk.
-- Row 7 at 40 peers: only the three readers are held.
+- Rows 7 and 15 at 40 peers: the pool is the recall of three, which holds only the three readers.
+- Rows 13 and 14 (case mh): the pool is the recall of 12, which lacks `visual-00`; one episode is matched, the score is 1.0 and the risk none.
+- Row 16 (case mi): each episode is matched twice; 4 of 6 pairs are independent, not 1 of 1.
 
 ## 8. What this does NOT change
 
@@ -968,7 +975,7 @@ Name the consumer for each property and confirm that it accepts the change.
    - An episode is kept for an id exactly when its owners contain that id or the certificate id it maps to.
    - With `identity_registry=None`, the result equals the base's for any input whose recall returns all episodes.
    - **Consumers:** `BridgeAlertService.check_cascade_risk` (`bridge_alerts.py:849`) and the Counselor's cascade handler, both reading the unchanged `CascadeRiskResult` fields.
-4. **Recall.** There is one `recall` per check, with `k = 3 * distinct non-empty author ids`. Per-peer filtering keeps duplicates as before. The disabled path still awaits no recall (`test_bf920...:269`).
+4. **Recall.** A check makes at most two `recall` calls: `recall(post_body, k=3)`, the base's call, and, only with more than one distinct non-empty author id, `recall(post_body, k=3 * distinct non-empty author ids)`. The pool is the first result, then each episode of the second whose id the first does not hold, so every episode the base's recall returned is in the pool whether recall fuses, reranks or ranks by similarity alone. A failure of either recall leaves the other's episodes. Per-peer filtering keeps duplicates as before. The disabled path still awaits no recall (`test_bf920...:269`).
 5. **Reply channel.** Both reply-path episodes store `thread_channel_id`, the value the same method hands the cascade check (`messages.py:319`). **Consumers:** `anchor_quality.py:47` (presence only) and `_are_independently_anchored` (`:104-109`).
 6. **Paperwork.** The text is ASCII. Subjects and tracker lines carry no `AD-` or `BF-` token, and both scans of section 5 are clean.
 
@@ -984,7 +991,7 @@ Name the consumer for each property and confirm that it accepts the change.
   - Three certificated peers echoing a post (a real promotion request) give `["medium", "high"]`.
   - The same posts by agents with no certificate, and by agents certificated after their posts, give it too.
   - A reply echo among certificated agents gives it, and reply episodes store the channel id.
-  - At 40 peers, one recall holds every peer's episode.
+  - At 40 peers, the pool holds every peer's episode (`mc`). An episode that a hybrid-shaped recall of three holds and its recall of `3 * owners` drops is kept (`mh`). An episode both recalls hold counts once (`mi`).
   - Row 5 fails the chain cases.
   - The replay waits for the Captain (D3, L6).
 - The report states what changes for new episodes, that no stored episode changes, and what can now fire for agents with certificates (L7).
@@ -1087,5 +1094,33 @@ HOLDS: yes
   - duplicate peers inflate dependence (L5, kept);
   - fan-out and pre-certificate episodes keep the slot id (handled by both keys);
   - after a slot reassignment the old certificate's episodes are not matched (accepted; `reassign_slot` is a rare manual step);
-  - one recall replaces up to 41, a cost reduction;
+  - at most two recalls replace up to 41, a cost reduction;
   - the cascade check runs before the post's own episode is stored, so the author contributes only earlier episodes (unchanged).
+
+## 13. Amendment A1 (2026-11-16): review round 1, finding F1
+
+**Revised by** `claude-architect`. Sections 1 to 12 are read with this section; where they differ, this section wins. Edited in place: the header, G2b's count, D2, L4, L5, section 7 (heading, row 7, rows 13 to 16, arithmetic), section 9 property 4, section 10 and section 12's cost line. M2b's commit subject ("with one recall for every peer") is history and stays; this section supersedes it.
+
+| # | Milestone | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|---|
+| F1 | M2b | `check_cascade_risk` made one recall with `k = 3 * owners`. With hybrid recall on (shipped: `config/system.yaml:137`), the fused top `k` is not contained in the fused top `k'` for `k' > k` (`episodic.py:3615-3623`: a sparse window of `3 * k`, reciprocal rank fusion, a cut to `k`), so the wider recall can drop an episode the base's `recall(k=3)` held. The reviewer and the orchestrator's probe reproduced it on a real `EpisodicMemory(hybrid_recall_enabled=True)` with 21 synthetic episodes: `recall(k=3)` = `[dense-00, visual-00, dense-01]`; `k=6`, `9` and `12` hold only dense episodes; `k=15` holds `visual-00` again. For peers a, b and c, the base gave `high` with one event and the candidate `none` with none. | ordinary | yes (P2) | repaired: R1-1, R1-2; cases mh, mi |
+
+**D2 corrected.** "The pool holds what the base saw" was argued for prefix-shaped recalls. It fails under hybrid fusion (measured) and, by reading (not measured), under composite reranking, whose candidate window is `10 * k` (`episodic.py:3494`; off by default, `config.py:980`). The dense-only path takes the first `k` passing candidates of a similarity-ordered window of `3 * k` (`episodic.py:3494`, `:3551-3554`). By reading, that is a prefix only as far as the vector index returns the same order for a larger window (not measured). The union makes the pool independent of all three paths.
+
+**Rejected:**
+- one wider recall with the gap recorded as a limit (a regression of ordinary reach under the shipped config);
+- `recall_for_agent` per peer (D2's reason stands);
+- a larger fixed `k` alone (no `k` makes fused results nested).
+
+**The test doubles.** `_Fused` runs the production `reciprocal_rank_fusion` at its default `k=60` (`episodic.py:235-236`; `config.py:1006`) with `_fuse_dense_sparse`'s windows. Two premise assertions in case mh fail loudly if the fixture stops discriminating. A real hybrid store was not used: its ranking depends on which embedding function the environment has, either a cached model or the fallback CI's `PROBOS_EMBEDDINGS=local` selects (`tests/conftest.py:183-189`, `.github/workflows/ci.yml:40`). The probe above is the record that the real store has this shape. `_Copies` answers new Episode objects per recall, so case mi needs the union to deduplicate by episode id, not by object.
+
+| Case | Kind | Asserts |
+|---|---|---|
+| mh | regression | premise: the recall of 3 is `[dense-00, visual-00, dense-01]` and the recall of 12 holds `dense-00` but not `visual-00`; peers a, b and c give `high` |
+| mi | control | two peers' episodes in different channels and threads, held by both recalls as new objects, give an independence score of 1.0 |
+
+**Counts (expected, not measured).** The new file has 15 cases, none marked. With R1's tests on the M2b source: mh fails (`none`), 14 pass. After R1: 15 pass.
+
+**L8 (#1793).** The pool holds at least the base's episodes, not only them. An episode that only the wider recall holds can raise or lower the independence score, so a risk can differ from the base's, for agents with or without certificates. That is D2's purpose, more of each peer's episodes, not a loss of any episode the base saw.
+
+**Captain.** None: the change strengthens a control, adds no flag and can be reverted (D4).

@@ -3,11 +3,14 @@
 #1792: resolve_author_department finds the department of an agent given its id ({type}_{pool}_{index}_{hash8}), not
 only of a bare type, so a Ward Room episode an agent writes carries its department anchor.
 #1793: the cascade check matches a post's author and its peers to episodes under both ids the Ward Room stores them
-under (the slot id, and the certificate id the identity registry maps it to), with one recall large enough for every
-peer; a reply episode stores the channel's id, as a thread episode does.
+under (the slot id, and the certificate id the identity registry maps it to), from a pool large enough for every
+peer that keeps every episode the old recall of three held; a reply episode stores the channel's id, as a thread
+episode does.
 
 The real WardRoomService runs on a temporary database with a real AgentIdentityRegistry and an episodic store double
 that records what it is given and answers ``recall`` with the first ``k`` stored episodes (the real cap, no ranking).
+Case mh uses a recall shaped like hybrid recall, which a wider ``k`` can make drop an episode; case mi uses one that
+answers new Episode objects on every recall, as a real store does.
 Synthetic fixtures only. A case marked ``until_built("#N")`` fails on the base at its own assert; the milestone that
 builds #N adds it to ``_BUILT``. ``WARD_ROOM_IDENTITY_KEYS_RUNXFAIL=1`` runs every case plainly.
 """
@@ -15,6 +18,7 @@ builds #N adds it to ``_BUILT``. ``WARD_ROOM_IDENTITY_KEYS_RUNXFAIL=1`` runs eve
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import os
 from pathlib import Path
@@ -26,6 +30,7 @@ import pytest_asyncio
 
 import probos.substrate.identity as substrate_identity
 from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.episodic import reciprocal_rank_fusion
 from probos.cognitive.social_verification import SocialVerificationService
 from probos.cognitive.thread_priority.scorer import ThreadPriorityScorer
 from probos.cognitive.thread_priority.service import ThreadPriorityService
@@ -83,6 +88,28 @@ class _Episodes:
 
     async def recall(self, query: str, k: int = 5) -> list[Episode]:
         return self.stored[:k]
+
+
+class _Copies(_Episodes):
+    """As ``_Episodes``, but each recall answers new Episode objects, as a real store builds them per recall."""
+
+    async def recall(self, query: str, k: int = 5) -> list[Episode]:
+        return [dataclasses.replace(ep) for ep in self.stored[:k]]
+
+
+class _Fused:
+    """A recall shaped like hybrid recall (episodic.py ``_fuse_dense_sparse``): the dense top ``k`` and the sparse
+    top ``3 * k``, fused by the production ``reciprocal_rank_fusion`` at its default ``k=60``, then cut to ``k``.
+    Both rankings grow with ``k``, so a wider recall need not hold a narrower one's episodes."""
+
+    def __init__(self, dense: list[Episode], sparse: list[Episode]) -> None:
+        self._by_id = {ep.id: ep for ep in [*dense, *sparse]}
+        self._dense = [ep.id for ep in dense]
+        self._sparse = [ep.id for ep in sparse]
+
+    async def recall(self, query: str, k: int = 5) -> list[Episode]:
+        fused = reciprocal_rank_fusion([self._dense[:k], self._sparse[: k * 3]], k=60)
+        return [self._by_id[eid] for eid, _score in fused[:k]]
 
 
 @pytest_asyncio.fixture
@@ -348,3 +375,50 @@ async def test_mc_one_recall_holds_a_matching_episode_of_every_peer_at_the_produ
     assert result is not None
     assert result.affected_departments == ["medical", "science"]
     assert result.risk_level == "high"
+
+
+def _shared(eid: str, owner: str) -> Episode:
+    """An episode of ``owner`` in the one thread every peer echoes: no pair of these is independent."""
+    return Episode(
+        id=eid, timestamp=1000.0, user_input=_ECHO, agent_ids=[owner],
+        anchors=AnchorFrame(channel_id="all-hands-id", thread_id="shared"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_mh_the_wider_recall_does_not_drop_an_episode_the_recall_of_three_held() -> None:
+    """Hybrid-shaped recall: the recall of 3 holds the second peer's episode; the recall of 3 per author id (four
+    ids, so 12) ranks eleven boosted episodes and dense-00 above it. The check keeps it, as the base did."""
+    dense = [_shared(f"dense-{i:02}", "peer-a" if i == 0 else "other") for i in range(15)]
+    sparse = [_shared("visual-00", "peer-b"), *dense[3:11], dense[1], dense[2], *dense[11:]]
+    store = _Fused(dense, sparse)
+    narrow = [ep.id for ep in await store.recall(_ECHO, k=3)]
+    wide = [ep.id for ep in await store.recall(_ECHO, k=12)]
+    assert narrow == ["dense-00", "visual-00", "dense-01"]  # premise: the recall of 3 holds both peers' episodes
+    assert "visual-00" not in wide and "dense-00" in wide  # premise: the recall of 12 drops one of them
+    matches = [{"author_id": f"peer-{x}", "author_callsign": x.upper(), "timestamp": 1000.0 + i} for i, x in enumerate("abc")]
+    result = await SocialVerificationService(store, SocialVerificationConfig()).check_cascade_risk(
+        "author", "Author", _ECHO, "all-hands-id", peer_matches=matches,
+    )
+    assert result is not None
+    assert result.risk_level == "high"
+
+
+@pytest.mark.asyncio
+async def test_mi_an_episode_both_recalls_hold_counts_once() -> None:
+    """Two peers' episodes in different channels and threads: one independent pair, score 1.0. Both recalls answer
+    both episodes as new objects; counted twice they would give 4 of 6 independent pairs."""
+    first = Episode(
+        id="echo-a", timestamp=1000.0, user_input=_ECHO, agent_ids=["peer-a"],
+        anchors=AnchorFrame(channel_id="channel-a", thread_id="thread-a"),
+    )
+    second = Episode(
+        id="echo-b", timestamp=1000.0, user_input=_ECHO, agent_ids=["peer-b"],
+        anchors=AnchorFrame(channel_id="channel-b", thread_id="thread-b"),
+    )
+    matches = [{"author_id": f"peer-{x}", "author_callsign": x.upper(), "timestamp": 1000.0} for x in "ab"]
+    result = await SocialVerificationService(_Copies([first, second]), SocialVerificationConfig()).check_cascade_risk(
+        "author", "Author", _ECHO, "all-hands-id", peer_matches=matches,
+    )
+    assert result is not None
+    assert result.anchor_independence_score == 1.0

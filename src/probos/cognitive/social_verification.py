@@ -98,6 +98,12 @@ def _owned_by(episodes: list[Any], keys: frozenset[str]) -> list[Any]:
     return [ep for ep in episodes if any(key in (getattr(ep, "agent_ids", None) or []) for key in keys)]
 
 
+def _union_by_id(first: list[Any], second: list[Any]) -> list[Any]:
+    """BF-963 (#1793): ``first``, then each episode of ``second`` whose id ``first`` does not hold."""
+    held = {ep.id for ep in first}
+    return [*first, *(ep for ep in second if ep.id not in held)]
+
+
 def _same_thread(anchors_a: Any, anchors_b: Any) -> bool:
     """BF-920: True when both anchor frames name the same non-empty thread."""
     thread_a = getattr(anchors_a, "thread_id", "") or ""
@@ -569,17 +575,26 @@ class SocialVerificationService:
         earliest_ts = float("inf")
         source_agent = author_callsign
 
-        # BF-963 (#1793): one recall, large enough to hold _RECALL_PER_OWNER
-        # episodes of each distinct author id. The recall of k=3 that used to run
-        # once for each peer answered the same three episodes every time.
+        # BF-963 (#1793): the pool is the recall of k=3 that used to run once for
+        # each peer (it answered the same episodes every time), then each episode
+        # of one recall large enough for _RECALL_PER_OWNER episodes of each
+        # distinct author id that the first does not hold. Hybrid recall fuses
+        # rankings that grow with k, so a wider recall need not hold a narrower
+        # one's episodes; the union keeps every episode the base's recall held.
         owners = {match.get("author_id", "") for match in peer_matches} | {author_id}
         owners.discard("")
         keys = {owner: _owner_keys(owner, identity_registry) for owner in owners}
         recalled: list[Any] = []
         try:
-            recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER * max(len(owners), 1))
+            recalled = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER)
         except Exception:
             logger.debug("AD-567f: cascade recall failed", exc_info=True)
+        if len(owners) > 1:
+            try:
+                wide = await self._episodic.recall(post_body, k=_RECALL_PER_OWNER * len(owners))
+                recalled = _union_by_id(recalled, wide)
+            except Exception:
+                logger.debug("BF-963: wide cascade recall failed", exc_info=True)
 
         for match in peer_matches:
             match_author = match.get("author_id", "")
