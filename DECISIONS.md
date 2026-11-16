@@ -1846,11 +1846,11 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 
 ### Ward Room identity keys: an agent id finds its department; the cascade check meets episode owners in their own key (2026-11-16, #1792, #1793)
 
-- *Scope.* `substrate/identity.py` (`agent_type_of`), `ward_room/_helpers.py`, `ward_room/threads.py`, `ward_room/messages.py`, `cognitive/social_verification.py`, the orientation config model and yaml, the two generated config documents; one new test file; a golden and a pinned field count updated inline.
+- *Scope.* `substrate/identity.py` (`agent_type_of`), `ward_room/_helpers.py`, `ward_room/threads.py`, `ward_room/messages.py`, `cognitive/social_verification.py`, the orientation config model and yaml, the two generated config documents; one new test file; the default dump golden and a pinned field count updated inline; the two digests of the agentic correlation default-off golden refreshed by measurement.
 - *G1 (department).* Try the value as given, then the type of a registered or hash-verified id. The unread flag is removed rather than given a reader: the Ward Room holds no config, and a reader would add a switch that empties the anchor this repairs.
 - *G2 (owner key).* The registry the Ward Room stored the episodes with reaches the check; both ids match. The base's recall of three episodes, then the other episodes of one recall of three per distinct author id, bounded by the 40 rows one peer check returns: a wider hybrid recall need not hold a narrower one's episodes. Rejected: per-agent recall, whose relaxed threshold changes what counts as a match.
 - *G3 (reply channel).* New reply episodes store the channel id. Stored ones keep the name; a form rule in the comparison was rejected, because it would also move the dream, records and metrics consumers of the independence score.
-- *Rollout.* No new flag: `social_verification.cascade_enabled` and the Bridge alert's cooldown and mute already bound it. *Residual.* L1 to L7 of the contract. *Reversal.* Revert the batch's commits in reverse order.
+- *Rollout.* No new flag: `social_verification.cascade_enabled` and the Bridge alert's cooldown and mute already bound it. *Residual.* L1 to L8 of the contract. *Reversal.* Revert the batch's commits in reverse order.
 
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
