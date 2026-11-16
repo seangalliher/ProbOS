@@ -103,3 +103,16 @@ def parse_agent_id(agent_id: str) -> dict[str, str] | None:
         "index": index,
         "hash": hash8,
     }
+
+
+def agent_type_of(agent_id: str) -> str:
+    """BF-962 (#1792): the agent type a deterministic agent id names, or "" if it names none.
+
+    The module registry first, then the hash-verified split (``parse_agent_id``).
+    The best-effort prefix ``parse_agent_id`` returns when no split matches the
+    hash is not a type, and neither is a value that is not a str.
+    """
+    parsed = parse_agent_id(agent_id) if isinstance(agent_id, str) else None
+    if not parsed or not parsed.get("pool_name"):
+        return ""
+    return parsed["agent_type"]

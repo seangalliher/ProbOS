@@ -9,10 +9,18 @@ logger = logging.getLogger(__name__)
 
 
 def resolve_author_department(author_id: str) -> str:
-    """Resolve department for Ward Room episode anchors (AD-567g)."""
+    """Resolve department for Ward Room episode anchors (AD-567g).
+
+    BF-962 (#1792): the department table is keyed by agent type, and an agent's
+    post names its author by the agent's id ({type}_{pool}_{index}_{hash8}).
+    The value is tried as given first, so a bare type or a key such as
+    ``captain`` behaves as before, then as the type the id names
+    (``substrate.identity.agent_type_of``). An unknown value gives "".
+    """
     try:
         from probos.cognitive.standing_orders import get_department
-        return get_department(author_id) or ""
+        from probos.substrate.identity import agent_type_of
+        return get_department(author_id) or get_department(agent_type_of(author_id)) or ""
     except Exception:
         return ""
 

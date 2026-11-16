@@ -194,8 +194,8 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'ArchiveConfig': {'enabled': 
                              'cold_start_full_orientation': True,
                              'warm_boot_orientation': True,
                              'proactive_supplement': True,
+                             # BF-962 (#1792): populate_ward_room_department removed; it had no reader.
                              'populate_watch_section': True,
-                             'populate_ward_room_department': True,
                              'populate_event_log_window': True},
     'PredictiveBranchingConfig': {   'enabled': False,
                                      'cache_ttl_seconds': 60.0,

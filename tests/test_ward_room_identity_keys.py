@@ -37,7 +37,7 @@ from probos.types import AnchorFrame, Episode
 from probos.ward_room import WardRoomService
 from probos.ward_room._helpers import resolve_author_department
 
-_BUILT: frozenset[str] = frozenset()
+_BUILT: frozenset[str] = frozenset({"#1792"})
 
 
 def until_built(issue: str) -> Any:

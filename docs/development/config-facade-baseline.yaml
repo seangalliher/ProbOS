@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1896
-  field_definitions: 1886
+  canonical_dump_leaves: 1895
+  field_definitions: 1885
   incidental: 13
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: 5658987ad1ad4a36ec30227ac0788ea77a10aa3e47a483c6d7fc8eb5f81776aa
+canonical_dump_sha256: db581b6542a1d80d4559994e7f2f3bca7177ce5e88ac617f835625b3f3eb68b2
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2658,7 +2658,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 25d606acaf314c60af02bf54b68530f2176a4d54797ad499d872ff94c06a78ae
+    schema_sha256: fa60253c54b0997339cec5744a0b69880d0596a98a69610672304910312307b3
     fields:
     - {default: 'True', name: enabled}
     - {default: '600.0', name: orientation_window_seconds}
@@ -2666,7 +2666,6 @@ models:
     - {default: 'True', name: warm_boot_orientation}
     - {default: 'True', name: proactive_supplement}
     - {default: 'True', name: populate_watch_section}
-    - {default: 'True', name: populate_ward_room_department}
     - {default: 'True', name: populate_event_log_window}
   PacksConfig:
     qualname: PacksConfig
@@ -3427,7 +3426,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: a20888ca2c68e0e8b4d8b4259644b8aacdc526e605a37f805041a8525ae6ccb4
+    schema_sha256: 1a10853aff8ead896e744d81094f3a48e211ee9a69eff6345d5d94a8912230b5
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
