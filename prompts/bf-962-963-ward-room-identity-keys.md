@@ -4,6 +4,7 @@
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-14: the orchestrator's oracle findings F1 to F3 (C2a-1's complete list; the `extra` search narrowed to what it finds; P2a-7, the pinned field count).
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16: review round 1, finding F1 (section 13, Amendment A1).
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16: the broad gate's finding G1 (section 14, Amendment A2).
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16: review round 3, findings R3-1 to R3-3 (section 14, the end of Amendment A2).
 **File in the repository:** `prompts/bf-962-963-ward-room-identity-keys.md`. No commit subject or tracker line in this batch carries an `AD-` or `BF-` token or this file's name (section 5).
 **Status:** ready to build on `origin/main` once #1794 and batches 1 to 3 have merged. Read on `5275d008`. None of those batches edits the source or test files below. Only the trackers move, and their anchors are text, not line numbers (M3).
 **Dependencies:** none in code. **Numbers:** #1792 is BF-962 and #1793 is BF-963 (`gh issue view`). Nothing is allocated here. The AD ceiling is AD-1359 (`scripts/ad_ceiling.py`, all three sources) and is stated for the record only.
@@ -1173,8 +1174,8 @@ FOUND: 36 lines in 14 files: ablation/sigma_report.py, fixtures/ad1152_agentic_o
        test_ad1135_setup_chain.py, test_ad1135_setup_cli.py, test_ad1152_agentic_correlation.py,
        test_ad1192_owned_steps_store.py, test_ad1196_did_key_binding.py, test_ad1270e1_config_facade.py,
        test_ad1328_s1_policy_evaluation.py, test_ad1328_s1_policy_models.py, test_ad1328_s2a_gate.py,
-       test_ad1328_s2a_startup_and_doctor.py, trials/catalog.py, trials/data/catalog_v1.yaml.
-       The lines are not listed here; the by-value searches above carry the CLAIM.
+       test_ad1328_s2a_startup_and_doctor.py, trials/catalog.py, trials/data/catalog_v1.yaml
+       (the lines are not listed here; the by-value searches above carry the CLAIM)
 RUN:   Grep "_canonical_sha|canon\b|hexdigest" in tests/test_ad1185_config_profiles.py (outside the 14)
 FOUND: 7 lines: :96 and :107 (_canonical_sha), :123 and :127 (canon), :131 and :132 (calls of canon),
        :400 (_canonical_sha(load_profile("minimal")) == _canonical_sha(SystemConfig()))
@@ -1203,10 +1204,10 @@ HOLDS: the by-value searches find the base's two digests of the default dump in 
 
 ### Round 3 of review (2026-11-16): findings R3-1 to R3-3
 
-**Revised by** `claude-architect`. Edited in place: A2's row of the consumer-search table (section 3), section 8's Tests line, A2's second search and A2's note for the next contracts. The repair narrows or removes claims; it adds no test, golden, source or tracker change.
+**Revised by** `claude-architect`. Edited in place: the header's provenance line, A2's row of the consumer-search table (section 3), section 8's Tests line, A2's second search and A2's note for the next contracts. The repair corrects three claims of R2's prose, replaces the pattern search's line list by its count and file list, and adds two searches by value; it adds no test, golden, source or tracker change.
 
-| # | Finding | Reach | Regression | Disposition |
-|---|---|---|---|---|
-| R3-1 | A2's second search called the golden the only digest pin the removal moves. The facade baseline's `canonical_dump_sha256` (`docs/development/config-facade-baseline.yaml:56`, `5658987a...` to `db581b65...`) moves too; C2a-1 regenerates it (section 2). | ordinary | yes (P3, R2's prose) | repaired in round 3: the CLAIM names both, from a search by value |
-| R3-2 | The pattern search over `tests/` said "The matched lines are:" and listed some of its 36 lines in 14 files. | ordinary | yes (P3, R2's prose) | repaired in round 3: the count and file list stay, the line list goes |
-| R3-3 | A2's row of the consumer-search table said `agentic-event-correlation.md:133` "links it and pins no value"; the document records the original capture's observation digest at `:145` and `:264`. | ordinary | yes (P3, R2's prose) | repaired in round 3: the row names that digest |
+| # | Milestone | Finding | Reach | Regression | Disposition |
+|---|---|---|---|---|---|
+| R3-1 | R2 | A2's second search called the golden the only digest pin the removal moves. The facade baseline's `canonical_dump_sha256` (`docs/development/config-facade-baseline.yaml:56`, `5658987a...` to `db581b65...`) moves too; C2a-1 regenerates it (section 2). | ordinary | yes (P3, R2's prose) | repaired in round 3: the CLAIM names both, from a search by value |
+| R3-2 | R2 | The pattern search over `tests/` said "The matched lines are:" and listed some of its 36 lines in 14 files. | ordinary | yes (P3, R2's prose) | repaired in round 3: the count and file list stay, the line list goes |
+| R3-3 | R2 | A2's row of the consumer-search table said `agentic-event-correlation.md:133` "links it and pins no value"; the document records the original capture's observation digest at `:145` and `:264`. | ordinary | yes (P3, R2's prose) | repaired in round 3: the row names that digest |
