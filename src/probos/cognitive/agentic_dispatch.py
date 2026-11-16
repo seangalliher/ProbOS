@@ -35,6 +35,7 @@ from probos.artifacts.refs import validate_artifact_ref
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.swe_harness.agentic_loop import (
     AGENTIC_DEFAULT_TIER,
+    UNOFFERED_TOOL_REFUSAL,
     AgenticBudgetAwarenessState,
 )
 from probos.cognitive.swe_harness.result_offload import workspace_delivery_context  # AD-1240
@@ -332,6 +333,7 @@ CONFINEMENT_ANSWERED = "answered"  # BF-947
 _NEVER_RAN_REFUSALS: frozenset[str] = frozenset({
     _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL, CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED,
     CONFINED_CALL_ANSWERED, UNREGISTERED_TOOL_REFUSAL,
+    UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): the loop refused a tool outside the offer
 })
 
 
@@ -2165,6 +2167,7 @@ def classify_tool_fault_error(error: Any) -> str | None:
             _DEFERRED_SCHEMA_REFUSAL, _PLAN_MODE_TOOL_REFUSAL,
             CONFINED_CALL_FILED, CONFINED_CALL_NOT_FILED, CONFINED_CALL_ANSWERED,  # AD-1347 S3, BF-947
             UNREGISTERED_TOOL_REFUSAL,  # AD-1356 S1.1
+            UNOFFERED_TOOL_REFUSAL,  # BF-965 (#1796): a refused unoffered call is not a fault
             "consensus_blocked", "requires_confirmation",
         )
         or error.startswith(_APPROVAL_PARKED_REFUSAL.split("{request_id}", 1)[0])
@@ -3608,9 +3611,11 @@ class WorkItemAgenticExecutor:
             ]
         # AD-1156: plan mode narrows the offer to its allowlist and arms the
         # matching invoke-time guard -- one decision, two consequences (BF-690).
-        # The guard is what holds for a tool the model names without being
-        # offered it, because the registry resolves every REGISTERED tool; it
-        # refuses before a call is resolved, parked (AD-1154) or run. Filtered
+        # BF-965: the loop refuses a tool the model names without being offered
+        # it before any executor sees the call; this guard stays as defence in
+        # depth, because the registry resolves every REGISTERED tool and a direct
+        # executor call is checked against no offer. It refuses before a call is
+        # resolved, parked (AD-1154) or run. Filtered
         # after every block has contributed, so a tool added to the union later
         # is withheld until it is classified, not offered by default.
         if plan_mode_tool_ids is not None:
@@ -3997,6 +4002,11 @@ class WorkItemAgenticExecutor:
         # AD-1189: an armed manifest needs the same seam; both off => no kwarg.
         if (mcp_offer_armed and mcp_offer is not None) or manifest_offer is not None:
             _loop_kwargs["refresh_tools"] = _refresh_tools
+        # BF-965: a withheld, loadable tool is named only inside load_tools, so the
+        # loop's offer check admits it and the AD-1189 guard answers the call. Unarmed
+        # => no kwarg, so a loop double pinning the unarmed keywords is unchanged.
+        if manifest_offer is not None:
+            _loop_kwargs["also_offered"] = manifest_offer.loadable_names
         # AD-1146: opt into the provider's real multi-turn message array
         # (assistant.tool_calls + role:"tool" results). Default-OFF — with the
         # flag off the loop builds the AD-545 flattened prompt verbatim. Read

@@ -45,6 +45,7 @@ from probos.cognitive.crew_verifier import (
     SubtaskVerifier,
 )
 from probos.cognitive.mcp_workbench import MCPDispatchOffer  # #1796: a correction offers MCP tools only through its source's AD-1241 offer.
+from probos.cognitive.swe_harness.agentic_loop import UNOFFERED_TOOL_REFUSAL
 from probos.config import SystemConfig
 from probos.events import EventType
 from probos.notifications import NotificationQueue
@@ -7531,10 +7532,17 @@ async def test_session_correction_find_mcp_tool_absent_registration_is_explicitl
         rank="ensign",
     )
 
-    assert outcome.status == "blocked"
-    assert outcome.failure_code == "correction_capability_denied"
+    # BF-965 (#1796): the projection's explicit denial withholds find_mcp_tool from the offer (synchronize_mcp_definitions
+    # skips an explicit denial, and no grant offers it), so the loop refuses the call before the denial is reached. A
+    # refusal is not a denial, so the one-response script ends the run as an execution defect, not a capability block.
+    assert "find_mcp_tool" not in [
+        (definition.get("function") or {}).get("name") for definition in correction_llm.requests[0].tools or []
+    ]
+    assert UNOFFERED_TOOL_REFUSAL in str(correction_llm.requests[1].prompt)
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "correction_execution_defect"
     assert outcome.terminal_attempt is not None
-    assert outcome.terminal_attempt.denied_tools == ("find_mcp_tool",)
+    assert outcome.terminal_attempt.denied_tools == ()
     assert runtime.tool_registry is before_registry
     assert [
         (registration.tool_id, id(registration), id(registration.tool))
@@ -7633,10 +7641,17 @@ async def test_session_correction_malformed_find_mcp_registration_is_explicit_de
         rank="ensign",
     )
 
-    assert outcome.status == "blocked"
-    assert outcome.failure_code == "correction_capability_denied"
+    # BF-965 (#1796): malformed finder metadata makes the projection deny find_mcp_tool explicitly, which also withholds
+    # it from the offer, so the loop refuses the call. A refusal is not a denial, so the one-response script ends the
+    # run as an execution defect, not a capability block.
+    assert "find_mcp_tool" not in [
+        (definition.get("function") or {}).get("name") for definition in correction_llm.requests[0].tools or []
+    ]
+    assert UNOFFERED_TOOL_REFUSAL in str(correction_llm.requests[1].prompt)
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "correction_execution_defect"
     assert outcome.terminal_attempt is not None
-    assert outcome.terminal_attempt.denied_tools == ("find_mcp_tool",)
+    assert outcome.terminal_attempt.denied_tools == ()
     assert runtime.mcp_workbench.calls == []
     assert source_tool.calls == []
     assert runtime.tool_registry is before_registry

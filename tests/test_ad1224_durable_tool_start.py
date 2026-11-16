@@ -871,6 +871,7 @@ async def test_agentic_loop_tool_call_reaches_the_durable_start_record(open_log:
     await loop._execute_one_tool(
         ToolUseBlock(tool_call=ToolCallRequest(id="c1", name="read_file", arguments={"path": "a"})),
         agent_id="agent-9", iteration=4, context=caller_context,
+        offered=frozenset({"read_file"}),  # #1796: a direct call passes the offer the loop's step would pass.
     )
     data = (await _rows(log, EventType.TOOL_STARTED.value))[0]["data"]
     assert data["tool_id"] == "read_file"

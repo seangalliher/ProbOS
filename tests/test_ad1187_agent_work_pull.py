@@ -1033,6 +1033,7 @@ async def test_loop_invalid_presentation_bounds_refuse_admission(bounds: dict[st
     result = await loop._execute_one_tool(
         ToolUseBlock(ToolCallRequest(name="claim_work_item")), agent_id="agent-a",
         iteration=1, context={"agent_id": "agent-a"},
+        offered=frozenset({"claim_work_item"}),  # #1796: a direct call passes the offer the loop's step would pass.
     )
     assert result.is_error is True
     assert "work_pull_presentation_invalid" in result.output
@@ -1048,6 +1049,7 @@ async def test_loop_rendering_failure_is_error_not_successful_empty() -> None:
     result = await loop._execute_one_tool(
         ToolUseBlock(ToolCallRequest(name="discover_work_items")), agent_id="agent-a",
         iteration=1, context={"agent_id": "agent-a"},
+        offered=frozenset({"discover_work_items"}),  # #1796: a direct call passes the offer the loop's step would pass.
     )
     assert result.is_error is True
     assert "work_pull_presentation_render_failed" in result.output

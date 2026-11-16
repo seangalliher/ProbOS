@@ -24,6 +24,7 @@ from probos.cognitive.agentic_dispatch import (
 )
 from probos.cognitive.decomposer import is_capability_gap
 from probos.cognitive.introspective_telemetry import IntrospectiveTelemetryService
+from probos.cognitive.swe_harness.agentic_loop import UNOFFERED_TOOL_REFUSAL
 from probos.cognitive.swe_harness.tool_call import (
     ToolCallRequest,
     ToolCallResult,
@@ -1567,10 +1568,9 @@ async def test_loop_self_query_errors_reach_model_without_telemetry_reads(
         assert runtime.tool_permission_store.get_active_grants_sync(
             "baseline-agent", "self_query",
         ) == [grant]
-        error = (
-            "Tool self_query failed: Agent baseline-agent has none on self_query, "
-            "needs read"
-        )
+        # BF-965 (#1796): the restriction withholds self_query from the offer, so the loop refuses the call before the
+        # registry's permission denial is reached.
+        error = UNOFFERED_TOOL_REFUSAL
     else:
         error = "self_query: telemetry service unavailable."
     call = ToolCallRequest(name="self_query", arguments=params, id="self-query-error")
@@ -1593,7 +1593,7 @@ async def test_loop_self_query_errors_reach_model_without_telemetry_reads(
     offered = [definition["function"]["name"] for definition in llm.requests[0].tools]
     if reason == "captain-restriction":
         assert "self_query" not in offered
-        assert outcome.denied_tools == ["self_query"]
+        assert outcome.denied_tools == []  # BF-965 (#1796): a call the loop refused is not a denial; AD-855 files nothing.
         assert runtime.tool_registry.resolve_permission(
             "baseline-agent", "self_query", agent_department="science",
             agent_rank="lieutenant",

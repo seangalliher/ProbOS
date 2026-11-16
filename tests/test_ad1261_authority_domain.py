@@ -962,6 +962,7 @@ async def _execute_retention(
             id="retention-read",
         )),
         agent_id=_SUBJECT, iteration=1, context={"agent_id": _SUBJECT},
+        offered=frozenset({tool_id}),  # #1796: a direct call passes the offer the loop's step would pass.
     )
 
 
@@ -1303,6 +1304,7 @@ async def test_loop_r2_concurrent_calls_have_separate_retained_pairs() -> None:
                 name="self_query", arguments={"domains": [domain]}, id=subject,
             )),
             agent_id=subject, iteration=1, context={"agent_id": subject},
+            offered=frozenset({"self_query"}),  # #1796: a direct call passes the offer the loop's step would pass.
         ))
         for subject, domain in zip((_SUBJECT, _OTHER), SELF_QUERY_OPTIONAL_DOMAINS)
     ]

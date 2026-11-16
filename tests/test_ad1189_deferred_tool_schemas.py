@@ -1083,7 +1083,9 @@ async def test_load_tools_ungranted_registered_name_is_reported_unknown_and_neve
 
     assert len(llm.requests) == 3
     assert _manifest_names(llm.requests[0].tools) == ["heavy_probe"]
-    load, direct = invocations
+    # BF-965 (#1796): the direct call names a tool its request did not offer and load_tools did not make loadable,
+    # so the loop refuses it and the executor (whose permission denial this case used to reach) is never entered.
+    (load,) = invocations
     assert load.tool_id == _META and load.result is not None and load.result.error is None
     assert load.result.output["unknown"] == ["secret_probe"]
     assert load.result.output["unknown_count"] == 1
@@ -1091,10 +1093,9 @@ async def test_load_tools_ungranted_registered_name_is_reported_unknown_and_neve
     for request in llm.requests:
         assert "secret_probe" not in _names(request.tools)
         assert "secret_probe" not in _manifest_names(request.tools)
-    assert direct.tool_id == "secret_probe"
-    assert isinstance(direct.raised, ToolPermissionDenied)
+    assert agentic_dispatch.UNOFFERED_TOOL_REFUSAL in llm.requests[2].prompt
     assert secret.calls == []
-    assert outcome.denied_tools == ["secret_probe"]
+    assert outcome.denied_tools == []
     assert outcome.stopped_reason == "complete"
 
 

@@ -16,7 +16,7 @@ import pytest
 
 from probos.artifacts import ArtifactStore
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor, WorkItemAgenticOutcome
-from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, AgenticResult
+from probos.cognitive.swe_harness.agentic_loop import UNOFFERED_TOOL_REFUSAL, AgenticLoop, AgenticResult
 from probos.cognitive.swe_harness.tool_call import (
     DelegatedToolCallResult,
     TextBlock,
@@ -740,7 +740,11 @@ async def test_target_department_gate_still_prevents_the_producer_from_running(t
     assert all(claim.kind != "published_finding" for claim in result.evidence.claims)
     ref = next(ref for ref in result.evidence.source_refs if ref.kind == "tool_trace")
     trace = json.loads(runtime.attachment_store.blobs[ref.content_hash])
-    assert trace[0]["is_error"] is True and "has none on publish_finding" in trace[0]["output"]
+    # BF-965 (#1796): the department gate withholds publish_finding from the child's offer, so the loop refuses the
+    # call before the registry's own department check is reached.
+    offered = [(definition.get("function") or {}).get("name") for definition in (llm.requests[0].tools or [])]
+    assert "publish_finding" not in offered
+    assert trace[0]["is_error"] is True and trace[0]["output"] == UNOFFERED_TOOL_REFUSAL
 
 
 class _ForgedPublication:

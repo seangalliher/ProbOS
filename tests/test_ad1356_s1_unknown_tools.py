@@ -54,7 +54,7 @@ class _Probe:
 
 # UT1
 async def test_an_unregistered_tool_is_refused_not_filed_and_never_counts_toward_a_fault(tmp_path: Path) -> None:
-    """Acceptance 3: the model is shown the refusal, which names search_capabilities; nothing is filed on the item; the
+    """Acceptance 3: the model is shown a refusal (the loop's since BF-965); nothing is filed on the item; the
     item is done; and two refusals in one run leave the fault store empty with no FAULT_REPORTED."""
     script = [_call(UNKNOWN, {}, "c1"), _call(UNKNOWN, {}, "c2"), _final("No such tool; nothing to report.")]
     async with _rig(tmp_path, script) as rig:
@@ -71,7 +71,10 @@ async def test_an_unregistered_tool_is_refused_not_filed_and_never_counts_toward
         item = await rig.store.get_work_item(created.work_item.id)
         assert item is not None and item.status == "done"
         assert requests_for_work_item(rig.requests, item.id) == []
-        assert _seen(rig, UNREGISTERED_TOOL_REFUSAL)
+        # BF-965 (#1796): an unregistered id is never offered, so the loop refuses it before the executor's AD-1356
+        # S1.1 refusal is reached; UT2 drives that refusal directly. Neither is filed or counted as a fault.
+        assert _seen(rig, agentic_dispatch.UNOFFERED_TOOL_REFUSAL)
+        assert not _seen(rig, UNREGISTERED_TOOL_REFUSAL)
         assert faults.list_open() == [] and events == []
 
 

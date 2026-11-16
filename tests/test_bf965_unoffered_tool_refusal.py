@@ -50,7 +50,7 @@ from tests import test_ad1240_tool_result_delivery as ad1240
 from tests.offered_tools import offer
 from tests.test_ad546_native_builder_harness import _FakeRegistry
 
-_BUILT: frozenset[str] = frozenset()
+_BUILT: frozenset[str] = frozenset({"#1796"})
 
 
 def until_built(issue: str) -> Any:
