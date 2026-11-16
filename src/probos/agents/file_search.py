@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -125,7 +126,7 @@ class FileSearchAgent(BaseAgent):
         the same seam, so leaving it open would have moved the leak rather than
         closed it.
         """
-        from probos.security.file_access import ReadFloor, resolve_for_runtime
+        from probos.security.file_access import resolve_for_runtime
 
         try:
             p = resolve_for_runtime(path, getattr(self, "_runtime", None))
@@ -137,21 +138,9 @@ class FileSearchAgent(BaseAgent):
             if not p.is_dir():
                 return {"success": False, "error": f"Not a directory: {path}"}
 
-            if include_ignored:
-                matches = sorted(str(m) for m in p.rglob(pattern))
-            else:
-                from probos.substrate.file_walk import iter_files
-                matches = sorted(
-                    str(f) for f in iter_files(p, skip_binary=False)
-                    if f.match(pattern)
-                )
-            # BF-944: a ``..`` pattern or a link under the base can lead out of it, so a match is kept when the read policy admits the
-            # path it resolves to and dropped otherwise; the policy is composed after the walk.
-            floor = ReadFloor(getattr(self, "_runtime", None))
-            kept = [m for m in matches if floor.permits(m)]  # BF-944: a match the policy refuses is left out and not counted
-            if len(kept) != len(matches):
-                logger.info("BF-944: file search left out %d match(es) the read policy refuses", len(matches) - len(kept))
-            matches = kept
+            # BF-972 (#1803): the walk, the match, the read policy and the sort run in one worker thread, so a broad search
+            # does not hold the event loop; the result is as before.
+            matches = await asyncio.to_thread(_admitted_matches, p, pattern, include_ignored, getattr(self, "_runtime", None))
             return {
                 "success": True,
                 "data": matches,
@@ -160,3 +149,24 @@ class FileSearchAgent(BaseAgent):
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+
+def _admitted_matches(base: Path, pattern: str, include_ignored: bool, runtime: Any) -> list[str]:
+    """BF-972 (#1803): the sorted matches of *pattern* under *base* that the read policy admits; run in a worker thread.
+
+    AD-990: the default walk skips ignored, hidden and default-ignore entries and stops at ``iter_files``'s cap;
+    ``include_ignored`` is the raw recursive glob. BF-944: a ``..`` pattern or a link under the base can lead out of it, so
+    a match is kept when the read policy admits the path it resolves to; the policy is composed after the walk.
+    """
+    from probos.security.file_access import ReadFloor
+
+    if include_ignored:
+        matches = sorted(str(m) for m in base.rglob(pattern))
+    else:
+        from probos.substrate.file_walk import iter_files
+        matches = sorted(str(f) for f in iter_files(base, skip_binary=False) if f.match(pattern))
+    floor = ReadFloor(runtime)
+    kept = [m for m in matches if floor.permits(m)]  # BF-944: a match the policy refuses is left out and not counted
+    if len(kept) != len(matches):
+        logger.info("BF-944: file search left out %d match(es) the read policy refuses", len(matches) - len(kept))
+    return kept

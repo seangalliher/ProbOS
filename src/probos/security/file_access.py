@@ -46,6 +46,7 @@ import os
 import posixpath
 import re
 import stat
+import threading
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -650,11 +651,33 @@ def resolve_for_runtime(
     )
 
 
+# BF-972 (#1803): a ReadFloor composed with no runtime says once per process that operator read_roots are not applied. The
+# flag is set under the lock, so a floor built on a worker thread and one built on the loop log once between them; a test
+# resets it with ``monkeypatch.setattr(file_access, "_NO_RUNTIME_WARNED", False)``.
+_NO_RUNTIME_LOCK = threading.Lock()
+_NO_RUNTIME_WARNED = False
+
+
+def _warn_no_runtime_once() -> None:
+    """BF-972 (#1803): log, once per process, that a read policy was composed without a runtime."""
+    global _NO_RUNTIME_WARNED
+    with _NO_RUNTIME_LOCK:
+        if _NO_RUNTIME_WARNED:
+            return
+        _NO_RUNTIME_WARNED = True
+    logger.warning("BF-972: read policy without a runtime; operator read_roots not applied (the floor still applies)")
+
+
 class ReadFloor:
     """BF-944: the read policy *runtime* configures (the floor, the agent workspace, ``security_infra.read_roots``), composed once
-    as :func:`resolve_for_runtime` composes it, for a caller that decides many paths. Built per listing or search."""
+    as :func:`resolve_for_runtime` composes it, for a caller that decides many paths. Built per listing or search.
+
+    BF-972 (#1803): it may be asked from a worker thread. It holds three attributes set here and only read afterwards, and
+    each ``permits`` call keeps its state in its own frame."""
 
     def __init__(self, runtime: Any) -> None:
+        if runtime is None:
+            _warn_no_runtime_once()  # BF-972 (#1803): the floor applies; operator read_roots cannot be read
         self._protected = protected_read_roots(runtime)
         self._exempt = workspace_exempt_roots(runtime)
         self._permitted = permitted_read_roots(runtime) or None

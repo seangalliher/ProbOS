@@ -39,7 +39,7 @@ from probos.security import file_access
 from tests.test_ad1344_constitution_write_refusal import _dir_link
 from tests.test_bf943_captain_document_write_refusal import _call, _office_file, _tree
 
-_BUILT: frozenset[str] = frozenset()
+_BUILT: frozenset[str] = frozenset({"#1803"})
 
 
 def until_built(issue: str) -> Any:
