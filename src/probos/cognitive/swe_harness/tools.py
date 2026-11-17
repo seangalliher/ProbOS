@@ -10,6 +10,7 @@ AD-423b's permission ladder.
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import hashlib
 import io
@@ -64,6 +65,7 @@ from probos.security.file_access import (
     resolve_read_path,
     workspace_exempt_roots,
 )
+from probos.substrate.file_walk import DEFAULT_MAX_FILES
 from probos.tools.protocol import (
     Tool,
     ToolResult,
@@ -514,6 +516,41 @@ _LIST_FILES_PATTERN_REFUSAL = (
     "list_files refused: pattern must be a relative glob with no '..' part; "
     "name the directory in path"
 )
+# BF-972 (#1803): list_files examines at most this many glob matches (substrate.file_walk's walk cap) and says when more match.
+_LIST_FILES_MAX_MATCHES = DEFAULT_MAX_FILES
+_LIST_FILES_TRUNCATED = (
+    "list_files stopped after examining {limit} matches; at least one more match was not examined. "
+    "Narrow the pattern or the path."
+)
+
+
+def _listed_matches(
+    base: Path, pattern: str, protected: list[Path], exempt: list[Path], permitted: list[Path] | None,
+) -> tuple[list[str], bool]:
+    """BF-972 (#1803): what ``list_files`` lists, and whether it stopped at the cap; run in a worker thread.
+
+    At most ``_LIST_FILES_MAX_MATCHES`` glob matches are examined, refused ones included; the result is truncated exactly
+    when one more match exists. BF-948's and BF-953's rules for each match, moved here unchanged.
+    """
+    files: list[str] = []
+    for examined, match in enumerate(base.glob(pattern)):
+        if examined >= _LIST_FILES_MAX_MATCHES:
+            return files, True  # BF-972: a match beyond the cap exists; it and any after it are not examined
+        try:
+            resolve_read_path(
+                str(match), protected_roots=protected, exempt_roots=exempt,
+                permitted_roots=permitted,
+            )
+        except FileAccessDenied:
+            continue  # BF-948: refused by the policy, so left out and not counted
+        shown = reader_spelling(match)  # BF-953: the spelling the verified reader's rules on the text admit
+        if shown is None:
+            continue  # BF-953 (Amendments 2 and 3): there is none, so it is left out like a refused match
+        files.append(
+            str(shown.relative_to(_PROJECT_ROOT))
+            if shown.is_relative_to(_PROJECT_ROOT) else str(shown)
+        )
+    return files, False
 
 
 class ListFilesTool:
@@ -531,6 +568,9 @@ class ListFilesTool:
     ordinary namespace what it names in the extended one (BF-953 D14). Any other match is left
     out like a refused one. The spelling is decided on the text alone, so a listed name does not
     say that it opens (BF-953 L18).
+    BF-972 (#1803): the glob and each match's checks run in one worker thread, and at most
+    ``_LIST_FILES_MAX_MATCHES`` matches are examined (refused ones included); when one more
+    match exists the output also holds ``truncated: True`` and a ``note`` saying so.
     Any other failure is answered and logged with its exception class only.
     """
 
@@ -579,22 +619,14 @@ class ListFilesTool:
                 )
             except FileAccessDenied as exc:
                 return ToolResult(error=f"list_files refused: {exc}")
-            files: list[str] = []
-            for match in base.glob(pattern):
-                try:
-                    resolve_read_path(
-                        str(match), protected_roots=protected, exempt_roots=exempt,
-                        permitted_roots=permitted,
-                    )
-                except FileAccessDenied:
-                    continue  # BF-948: refused by the policy, so left out and not counted
-                shown = reader_spelling(match)  # BF-953: the spelling the verified reader's rules on the text admit
-                if shown is None:
-                    continue  # BF-953 (Amendments 2 and 3): there is none, so it is left out like a refused match
-                files.append(
-                    str(shown.relative_to(_PROJECT_ROOT))
-                    if shown.is_relative_to(_PROJECT_ROOT) else str(shown)
-                )
+            # BF-972 (#1803): the glob and each match's policy check run in one worker thread, off the event loop.
+            files, truncated = await asyncio.to_thread(_listed_matches, base, pattern, protected, exempt, permitted)
+            if truncated:  # BF-972: the listing says it stopped, and how to narrow it
+                return ToolResult(output={
+                    "files": files,
+                    "truncated": True,
+                    "note": _LIST_FILES_TRUNCATED.format(limit=_LIST_FILES_MAX_MATCHES),
+                })
             return ToolResult(output={"files": files})
         except Exception as exc:
             kind = type(exc).__name__
@@ -1069,7 +1101,7 @@ class WriteFileTool:
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: write_file
             if refused is not None:
                 logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"write_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: write_file
             if refused is not None:
                 logger.warning("BF-911 WriteFileTool refused operation=write_file reason_code=protected_write_refused")
@@ -1166,7 +1198,7 @@ class EditFileTool:
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: edit_file
             if refused is not None:
                 logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"edit_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: edit_file
             if refused is not None:
                 logger.warning("BF-911 EditFileTool refused operation=edit_file reason_code=protected_write_refused")

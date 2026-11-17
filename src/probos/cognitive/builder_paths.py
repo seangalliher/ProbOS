@@ -231,6 +231,7 @@ CAPTAIN_DOCUMENT_PATHS = (
     "ui/package-lock.json",
     "CODEOWNERS",
     "docs/CODEOWNERS",
+    ".env",  # BF-975 (#1806): the environment file load_dotenv() reads at start (__main__.py), at a writer's own root
 )
 _CAPTAIN_DOCUMENT_PARTS = tuple(
     tuple(_canonical(part) for part in entry.rstrip("/").split("/")) for entry in CAPTAIN_DOCUMENT_PATHS
@@ -241,8 +242,8 @@ _DOCUMENT_ERRORS = (OSError, RuntimeError, ValueError)  # what the rule refuses 
 
 def _captain_document_refusal(path_text: str) -> str:
     return (
-        f"Captain document write refused (BF-943): {path_text!r} is one of the Captain's governance, instruction or "
-        "manifest files in a checkout (builder_paths.CAPTAIN_DOCUMENT_PATHS), which an agent does not write; standing "
+        f"Captain document write refused (BF-943): {path_text!r} is one of the Captain's governance, instruction, "
+        "manifest or environment files in a checkout (builder_paths.CAPTAIN_DOCUMENT_PATHS), which an agent does not write; standing "
         "orders change through directives, and the other files through a build the Captain reviews"
     )
 
@@ -252,6 +253,31 @@ def _captain_document_unverifiable(path_text: str, stage: str, exc: BaseExceptio
         f"Captain document write refused (BF-943): cannot verify that {path_text!r} is not one of the Captain's "
         f"documents ({stage}: {_exception_name(exc)})"
     )
+
+
+# BF-975 (#1806): the running vessel's package directory, ``Path(probos.__file__).resolve().parent`` (this module is
+# ``probos/cognitive/builder_paths.py``; the new test's R0 pins the equality).
+_RUNNING_PACKAGE = Path(__file__).resolve().parents[1]
+_DOTENV_KEY = _canonical(".env")
+
+
+def _running_code_refusal(path_text: str) -> str:
+    return (
+        f"Captain document write refused (BF-943, BF-975): {path_text!r} is in the running vessel's code (the probos "
+        "package directory) or is a .env file it loads at start, which an agent does not write; code and its environment "
+        "change through a build the Captain reviews"
+    )
+
+
+def _names_running_code(target: Path) -> bool:
+    """BF-975 (#1806): whether absolute *target* is at or below the running package directory, or is a ``.env`` file in it
+    or in a directory above it (each place ``load_dotenv()`` looks from ``__main__.py``). Both sides are compared as
+    :func:`_names_a_document` compares a root, by :func:`_document_parts` (case, a ``:`` suffix, trailing dots and spaces,
+    the extended-length prefix). It calls no filesystem function."""
+    parts, top = _document_parts(target), _document_parts(_RUNNING_PACKAGE)
+    if parts[: len(top)] == top:
+        return True
+    return len(parts) >= 2 and parts[-1] == _DOTENV_KEY and parts[:-1] == top[: len(parts) - 1]
 
 
 def _running_checkout() -> Path:
@@ -434,8 +460,10 @@ def captain_document_write_refusal(
     once resolved, is or lies below where an existing entry really is (an entry that is a link has its target's name too); an existing
     regular file with more than one link that has the ``os.stat`` identity of an existing file at or below an entry (a link to a directory
     inside an entry is not followed); an ``OSError``, ``RuntimeError`` or ``ValueError`` while resolving (a link that cannot be followed is an
-    error, not a name taken as written), examining or listing. A document
-    in another tree is not refused. Any other exception propagates.
+    error, not a name taken as written), examining or listing. BF-975 (#1806): also a path that, as written or once
+    resolved, lies at or below the running package directory (``_RUNNING_PACKAGE``), or is a ``.env`` file in it or in a
+    directory above it (where ``load_dotenv()`` looks). A document in another tree is not refused. Any other exception
+    propagates.
     """
     if type(path) is not str:
         return _DOCUMENT_NOT_A_STR
@@ -447,10 +475,14 @@ def captain_document_write_refusal(
             target = writer_root / target
         if _names_a_document(Path(os.path.abspath(target)), [Path(os.path.abspath(r)) for r in roots]):
             return _captain_document_refusal(path)
+        if _names_running_code(Path(os.path.abspath(target))):  # BF-975 (#1806): the running code, as written
+            return _running_code_refusal(path)
         resolved_roots = list(dict.fromkeys(_resolve(r) for r in roots))
         resolved = _resolve(target)
         if _names_a_document(resolved, resolved_roots):
             return _captain_document_refusal(path)
+        if _names_running_code(resolved):  # BF-975 (#1806): the running code, once resolved (a link into it)
+            return _running_code_refusal(path)
     except _DOCUMENT_ERRORS as exc:
         return _captain_document_unverifiable(path, "resolved", exc)
     try:
