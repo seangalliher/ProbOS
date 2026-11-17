@@ -709,7 +709,7 @@ Run the 8.1 command with `tests/test_dm_camera_hook_deadline.py` added. Expected
 | MU5 (a cancelled caller leaves at once) | consumer | `await asyncio.wait((work,))` | `pass` | t6 |
 | MU7 (the line only after a send that returns) | agents | `emit_line(` | `_sent != "raised" and emit_line(` | t4 |
 | MU8 (a raise reported as sent) | agents | `_sent = "raised"` | `_sent = "yes"` | t4 |
-| MU9 (a finished task treated as late) | consumer | `if work in done:` | `if False:` | t5; also ad733c1 `test_force_describe_returns_description_for_session` and `test_force_describe_falls_back_to_global` |
+| MU9 (a finished task treated as late) | consumer | `if work in done:` | `if False:` | t5; also ad733c1 `test_force_describe_returns_description_for_session` and `test_force_describe_falls_back_to_global`, and 14 BF-666 cases (every case that expects a returned description or no timeout WARNING; 17 cases in all, named in the campaign of record in `DECISIONS.md`) |
 | R0 (bounding only `_process`) | consumer | `consumer.py` restored from the base | -- | t1, t2, t3 fail; t4, t5, t6 and every BF-666 and ad733c1 case pass |
 | R0b (removing the `finally`) | agents | `agents.py` restored from the base | -- | t4 fails; every bf932 case passes |
 
