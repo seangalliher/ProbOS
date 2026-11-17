@@ -41,6 +41,16 @@ logger = logging.getLogger(__name__)
 _LatestFrameCandidate = tuple[str, float]
 
 
+class _ForceDescribeProgress:
+    """BF-977: the step one force-describe has reached and its frame, read by the caller at the deadline."""
+
+    __slots__ = ("sha", "step")
+
+    def __init__(self) -> None:
+        self.step = "permit"
+        self.sha = ""
+
+
 # Per-(runtime, agent) WorkingMemory instances keyed by agent_id.
 # Module-scoped because the consumer is runtime-singleton — one runtime
 # owns one camera and dispatches to N agents.
@@ -171,6 +181,9 @@ class VisionConsumer:
         # collapses concurrent public force calls before storage selection.
         self._latest_frame_lock = Lock()
         self._force_describe_lock = asyncio.Lock()
+        # BF-977: the force-describe tasks still running, held until each ends
+        # (a task its caller stopped waiting for drains here).
+        self._force_describe_work: set[asyncio.Task[str | None]] = set()
         self._latest_frame_by_session: dict[str, _LatestFrameCandidate] = {}
         self._latest_frame_global: _LatestFrameCandidate | None = None
         # BF-617: the most-recent VisionObservation produced by ``_process``,
@@ -735,11 +748,50 @@ class VisionConsumer:
         logs at WARNING (not ERROR — the DM still proceeds without the
         fresh frame).
 
-        ``timeout_s`` is a hard wall-clock cap: the caller (DM hook) must
-        not block on a slow vision tier. BF-304 single-flight lock means
-        spamming this call collapses to one describe per supervisor
-        window.
+        BF-977: ``timeout_s`` bounds the caller's wait for every step: the
+        permit, the storage pre-check, the describe (``_process``: the frame
+        read, the vision call, the identity check, the working-memory write,
+        the episode anchor and the proactive observer) and the storage
+        post-check. The steps run as a task of their own
+        (``_force_describe_owned``). At the deadline this method logs a
+        WARNING naming the step reached, cancels the task and returns
+        ``None`` without waiting for it. A step blocked in a thread ends only
+        when that thread returns (the filesystem store waits for its own
+        thread after a cancellation, BF-918); until then the task keeps the
+        force permit, so calls made meanwhile return ``None`` at once. An
+        observation already written to working memory stays when a later
+        step times out. A caller that is itself cancelled cancels the task
+        and waits for it to end. BF-304 single-flight lock means spamming
+        this call collapses to one describe per supervisor window.
         """
+        progress = _ForceDescribeProgress()
+        work = asyncio.create_task(
+            self._force_describe_owned(session_id, progress),
+        )
+        self._force_describe_work.add(work)
+        work.add_done_callback(self._force_describe_work.discard)
+        try:
+            done, _pending = await asyncio.wait((work,), timeout=timeout_s)
+        except asyncio.CancelledError:
+            work.cancel()
+            await asyncio.wait((work,))
+            raise
+        if work in done:
+            return work.result()
+        work.cancel()  # BF-977: not awaited; the task keeps the permit until its step ends
+        logger.warning(
+            "BF-977: force_describe timed out after %.1fs at step=%s sha=%s; "
+            "the caller proceeds without a fresh frame",
+            timeout_s, progress.step, progress.sha[:8],
+        )
+        return None
+
+    async def _force_describe_owned(
+        self,
+        session_id: str | None,
+        progress: _ForceDescribeProgress,
+    ) -> str | None:
+        """BF-977: the force-describe steps, run as the task the caller waits on; ``progress`` names the step."""
         async with self._force_describe_permit() as acquired:
             if not acquired:
                 logger.debug(
@@ -757,6 +809,7 @@ class VisionConsumer:
                 )
                 return None
             sha, captured_at = candidate
+            progress.sha = sha
             max_age = self._force_describe_max_age_seconds()
             age = max(0.0, time.time() - captured_at)
             if age > max_age:
@@ -783,6 +836,7 @@ class VisionConsumer:
                     sha[:8], exc_info=True,
                 )
                 return None
+            progress.step = "preflight"
             try:
                 exists = await store.exists(sha)
             except asyncio.CancelledError:
@@ -819,17 +873,11 @@ class VisionConsumer:
                     "force": True,
                 },
             )
+            progress.step = "describe"
             try:
-                produced_observation = await asyncio.wait_for(
-                    self._process(synthetic, cache_candidate=candidate),
-                    timeout=timeout_s,
+                produced_observation = await self._process(
+                    synthetic, cache_candidate=candidate,
                 )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "AD-733c-1: force_describe timed out after %.1fs sha=%s",
-                    timeout_s, sha[:8],
-                )
-                return None
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -839,6 +887,7 @@ class VisionConsumer:
                 )
                 return None
 
+            progress.step = "postcheck"
             try:
                 still_exists = await store.exists(sha)
             except asyncio.CancelledError:

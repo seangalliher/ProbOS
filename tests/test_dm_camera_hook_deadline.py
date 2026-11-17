@@ -39,8 +39,9 @@ from probos.routers.chat import _ATTACHMENT_STORE_CACHE, _get_attachment_store
 from probos.types import IntentMessage, LLMResponse
 from tests.test_bf932_reply_path_timing import _ROUTE, _dm, _field, _lines, _runtime
 
-# M1: each built case fails on the base at its own assert; M2 replaces this marker with a no-op.
-built = pytest.mark.xfail(strict=True, reason="#1808: the hook bounds only its describe step until M2")
+def built(func):
+    """The built cases failed on the base at their own assert and pass now; the marker is a no-op."""
+    return func
 
 _DEADLINE = 0.2  # the timeout_s each bounded call passes
 _BOUND = 3.0  # how long a test waits for a call before it fails; generous for a loaded host
