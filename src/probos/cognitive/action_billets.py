@@ -43,6 +43,27 @@ _COMPANION_TAGS = ("ward_room_post", "ward_room_reply", "endorse", "dm")  # writ
 #: The triage's tags are a model's free text, so ``decision_billet`` writes these constants for the tags it recognises and repeats no other string.
 BILLET_TAGS = (*_BLOCK_TAGS, *_COMPANION_TAGS)
 
+#: BF-976 (#1807): the line that gives a withdrawal its reason, written after ``[NO_RESPONSE]``; the billet teaches it and ``withdrawal_reason`` reads it.
+WITHDRAWN_MARKER = "[WITHDRAWN]"
+#: The longest reason a withdrawal keeps, in code points (the length of a Python ``str``).
+WITHDRAWAL_REASON_CHARS = 200
+
+
+def withdrawal_reason(text: str) -> str | None:
+    """The reason of the first withdrawal line in *text*, or None when *text* carries no ``WITHDRAWN_MARKER``.
+
+    The marker counts wherever it stands, as ``[NO_RESPONSE]`` does for the proactive loop, and in upper case only. The reason is the rest of the marker's line, up
+    to the first newline: each character that is not printable (``str.isprintable``: controls, format characters, surrogates, separators other than the space)
+    becomes a space, runs of white space become one space, and the result is cut to ``WITHDRAWAL_REASON_CHARS`` code points with no ellipsis. So the reason is one
+    line of at most 200 printable characters, and "" for a marker with no reason, which is still a withdrawal.
+    """
+    start = text.find(WITHDRAWN_MARKER)
+    if start < 0:
+        return None
+    rest = text[start + len(WITHDRAWN_MARKER):].split("\n", 1)[0]
+    cleaned = "".join(ch if ch.isprintable() else " " for ch in rest)
+    return " ".join(cleaned.split())[:WITHDRAWAL_REASON_CHARS].rstrip()
+
 
 def decision_billet(intended: Iterable[object] | None) -> str:
     """The text that gives the single call the triage's decision, or "" when the decision names no proposal or notebook entry.
@@ -64,8 +85,8 @@ def decision_billet(intended: Iterable[object] | None) -> str:
         f"\n\n## {DECISION_HEADING}",
         f"Before this step you decided to take these actions: {', '.join(named)}.",
         "That decision stands for this turn, so the usual default of silence does not apply here: carry it out with the blocks below, "
-        "after any observation text you also write. If you find that the evidence no longer supports an action, answer exactly "
-        "[NO_RESPONSE]; that withdrawal is recorded.",
+        "after any observation text you also write. If you find that the evidence no longer supports an action, withdraw it: write "
+        f"[NO_RESPONSE] on one line and, on the next, {WITHDRAWN_MARKER} followed by one plain sentence on why. That withdrawal is recorded with its reason.",
     ]
     if "proposal" in tags:
         lines += ["", "**You decided to file an improvement proposal.** Use this exact format as a SEPARATE block:", PROPOSAL_FORMAT.rstrip("\n")]

@@ -42,6 +42,7 @@ from probos.earned_agency import AgencyLevel, agency_from_rank, can_think_proact
 from probos.cognitive.circuit_breaker import CognitiveCircuitBreaker
 from probos.cognitive.dm_sanity_gate import apply_dm_sanity
 from probos.cognitive.action_accounting import settle_intended_actions  # BF-934
+from probos.cognitive.action_billets import withdrawal_reason  # BF-976
 from probos.cognitive.proposal_block import PROPOSAL_PATTERN, parse_proposal_block  # BF-934
 from probos.cognitive.orientation import OrientationContext, count_agent_episodes, derive_watch_section
 from probos.cognitive.provenance import iso_utc, record_write_time
@@ -1456,8 +1457,11 @@ class ProactiveCognitiveLoop:
         # BF-199: Extract text from leaked chain JSON
         from probos.utils.text_sanitize import sanitize_ward_room_text
         response_text = sanitize_ward_room_text(response_text)
-        # BF-934: a withdrawn observation that still carries a valid block is not silence.
-        if not response_text or ("[NO_RESPONSE]" in response_text and not carries_actionable_block(response_text)):
+        # BF-934: a withdrawn observation that still carries a valid block is not silence. BF-976 (#1807): a [WITHDRAWN] line withdraws the
+        # observation as [NO_RESPONSE] does, with or without the token, so that its reason is recorded and not posted.
+        _withdrawal = withdrawal_reason(response_text)
+        _silenced = "[NO_RESPONSE]" in response_text or _withdrawal is not None
+        if not response_text or (_silenced and not carries_actionable_block(response_text)):
             # Record duty execution even if agent had nothing to report
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
@@ -1530,10 +1534,13 @@ class ProactiveCognitiveLoop:
                     logger.debug("Failed to store no-response episode for %s", agent.agent_type, exc_info=True)
             # AD-488: Record no-response as event (rapid no-responses can also indicate loops)
             self._circuit_breaker.record_event(agent.id, "no_response", "")
-            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "no_response")
+            await settle_intended_actions(
+                self._runtime, agent, intent.id, getattr(result, "metadata", None), [],
+                "withdrawn" if _withdrawal is not None else "no_response", withdrawal=_withdrawal,
+            )
             return
 
-        _withdrawn = "[NO_RESPONSE]" in response_text  # BF-934: true only when the output carries a valid block (the gate above); see below
+        _withdrawn = _silenced  # BF-934: true only when the output carries a valid block (the gate above); see below. BF-976: or a [WITHDRAWN] line
 
         # BF-172: Suppress raw JSON intent payloads leaking from LLM mode-confusion
         stripped = response_text.lstrip()
@@ -1566,7 +1573,8 @@ class ProactiveCognitiveLoop:
             )
             if duty and self._duty_tracker:
                 self._duty_tracker.record_execution(agent.agent_type, duty.duty_id)
-            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "no_response" if _withdrawn else "empty_after_extraction")
+            _settle_reason = "withdrawn" if _withdrawal is not None else ("no_response" if _withdrawn else "empty_after_extraction")
+            await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, _settle_reason, withdrawal=_withdrawal)
             return
 
         # BF-032: Skip if too similar to agent's recent posts

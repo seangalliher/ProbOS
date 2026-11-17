@@ -23,8 +23,9 @@ from probos.protocols import EventLogQuerySpec
 from probos.types import IntentResult
 from tests.bf934_world import DECIDED, crew, think, thinker, threads, world
 
-# M1: each built case fails on the base at its own assert; M2 replaces this marker with a no-op.
-built = pytest.mark.xfail(strict=True, reason="#1807: a withdrawal is recorded as no_response until M2")
+def built(func):
+    """The built cases failed on the base at their own assert and pass now; the marker is a no-op."""
+    return func
 
 PROPOSAL = "[PROPOSAL]\nTitle: Cache the roster\nRationale: The roster is read forty times per cycle.\nAffected Systems: Ward Room\nPriority: low\n[/PROPOSAL]"
 WITHDRAWAL = "[NO_RESPONSE]\n[WITHDRAWN] evidence changed"
