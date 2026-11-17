@@ -245,6 +245,14 @@ def carries_actionable_block(text: str) -> bool:
     return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
 
 
+def withdrawal_outside_blocks(text: str) -> str | None:
+    """BF-976 (#1807): the reason of the first ``[WITHDRAWN]`` line in *text* outside its notebook and proposal blocks, or None.
+
+    A marker inside one of those blocks is that block's own text and is carried out with it, as it was before the line existed: only a line the model wrote outside
+    them withdraws the observation. The blocks come out as the extractor takes them out: the notebook blocks, then every strict proposal block, filed or refused."""
+    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "", split_notebook_blocks(text)[0], flags=re.DOTALL))
+
+
 def _as_read(text: Any) -> str:
     """BF-934: *text* as a person reads "the same words": the case and the spacing aside, every other character kept, so a changed number, sign or mark is a changed text.
 
@@ -1457,9 +1465,9 @@ class ProactiveCognitiveLoop:
         # BF-199: Extract text from leaked chain JSON
         from probos.utils.text_sanitize import sanitize_ward_room_text
         response_text = sanitize_ward_room_text(response_text)
-        # BF-934: a withdrawn observation that still carries a valid block is not silence. BF-976 (#1807): a [WITHDRAWN] line withdraws the
-        # observation as [NO_RESPONSE] does, with or without the token, so that its reason is recorded and not posted.
-        _withdrawal = withdrawal_reason(response_text)
+        # BF-934: a withdrawn observation that still carries a valid block is not silence. BF-976 (#1807): a [WITHDRAWN] line outside those blocks withdraws the
+        # observation as [NO_RESPONSE] does, with or without the token, so that its reason is recorded and not posted; inside one it is that block's own text.
+        _withdrawal = withdrawal_outside_blocks(response_text)
         _silenced = "[NO_RESPONSE]" in response_text or _withdrawal is not None
         if not response_text or (_silenced and not carries_actionable_block(response_text)):
             # Record duty execution even if agent had nothing to report

@@ -3,7 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-17
 **Status:** ready to build on `origin/main` `4f10b15f7e5acb08340e46f46ea3adf23d6005d1`. Every anchor below was read on that commit. `git log --oneline 5275d008..HEAD` over `action_billets.py`, `action_accounting.py`, `proactive.py`, `cognitive_agent.py`, `output_grounding.py`, `tests/test_bf934_s1_decision_routing.py`, `tests/test_bf934_s3_intended_actions_ledger.py` and `tests/bf934_world.py` prints nothing, so the issue's anchors (filed on `5275d008`) hold. Open PR #1825 touches no Python file. **Owning issue:** #1807 (BF-976, already allocated). Commits say `Refs #1807.` Save this contract as `prompts/withdrawal-reason-ledger.md`.
 **Dependencies:** none.
-**Estimated tests:** 23 cases in one new file, `tests/test_bf976_withdrawal_ledger.py`: 21 `built` and 2 controls. No existing test is edited.
+**Estimated tests:** 30 cases in one new file, `tests/test_bf976_withdrawal_ledger.py`: 28 `built` and 2 controls (M1 and M2 build 23 of them, 21 `built`; R2 adds the seven parameters of b9). No existing test is edited.
 
 ## 1. Problem
 
@@ -17,7 +17,7 @@
 
 - **Syntax.** The billet asks for `[NO_RESPONSE]` and, on the next line, `[WITHDRAWN]` followed by one plain sentence on why.
 - **Parser.** One constant and one parser are added to `action_billets.py`: `WITHDRAWN_MARKER`, `WITHDRAWAL_REASON_CHARS = 200` and `withdrawal_reason(text) -> str | None`.
-- **Loop (`proactive.py`).** The marker silences an output just as the token does, with or without the token:
+- **Loop (`proactive.py`).** The marker silences an output just as the token does, with or without the token. It is read outside the output's proposal and notebook blocks (D8), so a marker inside one is that block's own text:
   - an output with the line and no valid block settles at `:1533` with reason `withdrawn`;
   - an output with the line and a valid block has its blocks carried out and its text cleared, then settles at `:1569` with `withdrawn`;
   - the text never reaches `_post_to_ward_room`.
@@ -29,6 +29,7 @@ Rejected designs:
 - **Teaching the line to COMPOSE and REFLECT and keeping it through every rewriter.** That touches five sites in the chain for a path the billet does not reach. The issue's own rule covers it: where the chain strips the line, the withdrawal records as `no_response`, which over-counts loss and never hides it.
 - **Settling superseded attempts.** The issue rejected it: a `None` result carries no metadata.
 - **Stripping the marker line and posting the rest of a token-less output.** That needs a second strip rule beside BF-203's, and it contradicts the billet, where the withdrawal covers the turn's observation (D4).
+- **Stripping every marker line from the output before the extractor reads it** (review round 1, F1; the reviewer's smallest repair). A proposal whose title holds the marker would lose its title and be refused, where the base files it, and the ledger would still record `withdrawn` for an action the model never withdrew.
 
 ## 3. Decisions
 
@@ -37,10 +38,11 @@ Rejected designs:
 | D1 | **The parser.** `withdrawal_reason(text: str) -> str \| None`. It finds the first `[WITHDRAWN]` anywhere in the text, upper case only, and returns the rest of that line up to the first `"\n"`. Each character with `str.isprintable()` False becomes a space; whitespace runs collapse to one space; the result is cut to 200 code points (Python `str` length) with `.rstrip()` and no ellipsis. It returns `None` when there is no marker. A marker with no reason returns `""`, which is still a withdrawal. With two markers, the first wins. | "Anywhere" matches how the loop reads `[NO_RESPONSE]` (a substring test, `:1460`), and BF-203 would post a mid-line marker's reason just as it posts a line-start one. Upper case matches the taught form and BF-203's tag shape. A lower-case marker is not read (L5). `isprintable` removes controls, format characters, lone surrogates and the line and paragraph separators, so the reason is one physical line that UTF-8 can encode. |
 | D2 | **The billet clause** (P2-2), word for word: `If you find that the evidence no longer supports an action, withdraw it: write [NO_RESPONSE] on one line and, on the next, [WITHDRAWN] followed by one plain sentence on why. That withdrawal is recorded with its reason.` | It carries no hex-looking run and repeats no triage word (`action_billets.py:53-55`); the marker comes from the constant. "Plain sentence" asks for no identifiers, which lowers the BF-204 case (L1). |
 | D3 | **How the text travels.** `unaccounted(..., reason, *, withdrawal: str \| None = None)` and `settle_intended_actions(..., reason, *, withdrawal: str \| None = None)`. A drop whose final reason is `withdrawn` gets `drop["withdrawal"] = withdrawal`, and the row's `data` holds it. `detail` stays `"<callsign> intended <action>: <reason>"`. The log line is unchanged and logs at INFO when the reason is `withdrawn`. | Keyword-only with a default, so the other five call sites and the existing tests (`test_bf934_s3...py:248,268,314`, positional) stay as they are. The model's text lives in one governed place, the row's `data`, and not in the log. **Size:** at most 200 printable code points is at most 800 bytes under the governed reader's measure (`event_log.py:319-327`: UTF-8, `ensure_ascii=False`; 4 bytes for a code point outside the BMP, 2 for `"` or `\`), and at most 2400 bytes as stored (`event_log.py:659`, ASCII escapes, 12 bytes outside the BMP). The caps are 512 characters a string (`:34`), 4096 bytes a row (`:36`) and 16384 raw (`:35`). b7 measures it. |
-| D4 | **The sites.** `:1460` silences on `"[NO_RESPONSE]" in text or withdrawal_reason(text) is not None`. `:1533` settles `withdrawn` when the line is present, else `no_response`. `:1536` `_withdrawn` becomes that same condition. `:1569` settles `withdrawn` when the line is present, else as before. The other sites stay as they are: `:1449` (no output read) and `:1547` (`raw_intent_json`: an output that opens with a raw intents object; a silenced output reaches it only when it also carries a valid block, and its reason is then `raw_intent_json` with the line or the token alike, with no withdrawal text recorded, as the token's is on the base; the orchestrator's probe measured this on the M2 tree). `:1581`, `:1595` and `:1614` cannot be reached with a withdrawal, because a silenced output either returns at `:1533`, or returns at `:1547`, or has its text cleared at `:1558-1559` and returns at `:1569`. | At `:1569` the output carries a valid block and the line: the blocks are carried out, and an intended action the output did not carry out was judged, not lost (b3). A token-less marker withdraws like the token: its line never posts, and an observation beside it is not posted (L6). |
+| D4 | **The sites.** `:1460` silences on `"[NO_RESPONSE]" in text or withdrawal_outside_blocks(text) is not None` (D8). `:1533` settles `withdrawn` when the line is present, else `no_response`. `:1536` `_withdrawn` becomes that same condition. `:1569` settles `withdrawn` when the line is present, else as before. The other sites stay as they are: `:1449` (no output read) and `:1547` (`raw_intent_json`: an output that opens with a raw intents object; a silenced output reaches it only when it also carries a valid block, and its reason is then `raw_intent_json` with the line or the token alike, with no withdrawal text recorded, as the token's is on the base; the orchestrator's probe measured this on the M2 tree). `:1581`, `:1595` and `:1614` cannot be reached with a withdrawal, because a silenced output either returns at `:1533`, or returns at `:1547`, or has its text cleared at `:1558-1559` and returns at `:1569`. | At `:1569` the output carries a valid block and the line: the blocks are carried out, and an intended action the output did not carry out was judged, not lost (b3). A token-less marker withdraws like the token: its line never posts, and an observation beside it is not posted (L6). |
 | D5 | **Tests.** A real EventLog, a real Ward Room and the real think cycle (`tests/bf934_world.py`). The Ward Room claim is asserted on the Ward Room itself: `threads(w)` titles, plus every thread's title and body and every post's body. The retry seam swaps `probos.proactive`'s module-global `asyncio` for a shim whose `sleep` records its delay and returns at once; every other name delegates to `asyncio`. | The shim is narrower than patching `asyncio.sleep` process-wide: the Ward Room, the EventLog and the agent keep their real sleeps, and the recorded `[0.5]` proves that exactly one backoff ran. |
 | D6 | **The BF-934 contract.** Add a dated note under its D2 heading. Do not edit mutation row 46 or L15. | Row 46 and L15 record the campaign and measurements of the tree that contract built. Editing them would make its record false. The note states what moved. |
 | D7 | **Nothing is persisted beyond one optional key in a `dropped` row's `data`, and no config field, flag or baseline changes.** | See Absence Verified. `ProactiveCognitiveLoop`'s srp-size row already carries `lines` and `methods` (`architecture-baseline.yaml:862-867`), and no method is added. The EventLog pair census (`test_ad1195_eventlog_pair_freeze.py:109-110`) pins `(category, event)` pairs, which are unchanged. |
+| D8 | **Where the loop reads the line (review round 1, F1).** `withdrawal_outside_blocks(text)` in `proactive.py`, next to `carries_actionable_block`: `withdrawal_reason` of the text without its notebook blocks (`split_notebook_blocks`) and then without every strict proposal block (`PROPOSAL_PATTERN`, `re.DOTALL`), the patterns and the order the extractor strips with, a block it files and one it refuses alike. The parser is unchanged, and the helper is a function of the module, not a method of the loop. | A marker inside a block the loop carries out is that block's own text. Read as a withdrawal, it recorded `withdrawn` and the title or rationale as the reason for an action the model never withdrew (a forgotten action looked judged), and it withdrew the observation beside the block. The orchestrator's probe on M2: with the marker in the title of a filed proposal, an unfiled notebook entry recorded `withdrawn` with the title's text where the base recorded `no_block_executed`; the Ward Room thread and the notebook file were the ones the base writes. A marker in any other kind of block, or in a `[PROPOSAL]` that the pattern does not match, is still read (L7). |
 
 ## 4. Milestones and commits
 
@@ -55,18 +57,21 @@ The Builder is `claude-sonnet-5.5`, with at most about 150 tool calls per milest
 - **M3:** P3-1, P3-2 and P3-3.
   - Subject: `Trackers for the withdrawal reason in the intended-actions ledger`
   - Body: `PROGRESS.md and DECISIONS.md entries, and a dated note in the earlier ledger contract.` Then `Refs #1807.` and the trailer.
+- **R1 to R3 (review round 1; made by the orchestrator, not the Builder):** R1 is the first campaign of record and three corrections to this contract's text. R2 repairs finding F1: the pairs of 6.4 (`proactive.py`, the test file, `PROGRESS.md`, `DECISIONS.md`), this contract's corrections to the header and to sections 2, 3, 4, 5, 8.2, 8.3, 9, 11 and 13, and the regenerated ledger pair. R3 is the campaign of record on R2's head (20 rows, a new bullet in place of R1's) and the regenerated ledger pair.
 
 I checked the three subjects and bodies by eye for the issue's list of closing words, including inside other words, and for `AD-` and `BF-` tokens. They contain none.
 
 ## 5. Behaviour table (the reply as `proactive.py` reads it; the triage intends `proposal`)
 
-| Reply | Base: settlement, Ward Room | After M2 |
+| Reply | Base: settlement, Ward Room | After M2 and R2 |
 |---|---|---|
 | `[NO_RESPONSE]` | `no_response`; nothing posted | same (c1) |
 | `[NO_RESPONSE]\n[WITHDRAWN] evidence changed` | `no_response`; nothing posted | `withdrawn`, `data.withdrawal="evidence changed"`; nothing posted (b1, b2) |
 | `[WITHDRAWN] evidence changed` | posted: `[Observation] evidence changed`; `no_block_executed` | `withdrawn`; nothing posted (b2) |
 | observation + `\n[WITHDRAWN] evidence changed` | observation and reason posted | `withdrawn`; nothing posted (b2, L6) |
 | `[WITHDRAWN] ...` + valid proposal, triage also intends `notebook` (with and without the token) | with the token: proposal filed, notebook `no_response`; without it, the reason is posted too | proposal filed; notebook `withdrawn`; reason not posted (b3) |
+| a valid proposal whose title or rationale holds `[WITHDRAWN] evidence changed`, triage also intends `notebook` | proposal filed as written; notebook `no_block_executed` | the same as the base: the marker is the block's own text (b9) |
+| a valid notebook block with the marker inside, triage intends `proposal` and `notebook` | proposal `no_block_executed` | the same as the base (b9) |
 
 ## 6. The contract
 
@@ -584,6 +589,124 @@ REPLACE:
 **Note (2026-11-17, #1807).** A later change adds the reason `withdrawn` to the list of reasons below and to `PRE_EXTRACTION`: a single-call output that carries a `[WITHDRAWN] <reason>` line records each intended action nothing carried out as `withdrawn`, with the reason in the row's `data.withdrawal`. It also rewords the billet's withdrawal sentence. Mutation row 46 and L15 are left as this contract's record of the tree it built; `PRE_EXTRACTION` and the billet's length on later trees differ from them. See `prompts/withdrawal-reason-ledger.md`.
 ```
 
+### 6.4 R2: review round 1's repair of finding F1
+
+Review round 1 found that a `[WITHDRAWN]` marker inside a proposal or notebook block was read as a withdrawal (finding F1; D8 and L7 say what the repair decides). The orchestrator applied the pairs below, in order, to the tree of M3 and R1 (the Builder does not run them): the first four change `proactive.py` and the test file, the last four `PROGRESS.md` and `DECISIONS.md`. The corrections to this contract's own text (the header and sections 2, 3, 4, 5, 8.2, 8.3, 9, 11 and 13) are not pairs here, and the ledger pair is regenerated afterwards. R3 replaces R1's campaign bullet in `DECISIONS.md` with the one for 20 rows.
+
+**R2-S1** (`src/probos/proactive.py`: the helper that reads the line outside the proposal and notebook blocks, after `carries_actionable_block`)
+SEARCH:
+```
+    return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
+```
+REPLACE:
+```
+    return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
+
+
+def withdrawal_outside_blocks(text: str) -> str | None:
+    """BF-976 (#1807): the reason of the first ``[WITHDRAWN]`` line in *text* outside its notebook and proposal blocks, or None.
+
+    A marker inside one of those blocks is that block's own text and is carried out with it, as it was before the line existed: only a line the model wrote outside
+    them withdraws the observation. The blocks come out as the extractor takes them out: the notebook blocks, then every strict proposal block, filed or refused."""
+    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "", split_notebook_blocks(text)[0], flags=re.DOTALL))
+```
+
+**R2-S2** (`src/probos/proactive.py`: the silence gate reads the line outside those blocks)
+SEARCH:
+```
+        # BF-934: a withdrawn observation that still carries a valid block is not silence. BF-976 (#1807): a [WITHDRAWN] line withdraws the
+        # observation as [NO_RESPONSE] does, with or without the token, so that its reason is recorded and not posted.
+        _withdrawal = withdrawal_reason(response_text)
+```
+REPLACE:
+```
+        # BF-934: a withdrawn observation that still carries a valid block is not silence. BF-976 (#1807): a [WITHDRAWN] line outside those blocks withdraws the
+        # observation as [NO_RESPONSE] does, with or without the token, so that its reason is recorded and not posted; inside one it is that block's own text.
+        _withdrawal = withdrawal_outside_blocks(response_text)
+```
+
+**R2-T1** (`tests/test_bf976_withdrawal_ledger.py`: the two constants of the new case)
+SEARCH:
+```
+EMOJI = "\U0001F600"  # a code point outside the BMP: 4 bytes in UTF-8, 12 as a JSON ASCII escape
+```
+REPLACE:
+```
+EMOJI = "\U0001F600"  # a code point outside the BMP: 4 bytes in UTF-8, 12 as a JSON ASCII escape
+NOTEBOOK = "[NOTEBOOK roster-cache]\nRoster reads repeat: read 40 times per cycle.\n[/NOTEBOOK]"
+MARKER = "[WITHDRAWN] evidence changed"
+```
+
+**R2-T2** (`tests/test_bf976_withdrawal_ledger.py`: case b9, after b8)
+SEARCH:
+```
+    assert "That withdrawal is recorded with its reason." in billet and "answer exactly [NO_RESPONSE]; that withdrawal is recorded." not in billet
+```
+REPLACE:
+```
+    assert "That withdrawal is recorded with its reason." in billet and "answer exactly [NO_RESPONSE]; that withdrawal is recorded." not in billet
+
+
+@built
+@pytest.mark.parametrize("reply, expected_threads, expected_drops", [
+    (PROPOSAL.replace("Cache the roster", MARKER), ["[Proposal] [WITHDRAWN] evidence changed"], [("notebook", "no_block_executed", None)]),
+    (PROPOSAL.replace("per cycle.", f"per cycle.\n{MARKER}"), ["[Proposal] Cache the roster"], [("notebook", "no_block_executed", None)]),
+    (NOTEBOOK.replace("per cycle.", f"per cycle.\n{MARKER}"), [], [("proposal", "no_block_executed", None)]),
+    (f"[PROPOSAL]\nRationale: The roster is read forty times per cycle.\n{MARKER}\n[/PROPOSAL]", [], [("proposal", "missing_title", None), ("notebook", "no_block_executed", None)]),
+    ("Roster reads repeat.\n" + PROPOSAL.replace("Cache the roster", MARKER), ["[Observation] Roster reads repeat.", "[Proposal] [WITHDRAWN] evidence changed"], [("notebook", "no_block_executed", None)]),
+    (PROPOSAL.replace("Cache the roster", MARKER) + "\n[WITHDRAWN] the notebook entry can wait", ["[Proposal] [WITHDRAWN] evidence changed"], [("notebook", "withdrawn", "the notebook entry can wait")]),
+    (PROPOSAL.replace("[PROPOSAL]\n", "[PROPOSAL] ").replace("per cycle.", f"per cycle.\n{MARKER}"), [], [("proposal", "withdrawn", "evidence changed"), ("notebook", "withdrawn", "evidence changed")]),
+], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block"])
+async def test_a_marker_inside_a_proposal_or_notebook_block_is_that_blocks_own_text(tmp_path, reply, expected_threads, expected_drops):
+    """Review round 1, F1. A marker inside a strict proposal block (filed or refused) or a notebook block withdraws nothing: the block is carried out as written, the
+    observation beside it is judged as before and an action nothing carried out is lost, not withdrawn. A marker beside the blocks still decides (inside-and-beside),
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). Rows R17, R18, R19 and R20."""
+    async with world(tmp_path, event_log=True) as w:
+        await think(w, thinker(w, reply, {"intended_actions": ["proposal", "notebook"]}))
+        assert sorted(await threads(w)) == sorted(expected_threads)
+        assert _drops(await _rows(w, "dropped")) == expected_drops
+```
+
+**R2-D1a** (`PROGRESS.md`: the entry says where the loop reads the line)
+SEARCH:
+```
+A bare [NO_RESPONSE] still records no_response. A seam test pins that a retried think
+```
+REPLACE:
+```
+A bare [NO_RESPONSE] still records no_response. The loop reads the line outside the proposal and notebook blocks: a marker inside one is that block's own text and withdraws nothing. A seam test pins that a retried think
+```
+
+**R2-D1b** (`PROGRESS.md`: the case count)
+SEARCH:
+```
+`tests/test_bf976_withdrawal_ledger.py` adds 23 cases.
+```
+REPLACE:
+```
+`tests/test_bf976_withdrawal_ledger.py` adds 30 cases.
+```
+
+**R2-D2a** (`DECISIONS.md`: the entry's scope names the helper)
+SEARCH:
+```
+`proactive.py` (the silence gate and the two settles that follow it). One new test file.
+```
+REPLACE:
+```
+`proactive.py` (`withdrawal_outside_blocks`, the silence gate and the two settles that follow it). One new test file.
+```
+
+**R2-D2b** (`DECISIONS.md`: G2 says where the loop reads the line)
+SEARCH:
+```
+- *G2 (the loop).* The line silences an output as the token does, with or without the token. Both silence settles record withdrawn
+```
+REPLACE:
+```
+- *G2 (the loop).* The line silences an output as the token does, with or without the token, and the loop reads it outside the output's proposal and notebook blocks: a marker inside one is that block's own text (review round 1; rejected: stripping every marker line before the extractor reads the output, which would refuse a proposal whose title holds the marker). Both silence settles record withdrawn
+```
+
 ## 7. Builder: may and may not
 
 - **May:** apply the pairs in order; run `git diff --check` and `git diff --stat`; commit as section 4 says.
@@ -603,10 +726,11 @@ Record each file's count. I did not run these.
 
 - After M1: `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf976_withdrawal_ledger.py -n 0 -p no:randomly -q`. Expected: `2 passed, 21 xfailed`.
 - After M2: the 8.1 command with `tests/test_bf976_withdrawal_ledger.py` added. Expected: 23 passed for the new file, and every other file at its base count, all passed.
+- After R2: the same command. Expected: 30 passed for the new file (M2's 23 and the seven of b9), and every other file at its base count, all passed.
 - `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` and `d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --check` both pass.
 - After M3: the ledger generator, then `tests/test_ad1184_ad_ledger.py`.
 
-### 8.3 Mutation campaign (one row at a time on the M2 tree, restored before the next)
+### 8.3 Mutation campaign (one row at a time on the R2 tree, restored before the next)
 
 Each original occurs once in its file, as a substring of one line. "At least" marks a row whose mutant may break more cases than the ones listed.
 
@@ -614,22 +738,26 @@ Each original occurs once in its file, as a substring of one line. "At least" ma
 |---|---|---|---|---|
 | R1 | action_billets.py | `start = text.find(WITHDRAWN_MARKER)` | `start = text.rfind(WITHDRAWN_MARKER)` | b5[first reason] |
 | R2 | action_billets.py | `if start < 0:` | `if start < -1:` | at least b5[`[NO_RESPONSE]`], b5[""], b5[lower case], c1 |
-| R3 | action_billets.py | `rest = text[start + len(WITHDRAWN_MARKER):].split("\n", 1)[0]` | `rest = text[start + len(WITHDRAWN_MARKER):]` | at least b5[next line], b5[first reason], b3 (both) |
+| R3 | action_billets.py | `rest = text[start + len(WITHDRAWN_MARKER):].split("\n", 1)[0]` | `rest = text[start + len(WITHDRAWN_MARKER):]` | at least b5[next line], b5[first reason], b9[unmatched-block] |
 | R4 | action_billets.py | `cleaned = "".join(ch if ch.isprintable() else " " for ch in rest)` | `cleaned = rest` | at least b5[next line] |
 | R5 | action_billets.py | `return " ".join(cleaned.split())[:WITHDRAWAL_REASON_CHARS].rstrip()` | `return " ".join(cleaned.split())` | b6 (both), b7 |
 | R6 | action_billets.py | `f"[NO_RESPONSE] on one line and, on the next, {WITHDRAWN_MARKER} followed by one plain sentence on why. That withdrawal is recorded with its reason.",` | `"[NO_RESPONSE]; that withdrawal is recorded.",` | b8, b1 |
-| R7 | action_accounting.py | `PRE_EXTRACTION = frozenset({"think_failed", "no_output", "no_response", "raw_intent_json", "withdrawn"})` | the same without `, "withdrawn"` | b1, b2 (4), b3 (2), b4, b7 |
-| R8 | action_accounting.py | `if drop["reason"] == "withdrawn" and withdrawal is not None:` | `if False:` | b1, b2 (4), b3 (2), b7 |
-| R9 | action_accounting.py | `drops = unaccounted(intended, executed, reason, withdrawal=withdrawal)` | `drops = unaccounted(intended, executed, reason)` | b1, b2 (4), b3 (2), b7 |
+| R7 | action_accounting.py | `PRE_EXTRACTION = frozenset({"think_failed", "no_output", "no_response", "raw_intent_json", "withdrawn"})` | the same without `, "withdrawn"` | b1, b2 (4), b3 (2), b4, b7, b9[inside-and-beside], b9[unmatched-block] |
+| R8 | action_accounting.py | `if drop["reason"] == "withdrawn" and withdrawal is not None:` | `if False:` | b1, b2 (4), b3 (2), b7, b9[inside-and-beside], b9[unmatched-block] |
+| R9 | action_accounting.py | `drops = unaccounted(intended, executed, reason, withdrawal=withdrawal)` | `drops = unaccounted(intended, executed, reason)` | b1, b2 (4), b3 (2), b7, b9[inside-and-beside], b9[unmatched-block] |
 | R10 | action_accounting.py | `level = logging.INFO if drop["action"] == "ward_room_post" or drop.get("by_design") or drop["reason"] == "withdrawn" else logging.WARNING` | the same without `or drop["reason"] == "withdrawn" ` | b4 |
-| R11 | proactive.py | `"withdrawn" if _withdrawal is not None else "no_response", withdrawal=_withdrawal,` | `"no_response", withdrawal=_withdrawal,` (the issue's mutation) | b1, b2 (4), b4 |
-| R12 | proactive.py | `_withdrawal = withdrawal_reason(response_text)` | `_withdrawal = ""` | at least c1 |
-| R13 | proactive.py | `_silenced = "[NO_RESPONSE]" in response_text or _withdrawal is not None` | `_silenced = "[NO_RESPONSE]" in response_text` | b2[`[WITHDRAWN] evidence changed`], b2[observation], b3[""] |
-| R14 | proactive.py | `_withdrawn = _silenced  #` | `_withdrawn = "[NO_RESPONSE]" in response_text  #` | b3[""] |
-| R15 | proactive.py | `_settle_reason = "withdrawn" if _withdrawal is not None else ("no_response" if _withdrawn else "empty_after_extraction")` | `_settle_reason = "no_response" if _withdrawn else "empty_after_extraction"` | b3 (both) |
+| R11 | proactive.py | `"withdrawn" if _withdrawal is not None else "no_response", withdrawal=_withdrawal,` | `"no_response", withdrawal=_withdrawal,` (the issue's mutation) | b1, b2 (4), b4, b9[unmatched-block] |
+| R12 | proactive.py | `_withdrawal = withdrawal_outside_blocks(response_text)` | `_withdrawal = ""` | at least c1 |
+| R13 | proactive.py | `_silenced = "[NO_RESPONSE]" in response_text or _withdrawal is not None` | `_silenced = "[NO_RESPONSE]" in response_text` | b2[`[WITHDRAWN] evidence changed`], b2[observation], b3[""], b9[inside-and-beside], b9[unmatched-block] |
+| R14 | proactive.py | `_withdrawn = _silenced  #` | `_withdrawn = "[NO_RESPONSE]" in response_text  #` | b3[""], b9[inside-and-beside] |
+| R15 | proactive.py | `_settle_reason = "withdrawn" if _withdrawal is not None else ("no_response" if _withdrawn else "empty_after_extraction")` | `_settle_reason = "no_response" if _withdrawn else "empty_after_extraction"` | b3 (both), b9[inside-and-beside] |
 | R16 | proactive.py | `await asyncio.sleep(_backoff)` | `await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "think_failed"); await asyncio.sleep(_backoff)` | c2 |
+| R17 | proactive.py | `_withdrawal = withdrawal_outside_blocks(response_text)` | `_withdrawal = withdrawal_reason(response_text)` (the loop reads the whole output) | b9[in-title], b9[in-rationale], b9[in-notebook], b9[refused-block], b9[with-observation], b9[inside-and-beside] |
+| R18 | proactive.py | `re.sub(PROPOSAL_PATTERN, "", split_notebook_blocks(text)[0], flags=re.DOTALL)` | `split_notebook_blocks(text)[0]` (the helper strips notebook blocks only) | b9[in-title], b9[in-rationale], b9[refused-block], b9[with-observation], b9[inside-and-beside] |
+| R19 | proactive.py | the same | `re.sub(PROPOSAL_PATTERN, "", text, flags=re.DOTALL)` (the helper strips proposal blocks only) | b9[in-notebook] |
+| R20 | proactive.py | the same | `re.sub(r"\[PROPOSAL\].*?\[/PROPOSAL\]", "", split_notebook_blocks(text)[0], flags=re.DOTALL)` (a looser pattern than the extractor's) | b9[unmatched-block] |
 
-Case names: c1, c2 are the two controls in file order. b1 to b8 are the `built` functions in file order, and a bracket names a parameter.
+Case names: c1, c2 are the two controls in file order. b1 to b9 are the `built` functions in file order, and a bracket names a parameter (b9's are its ids: in-title, in-rationale, in-notebook, refused-block, with-observation, inside-and-beside, unmatched-block).
 
 ### 8.4 Broad gate
 
@@ -644,6 +772,7 @@ Once for the issue, after review: `d:/ProbOS/.venv/Scripts/python.exe scripts/ru
 5. Every existing call of `settle_intended_actions` and `unaccounted` still type-checks; the new parameter is keyword-only with default `None`.
 6. The billet contains no hex-like run and no word taken from the triage; the existing tests in `TestTheBilletRepeatsNoWordOfTheTriage` pass unchanged.
 7. After M2, `built` is a no-op and no `skip`, `xfail` or retry remains.
+8. A `[WITHDRAWN]` inside a strict proposal block or a notebook block withdraws nothing: the block is carried out and an action nothing carried out records the reason the base records (b9); a marker outside those blocks still decides.
 
 ## 10. Verified Against Codebase (2026-11-17, commit `4f10b15f7e5acb08340e46f46ea3adf23d6005d1`)
 
@@ -712,13 +841,13 @@ Not changed: COMPOSE, EVALUATE, REFLECT, BF-206, BF-204's gate, `_actions_lost`,
   - COMPOSE's silent short-circuit (`compose.py:657`);
   - BF-206 (`cognitive_agent.py:6263`);
   - REFLECT's suppress (`reflect.py:409`) and its "(C) Suppress" option (`reflect.py:161, 243, 323`).
-- **L3.** `_actions_lost` (`cognitive_agent.py:393`) does not count the token or the line as an action; the orchestrator's probe returned `[]` for both. The comment at `:6705` says "silence included". This is not edited here (L2's path).
+- **L3.** `_actions_lost` (`cognitive_agent.py:393`) keeps an approved output when a rewrite drops an action or silences it (BF-934 G3: "silence included" at `:6705` means that the *rewrite* is silence, as in `tests/test_bf934_s2_secondary_gates.py:209-210`, where the rewrite is the token). It ignores the *original's* silence: the orchestrator's probe returned `[]` for an original that carries the token or the line. A rewrite happens only when the compose text carries a marker the triage did not declare (`:6613`), so a bare token never reaches it. An output that carries the token and such a marker could be rewritten into text that is posted; a valid block beside the token is carried out either way (`tests/test_bf934_s2_secondary_gates.py:181-193`). Not changed here.
 - **L4.** At `:1569`, `withdrawn` applies by decision (D4).
 - **L5.** A lower-case `[withdrawn]` is not read. BF-203's regex does not remove it either, so it is posted as written.
 - **L6.** An observation written beside a token-less marker is not posted (D4).
-- **L7.** A `[WITHDRAWN]` inside a block body counts as a withdrawal line.
+- **L7.** A `[WITHDRAWN]` inside a strict `[PROPOSAL]` block (filed or refused) or a `[NOTEBOOK]` block is that block's own text: the loop reads the line outside those blocks (D8) and carries the block out as the base does (b9). A marker inside a `[PROPOSAL]` that `PROPOSAL_PATTERN` does not match (one written on a single line, or without a newline after its tag) or inside any other kind of block is read, and it silences the turn as the token does: a valid proposal or notebook block elsewhere in the output is still carried out, and nothing else is.
 - **L8.** Effects on silence handling:
-  - A token-less withdrawal now also gets AD-414's trust signal for disciplined silence and AD-430a's no-response episode.
+  - A token-less withdrawal now also runs the loop's silence block: the duty record, AD-414's trust signal for disciplined silence (`trust_no_response_weight`, default 0.0: no signal unless configured, `config.py:3218`), AD-430a's no-response episode, which is built and then refused by `EpisodicMemory.should_store` (`cognitive/episodic.py:1955-1957`: a proactive no-response is skipped), so none is stored, and AD-488's `no_response` circuit-breaker event.
   - BF-864's decision cache (off by default) can replay a cached withdrawal.
 - **L9.** Retries write one declared row per attempt, by the issue's decision. The re-measure counts the latest (#1673's reopening comment).
 
@@ -736,5 +865,6 @@ The blind spots found are L5 to L8 and the ledger keyword rule noted under secti
 - `[NO_RESPONSE]\n[WITHDRAWN] evidence changed` after a proposal billet records a dropped row with reason `withdrawn` and `data.withdrawal == "evidence changed"`; a bare `[NO_RESPONSE]` records `no_response` (b1, c1).
 - The withdrawal line reaches no Ward Room thread or post, with or without the token (b2, b3).
 - A think whose first `handle_intent` returns a transient LLM error after its triage, and whose second succeeds, writes two declared rows with one correlation id and one settlement (c2).
+- A `[WITHDRAWN]` inside a proposal or notebook block withdraws nothing: for every action that nothing carried out, the ledger records what it records on the base (b9).
 - R11 (the withdrawal mapped back to `no_response`) fails b1.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
