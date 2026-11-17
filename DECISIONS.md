@@ -1763,6 +1763,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (public text).* Synthetic fixtures only; no live figure in any test, comment, tracker line or commit message; the acceptance's live numbers are posted on the issue, not in the repository.
 - *Residual.* L1 to L8 of the contract (S1). *Reversal.* Revert the BF-930 slice 1 commits (after reverting slice 2, which imports the helper).
 
+### The HXI renders a build's review lists as plain text under the message and in the failure card (2026-11-17, #1809)
+
+- *Scope.* UI only: `ui/src/store/types.ts` (`BuildReviewNotes`, `ChatMessage.buildReview`, an optional `BuildFailureReport.review_suggestions`), `ui/src/store/useStore.ts` (the `build_success` case and `addChatMessage`'s meta), `ui/src/components/IntentSurface.tsx` (two render sites), a new `ui/src/components/chat/BuildReviewLists.tsx` and a new test file. No server, config, event or persisted-state change. Contract `prompts/build-review-lists.md`.
+- *D1 (shape).* The success lists travel as an optional `buildReview` on the chat message, beside `buildFailureReport`; the failure lists stay in the report. The component checks the shape at render, so both paths share one check.
+- *D2 (plain text).* Each item is a React text node in an `li`, outside the markdown renderer that draws the message text. Rejected: markdown for the items, because the text comes from a model.
+- *D3 (limits).* 10 items; 500 code points, not UTF-16 units, so a cut never splits a surrogate pair; U+2026 after a cut; "and <k> more" counts the string items not shown. A non-array shows nothing; non-string and empty items are skipped.
+- *Residual.* The lists are not restored after a reload. *Reversal.* Revert the commits of #1809; nothing is persisted.
+
 ### The DM camera hook bounds every step with one deadline, and the DM route's timing line survives a raised send (2026-11-16, #1808)
 
 - *Scope.* `perception/consumer.py`: `force_describe_current_frame`, a new `_force_describe_owned`, a progress holder, a set of task references and a done callback that logs a failure the caller no longer receives. `routers/agents.py`: the send and its timing line in a try/finally. One new test file, `tests/test_dm_camera_hook_deadline.py`. No config, event or schema change. Contract `prompts/dm-camera-hook-deadline.md`.
