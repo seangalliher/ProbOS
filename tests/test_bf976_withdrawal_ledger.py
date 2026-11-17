@@ -242,14 +242,23 @@ def test_the_billet_teaches_the_withdrawal_line_and_its_reason():
     ("[WITH" + PROPOSAL + "DRAWN] evidence changed", ["[Observation] evidence changed", "[Proposal] Cache the roster"], [("notebook", "no_block_executed", None)]),
     ("[WITH" + NOTEBOOK + "DRAWN] evidence changed", ["[Observation] evidence changed"], [("proposal", "no_block_executed", None)]),
     ("[WITHDRAWN] first part " + PROPOSAL + " trailing text", ["[Proposal] Cache the roster"], [("notebook", "withdrawn", "first part")]),
-], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block", "split-by-proposal", "split-by-notebook", "reason-before-block"])
+    (f"[PROPOSAL]\nTitle: Cache the roster\n{MARKER}{NOTEBOOK}[/PROPOSAL]", [], [("proposal", "malformed_block", None)]),
+    (f"Roster reads repeat.\n[PROPOSAL]\nTitle: Cache the roster\nRationale: The roster is read forty times per cycle.{NOTEBOOK}[/PROPOSAL]\nAffected Systems: Ward Room\n{MARKER}\n[/PROPOSAL]",
+     ["[Observation] Roster reads repeat.", "[Proposal] Cache the roster"], []),
+    ("[WITHDRAWN] first\x0csecond", [], [("proposal", "withdrawn", "first second"), ("notebook", "withdrawn", "first second")]),
+], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block", "split-by-proposal", "split-by-notebook", "reason-before-block",
+        "closer-after-notebook", "early-closer-after-notebook", "form-feed-in-reason"])
 async def test_a_marker_inside_a_proposal_or_notebook_block_is_that_blocks_own_text(tmp_path, reply, expected_threads, expected_drops):
-    """Review round 1, F1. A marker inside a strict proposal block (filed or refused) or a notebook block withdraws nothing: the block is carried out as written, the
-    observation beside it is judged as before and an action nothing carried out is lost, not withdrawn. A marker beside the blocks still decides (inside-and-beside),
-    and a proposal that the extractor's pattern does not match is no block (unmatched-block). Removing a block leaves a line break, so that a marker the model did not write
-    does not form across it (split-by-proposal, split-by-notebook) and a reason ends where a removed block begins (reason-before-block). On the base every case passes except
-    inside-and-beside, unmatched-block and reason-before-block, which need the withdrawal line; the others pin what the base does. On the tree of R6, which joined the text
-    around a removed block, the last three fail. Rows R17 to R22."""
+    """Review rounds 1 and 2, F1 and F2. A marker inside a strict proposal block (filed or refused) or a notebook block withdraws nothing: the block is carried out as written,
+    the observation beside it is judged as before and an action nothing carried out is lost, not withdrawn. A marker beside the blocks still decides (inside-and-beside),
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). A removed block reaches the parser as a line break, so that a marker the model did
+    not write does not form across it (split-by-proposal, split-by-notebook) and a reason ends where a removed block begins (reason-before-block). While the blocks are found it
+    is a form feed, because the extractor joins the text around a removed notebook block and a line break there made a closer that the joined text lacks (closer-after-notebook:
+    the marker is outside any block, so the reply withdraws) and closed a block early that the joined text closes later (early-closer-after-notebook: the marker is inside it,
+    so the observation is posted). A form feed that the model wrote is a space, as the parser reads it (form-feed-in-reason). On the base every case passes except inside-and-beside,
+    unmatched-block, reason-before-block, closer-after-notebook and form-feed-in-reason, which need the withdrawal line; the others pin what the base does. On the tree of R6,
+    which joined the text around a removed block, split-by-proposal, split-by-notebook and reason-before-block fail; on the tree of R7, which left a line break,
+    closer-after-notebook and early-closer-after-notebook fail. Rows R17 to R25."""
     async with world(tmp_path, event_log=True) as w:
         await think(w, thinker(w, reply, {"intended_actions": ["proposal", "notebook"]}))
         assert sorted(await threads(w)) == sorted(expected_threads)

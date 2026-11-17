@@ -245,14 +245,21 @@ def carries_actionable_block(text: str) -> bool:
     return parse_proposal_block(text).valid or bool(split_notebook_blocks(text)[1])
 
 
+_BLOCK_BREAK = "\f"  # whitespace, not a line break: what a removed block leaves while the blocks are found (withdrawal_outside_blocks)
+
+
 def withdrawal_outside_blocks(text: str) -> str | None:
     """BF-976 (#1807): the reason of the first ``[WITHDRAWN]`` line in *text* outside its notebook and proposal blocks, or None.
 
     A marker inside one of those blocks is that block's own text and is carried out with it, as it was before the line existed: only a line the model wrote outside
     them withdraws the observation. The blocks come out with the patterns the extractor takes them out with: the notebook blocks, then every strict proposal block,
-    filed or refused (it also removes ``[READ_NOTEBOOK]`` tags and ``[NOTE]`` blocks between the two, which this does not). Each comes out as a line break, so that
-    no marker forms across a removed block and no reason runs on past one."""
-    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "\n", _NOTEBOOK_PATTERN.sub("\n", text), flags=re.DOTALL))
+    filed or refused (it also removes ``[READ_NOTEBOOK]`` tags and ``[NOTE]`` blocks between the two, which this does not). The extractor joins the text around a removed
+    notebook block, so while the blocks are found each removed block is a form feed: whitespace, which the proposal pattern passes over as it passes over the join, and not
+    a line break, which could close a block early or make a closer that the joined text lacks. Then each becomes a line break for the parser, so that no marker forms across
+    a removed block and no reason runs on past one. A form feed in the text itself is a space first, as the parser reads it. A proposal tag that only the removal of a
+    notebook block completes is one the extractor finds and this does not (contract L7)."""
+    view = re.sub(PROPOSAL_PATTERN, _BLOCK_BREAK, _NOTEBOOK_PATTERN.sub(_BLOCK_BREAK, text.replace(_BLOCK_BREAK, " ")), flags=re.DOTALL)
+    return withdrawal_reason(view.replace(_BLOCK_BREAK, "\n"))
 
 
 def _as_read(text: Any) -> str:
