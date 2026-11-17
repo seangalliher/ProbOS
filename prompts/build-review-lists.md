@@ -679,10 +679,10 @@ ui/package.json: "react": "^19.0.0", "react-markdown": "^10.1.0", "@testing-libr
   - Run: `rg 'build_success|build_failure|buildFailureReport|review_issues|review_suggestions' ui`
   - Found: `useStore.ts`, `types.ts`, `IntentSurface.tsx`.
   - Holds (this tree has no `ui/node_modules`).
-- **Claim:** no Python test reads the edited UI files.
-  - Run: `rg '"ui"\s*/\s*"src"|ui/src/components|IntentSurface\.tsx|useStore\.ts|store/types' tests`
+- **Claim:** one Python test reads an edited UI file, and it pins only what this change leaves as it is; no other Python test reads `types.ts`, `useStore.ts` or `IntentSurface.tsx`.
+  - Run: `rg '"ui"\s*/\s*"src"|ui/src/components|IntentSurface\.tsx|useStore\.ts|store/types' tests`, then `rg -n -g '*.py' 'types\.ts|useStore|IntentSurface|"store"\s*/' tests` for a path built in pieces. The second run finds only the reader below and `test_wave_close_precheck.py:57-58,79-80`, a stub `useStore.ts` and a mock of it that the test writes into a temporary repository.
   - Found:
-    - `test_ad1164_continue_or_ask.py:1082-1090` (reads `types.ts`, pins `CapabilityApprovalView` only);
+    - `test_ad1164_continue_or_ask.py:1082-1090` (the one reader: it reads `types.ts` and pins only the `CapabilityApprovalView` declaration, which this change does not touch);
     - `test_wave_close_precheck.py:57` (writes a stub into a temporary repo);
     - `test_ad476_specialized_builders.py:46,75` (path strings);
     - `test_ad1214_decision_pre_clearance.py:1183` (`BridgeNotifications.tsx`).
