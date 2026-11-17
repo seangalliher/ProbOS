@@ -1763,6 +1763,16 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (public text).* Synthetic fixtures only; no live figure in any test, comment, tracker line or commit message; the acceptance's live numbers are posted on the issue, not in the repository.
 - *Residual.* L1 to L8 of the contract (S1). *Reversal.* Revert the BF-930 slice 1 commits (after reverting slice 2, which imports the helper).
 
+### The DM camera hook bounds every step with one deadline, and the DM route's timing line survives a raised send (2026-11-16, #1808)
+
+- *Scope.* `perception/consumer.py`: `force_describe_current_frame`, a new `_force_describe_owned`, a progress holder and a set of task references. `routers/agents.py`: the send and its timing line in a try/finally. One new test file, `tests/test_dm_camera_hook_deadline.py`. No config, event or schema change. Contract `prompts/dm-camera-hook-deadline.md`.
+- *Cause.* The hook bounded only `_process`, with `wait_for`. Both `AttachmentStore.exists` checks were awaited with no bound, and both callers (the DM route and the group round) pass `timeout_s=4.0` with no outer bound.
+- *G1 (the deadline).* The steps run in a task. The caller waits with `asyncio.wait(timeout=timeout_s)`, then cancels the task without awaiting it. Rejected: `asyncio.timeout` around the steps, as the issue proposed. It cancels inside the caller's own task, and the filesystem store answers a cancellation by waiting for its thread to end, so a slow store lookup would still hold the caller. Rejected: a deadline per store call, because the describe step also reads the store and uses threads.
+- *G2 (the permit).* The task keeps the permit until its step ends. A call made while a cancelled step drains therefore returns at once instead of starting a second store call. A cancelled caller cancels the task and waits for it, as on the base, so the permit is free when its cancellation surfaces.
+- *G3 (working memory).* An observation written before a later step times out stays; the docstring says so.
+- *G4 (the route line).* Written in a finally, with sent=yes, no or raised. The group round has no timing line and gets no edit: it awaits the same method, which now returns by its deadline.
+- *Residual.* The deadline bounds the caller, not the store: a blocked store thread still runs to its end. *Reversal.* Revert the commits of #1808; nothing is persisted.
+
 ### BF-932 slice 2 -- The Captain-DM reply path logs its own timeline, log-only (2026-11-13, #1670)
 
 - *Scope.* `routers/agents.py` (stamps and one line, after the send), `cognitive/cognitive_agent.py` (stamps and one line, before the model call), `cognitive/concurrency_manager.py` (one trailing field), one test file. Contract `prompts/bf-930-932-voice-and-reply-path-timing.md`.
