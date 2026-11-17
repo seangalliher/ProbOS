@@ -69,6 +69,8 @@ The billet says the decision stands for the turn and that the only way out is th
 
 ### D2. Make loss visible (acceptance 3, and the crew's reconciliation spec)
 
+**Note (2026-11-17, #1807).** A later change adds the reason `withdrawn` to the list of reasons below and to `PRE_EXTRACTION`: a single-call output that carries a `[WITHDRAWN] <reason>` line records each intended action nothing carried out as `withdrawn`, with the reason in the row's `data.withdrawal`. It also rewords the billet's withdrawal sentence. Mutation row 46 and L15 are left as this contract's record of the tree it built; `PRE_EXTRACTION` and the billet's length on later trees differ from them. See `prompts/withdrawal-reason-ledger.md`.
+
 **The log level and wording.** A proposal that is malformed, lacks a Title or a Rationale, has no router, is refused by the router (`{"success": False}`, now read instead of ignored) or raises logs at WARNING, `BF-934: proposal from <callsign> (<agent_type>) not posted: <reason>` with `reason` one of `missing_title`, `missing_rationale`, `no_router`, `router_refused: <error>`, `post_failed: <ExceptionName>`, and `BF-934: Malformed [PROPOSAL] block from <callsign> ...` for a block without the strict shape; an extra block logs `BF-934: N more [PROPOSAL] block(s) from <callsign> are ignored`. An observation with no channel logs at WARNING in `_post_to_ward_room`. The extractor also appends `{"type": "proposal_suppressed", "reason": <reason>}`, the convention it already has (`notebook_suppressed`, `artifact_suppressed`).
 
 **Where the inverse of AD-643b lives** (enumerated, not assumed):

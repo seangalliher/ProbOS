@@ -48,8 +48,9 @@ ACTION_TAGS: Mapping[str, ActionTag] = MappingProxyType({
     "ward_room_lookup": ActionTag(how="a lookup run between triage and COMPOSE (AD-1347 S4)"),
 })
 
-#: The reasons of an exit taken before the output was read for blocks: they apply to every tag.
-PRE_EXTRACTION = frozenset({"think_failed", "no_output", "no_response", "raw_intent_json"})
+#: The reasons of an exit taken before the output was read for blocks, and of a withdrawal (BF-976, #1807: the model's ``[WITHDRAWN]`` line covers each action
+#: the output did not carry out): they apply to every tag.
+PRE_EXTRACTION = frozenset({"think_failed", "no_output", "no_response", "raw_intent_json", "withdrawn"})
 
 
 def _normalised(intended: Iterable[object]) -> list[str]:
@@ -66,8 +67,15 @@ def intended_tags(intended: Iterable[object]) -> list[str]:
     return [tag for tag in _normalised(intended) if tag in ACTION_TAGS]
 
 
-def unaccounted(intended: Iterable[object], executed: Sequence[Mapping[str, Any]], reason: str) -> list[dict[str, Any]]:
+def unaccounted(
+    intended: Iterable[object], executed: Sequence[Mapping[str, Any]], reason: str, *, withdrawal: str | None = None,
+) -> list[dict[str, Any]]:
     """The drop entry of each intended action that nothing in *executed* carried out.
+
+    BF-976 (#1807): a drop whose reason is ``withdrawn`` also carries *withdrawal*, the model's reason as ``action_billets.withdrawal_reason`` reads it: one line of
+    at most 200 printable code points, so at most 800 bytes as the governed reader measures a row (UTF-8: 4 bytes for a code point outside the BMP, 2 for a quote
+    or a backslash) and at most 2400 bytes as ``EventLog.log`` stores it (ASCII escapes: 12 bytes for a code point outside the BMP), against the reader's caps of
+    512 characters a string and 4096 bytes a row. The text goes into the row's ``data`` only, not into its ``detail`` or the log line.
 
     *executed* is what ``ProactiveCognitiveLoop`` recorded (the extractor's entries, and ``{"type": "ward_room_post"}`` once the observation was posted);
     *reason* is why the think ended where it did. A tag with no evidence (``silent``, ``speak_freely``, ...) is never dropped. A tag whose extractor recorded a
@@ -89,6 +97,8 @@ def unaccounted(intended: Iterable[object], executed: Sequence[Mapping[str, Any]
                 if spec.suppressed == "notebook_suppressed":
                     drop["by_design"] = True  # AD-550's dedup and AD-552's repetition gate: counted, and only noted
                 break
+        if drop["reason"] == "withdrawn" and withdrawal is not None:
+            drop["withdrawal"] = withdrawal  # BF-976: the model's reason; a suppression's own reason above carries none
         drops.append(drop)
     return drops
 
@@ -116,22 +126,23 @@ async def record_declared(
 
 async def settle_intended_actions(
     runtime: Any, agent: Any, intent_id: str, metadata: object, executed: Sequence[Mapping[str, Any]], reason: str,
+    *, withdrawal: str | None = None,
 ) -> list[dict[str, Any]]:
     """Say, and record, each action the think's triage intended that nothing carried out; return the drop entries.
 
     *metadata* is the ``IntentResult.metadata`` of the think: it holds ``intended_actions`` only when a triage ran for it, and a think without one has nothing to
-    account for. A drop of ``ward_room_post`` (the usual quality gates) or a by-design notebook suppression is logged at INFO; any other drop is a lost decision and
-    is logged at WARNING. Nothing here raises.
+    account for. A drop of ``ward_room_post`` (the usual quality gates), a by-design notebook suppression or a withdrawal (BF-976: the model judged the action
+    unsupported and said why, *withdrawal*) is logged at INFO; any other drop is a lost decision and is logged at WARNING. Nothing here raises.
     """
     intended = metadata.get("intended_actions") if isinstance(metadata, dict) else None
     if not isinstance(intended, list):
         return []
-    drops = unaccounted(intended, executed, reason)
+    drops = unaccounted(intended, executed, reason, withdrawal=withdrawal)
     agent_type = getattr(agent, "agent_type", "")
     callsign = getattr(agent, "callsign", "") or agent_type
     log = getattr(runtime, "event_log", None)
     for drop in drops:
-        level = logging.INFO if drop["action"] == "ward_room_post" or drop.get("by_design") else logging.WARNING
+        level = logging.INFO if drop["action"] == "ward_room_post" or drop.get("by_design") or drop["reason"] == "withdrawn" else logging.WARNING
         logger.log(level, "BF-934: %s (%s) intended %s and nothing carried it out: %s", callsign, agent_type, drop["action"], drop["reason"])
         if log is None:
             continue
