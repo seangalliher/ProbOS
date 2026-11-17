@@ -142,6 +142,9 @@ def _reset_module_state() -> Any:
     _ATTACHMENT_STORE_CACHE.clear()
     yield
     reset_working_memories_for_tests()
+    for store in list(_ATTACHMENT_STORE_CACHE.values()):
+        if isinstance(store, FilesystemAttachmentStore):
+            store.close()  # a case that fails must not leave the store's IO threads running
     _ATTACHMENT_STORE_CACHE.clear()
 
 
