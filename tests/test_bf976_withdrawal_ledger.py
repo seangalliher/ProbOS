@@ -3,6 +3,7 @@
 Real: the think cycle, the extraction, the Ward Room and Ship's Records on tmp_path, an EventLog on tmp_path and, where a case calls ``crew``, the cognitive
 agent's lifecycle with the single call. Doubles (tests/bf934_world.py): the model, the triage's handlers, and a thinker whose ``handle_intent`` answers a fixed
 text with the ``intended_actions`` metadata the lifecycle would attach. The ``built`` cases fail on the base at their own assert; the two controls pass on both.
+b9, which R2 added, is neither: its docstring says which of its cases pass on the base.
 No name that M2 adds is imported at module level. Each docstring names the mutation rows (contract section 8.3) the case kills.
 """
 
@@ -230,7 +231,6 @@ def test_the_billet_teaches_the_withdrawal_line_and_its_reason():
     assert "That withdrawal is recorded with its reason." in billet and "answer exactly [NO_RESPONSE]; that withdrawal is recorded." not in billet
 
 
-@built
 @pytest.mark.parametrize("reply, expected_threads, expected_drops", [
     (PROPOSAL.replace("Cache the roster", MARKER), ["[Proposal] [WITHDRAWN] evidence changed"], [("notebook", "no_block_executed", None)]),
     (PROPOSAL.replace("per cycle.", f"per cycle.\n{MARKER}"), ["[Proposal] Cache the roster"], [("notebook", "no_block_executed", None)]),
@@ -243,7 +243,8 @@ def test_the_billet_teaches_the_withdrawal_line_and_its_reason():
 async def test_a_marker_inside_a_proposal_or_notebook_block_is_that_blocks_own_text(tmp_path, reply, expected_threads, expected_drops):
     """Review round 1, F1. A marker inside a strict proposal block (filed or refused) or a notebook block withdraws nothing: the block is carried out as written, the
     observation beside it is judged as before and an action nothing carried out is lost, not withdrawn. A marker beside the blocks still decides (inside-and-beside),
-    and a proposal that the extractor's pattern does not match is no block (unmatched-block). Rows R17, R18, R19 and R20."""
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). On the base the first five cases pass (they pin what the base does, which M2
+    as built changed) and the last two fail; on M2 as built unmatched-block passes and the other six fail. Rows R17, R18, R19 and R20."""
     async with world(tmp_path, event_log=True) as w:
         await think(w, thinker(w, reply, {"intended_actions": ["proposal", "notebook"]}))
         assert sorted(await threads(w)) == sorted(expected_threads)

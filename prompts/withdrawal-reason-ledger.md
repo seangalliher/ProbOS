@@ -3,7 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-17
 **Status:** ready to build on `origin/main` `4f10b15f7e5acb08340e46f46ea3adf23d6005d1`. Every anchor below was read on that commit. `git log --oneline 5275d008..HEAD` over `action_billets.py`, `action_accounting.py`, `proactive.py`, `cognitive_agent.py`, `output_grounding.py`, `tests/test_bf934_s1_decision_routing.py`, `tests/test_bf934_s3_intended_actions_ledger.py` and `tests/bf934_world.py` prints nothing, so the issue's anchors (filed on `5275d008`) hold. Open PR #1825 touches no Python file. **Owning issue:** #1807 (BF-976, already allocated). Commits say `Refs #1807.` Save this contract as `prompts/withdrawal-reason-ledger.md`.
 **Dependencies:** none.
-**Estimated tests:** 30 cases in one new file, `tests/test_bf976_withdrawal_ledger.py`: 28 `built` and 2 controls (M1 and M2 build 23 of them, 21 `built`; R2 adds the seven parameters of b9). No existing test is edited.
+**Estimated tests:** 30 cases in one new file, `tests/test_bf976_withdrawal_ledger.py`: 21 `built`, 2 controls and the seven cases of b9, which R2 adds (b9 is not `built`: five of its cases pass on the base, because they pin what the base does with a marker inside a block). No existing test is edited.
 
 ## 1. Problem
 
@@ -35,7 +35,7 @@ Rejected designs:
 
 | # | Decision | Reason |
 |---|---|---|
-| D1 | **The parser.** `withdrawal_reason(text: str) -> str \| None`. It finds the first `[WITHDRAWN]` anywhere in the text, upper case only, and returns the rest of that line up to the first `"\n"`. Each character with `str.isprintable()` False becomes a space; whitespace runs collapse to one space; the result is cut to 200 code points (Python `str` length) with `.rstrip()` and no ellipsis. It returns `None` when there is no marker. A marker with no reason returns `""`, which is still a withdrawal. With two markers, the first wins. | "Anywhere" matches how the loop reads `[NO_RESPONSE]` (a substring test, `:1460`), and BF-203 would post a mid-line marker's reason just as it posts a line-start one. Upper case matches the taught form and BF-203's tag shape. A lower-case marker is not read (L5). `isprintable` removes controls, format characters, lone surrogates and the line and paragraph separators, so the reason is one physical line that UTF-8 can encode. |
+| D1 | **The parser.** `withdrawal_reason(text: str) -> str \| None`. It finds the first `[WITHDRAWN]` anywhere in the text it is given (the loop gives it the output without its proposal and notebook blocks, D8), upper case only, and returns the rest of that line up to the first `"\n"`. Each character with `str.isprintable()` False becomes a space; whitespace runs collapse to one space; the result is cut to 200 code points (Python `str` length) with `.rstrip()` and no ellipsis. It returns `None` when there is no marker. A marker with no reason returns `""`, which is still a withdrawal. With two markers, the first wins. | "Anywhere" matches how the loop reads `[NO_RESPONSE]` (a substring test, `:1460`), and BF-203 would post a mid-line marker's reason just as it posts a line-start one. Upper case matches the taught form and BF-203's tag shape. A lower-case marker is not read (L5). `isprintable` removes controls, format characters, lone surrogates and the line and paragraph separators, so the reason is one physical line that UTF-8 can encode. |
 | D2 | **The billet clause** (P2-2), word for word: `If you find that the evidence no longer supports an action, withdraw it: write [NO_RESPONSE] on one line and, on the next, [WITHDRAWN] followed by one plain sentence on why. That withdrawal is recorded with its reason.` | It carries no hex-looking run and repeats no triage word (`action_billets.py:53-55`); the marker comes from the constant. "Plain sentence" asks for no identifiers, which lowers the BF-204 case (L1). |
 | D3 | **How the text travels.** `unaccounted(..., reason, *, withdrawal: str \| None = None)` and `settle_intended_actions(..., reason, *, withdrawal: str \| None = None)`. A drop whose final reason is `withdrawn` gets `drop["withdrawal"] = withdrawal`, and the row's `data` holds it. `detail` stays `"<callsign> intended <action>: <reason>"`. The log line is unchanged and logs at INFO when the reason is `withdrawn`. | Keyword-only with a default, so the other five call sites and the existing tests (`test_bf934_s3...py:248,268,314`, positional) stay as they are. The model's text lives in one governed place, the row's `data`, and not in the log. **Size:** at most 200 printable code points is at most 800 bytes under the governed reader's measure (`event_log.py:319-327`: UTF-8, `ensure_ascii=False`; 4 bytes for a code point outside the BMP, 2 for `"` or `\`), and at most 2400 bytes as stored (`event_log.py:659`, ASCII escapes, 12 bytes outside the BMP). The caps are 512 characters a string (`:34`), 4096 bytes a row (`:36`) and 16384 raw (`:35`). b7 measures it. |
 | D4 | **The sites.** `:1460` silences on `"[NO_RESPONSE]" in text or withdrawal_outside_blocks(text) is not None` (D8). `:1533` settles `withdrawn` when the line is present, else `no_response`. `:1536` `_withdrawn` becomes that same condition. `:1569` settles `withdrawn` when the line is present, else as before. The other sites stay as they are: `:1449` (no output read) and `:1547` (`raw_intent_json`: an output that opens with a raw intents object; a silenced output reaches it only when it also carries a valid block, and its reason is then `raw_intent_json` with the line or the token alike, with no withdrawal text recorded, as the token's is on the base; the orchestrator's probe measured this on the M2 tree). `:1581`, `:1595` and `:1614` cannot be reached with a withdrawal, because a silenced output either returns at `:1533`, or returns at `:1547`, or has its text cleared at `:1558-1559` and returns at `:1569`. | At `:1569` the output carries a valid block and the line: the blocks are carried out, and an intended action the output did not carry out was judged, not lost (b3). A token-less marker withdraws like the token: its line never posts, and an observation beside it is not posted (L6). |
@@ -57,7 +57,7 @@ The Builder is `claude-sonnet-5.5`, with at most about 150 tool calls per milest
 - **M3:** P3-1, P3-2 and P3-3.
   - Subject: `Trackers for the withdrawal reason in the intended-actions ledger`
   - Body: `PROGRESS.md and DECISIONS.md entries, and a dated note in the earlier ledger contract.` Then `Refs #1807.` and the trailer.
-- **R1 to R3 (review round 1; made by the orchestrator, not the Builder):** R1 is the first campaign of record and three corrections to this contract's text. R2 repairs finding F1: the pairs of 6.4 (`proactive.py`, the test file, `PROGRESS.md`, `DECISIONS.md`), this contract's corrections to the header and to sections 2, 3, 4, 5, 8.2, 8.3, 9, 11 and 13, and the regenerated ledger pair. R3 is the campaign of record on R2's head (20 rows, a new bullet in place of R1's) and the regenerated ledger pair.
+- **R1 to R5 (review round 1; made by the orchestrator, not the Builder):** R1 is the first campaign of record and three corrections to this contract's text. R2 repairs finding F1: the pairs of 6.4 (`proactive.py`, the test file, `PROGRESS.md`, `DECISIONS.md`), this contract's corrections to the header and to sections 2, 3, 4, 5, 8.2, 8.3, 9, 11 and 13, and the regenerated ledger pair. R3 is the campaign of record on R2's head. R4 corrects what R2 said of its case b9, which is not a `built` case: the marker and the docstrings in the test file (the pairs of 6.5) and this contract's header, D1, section 4 and 8.3. R5 is the campaign of record on R4's head (20 rows), a bullet that replaces R3's in `DECISIONS.md`, and the regenerated ledger pair.
 
 I checked the three subjects and bodies by eye for the issue's list of closing words, including inside other words, and for `AD-` and `BF-` tokens. They contain none.
 
@@ -707,6 +707,43 @@ REPLACE:
 - *G2 (the loop).* The line silences an output as the token does, with or without the token, and the loop reads it outside the output's proposal and notebook blocks: a marker inside one is that block's own text (review round 1; rejected: stripping every marker line before the extractor reads the output, which would refuse a proposal whose title holds the marker). Both silence settles record withdrawn
 ```
 
+### 6.5 R4: what R2 said of its case b9
+
+On the base, the test file of R2 gives 23 failures and 7 passes: five of b9's seven cases pass there, because they pin what the base does with a marker inside a block (they fail on M2 as built), so b9 is not a `built` case. The orchestrator applied the pairs below to the tree of R3. Nothing but the marker and the docstrings changes in the test file: the cases, the source and the table of 8.3 are as in R2. R5 replaces R3's campaign bullet in `DECISIONS.md`, because the test file's bytes changed.
+
+**R4-T1** (`tests/test_bf976_withdrawal_ledger.py`: the module's docstring says that b9 is neither a built case nor a control)
+SEARCH:
+```
+text with the ``intended_actions`` metadata the lifecycle would attach. The ``built`` cases fail on the base at their own assert; the two controls pass on both.
+```
+REPLACE:
+```
+text with the ``intended_actions`` metadata the lifecycle would attach. The ``built`` cases fail on the base at their own assert; the two controls pass on both.
+b9, which R2 added, is neither: its docstring says which of its cases pass on the base.
+```
+
+**R4-T2** (`tests/test_bf976_withdrawal_ledger.py`: b9 is not marked `built`)
+SEARCH:
+```
+@built
+@pytest.mark.parametrize("reply, expected_threads, expected_drops", [
+```
+REPLACE:
+```
+@pytest.mark.parametrize("reply, expected_threads, expected_drops", [
+```
+
+**R4-T3** (`tests/test_bf976_withdrawal_ledger.py`: b9's docstring says which cases pass on the base and on M2)
+SEARCH:
+```
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). Rows R17, R18, R19 and R20."""
+```
+REPLACE:
+```
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). On the base the first five cases pass (they pin what the base does, which M2
+    as built changed) and the last two fail; on M2 as built unmatched-block passes and the other six fail. Rows R17, R18, R19 and R20."""
+```
+
 ## 7. Builder: may and may not
 
 - **May:** apply the pairs in order; run `git diff --check` and `git diff --stat`; commit as section 4 says.
@@ -757,7 +794,7 @@ Each original occurs once in its file, as a substring of one line. "At least" ma
 | R19 | proactive.py | the same | `re.sub(PROPOSAL_PATTERN, "", text, flags=re.DOTALL)` (the helper strips proposal blocks only) | b9[in-notebook] |
 | R20 | proactive.py | the same | `re.sub(r"\[PROPOSAL\].*?\[/PROPOSAL\]", "", split_notebook_blocks(text)[0], flags=re.DOTALL)` (a looser pattern than the extractor's) | b9[unmatched-block] |
 
-Case names: c1, c2 are the two controls in file order. b1 to b9 are the `built` functions in file order, and a bracket names a parameter (b9's are its ids: in-title, in-rationale, in-notebook, refused-block, with-observation, inside-and-beside, unmatched-block).
+Case names: c1, c2 are the two controls in file order. b1 to b8 are the `built` functions in file order, b9 is the case that R2 adds (not `built`), and a bracket names a parameter (b9's are its ids: in-title, in-rationale, in-notebook, refused-block, with-observation, inside-and-beside, unmatched-block).
 
 ### 8.4 Broad gate
 
