@@ -31,6 +31,7 @@ import { Diamond, Check, XMark, StatusPending, DiamondOpen, Bullseye, ChevronDow
 import { AgentAvatarBadge } from './AgentAvatarBadge';
 import { denialNotice, policyDenialOf } from '../chat/policyDenial';
 import { approveQueuedBuild } from '../store/buildQueueApprove';
+import { BuildReviewLists } from './chat/BuildReviewLists';
 
 /* ── spring easing ── */
 const spring = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -1163,6 +1164,13 @@ export function IntentSurface() {
                       )}
                     </div>
 
+                    {/* Build review lists under a build_success message (BF-978) */}
+                    {msg.buildReview && (
+                      <div style={{ marginTop: 8, maxWidth: '80%' }}>
+                        <BuildReviewLists issues={msg.buildReview.issues} suggestions={msg.buildReview.suggestions} />
+                      </div>
+                    )}
+
                     {/* Self-mod approval buttons */}
                     {msg.selfModProposal && msg.selfModProposal.status === 'proposed' && (
                       <div style={{ marginTop: 8 }}>
@@ -1543,6 +1551,12 @@ export function IntentSurface() {
                             ))}
                           </div>
                         )}
+
+                        {/* Review lists from the failure report (BF-978) */}
+                        <BuildReviewLists
+                          issues={msg.buildFailureReport.review_issues}
+                          suggestions={msg.buildFailureReport.review_suggestions}
+                        />
 
                         {/* Collapsible raw error */}
                         {msg.buildFailureReport.raw_error && (
