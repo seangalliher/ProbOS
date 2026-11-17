@@ -1692,6 +1692,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G4 (scope).* Proactive thinks only; the Ward Room notification path is not reconciled (L6).
 - *Residual.* L1, L3, L6, L7, L8, L12, L13, L14, L16, L29, L30 and L31 of the contract. *Reversal.* Revert the BF-934 slice 3 commits.
 
+### A judged withdrawal is recorded apart from a lost action, with its reason, and a retried think settles once (2026-11-17, #1807)
+
+- *Scope.* `cognitive/action_billets.py` (the marker, the cap, `withdrawal_reason`, the billet's clause), `cognitive/action_accounting.py` (`withdrawn` in `PRE_EXTRACTION`; a keyword `withdrawal` on `unaccounted` and `settle_intended_actions`; INFO for a withdrawal), `proactive.py` (the silence gate and the two settles that follow it). One new test file. No config, event type or schema change. Contract `prompts/withdrawal-reason-ledger.md`.
+- *G1 (syntax).* [NO_RESPONSE] and then a [WITHDRAWN] line. Rejected: a new silence token, which each reader of [NO_RESPONSE] would need to learn.
+- *G2 (the loop).* The line silences an output as the token does, with or without the token. Both silence settles record withdrawn when the line is present; at the second, a valid block beside it is carried out first. The reason goes into the dropped row's data, cut to 200 printable code points (at most 800 bytes under the governed reader's measure).
+- *G3 (retries).* No change to the writes; each attempt's triage writes its declared row, and the last attempt settles. The re-measure counts the latest declared row per agent and correlation id. Rejected: settling a superseded attempt, which may carry no metadata.
+- *Residual.* The chain's rewriters (COMPOSE's silent path, BF-206, REFLECT's suppress) and BF-204's grounding rule can reduce a withdrawal to the bare token, which records no_response. *Reversal.* Revert the commits of #1807; a dropped row's `withdrawal` key is optional.
+
 ### BF-936 -- The standing orders say what crew can do about code changes (2026-11-12, #1677)
 
 - *Scope.* `config/standing_orders/ship.md` (a section, first in the file, tagged `core_directives`), `builder.md`, `engineering.md`, the AD-1152 golden and the AD-1200 request fingerprints (both refreshed by measurement), one new test file. Contract `prompts/bf-936-crew-code-change-orders.md`.
