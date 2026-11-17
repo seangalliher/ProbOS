@@ -249,8 +249,10 @@ def withdrawal_outside_blocks(text: str) -> str | None:
     """BF-976 (#1807): the reason of the first ``[WITHDRAWN]`` line in *text* outside its notebook and proposal blocks, or None.
 
     A marker inside one of those blocks is that block's own text and is carried out with it, as it was before the line existed: only a line the model wrote outside
-    them withdraws the observation. The blocks come out as the extractor takes them out: the notebook blocks, then every strict proposal block, filed or refused."""
-    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "", split_notebook_blocks(text)[0], flags=re.DOTALL))
+    them withdraws the observation. The blocks come out with the patterns the extractor takes them out with: the notebook blocks, then every strict proposal block,
+    filed or refused (it also removes ``[READ_NOTEBOOK]`` tags and ``[NOTE]`` blocks between the two, which this does not). Each comes out as a line break, so that
+    no marker forms across a removed block and no reason runs on past one."""
+    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "\n", _NOTEBOOK_PATTERN.sub("\n", text), flags=re.DOTALL))
 
 
 def _as_read(text: Any) -> str:

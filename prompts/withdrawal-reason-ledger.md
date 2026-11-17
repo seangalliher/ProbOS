@@ -3,7 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-17
 **Status:** ready to build on `origin/main` `4f10b15f7e5acb08340e46f46ea3adf23d6005d1`. Every anchor below was read on that commit. `git log --oneline 5275d008..HEAD` over `action_billets.py`, `action_accounting.py`, `proactive.py`, `cognitive_agent.py`, `output_grounding.py`, `tests/test_bf934_s1_decision_routing.py`, `tests/test_bf934_s3_intended_actions_ledger.py` and `tests/bf934_world.py` prints nothing, so the issue's anchors (filed on `5275d008`) hold. Open PR #1825 touches no Python file. **Owning issue:** #1807 (BF-976, already allocated). Commits say `Refs #1807.` Save this contract as `prompts/withdrawal-reason-ledger.md`.
 **Dependencies:** none.
-**Estimated tests:** 30 cases in one new file, `tests/test_bf976_withdrawal_ledger.py`: 21 `built`, 2 controls and the seven cases of b9, which R2 adds (b9 is not `built`: five of its cases pass on the base, because they pin what the base does with a marker inside a block). No existing test is edited.
+**Estimated tests:** 33 cases in one new file, `tests/test_bf976_withdrawal_ledger.py`: 21 `built`, 2 controls and the ten cases of b9, which R2 adds and R7 extends (b9 is not `built`: seven of its cases pass on the base, because they pin what the base does with a marker inside or across a block). No existing test is edited.
 
 ## 1. Problem
 
@@ -42,7 +42,7 @@ Rejected designs:
 | D5 | **Tests.** A real EventLog, a real Ward Room and the real think cycle (`tests/bf934_world.py`). The Ward Room claim is asserted on the Ward Room itself: `threads(w)` titles, plus every thread's title and body and every post's body. The retry seam swaps `probos.proactive`'s module-global `asyncio` for a shim whose `sleep` records its delay and returns at once; every other name delegates to `asyncio`. | The shim is narrower than patching `asyncio.sleep` process-wide: the Ward Room, the EventLog and the agent keep their real sleeps, and the recorded `[0.5]` proves that exactly one backoff ran. |
 | D6 | **The BF-934 contract.** Add a dated note under its D2 heading. Do not edit mutation row 46 or L15. | Row 46 and L15 record the campaign and measurements of the tree that contract built. Editing them would make its record false. The note states what moved. |
 | D7 | **Nothing is persisted beyond one optional key in a `dropped` row's `data`, and no config field, flag or baseline changes.** | See Absence Verified. `ProactiveCognitiveLoop`'s srp-size row already carries `lines` and `methods` (`architecture-baseline.yaml:862-867`), and no method is added. The EventLog pair census (`test_ad1195_eventlog_pair_freeze.py:109-110`) pins `(category, event)` pairs, which are unchanged. |
-| D8 | **Where the loop reads the line (review round 1, F1).** `withdrawal_outside_blocks(text)` in `proactive.py`, next to `carries_actionable_block`: `withdrawal_reason` of the text without its notebook blocks (`split_notebook_blocks`) and then without every strict proposal block (`PROPOSAL_PATTERN`, `re.DOTALL`), the patterns and the order the extractor strips with, a block it files and one it refuses alike. The parser is unchanged, and the helper is a function of the module, not a method of the loop. | A marker inside a block the loop carries out is that block's own text. Read as a withdrawal, it recorded `withdrawn` and the title or rationale as the reason for an action the model never withdrew (a forgotten action looked judged), and it withdrew the observation beside the block. The orchestrator's probe on M2: with the marker in the title of a filed proposal, an unfiled notebook entry recorded `withdrawn` with the title's text where the base recorded `no_block_executed`; the Ward Room thread and the notebook file were the ones the base writes. A marker in any other kind of block, or in a `[PROPOSAL]` that the pattern does not match, is still read (L7). |
+| D8 | **Where the loop reads the line (review rounds 1 and 2, F1 and F2).** `withdrawal_outside_blocks(text)` in `proactive.py`, next to `carries_actionable_block`: `withdrawal_reason` of the text in which each notebook block (`_NOTEBOOK_PATTERN`) and then each strict proposal block (`PROPOSAL_PATTERN`, `re.DOTALL`) has been replaced by a line break: the two patterns the extractor strips with, in its order, a block it files and one it refuses alike. The extractor also removes `[READ_NOTEBOOK]` tags and `[NOTE]` blocks between the two passes, which the helper does not (L7). The line break keeps the neighbours of a removed block apart: `[WITH`, a block and `DRAWN]` read as no marker, and a reason ends where a removed block begins (b9: split-by-proposal, split-by-notebook, reason-before-block). The parser is unchanged, and the helper is a function of the module, not a method of the loop. | A marker inside a block the loop carries out is that block's own text. Read as a withdrawal, it recorded `withdrawn` and the title or rationale as the reason for an action the model never withdrew (a forgotten action looked judged), and it withdrew the observation beside the block. The orchestrator's probe on M2: with the marker in the title of a filed proposal, an unfiled notebook entry recorded `withdrawn` with the title's text where the base recorded `no_block_executed`; the Ward Room thread and the notebook file were the ones the base writes. A marker in any other kind of block, or in a `[PROPOSAL]` that the pattern does not match, is still read (L7). Round 2 found that removing a block with nothing in its place joined its neighbours: the orchestrator's probe on R6 showed `[WITH`, a proposal block and `DRAWN] x` recording `withdrawn` with the reason `x`, where the base records no withdrawal. |
 
 ## 4. Milestones and commits
 
@@ -57,7 +57,7 @@ The Builder is `claude-sonnet-5.5`, with at most about 150 tool calls per milest
 - **M3:** P3-1, P3-2 and P3-3.
   - Subject: `Trackers for the withdrawal reason in the intended-actions ledger`
   - Body: `PROGRESS.md and DECISIONS.md entries, and a dated note in the earlier ledger contract.` Then `Refs #1807.` and the trailer.
-- **R1 to R6 (review round 1; made by the orchestrator, not the Builder):** R1 is the first campaign of record and three corrections to this contract's text. R2 repairs finding F1: the pairs of 6.4 (`proactive.py`, the test file, `PROGRESS.md`, `DECISIONS.md`), this contract's corrections to the header and to sections 2, 3, 4, 5, 8.2, 8.3, 9, 11 and 13, and the regenerated ledger pair. R3 is the campaign of record on R2's head. R4 corrects what R2 said of its case b9, which is not a `built` case: the marker and the docstrings in the test file (the pairs of 6.5) and this contract's header, D1, section 4 and 8.3. R5 is the campaign of record on R4's head (20 rows), a bullet that replaces R3's in `DECISIONS.md`, and the regenerated ledger pair. R6 corrects the last clause of L7 (what runs when a marker that the helper does not strip withdraws a turn); it changes this contract and the ledger pair only.
+- **R1 to R8 (review rounds 1 and 2; made by the orchestrator, not the Builder):** R1 is the first campaign of record and three corrections to this contract's text. R2 repairs finding F1: the pairs of 6.4 (`proactive.py`, the test file, `PROGRESS.md`, `DECISIONS.md`), this contract's corrections to the header and to sections 2, 3, 4, 5, 8.2, 8.3, 9, 11 and 13, and the regenerated ledger pair. R3 is the campaign of record on R2's head. R4 corrects what R2 said of its case b9, which is not a `built` case: the marker and the docstrings in the test file (the pairs of 6.5) and this contract's header, D1, section 4 and 8.3. R5 is the campaign of record on R4's head (20 rows), a bullet that replaces R3's in `DECISIONS.md`, and the regenerated ledger pair. R6 corrects the last clause of L7 (what runs when a marker that the helper does not strip withdraws a turn); it changes this contract and the ledger pair only. R7 repairs finding F2 of review round 2 (removing a block joined its neighbours): the pairs of 6.6 (`proactive.py`, the test file, `PROGRESS.md`, `DECISIONS.md`), this contract's corrections to the header, D8, L7 and sections 4, 8.2, 8.3 and 9, and the regenerated ledger pair. R8 is the campaign of record on R7's head (22 rows), a bullet that replaces R5's in `DECISIONS.md`, and the regenerated ledger pair.
 
 I checked the three subjects and bodies by eye for the issue's list of closing words, including inside other words, and for `AD-` and `BF-` tokens. They contain none.
 
@@ -744,6 +744,73 @@ REPLACE:
     as built changed) and the last two fail; on M2 as built unmatched-block passes and the other six fail. Rows R17, R18, R19 and R20."""
 ```
 
+### 6.6 R7: review round 2's repair of finding F2
+
+Review round 2 found that removing a block with nothing in its place joined its neighbours: `[WITH`, a block and `DRAWN]` read as a marker that the model never wrote, and a reason could run on past a removed block (finding F2; D8 and L7 say what the repair decides). The repair puts a line break in place of each removed block. The orchestrator applied the pairs below, in order, to the tree of R6: the first three change `proactive.py` and the test file, the last two `PROGRESS.md` and `DECISIONS.md`. The corrections to this contract's own text (the header, D8, L7 and sections 4, 8.2, 8.3, 9 and 13) are not pairs here, and the ledger pair is regenerated afterwards. R8 replaces R5's campaign bullet in `DECISIONS.md` with the one for 22 rows.
+
+**R7-S1** (`src/probos/proactive.py`: each removed block leaves a line break, so no marker forms across it and no reason runs on past it)
+SEARCH:
+```
+    A marker inside one of those blocks is that block's own text and is carried out with it, as it was before the line existed: only a line the model wrote outside
+    them withdraws the observation. The blocks come out as the extractor takes them out: the notebook blocks, then every strict proposal block, filed or refused."""
+    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "", split_notebook_blocks(text)[0], flags=re.DOTALL))
+```
+REPLACE:
+```
+    A marker inside one of those blocks is that block's own text and is carried out with it, as it was before the line existed: only a line the model wrote outside
+    them withdraws the observation. The blocks come out with the patterns the extractor takes them out with: the notebook blocks, then every strict proposal block,
+    filed or refused (it also removes ``[READ_NOTEBOOK]`` tags and ``[NOTE]`` blocks between the two, which this does not). Each comes out as a line break, so that
+    no marker forms across a removed block and no reason runs on past one."""
+    return withdrawal_reason(re.sub(PROPOSAL_PATTERN, "\n", _NOTEBOOK_PATTERN.sub("\n", text), flags=re.DOTALL))
+```
+
+**R7-T1** (`tests/test_bf976_withdrawal_ledger.py`: three more parameters of b9)
+SEARCH:
+```
+], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block"])
+```
+REPLACE:
+```
+    ("[WITH" + PROPOSAL + "DRAWN] evidence changed", ["[Observation] evidence changed", "[Proposal] Cache the roster"], [("notebook", "no_block_executed", None)]),
+    ("[WITH" + NOTEBOOK + "DRAWN] evidence changed", ["[Observation] evidence changed"], [("proposal", "no_block_executed", None)]),
+    ("[WITHDRAWN] first part " + PROPOSAL + " trailing text", ["[Proposal] Cache the roster"], [("notebook", "withdrawn", "first part")]),
+], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block", "split-by-proposal", "split-by-notebook", "reason-before-block"])
+```
+
+**R7-T2** (`tests/test_bf976_withdrawal_ledger.py`: b9's docstring says what the three new cases pin and which cases pass on the base)
+SEARCH:
+```
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). On the base the first five cases pass (they pin what the base does, which M2
+    as built changed) and the last two fail; on M2 as built unmatched-block passes and the other six fail. Rows R17, R18, R19 and R20."""
+```
+REPLACE:
+```
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). Removing a block leaves a line break, so that a marker the model did not write
+    does not form across it (split-by-proposal, split-by-notebook) and a reason ends where a removed block begins (reason-before-block). On the base every case passes except
+    inside-and-beside, unmatched-block and reason-before-block, which need the withdrawal line; the others pin what the base does. On the tree of R6, which joined the text
+    around a removed block, the last three fail. Rows R17 to R22."""
+```
+
+**R7-D1** (`PROGRESS.md`: the case count)
+SEARCH:
+```
+`tests/test_bf976_withdrawal_ledger.py` adds 30 cases.
+```
+REPLACE:
+```
+`tests/test_bf976_withdrawal_ledger.py` adds 33 cases.
+```
+
+**R7-D2** (`DECISIONS.md`: G2 says that a removed block leaves a line break)
+SEARCH:
+```
+(review round 1; rejected: stripping every marker line before the extractor reads the output
+```
+REPLACE:
+```
+(review rounds 1 and 2: each removed block leaves a line break, so that no marker forms across it; rejected: stripping every marker line before the extractor reads the output
+```
+
 ## 7. Builder: may and may not
 
 - **May:** apply the pairs in order; run `git diff --check` and `git diff --stat`; commit as section 4 says.
@@ -764,10 +831,11 @@ Record each file's count. I did not run these.
 - After M1: `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf976_withdrawal_ledger.py -n 0 -p no:randomly -q`. Expected: `2 passed, 21 xfailed`.
 - After M2: the 8.1 command with `tests/test_bf976_withdrawal_ledger.py` added. Expected: 23 passed for the new file, and every other file at its base count, all passed.
 - After R2: the same command. Expected: 30 passed for the new file (M2's 23 and the seven of b9), and every other file at its base count, all passed.
+- After R7: the same command. Expected: 33 passed for the new file (M2's 23 and the ten of b9), and every other file at its base count, all passed.
 - `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` and `d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --check` both pass.
 - After M3: the ledger generator, then `tests/test_ad1184_ad_ledger.py`.
 
-### 8.3 Mutation campaign (one row at a time on the R2 tree, restored before the next)
+### 8.3 Mutation campaign (one row at a time on the R7 tree, restored before the next)
 
 Each original occurs once in its file, as a substring of one line. "At least" marks a row whose mutant may break more cases than the ones listed.
 
@@ -775,26 +843,28 @@ Each original occurs once in its file, as a substring of one line. "At least" ma
 |---|---|---|---|---|
 | R1 | action_billets.py | `start = text.find(WITHDRAWN_MARKER)` | `start = text.rfind(WITHDRAWN_MARKER)` | b5[first reason] |
 | R2 | action_billets.py | `if start < 0:` | `if start < -1:` | at least b5[`[NO_RESPONSE]`], b5[""], b5[lower case], c1 |
-| R3 | action_billets.py | `rest = text[start + len(WITHDRAWN_MARKER):].split("\n", 1)[0]` | `rest = text[start + len(WITHDRAWN_MARKER):]` | at least b5[next line], b5[first reason], b9[unmatched-block] |
+| R3 | action_billets.py | `rest = text[start + len(WITHDRAWN_MARKER):].split("\n", 1)[0]` | `rest = text[start + len(WITHDRAWN_MARKER):]` | at least b5[next line], b5[first reason], b9[unmatched-block], b9[reason-before-block] |
 | R4 | action_billets.py | `cleaned = "".join(ch if ch.isprintable() else " " for ch in rest)` | `cleaned = rest` | at least b5[next line] |
 | R5 | action_billets.py | `return " ".join(cleaned.split())[:WITHDRAWAL_REASON_CHARS].rstrip()` | `return " ".join(cleaned.split())` | b6 (both), b7 |
 | R6 | action_billets.py | `f"[NO_RESPONSE] on one line and, on the next, {WITHDRAWN_MARKER} followed by one plain sentence on why. That withdrawal is recorded with its reason.",` | `"[NO_RESPONSE]; that withdrawal is recorded.",` | b8, b1 |
-| R7 | action_accounting.py | `PRE_EXTRACTION = frozenset({"think_failed", "no_output", "no_response", "raw_intent_json", "withdrawn"})` | the same without `, "withdrawn"` | b1, b2 (4), b3 (2), b4, b7, b9[inside-and-beside], b9[unmatched-block] |
-| R8 | action_accounting.py | `if drop["reason"] == "withdrawn" and withdrawal is not None:` | `if False:` | b1, b2 (4), b3 (2), b7, b9[inside-and-beside], b9[unmatched-block] |
-| R9 | action_accounting.py | `drops = unaccounted(intended, executed, reason, withdrawal=withdrawal)` | `drops = unaccounted(intended, executed, reason)` | b1, b2 (4), b3 (2), b7, b9[inside-and-beside], b9[unmatched-block] |
+| R7 | action_accounting.py | `PRE_EXTRACTION = frozenset({"think_failed", "no_output", "no_response", "raw_intent_json", "withdrawn"})` | the same without `, "withdrawn"` | b1, b2 (4), b3 (2), b4, b7, b9[inside-and-beside], b9[unmatched-block], b9[reason-before-block] |
+| R8 | action_accounting.py | `if drop["reason"] == "withdrawn" and withdrawal is not None:` | `if False:` | b1, b2 (4), b3 (2), b7, b9[inside-and-beside], b9[unmatched-block], b9[reason-before-block] |
+| R9 | action_accounting.py | `drops = unaccounted(intended, executed, reason, withdrawal=withdrawal)` | `drops = unaccounted(intended, executed, reason)` | b1, b2 (4), b3 (2), b7, b9[inside-and-beside], b9[unmatched-block], b9[reason-before-block] |
 | R10 | action_accounting.py | `level = logging.INFO if drop["action"] == "ward_room_post" or drop.get("by_design") or drop["reason"] == "withdrawn" else logging.WARNING` | the same without `or drop["reason"] == "withdrawn" ` | b4 |
 | R11 | proactive.py | `"withdrawn" if _withdrawal is not None else "no_response", withdrawal=_withdrawal,` | `"no_response", withdrawal=_withdrawal,` (the issue's mutation) | b1, b2 (4), b4, b9[unmatched-block] |
 | R12 | proactive.py | `_withdrawal = withdrawal_outside_blocks(response_text)` | `_withdrawal = ""` | at least c1 |
-| R13 | proactive.py | `_silenced = "[NO_RESPONSE]" in response_text or _withdrawal is not None` | `_silenced = "[NO_RESPONSE]" in response_text` | b2[`[WITHDRAWN] evidence changed`], b2[observation], b3[""], b9[inside-and-beside], b9[unmatched-block] |
-| R14 | proactive.py | `_withdrawn = _silenced  #` | `_withdrawn = "[NO_RESPONSE]" in response_text  #` | b3[""], b9[inside-and-beside] |
-| R15 | proactive.py | `_settle_reason = "withdrawn" if _withdrawal is not None else ("no_response" if _withdrawn else "empty_after_extraction")` | `_settle_reason = "no_response" if _withdrawn else "empty_after_extraction"` | b3 (both), b9[inside-and-beside] |
+| R13 | proactive.py | `_silenced = "[NO_RESPONSE]" in response_text or _withdrawal is not None` | `_silenced = "[NO_RESPONSE]" in response_text` | b2[`[WITHDRAWN] evidence changed`], b2[observation], b3[""], b9[inside-and-beside], b9[unmatched-block], b9[reason-before-block] |
+| R14 | proactive.py | `_withdrawn = _silenced  #` | `_withdrawn = "[NO_RESPONSE]" in response_text  #` | b3[""], b9[inside-and-beside], b9[reason-before-block] |
+| R15 | proactive.py | `_settle_reason = "withdrawn" if _withdrawal is not None else ("no_response" if _withdrawn else "empty_after_extraction")` | `_settle_reason = "no_response" if _withdrawn else "empty_after_extraction"` | b3 (both), b9[inside-and-beside], b9[reason-before-block] |
 | R16 | proactive.py | `await asyncio.sleep(_backoff)` | `await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), [], "think_failed"); await asyncio.sleep(_backoff)` | c2 |
-| R17 | proactive.py | `_withdrawal = withdrawal_outside_blocks(response_text)` | `_withdrawal = withdrawal_reason(response_text)` (the loop reads the whole output) | b9[in-title], b9[in-rationale], b9[in-notebook], b9[refused-block], b9[with-observation], b9[inside-and-beside] |
-| R18 | proactive.py | `re.sub(PROPOSAL_PATTERN, "", split_notebook_blocks(text)[0], flags=re.DOTALL)` | `split_notebook_blocks(text)[0]` (the helper strips notebook blocks only) | b9[in-title], b9[in-rationale], b9[refused-block], b9[with-observation], b9[inside-and-beside] |
-| R19 | proactive.py | the same | `re.sub(PROPOSAL_PATTERN, "", text, flags=re.DOTALL)` (the helper strips proposal blocks only) | b9[in-notebook] |
-| R20 | proactive.py | the same | `re.sub(r"\[PROPOSAL\].*?\[/PROPOSAL\]", "", split_notebook_blocks(text)[0], flags=re.DOTALL)` (a looser pattern than the extractor's) | b9[unmatched-block] |
+| R17 | proactive.py | `_withdrawal = withdrawal_outside_blocks(response_text)` | `_withdrawal = withdrawal_reason(response_text)` (the loop reads the whole output) | b9[in-title], b9[in-rationale], b9[in-notebook], b9[refused-block], b9[with-observation], b9[inside-and-beside], b9[reason-before-block] |
+| R18 | proactive.py | `re.sub(PROPOSAL_PATTERN, "\n", _NOTEBOOK_PATTERN.sub("\n", text), flags=re.DOTALL)` | `_NOTEBOOK_PATTERN.sub("\n", text)` (the helper strips notebook blocks only) | b9[in-title], b9[in-rationale], b9[refused-block], b9[with-observation], b9[inside-and-beside], b9[reason-before-block] |
+| R19 | proactive.py | the same | `re.sub(PROPOSAL_PATTERN, "\n", text, flags=re.DOTALL)` (the helper strips proposal blocks only) | b9[in-notebook] |
+| R20 | proactive.py | the same | `re.sub(r"\[PROPOSAL\].*?\[/PROPOSAL\]", "\n", _NOTEBOOK_PATTERN.sub("\n", text), flags=re.DOTALL)` (a looser pattern than the extractor's) | b9[unmatched-block] |
+| R21 | proactive.py | the same | `re.sub(PROPOSAL_PATTERN, "", _NOTEBOOK_PATTERN.sub("\n", text), flags=re.DOTALL)` (a removed proposal block leaves nothing) | b9[split-by-proposal], b9[reason-before-block] |
+| R22 | proactive.py | the same | `re.sub(PROPOSAL_PATTERN, "\n", _NOTEBOOK_PATTERN.sub("", text), flags=re.DOTALL)` (a removed notebook block leaves nothing) | b9[split-by-notebook] |
 
-Case names: c1, c2 are the two controls in file order. b1 to b8 are the `built` functions in file order, b9 is the case that R2 adds (not `built`), and a bracket names a parameter (b9's are its ids: in-title, in-rationale, in-notebook, refused-block, with-observation, inside-and-beside, unmatched-block).
+Case names: c1, c2 are the two controls in file order. b1 to b8 are the `built` functions in file order, b9 is the case that R2 adds (not `built`), and a bracket names a parameter (b9's are its ids: in-title, in-rationale, in-notebook, refused-block, with-observation, inside-and-beside, unmatched-block, split-by-proposal, split-by-notebook, reason-before-block).
 
 ### 8.4 Broad gate
 
@@ -810,6 +880,7 @@ Once for the issue, after review: `d:/ProbOS/.venv/Scripts/python.exe scripts/ru
 6. The billet contains no hex-like run and no word taken from the triage; the existing tests in `TestTheBilletRepeatsNoWordOfTheTriage` pass unchanged.
 7. After M2, `built` is a no-op and no `skip`, `xfail` or retry remains.
 8. A `[WITHDRAWN]` inside a strict proposal block or a notebook block withdraws nothing: the block is carried out and an action nothing carried out records the reason the base records (b9); a marker outside those blocks still decides.
+9. No marker is read that the model did not write: removing a block leaves a line break, so `[WITH`, a block and `DRAWN]` read as no marker, and a reason ends where a removed block begins (b9).
 
 ## 10. Verified Against Codebase (2026-11-17, commit `4f10b15f7e5acb08340e46f46ea3adf23d6005d1`)
 
@@ -882,7 +953,7 @@ Not changed: COMPOSE, EVALUATE, REFLECT, BF-206, BF-204's gate, `_actions_lost`,
 - **L4.** At `:1569`, `withdrawn` applies by decision (D4).
 - **L5.** A lower-case `[withdrawn]` is not read. BF-203's regex does not remove it either, so it is posted as written.
 - **L6.** An observation written beside a token-less marker is not posted (D4).
-- **L7.** A `[WITHDRAWN]` inside a strict `[PROPOSAL]` block (filed or refused) or a `[NOTEBOOK]` block is that block's own text: the loop reads the line outside those blocks (D8) and carries the block out as the base does (b9). A marker inside a `[PROPOSAL]` that `PROPOSAL_PATTERN` does not match (one written on a single line, or without a newline after its tag) or inside any other kind of block is read, and it withdraws the turn as the token does: the observation is not posted, and the extractor runs over the output only when it also carries a valid proposal or notebook block (L4), in which case it carries out every action the output holds, as it does for the token. The orchestrator's probe: with a marker inside a `[NOTE]` block, an unwritten notebook entry records `withdrawn` where the base records `no_block_executed`, and a `[NOTE]` block or a `[READ_NOTEBOOK]` tag with no valid block beside it is no longer carried out.
+- **L7.** A `[WITHDRAWN]` inside a strict `[PROPOSAL]` block (filed or refused) or a `[NOTEBOOK]` block is that block's own text: the loop reads the line outside those blocks (D8) and carries the block out as the base does (b9). A marker inside a `[PROPOSAL]` that `PROPOSAL_PATTERN` does not match (one written on a single line, without a newline after its tag, or with a `[READ_NOTEBOOK]` tag or a `[NOTE]` block between its tag and the newline: the extractor removes those before it reads the proposal and files it, and the helper does not) or inside any other kind of block is read, and it withdraws the turn as the token does: the observation is not posted, and the extractor runs over the output only when it also carries a valid proposal or notebook block (L4), in which case it carries out every action the output holds, as it does for the token. The orchestrator's probe: with a marker inside a `[NOTE]` block, an unwritten notebook entry records `withdrawn` where the base records `no_block_executed`, and a `[NOTE]` block or a `[READ_NOTEBOOK]` tag with no valid block beside it is no longer carried out.
 - **L8.** Effects on silence handling:
   - A token-less withdrawal now also runs the loop's silence block: the duty record, AD-414's trust signal for disciplined silence (`trust_no_response_weight`, default 0.0: no signal unless configured, `config.py:3218`), AD-430a's no-response episode, which is built and then refused by `EpisodicMemory.should_store` (`cognitive/episodic.py:1955-1957`: a proactive no-response is skipped), so none is stored, and AD-488's `no_response` circuit-breaker event.
   - BF-864's decision cache (off by default) can replay a cached withdrawal.
@@ -903,5 +974,6 @@ The blind spots found are L5 to L8 and the ledger keyword rule noted under secti
 - The withdrawal line reaches no Ward Room thread or post, with or without the token (b2, b3).
 - A think whose first `handle_intent` returns a transient LLM error after its triage, and whose second succeeds, writes two declared rows with one correlation id and one settlement (c2).
 - A `[WITHDRAWN]` inside a proposal or notebook block withdraws nothing: for every action that nothing carried out, the ledger records what it records on the base (b9).
+- A reply that holds no `[WITHDRAWN]` records no withdrawal, however its blocks sit: removing a block leaves a line break, so `[WITH`, a block and `DRAWN]` read as no marker (b9).
 - R11 (the withdrawal mapped back to `no_response`) fails b1.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.

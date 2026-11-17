@@ -239,12 +239,17 @@ def test_the_billet_teaches_the_withdrawal_line_and_its_reason():
     ("Roster reads repeat.\n" + PROPOSAL.replace("Cache the roster", MARKER), ["[Observation] Roster reads repeat.", "[Proposal] [WITHDRAWN] evidence changed"], [("notebook", "no_block_executed", None)]),
     (PROPOSAL.replace("Cache the roster", MARKER) + "\n[WITHDRAWN] the notebook entry can wait", ["[Proposal] [WITHDRAWN] evidence changed"], [("notebook", "withdrawn", "the notebook entry can wait")]),
     (PROPOSAL.replace("[PROPOSAL]\n", "[PROPOSAL] ").replace("per cycle.", f"per cycle.\n{MARKER}"), [], [("proposal", "withdrawn", "evidence changed"), ("notebook", "withdrawn", "evidence changed")]),
-], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block"])
+    ("[WITH" + PROPOSAL + "DRAWN] evidence changed", ["[Observation] evidence changed", "[Proposal] Cache the roster"], [("notebook", "no_block_executed", None)]),
+    ("[WITH" + NOTEBOOK + "DRAWN] evidence changed", ["[Observation] evidence changed"], [("proposal", "no_block_executed", None)]),
+    ("[WITHDRAWN] first part " + PROPOSAL + " trailing text", ["[Proposal] Cache the roster"], [("notebook", "withdrawn", "first part")]),
+], ids=["in-title", "in-rationale", "in-notebook", "refused-block", "with-observation", "inside-and-beside", "unmatched-block", "split-by-proposal", "split-by-notebook", "reason-before-block"])
 async def test_a_marker_inside_a_proposal_or_notebook_block_is_that_blocks_own_text(tmp_path, reply, expected_threads, expected_drops):
     """Review round 1, F1. A marker inside a strict proposal block (filed or refused) or a notebook block withdraws nothing: the block is carried out as written, the
     observation beside it is judged as before and an action nothing carried out is lost, not withdrawn. A marker beside the blocks still decides (inside-and-beside),
-    and a proposal that the extractor's pattern does not match is no block (unmatched-block). On the base the first five cases pass (they pin what the base does, which M2
-    as built changed) and the last two fail; on M2 as built unmatched-block passes and the other six fail. Rows R17, R18, R19 and R20."""
+    and a proposal that the extractor's pattern does not match is no block (unmatched-block). Removing a block leaves a line break, so that a marker the model did not write
+    does not form across it (split-by-proposal, split-by-notebook) and a reason ends where a removed block begins (reason-before-block). On the base every case passes except
+    inside-and-beside, unmatched-block and reason-before-block, which need the withdrawal line; the others pin what the base does. On the tree of R6, which joined the text
+    around a removed block, the last three fail. Rows R17 to R22."""
     async with world(tmp_path, event_log=True) as w:
         await think(w, thinker(w, reply, {"intended_actions": ["proposal", "notebook"]}))
         assert sorted(await threads(w)) == sorted(expected_threads)
