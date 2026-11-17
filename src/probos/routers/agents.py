@@ -3692,20 +3692,26 @@ async def _agent_chat_impl(
     # costume. The app-wide handler renders 403; the only ``except Exception``
     # below this point wraps the thread append, so the denial reaches it.
     _t_send0 = time.perf_counter()  # BF-932: log-only
-    result = None if _held_notice else await runtime.intent_bus.send(
-        intent, raise_on_denial=True,
-    )
-    _t_send1 = time.perf_counter()
-    # BF-932: one line per Captain DM: where its time went before the agent's turn and during it (milliseconds, monotonic
-    # clock). ``intent`` is the id the agent's own ``BF-932: dm turn`` line carries.
-    emit_line(
-        logger,
-        "BF-932: dm route intent=%s agent=%s thread_ms=%.0f prep_ms=%.0f hook=%s hook_ms=%.0f dispatch_ms=%.0f "
-        "send_ms=%.0f total_ms=%.0f sent=%s",
-        intent.id[:8], agent_id[:12], ms_between(_t_entry, _t_thread), ms_between(_t_thread, _t_vision), _hook,
-        ms_between(_t_hook0, _t_hook1), ms_between(_t_vision, _t_send0) - ms_between(_t_hook0, _t_hook1),
-        ms_between(_t_send0, _t_send1), ms_between(_t_entry, _t_send1), "no" if _held_notice else "yes",
-    )
+    # BF-977: the line is written whether the send returns or raises. ``sent`` is yes, no (a held thread: nothing
+    # sent) or raised (a denial or any other exception, which propagates unchanged).
+    _sent = "raised"
+    try:
+        result = None if _held_notice else await runtime.intent_bus.send(
+            intent, raise_on_denial=True,
+        )
+        _sent = "no" if _held_notice else "yes"
+    finally:
+        _t_send1 = time.perf_counter()
+        # BF-932: one line per Captain DM: where its time went before the agent's turn and during it (milliseconds,
+        # monotonic clock). ``intent`` is the id the agent's own ``BF-932: dm turn`` line carries.
+        emit_line(
+            logger,
+            "BF-932: dm route intent=%s agent=%s thread_ms=%.0f prep_ms=%.0f hook=%s hook_ms=%.0f dispatch_ms=%.0f "
+            "send_ms=%.0f total_ms=%.0f sent=%s",
+            intent.id[:8], agent_id[:12], ms_between(_t_entry, _t_thread), ms_between(_t_thread, _t_vision), _hook,
+            ms_between(_t_hook0, _t_hook1), ms_between(_t_vision, _t_send0) - ms_between(_t_hook0, _t_hook1),
+            ms_between(_t_send0, _t_send1), ms_between(_t_entry, _t_send1), _sent,
+        )
 
     callsign = ""
     if hasattr(runtime, 'callsign_registry'):
