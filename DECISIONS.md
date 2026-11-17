@@ -1871,6 +1871,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G3 (running code).* The package directory is the running module's own; it is compared by the rule's canonical parts, as written and after links are followed. A `.env` file is refused where the start-up loader looks (the package directory and every directory above it) and, as a documents entry, at the writer's root. Rejected: `src/` as an entry (it would refuse a user's own working-directory `src`), and protecting only the rule's modules. Deferred: second names (hard links) of a package file. write_file and edit_file give the rule's refusal after their own refusal mark (`write_file refused: `), so on the ordinary route (the default) neither fault detector counts it as a tool defect; their constitution and protected-configuration refusals stay unmarked (L9), and the strict route's refusal projection drops the mark (L10).
 - *Rollout.* No flag; the rule adds refusals and rewords the Captain's documents rule's refusal text to name environment files. *Residual.* L1 to L10 of the contract. *Reversal.* Revert the batch's commits in reverse order.
 
+### The screen stream takes the camera loop's guards (2026-11-16, #1804)
+
+- *Scope.* `ui/src/hooks/useScreenStream.ts`; one new test file. The server's frame route, its rate buckets and the camera hook are unchanged.
+- *G1 (start).* One shared pending start; a stop advances an epoch compared after the picker and after play(); a capture picked after a stop has its tracks stopped as soon as the picker returns it. A pending start's promise settles when the picker does and resolves without a value.
+- *G2 (frame).* The epoch and the session id are read before the encode; a frame whose loop was stopped during the encode is not posted, and an answer that arrives after a stop is not acted on. Considered, deferred: aborting the upload in flight at a stop (the camera hook does not either).
+- *G3 (pacing).* An upload in flight holds the next tick, bounded at 10 s; a 429 pauses for its Retry-After, or 1 s doubling up to 30 s. The frame route sends `Retry-After: 1` with its 429.
+- *Rollout.* No flag, config or persisted state. *Residual.* L1 to L5 of the contract. *Reversal.* Revert the issue's commits in reverse order.
+
 ### AD-1346 M3e4d9 -- part (a) of the pending workforce scopes, classified (2026-11-05, #1604)
 
 AD-1346 M3e4d9 is the ninth part of M3e4d and part (a) of register R160. Thirteen `WorkItemStore` scopes, covering lifecycle, watchers, notice claims, assignment, bookings, booking timestamps and journal, leave `_WORKFORCE_PENDING` and become `System` rows under D239. No `src` file changes and no check is added. `STORE_WRITE_SCOPES` holds 20 `StoreCheck`, 64 `System` and 32 `Pending` rows. The contract is `prompts/ad-1346-m3e4d9-workforce-lifecycle-rows.md`.
