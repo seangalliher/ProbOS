@@ -11,7 +11,7 @@ import { WorkItemReconciler, bindWorkItemReconciler } from './workItemReconcilia
 import type { WorkItemReadState } from './workItemReconciliation';
 import type {
   Agent, Connection, PoolInfo, PoolGroupInfo, SystemMode, DagNode, ChatMessage, SelfModProposal,
-  BuildProposal, BuildFailureReport, ArchitectProposalView, BuildQueueItem, MissionControlTask,
+  BuildProposal, BuildFailureReport, BuildReviewNotes, ArchitectProposalView, BuildQueueItem, MissionControlTask,
   AgentTaskView, NotificationView,
   AgentProfileMessage, AgentConversation,  // AD-406
   WardRoomChannel,  // AD-407
@@ -723,7 +723,7 @@ export interface HXIState {
     threadId?: string | null,
     detail?: string | null,
   ) => void;
-  addChatMessage: (role: 'user' | 'agent' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; architectProposal?: ArchitectProposalView; agent_id?: string; callsign?: string }) => void;
+  addChatMessage: (role: 'user' | 'agent' | 'system', text: string, meta?: { selfModProposal?: SelfModProposal; buildProposal?: BuildProposal; buildFailureReport?: BuildFailureReport; buildReview?: BuildReviewNotes; architectProposal?: ArchitectProposalView; agent_id?: string; callsign?: string }) => void;
   clearAnimationEvent: (key: 'pendingConsensusFlash' | 'pendingSelfModBloom' | 'pendingRoutingPulse' | 'pendingFeedbackPulse') => void;
   setConnected: (v: boolean) => void;
   setHoveredAgent: (agent: Agent | null, pos?: { x: number; y: number }) => void;
@@ -3185,6 +3185,7 @@ export const useStore = create<HXIState>((set, get) => ({
       ...(meta?.selfModProposal ? { selfModProposal: meta.selfModProposal } : {}),
       ...(meta?.buildProposal ? { buildProposal: meta.buildProposal } : {}),
       ...(meta?.buildFailureReport ? { buildFailureReport: meta.buildFailureReport } : {}),
+      ...(meta?.buildReview ? { buildReview: meta.buildReview } : {}),
       ...(meta?.architectProposal ? { architectProposal: meta.architectProposal } : {}),
       ...(meta?.agent_id ? { agent_id: meta.agent_id } : {}),
       ...(meta?.callsign ? { callsign: meta.callsign } : {}),
@@ -3801,7 +3802,8 @@ export const useStore = create<HXIState>((set, get) => ({
         set({ buildProgress: null });
         const msg = (data.message || '') as string;
         if (msg) {
-          get().addChatMessage('system', msg);
+          // BF-978 (#1809): the review lists ride as metadata; BuildReviewLists checks their shape when it renders.
+          get().addChatMessage('system', msg, { buildReview: { issues: data.review_issues as string[] | undefined, suggestions: data.review_suggestions as string[] | undefined } });
         }
         break;
       }

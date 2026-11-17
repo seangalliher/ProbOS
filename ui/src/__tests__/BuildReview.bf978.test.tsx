@@ -12,8 +12,8 @@ import { IntentSurface } from '../components/IntentSurface';
 import { useStore } from '../store/useStore';
 import type { WSEvent } from '../store/types';
 
-// M1: each built case fails on the base at its own assert; M2 replaces this marker with a no-op.
-const built = process.env.BF978_RUNXFAIL === '1' ? it : it.fails;
+// The built cases failed on the base at their own assert and pass now; the marker is a no-op.
+const built = it;
 
 const GENERATION = 'c'.repeat(32);
 const SUCCESS_TEXT = 'Build complete in the review case';
