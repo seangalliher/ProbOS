@@ -24,7 +24,7 @@ import {
 } from '../useScreenStream';
 import { useScreenStore } from '../../store/useScreenStore';
 
-const built = process.env.BF973_RUNXFAIL === '1' ? it : it.fails;
+const built = it;
 
 class FakeTrack {
   stopped = false;
