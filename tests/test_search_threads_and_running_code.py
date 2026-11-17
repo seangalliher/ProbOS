@@ -4,7 +4,7 @@
 broad search does not hold the event loop; list_files stops after a cap of glob matches and says so; a read policy composed
 with no runtime warns once per process. #1806: the Captain's documents rule, at all eight writer sites, also refuses a path
 at or below the running package directory, as written or once resolved, and a .env file that load_dotenv() can read.
-write_file and edit_file give that refusal after their own refusal mark, which neither fault detector counts (R14).
+write_file and edit_file give that refusal after their own refusal mark, which both fault detectors skip (R14).
 
 Loop liveness (S1 to S3): the policy check is wrapped by ``_LoopProbe``. Every call records whether it ran on the event
 loop's thread; the first call also waits on a threading.Event that only a coroutine on the loop sets. On a worker thread
@@ -465,8 +465,9 @@ async def test_r14_a_refusal_carries_the_tools_mark_and_is_no_tool_defect(
     vessel: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tool_id: str, given: str,
 ) -> None:
     """R14 (kills W6, W7): write_file and edit_file answer the documents rule's refusal of a package path, the writer-root
-    ``.env`` and a document as ``<tool id> refused: <the rule's text>``. Two identical refusals in one run give neither
-    detector a defect; two identical genuine failures of the same tool beside them still do (the premise and the control)."""
+    ``.env`` and a document as ``<tool id> refused: <the rule's text>``. Passed to both detectors as the tools return
+    them, two identical refusals in one run give neither a defect; two identical genuine failures of the same tool
+    beside them still do (the premise and the control)."""
     tool = WriteFileTool(SimpleNamespace()) if tool_id == "write_file" else EditFileTool(SimpleNamespace())
     edit = {"content": "AMENDED\n"} if tool_id == "write_file" else {"old_text": "v1", "new_text": "AMENDED"}
     before = _tree(vessel.root)
