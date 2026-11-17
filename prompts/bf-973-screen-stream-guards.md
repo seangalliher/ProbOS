@@ -857,9 +857,9 @@ Each original line occurs once in the M2 file. Run each row with `npx vitest run
 | W1 | `  if (_startInFlight) return _startInFlight;` | line deleted | S1 |
 | W2 | `  if (epoch !== _epoch) { // a stop came while the picker was open: release what was picked, start no loop` | `  if (false) {` | S2, S4 (the issue's row) |
 | W3 | `  if (epoch !== _epoch) return; // a stop came during play(): the stream is already released, start no loop` | line deleted | S3 |
-| W4 | `  _startInFlight = null; // a call after a stop is not held to the cancelled start` | line deleted | S4 |
+| W4 | `  _startInFlight = null; // a call after a stop is not held to the cancelled start` | line deleted | C1 to C5, S4 to S13 (S4 is the case written for the row: its second start returns the cancelled first start, so its assert on the number of `getDisplayMedia` calls fails before the case answers the first picker; the other 14 fail after it, because that first start never settles and stays in `_startInFlight`, which `_testReset` clears only through this line, so a later case's start returns it instead of opening its own picker: S5 and 13 more fail at a `picker.pick[...]` that no start opened) |
 | W5 | `    if (epoch === _epoch) useScreenStore.getState().setError(`getDisplayMedia failed: ${String(err)}`);` | `    useScreenStore.getState().setError(`getDisplayMedia failed: ${String(err)}`);` | S5 |
-| W6 | `  if (_uploading \|\| Date.now() < _resumeAtMs) return;` | `  if (Date.now() < _resumeAtMs) return;` | S6 |
+| W6 | `  if (_uploading \|\| Date.now() < _resumeAtMs) return;` | `  if (Date.now() < _resumeAtMs) return;` | S6, S8, S12 (S6 is the case written for the row; S8 and S12 also count the sends that ticks make while an upload is pending, S8 after a restart and S12 while an upload never answers; without the guard S6 sees 4 sends where it expects 1, S8 sees 3 where it expects 2 and S12 sees 12 where it expects 2) |
 | W7 | `    if (epoch === _epoch) _uploading = false;` | `    _uploading = false;` | S8 |
 | W8 | `  if (epoch !== _epoch) return; // a stop came during the encode: post nothing` | line deleted | S7 |
 | W9 | `      _resumeAtMs = Date.now() + Math.min(waitMs, RETRY_AFTER_MAX_MS);` | line deleted | S9, S10, S11 |
@@ -922,11 +922,11 @@ The consumers that must accept the change: the four importers in section 4's tab
 ## Verified Against Codebase (2026-11-16, tree `7db7edd7`, commit `4235580e`)
 
 ```
-Read ui/src/hooks/useScreenStream.ts (167 lines)
+Read ui/src/hooks/useScreenStream.ts (166 lines)
   112: if (_screenStream) return; // idempotent     119: _screenStream = await navigator.mediaDevices.getDisplayMedia({
   153: _intervalId = window.setInterval(() => {     101: // 429 / 413: drop the frame; the next interval tick retries.
   83: form.append('session_id', _sessionId);        44-56: function _stopTracks
-Read ui/src/hooks/useCameraStream.ts (308 lines)
+Read ui/src/hooks/useCameraStream.ts (307 lines)
   42-46 guards; 86-90 reset in _stopTracks; 119-126 _parseRetryAfterMs; 131-140 wrapper; 162-169 encode then _sessionId;
   181-212 deadline, epoch checks, 429; 224-233 shared start; 258-269 catch and post-camera check; 287-288 post-play check
 Grep [^\x00-\x7F] ui/src/hooks/useScreenStream.ts -> 1, 4, 13, 85, 103, 129
