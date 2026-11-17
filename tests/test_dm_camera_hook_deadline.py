@@ -13,6 +13,7 @@ The unmarked cases are controls that pass on the base and after.
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import logging
 import threading
@@ -123,6 +124,25 @@ async def _permit_free(consumer: VisionConsumer) -> bool:
 def _others_done() -> bool:
     current = asyncio.current_task()
     return all(task.done() for task in asyncio.all_tasks() if task is not current)
+
+
+async def _until(condition: Any) -> bool:
+    """Poll ``condition`` every 10 ms until it holds or the bound passes."""
+    deadline = time.monotonic() + _BOUND
+    while not condition() and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    return bool(condition())
+
+
+_LATE = "after its caller stopped waiting"
+
+
+def _late(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.levelno == logging.WARNING and _LATE in r.getMessage()]
+
+
+class _LateFailure(BaseException):
+    """A failure that the steps' ``except Exception`` handlers do not catch."""
 
 
 class _GatedRoot:
@@ -289,8 +309,9 @@ async def test_t5_describe_inside_the_deadline_returns_its_description(tmp_path:
 async def test_t6_cancelled_caller_waits_for_the_store_thread_then_frees_the_permit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Control (passes on the base). Kills MU5: a cancelled caller cancels its task and waits for it, so the
-    permit is free and no task is left when the caller's cancellation surfaces."""
+    """Control (passes on the base). Kills MU5, MU10 and MU11: a cancelled caller cancels its task and waits for
+    it, through a second cancellation too, so the permit is free and no task is left when the caller's
+    cancellation surfaces."""
     runtime = _vision_runtime(tmp_path)
     consumer = _consumer(runtime)
     store, _sha, _captured_at = await _frame(runtime, consumer)
@@ -302,6 +323,10 @@ async def test_t6_cancelled_caller_waits_for_the_store_thread_then_frees_the_per
         caller.cancel()
         done, _pending = await asyncio.wait((caller,), timeout=0.3)
         assert caller not in done, "the cancelled caller left before its store thread ended"
+        caller.cancel()
+        done, _pending = await asyncio.wait((caller,), timeout=0.3)
+        assert caller not in done, "a second cancellation ended the caller before its store thread ended"
+        assert consumer._force_describe_lock.locked(), "the permit was released before the store thread ended"
         gated.gate.set()
         done, _pending = await asyncio.wait((caller,), timeout=_BOUND)
         assert caller in done and caller.cancelled()
@@ -311,3 +336,63 @@ async def test_t6_cancelled_caller_waits_for_the_store_thread_then_frees_the_per
         gated.gate.set()
         await _settle(caller)
         store.close()
+
+
+@built
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leave", ["deadline", "cancelled"])
+async def test_t7_failure_after_the_caller_left_is_logged_once_and_retrieved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, leave: str,
+) -> None:
+    """Kills MU12 (``deadline``), MU13 (``cancelled``) and MU14; ``deadline`` also kills MU1 and MU2. The
+    pre-check outlives its cancellation, then raises a failure no step handler catches once the test releases it.
+    The failure is logged once at WARNING with the exception, and asyncio does not report it as never retrieved."""
+    runtime = _vision_runtime(tmp_path)
+    consumer = _consumer(runtime)
+    store, _sha, _captured_at = await _frame(runtime, consumer)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    swallowed: list[bool] = []
+    failure = _LateFailure("the pre-check failed after its caller left")
+
+    async def _exists(_content_hash: str) -> bool:
+        entered.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                swallowed.append(True)  # the step outlives its cancellation
+        raise failure
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    reported: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    monkeypatch.setattr(store, "exists", _exists)
+    caplog.set_level(logging.WARNING)
+    timeout_s = _DEADLINE if leave == "deadline" else _THREAD_CAP
+    call = asyncio.create_task(consumer.force_describe_current_frame("s1", timeout_s=timeout_s))
+    try:
+        if leave == "deadline":
+            done, _pending = await asyncio.wait((call,), timeout=_BOUND)
+            assert call in done, "the call still waits on the pre-check"
+            assert call.result() is None
+        else:
+            await asyncio.wait_for(entered.wait(), _BOUND)
+            call.cancel()
+        assert await _until(lambda: bool(swallowed)), "the pre-check never received a cancellation"
+        assert not _late(caplog), "a failure was logged before the step failed"
+        release.set()
+        assert await _until(lambda: bool(_late(caplog))), "the late failure was not logged"
+        if leave == "cancelled":
+            done, _pending = await asyncio.wait((call,), timeout=_BOUND)
+            assert call in done and call.cancelled()
+        late = _late(caplog)
+        assert len(late) == 1 and late[0].exc_info is not None and late[0].exc_info[1] is failure, late
+        assert _others_done()
+        gc.collect()
+        assert not [c for c in reported if c.get("exception") is failure], reported
+    finally:
+        release.set()
+        loop.set_exception_handler(previous_handler)
+        await _settle(call)

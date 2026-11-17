@@ -3,8 +3,8 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-16
 **Status:** ready to build on the merge of #1823 (head `0a3ef965`, tree `7db7edd7`). Every anchor was read on tree `7db7edd7`. `git diff --stat 2c756a93 HEAD` over every product and test file this contract edits, runs or cites is empty, so the line numbers are the same on `2c756a93`. **Owning issue:** #1808 (BF-977, already allocated). Commits say `Refs #1808.` This contract is saved as `prompts/dm-camera-hook-deadline.md`.
 **Dependencies:** none beyond #1823's merge.
-**Estimated tests:** 6 new tests in a new file, `tests/test_dm_camera_hook_deadline.py`: 4 `built` and 2 controls. No test removed or changed.
-**Size:** about 45 product lines in `src/probos/perception/consumer.py` and about 8 in `src/probos/routers/agents.py`. The rest is tests and trackers.
+**Estimated tests:** 8 new test cases (7 functions; t7 runs twice) in a new file, `tests/test_dm_camera_hook_deadline.py`: 6 `built` and 2 controls. No test removed or changed. The review round 1 repair (R2) extended t6 and added t7.
+**Size:** `git diff --stat 4235580e 30bf98fc` counts 75 changed lines in `src/probos/perception/consumer.py` and 34 in `src/probos/routers/agents.py` (most of those are the re-indented line call). R2 adds about 35 lines to `consumer.py`. The rest is tests and trackers.
 
 ## 1. Problem
 
@@ -16,7 +16,7 @@ On the DM route, the `BF-932: dm route` line is written after the send (`agents.
 
 ## 2. Solution overview
 
-- **Consumer.** The steps move, unchanged except for the step labels, into `_force_describe_owned`. That method runs as a task. The caller waits for it with `asyncio.wait((work,), timeout=timeout_s)`. At the deadline the caller cancels the task, does not await it, logs one WARNING naming the step reached, and returns `None`. The task holds the BF-666 permit until its step ends. A strong reference to the task is kept in a set until it ends. If the caller is itself cancelled, it cancels the task and waits for the task to end, as the base caller did. The inner `wait_for` goes. The docstring is corrected.
+- **Consumer.** The steps move, unchanged except for the step labels, into `_force_describe_owned`. That method runs as a task. The caller waits for it with `asyncio.wait((work,), timeout=timeout_s)`. At the deadline the caller cancels the task, does not await it, logs one WARNING naming the step reached, and returns `None`. The task holds the BF-666 permit until its step ends. A strong reference to the task is kept in a set until it ends. If the caller is itself cancelled, it cancels the task and waits for the task to end, also through further cancellations, as the base caller did. On both of those paths a done callback logs a failure of the task once at WARNING (D7). The inner `wait_for` goes. The docstring is corrected.
 - **DM route.** The send moves into `try/finally`. The `finally` stamps `_t_send1` and writes the line with `sent=yes`, `no` or `raised`.
 - **Group round.** No change (D4).
 
@@ -35,13 +35,14 @@ Rejected designs:
 | D4 | **The route line** is written in a `finally`. `_sent` starts as `"raised"` and is set after the send returns: `"no"` for a held thread, `"yes"` otherwise. The fields are unchanged: `intent agent thread_ms prep_ms hook hook_ms dispatch_ms send_ms total_ms sent`. The exception propagates unchanged because the `finally` does not catch it. `emit_line` never raises (`utils/step_timing.py:36-43`). **`thread_fanout.py` gets no edit.** | `_maybe_force_describe_frame` (`thread_fanout.py:386-410`) awaits the same method, which now returns by its deadline. The issue names only the DM route's line, and the group round has no `BF-932` or `emit_line` call (search below). |
 | D5 | **Tests.** A store that never answers blocks on an `asyncio.Event` (T1, T2) or, in its own thread, on a `threading.Event` (T3). The test sets the event only during cleanup. Each call passes `timeout_s=0.2`, and the test waits at most 3.0 s for it. | The base never returns, so any finite bound tells the base from the build, and 3.0 s absorbs a loaded Windows host (BF-981, #1523 F-1). On the base each `built` consumer case costs 3 s. A gated thread gives up after 30 s, so a failing test strands no thread. |
 | D6 | **Nothing is persisted, and no config field, flag or baseline changes.** | The searches are listed under Absence Verified. `VisionConsumer` gains 1 direct method. Its `srp-size` row already carries both `lines` and `methods` (`docs/development/architecture-baseline.yaml:836-840`), so the trigger set is unchanged. The new class has one method. |
+| D7 | **A cancelled caller and a late failure** (review round 1 repair, R2). A cancelled caller cancels the task, waits for it in a loop that absorbs further cancellations, then re-raises its first cancellation. On the two paths where the caller does not read `work.result()` (its deadline, its cancellation) a module function, `_log_abandoned_force_describe`, is registered as a done callback: it returns for a cancelled task and logs any other exception once at WARNING. | F1: on the base the filesystem store absorbs further cancellations (`filesystem_store.py:55-72`), so the base caller kept waiting; the M2 caller left on a second cancellation while its task held the permit (the orchestrator's probe on both trees). F3: without the callback, a failure that escapes the steps' `except Exception` handlers ended unretrieved and asyncio reported "Task exception was never retrieved" (the orchestrator's probe, with a `BaseException` subclass). A callback runs outside the caller, so the caller still sees `None` or its own cancellation. On the base such a failure reached the caller (L4). |
 
 ## 4. Milestones and commits
 
 The Builder is `claude-sonnet-5.5`, with at most about 150 tool calls per milestone. It searches first and then reads the range. It runs only the focused tests named here; the orchestrator runs the broad gate. Stage only the named files and never use `git add -A`. Every SEARCH must match exactly once at its turn. If one does not, stop and report.
 
 - **M1:** P1-1.
-  - Run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_dm_camera_hook_deadline.py -n 0 -p no:randomly -q`. Expected: 2 passed, 4 xfailed (about 10 s).
+  - Run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_dm_camera_hook_deadline.py -n 0 -p no:randomly -q`. Expected: 2 passed, 4 xfailed (about 10 s). That is the file as committed in `f60450d5`. P1-1 now shows the file after the R2 repair, which extends t6 and adds t7 (two `built` cases).
   - Subject: `DM camera hook tests: a slow store step answers by the deadline and a raised send is timed (expected failures until the build)`
   - Body: `Adds four cases that fail on the base at their own assert, marked strict expected failures until the build, and two controls that pass on the base. Three drive the vision consumer with a store that never answers: before the describe, after it, and in the store's own thread. One drives the DM route with a send that is denied.` Then `Refs #1808.` and the trailer.
 - **M2:** P2-1 to P2-7 (`consumer.py`), P2-8 (`agents.py`), P2-9 (the marker becomes a no-op).
@@ -53,8 +54,12 @@ The Builder is `claude-sonnet-5.5`, with at most about 150 tool calls per milest
   - Run `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1184_ad_ledger.py -n 0 -p no:randomly -q`.
   - Subject: `Trackers for the DM camera hook's deadline`
   - Body: `PROGRESS.md and DECISIONS.md entries; ledger regenerated.` Then `Refs #1808.` and the trailer.
+- **R2 (review round 1 repair):** the R2 pairs at `30bf98fc` (tree `7f04566f`): `consumer.py`, the test file, `PROGRESS.md`, `DECISIONS.md` and this contract.
+  - Run the section 8.2 command, both tables. Expected for the new file: 8 passed.
+  - Subject: `DM camera hook: a cancelled caller keeps waiting through a second cancellation, and a late failure is logged`
+  - Body: `Review round 1. When the hook's caller is cancelled it waits for its task through further cancellations, as the attachment store does, so the permit is free when its first cancellation is re-raised. A done callback logs a failure the task raises after its caller timed out or was cancelled. The docstring names which threads the task waits for. One case is extended and one added; the contract's reader list, counts, mutation rows and limits follow.` Then `Refs #1808.` and the trailer.
 
-I checked the three subjects and bodies by eye against the issue's list of closing words, including inside other words, and for `AD-` and `BF-` tokens. They contain none.
+I checked the four subjects and bodies by eye against the issue's list of closing words, including inside other words, and for `AD-` and `BF-` tokens. They contain none.
 
 ## 5. Behaviour table (after M2)
 
@@ -64,7 +69,8 @@ I checked the three subjects and bodies by eye against the issue's list of closi
 | storage pre-check inside the filesystem store's thread | waits until the thread returns | `None` at the deadline; the task keeps the permit until the thread returns |
 | describe (`_process`) | `None` at the deadline; WARNING | `None` at the deadline; WARNING `step=describe` |
 | storage post-check | waits until the store answers | `None` at the deadline; WARNING `step=postcheck`; the working-memory observation stays |
-| caller cancelled | waits for the cancelled step, then re-raises | the same |
+| caller cancelled, once or more | waits for the cancelled step (the filesystem store absorbs further cancellations), then re-raises | the same; a failure the task raised after the cancellation is logged once at WARNING and the cancellation is re-raised |
+| the task fails after the deadline with an exception its steps do not catch | not reached: the storage steps had no deadline | the caller already returned `None`; the failure is logged once at WARNING |
 
 | DM route send | Base line | After M2 |
 |---|---|---|
@@ -93,6 +99,7 @@ The unmarked cases are controls that pass on the base and after.
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import logging
 import threading
@@ -202,6 +209,25 @@ async def _permit_free(consumer: VisionConsumer) -> bool:
 def _others_done() -> bool:
     current = asyncio.current_task()
     return all(task.done() for task in asyncio.all_tasks() if task is not current)
+
+
+async def _until(condition: Any) -> bool:
+    """Poll ``condition`` every 10 ms until it holds or the bound passes."""
+    deadline = time.monotonic() + _BOUND
+    while not condition() and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    return bool(condition())
+
+
+_LATE = "after its caller stopped waiting"
+
+
+def _late(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.levelno == logging.WARNING and _LATE in r.getMessage()]
+
+
+class _LateFailure(BaseException):
+    """A failure that the steps' ``except Exception`` handlers do not catch."""
 
 
 class _GatedRoot:
@@ -368,8 +394,9 @@ async def test_t5_describe_inside_the_deadline_returns_its_description(tmp_path:
 async def test_t6_cancelled_caller_waits_for_the_store_thread_then_frees_the_permit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Control (passes on the base). Kills MU5: a cancelled caller cancels its task and waits for it, so the
-    permit is free and no task is left when the caller's cancellation surfaces."""
+    """Control (passes on the base). Kills MU5, MU10 and MU11: a cancelled caller cancels its task and waits for
+    it, through a second cancellation too, so the permit is free and no task is left when the caller's
+    cancellation surfaces."""
     runtime = _vision_runtime(tmp_path)
     consumer = _consumer(runtime)
     store, _sha, _captured_at = await _frame(runtime, consumer)
@@ -381,6 +408,10 @@ async def test_t6_cancelled_caller_waits_for_the_store_thread_then_frees_the_per
         caller.cancel()
         done, _pending = await asyncio.wait((caller,), timeout=0.3)
         assert caller not in done, "the cancelled caller left before its store thread ended"
+        caller.cancel()
+        done, _pending = await asyncio.wait((caller,), timeout=0.3)
+        assert caller not in done, "a second cancellation ended the caller before its store thread ended"
+        assert consumer._force_describe_lock.locked(), "the permit was released before the store thread ended"
         gated.gate.set()
         done, _pending = await asyncio.wait((caller,), timeout=_BOUND)
         assert caller in done and caller.cancelled()
@@ -390,6 +421,66 @@ async def test_t6_cancelled_caller_waits_for_the_store_thread_then_frees_the_per
         gated.gate.set()
         await _settle(caller)
         store.close()
+
+
+@built
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leave", ["deadline", "cancelled"])
+async def test_t7_failure_after_the_caller_left_is_logged_once_and_retrieved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, leave: str,
+) -> None:
+    """Kills MU12 (``deadline``), MU13 (``cancelled``) and MU14; ``deadline`` also kills MU1 and MU2. The
+    pre-check outlives its cancellation, then raises a failure no step handler catches once the test releases it.
+    The failure is logged once at WARNING with the exception, and asyncio does not report it as never retrieved."""
+    runtime = _vision_runtime(tmp_path)
+    consumer = _consumer(runtime)
+    store, _sha, _captured_at = await _frame(runtime, consumer)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    swallowed: list[bool] = []
+    failure = _LateFailure("the pre-check failed after its caller left")
+
+    async def _exists(_content_hash: str) -> bool:
+        entered.set()
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                swallowed.append(True)  # the step outlives its cancellation
+        raise failure
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    reported: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: reported.append(context))
+    monkeypatch.setattr(store, "exists", _exists)
+    caplog.set_level(logging.WARNING)
+    timeout_s = _DEADLINE if leave == "deadline" else _THREAD_CAP
+    call = asyncio.create_task(consumer.force_describe_current_frame("s1", timeout_s=timeout_s))
+    try:
+        if leave == "deadline":
+            done, _pending = await asyncio.wait((call,), timeout=_BOUND)
+            assert call in done, "the call still waits on the pre-check"
+            assert call.result() is None
+        else:
+            await asyncio.wait_for(entered.wait(), _BOUND)
+            call.cancel()
+        assert await _until(lambda: bool(swallowed)), "the pre-check never received a cancellation"
+        assert not _late(caplog), "a failure was logged before the step failed"
+        release.set()
+        assert await _until(lambda: bool(_late(caplog))), "the late failure was not logged"
+        if leave == "cancelled":
+            done, _pending = await asyncio.wait((call,), timeout=_BOUND)
+            assert call in done and call.cancelled()
+        late = _late(caplog)
+        assert len(late) == 1 and late[0].exc_info is not None and late[0].exc_info[1] is failure, late
+        assert _others_done()
+        gc.collect()
+        assert not [c for c in reported if c.get("exception") is failure], reported
+    finally:
+        release.set()
+        loop.set_exception_handler(previous_handler)
+        await _settle(call)
 ```
 
 ### 6.2 M2: `consumer.py`, `agents.py` and the marker
@@ -412,6 +503,25 @@ class _ForceDescribeProgress:
     def __init__(self) -> None:
         self.step = "permit"
         self.sha = ""
+
+
+def _log_abandoned_force_describe(work: asyncio.Task[str | None]) -> None:
+    """BF-977: a done callback for a force-describe task whose caller does not read its result.
+
+    Registered only after the caller timed out or was cancelled. Reading the exception
+    here logs a failure the caller can no longer receive and stops asyncio from
+    reporting it as never retrieved, as the store logs a failed call whose caller was
+    cancelled (BF-918). A cancelled task is not a failure.
+    """
+    if work.cancelled():
+        return
+    error = work.exception()
+    if error is not None:
+        logger.warning(
+            "BF-977: force_describe failed after its caller stopped waiting for its result: %r",
+            error,
+            exc_info=error,
+        )
 ```
 
 **P2-2** (`src/probos/perception/consumer.py`: the task references)
@@ -448,14 +558,20 @@ REPLACE:
         post-check. The steps run as a task of their own
         (``_force_describe_owned``). At the deadline this method logs a
         WARNING naming the step reached, cancels the task and returns
-        ``None`` without waiting for it. A step blocked in a thread ends only
-        when that thread returns (the filesystem store waits for its own
+        ``None`` without waiting for it. A step blocked in a filesystem
+        store call (the pre-check, the frame read or the post-check) ends
+        only when the store's thread returns (the store waits for its own
         thread after a cancellation, BF-918); until then the task keeps the
-        force permit, so calls made meanwhile return ``None`` at once. An
+        force permit, so calls made meanwhile return ``None`` at once. The
+        identity check's executor thread is not waited for: its await ends
+        at the cancellation and the thread finishes on its own. An
         observation already written to working memory stays when a later
         step times out. A caller that is itself cancelled cancels the task
-        and waits for it to end. BF-304 single-flight lock means spamming
-        this call collapses to one describe per supervisor window.
+        and waits for it to end, also through further cancellations, then
+        re-raises its first cancellation. A failure the task raises after
+        its caller timed out or was cancelled is logged once at WARNING.
+        BF-304 single-flight lock means spamming this call collapses to one
+        describe per supervisor window.
         """
         progress = _ForceDescribeProgress()
         work = asyncio.create_task(
@@ -467,11 +583,19 @@ REPLACE:
             done, _pending = await asyncio.wait((work,), timeout=timeout_s)
         except asyncio.CancelledError:
             work.cancel()
-            await asyncio.wait((work,))
+            work.add_done_callback(_log_abandoned_force_describe)  # BF-977: logs a failure after the cancellation
+            # BF-977: wait for the task through further cancellations, as the store waits for its thread
+            # (BF-918), so the permit is free when the first cancellation is re-raised.
+            while not work.done():
+                try:
+                    await asyncio.wait((work,))
+                except asyncio.CancelledError:
+                    pass  # BF-977: cancelled again: keep waiting for the task
             raise
         if work in done:
             return work.result()
         work.cancel()  # BF-977: not awaited; the task keeps the permit until its step ends
+        work.add_done_callback(_log_abandoned_force_describe)  # BF-977: logs a failure after the deadline
         logger.warning(
             "BF-977: force_describe timed out after %.1fs at step=%s sha=%s; "
             "the caller proceeds without a fresh frame",
@@ -626,7 +750,7 @@ REPLACE:
 
 **The DM camera hook answers by its deadline whichever step is slow, and the DM route's timing line is written when the send raises (2026-11-16), #1808.**
 - **Base.** Before a Captain DM or a group round, a hook describes the latest camera frame. Its docstring called its timeout a hard wall-clock cap, but only the describe step was bounded. The storage checks before and after it were not, so a slow attachment store held the DM route and the group round without limit. The route's timing line was written only after a send that returned.
-- **Change.** The hook's steps (the permit, the storage pre-check, the describe and the storage post-check) run in a task of their own. The caller waits for that task with one deadline. At the deadline it logs a WARNING naming the step, cancels the task and returns without a fresh frame, without waiting for the cancelled step. A deadline inside the caller's own task would not have been enough: the filesystem store waits for its own thread after a cancellation. One new case covers that store. The task keeps the hook's permit until its step ends, so calls made meanwhile return at once. An observation already written to working memory stays. A cancelled caller still waits for its task, as before. The DM route writes its timing line in a finally, with sent=yes, no or raised, and the exception propagates unchanged. No config field or persisted state changes. `tests/test_dm_camera_hook_deadline.py` adds six cases.
+- **Change.** The hook's steps (the permit, the storage pre-check, the describe and the storage post-check) run in a task of their own. The caller waits for that task with one deadline. At the deadline it logs a WARNING naming the step, cancels the task and returns without a fresh frame, without waiting for the cancelled step. A deadline inside the caller's own task would not have been enough: the filesystem store waits for its own thread after a cancellation. One new case covers that store. The task keeps the hook's permit until its step ends, so calls made meanwhile return at once. An observation already written to working memory stays. A cancelled caller still waits for its task, also through a second cancellation, as before. A failure the task raises after its caller timed out or was cancelled is logged once at WARNING. The DM route writes its timing line in a finally, with sent=yes, no or raised, and the exception propagates unchanged. No config field or persisted state changes. `tests/test_dm_camera_hook_deadline.py` adds eight cases.
 - **Limits.** The deadline bounds what the caller sees, not the store. A step blocked in the store's thread runs until that thread returns, and until then the hook gives no fresh frame. The store itself is not tuned here (#1670). The decisions are in DECISIONS.md; the contract is `prompts/dm-camera-hook-deadline.md`.
 ```
 
@@ -642,10 +766,10 @@ REPLACE:
 ```markdown
 ### The DM camera hook bounds every step with one deadline, and the DM route's timing line survives a raised send (2026-11-16, #1808)
 
-- *Scope.* `perception/consumer.py`: `force_describe_current_frame`, a new `_force_describe_owned`, a progress holder and a set of task references. `routers/agents.py`: the send and its timing line in a try/finally. One new test file, `tests/test_dm_camera_hook_deadline.py`. No config, event or schema change. Contract `prompts/dm-camera-hook-deadline.md`.
+- *Scope.* `perception/consumer.py`: `force_describe_current_frame`, a new `_force_describe_owned`, a progress holder, a set of task references and a done callback that logs a failure the caller no longer receives. `routers/agents.py`: the send and its timing line in a try/finally. One new test file, `tests/test_dm_camera_hook_deadline.py`. No config, event or schema change. Contract `prompts/dm-camera-hook-deadline.md`.
 - *Cause.* The hook bounded only `_process`, with `wait_for`. Both `AttachmentStore.exists` checks were awaited with no bound, and both callers (the DM route and the group round) pass `timeout_s=4.0` with no outer bound.
 - *G1 (the deadline).* The steps run in a task. The caller waits with `asyncio.wait(timeout=timeout_s)`, then cancels the task without awaiting it. Rejected: `asyncio.timeout` around the steps, as the issue proposed. It cancels inside the caller's own task, and the filesystem store answers a cancellation by waiting for its thread to end, so a slow store lookup would still hold the caller. Rejected: a deadline per store call, because the describe step also reads the store and uses threads.
-- *G2 (the permit).* The task keeps the permit until its step ends. A call made while a cancelled step drains therefore returns at once instead of starting a second store call. A cancelled caller cancels the task and waits for it, as on the base, so the permit is free when its cancellation surfaces.
+- *G2 (the permit).* The task keeps the permit until its step ends. A call made while a cancelled step drains therefore returns at once instead of starting a second store call. A cancelled caller cancels the task and waits for it, also through further cancellations, as on the base (where the filesystem store absorbs them), so the permit is free when its first cancellation is re-raised. When the caller times out or is cancelled, a done callback logs a failure of the task once at WARNING; on the base such a failure reached the caller.
 - *G3 (working memory).* An observation written before a later step times out stays; the docstring says so.
 - *G4 (the route line).* Written in a finally, with sent=yes, no or raised. The group round has no timing line and gets no edit: it awaits the same method, which now returns by its deadline.
 - *Residual.* The deadline bounds the caller, not the store: a blocked store thread still runs to its end. *Reversal.* Revert the commits of #1808; nothing is persisted.
@@ -678,7 +802,7 @@ Record each file's count. I did not run these.
 ### 8.2 Focused check on the built tree
 
 Run the 8.1 command with `tests/test_dm_camera_hook_deadline.py` added. Expected results:
-- `tests/test_dm_camera_hook_deadline.py`: 6 passed.
+- `tests/test_dm_camera_hook_deadline.py`: 8 passed.
 - Every other file: its base count, all passed.
 - `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` passes.
 - `d:/ProbOS/.venv/Scripts/python.exe scripts/check_config_facade.py --check` passes.
@@ -694,23 +818,50 @@ Run the 8.1 command with `tests/test_dm_camera_hook_deadline.py` added. Expected
 | `tests/test_ad733a_vision_consumer.py`, `tests/test_ad733c2_mode_controller.py` | Scan the text of `consumer.py` for base64 tokens (`:559-569`; `:245-260`). The new code contains none. | none |
 | `tests/test_ad1184_ad_ledger.py` | M3 regenerates the ledger. | none |
 
+Also run these readers and importers of the two edited files, in one process with the same flags (review round 1 F2). The counts are the orchestrator's at `30bf98fc` (tree `7f04566f`): 233 passed over the first 14. R2 does not edit `agents.py`; it edits `consumer.py`, which the package scans read again. Nobody has run the last three on this head.
+
+| File | What it reads | Count at `30bf98fc` |
+|---|---|---|
+| `tests/test_ad636_llm_priority_scheduling.py` | `routers/agents.py` text, `ast.parse` (`:365-366`) | 30 |
+| `tests/test_ad791a_chat_threads_wiring.py` | `inspect.getsource(agents_module._agent_chat_impl)` (`:447`) | 25 |
+| `tests/test_ad1203_turn_provenance.py` | `inspect.getsource(agents_router)` (`:219`, `:281`) | 23 |
+| `tests/test_ad1230_deferred_turns.py` | `inspect.getsource(agents_router)` (`:576`) | 55 |
+| `tests/test_ad722b4_fleet_telemetry.py` | `inspect.getsource(agents_module.fleet_avatar_telemetry_stream)` (`:261`) | 7 |
+| `tests/test_bf289_agent_chat_empty_classification.py` | `inspect.getsource(agents_module._agent_chat_impl)` (`:32`, `:98`) | 3 |
+| `tests/test_bf714_degrade_diagnosis.py` | `inspect.getsource(agents_router)` (`:214`) | 18 |
+| `tests/test_bf626_ws_safe_close.py` | imports from `probos.routers.agents` (`:16`) | 4 |
+| `tests/test_ad746_vision_aggregator.py` | imports from `probos.perception.consumer` (`:22`) | 12 |
+| `tests/test_ad742c_per_agent_camera.py` | imports `probos.perception.consumer` (`:184`) | 10 |
+| `tests/test_ad1031_camera_bid.py` | mirrors the route's scene rendering (`:52`); my search found no source read | 20 |
+| `tests/test_ad1346_admission_file_write_census.py` with `tests/fixtures/ad1346_file_write_census.py` | a census of file writes over the package | 9 |
+| `tests/test_layer_boundaries.py` | scans the package (the orchestrator's enumeration; I did not read it) | 3 |
+| `tests/test_bf925_guard_names.py` | the attribute guards of production code | 14 |
+| `tests/test_ad1346_admission_service.py` | every package file's text for `admission_service` and its imports (`:630-649`; the set names `routers/agents.py`) | not run |
+| `tests/test_bf791_bf792_bypass_egress.py` | a set of sink modules that names `routers/agents.py` (`:339-349`) | not run |
+| `tests/test_ad1156_plan_mode_scope.py` | a census of reader calls that counts `routers/agents.py` (`:1212-1223`) | not run |
+
 ### 8.3 Mutation campaign (one row at a time, restored before the next; win32)
 
 - **Selector:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_dm_camera_hook_deadline.py tests/test_bf666_force_describe_cache_expiry.py tests/test_ad733c1_force_describe.py tests/test_bf932_reply_path_timing.py -n 0 -p no:randomly -q`.
 - **Campaign of record:** record the tree id and the sha256 of `consumer.py`, `agents.py` and the four selected test files. Rerun only the rows whose file differs.
-- Each "original" below is a whole stripped line that occurs exactly once in its M2 file.
+- Each "original" below is a whole stripped line that occurs exactly once in its file at the R2 head. MU11 reuses MU10's original line.
 
 | Row | File | Original | Mutant | Expected killers |
 |---|---|---|---|---|
-| MU1 (no deadline) | consumer | `done, _pending = await asyncio.wait((work,), timeout=timeout_s)` | `done, _pending = await asyncio.wait((work,))` | t1, t2, t3; also ad733c1 `test_force_describe_times_out_gracefully` (after about 10 s) |
-| MU2 (the caller waits for its cancelled step: the `asyncio.timeout` design) | consumer | `work.cancel()  # BF-977: not awaited; the task keeps the permit until its step ends` | `work.cancel(); await asyncio.wait((work,))` | t3 |
+| MU1 (no deadline) | consumer | `done, _pending = await asyncio.wait((work,), timeout=timeout_s)` | `done, _pending = await asyncio.wait((work,))` | t1, t2, t3, t7[deadline]; also ad733c1 `test_force_describe_times_out_gracefully` (after about 10 s) |
+| MU2 (the caller waits for its cancelled step: the `asyncio.timeout` design) | consumer | `work.cancel()  # BF-977: not awaited; the task keeps the permit until its step ends` | `work.cancel(); await asyncio.wait((work,))` | t3, t7[deadline] |
 | MU3 (pre-check step unlabelled) | consumer | `progress.step = "preflight"` | `pass` | t1, t3 |
 | MU4 (post-check step unlabelled) | consumer | `progress.step = "postcheck"` | `pass` | t2 |
-| MU5 (a cancelled caller leaves at once) | consumer | `await asyncio.wait((work,))` | `pass` | t6 |
+| MU5 (a cancelled caller leaves at once) | consumer | `while not work.done():` | `while False:` | t6 |
+| MU10 (a second cancellation ends the cleanup wait) | consumer | `pass  # BF-977: cancelled again: keep waiting for the task` | `raise` | t6 |
+| MU11 (the cleanup wait stops after a second cancellation) | consumer | `pass  # BF-977: cancelled again: keep waiting for the task` | `break` | t6 |
+| MU12 (a failure after the deadline is not observed) | consumer | `work.add_done_callback(_log_abandoned_force_describe)  # BF-977: logs a failure after the deadline` | `pass` | t7[deadline] |
+| MU13 (a failure after the caller's cancellation is not observed) | consumer | `work.add_done_callback(_log_abandoned_force_describe)  # BF-977: logs a failure after the cancellation` | `pass` | t7[cancelled] |
+| MU14 (the callback reads the failure but does not log it) | consumer | `if error is not None:` | `if False:` | t7[deadline], t7[cancelled] |
 | MU7 (the line only after a send that returns) | agents | `emit_line(` | `_sent != "raised" and emit_line(` | t4 |
 | MU8 (a raise reported as sent) | agents | `_sent = "raised"` | `_sent = "yes"` | t4 |
 | MU9 (a finished task treated as late) | consumer | `if work in done:` | `if False:` | t5; also ad733c1 `test_force_describe_returns_description_for_session` and `test_force_describe_falls_back_to_global`, and 14 BF-666 cases (every case that expects a returned description or no timeout WARNING; 17 cases in all, named in the campaign of record in `DECISIONS.md`) |
-| R0 (bounding only `_process`) | consumer | `consumer.py` restored from the base | -- | t1, t2, t3 fail; t4, t5, t6 and every BF-666 and ad733c1 case pass |
+| R0 (bounding only `_process`) | consumer | `consumer.py` restored from the base | -- | t1, t2, t3, t7[deadline], t7[cancelled] fail; t4, t5, t6 and every BF-666 and ad733c1 case pass |
 | R0b (removing the `finally`) | agents | `agents.py` restored from the base | -- | t4 fails; every bf932 case passes |
 
 There is no MU6 row. A caller that does not cancel its task on its own cancellation would hang the BF-666 cancellation cases until pytest's timeout, so the row is left out.
@@ -726,10 +877,11 @@ Run it once, on the committed head after the last repair: `scripts/run_test_gate
 1. The diff touches only `src/probos/perception/consumer.py`, `src/probos/routers/agents.py`, `tests/test_dm_camera_hook_deadline.py`, `PROGRESS.md`, `DECISIONS.md` and the two regenerated ledger files.
 2. Consumers that must accept the change: the DM hook (`agents.py:3488-3497`) and `_maybe_force_describe_frame` (`thread_fanout.py:386-410`). For each step in D2, the method returns by `timeout_s` (plus scheduling) with `None` or the description, or it raises what the steps raised, as before.
 3. The one `create_task` added is referenced in `_force_describe_work` until it ends, and the done callback removes it. The permit is released only by `_force_describe_permit`'s `finally`, inside the task.
-4. When the caller is cancelled, it cancels the task and waits for it before it re-raises. The BF-666 cancellation cases still hold.
+4. When the caller is cancelled, it cancels the task and waits for it, also through further cancellations, before it re-raises its first cancellation (t6). The BF-666 cancellation cases still hold.
 5. The route writes exactly one `BF-932: dm route` line per DM whether the send returns or raises. The fields are unchanged. `sent` is `yes`, `no` or `raised`. The raised exception is the same object. `_t_send1` is assigned in the `finally`.
 6. The timeout WARNING contains `force_describe timed out` (`test_ad733c1_force_describe.py:192`) and `step=<step>`. No `timeout_s` reference remains in `_force_describe_owned`.
 7. After M2, `built` is a no-op and no `skip`, `xfail` or retry remains.
+8. `_log_abandoned_force_describe` is registered as a done callback on the two paths where the caller does not read `work.result()` (the deadline, the caller's cancellation) and nowhere else. It returns for a cancelled task and otherwise logs the task's exception once at WARNING. It runs as a callback, outside the caller (t7).
 
 ## 10. Verified Against Codebase (2026-11-16, tree `7db7edd7`; the cited product and test files are identical on `2c756a93`)
 
@@ -766,26 +918,27 @@ git diff --stat 2c756a93 HEAD -- (consumer.py, agents.py, thread_fanout.py, file
 | No test outside the focused set calls the method | `force_describe_current_frame` in `tests/` | the 6 files in 8.2 that drive or fake it, plus `test_bf624_stale_meeting_vision_refresh.py:11`, which is a docstring only | yes |
 | No UI consumer | `force_describe\|dm route\|BF-932\|sent=` in `ui/` | `SettingsMain.tsx:316` (`secretPresent=`, which is not the field) | yes |
 | Only bf932 pins the route line | `BF-932: dm route\|dm route` in `tests/` | `test_bf932_reply_path_timing.py` | yes |
-| No test reads the source of `consumer.py`, `agents.py` or `thread_fanout.py` beyond the 8.2 rows | `perception/consumer\|routers/agents\.py\|thread_fanout` in `tests/`; `read_text\|getsource\|ast\.parse` in the perception tests | ad733a, ad733c2 (base64 tokens); the ad1343 registry (`_agent_chat_impl` order); the rest are imports or calls | yes |
+| The tests that read the source of `consumer.py` or `agents.py` are in 8.2 (review round 1 F2: this row first said there were none beyond the first 8.2 table, which was false) | orchestrator, at `30bf98fc`: `git grep -l -E` for the route, the consumer and `thread_fanout` in `tests ui scripts` (112 files, 39 with a source-reading call); architect, at `30bf98fc`: Grep `getsource\((agents_router\|agents_module\|...)\|routers/agents\.py\|perception/consumer\.py` in `tests/` (23 files, each matching line read) | both 8.2 tables; the other matches mention the files in docstrings or comments (for example `test_bf868_erasure_declared_fields.py:319`, `test_bf863_nats_handler_error_is_not_the_exception.py:133`) | at least these: the 39 files of the first search were not each classified |
 | No timeout or handler census covers these files | `["']wait_for\|["']asyncio\.timeout\|TimeoutError["']\|ast\.Try\|ast\.ExceptHandler` in `tests/` | 13 files; the one touching these functions is ad1343 (`crew_executor`) | yes |
 | No config, profile or facade field | `force_describe` in `config.py` and `config_models/`; in `config/` | `config.py:2309-2312` (`dm_force_describe_enabled`), `config/system.yaml:1798`; both unchanged | yes |
 | The group round has no timing line | `BF-932\|emit_line` in `thread_fanout.py` | none | yes |
 | `consumer.py` starts no subprocess and uses one executor call | `subprocess\|create_subprocess\|to_thread\|run_in_executor` in `consumer.py` | `:995` only | yes |
-| Nothing in `consumer.py` swallows cancellation | `except BaseException\|except asyncio\.CancelledError\|except:` in `consumer.py` | each `CancelledError` handler re-raises (`:488`, `:547`, `:559`, `:776`, `:788`, `:833`, `:844`) | yes |
+| Nothing in `consumer.py` ends a cancellation without re-raising it, except the R2 cleanup wait (D7) | `CancelledError` and `except BaseException\|except:` in `consumer.py` at `30bf98fc` | 8 `CancelledError` handlers, each re-raises (`:501`, `:560`, `:572`, `:775`, `:829`, `:842`, `:881`, `:893`); no `except BaseException` or bare `except:`. R2 nests one handler in the branch at `:775`; it absorbs a repeated cancellation, and the branch then re-raises the first | yes |
 | The perception package uses no context variables | `contextvar\|ContextVar` in `src/probos/perception` | none | yes |
 
 ## 11. What this does NOT change, and recorded limits
 
 - No change to the store, its thread pool or its BF-918 cancellation; no change to `thread_fanout.py`, the hook's 4.0 s value, `_process`, or the BF-666 permit's logic.
 - **L1.** The deadline bounds what the caller sees, not what the store does. A step blocked in the store's thread runs until that thread returns, and the hook gives no fresh frame until then. A cut can land in the episode anchor or the observer and stop them there, as the base `wait_for` could.
-- **L2.** A cancelled caller still waits for a step blocked in a thread, as on the base (t6).
+- **L2.** A cancelled caller still waits for a step blocked in the filesystem store's thread, also through further cancellations, as on the base (t6). It does not wait for the identity check's executor thread, whose await ends at the cancellation (D2).
 - **L3.** `_save_index_sync` and `_find` are measured under #1670, not here.
+- **L4.** A failure the task raises after its caller timed out or was cancelled is logged once at WARNING (D7, t7); it does not reach the caller. On the base, a failure that escaped the steps' `except Exception` handlers reached the caller. The reach is a failure those handlers do not catch, such as a `BaseException` subclass other than a cancellation (review round 1 F3: injected only).
 
 ## 12. Prior art and blind spots (date used: 2026-11-16)
 
 - **AnyIO** `to_thread.run_sync(abandon_on_cancel=True)`: the caller stops waiting while the function keeps running in its thread, and by default the caller waits ([AnyIO threads docs](https://sources.debian.org/src/python-anyio/4.8.0-3/docs/threads.rst)). Adopted at the task level: the caller abandons the task and the task waits for its thread. We do not import AnyIO; the stdlib's `asyncio.wait` covers it.
 - **`asyncio.timeout`** (stdlib, 3.11 and later): rejected (D1).
-- **Internal:** BF-918 M4 explains why the store waits. The BF-666 permit is reused to stop pile-up. The BF-932 line's fields are unchanged.
+- **Internal:** BF-918 M4 explains why the store waits. The BF-666 permit is reused to stop pile-up. The BF-932 line's fields are unchanged. R2 copies BF-918's `_finish_cancelled` (`filesystem_store.py:55-72`) for the cancelled caller: it absorbs repeated cancellations and logs a failure its caller can no longer receive.
 - **Reference projects:** a search of `docs/research/reference-projects.md` for `anyio|trio|asyncio|timeout|deadline` matched nothing, so none was due for this subject. Considered and deferred: none.
 - **Blind spot found:** the issue's design leaves the live store unbounded (section 1). T3 and MU2 measure it.
 
@@ -793,5 +946,7 @@ git diff --stat 2c756a93 HEAD -- (consumer.py, agents.py, thread_fanout.py, file
 
 - With a store that never answers, before the describe or after it, the call returns `None` within the test's 3.0 s bound for `timeout_s=0.2` (t1, t2). The same holds when the store blocks in its own thread (t3). R0, which bounds only `_process`, fails all three.
 - A denied send writes exactly one `BF-932: dm route` line with `sent=raised`, and the same exception propagates (t4). R0b, which removes the `finally`, fails it.
-- The BF-666, AD-733c and BF-932 tests pass unchanged.
+- A caller cancelled twice while its store thread runs still waits for that thread, the permit stays held until then, and it is free when the caller's cancellation surfaces (t6). The orchestrator's probe found the base caller still waiting after a second cancellation, so R0 should pass t6.
+- A failure the task raises after its caller timed out or was cancelled is logged once at WARNING with the exception, and asyncio does not report it as never retrieved (t7, both cases). R0 fails both.
+- The BF-666, AD-733c and BF-932 tests pass unchanged, and so do the readers in the second table of 8.2.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
