@@ -130,19 +130,44 @@ collector, semantic-convention mapping, UI progress or streaming work here.
 
 ## Validation lineage
 
-The immutable [OFF golden](../../tests/fixtures/ad1152_agentic_off_golden.json)
+The [OFF golden](../../tests/fixtures/ad1152_agentic_off_golden.json)
 was captured with production files still pristine at
 `7dd9542289fbe3b574b09f4e9b5fe934c35f424c`, before production edits. It contains
 the base source blob IDs, deterministic requests/results/events, seven
 constructor calls, raw SQLite metadata, reopened API output and associated
-hashes. Only the new default-False config leaf is removed before comparing the
-pre-existing default configuration digest.
+hashes. The capture is never regenerated. Later work refreshes three kinds of
+value in it by measurement, and nothing else: the default configuration digest
+(`observation.default_config_sha256`), the observation text that embeds the
+native builder's composed standing orders (BF-936, AD-1359), and the shape of
+the work item in the reopened API output (AD-1321 added four keys that hold
+null). `observation_sha256`, the digest of the whole observation, follows any of
+them. A refresh runs the test's own `_off_observation` on the changed tree and
+copies only the values that moved; for a config change, that is one key.
+
+**When the default configuration changes** (#1676). An added field is popped in
+`_off_observation` with its default asserted, so the digest stays. A deleted
+field, or a changed default, leaves a line in `_off_observation` that names it
+(the key is absent, or has its new value), and the digest is refreshed by
+measurement. The test's failure message for `default_config_sha256` repeats
+this rule. A deleted field's old default is not re-inserted to keep an old
+digest: the digest stopped being the pristine one on 2026-10-08.
+
+The golden has been refreshed 17 times since the capture
+(`git log -- tests/fixtures/ad1152_agentic_off_golden.json`): 14 times for the
+default configuration digest, twice for the composed standing orders and once
+for the work-item shape. Eight of the 14 were config changes between 2026-10-08
+and 2026-10-13 (the Sonnet 5.5 defaults, budget awareness, AD-1315, AD-1322 to
+AD-1325 and AD-1327), absorbed with no line in the test. The other six are named
+in the test since #1676: the deletions of BF-924, BF-926, AD-1270 slice 4c (two)
+and BF-962/963, and BF-937's changed default.
 Typed path defaults are rendered in the captured Windows representation on
 other platforms too; ordinary strings and all other default values are left
 unchanged. The golden itself is never regenerated for this normalization.
 
-The observation SHA-256 is
-`3a95dbc861da39ef946143029abaeb431820b237747ce95a984c55ce732497f3`.
+The observation SHA-256 of the initial capture was
+`3a95dbc861da39ef946143029abaeb431820b237747ce95a984c55ce732497f3`; every
+refresh above changes it, and the golden's `observation_sha256` holds the
+current value.
 An initial non-deterministic capture was rejected, not used as an oracle.
 The successful capture and baseline run are recorded in ignored
 `logs/gates/ordinary-1079-base-golden-20260918-01.log` and

@@ -52,7 +52,8 @@ container constructor (``dict(gate=holder)``) is an escape; a builtin replaced a
 a false caller or invoke an entry behind an exempt name.
 (a) Silent: a typed parameter is keyed by its callable's short name (the class for ``__init__``)
 and the parameter name, so a keyword hand-off to another callable with the same two names is
-exempt as if typed.
+exempt as if typed. Since A5 this reaches the ``.__call__`` spelling too
+(``lookup.submit.__call__(gate=runtime.gate)`` reads as ``lookup.submit(gate=runtime.gate)``).
 (b) Loud: a holder attribute is matched by its name, not its owner, so once ``runtime.gate`` holds
 the service any ``other.gate.check()`` counts as a call.
 (c) Loud: a positional argument is an escape even into a parameter annotated with the class (spell
@@ -62,6 +63,14 @@ as a call; silent, a call through an import alias (``from ... import vote_on_int
 not followed.
 (e) Loud: a Python 3.12 type parameter (``def f[getattr]()``) is not collected as a binding, so a
 builtin of that name stays trusted in its module and can count a false caller.
+(f) Silent: a decorator application is not indexed as a call (only explicit ``ast.Call`` nodes
+are), so ``@runtime.threat_detector.scan`` above a ``def`` invokes the entry at decoration time
+unseen (#1676 counted 3,208 production decorators, none spelled as an entry).
+(g) Silent: a holder reached through the ``__self__`` of a non-entry bound method handed on
+(``sink(holder.reset)``, listed under "cannot see" above) is not traced, so a call made through
+it is not counted.
+These seven stay disclosed rather than fixed (#1676 item 1): the resolver is test machinery with
+no production reach, and the 12 production states it pins are unchanged.
 """
 
 from __future__ import annotations

@@ -115,3 +115,35 @@ def test_the_unbounded_tool_result_default_is_called_out() -> None:
     text = _DOC.read_text(encoding="utf-8")
     assert "tool_result_max_chars" in text
     assert "unbounded" in text.lower()
+
+
+def _model_paths(model: type, prefix: str = "") -> list[str]:
+    """Each model-typed field's dotted path below ``model``, depth first in declaration order."""
+    paths: list[str] = []
+    for name, field in model.model_fields.items():
+        if hasattr(field.annotation, "model_fields"):
+            path = f"{prefix}{name}"
+            paths += [path, *_model_paths(field.annotation, f"{path}.")]
+    return paths
+
+
+def test_every_model_has_one_section_headed_by_its_path() -> None:
+    """BF-983 (#1676 item 4): one section per model-typed field at every path, headed by that path, in model order.
+
+    The generator keyed a ``seen`` set on the field name, so a model whose name an earlier section had used was left
+    out: ``security.memory`` (after ``memory``), ``proactive_cognitive.duty_schedule`` (after ``duty_schedule``) and
+    the top-level ``discovery`` (after ``federation.discovery``). This walk reads the models, not the generator.
+    """
+    from probos.config import SystemConfig
+
+    paths = _model_paths(SystemConfig)
+    assert {  # premise: the three colliding names exist at both of their paths
+        "memory", "security.memory", "duty_schedule", "proactive_cognitive.duty_schedule",
+        "federation.discovery", "discovery",
+    } <= set(paths)
+    headings = [
+        line[len("## `"):-1]
+        for line in _DOC.read_text(encoding="utf-8").splitlines()
+        if line.startswith("## `") and line.endswith("`")
+    ]
+    assert headings == paths

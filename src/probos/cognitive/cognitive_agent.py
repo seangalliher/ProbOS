@@ -8916,7 +8916,8 @@ class CognitiveAgent(BaseAgent):
 
     async def _answer_consultation(self, request: Any) -> Any:
         """``handle_consultation_request``'s work past its stop check, moved here by AD-1346 M3d2, unchanged but for this
-        import, so that its ticket ends in one ``finally``."""
+        import, so that its ticket ends in one ``finally``. BF-983 (#1676) builds its LLM request with ``prompt`` (it raised
+        ``TypeError`` before) and answers the fallback for a response that carries an error or no text."""
         from probos.cognitive.consultation import ConsultationResponse
 
         callsign = getattr(self, "callsign", None) or self.agent_type
@@ -8956,8 +8957,8 @@ class CognitiveAgent(BaseAgent):
             try:
                 from probos.types import LLMRequest
                 llm_request = LLMRequest(
+                    prompt=user_message,  # BF-983 (#1676): LLMRequest's field; it has no user_message
                     system_prompt=system_prompt,
-                    user_message=user_message,
                     tier="fast",
                 )
                 llm_response = await llm.complete(llm_request)
@@ -8966,6 +8967,10 @@ class CognitiveAgent(BaseAgent):
                     if hasattr(llm_response, "content")
                     else str(llm_response)
                 )
+                # BF-983 (#1676): the client answers a refused or failed call (a rate limit, every tier unavailable) with
+                # ``error`` set and no text rather than raising, so that response takes the fallback below as well.
+                if getattr(llm_response, "error", None) or not str(answer).strip():
+                    raise RuntimeError(f"no usable answer: {getattr(llm_response, 'error', None) or 'empty content'}")
                 confidence = 0.6
                 reasoning = f"Consulted on {request.topic}"
             except Exception:

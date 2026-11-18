@@ -50,6 +50,16 @@ from tests.test_ad1258_self_knowledge import _OfferSysProxy
 
 BASE_COMMIT = "7dd9542289fbe3b574b09f4e9b5fe934c35f424c"
 GOLDEN_PATH = Path(__file__).parent / "fixtures" / "ad1152_agentic_off_golden.json"
+# BF-983 (#1676): what the next author does when the default configuration's digest no longer matches the golden.
+_DEFAULT_CONFIG_RULE = (
+    "default_config_sha256: the default SystemConfig dump changed. An added field: pop it in _off_observation with its "
+    "default asserted; the golden stays. A deleted field or a changed default: add a line in _off_observation that "
+    "names it (assert the key is absent, or assert its new value), then refresh by measurement: run "
+    "test_default_off_matches_pinned_base with -n 0, confirm default_config_sha256 is the only key that differs, copy "
+    "the actual digest into the golden's observation.default_config_sha256, run again and copy the reported "
+    "observation digest into observation_sha256. Never re-capture the golden. "
+    "See docs/development/agentic-event-correlation.md, 'Validation lineage'."
+)
 LOOP_EVENTS = (
     EventType.AGENTIC_LOOP_ITERATION.value,
     EventType.AGENTIC_TOOL_CALL_STARTED.value,
@@ -335,6 +345,19 @@ async def _off_observation(
     assert config["records"].pop("git_lock_stale_minutes") == 10.0
     assert config["records"].pop("git_uncommitted_warn_paths") == 50
     assert config["records"].pop("git_last_commit_warn_hours") == 24.0
+    # Deleted fields and changed defaults (BF-983, #1676). Each one moved the digest, which was refreshed by measurement
+    # (_DEFAULT_CONFIG_RULE); the line names what the pinned digest no longer contains, or now contains.
+    # BF-924 (#1654) removed the Counselor's four unread fields.
+    assert not {"enabled", "profile_retention_days", "alert_on_red", "alert_on_yellow"} & set(config["counselor"])
+    # BF-926 (#1656) deleted AD-607d's leak-guard flag.
+    assert "enforce_leak_guard" not in config["security"]["memory"]
+    # AD-1270 slice 4c (#1324) deleted AD-509's phase-tracker section, then boot camp's nudge cooldown.
+    assert "boot_camp_phase" not in config
+    assert "nudge_cooldown_seconds" not in config["boot_camp"]
+    # BF-962/963 (#1792) deleted the unread orientation flag.
+    assert "populate_ward_room_department" not in config["orientation"]
+    # BF-937 (#1678) changed a default: promoted agents go to {data_dir}/promoted-agents, never the source checkout.
+    assert config["self_improvement"]["persistence_root_dir"] == ""
     runtime = _local_runtime()
     events: list[dict[str, Any]] = []
     runtime.add_event_listener(lambda event: events.append(_snapshot(event)), LOOP_EVENTS)
@@ -539,7 +562,7 @@ async def test_default_off_matches_pinned_base(
     assert golden["production_pristine"] is True
     actual = await _off_observation(tmp_path, monkeypatch)
     for key, expected in golden["observation"].items():
-        assert actual[key] == expected, key
+        assert actual[key] == expected, (_DEFAULT_CONFIG_RULE if key == "default_config_sha256" else key)
     assert _json_bytes(actual) == _json_bytes(golden["observation"])
     assert hashlib.sha256(_json_bytes(actual)).hexdigest() == golden["observation_sha256"]
 
