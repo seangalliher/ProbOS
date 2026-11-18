@@ -772,6 +772,9 @@ class EventLog:
     async def _insert_chained_row(self, payload: dict[str, Any]) -> int | None:
         """Read the chain tail and append one row in a single write transaction.
 
+        With no tail row the new row chains from the truncation anchor a prune recorded, read in the
+        same transaction, and from genesis only when there is no anchor either (BF-980).
+
         SQLite-specific by design; this module already speaks SQLite throughout.
         """
         if not self._db:
@@ -783,14 +786,23 @@ class EventLog:
         try:
             await self._db.execute("BEGIN IMMEDIATE")
             prev_hash = self.GENESIS_HASH
+            has_tail = False
             async with self._db.execute(
                 "SELECT row_hash FROM events ORDER BY id DESC LIMIT 1"
             ) as cursor:
                 async for row in cursor:
+                    has_tail = True
                     prior = row[0]
                     if prior:
                         prev_hash = prior
                     break
+            if not has_tail:
+                # BF-980: an emptied table goes on from the anchor the prune recorded, read inside
+                # this BEGIN IMMEDIATE so no other connection can move it between the two reads.
+                # wipe() deletes the anchor with the rows, so a wiped log still starts at genesis.
+                anchor = await self._read_truncation_anchor()
+                if anchor is not None:
+                    prev_hash = anchor[1]
             row_hash = _compute_row_hash(prev_hash=prev_hash, payload=payload)
             cursor = await self._db.execute(
                 "INSERT INTO events "
@@ -1253,8 +1265,9 @@ class EventLog:
 
         Each row's ``row_hash`` is recomputed from its stored ``prev_hash`` and payload, and its ``prev_hash`` must
         be the row before it. The walk starts at genesis or, once a prune has recorded a truncation anchor (BF-942),
-        at the anchor's ``row_hash``: the first retained row must come after the anchor's id and link to its hash, or
-        to genesis when the prune left no row and the next append restarted the chain. Without an anchor, a first row
+        at the anchor's ``row_hash``: the first retained row must come after the anchor's id and link to its hash,
+        and to nothing else. A first row that links to genesis after an anchor is ``broken`` (BF-980: the append
+        chains an emptied table from the anchor, so no routine path writes one). Without an anchor, a first row
         that does not link to genesis is a cut head: the walk goes on from its own link and ends ``(False, first_id)``,
         ``unanchored``, if the rest verify, so an edit behind the cut is still found.
 
@@ -1297,8 +1310,8 @@ class EventLog:
                         if anchor is None:
                             detached_at = row[0]
                             expected_prev = stored_prev
-                        elif stored_prev == self.GENESIS_HASH:
-                            expected_prev = stored_prev
+                        # BF-980: after an anchor there is no exception. A first row that links to
+                        # genesis, or to anything but the anchor's hash, is broken just below.
                 if stored_prev != expected_prev:
                     return ChainVerdict(False, row[0], state="broken", anchor_id=anchor_id)
                 recomputed = _compute_row_hash(prev_hash=expected_prev, payload=payload)
