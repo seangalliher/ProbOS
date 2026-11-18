@@ -210,26 +210,29 @@ class TestProvenanceIntegrity:
         ok, reason = validate_provenance(ep)
         assert ok is True
 
-    def test_recall_emits_provenance_gap_event_observational(self) -> None:
-        # When config is observational, the validator surfaces the anomaly
-        # but the caller decides not to drop. Simulate that contract.
-        ep = make_episode(agent_ids=[])
-        cfg = MemorySecurityConfig(enforce_provenance=False)
-        result = validate_recall_result(ep, config=cfg)
-        # Caller logic: enforce_provenance=False → keep
-        assert result.anomalies  # anomaly was surfaced
-        # Observational: no drop
-        keep = not bool(cfg.enforce_provenance)
-        assert keep is True
+    def test_recall_emits_provenance_gap_event_observational(self, tmp_path: Any) -> None:
+        # BF-938 (#1680): this simulated the caller and asserted the flag against itself. It now asks the verdict
+        # EpisodicMemory runs on each recalled episode. The startup binding and a real recall are
+        # tests/test_bf938_ad607_binding.py.
+        from probos.cognitive.episodic import EpisodicMemory
 
-    def test_recall_drops_provenance_gap_when_enforced(self) -> None:
-        ep = make_episode(agent_ids=[])
-        cfg = MemorySecurityConfig(enforce_provenance=True)
-        result = validate_recall_result(ep, config=cfg)
-        assert result.anomalies
-        # Caller logic: enforce_provenance=True → drop
-        drop = bool(cfg.enforce_provenance)
-        assert drop is True
+        em = EpisodicMemory(db_path=str(tmp_path / "episodic" / "episodic.db"))
+        emitter = _FakeEmitter()
+        em.set_security_config(MemorySecurityConfig(enforce_provenance=False))
+        em.set_security_event_emitter(emitter)
+        assert em._security_anomaly_drop(make_episode(agent_ids=[])) is False  # observational: kept
+        assert [event for event, _ in emitter.events] == [
+            EventType.MEMORY_RECALL_ANOMALY, EventType.MEMORY_PROVENANCE_GAP,
+        ]
+
+    def test_recall_drops_provenance_gap_when_enforced(self, tmp_path: Any) -> None:
+        # BF-938 (#1680): this computed ``drop = bool(cfg.enforce_provenance)``; it now asks the real verdict.
+        from probos.cognitive.episodic import EpisodicMemory
+
+        em = EpisodicMemory(db_path=str(tmp_path / "episodic" / "episodic.db"))
+        em.set_security_config(MemorySecurityConfig(enforce_provenance=True))
+        assert em._security_anomaly_drop(make_episode()) is False  # premise: an intact episode is kept
+        assert em._security_anomaly_drop(make_episode(agent_ids=[])) is True
 
 
 # ---------------------------------------------------------------------------
