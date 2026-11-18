@@ -130,13 +130,34 @@ collector, semantic-convention mapping, UI progress or streaming work here.
 
 ## Validation lineage
 
-The immutable [OFF golden](../../tests/fixtures/ad1152_agentic_off_golden.json)
+The [OFF golden](../../tests/fixtures/ad1152_agentic_off_golden.json)
 was captured with production files still pristine at
 `7dd9542289fbe3b574b09f4e9b5fe934c35f424c`, before production edits. It contains
 the base source blob IDs, deterministic requests/results/events, seven
 constructor calls, raw SQLite metadata, reopened API output and associated
-hashes. Only the new default-False config leaf is removed before comparing the
-pre-existing default configuration digest.
+hashes. The capture is never regenerated. Later work refreshes two kinds of
+value in it by measurement, and nothing else: the default configuration digest
+(`observation.default_config_sha256`), and the observation text that embeds the
+native builder's composed standing orders (BF-936, AD-1359).
+`observation_sha256`, the digest of the whole observation, follows either. A
+refresh runs the test's own `_off_observation` on the changed tree and copies
+only the values that moved; for a config change, that is one key.
+
+**When the default configuration changes** (#1676). An added field is popped in
+`_off_observation` with its default asserted, so the digest stays. A deleted
+field, or a changed default, leaves a line in `_off_observation` that names it
+(the key is absent, or has its new value), and the digest is refreshed by
+measurement. The test's failure message for `default_config_sha256` repeats
+this rule. A deleted field's old default is not re-inserted to keep an old
+digest: the digest stopped being the pristine one on 2026-10-08.
+
+The digest has been refreshed 14 times since the capture
+(`git log -- tests/fixtures/ad1152_agentic_off_golden.json`). Eight were config
+changes between 2026-10-08 and 2026-10-13 (the Sonnet 5.5 defaults, budget
+awareness, AD-1315, AD-1322 to AD-1325 and AD-1327), absorbed with no line in
+the test. The other six are named in the test since #1676: the deletions of
+BF-924, BF-926, AD-1270 slice 4c (two) and BF-962/963, and BF-937's changed
+default.
 Typed path defaults are rendered in the captured Windows representation on
 other platforms too; ordinary strings and all other default values are left
 unchanged. The golden itself is never regenerated for this normalization.
