@@ -1700,6 +1700,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G4 (scope).* Proactive thinks only; the Ward Room notification path is not reconciled (L6).
 - *Residual.* L1, L3, L6, L7, L8, L12, L13, L14, L16, L29, L30 and L31 of the contract. *Reversal.* Revert the BF-934 slice 3 commits.
 
+### BF-983 -- #1676: an AD-594 consultation reaches the LLM, the AD-1152 golden's refresh rule, a config reference section per path (2026-11-18, #1676)
+
+- *Consultation request.* `prompt=` replaces the field `LLMRequest` never had. A response with `error` set or no text is a failed call, because the client reports rate limits and unavailable tiers that way rather than raising. Rejected for now: `agent_id` routing correlation and parsing the model's self-rated confidence, which are feature work on a path nothing calls.
+- *Golden refresh rule.* An added default field is popped with its default asserted. A deleted field or a changed default leaves a line that names it, and the digest is refreshed by measurement, never re-captured. Rejected: re-inserting a deleted field's old default to keep a pristine digest. The digest had been refreshed 14 times, and each deletion would leave a dead key in a frozen test.
+- *Config reference key.* The dotted path is the key and the heading. Rejected: path key with leaf headings (duplicate `memory`, `duty_schedule` and `discovery` headings), and keying by model class (still drops a class used at a second path).
+- *Config-reader check.* It stays report-only. Under-reporting from a check that gates nothing costs no build. A version that resolves each read to its owning model comes first if the Captain decides to enforce it.
+- *Reversal.* Revert the commits: the consultation raises `TypeError` again, the golden's lines and message go, and the reference returns to leaf headings without the three sections.
+
 ### A judged withdrawal is recorded apart from a lost action, with its reason, and a retried think settles once (2026-11-17, #1807)
 
 - *Scope.* `cognitive/action_billets.py` (the marker, the cap, `withdrawal_reason`, the billet's clause), `cognitive/action_accounting.py` (`withdrawn` in `PRE_EXTRACTION`; a keyword `withdrawal` on `unaccounted` and `settle_intended_actions`; INFO for a withdrawal), `proactive.py` (`withdrawal_outside_blocks`, the silence gate and the two settles that follow it). One new test file. No config, event type or schema change. Contract `prompts/withdrawal-reason-ledger.md`.
