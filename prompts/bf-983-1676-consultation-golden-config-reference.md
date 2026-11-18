@@ -4,6 +4,8 @@
 
 **Corrected by:** the orchestrator, 2026-11-18, after its first oracle run of M2: §7.3's backfill line read `config["medical"]`, but BF-924 (`091f1143`) removed the four fields from `CounselorConfig`, whose section is `counselor` (`config.py:3989`); `MedicalConfig` (`config.py:3988`) keeps its own `enabled`. The line, its comment and the three lines of §11 that named `medical` now name `counselor`. Nothing else changed.
 
+**Corrected again by:** the orchestrator, 2026-11-18, after review round 1 (two P3 findings on section 7.4, each confirmed against `git log -p` on the golden): the lineage paragraph named two kinds of refresh, but a third exists (AD-1321, `0debd77b`, four keys holding null under `persisted.endpoint.work_item`), and the page stated the original capture's observation checksum without saying so. Section 7.4 now names the three kinds, counts all 17 refreshes since the capture (14 for the default configuration digest, two for the composed standing orders, one for the work-item shape), and labels the checksum (the new pair 7.4b). Section 14 property 8 follows. Nothing else changed.
+
 **Status:** build-ready. Issue #1676 (labels: `latent`), batch B3 of the order of work (`48b6aed2`). **One BF number covers the batch.** Item 2 is a production defect, and items 3 and 4 are defects in a test's lineage and in a generator. The orchestrator allocated BF-983 on 2026-11-18 (the ceiling was BF-982, from issue titles and prompt filenames) and replaced the draft's placeholder everywhere; it appears only in REPLACE text and tracker text, never in a SEARCH and never in a path.
 
 **Base:** `origin/main` `9f43697fd8433071dd0f0afc394fba06de905a0c` (2026-11-17). #1680 and #1811 build first. Neither touches a file this contract searches, except `PROGRESS.md` and `DECISIONS.md`, whose anchors are a title and a heading that their insertions leave in place. P6 checks this.
@@ -403,13 +405,14 @@ was captured with production files still pristine at
 `7dd9542289fbe3b574b09f4e9b5fe934c35f424c`, before production edits. It contains
 the base source blob IDs, deterministic requests/results/events, seven
 constructor calls, raw SQLite metadata, reopened API output and associated
-hashes. The capture is never regenerated. Later work refreshes two kinds of
+hashes. The capture is never regenerated. Later work refreshes three kinds of
 value in it by measurement, and nothing else: the default configuration digest
-(`observation.default_config_sha256`), and the observation text that embeds the
-native builder's composed standing orders (BF-936, AD-1359).
-`observation_sha256`, the digest of the whole observation, follows either. A
-refresh runs the test's own `_off_observation` on the changed tree and copies
-only the values that moved; for a config change, that is one key.
+(`observation.default_config_sha256`), the observation text that embeds the
+native builder's composed standing orders (BF-936, AD-1359), and the shape of
+the work item in the reopened API output (AD-1321 added four keys that hold
+null). `observation_sha256`, the digest of the whole observation, follows any of
+them. A refresh runs the test's own `_off_observation` on the changed tree and
+copies only the values that moved; for a config change, that is one key.
 
 **When the default configuration changes** (#1676). An added field is popped in
 `_off_observation` with its default asserted, so the digest stays. A deleted
@@ -419,13 +422,31 @@ measurement. The test's failure message for `default_config_sha256` repeats
 this rule. A deleted field's old default is not re-inserted to keep an old
 digest: the digest stopped being the pristine one on 2026-10-08.
 
-The digest has been refreshed 14 times since the capture
-(`git log -- tests/fixtures/ad1152_agentic_off_golden.json`). Eight were config
-changes between 2026-10-08 and 2026-10-13 (the Sonnet 5.5 defaults, budget
-awareness, AD-1315, AD-1322 to AD-1325 and AD-1327), absorbed with no line in
-the test. The other six are named in the test since #1676: the deletions of
-BF-924, BF-926, AD-1270 slice 4c (two) and BF-962/963, and BF-937's changed
-default.
+The golden has been refreshed 17 times since the capture
+(`git log -- tests/fixtures/ad1152_agentic_off_golden.json`): 14 times for the
+default configuration digest, twice for the composed standing orders and once
+for the work-item shape. Eight of the 14 were config changes between 2026-10-08
+and 2026-10-13 (the Sonnet 5.5 defaults, budget awareness, AD-1315, AD-1322 to
+AD-1325 and AD-1327), absorbed with no line in the test. The other six are named
+in the test since #1676: the deletions of BF-924, BF-926, AD-1270 slice 4c (two)
+and BF-962/963, and BF-937's changed default.
+```
+
+### 7.4b `docs/development/agentic-event-correlation.md` (M2)
+
+SEARCH:
+```markdown
+The observation SHA-256 is
+`3a95dbc861da39ef946143029abaeb431820b237747ce95a984c55ce732497f3`.
+An initial non-deterministic capture was rejected, not used as an oracle.
+```
+REPLACE:
+```markdown
+The observation SHA-256 of the initial capture was
+`3a95dbc861da39ef946143029abaeb431820b237747ce95a984c55ce732497f3`; every
+refresh above changes it, and the golden's `observation_sha256` holds the
+current value.
+An initial non-deterministic capture was rejected, not used as an oracle.
 ```
 
 ### 7.5 `tests/test_bf927_boot_claims.py` (M2, docstring only)
@@ -864,7 +885,7 @@ Blind spots found:
 5. The golden fixture has no byte changed. The lines added to `_off_observation` only read `config`; none mutates the hashed dict.
 6. Each backfilled line names a key that §11 shows was deleted (or, for BF-937, changed) after the capture, and each holds on the base tree.
 7. The `default_config_sha256` comparison's failure message is `_DEFAULT_CONFIG_RULE`, and the rule says: added = pop; deleted or changed = named line plus refresh by measurement; never re-capture. The document says the same.
-8. The document no longer calls the golden immutable or says only AD-1152's leaf is removed, and its count (14) matches `git log` on the fixture.
+8. The document no longer calls the golden immutable or says only AD-1152's leaf is removed; it names the three kinds of value that were refreshed, its counts (17 refreshes since the capture: 14, two and one; and the eight and six within the 14) match `git log` on the fixture, and its observation checksum is labelled as the initial capture's.
 9. 7.5 changes only the docstring of `tests/test_bf927_boot_claims.py`, which lists (a) to (g), each with a direction.
 10. `_describe_model` heads each section with its dotted path and skips nothing. `render` passes the top-level name. No `seen` remains.
 11. The regenerated reference matches §7.8 exactly: header lines, 32 heading renames, three added sections, and no other removed line.
