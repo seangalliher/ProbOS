@@ -249,7 +249,7 @@ class TestTheChainSurvivesAPrune:
             assert await _anchors(log) == [(ids[6], before[6][2])]
             assert _seen(await log.verify_chain()) == ((True, None), "truncated", ids[6])
 
-    async def test_a_prune_that_empties_the_table_restarts_the_chain_and_it_still_verifies(self, tmp_path, monkeypatch):
+    async def test_after_a_prune_empties_the_table_the_next_row_links_to_the_anchor(self, tmp_path, monkeypatch):
         at = _clock(monkeypatch)
         async with _opened(tmp_path) as log:
             at(10)
@@ -262,7 +262,9 @@ class TestTheChainSurvivesAPrune:
             assert _seen(await log.verify_chain()) == ((True, None), "truncated", old[2])
             await _fill(log, 2)
             first = (await _rows(log))[0]
-            assert first[:2] == (old[2] + 1, EventLog.GENESIS_HASH), "premise: the append restarts at genesis"
+            # BF-980 (#1811): this case pinned BF-942's D4, a restart at genesis that verify_chain accepted after
+            # an anchor. The append now chains an emptied table from the anchor, and the walk accepts nothing else.
+            assert first[:2] == (old[2] + 1, before[2][2])
             assert _seen(await log.verify_chain()) == ((True, None), "truncated", old[2])
 
     async def test_a_clock_stepped_back_cannot_make_the_age_prune_cut_the_middle(self, tmp_path, monkeypatch):
