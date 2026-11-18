@@ -80,6 +80,7 @@ from probos.cognitive.promoted_report_delivery import (
     promoted_report_metadata,
 )
 from probos.tools.executor import recording_identity, sample_recording_identity
+from probos.workforce import _MAX_PROMOTED_REPORT_BODY_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -917,6 +918,37 @@ def _outcome_digest(body: str, limit: int = _OUTCOME_DIGEST_CHARS) -> str:
     return window
 
 
+def _bound_report_body(
+    body: str,
+    limit: int = _MAX_PROMOTED_REPORT_BODY_BYTES,
+    *,
+    work_item_id: str = "",
+) -> str:
+    """BF-955: bound a promoted report body to the outbox limit in UTF-8 bytes.
+
+    The outbox enforces ``_MAX_PROMOTED_REPORT_BODY_BYTES`` (64 KiB) on both
+    enqueue and drain replay. The thread store enforces no body limit. If a
+    report over 64 KiB exhausts its first delivery attempts without bounding,
+    enqueueing to the outbox raises ``ValueError``, permanently dropping the
+    durable retry.
+
+    Bounding the body BEFORE the first delivery attempt guarantees:
+    1. The thread post and any later outbox replay deliver the identical message
+       (AD-1274 exactly-once semantics).
+    2. The rendered body returned on ``ReportDelivery`` is the single truth reused
+       for the thread transcript, episode, and outcome artifact (AD-1248).
+    """
+    raw = str(body or "").encode("utf-8")
+    if len(raw) <= limit:
+        return str(body or "")
+    logger.warning(
+        "BF-955: promoted report for work item %s exceeds %d UTF-8 bytes "
+        "(%d bytes); bounding to preserve durable retry",
+        work_item_id, limit, len(raw),
+    )
+    return raw[:limit].decode("utf-8", errors="ignore")
+
+
 async def _store_outcome_artifact(
     *,
     runtime: Any,
@@ -1164,6 +1196,7 @@ async def _post_report(
             "report is delivered with its body unchanged",
             work_item_id, exc_info=True,
         )
+    body = _bound_report_body(body, work_item_id=work_item_id)
     store = getattr(runtime, "chat_thread_store", None)
     if store is None:
         logger.warning(

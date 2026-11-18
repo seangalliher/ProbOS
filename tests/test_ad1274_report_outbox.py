@@ -872,3 +872,220 @@ async def test_startup_wiring_degrades_when_there_is_no_work_store() -> None:
     runtime = SimpleNamespace(work_item_store=None, chat_thread_store=None)
     await _wire_promoted_report_delivery(runtime)
     assert not hasattr(runtime, "promoted_report_delivery_service")
+
+
+# ── BF-955: oversized report durable retry ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_bf955_oversized_promoted_report_is_queued_and_drained_with_identical_body(
+    tmp_path, monkeypatch,
+) -> None:
+    """BF-955: an oversized report (>64 KiB) whose first delivery attempts fail
+    is bounded to outbox capacity, queued durably, and replayed with the identical
+    bounded body that uncontended delivery would have posted."""
+    import probos.cognitive.turn_promotion as tp
+    from probos.workforce import _MAX_PROMOTED_REPORT_BODY_BYTES
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (0.001,))
+
+    oversized_body = "x" * (_MAX_PROMOTED_REPORT_BODY_BYTES + 1)
+    expected_body = "x" * _MAX_PROMOTED_REPORT_BODY_BYTES
+
+    # 1. Contended path: store is busy, all attempts exhausted
+    busy_threads = _AlwaysBusy(db_path=tmp_path / "chat_threads_contended.db")
+    thread_contended = busy_threads.create_thread(title="tc", participants=["captain", "agent-1"])
+    work = await _work_store(tmp_path)
+    try:
+        outcome = await tp._post_report(
+            runtime=SimpleNamespace(chat_thread_store=busy_threads, work_item_store=work),
+            agent_id="agent-1",
+            thread_id=thread_contended.id,
+            work_item_id="wi-contended",
+            body=oversized_body,
+        )
+        assert outcome.delivered is False
+        assert outcome.reason == "exhausted"
+        assert outcome.queued is True
+        assert outcome.body == expected_body
+        assert len(outcome.body.encode("utf-8")) == _MAX_PROMOTED_REPORT_BODY_BYTES
+
+        pending = await work.list_pending_promoted_reports(limit=10)
+        assert len(pending) == 1
+        assert pending[0].body == expected_body
+        assert pending[0].message_id == outcome.message_id
+        assert pending[0].work_item_id == "wi-contended"
+
+        # Drain the queued report into real thread store
+        real_threads = ChatThreadStore(db_path=tmp_path / "chat_threads_contended.db")
+        service = PromotedReportDeliveryService(
+            outbox=work, threads=real_threads,
+        )
+        drained_count = await service.drain_pending()
+        assert drained_count == 1
+        assert await work.list_pending_promoted_reports(limit=10) == ()
+
+        messages = real_threads.list_messages(thread_contended.id, limit=10)
+        assert len(messages) == 1
+        assert messages[0].id == outcome.message_id
+        assert messages[0].body == expected_body
+    finally:
+        await work.stop()
+
+    # 2. Uncontended path: verify first attempt produces identical bounded body
+    free_dir = tmp_path / "free_dir"
+    free_dir.mkdir(parents=True, exist_ok=True)
+    free_threads = ChatThreadStore(db_path=free_dir / "chat_threads_free.db")
+    thread_free = free_threads.create_thread(title="tf", participants=["captain", "agent-1"])
+    free_work = await _work_store(free_dir)
+    try:
+        free_outcome = await tp._post_report(
+            runtime=SimpleNamespace(chat_thread_store=free_threads, work_item_store=free_work),
+            agent_id="agent-1",
+            thread_id=thread_free.id,
+            work_item_id="wi-free",
+            body=oversized_body,
+        )
+        assert free_outcome.delivered is True
+        assert free_outcome.body == expected_body
+
+        free_messages = free_threads.list_messages(thread_free.id, limit=10)
+        assert len(free_messages) == 1
+        assert free_messages[0].body == expected_body
+        # Uncontended and replayed message bodies are byte-identical
+        assert free_messages[0].body == messages[0].body
+    finally:
+        await free_work.stop()
+
+
+@pytest.mark.asyncio
+async def test_bf955_report_at_and_over_limit_behave_alike_on_both_paths(
+    tmp_path, monkeypatch,
+) -> None:
+    """BF-955: a report exactly at limit and one over limit behave identically:
+    both deliver cleanly uncontended, and both queue and drain without dropping."""
+    import probos.cognitive.turn_promotion as tp
+    from probos.workforce import _MAX_PROMOTED_REPORT_BODY_BYTES
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (0.001,))
+
+    body_at_limit = "A" * _MAX_PROMOTED_REPORT_BODY_BYTES
+    body_over_limit = "A" * (_MAX_PROMOTED_REPORT_BODY_BYTES + 100)
+
+    work = await _work_store(tmp_path)
+    try:
+        busy_threads = _AlwaysBusy(db_path=tmp_path / "chat_threads.db")
+        thread_at = busy_threads.create_thread(title="tat", participants=["captain", "agent-1"])
+        thread_over = busy_threads.create_thread(title="tover", participants=["captain", "agent-1"])
+
+        outcome_at = await tp._post_report(
+            runtime=SimpleNamespace(chat_thread_store=busy_threads, work_item_store=work),
+            agent_id="agent-1", thread_id=thread_at.id, work_item_id="wi-at",
+            body=body_at_limit,
+        )
+        assert outcome_at.delivered is False
+        assert outcome_at.queued is True
+        assert outcome_at.body == body_at_limit
+
+        outcome_over = await tp._post_report(
+            runtime=SimpleNamespace(chat_thread_store=busy_threads, work_item_store=work),
+            agent_id="agent-1", thread_id=thread_over.id, work_item_id="wi-over",
+            body=body_over_limit,
+        )
+        assert outcome_over.delivered is False
+        assert outcome_over.queued is True
+        assert outcome_over.body == body_at_limit
+
+        real_threads = ChatThreadStore(db_path=tmp_path / "chat_threads.db")
+        service = PromotedReportDeliveryService(
+            outbox=work, threads=real_threads,
+        )
+        drained = await service.drain_pending()
+        assert drained == 2
+        assert await work.list_pending_promoted_reports(limit=10) == ()
+
+        msg_at = real_threads.list_messages(thread_at.id, limit=10)[0]
+        msg_over = real_threads.list_messages(thread_over.id, limit=10)[0]
+        assert msg_at.body == body_at_limit
+        assert msg_over.body == body_at_limit
+    finally:
+        await work.stop()
+
+
+@pytest.mark.asyncio
+async def test_bf955_multibyte_utf8_truncation_is_valid_and_queuable(
+    tmp_path, monkeypatch,
+) -> None:
+    """BF-955: multibyte UTF-8 characters sliced at 64 KiB boundary do not leave
+    corrupted UTF-8 code units, queue cleanly in SQLite, and drain without error."""
+    import probos.cognitive.turn_promotion as tp
+    from probos.workforce import _MAX_PROMOTED_REPORT_BODY_BYTES
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (0.001,))
+
+    # 'あ' is 3 bytes in UTF-8: 65536 / 3 = 21845.33, remainder 1 byte.
+    multibyte_body = "あ" * 22_000  # 66,000 UTF-8 bytes
+    busy_threads = _AlwaysBusy(db_path=tmp_path / "chat_threads.db")
+    thread = busy_threads.create_thread(title="tmb", participants=["captain", "agent-1"])
+    work = await _work_store(tmp_path)
+    try:
+        outcome = await tp._post_report(
+            runtime=SimpleNamespace(chat_thread_store=busy_threads, work_item_store=work),
+            agent_id="agent-1", thread_id=thread.id, work_item_id="wi-mb",
+            body=multibyte_body,
+        )
+        assert outcome.delivered is False
+        assert outcome.queued is True
+        # Verify bounded body is valid UTF-8 and <= 65,536 bytes
+        bounded_bytes = outcome.body.encode("utf-8")
+        assert len(bounded_bytes) <= _MAX_PROMOTED_REPORT_BODY_BYTES
+        assert len(bounded_bytes) == 21845 * 3  # exactly 65,535 bytes
+
+        # Draining passes read check at workforce.py:2113
+        real_threads = ChatThreadStore(db_path=tmp_path / "chat_threads.db")
+        service = PromotedReportDeliveryService(
+            outbox=work, threads=real_threads,
+        )
+        assert await service.drain_pending() == 1
+        msg = real_threads.list_messages(thread.id, limit=10)[0]
+        assert msg.body == outcome.body
+    finally:
+        await work.stop()
+
+
+@pytest.mark.asyncio
+async def test_bf955_cancelled_oversized_report_queues_bounded_body(
+    tmp_path, monkeypatch,
+) -> None:
+    """BF-955: a turn cancelled during delivery attempts or retry backoff queues
+    the bounded body via _queue_on_cancel."""
+    import probos.cognitive.turn_promotion as tp
+    from probos.workforce import _MAX_PROMOTED_REPORT_BODY_BYTES
+
+    monkeypatch.setattr(tp, "_REPORT_RETRY_BACKOFF_SECONDS", (30.0,))
+
+    oversized_body = "C" * (_MAX_PROMOTED_REPORT_BODY_BYTES + 500)
+    expected_body = "C" * _MAX_PROMOTED_REPORT_BODY_BYTES
+
+    busy_threads = _AlwaysBusy(db_path=tmp_path / "chat_threads.db")
+    thread = busy_threads.create_thread(title="tcancel", participants=["captain", "agent-1"])
+    work = await _work_store(tmp_path)
+    try:
+        task = asyncio.create_task(
+            tp._post_report(
+                runtime=SimpleNamespace(chat_thread_store=busy_threads, work_item_store=work),
+                agent_id="agent-1", thread_id=thread.id, work_item_id="wi-cancel",
+                body=oversized_body,
+            )
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        pending = await work.list_pending_promoted_reports(limit=10)
+        assert len(pending) == 1
+        assert pending[0].body == expected_body
+        assert pending[0].work_item_id == "wi-cancel"
+    finally:
+        await work.stop()
