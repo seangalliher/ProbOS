@@ -42,7 +42,7 @@ SECRET_NAME = "secret-name-948.txt"
 _LIST_NEXT = ". Do not repeat this call with the same path: list another directory."
 _READ_OUTSIDE = (
     "read_file refused: path is outside every readable root. Do not repeat this call with the same path: "
-    "read another file, and use list_files to see which files you can read."
+    "read another file, or say in your reply which file you needed."
 )
 _OUTSIDE = "list_files refused: path is outside every readable root" + _LIST_NEXT
 _PROTECTED = "list_files refused: path is protected: the runtime's data directory or a config file" + _LIST_NEXT

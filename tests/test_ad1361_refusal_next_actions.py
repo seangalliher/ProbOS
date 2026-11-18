@@ -15,16 +15,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.decomposer import _CAPABILITY_GAP_RE
 from probos.cognitive.swe_harness import tools as swe_tools
-from probos.cognitive.swe_harness.tool_call import llm_function_name
-from probos.cognitive.swe_harness.tools import EditFileTool, ReadFileTool, WriteFileTool, register_native_swe_tools
-from probos.tools.protocol import is_caller_input_error
-from probos.tools.registry import ToolRegistry
+from probos.cognitive.swe_harness.tools import EditFileTool, ReadFileTool, WriteFileTool
+from probos.tools.protocol import ToolPermission, ToolResult, is_caller_input_error
+from tests.test_ad1240_tool_result_delivery import (
+    _AGENT_ID, _FakeLLM, _RawTool, _arm_dispatch_runtime, _done, _environment, _last_result, _started, _turn,
+)
 from tests.test_bf948_list_files_read_policy import SECRET_NAME, _list, _runtime, _scene
 
 _READ_NEXT = (
-    "Do not repeat this call with the same path: read another file, and use list_files to see which files you can read."
+    "Do not repeat this call with the same path: read another file, or say in your reply which file you needed."
 )
 _LIST_NEXT = "Do not repeat this call with the same path: list another directory."
 _WRITE_NEXT = (
@@ -34,6 +36,8 @@ _WRITE_NEXT = (
 _STANDING_ORDERS_NEXT = "Do not repeat this call for it: say in your reply which file you needed."
 _RULE = "RULE-TEXT-1361"
 _RULES = ("constitution_write_refusal", "captain_document_write_refusal", "protected_write_refusal")
+# A tool id as the model sees it: lower-case words joined by underscores.
+_TOOL_NAME = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
 
 # Each sentence and the tools whose refusal ends with it.
 _REFUSED_BY = {
@@ -108,21 +112,53 @@ def test_the_standing_orders_denial_and_the_sentences_are_pinned() -> None:
 
 
 def test_each_next_action_reads_as_no_gap_and_names_only_tools_the_refused_agent_has() -> None:
-    """No sentence reads as a capability gap; a tool a sentence names is registered with the refused tool's own
-    permission matrix and spelled as the model sees it."""
-    registry = ToolRegistry()
-    assert register_native_swe_tools(registry, SimpleNamespace()) == 12
-    named_any = False
+    """No sentence reads as a capability gap, and none names a tool but the one refused. That tool ran, so the agent
+    was offered it; any other may be outside the offer (AD-1240 offers read_file alone as the recovery reader,
+    which U6 measures through the executor)."""
+    assert _TOOL_NAME.findall("or use list_files to see") == ["list_files"]  # positive control: the scan finds a name
     for sentence, refused_by in _REFUSED_BY.items():
         assert _CAPABILITY_GAP_RE.search(sentence) is None, sentence
-        for name in sorted(set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", sentence))):
-            named_any = True
-            registration = registry.get(name)
-            assert registration is not None, f"{name} is not a registered tool"
-            assert llm_function_name(name) == name
-            for tool_id in refused_by:
-                assert registration.default_permissions == registry.get(tool_id).default_permissions, (name, tool_id)
-    assert named_any, "premise: at least one sentence names a tool"
+        named = set(_TOOL_NAME.findall(sentence))
+        for tool_id in refused_by:
+            assert named <= {tool_id}, (sentence, tool_id)
+
+
+@pytest.mark.asyncio
+async def test_the_read_refusal_names_no_tool_outside_the_recovery_offer(tmp_path: Path) -> None:
+    """The read refusal as the model receives it, against the offer of the request it arrives in. An agent granted
+    only another tool, whose result was offloaded, is offered read_file alone as the recovery reader (AD-1240); a
+    tool the refusal named outside that offer would be refused unrun (BF-965)."""
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    runtime, _, _ = _environment(owned)
+    _arm_dispatch_runtime(runtime, owned, structured=True)
+    runtime.tool_registry.register(_RawTool(ToolResult(output="synthetic row\n" * 1300)))
+    await runtime.tool_permission_store.issue_grant(_AGENT_ID, "fixture_result", ToolPermission.READ)
+    grants = runtime.tool_permission_store.get_active_grants_sync(_AGENT_ID)
+    assert [grant.tool_id for grant in grants] == ["fixture_result"]  # premise: one grant and no restriction
+    assert not any(grant.is_restriction for grant in grants)
+    outside = tmp_path / "fixture.txt"  # beside, not under, the one readable root
+    outside.write_bytes(b"synthetic only")
+    model = _FakeLLM([
+        _turn("fixture_result"),
+        _turn("read_file", _call_id="policy-read", path=str(outside), offset=0, limit=1),
+        _done(),
+    ])
+    async with _started(runtime):
+        result = await WorkItemAgenticExecutor(llm_client=model).run(
+            agent_id=_AGENT_ID, instructions="Synthetic fixture.", task_text="Read the synthetic result.",
+            runtime=runtime, department="engineering", rank="lieutenant", max_iterations=4,
+        )
+    assert result.stopped_reason == "complete" and len(model.requests) == 3
+    offers = [{definition["function"]["name"] for definition in request.tools} for request in model.requests]
+    # premise: read_file arrives as the recovery reader, without list_files
+    assert "read_file" not in offers[0] and "read_file" in offers[1] and "list_files" not in offers[2]
+    refusal = _last_result(model.requests[2])
+    assert refusal.startswith("read_file refused: path is outside every readable root. ")  # premise: policy refused
+    named = set(_TOOL_NAME.findall(refusal))
+    assert "read_file" in named  # positive control: the scan finds the refused tool's own name
+    assert named <= offers[2], sorted(named - offers[2])
+    assert refusal == f"read_file refused: path is outside every readable root. {_READ_NEXT}"
 
 
 def test_every_error_return_in_the_native_tools_is_counted() -> None:

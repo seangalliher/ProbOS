@@ -67,7 +67,7 @@ WINDOWS = pytest.mark.skipif(os.name != "nt", reason="BF-953: these are Windows 
 _CONTENT = b"bf953 fixture"
 # AD-1361 (#1743 item 2): read_file's policy refusal now ends with the next action.
 _READ_NEXT = (
-    ". Do not repeat this call with the same path: read another file, and use list_files to see which files you can read."
+    ". Do not repeat this call with the same path: read another file, or say in your reply which file you needed."
 )
 _READ_PROTECTED = "read_file refused: path is protected: the runtime's data directory or a config file" + _READ_NEXT
 _READ_OUTSIDE = "read_file refused: path is outside every readable root" + _READ_NEXT

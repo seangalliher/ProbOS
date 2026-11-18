@@ -324,8 +324,9 @@ def _read_file_slice_note(first: int, last: int, total: int) -> str:
 def with_slice_note(text: str, note: str) -> str:
     """AD-1361: ``text``, a blank line and ``note``; ``note`` alone when ``text`` is empty; ``text`` when there is no note.
 
-    The note follows the slice, so a reader of the text from its start meets the slice first, and AD-1148's bound,
-    which keeps a head and a tail, keeps the note unless the cap is too small for it.
+    The note follows the slice, so a reader of the text from its start meets the slice first. AD-1148's bound
+    (``tool_result_max_chars``, 0 and off by default) keeps a head and a tail of a text it cuts, so a cut text keeps
+    the whole note only when the tail, after any shrink to fit the cap, is at least as long as the note.
     """
     if not note:
         return text
@@ -458,12 +459,12 @@ def _file_read_result(text: str, target: Path, runtime: object) -> ToolResult:
     return InstructionToolResult(output=text, repository_instructions=observation)
 
 
-# AD-1361 (#1743 item 2): a refusal names the nearest action this agent has. list_files is registered beside
-# read_file with the same permissions (register_native_swe_tools) and lists only what the read policy admits
-# (BF-948). Where no tool fits, the agent's reply is the action. Each sentence is kept clear of
+# AD-1361 (#1743 item 2): a refusal names the nearest action this agent has. A sentence names no tool but the one
+# refused: that tool ran, so it was offered, and a tool cannot see the rest of the offer (AD-1240 offers read_file
+# alone as the recovery reader). Where no tool fits, the agent's reply is the action. Each sentence is kept clear of
 # decomposer._CAPABILITY_GAP_RE (tests/test_ad1361_refusal_next_actions.py).
 _READ_REFUSAL_NEXT = (
-    "Do not repeat this call with the same path: read another file, and use list_files to see which files you can read."
+    "Do not repeat this call with the same path: read another file, or say in your reply which file you needed."
 )
 _LIST_REFUSAL_NEXT = "Do not repeat this call with the same path: list another directory."
 _WRITE_REFUSAL_NEXT = (

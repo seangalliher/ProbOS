@@ -2,8 +2,9 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-18
 **Corrected by:** the orchestrator, 2026-11-18, after its oracle run of the section 10 campaign: row RF-10 named `test_each_next_action_reads_as_no_gap_and_names_only_tools_the_refused_agent_has` (U4) as its killer. U4 reads the test file's own copies of the four sentences, so mutating the production sentence does not reach it; the row is killed by `test_read_and_list_refusals_name_the_next_action[read_file]` and `test_the_standing_orders_denial_and_the_sentences_are_pinned`, which tie the production sentences to those copies. The row now says so. Nothing else changed.
+**Corrected by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-18, amendment A1 (section 16) after Diff Review round 1. R1: the `read_file` refusal named `list_files`, which AD-1240's recovery-only offer can withhold; the sentence now names no tool but the refused one, U4 checks that, and the new U6 checks the read refusal against the actual recovery offer. R2: the note's retention under AD-1148 depends on the tail budget, not only the cap. Sections 3, 4, 6, 8 (P4-2), 10, 11, 14 and 15 are corrected in place. Section 7's M1 and M2 blocks (the `with_slice_note` docstring, `_READ_REFUSAL_NEXT` and its comment, and the M2 test files) are the as-built record before A1; where they differ from the head, A1 wins.
 **Save as:** `prompts/ad-1361-tool-results-state-the-whole-and-refusals-name-the-next-action.md`
-**Status:** Ready to build as batch B4 (M1 to M4). The Captain admitted items 1, 2 and 6 on #1743 on 2026-11-18. Items 3, 4, 5 and 7 are not admitted and are not touched. **Base:** drafted on `9f43697f` (origin/main, 2026-11-18). Built after #1680 (BF-938) and #1811 (BF-980) merge. Neither issue touches the files this contract edits (their titles concern the recall anomaly gate and the event chain; this is not a diff check, see §4.1 V1). **Dependencies:** none. **Tier:** M1 HIGH (it edits AD-1240's delivery in `result_offload.py`), M2 STANDARD, M3 STANDARD (one docs line), M4 STANDARD. **Estimated tests:** two new files. `tests/test_ad1361_slice_notes.py` holds 11 cases (M1) and `tests/test_ad1361_refusal_next_actions.py` holds 11 (M2). Existing pins are updated in `test_ad1240_tool_result_delivery.py`, `test_ad1200_repository_instruction_wire.py`, `test_bf948_list_files_read_policy.py`, `test_bf953_read_floor_spellings.py` and `test_bf911_protected_config_write_refusal.py`.
+**Status:** Ready to build as batch B4 (M1 to M4). The Captain admitted items 1, 2 and 6 on #1743 on 2026-11-18. Items 3, 4, 5 and 7 are not admitted and are not touched. **Base:** drafted on `9f43697f` (origin/main, 2026-11-18). Built after #1680 (BF-938) and #1811 (BF-980) merge. Neither issue touches the files this contract edits (their titles concern the recall anomaly gate and the event chain; this is not a diff check, see §4.1 V1). **Dependencies:** none. **Tier:** M1 HIGH (it edits AD-1240's delivery in `result_offload.py`), M2 STANDARD, M3 STANDARD (one docs line), M4 STANDARD. **Estimated tests:** two new files. `tests/test_ad1361_slice_notes.py` holds 11 cases (M1) and `tests/test_ad1361_refusal_next_actions.py` holds 11 (M2) and 12 after A1 (U6). Existing pins are updated in `test_ad1240_tool_result_delivery.py`, `test_ad1200_repository_instruction_wire.py`, `test_bf948_list_files_read_policy.py`, `test_bf953_read_floor_spellings.py` and `test_bf911_protected_config_write_refusal.py`.
 **AD number:** AD-1361. `d:/ProbOS/.venv/Scripts/python.exe scripts/ad_ceiling.py` on `9f43697f` gave `CEILING: AD-1360 (from: GitHub issue titles (all states))` and `NEXT: AD-1361`. Re-run it at build time. Item 6 takes no number.
 
 **Which text describes the head.** Sections 1 to 3 describe `9f43697f`, with that commit's line numbers. A SEARCH that no longer matches goes back to the Architect and is not rebased by hand. Where prose and a REPLACE or new-file block differ, the block wins.
@@ -58,7 +59,7 @@ None. No `EventType`, no config field and no persisted key is added.
     - more follows: `[read_file slice: lines {first} to {last} of {total}, counted from 0 (offset={first}, limit={count}). More follows: call read_file again with the same path and offset={last} to read on.]`
     - reaches the end: `[read_file slice: lines {first} to {last} of {total}, counted from 0 (offset={first}, limit={count}). This slice reaches the end of the file.]`
     - empty: `[read_file slice: no lines in this range. The file has {total} lines, counted from 0.]`
-  - **Placement:** after the slice, separated by a blank line. A reader of the text meets the slice first, and AD-1148 keeps a tail, so the note survives its bound unless the cap is too small for it. This copies BF-889's `read_page` header, with the integers kept bare so the model can copy them back.
+  - **Placement:** after the slice, separated by a blank line. A reader of the text meets the slice first. AD-1148's bound is off by default; when it cuts the text it keeps a head and a tail, so the whole note survives only when the tail budget, after any shrink to fit the cap, is at least the note's length (L10). This copies BF-889's `read_page` header, with the integers kept bare so the model can copy them back.
   - **Total unknown:** this does not happen on either covered path, since both have `len(lines)`.
 - **Which paths.**
 
@@ -87,9 +88,9 @@ None. No `EventType`, no config field and no persisted key is added.
 - **The refusal convention (item 2).**
   - **Rule.** A refusal says what was refused and why (unchanged), then one sentence naming the nearest action this agent has.
   - **Where no tool fits**, the sentence names the reply: "say in your reply ...". That is available to every agent in every run. It matches the AD-1328 frames ("report that this step is blocked"). The capability-request route is not a tool an agent calls: requests are filed by the system from gap replies, tier floors and continue-or-ask (`capability_triage.py:573`, `continue_or_ask.py:544`, `tier_floor_ask.py:259`).
-  - **Named tools.** The only tool named is `list_files`, in the `read_file` refusal. It is registered beside `read_file` with the same permission matrix (`tools.py:1487-1488`, `read_perms`). It lists only what the read policy admits (BF-948), and `llm_function_name("list_files") == "list_files"`. Plan mode withholds both (`agent_mode.py:68-83`).
+  - **Named tools.** No sentence names a tool but the one refused, which the agent was offered because it ran. A tool cannot see the agent's offer, and AD-1240 offers `read_file` alone as the recovery reader to an agent granted another tool whose result was offloaded (`agentic_dispatch.py:3721-3722`, `:3759`; `agentic_loop.py:1752-1756`), so a named `list_files` would be refused unrun there (BF-965). The first build named it; A1 removed it (section 16).
   - **Sentences.**
-    - read: `Do not repeat this call with the same path: read another file, and use list_files to see which files you can read.`
+    - read: `Do not repeat this call with the same path: read another file, or say in your reply which file you needed.`
     - list: `Do not repeat this call with the same path: list another directory.`
     - write: `Do not repeat this call: leave this file as it is, go on with the rest of your task, and say in your reply what change you wanted.`
     - standing orders: `Do not repeat this call for it: say in your reply which file you needed.`
@@ -138,7 +139,7 @@ None. No `EventType`, no config field and no persisted key is added.
   - `cognitive/copilot_adapter.py:76`: its own `_STANDING_ORDERS_DENIED` copy (L11).
   - The rule texts in `builder_paths.py` and `file_access.py` as other writers return them.
   - The modules under `src/probos/tools/`, which this contract does not enumerate.
-- **Tests pin the convention.** U1 to U3 run each changed refusal and compare the exact text. U4 checks that each sentence is gap-free and names only a co-registered tool spelled as the model sees it. U5 is the census.
+- **Tests pin the convention.** U1 to U3 run each changed refusal and compare the exact text. U4 checks that each sentence is gap-free and names no tool but the refused one. U5 is the census. U6 (A1) runs the read refusal through `WorkItemAgenticExecutor` under AD-1240's recovery-only offer and checks that every tool name in the text the model receives is in that request's offer.
 - **Item 6.** The bullet is placed under §8 after "Rollback path". No other copy of the criteria exists:
   - no `src` or `tests` file names it (Absence A5);
   - `scripts/wave-orchestrator.ps1:495` and `.claude/agents/claude-architect.md:99` tell a reviewer agent to read the file;
@@ -159,7 +160,7 @@ None. No `EventType`, no config field and no persisted key is added.
 
 **G1:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1361_slice_notes.py tests/test_ad1240_tool_result_delivery.py tests/test_ad1240_workspace_results.py tests/test_ad1240_workspace_result_lifecycle.py tests/test_ad1200_repository_instruction_wire.py tests/test_bf946_read_only_delivery_failures.py tests/test_ad1356_s1_recovery_reads.py tests/test_ad1191_delegation_wire.py tests/test_ad544_native_tools.py tests/test_ad1179_tool_schema_golden.py -q -n 0`, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check`. New file: 11 cases. The other counts are not measured here; the oracle records them on M1's stage.
 
-**G2:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1361_refusal_next_actions.py tests/test_bf948_list_files_read_policy.py tests/test_bf953_read_floor_spellings.py tests/test_bf911_protected_config_write_refusal.py tests/test_bf943_captain_document_write_refusal.py tests/test_ad1344_constitution_write_refusal.py tests/test_bf910_standing_orders_lookup.py tests/test_search_threads_and_running_code.py tests/test_ad1356_s1_input_errors.py tests/test_ad1179_vocabulary_constants.py tests/test_bf965_unoffered_tool_refusal.py tests/test_ad1316_real_effect_routes.py tests/test_ad544_native_tools.py -q -n 0`. New file: 11 cases. Other counts are measured by the oracle.
+**G2:** `d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_ad1361_refusal_next_actions.py tests/test_bf948_list_files_read_policy.py tests/test_bf953_read_floor_spellings.py tests/test_bf911_protected_config_write_refusal.py tests/test_bf943_captain_document_write_refusal.py tests/test_ad1344_constitution_write_refusal.py tests/test_bf910_standing_orders_lookup.py tests/test_search_threads_and_running_code.py tests/test_ad1356_s1_input_errors.py tests/test_ad1179_vocabulary_constants.py tests/test_bf965_unoffered_tool_refusal.py tests/test_ad1316_real_effect_routes.py tests/test_ad544_native_tools.py -q -n 0`. New file: 11 cases (12 after A1, which adds U6). Other counts are measured by the oracle.
 
 **G3:** no test (Absence A5). `git diff --cached --stat` shows only `prompts/review-criteria.md`, 1 file, 1 insertion. Delta review only.
 
@@ -183,7 +184,7 @@ None. No `EventType`, no config field and no persisted key is added.
 | V3 | The loop's `read_file` takes the verified path | T3 asserts that `Path.read_text` was never called for the file. G1 green on M1's stage |
 | V4 | My census is complete | U5 green on M2's stage. A mismatch is a hard stop back to the Architect (do not edit the table to match) |
 | V5 | No pin of the source frame's header or length breaks | G1 green (Absence A1 covers the text; frame lengths in tests were not read one by one) |
-| V6 | The new sentences are gap-free and name a co-registered tool | U4 green |
+| V6 | The new sentences are gap-free and name no tool but the refused one; the read refusal names nothing outside the recovery offer | U4 and U6 green |
 | V7 | Every §10 mutant is killed | the oracle's campaign of record on M2's head |
 
 ## 5. Commit messages
@@ -205,8 +206,9 @@ None. No `EventType`, no config field and no persisted key is added.
 | U1 (2) | refusal_next_actions | `test_read_and_list_refusals_name_the_next_action` | exact text; BF-948 mark kept |
 | U2 (6) | refusal_next_actions | `test_write_refusals_name_the_next_action` (2 tools × 3 rules) | exact text; target unchanged |
 | U3 | refusal_next_actions | `test_the_standing_orders_denial_and_the_sentences_are_pinned` | the constant and the three sentence constants |
-| U4 | refusal_next_actions | `test_each_next_action_reads_as_no_gap_and_names_only_tools_the_refused_agent_has` | `_CAPABILITY_GAP_RE`, registration, permission matrix, model spelling |
+| U4 | refusal_next_actions | `test_each_next_action_reads_as_no_gap_and_names_only_tools_the_refused_agent_has` | `_CAPABILITY_GAP_RE`; no tool named but the refused one (A1) |
 | U5 | refusal_next_actions | `test_every_error_return_in_the_native_tools_is_counted` | the census |
+| U6 | refusal_next_actions | `test_the_read_refusal_names_no_tool_outside_the_recovery_offer` (A1) | the seam from the refusal to the next request's offer, through `WorkItemAgenticExecutor` |
 
 Updated pins, each with an inline reason (§7):
 - `test_ad1240`: `:1318` parity, `:1605`, `:2149-2150`, `:3411-3412`
@@ -1269,7 +1271,7 @@ REPLACE:
 - *Scope.* `cognitive/swe_harness/tools.py` (`with_slice_note`, `_read_file_slice_note`, `SourceToolResult.slice_note`, the refusal sentences), `cognitive/swe_harness/result_offload.py` (the legacy branch of `_prepare_result`, `_source_frame`), tests. #1743 items 1 and 2. Item 6 is one bullet in `prompts/review-criteria.md` section 8 and takes no number. Contract `prompts/ad-1361-tool-results-state-the-whole-and-refusals-name-the-next-action.md`.
 - *The note.* Lines as `str.splitlines` counts them, the range actually returned, three fixed texts (more follows, reaches the end, no lines), placed after the slice. It follows BF-889's `read_page` sections.
 - *Placement by path.* The plain path puts it in the text. The verified path carries it beside the text, and the AD-1240 legacy delivery appends it. A note inside the verified text was rejected: it would count against the per-read bound (BF-946) and the source frame's line count. A recovery re-read and an artifact slice carry none, because their frame named the whole (`of N` on the source frame; `chars` in the artifact outline).
-- *Refusals.* A refusal says what was refused and why, then one sentence naming the nearest action this agent has. Where no tool fits, that action is the agent's reply. Only `list_files` is named, because it is registered beside `read_file` with the same permissions. Appending keeps BF-948's mark and the identity of repeated texts, so the fault detectors decide as before. The first family is `tools.py`. #1722 S3 keeps the agent-work refusals, and the other families follow on #1743.
+- *Refusals.* A refusal says what was refused and why, then one sentence naming the nearest action this agent has. Where no tool fits, that action is the agent's reply. No sentence names a tool but the one refused: a tool cannot see the agent's offer, and AD-1240 offers `read_file` alone as the recovery reader, so the `list_files` the first build named could be refused unrun (review round 1). Appending keeps BF-948's mark and the identity of repeated texts, so the fault detectors decide as before. The first family is `tools.py`. #1722 S3 keeps the agent-work refusals, and the other families follow on #1743.
 - *Rejected.* A typed note rendered by the loop (more code for the same effect). Reserving room in the frames for a note on recovery reads (it moves the AD-1240 accounting). Covering `codebase_read_source` now (it needs its own 1-based sentence). Editing the rule texts in `builder_paths.py` and `file_access.py` (other writers return them).
 - *Residual.* Recorded limits L1 to L12 of the contract.
 - *Reversal.* Revert the AD-1361 commits. Item 6's bullet is reverted on its own.
@@ -1319,7 +1321,8 @@ The Line cells hold the source line without its leading indentation. Each occurs
 | RF-7 | `tools.py` | the `# AD-1361 (AD-1344 rule): edit_file names the next action` line | `return ToolResult(error=refused)` | `...[edit_file-constitution_write_refusal]` |
 | RF-8 | `tools.py` | the `edit_file refused: {refused}. {_WRITE_REFUSAL_NEXT}` line | `return ToolResult(error=f"edit_file refused: {refused}")` | `...[edit_file-captain_document_write_refusal]` |
 | RF-9 | `tools.py` | the `# AD-1361 (BF-911 rule): edit_file names the next action` line | `return ToolResult(error=refused)` | `...[edit_file-protected_write_refusal]` |
-| RF-10 | `tools.py` | `"Do not repeat this call with the same path: read another file, and use list_files to see which files you can read."` | `list_files` → `list_dir` | `test_read_and_list_refusals_name_the_next_action[read_file]`, `test_the_standing_orders_denial_and_the_sentences_are_pinned` |
+| RF-10 | `tools.py` | `"Do not repeat this call with the same path: read another file, or say in your reply which file you needed."` | `"Do not repeat this call with the same path: read another file, or use list_files to see which files you can read."` | `test_the_read_refusal_names_no_tool_outside_the_recovery_offer` (at `named <= offers[2]`), `test_read_and_list_refusals_name_the_next_action[read_file]`, `test_the_standing_orders_denial_and_the_sentences_are_pinned` |
+| RF-11 | `tools.py` | `return ToolResult(error=f"read_file refused: {exc}. {_READ_REFUSAL_NEXT}")  # AD-1361: and the next action` | `return ToolResult(error=f"read_file refused: {exc}. {_READ_REFUSAL_NEXT} Then use list_files.")` | `test_the_read_refusal_names_no_tool_outside_the_recovery_offer` (at `named <= offers[2]`), `test_read_and_list_refusals_name_the_next_action[read_file]` |
 
 **Campaign of record.** Run an unmutated baseline of both new files first. Then run each row against the file that holds its killer. Record the base tree and the sha256 of `tools.py` and `result_offload.py`. A Builder whose files match does not repeat it.
 
@@ -1331,10 +1334,10 @@ The Line cells hold the source line without its leading indentation. Each occurs
 - **L4.** Lines are counted by `str.splitlines`, so `\x0c`, `\x1c`-`\x1e`, `\x85`, `\u2028` and `\u2029` count as breaks. This matches what `offset` selects.
 - **L5.** On the plain path the note is part of the text, so it counts against AD-1148's cap and, under a delivery run, against the threshold (at most about 200 characters).
 - **L6.** The run's `tool_results[*].output` holds the note for a plain read and a verified legacy read, but not for an offloaded one. It reaches the AD-1151 trace, and BF-947 carried results for the plain path only.
-- **L7.** The `read_file` refusal names `list_files` without checking the agent's offer. A per-agent override that removes `list_files` alone would make it name a tool the agent lacks. Plan mode withholds both.
+- **L7.** A refusal names no tool but the one refused, because a tool cannot see the agent's offer (AD-1240 offers `read_file` alone as the recovery reader). So the read refusal does not point at `list_files` even where it is offered; an agent that has it can still choose it.
 - **L8.** `codebase_read_source` answers a read-policy refusal as `codebase_read_source failed:` (`tools.py:852`, `:880`). This predates AD-1361; BF-948 marked `read_file` and `list_files` only.
 - **L9.** The AD-1344 and BF-911 refusals stay unmarked, so the detectors count them. This predates AD-1361 and is not changed here.
-- **L10.** At a tiny AD-1148 cap the trailing note can be cut.
+- **L10.** Under an AD-1148 bound that cuts the text, the trailing note is kept whole only when the tail budget (`tool_result_tail_chars`, after any shrink to fit `tool_result_max_chars`) is at least the note's length. Review round 1 measured, at a 6,000 cap and a 4,000 head, the note kept at a 2,000 tail and cut at 0 and 50, on both paths and both transcripts. The bound is off by default.
 - **L11.** The Copilot adapter's own `_STANDING_ORDERS_DENIED` (`copilot_adapter.py:76`) is not updated (another family).
 - **L12.** `codebase_index unavailable on runtime` (four tools) names no next action. It reports the tool's own state, not a rule's refusal, and is a candidate for a later family.
 
@@ -1467,7 +1470,7 @@ A9 CLAIM: none of #1722 S3's refusals is in tools.py.
 2. `_prepare_result` appends the note only in the legacy branch, after the threshold was measured on the slice. The recovery branch, the bound check, `canonical_capture`, `_source_frame`'s count and `ResultDelivery` are unchanged apart from the frame header's ` of N`. **Consumer:** the loop's `format_tool_result_content` and BF-946's continuation.
 3. On the plain path, the note describes the range `lines[start:end]` actually returned, by `slice.indices`. A whole read (no `offset`, no `limit`) is byte-identical. **Consumer:** the model, through AD-1148.
 4. Each changed refusal keeps its prefix byte-for-byte and appends `". " + one fixed sentence`. `is_caller_input_error` answers as before for each, and two identical refusals stay identical. **Consumers:** `fault_report.detect_tool_defect` and `fault_detection.collect_tool_fault_batch`.
-5. No sentence or note matches `_CAPABILITY_GAP_RE`. The only tool named is `list_files`.
+5. No sentence or note matches `_CAPABILITY_GAP_RE`. No refusal sentence names a tool but the one refused (A1). The slice notes name `read_file`, which was offered because the note rides on a `read_file` result, and a recovery offer stays for the run (`agentic_loop.py:1752-1756`, `result_offload.py:293`, `:405-407`).
 6. No method is added to any class, and no config field, `EventType`, persisted key or schema change is made.
 7. Every new or rewritten comment, docstring, test docstring and tracker line is true of the head.
 8. T3 starts at the model's call and ends at the next request's message, and T4 starts at the tool and ends at the frame.
@@ -1476,7 +1479,7 @@ A9 CLAIM: none of #1722 S3's refusals is in tools.py.
 ## 15. Acceptance criteria
 
 1. T1 to T5 pass: a sliced `read_file` states the whole on both paths. An offloaded slice's frame says `of N` and keeps its line count. A recovery read carries no note.
-2. U1 to U5 pass: the nine refusals name the next action, their marks hold, the sentences are gap-free and name only a co-registered tool, and the census holds.
+2. U1 to U6 pass: the nine refusals name the next action, their marks hold, the sentences are gap-free and name no tool but the refused one, the read refusal names nothing outside the recovery offer, and the census holds.
 3. The updated pins pass with their inline reasons, and the left pins pass unchanged.
 4. G1 to G4 pass, every §10 mutant is killed, and the broad gate's receipt is green.
 5. `prompts/review-criteria.md` §8 holds the parity bullet in its own commit.
@@ -1487,3 +1490,11 @@ A9 CLAIM: none of #1722 S3's refusals is in tools.py.
 - **AD-1346 register.** No new store-write, egress or subprocess site, so no row. The longer texts reach the existing AD-1151 trace write (attachment store) and the in-process BF-947 carried results.
 - **AD ledger.** One new entry, AD-1361. Item 6 adds none.
 - **#1743** stays OPEN with items 3, 4, 5 and 7 and item 2's remaining families. Its title and the ledger heads carry no lifecycle keyword.
+
+## 16. Amendment A1 (2026-11-18, Diff Review round 1)
+
+- **R1 (P2).** The read refusal named `list_files`. A tool cannot see the agent's offer, and AD-1240 offers `read_file` alone as the recovery reader to an agent granted another tool whose result was offloaded (`agentic_dispatch.py:3721-3722`, `:3759`; `agentic_loop.py:1752-1756`). Reproduced through `WorkItemAgenticExecutor`: offers `[fixture_result]`, `[fixture_result, read_file]`, `[fixture_result, read_file]`; the named `list_files` got `UNOFFERED_TOOL_REFUSAL` unrun. U4 passed because it checked registration, not the offer. Decision: the sentence names no tool but the refused one. Rejected: a conditional naming (the model must reason about its own offer), an offer-aware sentence (needs the offer through `agentic_loop.py`, excluded by section 9, and makes identical refusals differ), no next action (undoes item 2).
+- **R2 (P3).** The note's retention under AD-1148 depends on the tail budget, not only the cap. The `with_slice_note` docstring, section 3 and L10 say so. No test: the behaviour is AD-1148's own (`agentic_loop.py:234-264`, `tests/test_ad1148_tool_result_bounds.py:181`, `:205`) and unchanged here.
+- **Tests.** U4 checks that a sentence names no tool but the refused one; U6 is new; the file holds 12 cases. The read-refusal copies in `test_bf948` and `test_bf953` follow the new sentence.
+- **Same class elsewhere.** Every snake_case token in the model-visible text M1 to M3 added (`git diff -U0 0207997..85f917bd -- src/`): `read_file` in the three slice-note texts (on a `read_file` result, so offered), and `list_files` in `_READ_REFUSAL_NEXT` (the defect). The other sentences and the frame's ` of N` name none.
+- **Campaign.** Mutation rows RF-1, RF-10 and RF-11 are rerun on A1's head with an unmutated baseline of the file. RF-2 to RF-9 and SL-1 to SL-9 carry over: A1 changes no mutated line and no killer test's body.
