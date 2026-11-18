@@ -150,8 +150,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: ui/package-lock.json
 
+      # BF-938 (#1680): onnxruntime-node's install script downloads a CUDA provider tarball from a GitHub release that now
+      # answers 404, and the failed install stopped this job before any test ran. The UI loads onnxruntime-web in the
+      # browser and nothing under ui/src uses the Node binding, so the package's own variable skips that download.
       - name: Install dependencies
         working-directory: ui
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
         run: npm ci
 
       - name: Run tests
