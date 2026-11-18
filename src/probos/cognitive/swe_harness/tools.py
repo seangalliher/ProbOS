@@ -267,6 +267,10 @@ class SourceToolResult(ToolResult):
 
     source_reference: SourceRef = field(kw_only=True, repr=False)
     recovery: bool = field(default=False, kw_only=True)
+    # AD-1361 (#1743 item 1): for a fresh sliced read_file, the note naming the whole it is a slice of. It is kept
+    # beside ``output``, so the slice text and every AD-1240 bound measured on it are unchanged; the delivery adds
+    # it to what the model is shown. Empty for a whole read, a recovery re-read and codebase_read_source.
+    slice_note: str = field(default="", kw_only=True, repr=False)
 
 
 @dataclass(frozen=True)
@@ -275,6 +279,7 @@ class InstructionSourceToolResult(InstructionToolResult):
 
     source_reference: SourceRef = field(kw_only=True, repr=False)
     recovery: bool = field(default=False, kw_only=True)
+    slice_note: str = field(default="", kw_only=True, repr=False)  # AD-1361: as on SourceToolResult
 
 
 @dataclass(frozen=True)
@@ -289,6 +294,42 @@ class RecoveryFailureToolResult(ToolResult):
     """A typed, content-free refusal of a promised recovery or private read."""
 
     delivery_error: str = field(kw_only=True)
+
+
+# AD-1361 (#1743 item 1): what a sliced read_file says about the whole it is a slice of, after BF-889's read_page
+# sections. Plain integers, so the model can copy ``offset=`` back; lines are counted as ``str.splitlines`` counts
+# them, which is how ``offset`` and ``limit`` select them.
+_READ_FILE_SLICE_MORE = (
+    "[read_file slice: lines {first} to {last} of {total}, counted from 0 (offset={first}, limit={count}). "
+    "More follows: call read_file again with the same path and offset={last} to read on.]"
+)
+_READ_FILE_SLICE_END = (
+    "[read_file slice: lines {first} to {last} of {total}, counted from 0 (offset={first}, limit={count}). "
+    "This slice reaches the end of the file.]"
+)
+_READ_FILE_SLICE_EMPTY = "[read_file slice: no lines in this range. The file has {total} lines, counted from 0.]"
+
+
+def _read_file_slice_note(first: int, last: int, total: int) -> str:
+    """AD-1361: the note for the zero-based, end-exclusive range ``first:last`` actually returned of ``total`` lines.
+
+    ``first`` and ``last`` are ``slice.indices`` of the request, with ``last`` never below ``first``.
+    """
+    if first >= last:
+        return _READ_FILE_SLICE_EMPTY.format(total=total)
+    template = _READ_FILE_SLICE_MORE if last < total else _READ_FILE_SLICE_END
+    return template.format(first=first, last=last, total=total, count=last - first)
+
+
+def with_slice_note(text: str, note: str) -> str:
+    """AD-1361: ``text``, a blank line and ``note``; ``note`` alone when ``text`` is empty; ``text`` when there is no note.
+
+    The note follows the slice, so a reader of the text from its start meets the slice first, and AD-1148's bound,
+    which keeps a head and a tail, keeps the note unless the cap is too small for it.
+    """
+    if not note:
+        return text
+    return f"{text}\n\n{note}" if text else note
 
 
 def _read_context(context: dict[str, Any] | None) -> WorkspaceReadContext | None:
@@ -333,7 +374,7 @@ def _workspace_result_path(
 
 def _verified_source_result(
     target: Path, runtime: object, read: WorkspaceReadContext,
-    start: int | None, end: int | None,
+    start: int | None, end: int | None, *, note_slice: bool = False,
 ) -> ToolResult:
     read.scope.validate(str(target), read.directive)
     expected = read.directive.reference if type(read.directive) is RecoverRead else None
@@ -371,13 +412,22 @@ def _verified_source_result(
         read.binding.agent_id, read.scope.run_nonce, str(target),
         snapshot.identity, snapshot.revision, digest, first, max(first, last), len(lines), whole,
     )
+    # AD-1361 (#1743 item 1): a fresh sliced read_file carries the note naming the whole it is a slice of; a
+    # recovery re-read does not, because its text is held to the per-read bound (BF-946) and the frame that made
+    # its promise already named the whole.
+    note = (
+        _read_file_slice_note(first, max(first, last), len(lines))
+        if note_slice and expected is None and not whole else ""
+    )
     result = _file_read_result(text, target, runtime)
     if isinstance(result, InstructionToolResult):
         return InstructionSourceToolResult(
             output=text, repository_instructions=result.repository_instructions,
-            source_reference=reference, recovery=expected is not None,
+            source_reference=reference, recovery=expected is not None, slice_note=note,
         )
-    return SourceToolResult(output=text, source_reference=reference, recovery=expected is not None)
+    return SourceToolResult(
+        output=text, source_reference=reference, recovery=expected is not None, slice_note=note,
+    )
 
 
 async def _workspace_slice_result(
@@ -483,14 +533,17 @@ class ReadFileTool:
                 start = int(offset or 0) if offset is not None or limit is not None else None
                 end = (start or 0) + int(limit) if limit is not None else None
                 return await drained_result_io(
-                    lambda: _verified_source_result(target, self._runtime, read, start, end),
+                    lambda: _verified_source_result(target, self._runtime, read, start, end, note_slice=True),
                 )
             text = target.read_text(encoding="utf-8")
             if offset is not None or limit is not None:
                 lines = text.splitlines()
                 start = int(offset or 0)
                 end = start + int(limit) if limit is not None else len(lines)
-                text = "\n".join(lines[start:end])
+                first, last, _ = slice(start, end).indices(len(lines))
+                # AD-1361 (#1743 item 1): the slice, then the note naming the whole it is a slice of.
+                note = _read_file_slice_note(first, max(first, last), len(lines))
+                text = with_slice_note("\n".join(lines[start:end]), note)
             return _file_read_result(text, target, self._runtime)
         except WorkspaceResultError as exc:
             return RecoveryFailureToolResult(error=exc.code, delivery_error=exc.code)
