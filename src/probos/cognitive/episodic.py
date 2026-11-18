@@ -3626,6 +3626,10 @@ class EpisodicMemory:
             missing = [eid for eid in fused_ids if eid not in have]
             if missing:
                 for ep in await self.get_by_ids(missing):
+                    # BF-938 (#1680): get_by_ids is unfiltered, so an episode the dense loop's AD-607 gate dropped came
+                    # back here whenever it matched a keyword. Each hydrated episode passes the same gate.
+                    if self._security_anomaly_drop(ep, query=query):  # BF-938: the AD-607 gate, as the dense loop applies it
+                        continue
                     have[ep.id] = ep
             return [have[eid] for eid in fused_ids if eid in have]
         except Exception:
@@ -5044,17 +5048,14 @@ class EpisodicMemory:
 
         # AD-607a/c: anchor-aware recall anomaly gate over scored results
         if getattr(self, "_security_config", None) is not None and budgeted:
-            _aq = _AnchorQueryView(
-                watch_section=query_watch_section or watch_section,
-                channel=channel,
-                department=department,
-                trigger_agent=trigger_agent or agent_id,
-                trigger_type=intent_type or trigger_type,
-            )
+            # BF-938 (#1680): the view is built from this method's own cues; it named recall_by_anchor's parameters,
+            # so any bound config raised NameError here. ``agent_id`` is the recalling agent's sovereign id, not who
+            # drove an episode (an episode's trigger_agent is a callsign, "captain" or an author id): never compared.
+            _aq = _AnchorQueryView(watch_section=query_watch_section, trigger_type=intent_type)
             filtered_rs: list[RecallScore] = []
             for rs in budgeted:
                 if self._security_anomaly_drop(
-                    rs.episode, query=semantic_query, anchor_query=_aq,
+                    rs.episode, query=query, anchor_query=_aq,
                 ):
                     continue
                 filtered_rs.append(rs)
@@ -5271,7 +5272,7 @@ class EpisodicMemory:
                 watch_section=watch_section,
                 channel=channel,
                 department=department,
-                trigger_agent=trigger_agent or agent_id,
+                trigger_agent=trigger_agent,  # BF-938: never the recalling agent's sovereign id (see recall_weighted)
                 trigger_type=trigger_type,
             )
             filtered: list[Episode] = []

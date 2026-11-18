@@ -197,11 +197,13 @@ class TestProvenanceIntegrity:
         assert ok is False
         assert reason.startswith("unknown_source:")
 
-    def test_validate_provenance_direct_no_correlation_fails(self) -> None:
-        ep = make_episode(correlation_id="")
-        ok, reason = validate_provenance(ep)
-        assert ok is False
-        assert reason == "direct_source_missing_correlation_id"
+    def test_validate_provenance_direct_no_correlation_passes(self) -> None:
+        # BF-938 (#1680): this pinned "fails" (direct_source_missing_correlation_id). The Captain retired that rule on
+        # 2026-11-18 until AD-1360 (#1828) restores it as a check that the id resolves to an AD-492 chain.
+        assert validate_provenance(make_episode(correlation_id="")) == (True, "")
+        # The two remaining reasons still fire on a direct episode with no correlation id.
+        assert validate_provenance(make_episode(correlation_id="", agent_ids=[])) == (False, "missing_agent_ids")
+        assert validate_provenance(make_episode(correlation_id="", source="forged")) == (False, "unknown_source:forged")
 
     def test_validate_provenance_federated_source_no_correlation_passes(self) -> None:
         ep = make_episode(source="federated", correlation_id="")

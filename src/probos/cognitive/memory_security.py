@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from probos.types import Episode
+from probos.types import Episode, MemorySource
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +48,28 @@ class StoreSecurityDecision:
     matched_pattern: str = ""
 
 
-# AD-607b: known MemorySource enum values (mirrors AD-541 MemorySource).
-KNOWN_MEMORY_SOURCES: frozenset[str] = frozenset({
+# AD-607b: the episode sources the provenance check knows. BF-938 (#1680): the set claimed to mirror AD-541's
+# MemorySource, lacked four of its five values and every label production writes outside that enum, so
+# enforce_provenance would have dropped every reflection, cross-agent recall, chat and rebuilt episode ProbOS writes.
+# tests/test_bf938_episode_source_guard.py fails when an Episode( construction under src/probos writes a source that
+# is not here.
+_AD607_ORIGINAL_SOURCES: frozenset[str] = frozenset({
     "direct", "introspection", "designed", "federated", "imported",
     "consolidated_thought", "seeded",
 })
+# The sources production writes outside MemorySource, each with its writer (BF-938, amendment A-5).
+_PRODUCTION_EPISODE_SOURCES: frozenset[str] = frozenset({
+    "action_dispatch",     # cognitive/dm/reply_pipeline.py
+    "captain_chat",        # routers/chat.py, the Captain's chat
+    "crew_collaboration",  # cognitive/crew_synth.py, crew synthesis
+    "group_chat_fanout",   # routers/thread_fanout.py, AD-933a
+    "multi_agent_chat",    # routers/chat.py, AD-719
+    "qualification_test",  # cognitive/memory_probes.py, probe episodes seeded into the live store and recalled
+    "wardroom_import",     # maintenance/rebuild_episodic.py, AD-819's rebuild from the Ward Room
+})
+KNOWN_MEMORY_SOURCES: frozenset[str] = (
+    _AD607_ORIGINAL_SOURCES | frozenset(source.value for source in MemorySource) | _PRODUCTION_EPISODE_SOURCES
+)
 
 
 # Pattern set scoped tightly to known prompt-injection shapes. Default-set
@@ -78,16 +95,21 @@ _DEFAULT_ANCHOR_WEIGHTS: dict[str, float] = {
 def validate_provenance(episode: Episode) -> tuple[bool, str]:
     """AD-607b: provenance integrity check. Returns (ok, reason).
 
-    Reason is empty when provenance is intact.
+    Reason is empty when provenance is intact; otherwise ``missing_agent_ids`` or ``unknown_source:<source>``.
+    BF-938 (#1680) retired a third reason, ``direct_source_missing_correlation_id``, on the Captain's decision of
+    2026-11-18. AD-1360 (#1828) restores it as a check that the id resolves to an AD-492 chain, for episodes written
+    after a cutoff.
     """
     if not getattr(episode, "agent_ids", None):
         return False, "missing_agent_ids"
     source = getattr(episode, "source", "") or ""
     if source not in KNOWN_MEMORY_SOURCES:
         return False, f"unknown_source:{source}"
-    if source == "direct" and not getattr(episode, "correlation_id", "") :
-        return False, "direct_source_missing_correlation_id"
-    return True, ""
+    # BF-938 (#1680), the Captain's decision of 2026-11-18 (option A): a direct episode with no AD-492 correlation id
+    # is no longer a provenance gap. The rule checked only that the id was non-empty, most direct producers set none
+    # (704 of 1,227 live episodes, 2026-10-27), and armed it would have dropped 71% of crew recall. The retirement is
+    # temporary: AD-1360 (#1828) restores it as a check that the id resolves, for episodes written after a cutoff.
+    return True, ""  # BF-938: no correlation-id rule until AD-1360 (#1828)
 
 
 def score_anchor_mismatch(episode: Episode, anchor_query: Any) -> float:
