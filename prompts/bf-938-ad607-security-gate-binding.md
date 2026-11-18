@@ -30,6 +30,10 @@
   - The orchestrator's list also named `crew_synth`. That label is not an episode source: the dict at `cognitive/crew_synth.py:425-429` is a `producer_trust` effect, consumed by `self._trust.record_outcome(..., source=payload["source"])` (`:635-641`), not by `Episode(**payload)` (`:642-646`).
 - **A-6, hybrid hydration bypass.** `recall_with_confidence` (behind `recall()`) gates each dense candidate (`episodic.py:3539-3541`). With `memory.hybrid_recall_enabled`, which the supported profile arms (`supported.yaml:27-28`), `_fuse_dense_sparse` hydrates sparse-only ids through the unfiltered `get_by_ids` (`:3624-3630`). So an episode the gate dropped comes back whenever it matches a keyword. This is the same shape AD-1293 documents for its own filter (`:3574-3579`, "filtering earlier would be undone here"). M1 gates each hydrated episode.
 
+**New in R1 (review round 1, 2026-11-18; §16):**
+- **A-7, the in-memory double.** D5's unwrapped binding stopped every runtime boot that installs `MockEpisodicMemory` (`cognitive/episodic_mock.py`), which had none of the three setters: 21 boots in 10 test files raised `AttributeError`. The mock now stores each value under the real memory's attribute name (`episodic.py:1477-1479`), as `set_activation_tracker` does. Its `store` and `recall` read none of them, so it still gates and emits nothing. D5 is unchanged: a wrapped binding would also hide a real memory that fails to bind. B7 pins it.
+- **A-8, the dormant-class baseline.** Once startup binds the gate, `MemorySecurityGate` and `StoreSecurityDecision` are live, so their `wire` rows (owner #1324) leave `docs/development/dormant-class-baseline.yaml` in this change, as #1324 asks. `MemorySecurityRegistry` stays dormant and keeps its row. The rows are removed by hand: `--update-baseline` would also add the unrelated `admission/tickets.py` `TestTicket` row.
+
 **Captain:** nothing further. Every other choice here corrects an armed control to its stated design, or admits only labels ProbOS itself writes. That is inside the envelope (§3).
 
 **Milestones and tiers:** each milestone is one Builder delegation and one local commit, built in order.
@@ -47,6 +51,7 @@ Review is cross-family (`gpt-6.1-sol`) for M1 and M2. One mutation campaign runs
 - New `tests/test_bf938_ad607_recall_gate.py` (M1): 9 functions, 18 cases.
 - New `tests/test_bf938_episode_source_guard.py` (M1): 4 functions, 10 cases.
 - New `tests/test_bf938_ad607_binding.py` (M2): 6 functions, 8 cases.
+- New `tests/test_bf938_mock_episodic_binding.py` (R1, A-7): 1 function, 1 case.
 - Updated `tests/test_ad607_memory_security.py`. In M1, the test that pinned the retired rule as "fails" now pins "passes", with the reason inline. In M3, two tautological tests now ask the real verdict. The file keeps 78 cases.
 
 **Line endings:** the working copies are CRLF (`core.autocrlf=true`). The SEARCH blocks are LF. Match and write with each file's own endings. New files are written LF.
@@ -168,7 +173,7 @@ Each milestone is one Builder delegation and one local commit, built in order.
 
 **How the gate lists were chosen (AV9, re-derived on `9f43697f`):**
 - **M1** lists every test file that matches `MemorySecurityConfig|MemorySecurityGate|validate_recall_result|validate_provenance|_security_gate|set_security_|KNOWN_MEMORY_SOURCES|security\.memory|enforce_provenance|enforce_store|enforce_recall`. That is 7 files; `test_ad1270e1_config_facade.py` is new since a0, and `test_ad1185_config_profiles.py` sits in M2 and M3. It also lists every file that matches `\.recall_weighted\(|\.recall_by_anchor\(|\.recall_with_confidence\(`: 18 files. `test_ad979a/c/f` are new, because M1 now gates hybrid fusion inside `recall_with_confidence`.
-- **M2** lists every test that calls `init_cognitive_services` with an episodic memory (AV9), plus the runtime and profile tests.
+- **M2** lists every test that calls `init_cognitive_services` directly with an episodic memory (AV9), plus the runtime and profile tests. It missed the ten files that reach it through `ProbOSRuntime.start()` with `MockEpisodicMemory` (review round 1; A-7). R1's focused gate (§16) lists them.
 - **Not listed:** `test_ad455_security_team.py` and `test_claude_bootstrap_init_defaults.py`. Their names match only `*_security_config_defaults` and they touch no AD-607 surface. The broad gate runs them; the orchestrator's oracle ran them anyway (27 passed).
 
 **Expected focused counts:** measure each list on `9f43697f`, then add the new cases.
@@ -1341,6 +1346,7 @@ REPLACE:
 - **Change.** Startup binds `security.memory`, a `MemorySecurityGate` and the runtime's event emitter next to AD-610's storage gate, unwrapped. Weighted recall's gate builds its view from the recall's own cues. Neither anchor view compares the recalling agent's sovereign id with an episode's trigger callsign. `KNOWN_MEMORY_SOURCES` holds AD-607's seven labels, every `MemorySource` value and the seven labels production writes (`action_dispatch`, `captain_chat`, `crew_collaboration`, `group_chat_fanout`, `multi_agent_chat`, `qualification_test`, `wardroom_import`). An AST guard fails when an `Episode(` construction under `src/probos` writes a source outside that set. Hybrid fusion passes each sparse-only episode through the gate. On the Captain's decision of 2026-11-18, the rule that a direct episode carries an AD-492 correlation id is retired until AD-1360 (#1828) restores it as a check that the id resolves, for episodes written after a cutoff. Every `enforce_*` default is unchanged: by default the gates only report. The manifest's evidence for both armed flags is now a test through the startup binding and a real `EpisodicMemory`. New: `tests/test_bf938_ad607_recall_gate.py`, `tests/test_bf938_episode_source_guard.py`, `tests/test_bf938_ad607_binding.py`.
 - **Measured (2026-10-27, read-only copy of the Captain's store: 1,227 episodes, 200 queries, 1,806 results).** 704 direct episodes had no correlation id. Under the supported profile with every `MemorySource` value admitted, that rule dropped 71.0% of results, and the default config emitted 14,766 events in the busiest hour. With the rule retired, 1.2% and about 242 events/h, all from `wardroom_import`; with that label admitted, 0 and 0. Gate p95 0.067 ms.
 - **Limits.** AD-607 gates three recall methods (register G8). `probos memory rebuild` binds neither gate (G1). Verdicts fail open at DEBUG (G2). An enforced drop is not refilled (G3). The events are neither persisted nor counted (G4; AD-607j on #1324). Contract `prompts/bf-938-ad607-security-gate-binding.md`.
+- **R1 (review round 1).** The unwrapped binding stopped every runtime boot that installs the in-memory `MockEpisodicMemory` (21 boots in 10 test files). The mock now takes the three setters, stores them and applies none (`tests/test_bf938_mock_episodic_binding.py`). The `MemorySecurityGate` and `StoreSecurityDecision` rows leave the dormant-class baseline.
 ```
 
 **`DECISIONS.md`.** The entry goes before the `### Explicit delegation models` heading (`DECISIONS.md:2020`), as every entry since 2026-10-17 does. On `9f43697f` that heading occurs once, right after BF-982's entry (`:1996`).
@@ -1365,6 +1371,7 @@ REPLACE:
 - *Disclosed effects.* At the default every recall runs the validator. An anomalous episode emits `memory_recall_anomaly` plus `memory_provenance_gap` or `memory_anchor_mismatch` through the runtime's emitter. Under enforcement with hybrid recall, an episode found by both axes is reported twice. A stored episode matching a prompt-injection pattern emits `memory_injection_suspected`. These events are not persisted (AD-1195 grandfathered), and nothing counts them yet (AD-607j). Recall and store results change only when a flag is armed. An enforced drop leaves the episode out of that recall only; it is not deleted.
 - *Reversal.* Revert the BF-938 commits. The setters again have no caller and the armed flags are inert; the NameError returns behind them.
 - *What AD-607 now does (for the Captain).* ProbOS binds its memory security framework whenever it starts with episodic memory. By default it only reports. Each recalled memory is checked; one with no agent, or with a source ProbOS does not write, is reported as `memory_recall_anomaly` and `memory_provenance_gap`. A stored memory whose text matches one of four prompt-injection patterns (ignore previous instructions, a role swap, a spoofed tool call, a system-prompt probe) is reported as `memory_injection_suspected`. What the crew recall and store is unchanged. The supported profile arms two controls, which now work: `enforce_store` refuses to store such a memory, and `enforce_provenance` leaves a memory with a provenance gap out of recall (it stays stored). A direct memory with no correlation id is not a gap until AD-1360 (#1828) restores that check properly. `enforce_recall` (also leave out an anchor mismatch) is armed by no profile. The reference config (`config/system.yaml`) arms none of them, and no command counts the events yet (`/security memory`, AD-607j, #1324).
+- *R1 (review round 1; amendments A-7 and A-8).* The unwrapped binding (D5) stopped every runtime boot that installs `MockEpisodicMemory`, the in-memory test double kept in `src` (21 boots in 10 test files), with `AttributeError`. The mock now takes the three setters and stores each value under the real memory's attribute name, as it stores its activation tracker. Its `store` and `recall` read none of them, so it still gates and emits nothing (`tests/test_bf938_mock_episodic_binding.py`). D5 stands: a wrapped binding would also hide a real memory that fails to bind. `MemorySecurityGate` and `StoreSecurityDecision` are live, so their rows leave `docs/development/dormant-class-baseline.yaml`; `MemorySecurityRegistry` keeps its row.
 
 ### Explicit delegation models, plain-id profile models and the orchestrator's model guard (2026-10-17; F-91, F-116 and F-117 on #1523)
 ```
@@ -1517,12 +1524,20 @@ AV7 CLAIM: no src listener keys on an AD-607 event
     RUN:   Grep "MEMORY_RECALL_ANOMALY|MEMORY_PROVENANCE_GAP|MEMORY_ANCHOR_MISMATCH|MEMORY_INJECTION_SUSPECTED" over src/probos
     FOUND: events.py:364-368; event_persistence.py:298-302; episodic.py:1561, :1569, :1577, :2125 (emits)
     HOLDS: yes
-AV9 CLAIM: every test that passes an episodic memory to init_cognitive_services passes None, a MagicMock or a real EpisodicMemory
-    RUN:   Grep "init_cognitive_services|cognitive_services" over tests (14 files); Grep "episodic_memory=" in them
-    FOUND: test_ad1340_s1_erasure.py:1067 real; test_ad600_transactive_memory.py:191 None; test_bf103_episode_id_mismatch.py:144 MagicMock();
-           fixtures/runtime_lifecycle.py:375 replaces the step; the others import constants or read the source
-           (test_bf907_trust_identity.py's episodic_memory= go to other constructors)
-    HOLDS: yes
+AV9 CLAIM (corrected in R1, 2026-11-18): every episodic memory that reaches init_cognitive_services in a test, directly or through
+           ProbOSRuntime.start(), is None, a mock spec'd on EpisodicMemory, a real EpisodicMemory or MockEpisodicMemory.
+           a1's claim counted direct callers only and missed MockEpisodicMemory (review round 1, P1).
+    RUN:   Grep "init_cognitive_services|cognitive_services" over tests (14 files); Grep "episodic_memory=" in them;
+           multiline Grep "ProbOSRuntime\((?:[^()]|\([^()]*\)){0,400}?episodic_memory=\s*\w+" over {src,tests};
+           multiline Grep "episodic_memory = [^\n]+\n(?:[^\n]*\n){0,3}?\s*await [\w.]+\.start\(\)" over tests
+    FOUND: direct: test_ad1340_s1_erasure.py:1067 real; test_ad600_transactive_memory.py:191 None;
+           test_bf103_episode_id_mismatch.py:144 MagicMock(); fixtures/runtime_lifecycle.py:375 replaces the step.
+           Through start(): __main__.py 1 real; 21 test constructor sites in 11 files: MockEpisodicMemory 17 (test_dreaming 3,
+           test_knowledge_store 3, test_system_qa 3, test_workflow_cache 2, test_experience_nl_memory 2, test_introspect 2,
+           test_hxi_events 1, test_runtime_discovery 1), real EpisodicMemory 3 (test_ad1346_admission_store_writes 2,
+           test_bf923_episodic_recall_callers 1), MagicMock(spec=EpisodicMemory) 1 (test_escalation);
+           assigned before start(): MockEpisodicMemory 4 (test_semantic_knowledge 3, test_emergent_detector 1)
+    HOLDS: yes after R1 (A-7): MockEpisodicMemory, in 21 boots across 10 files, takes the three setters
 AV11 CLAIM: exactly three recall sites call the verdict
     RUN:   Grep "_security_anomaly_drop\(" over src/probos
     FOUND: episodic.py:1534 (def), 3540, 5056, 5279
@@ -1557,7 +1572,7 @@ AV14 CLAIM: `crew_synth` is never an episode source
 
 | Check | Result |
 |---|---|
-| SRP | No method is added to any class. `EpisodicMemory` and `MemorySecurityGate` keep their shape. Two module-private frozensets are added in `memory_security.py` |
+| SRP | No method is added to `EpisodicMemory` or `MemorySecurityGate`; both keep their shape. Two module-private frozensets are added in `memory_security.py`. R1 (A-7) adds three setters to `MockEpisodicMemory`, frozen in `architecture-baseline.yaml` as `srp-size` with triggers `[methods]`; its body stays under 500 lines, so the triggers do not drift |
 | Layer | `startup` imports `cognitive.memory_security` lazily, as it already imports `cognitive.storage_gate` (`:316`). `memory_security` imports `types.MemorySource`, the lowest layer |
 | Phantom precheck | New names: `_Recorder`, `_raising_emitter`, `_episode`, `_anchored`, `_standard`, `_memory`, `_weighted`, `_bound`, `_RaisingGate`, `_KEPT`, `_ALL`, `_FORGED`, `_SETTERS`, `_AD607_ROWS`, `_ARMED_ROWS`, `_INJECTED`, `_AD607_ORIGINAL_SOURCES`, `_PRODUCTION_EPISODE_SOURCES`, `_Site`, `_member`, `_label`, `_resolve`, `_feeder_labels`, `_episode_calls`, `_sites`, `_COMPUTED`, `_SPLAT_FEEDERS`, `_EXPECTED_BY_FORM`, `_PRODUCTION_LABELS`, `_MIN_SITES`, `_FIELDS`, `_DEFAULT_SOURCE`. Every other name is verified in §11 |
 | Kwarg check | `EpisodicMemory(db_path=, max_episodes=, relevance_threshold=, hybrid_recall_enabled=)`; `recall(query, k=)`; `keyword_search(query, k=)`; `recall_weighted(agent_id, query, k=, intent_type=, query_watch_section=)`; `recall_by_anchor(department=, agent_id=)`; `init_cognitive_services(..., emit_event_fn=)`; `MemorySecurityConfig(enforce_provenance=, enforce_recall=, enforce_store=, anchor_mismatch_threshold=)`; `_security_anomaly_drop(episode, *, query=, anchor_query=)`; `dataclasses.replace(Episode, correlation_id=)` |
@@ -1612,7 +1627,7 @@ AV14 CLAIM: `crew_synth` is never an episode source
 7. `validate_provenance` returns only `missing_agent_ids` or `unknown_source:<source>`. Its docstring and the retirement comment name the Captain's decision of 2026-11-18 and AD-1360 (#1828).
 8. No `enforce_*` default, `config/system.yaml` line or `config/profiles/supported.yaml` line changes. `MemorySecurityRegistry` is untouched.
 9. No new `EventType`, config field, table or route; event names and payloads are unchanged.
-10. The new tests use a real `EpisodicMemory`, the real `init_cognitive_services` and the real `load_profile`. The only stand-ins are recording or raising emitters and a raising gate or validator.
+10. The new tests use a real `EpisodicMemory`, the real `init_cognitive_services` and the real `load_profile`; R1's B7 runs that startup on the repository's `MockEpisodicMemory`. The stand-ins are recording or raising emitters, a raising gate or validator, and the inert `object()` and lambda placeholders `_bound` passes for startup arguments these tests do not exercise.
 11. Every test node the manifest's AD-607 rows name exists and tests what the row says.
 
 ## 15. Acceptance criteria
@@ -1639,3 +1654,43 @@ AV14 CLAIM: `crew_synth` is never an episode source
 - **G7 (filed).** AD-1360 (#1828) restores the correlation-id rule as a resolvable-id check after a cutoff.
 - **G8.** AD-607 gates three recall methods (AV11), plus `recall_by_anchor_scored` and `recall_valid_at`, which delegate to gated ones (`episodic.py:3772`, `:5073`). `recall_for_agent`, `recall_for_agent_with_confidence` (with its sovereign hybrid fusion), `recall_by_intent`, `recent_for_agent` and `recent` have no call to the verdict in their bodies. Whether each one reaches a gated method was not enumerated.
 - **G9.** Under enforcement with hybrid recall, an episode the dense loop dropped and the sparse axis found is gated and reported twice.
+
+## 16. Repair R1 (review round 1, 2026-11-18)
+
+Review round 1 (`gpt-6.1-sol`) found one P1: D5's unwrapped binding stopped every runtime boot that installs `MockEpisodicMemory` (A-7). The orchestrator found the stale dormant-class rows (A-8). R1 is one Builder delegation and one local commit on `e82921a7`; its pairs are recorded on #1680.
+
+| File | Change |
+|---|---|
+| `src/probos/cognitive/episodic_mock.py` | Three `None` attributes in `__init__` and three setters that store them (A-7) |
+| New `tests/test_bf938_mock_episodic_binding.py` | B7 |
+| `docs/development/dormant-class-baseline.yaml` | The `MemorySecurityGate` and `StoreSecurityDecision` rows, removed by hand (A-8) |
+| This contract, `DECISIONS.md`, `PROGRESS.md` | A-7, A-8, AV9, §4, §12, §14 item 10 and the R1 bullets |
+
+B7 is in a new file because §7.7 holds `tests/test_bf938_ad607_binding.py` verbatim, so no SEARCH on that file is unique across the candidate. It reuses `_bound` by patching that module's `EpisodicMemory` name, and asserts the premise (`em is mock`).
+
+| Test | Asserts | On `e82921a7` |
+|---|---|---|
+| B7 `test_startup_binds_the_in_memory_mock_and_the_mock_gates_nothing` | The real startup completes on a `MockEpisodicMemory` and stores `config.security.memory`, a `MemorySecurityGate` and the emitter on it. With `enforce_store` armed, the mock still stores and recalls an injected episode, and no `memory_injection_suspected` is emitted | Fails: `AttributeError: 'MockEpisodicMemory' object has no attribute 'set_security_config'` |
+
+Mutation rows (same rules as §10; first an unmutated pass of B7 and `tests/test_runtime_discovery.py`):
+
+| # | File | Line (stripped) | Mutate to | Killed by |
+|---|---|---|---|---|
+| K-1 | `src/probos/cognitive/episodic_mock.py` | `self._security_config = config` | `pass` | B7 |
+| K-2 | same | `self._security_gate = gate` | `pass` | B7 |
+| K-3 | same | `self._security_event_emitter = emitter` | `pass` | B7 |
+| K-4 | same | `def set_security_config(self, config: Any) -> None:` | `def _set_security_config(self, config: Any) -> None:` | B7, `tests/test_runtime_discovery.py` |
+
+No row: the three `= None` lines in `__init__`, because the setters overwrite them and nothing reads them before startup (equivalent).
+
+**Focused gate (29 files):**
+- `tests/test_bf938_mock_episodic_binding.py` and `tests/test_bf938_ad607_binding.py`.
+- The ten runtime-boot files: `test_runtime_discovery`, `test_dreaming`, `test_workflow_cache`, `test_experience_nl_memory`, `test_hxi_events`, `test_introspect`, `test_knowledge_store`, `test_system_qa`, `test_semantic_knowledge`, `test_emergent_detector`.
+- The other fourteen files that name `MockEpisodicMemory`: `test_ad1156_plan_mode_scope`, `test_ad1156_plan_mode_learning`, `test_ad1258_self_knowledge`, `test_ad1341_s4_stand_down`, `test_ad566b_baseline_tests`, `test_ad582_memory_probes`, `test_ad584_recall_qa_fix`, `test_ad599_reflection_episodes`, `test_ad873_episode_decay`, `test_ad980b_dream_attribution`, `test_cognitive_agent`, `test_episodic`, `test_introspection_phase14d`, `test_selective_encoding`.
+- `test_ad1270_dormant_classes`, `test_ad1270b_architecture_fitness` and `test_ad1270f_shutdown_grace`.
+
+Also run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_dormant_classes.py --check`.
+
+**Acceptance (R1):**
+11. Startup completes on `MockEpisodicMemory`. The mock stores the three values and gates nothing (B7; K-1 to K-4), and the ten runtime-boot files pass.
+12. `check_dormant_classes.py --check` reports `0 baseline row(s) no longer dormant` and still lists `admission/tickets.py:97 TestTicket` as new.
