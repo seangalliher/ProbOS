@@ -327,6 +327,18 @@ async def init_cognitive_services(
                 exc,
             )
 
+    # AD-607 (BF-938, #1680): the memory security framework. Every enforce_* flag defaults to False, so by default
+    # the recall validator and the store gate only report (MEMORY_* events); recall and store results change only
+    # when the operator's config or a profile arms a flag. Not wrapped: an armed control that silently fails to
+    # bind is the defect this fixes.
+    if episodic_memory:
+        from probos.cognitive.memory_security import MemorySecurityGate
+
+        episodic_memory.set_security_config(config.security.memory)
+        episodic_memory.set_security_gate(MemorySecurityGate(config.security.memory))
+        episodic_memory.set_security_event_emitter(emit_event_fn)
+        logger.info("AD-607: memory security config, store gate and event emitter bound to EpisodicMemory (BF-938)")
+
     # AD-608: Retroactive evolver for episodic memory
     if episodic_memory and config.retroactive.enabled:
         try:
