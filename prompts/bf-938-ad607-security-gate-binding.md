@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-10-26
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-18
+**Corrected by:** the orchestrator, 2026-11-18, after review round 2 (AV9, section 4 and section 16 only; no code changed)
 
 **Status:** build-ready. Issue #1680 (`gh issue view 1680`: "BF-938: AD-607's recall anomaly gate is never bound in production, and would raise NameError if it were", OPEN). No new number: BF-938 is in the title. Tier **HIGH** (security class: armed security controls that never run). It is batch 1 and is built alone, as one PR.
 
@@ -173,7 +174,7 @@ Each milestone is one Builder delegation and one local commit, built in order.
 
 **How the gate lists were chosen (AV9, re-derived on `9f43697f`):**
 - **M1** lists every test file that matches `MemorySecurityConfig|MemorySecurityGate|validate_recall_result|validate_provenance|_security_gate|set_security_|KNOWN_MEMORY_SOURCES|security\.memory|enforce_provenance|enforce_store|enforce_recall`. That is 7 files; `test_ad1270e1_config_facade.py` is new since a0, and `test_ad1185_config_profiles.py` sits in M2 and M3. It also lists every file that matches `\.recall_weighted\(|\.recall_by_anchor\(|\.recall_with_confidence\(`: 18 files. `test_ad979a/c/f` are new, because M1 now gates hybrid fusion inside `recall_with_confidence`.
-- **M2** lists every test that calls `init_cognitive_services` directly with an episodic memory (AV9), plus the runtime and profile tests. It missed the ten files that reach it through `ProbOSRuntime.start()` with `MockEpisodicMemory` (review round 1; A-7). R1's focused gate (§16) lists them.
+- **M2** lists every test that names `init_cognitive_services` (AV9: `test_ad1340_s1_erasure`, `test_ad600_transactive_memory` and the new binding file call it; `test_bf103_episode_id_mismatch` only inspects its signature), plus the runtime and profile tests. It missed the ten files that reach it through `ProbOSRuntime.start()` with `MockEpisodicMemory` (review round 1; A-7). R1's focused gate (§16) lists them.
 - **Not listed:** `test_ad455_security_team.py` and `test_claude_bootstrap_init_defaults.py`. Their names match only `*_security_config_defaults` and they touch no AD-607 surface. The broad gate runs them; the orchestrator's oracle ran them anyway (27 passed).
 
 **Expected focused counts:** measure each list on `9f43697f`, then add the new cases.
@@ -1530,8 +1531,11 @@ AV9 CLAIM (corrected in R1, 2026-11-18): every episodic memory that reaches init
     RUN:   Grep "init_cognitive_services|cognitive_services" over tests (14 files); Grep "episodic_memory=" in them;
            multiline Grep "ProbOSRuntime\((?:[^()]|\([^()]*\)){0,400}?episodic_memory=\s*\w+" over {src,tests};
            multiline Grep "episodic_memory = [^\n]+\n(?:[^\n]*\n){0,3}?\s*await [\w.]+\.start\(\)" over tests
-    FOUND: direct: test_ad1340_s1_erasure.py:1067 real; test_ad600_transactive_memory.py:191 None;
-           test_bf103_episode_id_mismatch.py:144 MagicMock(); fixtures/runtime_lifecycle.py:375 replaces the step.
+    FOUND: direct (the function is called): test_ad1340_s1_erasure.py:1059, episodic_memory=em at :1067 (a real EpisodicMemory);
+           test_ad600_transactive_memory.py:183, :191 None; test_bf938_ad607_binding.py:83 (_bound: a real EpisodicMemory, or the
+           MockEpisodicMemory that B7 substitutes); fixtures/runtime_lifecycle.py:375 replaces the step.
+           Not a caller (corrected in review round 2): test_bf103_episode_id_mismatch.py only inspects the signature (:318-322);
+           its :144 MagicMock() is an argument of DreamAdapter (:141).
            Through start(): __main__.py 1 real; 21 test constructor sites in 11 files: MockEpisodicMemory 17 (test_dreaming 3,
            test_knowledge_store 3, test_system_qa 3, test_workflow_cache 2, test_experience_nl_memory 2, test_introspect 2,
            test_hxi_events 1, test_runtime_discovery 1), real EpisodicMemory 3 (test_ad1346_admission_store_writes 2,
@@ -1658,6 +1662,8 @@ AV14 CLAIM: `crew_synth` is never an episode source
 ## 16. Repair R1 (review round 1, 2026-11-18)
 
 Review round 1 (`gpt-6.1-sol`) found one P1: D5's unwrapped binding stopped every runtime boot that installs `MockEpisodicMemory` (A-7). The orchestrator found the stale dormant-class rows (A-8). R1 is one Builder delegation and one local commit on `e82921a7`; its pairs are recorded on #1680.
+
+Review round 2 (`gpt-6.1-sol`, a delta review of R1) found one P3 and confirmed the other properties: AV9 listed `test_bf103_episode_id_mismatch.py:144` as a direct caller of `init_cognitive_services`, but that line is an argument of `DreamAdapter` and the file only inspects the function's signature. AV9 and section 4 are corrected by a second local commit that changes this file alone. The direct callers were re-enumerated by a search over `src` and `tests` for `init_cognitive_services`: `runtime.py:3034` in production, and in tests the three files AV9 now names plus the fixture that replaces the step.
 
 | File | Change |
 |---|---|
