@@ -38,8 +38,14 @@ from tests.test_ad1356_s2_tool_effect_table import _native, _notes, _self_task
 from tests.test_ad1356_s3_chain_of_command import _chain, _finished
 
 SECRET_NAME = "secret-name-948.txt"
-_OUTSIDE = "list_files refused: path is outside every readable root"
-_PROTECTED = "list_files refused: path is protected: the runtime's data directory or a config file"
+# AD-1361 (#1743 item 2): a policy refusal now ends with the next action; the mark and the reason are unchanged.
+_LIST_NEXT = ". Do not repeat this call with the same path: list another directory."
+_READ_OUTSIDE = (
+    "read_file refused: path is outside every readable root. Do not repeat this call with the same path: "
+    "read another file, and use list_files to see which files you can read."
+)
+_OUTSIDE = "list_files refused: path is outside every readable root" + _LIST_NEXT
+_PROTECTED = "list_files refused: path is protected: the runtime's data directory or a config file" + _LIST_NEXT
 _PATTERN_REFUSAL = (
     "list_files refused: pattern must be a relative glob with no '..' part; name the directory in path"
 )
@@ -117,7 +123,7 @@ async def test_list_files_refuses_a_base_outside_every_readable_root(
     scene = _scene(tmp_path)
     runtime = _runtime(scene, read_roots=[scene.allowed])
     refused = await ReadFileTool(runtime).invoke({"path": str(scene.outside / SECRET_NAME)})
-    assert refused.error == "read_file refused: path is outside every readable root"  # premise
+    assert refused.error == _READ_OUTSIDE  # premise (AD-1361: with the next action)
     path = {
         "absolute": str(scene.outside),
         "dotdot": str(scene.allowed / ".." / "outside"),
@@ -174,7 +180,7 @@ async def test_a_link_inside_a_permitted_root_to_outside_is_not_listed(tmp_path:
         assert (door / SECRET_NAME).is_file()  # premise: the link reaches the outside file
         runtime = _runtime(scene, read_roots=[scene.allowed])
         refused = await ReadFileTool(runtime).invoke({"path": str(door / SECRET_NAME)})
-        assert refused.error == "read_file refused: path is outside every readable root"  # premise
+        assert refused.error == _READ_OUTSIDE  # premise (AD-1361: with the next action)
         lister = ListFilesTool(runtime)
         top = await lister.invoke({"pattern": "*", "path": str(scene.allowed)})
         assert top.error is None
@@ -329,7 +335,7 @@ async def test_read_file_answers_refused_only_for_the_policys_refusal(
     scene = _scene(tmp_path)
     reader = ReadFileTool(_runtime(scene, read_roots=[scene.allowed]))
     refused = await reader.invoke({"path": str(scene.outside / SECRET_NAME)})
-    assert refused.error == "read_file refused: path is outside every readable root"  # premise
+    assert refused.error == _READ_OUTSIDE  # premise (AD-1361: with the next action)
 
     def _broken(*_args: Any, **_kwargs: Any) -> Path:
         raise RuntimeError("policy layer broke")

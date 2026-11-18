@@ -458,6 +458,20 @@ def _file_read_result(text: str, target: Path, runtime: object) -> ToolResult:
     return InstructionToolResult(output=text, repository_instructions=observation)
 
 
+# AD-1361 (#1743 item 2): a refusal names the nearest action this agent has. list_files is registered beside
+# read_file with the same permissions (register_native_swe_tools) and lists only what the read policy admits
+# (BF-948). Where no tool fits, the agent's reply is the action. Each sentence is kept clear of
+# decomposer._CAPABILITY_GAP_RE (tests/test_ad1361_refusal_next_actions.py).
+_READ_REFUSAL_NEXT = (
+    "Do not repeat this call with the same path: read another file, and use list_files to see which files you can read."
+)
+_LIST_REFUSAL_NEXT = "Do not repeat this call with the same path: list another directory."
+_WRITE_REFUSAL_NEXT = (
+    "Do not repeat this call: leave this file as it is, go on with the rest of your task, "
+    "and say in your reply what change you wanted."
+)
+
+
 # --------------------------------------------------------------------------
 # Read-only tools (Trust 0.0+ Ensign / READ permission)
 # --------------------------------------------------------------------------
@@ -519,7 +533,7 @@ class ReadFileTool:
                     raise WorkspaceResultError("source_changed") from exc
                 if not isinstance(exc, FileAccessDenied):
                     raise  # BF-948: only the policy's refusal carries the refusal mark; any other error is a failure
-                return ToolResult(error=f"read_file refused: {exc}")
+                return ToolResult(error=f"read_file refused: {exc}. {_READ_REFUSAL_NEXT}")  # AD-1361: and the next action
             if read is not None:
                 read.scope.validate(str(target), read.directive)
             offset = params.get("offset")
@@ -671,7 +685,7 @@ class ListFilesTool:
                     permitted_roots=permitted, relative_base=_PROJECT_ROOT,
                 )
             except FileAccessDenied as exc:
-                return ToolResult(error=f"list_files refused: {exc}")
+                return ToolResult(error=f"list_files refused: {exc}. {_LIST_REFUSAL_NEXT}")  # AD-1361: and the next action
             # BF-972 (#1803): the glob and each match's policy check run in one worker thread, off the event loop.
             files, truncated = await asyncio.to_thread(_listed_matches, base, pattern, protected, exempt, permitted)
             if truncated:  # BF-972: the listing says it stopped, and how to narrow it
@@ -951,7 +965,8 @@ _STANDING_ORDERS_NAME_REFUSAL = (
     "digits, '_' or '-', for example 'engineering'"
 )
 _STANDING_ORDERS_DENIED = (
-    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel. "
+    "Do not repeat this call for it: say in your reply which file you needed."  # AD-1361: the next action
 )
 
 
@@ -1150,15 +1165,15 @@ class WriteFileTool:
             refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: write_file
             if refused is not None:
                 logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (AD-1344 rule): write_file names the next action
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: write_file
             if refused is not None:
                 logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
-                return ToolResult(error=f"write_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
+                return ToolResult(error=f"write_file refused: {refused}. {_WRITE_REFUSAL_NEXT}")  # BF-975 (#1806): marked, so the two fault detectors skip it; AD-1361: the next action
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: write_file
             if refused is not None:
                 logger.warning("BF-911 WriteFileTool refused operation=write_file reason_code=protected_write_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (BF-911 rule): write_file names the next action
             target = _resolve_path(path_text)  # AD-1344: write_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")
@@ -1247,15 +1262,15 @@ class EditFileTool:
             refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file
             if refused is not None:
                 logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (AD-1344 rule): edit_file names the next action
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: edit_file
             if refused is not None:
                 logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
-                return ToolResult(error=f"edit_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
+                return ToolResult(error=f"edit_file refused: {refused}. {_WRITE_REFUSAL_NEXT}")  # BF-975 (#1806): marked, so the two fault detectors skip it; AD-1361: the next action
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: edit_file
             if refused is not None:
                 logger.warning("BF-911 EditFileTool refused operation=edit_file reason_code=protected_write_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (BF-911 rule): edit_file names the next action
             target = _resolve_path(path_text)  # AD-1344: edit_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")
