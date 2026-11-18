@@ -197,9 +197,10 @@ flags:
   kind: security-control
   profiles:
   - supported
-  evidence_to_promote: tests/test_ad607_memory_security.py::TestPromptInjectionStoreGate::test_store_ignore_previous_enforced_rejected
-    -- with the flag on the gate returns REJECT for an injected episode; its sibling test
-    proves the same input is ALLOW-with-pattern when off.
+  evidence_to_promote: tests/test_bf938_ad607_binding.py::test_a_bound_store_gate_rejects_an_injected_episode_only_when_enforce_store_is_armed
+    -- through the startup binding (src/probos/startup/cognitive_services.py, BF-938) and a real
+    EpisodicMemory.store(), an injected episode is not persisted when armed and is stored when off;
+    MEMORY_INJECTION_SUSPECTED is emitted either way.
   external_dependency: null
   requires: []
   conflicts_with: []
@@ -207,18 +208,19 @@ flags:
   kind: security-control
   profiles:
   - supported
-  evidence_to_promote: tests/test_ad607_memory_security.py::TestProvenanceIntegrity::test_recall_drops_provenance_gap_when_enforced
-    -- recall drops a provenance-gapped episode only when enforced.
+  evidence_to_promote: tests/test_bf938_ad607_binding.py::test_the_supported_profile_drops_a_forged_source_from_weighted_recall
+    -- the supported profile, bound at startup, drops an episode whose source ProbOS never writes
+    from a real EpisodicMemory's weighted recall, and the default config returns it. BF-938 replaced
+    a test that only compared the flag with itself.
   external_dependency: null
   requires: []
   conflicts_with: []
 - path: security.memory.enforce_recall
   kind: security-control
   profiles: []
-  evidence_to_promote: Needs a test that exercises the recall gate with the flag ON and shows
-    a different outcome from OFF. tests/test_ad607_memory_security.py covers the anomaly scoring
-    but never constructs MemorySecurityConfig(enforce_recall=True), so nothing currently proves
-    the enforcing branch. Enumerated over that file 2026-09-02.
+  evidence_to_promote: tests/test_bf938_ad607_recall_gate.py::test_a_bound_config_completes_a_non_empty_weighted_recall
+    -- with the flag on, weighted recall on a real EpisodicMemory drops the anomalous episode it
+    returns with the flag off (BF-938). Armed by no profile; arming it is a separate decision.
   external_dependency: null
   requires: []
   conflicts_with: []
