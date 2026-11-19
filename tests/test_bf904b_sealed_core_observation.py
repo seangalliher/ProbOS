@@ -375,6 +375,7 @@ def _parser_raising(fault: type[BaseException]) -> Any:
 
 
 @needs_git
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-986 (#1754): the deep-nesting case overflows the Python stack in PyYAML
 @pytest.mark.parametrize(("kind", "text", "raised"), _UNREADABLE, ids=[case[0] for case in _UNREADABLE])
 async def test_a_policy_that_cannot_be_read_observes_nothing_and_the_build_commits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, kind: str, text: bytes,

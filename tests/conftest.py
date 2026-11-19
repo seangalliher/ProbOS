@@ -29,6 +29,7 @@ from probos.substrate.spawner import AgentSpawner
 from probos.config import PoolConfig
 from tests.fixtures.abortive_self_pipe import install_abortive_self_pipe
 from tests.fixtures.timeout_timer_release import pytest_runtest_protocol  # noqa: F401  (pytest hook)
+from tests.fixtures.recursion_limit_gc import gc_quiet_at_recursion_limit  # noqa: F401  (fixture; BF-986, #1754)
 
 # AD-721i: defense-in-depth pytest collection ignore for the bundled in-Blender
 # render script. ``pyproject.toml`` already pins ``testpaths = ["tests"]`` so
