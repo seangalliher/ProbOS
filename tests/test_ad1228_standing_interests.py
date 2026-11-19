@@ -128,7 +128,11 @@ class _EmitHost:
 async def _drain(host: _EmitHost) -> None:
     """Await every coroutine-listener task the host started (never a sleep)."""
     while host._event_listener_tasks:
-        await asyncio.gather(*list(host._event_listener_tasks))
+        pending = tuple(host._event_listener_tasks)
+        try:
+            await asyncio.gather(*pending)
+        finally:
+            host._event_listener_tasks.difference_update(task for task in pending if task.done())
 
 
 class _Clock:
