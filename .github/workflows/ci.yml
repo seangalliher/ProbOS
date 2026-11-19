@@ -67,9 +67,9 @@ jobs:
         # AD-1270f P2.7: each shard keeps --maxfail=10 as its own budget. A shard that
         # stops early is red and leaves nodes unexecuted, which `python-tests` rejects
         # separately, so --maxfail can never give a green `python-tests` with a missing node.
-        # BF-985: shards have stalled after `[ 99%]` until the job limit cancelled them, and a
-        # cancelled job runs no later step. This step limit ends a stall as a FAILED step (a
-        # healthy shard reaches `[ 99%]` in about 13-14 minutes), so both uploads below run.
+        # BF-985: shards have stalled after `[ 99%]` until the job limit cancelled them, and the
+        # evidence upload below skips a cancelled job. This step limit ends a stall as a FAILED
+        # step (a healthy shard reaches `[ 99%]` in about 13-14 minutes), so both uploads run.
         # --probos-shard-stack-dir makes the controller and every worker write all their stacks
         # to ci-shard-stacks after 600 s without a test event (scripts/_ci_shard_pytest_plugin.py).
         timeout-minutes: 38

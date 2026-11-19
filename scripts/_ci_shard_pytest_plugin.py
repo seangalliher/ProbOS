@@ -11,8 +11,9 @@ plus, optionally, ``--probos-shard-durations PATH``, ``--probos-shard-stack-dir 
 ``--probos-shard-stall-seconds S`` (BF-985, below). Relative paths resolve against
 pytest's rootpath. With none of the first three options the plugin is inert. A partial
 set, an index outside 1..N, an unusable durations file, a stall bound without a stack
-directory or below 1, or a stack directory beside pytest's ``faulthandler_timeout``
-raises ``pytest.UsageError`` from ``pytest_configure``, before xdist starts any worker.
+directory or below 1, a stack directory that is the evidence directory or inside it, or a
+stack directory beside pytest's ``faulthandler_timeout`` raises ``pytest.UsageError`` from
+``pytest_configure``, before xdist starts any worker.
 Pytest's rootdir detection
 runs before this plugin loads and reads the value after an unknown option as a path
 argument, so pass explicit test paths (CI passes ``tests/``) or write ``--option=value``.
@@ -36,8 +37,10 @@ re-arms the timer (at most once per S/20 seconds), so the file stays empty unles
 process saw no event for about S seconds; then every thread's stack is written, and again
 every S seconds while the silence lasts. The timer is re-armed after pytest's faulthandler
 plugin cancels it on a failing phase, and re-armed, never cancelled, at session finish and
-unconfigure, so a process that hangs in interpreter shutdown is dumped too; ``Py_Finalize``
-cancels it on a normal exit. The dumps live outside the evidence directory, which
+unconfigure, so the controller, or the one process under ``-n 0``, is dumped if it hangs in
+interpreter shutdown (xdist ends a worker that is still alive 10 s after its run, so with
+the default bound a worker held at exit leaves no dump); ``Py_Finalize`` cancels it on a
+normal exit. The dumps live outside the evidence directory, which
 ``verify`` requires to hold evidence files only. The watchdog only writes: it changes no
 outcome.
 """
@@ -293,8 +296,9 @@ class StallWatchdog:
 
     @pytest.hookimpl(trylast=True)
     def pytest_unconfigure(self) -> None:
-        # The last arm covers threading._shutdown joining a leftover non-daemon thread;
-        # Py_Finalize cancels the timer when the process exits normally.
+        # The last arm covers threading._shutdown joining a leftover non-daemon thread in the
+        # controller (xdist ends a worker still alive 10 s after its run); Py_Finalize cancels
+        # the timer when the process exits normally.
         self.arm()
 
 
@@ -365,11 +369,17 @@ def pytest_configure(config: pytest.Config) -> None:
     except ci_shards.ShardError as exc:
         raise pytest.UsageError(f"CI shard plugin: {exc}") from exc
     stack_file = _stack_file(config)
+    evidence_path = _resolve(config.rootpath, evidence_dir)
+    if stack_file is not None and stack_file.parent.resolve().is_relative_to(evidence_path.resolve()):
+        raise pytest.UsageError(
+            "--probos-shard-stack-dir must not be the evidence directory or inside it: "
+            "scripts/ci_shards.py verify rejects every entry there but shard-K/<worker>.json"
+        )
     stream = None if stack_file is None else _open_stack_file(stack_file)
     recorder = ShardRecorder(
         index=index,
         count=count,
-        evidence_dir=_resolve(config.rootpath, evidence_dir),
+        evidence_dir=evidence_path,
         durations_label=_durations_label(config.rootpath, durations_path),
         durations=durations,
     )

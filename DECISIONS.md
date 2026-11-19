@@ -1717,9 +1717,9 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
   - unconditionally after `pytest_exception_interact`, where pytest's faulthandler plugin cancels the one per-process timer;
   - at session finish and unconfigure.
 
-  It is never cancelled, so a process held at exit by a leftover non-daemon thread is dumped. `faulthandler_timeout` > 0 is refused beside it. Rejected: cancelling at session finish (it blinds the end-of-run window the three stalls point to); pytest's `faulthandler_timeout` (inside one test only, and it shares the timer); a Python watchdog thread (it needs the GIL).
+  It is never cancelled, so the controller, or the one process under `-n 0`, is dumped if a leftover non-daemon thread holds it at exit (xdist ends a worker still alive 10 s after its run, so with the 600 s bound a worker held at exit leaves no dump). `faulthandler_timeout` > 0 is refused beside it. Rejected: cancelling at session finish (it blinds the end-of-run window the three stalls point to); pytest's `faulthandler_timeout` (inside one test only, and it shares the timer); a Python watchdog thread (it needs the GIL).
 - *D3 (ending the stall).* `timeout-minutes: 38` on `Run tests`: the step fails and the job is not cancelled, so both uploads run (`actions/runner` `StepsRunner.cs`). The evidence upload keeps `!cancelled()`, and `python-tests` fails at `Require every shard to succeed` as for any red shard. Rejected: `always()` on the evidence upload (nothing reads a cancelled job's evidence), a longer job limit, an automatic retry.
-- *Residual.* The stall's cause stays unknown until the first stall's `ci-shard-stacks-K` is read. L1 to L8 of the contract. *Reversal.* Revert the commits; only seven-day artifacts remain.
+- *Residual.* The stall's cause stays unknown until the first stall's `ci-shard-stacks-K` is read. L1 to L9 of the contract. *Reversal.* Revert the commits; only seven-day artifacts remain.
 
 ### A judged withdrawal is recorded apart from a lost action, with its reason, and a retried think settles once (2026-11-17, #1807)
 

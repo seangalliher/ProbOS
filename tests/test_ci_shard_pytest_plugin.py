@@ -1071,6 +1071,31 @@ def test_configure_refuses_a_worker_id_it_cannot_name_a_stack_file_after(plugin:
     assert not (tmp_path / "stacks").exists()
 
 
+@pytest.mark.parametrize(
+    "stack_dir",
+    ["ev", "ev/stacks", "ev/shard-2", "./ev/../ev", "ev/stacks/../stacks"],
+    ids=["the evidence directory", "beneath it", "its shard directory", "spelled around it", "beneath it, spelled around it"],
+)
+def test_configure_refuses_a_stack_dir_that_is_the_evidence_directory_or_inside_it(
+    plugin: ModuleType, tmp_path: Path, stack_dir: str
+) -> None:
+    # verify rejects every entry in the evidence root but shard-K/<worker>.json, so such a run would pass and then fail verify.
+    with pytest.raises(pytest.UsageError, match="must not be the evidence directory or inside it"):
+        watchdog_configured(plugin, tmp_path, probos_shard_stack_dir=stack_dir)
+
+    assert not (tmp_path / "ev").exists()
+
+
+@pytest.mark.parametrize("stack_dir", ["stacks", "ev-stacks", "stacks/ev"])
+def test_configure_accepts_a_stack_dir_beside_the_evidence_directory(
+    plugin: ModuleType, tmp_path: Path, stack_dir: str
+) -> None:
+    _, registered = watchdog_configured(plugin, tmp_path, probos_shard_stack_dir=stack_dir)
+    registered["probos-ci-stall-watchdog"].stream.close()
+
+    assert (tmp_path / stack_dir / "faulthandler-controller.txt").is_file()
+
+
 def test_watchdog_rearms_on_test_events_at_most_once_per_twentieth_of_the_bound(
     plugin: ModuleType, tmp_path: Path
 ) -> None:
