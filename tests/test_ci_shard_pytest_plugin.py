@@ -160,8 +160,8 @@ def verify(cs: ModuleType, evidence: Path, count: int, durations: Path) -> int:
 
 
 def repo_strays() -> set[str]:
-    """Evidence-shaped names directly under the repository's root, scripts/ and tests/."""
-    patterns = ("shard-*", "*evidence*", ".gw*.tmp", ".main.*.tmp")
+    """Evidence- and stack-shaped names directly under the repository's root, scripts/ and tests/."""
+    patterns = ("shard-*", "*evidence*", ".gw*.tmp", ".main.*.tmp", "faulthandler-*", "*stacks*")
     return {
         str(path.relative_to(REPO_ROOT))
         for base in (REPO_ROOT, REPO_ROOT / "scripts", REPO_ROOT / "tests")
@@ -172,15 +172,25 @@ def repo_strays() -> set[str]:
 
 @pytest.fixture(scope="module")
 def sharded_run(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
-    """Shard 1/2 under ``-n 2 --dist=loadfile`` and shard 2/2 under ``-n 0``, one evidence dir."""
+    """Shard 1/2 under ``-n 2 --dist=loadfile`` and shard 2/2 under ``-n 0``, one evidence dir.
+
+    BF-985: each run also arms the stall watchdog (the default bound) into its own stack dir.
+    """
     tree = make_tree(tmp_path_factory.mktemp("shard_tree") / "tree")
     evidence = tree.parent / "evidence"
+    stacks = tree.parent / "stacks"
     before = repo_strays()
-    first = run_pytest(tree, "suite", "-q", "-n", "2", "--dist=loadfile", *shard_options(1, 2, evidence))
-    second = run_pytest(tree, "suite", "-q", "-n", "0", *shard_options(2, 2, evidence))
+    first = run_pytest(
+        tree, "suite", "-q", "-n", "2", "--dist=loadfile", *shard_options(1, 2, evidence),
+        f"--probos-shard-stack-dir={stacks / '1'}",
+    )  # fmt: skip
+    second = run_pytest(
+        tree, "suite", "-q", "-n", "0", *shard_options(2, 2, evidence), f"--probos-shard-stack-dir={stacks / '2'}"
+    )
     return SimpleNamespace(
         tree=tree,
         evidence=evidence,
+        stacks=stacks,
         durations=tree / "durations.json",
         first=first,
         second=second,
@@ -242,9 +252,22 @@ def test_the_duration_scheduler_receives_the_shard_filtered_collection(
     assert re.search(r"\b4 passed\b.*\b1 skipped\b.*\b7 deselected\b.*\b1 xfailed\b", sharded_run.second.stdout)
 
 
-def test_the_runs_wrote_only_the_evidence_and_nothing_into_the_repository(
+def test_the_runs_wrote_the_evidence_and_empty_stack_files_apart_and_nothing_into_the_repository(
     sharded_run: SimpleNamespace,
 ) -> None:
+    stack_sizes = {
+        path.relative_to(sharded_run.stacks).as_posix(): path.stat().st_size
+        for path in sharded_run.stacks.rglob("*")
+        if path.is_file()
+    }
+
+    # BF-985: one stack file per process, outside the evidence, empty after a run that never stalled.
+    assert stack_sizes == {
+        "1/faulthandler-controller.txt": 0,
+        "1/faulthandler-gw0.txt": 0,
+        "1/faulthandler-gw1.txt": 0,
+        "2/faulthandler-controller.txt": 0,
+    }
     assert sharded_run.new_strays == set()
     assert sorted(path.name for path in sharded_run.evidence.iterdir()) == ["shard-1", "shard-2"]
     assert sorted(path.name for path in (sharded_run.evidence / "shard-1").iterdir()) == ["gw0.json", "gw1.json"]
@@ -382,10 +405,12 @@ def test_the_command_line_form_ci_uses_works_with_space_separated_options(
 ) -> None:
     tree = make_tree(tmp_path / "tree")
     evidence = tmp_path / "ci-shard-evidence"
+    stacks = tmp_path / "ci-shard-stacks"
     command = [
         "suite", "-n", "0", "-q", "--tb=short", "--maxfail=10", *PLUGIN_ARGS,
         "--probos-shard-index", "1", "--probos-shard-count", "2",
         "--probos-shard-evidence-dir", str(evidence), "--probos-shard-durations=durations.json",
+        "--probos-shard-stack-dir", str(stacks),
     ]  # fmt: skip
 
     first = run_pytest(tree, *command)
@@ -395,6 +420,7 @@ def test_the_command_line_form_ci_uses_works_with_space_separated_options(
     assert (first.returncode, second.returncode) == (0, 0), first.stdout + second.stdout
     assert sorted(read_evidence(evidence)) == ["shard-1/main", "shard-2/main"]
     assert verify(cs, evidence, 2, tree / "durations.json") == 0, capsys.readouterr().out
+    assert [(path.name, path.stat().st_size) for path in stacks.iterdir()] == [("faulthandler-controller.txt", 0)]
 
 
 def test_relative_paths_resolve_against_the_rootpath_not_the_working_directory(tmp_path: Path) -> None:
@@ -421,12 +447,16 @@ def test_relative_paths_resolve_against_the_rootpath_not_the_working_directory(t
 
 @pytest.mark.parametrize(
     "case",
-    ["partial options", "index above count under xdist", "count below one", "default durations absent", "bad durations"],
-)
+    [
+        "partial options", "index above count under xdist", "count below one", "default durations absent",
+        "bad durations", "stall bound without a stack dir", "stack dir beside faulthandler_timeout under xdist",
+    ],
+)  # fmt: skip
 def test_misconfiguration_exits_four_before_any_test_or_worker_starts(tmp_path: Path, case: str) -> None:
     tree = make_tree(tmp_path / "tree")
     (tree / "bad.json").write_text('{"schema_version": 2, "files": {}}', encoding="utf-8")
     evidence = tmp_path / "evidence"
+    stacks = tmp_path / "stacks"
     cases = {
         "partial options": (["-n", "0", *PLUGIN_ARGS, "--probos-shard-index=1"], "must be given together"),
         "index above count under xdist": (
@@ -443,6 +473,15 @@ def test_misconfiguration_exits_four_before_any_test_or_worker_starts(tmp_path: 
             ["-n", "0", *shard_options(1, 2, evidence, durations="bad.json")],
             "durations file bad.json: schema_version must be 1",
         ),
+        "stall bound without a stack dir": (
+            ["-n", "0", *shard_options(1, 2, evidence), "--probos-shard-stall-seconds=5"],
+            "--probos-shard-stall-seconds needs --probos-shard-stack-dir",
+        ),
+        "stack dir beside faulthandler_timeout under xdist": (
+            ["-n", "2", "-o", "faulthandler_timeout=5", *shard_options(1, 2, evidence),
+             f"--probos-shard-stack-dir={stacks}"],
+            "cannot run with faulthandler_timeout > 0",
+        ),
     }  # fmt: skip
     arguments, message = cases[case]
 
@@ -452,6 +491,7 @@ def test_misconfiguration_exits_four_before_any_test_or_worker_starts(tmp_path: 
     assert message in result.stderr
     assert "bringing up nodes" not in result.stdout and "passed" not in result.stdout
     assert not evidence.exists()
+    assert not stacks.exists()
 
 
 def test_a_red_shard_that_stops_early_is_rejected_for_its_exit_status_and_unexecuted_nodes(
@@ -479,6 +519,100 @@ def test_a_red_shard_that_stops_early_is_rejected_for_its_exit_status_and_unexec
     out = capsys.readouterr().out
     assert "shard-1/main reports exitstatus 1, not 0" in out
     assert "missing (never executed): 3" in out
+
+
+# --- BF-985: the stall watchdog, against controlled doubles that end by themselves ----
+
+# A distinctively named function that blocks for a few seconds and then returns, so every run ends
+# by itself and nothing is killed on the host.
+BLOCKER = (
+    "def _bf985_blocks_here(seconds):\n"
+    "    deadline = time.monotonic() + seconds\n"
+    "    while time.monotonic() < deadline:\n"
+    "        time.sleep(0.05)\n\n\n"
+)
+NO_DURATIONS = {"schema_version": 1, "files": {}}
+
+
+def stack_texts(stacks: Path) -> dict[str, str]:
+    return {path.name: path.read_text(encoding="utf-8", errors="replace") for path in sorted(stacks.iterdir())}
+
+
+def test_a_worker_that_stalls_inside_a_test_is_dumped_by_name_and_the_controller_shows_its_wait(
+    cs: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    files = {
+        "suite/test_stalls.py": "import time\n\n\n" + BLOCKER + "def test_stalls_then_returns():\n    _bf985_blocks_here(5)\n",
+        "suite/test_quick.py": "def test_quick():\n    pass\n",
+    }
+    tree = make_tree(tmp_path / "tree", files, durations=NO_DURATIONS)
+    evidence = tmp_path / "evidence"
+    stacks = tmp_path / "stacks"
+
+    result = run_pytest(
+        tree, "suite", "-q", "-n", "2", "--dist=loadfile", *shard_options(1, 1, evidence),
+        f"--probos-shard-stack-dir={stacks}", "--probos-shard-stall-seconds=1",
+    )  # fmt: skip
+
+    texts = stack_texts(stacks)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b2 passed\b", result.stdout)
+    assert sorted(texts) == ["faulthandler-controller.txt", "faulthandler-gw0.txt", "faulthandler-gw1.txt"]
+    stalled = [name for name in ("faulthandler-gw0.txt", "faulthandler-gw1.txt") if "_bf985_blocks_here" in texts[name]]
+    assert len(stalled) == 1, texts
+    assert "Timeout (0:00:01" in texts[stalled[0]] and "test_stalls_then_returns" in texts[stalled[0]]
+    # The controller waits in xdist's event loop while the worker blocks.
+    assert "dsession.py" in texts["faulthandler-controller.txt"]
+    assert "_bf985_blocks_here" not in texts["faulthandler-controller.txt"]
+    assert sorted(path.name for path in evidence.iterdir()) == ["shard-1"]
+    assert verify(cs, evidence, 1, tree / "durations.json") == 0, capsys.readouterr().out
+
+
+def test_a_failing_test_leaves_the_watchdog_armed_for_the_silence_after_it(tmp_path: Path) -> None:
+    """pytest's faulthandler plugin cancels the process's one timer in pytest_exception_interact."""
+    files = {
+        "suite/test_fails.py": (
+            "import time\n\nimport pytest\n\n\n" + BLOCKER
+            + "@pytest.fixture\ndef slow_teardown():\n    yield\n    _bf985_blocks_here(4)\n\n\n"
+            "def test_fails_then_tears_down_slowly(slow_teardown):\n    assert False\n"
+        ),
+    }
+    tree = make_tree(tmp_path / "tree", files, durations=NO_DURATIONS)
+    stacks = tmp_path / "stacks"
+
+    result = run_pytest(
+        tree, "suite", "-q", "-n", "0", *shard_options(1, 1, tmp_path / "evidence"),
+        f"--probos-shard-stack-dir={stacks}", "--probos-shard-stall-seconds=1",
+    )  # fmt: skip
+
+    text = stack_texts(stacks)["faulthandler-controller.txt"]
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert re.search(r"\b1 failed\b", result.stdout)
+    assert "_bf985_blocks_here" in text and "slow_teardown" in text
+
+
+def test_a_process_held_open_at_exit_by_a_leftover_thread_is_dumped_during_shutdown(tmp_path: Path) -> None:
+    """The #1419 shape: interpreter shutdown joins a non-daemon thread after every pytest hook ran."""
+    files = {
+        "suite/test_leaves_a_thread.py": (
+            "import threading\nimport time\n\n\n" + BLOCKER
+            + "def test_leaves_a_non_daemon_thread_behind():\n"
+            "    threading.Thread(target=_bf985_blocks_here, args=(4,), daemon=False).start()\n"
+        ),
+    }
+    tree = make_tree(tmp_path / "tree", files, durations=NO_DURATIONS)
+    stacks = tmp_path / "stacks"
+
+    result = run_pytest(
+        tree, "suite", "-q", "-n", "0", *shard_options(1, 1, tmp_path / "evidence"),
+        f"--probos-shard-stack-dir={stacks}", "--probos-shard-stall-seconds=1",
+    )  # fmt: skip
+
+    text = stack_texts(stacks)["faulthandler-controller.txt"]
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b1 passed\b", result.stdout)
+    assert "_bf985_blocks_here" in text
+    assert "_shutdown" in text  # the main thread is in threading._shutdown, after pytest returned
 
 
 # --- the plugin's hooks, driven in-process for every branch --------------------------
@@ -543,6 +677,55 @@ def written(root: Path, name: str = "ev/shard-2/main.json") -> dict[str, Any]:
     return json.loads((root / name).read_text(encoding="utf-8"))
 
 
+class WatchdogConfig(FakeConfig):
+    """A FakeConfig with ``getini`` (a missing key raises as pytest does) and an optional ``workerinput``."""
+
+    def __init__(
+        self, rootpath: Path, *, ini: dict[str, Any], workerinput: dict[str, Any] | None, **options: Any
+    ) -> None:
+        super().__init__(rootpath, **options)
+        self.ini = ini
+        if workerinput is not None:
+            self.workerinput = workerinput
+
+    def getini(self, name: str) -> Any:
+        if name not in self.ini:
+            raise ValueError(f"unknown configuration value: {name!r}")
+        return self.ini[name]
+
+
+def watchdog_configured(
+    plugin: ModuleType,
+    root: Path,
+    *,
+    ini: dict[str, Any] | None = None,
+    workerinput: dict[str, Any] | None = None,
+    **options: Any,
+) -> tuple[WatchdogConfig, dict[str, Any]]:
+    (root / "durations.json").write_text(json.dumps(DURATIONS), encoding="utf-8")
+    values = {
+        "probos_shard_index": 2,
+        "probos_shard_count": 2,
+        "probos_shard_evidence_dir": "ev",
+        "probos_shard_durations": "durations.json",
+        "probos_shard_stack_dir": "stacks",
+        **options,
+    }
+    config = WatchdogConfig(
+        root, ini={"faulthandler_timeout": "0"} if ini is None else ini, workerinput=workerinput, **values
+    )
+    plugin.pytest_configure(config)
+    return config, dict(config.registered)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 def test_plugin_module_is_marked_unrewritten_and_never_imports_the_gate_plugin() -> None:
     import ast
 
@@ -559,7 +742,7 @@ def test_plugin_module_is_marked_unrewritten_and_never_imports_the_gate_plugin()
     assert not [entry for entry in imports if "gate" in entry[0] or any("gate" in name for name in entry[1])]
 
 
-def test_addoption_registers_the_four_options_with_no_defaults(plugin: ModuleType) -> None:
+def test_addoption_registers_the_six_options_with_no_defaults(plugin: ModuleType) -> None:
     added: list[tuple[tuple[str, ...], dict[str, Any]]] = []
     group = SimpleNamespace(addoption=lambda *names, **kwargs: added.append((names, kwargs)))
     parser = SimpleNamespace(getgroup=lambda *args: group)
@@ -571,18 +754,25 @@ def test_addoption_registers_the_four_options_with_no_defaults(plugin: ModuleTyp
         ("--probos-shard-count",),
         ("--probos-shard-evidence-dir",),
         ("--probos-shard-durations",),
+        ("--probos-shard-stack-dir",),
+        ("--probos-shard-stall-seconds",),
     ]
     assert all(kwargs["default"] is None for _, kwargs in added)
-    assert [kwargs.get("type") for _, kwargs in added] == [int, int, None, None]
+    assert [kwargs.get("type") for _, kwargs in added] == [int, int, None, None, None, int]
 
 
 def test_configure_is_inert_without_any_of_the_three_shard_options(plugin: ModuleType, tmp_path: Path) -> None:
-    for options in ({}, {"probos_shard_durations": "ignored.json"}):
+    for options in (
+        {},
+        {"probos_shard_durations": "ignored.json"},
+        {"probos_shard_stack_dir": "stacks", "probos_shard_stall_seconds": 5},
+    ):
         config = FakeConfig(tmp_path, **options)
 
         plugin.pytest_configure(config)
 
         assert config.registered == []
+    assert not (tmp_path / "stacks").exists()
 
 
 @pytest.mark.parametrize(
@@ -597,6 +787,12 @@ def test_configure_is_inert_without_any_of_the_three_shard_options(plugin: Modul
         ({"probos_shard_index": -1}, r"within 1\.\.2 .* got -1"),
         ({"probos_shard_evidence_dir": "  "}, "must not be empty"),
         ({"probos_shard_durations": "absent.json"}, "durations file absent.json: unreadable"),
+        ({"probos_shard_stall_seconds": 5}, "--probos-shard-stall-seconds needs --probos-shard-stack-dir"),
+        ({"probos_shard_stack_dir": "  "}, "--probos-shard-stack-dir must not be empty"),
+        (
+            {"probos_shard_stack_dir": "stacks", "probos_shard_stall_seconds": 0},
+            r"--probos-shard-stall-seconds must be >= 1, got 0",
+        ),
     ],
 )
 def test_configure_rejects_misconfiguration_with_a_usage_error(
@@ -805,3 +1001,124 @@ def test_recorder_lets_an_unwritable_evidence_directory_fail_loudly(plugin: Modu
 
     with pytest.raises(OSError):
         recorder.pytest_sessionfinish(SimpleNamespace(config=SimpleNamespace()), 0)
+
+
+# --- BF-985: the stall watchdog's configuration and hooks -----------------------------
+
+
+@pytest.mark.parametrize("value", ["5", 5.0])
+def test_configure_refuses_a_stack_dir_beside_pytests_faulthandler_timeout(
+    plugin: ModuleType, tmp_path: Path, value: Any
+) -> None:
+    with pytest.raises(pytest.UsageError, match="cannot run with faulthandler_timeout > 0"):
+        watchdog_configured(plugin, tmp_path, ini={"faulthandler_timeout": value})
+
+    assert not (tmp_path / "stacks").exists()
+
+
+@pytest.mark.parametrize(
+    "ini", [{"faulthandler_timeout": "0"}, {}], ids=["timeout zero", "pytest faulthandler plugin off"]
+)
+def test_configure_accepts_a_stack_dir_when_nothing_else_drives_the_timer(
+    plugin: ModuleType, tmp_path: Path, ini: dict[str, Any]
+) -> None:
+    _, registered = watchdog_configured(plugin, tmp_path, ini=ini, probos_shard_stall_seconds=7)
+    watchdog = registered["probos-ci-stall-watchdog"]
+    watchdog.stream.close()
+
+    assert list(registered) == ["probos-ci-shard-recorder", "probos-ci-stall-watchdog"]
+    assert watchdog.stall_seconds == 7
+
+
+@pytest.mark.parametrize(
+    ("workerinput", "name"),
+    [
+        (None, "faulthandler-controller.txt"),
+        ({"workerid": "gw3", "workercount": 4, "testrunuid": "u"}, "faulthandler-gw3.txt"),
+    ],
+)
+def test_configure_opens_this_processs_stack_file_and_arms_only_when_the_session_starts(
+    plugin: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workerinput: dict[str, Any] | None,
+    name: str,
+) -> None:
+    calls: list[tuple[int, dict[str, Any]]] = []
+    monkeypatch.setattr(plugin.faulthandler, "dump_traceback_later", lambda seconds, **kw: calls.append((seconds, kw)))
+
+    _, registered = watchdog_configured(plugin, tmp_path, workerinput=workerinput)
+    watchdog = registered["probos-ci-stall-watchdog"]
+    try:
+        assert Path(watchdog.stream.name) == tmp_path / "stacks" / name
+        assert sorted(path.name for path in (tmp_path / "stacks").iterdir()) == [name]
+        assert watchdog.stall_seconds == 600 and calls == []
+
+        watchdog.pytest_sessionstart()
+
+        assert calls == [(600, {"repeat": True, "file": watchdog.stream})]
+    finally:
+        watchdog.stream.close()
+    assert (tmp_path / "stacks" / name).read_text(encoding="utf-8") == ""
+
+
+def test_configure_refuses_a_worker_id_it_cannot_name_a_stack_file_after(plugin: ModuleType, tmp_path: Path) -> None:
+    worker = {"workerid": "../gw0", "workercount": 2, "testrunuid": "u"}
+
+    with pytest.raises(pytest.UsageError, match="cannot name a stack file"):
+        watchdog_configured(plugin, tmp_path, workerinput=worker)
+
+    assert not (tmp_path / "stacks").exists()
+
+
+def test_watchdog_rearms_on_test_events_at_most_once_per_twentieth_of_the_bound(
+    plugin: ModuleType, tmp_path: Path
+) -> None:
+    calls: list[tuple[int, dict[str, Any]]] = []
+    clock = FakeClock()
+    with (tmp_path / "s.txt").open("w", encoding="utf-8") as stream:
+        fresh = plugin.StallWatchdog(stream=stream, stall_seconds=600, arm=lambda s, **kw: calls.append((s, kw)), clock=clock)
+        fresh.pytest_runtest_logreport()  # never armed: the first event arms
+        assert len(calls) == 1
+        calls.clear()
+        watchdog = plugin.StallWatchdog(
+            stream=stream, stall_seconds=600, arm=lambda s, **kw: calls.append((s, kw)), clock=clock
+        )
+        watchdog.pytest_sessionstart()
+        armed = []
+        for now, hook in [
+            (10.0, watchdog.pytest_runtest_logstart),
+            (29.9, watchdog.pytest_runtest_logreport),
+            (30.0, watchdog.pytest_runtest_logreport),
+            (59.9, watchdog.pytest_runtest_logstart),
+            (60.0, watchdog.pytest_runtest_logstart),
+        ]:
+            clock.now = now
+            before = len(calls)
+            hook()
+            armed.append(len(calls) > before)
+
+    assert armed == [False, False, True, False, True]
+    assert calls == [(600, {"repeat": True, "file": stream})] * 3
+
+
+def test_watchdog_rearms_inside_the_gap_where_pytest_cancels_the_timer_and_as_the_session_ends(
+    plugin: ModuleType, tmp_path: Path
+) -> None:
+    calls: list[float] = []
+    clock = FakeClock()
+    with (tmp_path / "s.txt").open("w", encoding="utf-8") as stream:
+        watchdog = plugin.StallWatchdog(
+            stream=stream, stall_seconds=600, arm=lambda s, **kw: calls.append(clock.now), clock=clock
+        )
+        watchdog.pytest_sessionstart()
+        for now, hook in [
+            (1.0, watchdog.pytest_exception_interact),
+            (2.0, watchdog.pytest_sessionfinish),
+            (3.0, watchdog.pytest_unconfigure),
+            (3.5, watchdog.pytest_runtest_logreport),
+        ]:
+            clock.now = now
+            hook()
+
+    assert calls == [0.0, 1.0, 2.0, 3.0]

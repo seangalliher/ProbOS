@@ -7,10 +7,13 @@ through ``python -m pytest`` (the bare ``pytest`` command leaves the repository 
 
     --probos-shard-index K --probos-shard-count N --probos-shard-evidence-dir DIR
 
-plus, optionally, ``--probos-shard-durations PATH``. Relative paths resolve against
+plus, optionally, ``--probos-shard-durations PATH``, ``--probos-shard-stack-dir DIR`` and
+``--probos-shard-stall-seconds S`` (BF-985, below). Relative paths resolve against
 pytest's rootpath. With none of the first three options the plugin is inert. A partial
-set, an index outside 1..N or an unusable durations file raises ``pytest.UsageError``
-from ``pytest_configure``, before xdist starts any worker. Pytest's rootdir detection
+set, an index outside 1..N, an unusable durations file, a stall bound without a stack
+directory or below 1, or a stack directory beside pytest's ``faulthandler_timeout``
+raises ``pytest.UsageError`` from ``pytest_configure``, before xdist starts any worker.
+Pytest's rootdir detection
 runs before this plugin loads and reads the value after an unknown option as a path
 argument, so pass explicit test paths (CI passes ``tests/``) or write ``--option=value``.
 
@@ -23,22 +26,45 @@ assignment, and the node ID of every setup-phase report in execution order with 
 kept. ``scripts/ci_shards.py verify`` turns those into the exactly-once proof. The plugin
 changes no markers, scheduling, timeouts or outcomes. The xdist controller never collects,
 so it never writes.
+
+BF-985: with ``--probos-shard-stack-dir DIR`` every pytest process (the xdist controller,
+or the only process under ``-n 0``, and each worker) opens
+``DIR/faulthandler-<controller|gwN>.txt`` for its whole life and arms
+``faulthandler.dump_traceback_later(S, repeat=True)`` on it at session start
+(S = ``--probos-shard-stall-seconds``, default 600). Each test event the process sees
+re-arms the timer (at most once per S/20 seconds), so the file stays empty unless the
+process saw no event for about S seconds; then every thread's stack is written, and again
+every S seconds while the silence lasts. The timer is re-armed after pytest's faulthandler
+plugin cancels it on a failing phase, and re-armed, never cancelled, at session finish and
+unconfigure, so a process that hangs in interpreter shutdown is dumped too; ``Py_Finalize``
+cancels it on a normal exit. The dumps live outside the evidence directory, which
+``verify`` requires to hold evidence files only. The watchdog only writes: it changes no
+outcome.
 """
 
 from __future__ import annotations
 
+import faulthandler
+import re
+import time
 import uuid
 from collections import Counter
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import pytest
 
 from scripts import ci_shards
 
 _RECORDER_NAME = "probos-ci-shard-recorder"
+_WATCHDOG_NAME = "probos-ci-stall-watchdog"
 _PREVIEW_LIMIT = 5
+DEFAULT_STALL_SECONDS = 600
+# Each dump_traceback_later call joins the old watchdog thread and starts a new one, so a test
+# event re-arms at most once per this fraction of the bound.
+_REARM_FRACTION = 20
+_STACK_WORKER_ID = re.compile(r"gw[0-9]{1,6}")
 
 
 def _preview(nodeids: list[str]) -> str:
@@ -90,6 +116,21 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         metavar="PATH",
         help=f"durations JSON for the split (default: {ci_shards.DEFAULT_DURATIONS_PATH})",
+    )
+    group.addoption(
+        "--probos-shard-stack-dir",
+        dest="probos_shard_stack_dir",
+        default=None,
+        metavar="DIR",
+        help="arm a stall watchdog that writes every thread's stack to DIR/faulthandler-<process>.txt",
+    )
+    group.addoption(
+        "--probos-shard-stall-seconds",
+        dest="probos_shard_stall_seconds",
+        type=int,
+        default=None,
+        metavar="S",
+        help=f"seconds without a test event before a stack dump (default: {DEFAULT_STALL_SECONDS})",
     )
 
 
@@ -187,6 +228,114 @@ class ShardRecorder:
         ci_shards.write_evidence(self._evidence_dir, payload)
 
 
+class StallWatchdog:
+    """BF-985: writes every thread's stack to this process's file after a silence of the bound.
+
+    One ``faulthandler`` dump timer exists per process, and ``dump_traceback_later`` replaces it.
+    pytest's own faulthandler plugin cancels that timer in ``pytest_exception_interact``, so this
+    re-arms after that hook; ``pytest_configure`` refuses ``faulthandler_timeout`` > 0 beside it,
+    because pytest then arms and cancels the same timer around every test.
+    """
+
+    def __init__(
+        self,
+        *,
+        stream: TextIO,
+        stall_seconds: int,
+        arm: Callable[..., None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._stream = stream
+        self._stall_seconds = stall_seconds
+        self._rearm_gap = stall_seconds / _REARM_FRACTION
+        self._arm_timer = faulthandler.dump_traceback_later if arm is None else arm
+        self._clock = clock
+        self._armed_at: float | None = None
+
+    @property
+    def stream(self) -> TextIO:
+        """The file the dumps go to; it stays open for the life of the process."""
+        return self._stream
+
+    @property
+    def stall_seconds(self) -> int:
+        return self._stall_seconds
+
+    def arm(self) -> None:
+        """Restart the timer: a dump after ``stall_seconds`` unless re-armed, then every ``stall_seconds``."""
+        self._arm_timer(self._stall_seconds, repeat=True, file=self._stream)
+        self._armed_at = self._clock()
+
+    def _rearm_on_event(self) -> None:
+        if self._armed_at is None or self._clock() - self._armed_at >= self._rearm_gap:
+            self.arm()
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_sessionstart(self) -> None:
+        self.arm()
+
+    def pytest_runtest_logstart(self) -> None:
+        self._rearm_on_event()
+
+    def pytest_runtest_logreport(self) -> None:
+        self._rearm_on_event()
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_exception_interact(self) -> None:
+        # pytest's faulthandler plugin (tryfirst) has just cancelled this process's one timer.
+        self.arm()
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_sessionfinish(self) -> None:
+        # Re-armed, never cancelled: a process can still hang after this, in another plugin's
+        # session finish, in unconfigure or in interpreter shutdown.
+        self.arm()
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_unconfigure(self) -> None:
+        # The last arm covers threading._shutdown joining a leftover non-daemon thread;
+        # Py_Finalize cancels the timer when the process exits normally.
+        self.arm()
+
+
+def _stack_file(config: pytest.Config) -> Path | None:
+    """Check the BF-985 options; return this process's stack file, or None without a stack directory."""
+    stack_dir = config.getoption("probos_shard_stack_dir")
+    stall = config.getoption("probos_shard_stall_seconds")
+    if stack_dir is None:
+        if stall is not None:
+            raise pytest.UsageError("--probos-shard-stall-seconds needs --probos-shard-stack-dir")
+        return None
+    if not stack_dir.strip():
+        raise pytest.UsageError("--probos-shard-stack-dir must not be empty")
+    if stall is not None and stall < 1:
+        raise pytest.UsageError(f"--probos-shard-stall-seconds must be >= 1, got {stall}")
+    try:
+        pytest_timeout = config.getini("faulthandler_timeout")
+    except ValueError:  # pytest's faulthandler plugin is off (-p no:faulthandler): nothing else drives the timer
+        pytest_timeout = 0.0
+    if float(pytest_timeout or 0.0) > 0:
+        raise pytest.UsageError(
+            "--probos-shard-stack-dir cannot run with faulthandler_timeout > 0: pytest's faulthandler "
+            "plugin arms and cancels the same per-process dump timer around every test"
+        )
+    worker_input = getattr(config, "workerinput", None)
+    name = "controller"
+    if isinstance(worker_input, dict):
+        name = str(worker_input["workerid"])
+        if _STACK_WORKER_ID.fullmatch(name) is None:
+            raise pytest.UsageError(f"CI shard plugin cannot name a stack file after worker id {name!r}")
+    return _resolve(config.rootpath, stack_dir) / f"faulthandler-{name}.txt"
+
+
+def _open_stack_file(path: Path) -> TextIO:
+    """Create the stack directory and open this process's file for the rest of its life."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # faulthandler writes to this file's descriptor from its own C thread, without the GIL, and
+    # holds a reference to it; nothing closes it, so a dump during shutdown still lands.
+    return path.open("w", encoding="utf-8")
+
+
 def pytest_configure(config: pytest.Config) -> None:
     index = config.getoption("probos_shard_index")
     count = config.getoption("probos_shard_count")
@@ -215,6 +364,8 @@ def pytest_configure(config: pytest.Config) -> None:
         durations = ci_shards.read_durations(durations_path)
     except ci_shards.ShardError as exc:
         raise pytest.UsageError(f"CI shard plugin: {exc}") from exc
+    stack_file = _stack_file(config)
+    stream = None if stack_file is None else _open_stack_file(stack_file)
     recorder = ShardRecorder(
         index=index,
         count=count,
@@ -223,3 +374,10 @@ def pytest_configure(config: pytest.Config) -> None:
         durations=durations,
     )
     config.pluginmanager.register(recorder, _RECORDER_NAME)
+    if stream is not None:
+        stall = config.getoption("probos_shard_stall_seconds")
+        watchdog = StallWatchdog(
+            stream=stream,
+            stall_seconds=DEFAULT_STALL_SECONDS if stall is None else stall,
+        )
+        config.pluginmanager.register(watchdog, _WATCHDOG_NAME)
