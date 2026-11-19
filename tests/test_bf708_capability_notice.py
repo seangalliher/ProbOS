@@ -244,7 +244,11 @@ class _RealEmitHost:
     async def drain(self) -> None:
         """Await the listener tasks ``_emit_event_local`` spawned."""
         while self._event_listener_tasks:
-            await asyncio.gather(*tuple(self._event_listener_tasks))
+            pending = tuple(self._event_listener_tasks)
+            try:
+                await asyncio.gather(*pending)
+            finally:
+                self._event_listener_tasks.difference_update(task for task in pending if task.done())
 
 
 async def test_real_emit_path_delivers_notice_end_to_end() -> None:

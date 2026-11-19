@@ -1273,7 +1273,11 @@ async def test_a_stand_down_turn_is_answered_inline_by_the_real_dm_consumer_and_
     finally:
         for agent in agents:
             while agent._promoted_turn_tasks:
-                await asyncio.gather(*tuple(agent._promoted_turn_tasks), return_exceptions=True)
+                pending = tuple(agent._promoted_turn_tasks)
+                try:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                finally:
+                    agent._promoted_turn_tasks.difference_update(task for task in pending if task.done())
         await work.stop()
 
     assert len(turns) == 2 and all(intent.params[BOUNDED_TURN_PARAM] is True for intent in turns)
