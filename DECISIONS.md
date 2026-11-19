@@ -1700,6 +1700,14 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *G4 (scope).* Proactive thinks only; the Ward Room notification path is not reconciled (L6).
 - *Residual.* L1, L3, L6, L7, L8, L12, L13, L14, L16, L29, L30 and L31 of the contract. *Reversal.* Revert the BF-934 slice 3 commits.
 
+### BF-986 -- #1754 GATE-F1: a test at the recursion limit runs with the collector quiet; the census of loop leakers runs once (2026-11-19, #1754)
+
+- *The guard.* An explicit fixture, `gc_quiet_at_recursion_limit`, requested with `usefixtures` by each test whose passing path raises `RecursionError` through Python frames. It collects first, then disables automatic collection, then restores the prior state. Collect-first is the only line that stops an explicit collection at the limit from finalising garbage that earlier tests left, and disable is the only line that stops an automatic collection there from finalising garbage made during the test. Rejected: autouse for every test (about 54k collections a run, for 11 nodes); hooking or disabling pytest's unraisable plugin (it hides real errors); raising the recursion limit (moves the window); fixing only the leakers (the census is partial).
+- *Selection.* Overflows in C code alone are not guarded: CPython 3.12 runs the collector only at eval-breaker checks, which a pure-C recursion reaches only after unwinding (gh-97922). Revisit on an interpreter change.
+- *Census.* One whole-suite run with the orchestrator's loop-census plugin after the merge, recorded on #1754. No plugin ships. A test leaker becomes a follow-up item on #1754; a production leaker gets its own issue.
+- *Reading the next occurrence.* In a guarded test: a finaliser the guard cannot stop (garbage made inside the test, or a reference-count drop); the log's `object=` names it. In an unguarded test: that test overflows and needs the guard. With no deep test in the run: a different mechanism, filed as a new item.
+- *Reversal.* Revert the commits: the three tests run with the collector on, and the AD-721h test leaks its loop again.
+
 ### BF-983 -- #1676: an AD-594 consultation reaches the LLM, the AD-1152 golden's refresh rule, a config reference section per path (2026-11-18, #1676)
 
 - *Consultation request.* `prompt=` replaces the field `LLMRequest` never had. A response with `error` set or no text is a failed call, because the client reports rate limits and unavailable tiers that way rather than raising. Rejected for now: `agent_id` routing correlation and parsing the model's self-rated confidence, which are feature work on a path nothing calls.
