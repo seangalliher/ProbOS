@@ -501,11 +501,16 @@ async def test_reader_extensions_preserve_slicing_output_metadata_and_errors(
     )
     result = await reader.invoke(params)
     assert isinstance(result, InstructionToolResult)
-    assert result.output == "beta" and result.metadata == {} and result.error is None
+    # AD-1361 (#1743 item 1): a sliced read_file states the whole after the slice; codebase_read_source does not.
+    expected = "beta" if tool == "codebase_read_source" else (
+        "beta\n\n[read_file slice: lines 1 to 2 of 2, counted from 0 (offset=1, limit=1). "
+        "This slice reaches the end of the file.]"
+    )
+    assert result.output == expected and result.metadata == {} and result.error is None
     assert "NOT-SOURCE-OUTPUT" not in repr(result)
     adapted = ToolCallResult.from_tool_result("call", result, 12.5)
     assert isinstance(adapted, InstructionToolCallResult)
-    assert adapted.output == "beta" and adapted.duration_ms == 12.5
+    assert adapted.output == expected and adapted.duration_ms == 12.5
     assert adapted.repository_instructions is result.repository_instructions
     with pytest.raises(FrozenInstanceError):
         adapted.repository_instructions = InstructionObservation()

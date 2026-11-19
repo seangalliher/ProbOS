@@ -73,6 +73,7 @@ from probos.cognitive.swe_harness.tools import (
     SourceToolResult,
     WorkspaceSliceToolResult,
     register_native_swe_tools,
+    with_slice_note,
 )
 from probos.execution.workspace import WorkspaceManager
 from probos.execution.workspace_result_store import WorkspaceResultStore
@@ -1315,7 +1316,10 @@ async def test_armed_fresh_read_returns_the_native_content_with_a_verified_refer
     armed = await _invoke(executor, reader, params, context, read=read)
     assert isinstance(native, ToolResult) and not isinstance(native, _SOURCE_RESULTS)
     assert isinstance(armed, _SOURCE_RESULTS)
-    assert armed.output == native.output  # universal newlines, slicing and the trailing newline
+    # AD-1361 (#1743 item 1): a sliced read_file states the whole. The plain path puts the note in its text; the
+    # verified path carries it beside its text, and AD-1240's delivery shows it, so the text stays the slice.
+    assert bool(armed.slice_note) == (reader == "read_file" and bool(arguments))
+    assert native.output == with_slice_note(armed.output, armed.slice_note)  # universal newlines, slicing, trailing newline
     reference = armed.source_reference
     assert reference.path == str(path) and reference.whole == (not arguments)
     assert reference.raw_sha256 == hashlib.sha256(raw_bytes).hexdigest() and reference.total_lines == 4
@@ -1602,7 +1606,11 @@ async def test_same_named_directory_outside_the_workspace_keeps_ordinary_line_se
     path.write_bytes(b"first\r\nsecond\r\nthird\r\n")
     raw = await _invoke(executor, "read_file", {"path": str(path), "offset": 1, "limit": 1}, context)
     assert isinstance(raw, ToolResult) and not isinstance(raw, _SOURCE_RESULTS)
-    assert raw.error is None and raw.output == "second"
+    # AD-1361 (#1743 item 1): the plain path's slice is followed by the note naming the whole.
+    assert raw.error is None and raw.output == (
+        "second\n\n[read_file slice: lines 1 to 2 of 3, counted from 0 (offset=1, limit=1). "
+        "More follows: call read_file again with the same path and offset=2 to read on.]"
+    )
 
 
 # --- delivery admission: the preview path and the work-pull receipt ---------
@@ -2146,8 +2154,13 @@ async def test_explicit_recovery_after_scope_exit_refuses_plaintext(tmp_path: Pa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reader,arguments,expected", [
-    ("read_file", {"offset": -2, "limit": 1}, "c"),
-    ("read_file", {"offset": 1, "limit": 0}, ""),
+    # AD-1361 (#1743 item 1): the model is shown a sliced read_file's note after the slice (the range actually
+    # returned, of the 4 lines); an empty range is the note alone; a whole read is unchanged.
+    ("read_file", {"offset": -2, "limit": 1}, (
+        "c\n\n[read_file slice: lines 2 to 3 of 4, counted from 0 (offset=2, limit=1). "
+        "More follows: call read_file again with the same path and offset=3 to read on.]"
+    )),
+    ("read_file", {"offset": 1, "limit": 0}, "[read_file slice: no lines in this range. The file has 4 lines, counted from 0.]"),
     ("read_file", {}, "a\nb\nc\nd\n"),
     ("codebase_read_source", {"start_line": 2, "end_line": 3}, "b\nc"),
     ("codebase_read_source", {"start_line": -4, "end_line": -1}, "a\nb\nc"),
@@ -3409,9 +3422,11 @@ async def test_r1_worked_source_call_keeps_lexical_promise_before_target_access(
             ).run(system_prompt="", user_message="", tools=[*offer("read_file")], context=context)  # #1796: the loop runs only offered tools, so the scripted call's tool is offered.
             assert fresh.stopped_reason == "complete" and not fresh_llm.responses
             expected = "REPLACEMENT_PAYLOAD" if change == "physical" else canonical.splitlines()[0]
-            assert _last_result(fresh_llm.requests[-1]) == expected
             assert isinstance(observed[-1], _SOURCE_RESULTS)
             assert observed[-1].recovery is False
+            # AD-1361 (#1743 item 1): the fresh sliced read keeps its text and is shown with the note naming the whole.
+            assert observed[-1].output == expected and observed[-1].slice_note.startswith("[read_file slice: lines 0 to 1 of ")
+            assert _last_result(fresh_llm.requests[-1]) == with_slice_note(expected, observed[-1].slice_note)
     finally:
         if change == "physical":
             _unlink_alias(source_dir)

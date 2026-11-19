@@ -267,6 +267,10 @@ class SourceToolResult(ToolResult):
 
     source_reference: SourceRef = field(kw_only=True, repr=False)
     recovery: bool = field(default=False, kw_only=True)
+    # AD-1361 (#1743 item 1): for a fresh sliced read_file, the note naming the whole it is a slice of. It is kept
+    # beside ``output``, so the slice text and every AD-1240 bound measured on it are unchanged; the delivery adds
+    # it to what the model is shown. Empty for a whole read, a recovery re-read and codebase_read_source.
+    slice_note: str = field(default="", kw_only=True, repr=False)
 
 
 @dataclass(frozen=True)
@@ -275,6 +279,7 @@ class InstructionSourceToolResult(InstructionToolResult):
 
     source_reference: SourceRef = field(kw_only=True, repr=False)
     recovery: bool = field(default=False, kw_only=True)
+    slice_note: str = field(default="", kw_only=True, repr=False)  # AD-1361: as on SourceToolResult
 
 
 @dataclass(frozen=True)
@@ -289,6 +294,43 @@ class RecoveryFailureToolResult(ToolResult):
     """A typed, content-free refusal of a promised recovery or private read."""
 
     delivery_error: str = field(kw_only=True)
+
+
+# AD-1361 (#1743 item 1): what a sliced read_file says about the whole it is a slice of, after BF-889's read_page
+# sections. Plain integers, so the model can copy ``offset=`` back; lines are counted as ``str.splitlines`` counts
+# them, which is how ``offset`` and ``limit`` select them.
+_READ_FILE_SLICE_MORE = (
+    "[read_file slice: lines {first} to {last} of {total}, counted from 0 (offset={first}, limit={count}). "
+    "More follows: call read_file again with the same path and offset={last} to read on.]"
+)
+_READ_FILE_SLICE_END = (
+    "[read_file slice: lines {first} to {last} of {total}, counted from 0 (offset={first}, limit={count}). "
+    "This slice reaches the end of the file.]"
+)
+_READ_FILE_SLICE_EMPTY = "[read_file slice: no lines in this range. The file has {total} lines, counted from 0.]"
+
+
+def _read_file_slice_note(first: int, last: int, total: int) -> str:
+    """AD-1361: the note for the zero-based, end-exclusive range ``first:last`` actually returned of ``total`` lines.
+
+    ``first`` and ``last`` are ``slice.indices`` of the request, with ``last`` never below ``first``.
+    """
+    if first >= last:
+        return _READ_FILE_SLICE_EMPTY.format(total=total)
+    template = _READ_FILE_SLICE_MORE if last < total else _READ_FILE_SLICE_END
+    return template.format(first=first, last=last, total=total, count=last - first)
+
+
+def with_slice_note(text: str, note: str) -> str:
+    """AD-1361: ``text``, a blank line and ``note``; ``note`` alone when ``text`` is empty; ``text`` when there is no note.
+
+    The note follows the slice, so a reader of the text from its start meets the slice first. AD-1148's bound
+    (``tool_result_max_chars``, 0 and off by default) keeps a head and a tail of a text it cuts, so a cut text keeps
+    the whole note only when the tail, after any shrink to fit the cap, is at least as long as the note.
+    """
+    if not note:
+        return text
+    return f"{text}\n\n{note}" if text else note
 
 
 def _read_context(context: dict[str, Any] | None) -> WorkspaceReadContext | None:
@@ -333,7 +375,7 @@ def _workspace_result_path(
 
 def _verified_source_result(
     target: Path, runtime: object, read: WorkspaceReadContext,
-    start: int | None, end: int | None,
+    start: int | None, end: int | None, *, note_slice: bool = False,
 ) -> ToolResult:
     read.scope.validate(str(target), read.directive)
     expected = read.directive.reference if type(read.directive) is RecoverRead else None
@@ -371,13 +413,22 @@ def _verified_source_result(
         read.binding.agent_id, read.scope.run_nonce, str(target),
         snapshot.identity, snapshot.revision, digest, first, max(first, last), len(lines), whole,
     )
+    # AD-1361 (#1743 item 1): a fresh sliced read_file carries the note naming the whole it is a slice of; a
+    # recovery re-read does not, because its text is held to the per-read bound (BF-946) and the frame that made
+    # its promise already named the whole.
+    note = (
+        _read_file_slice_note(first, max(first, last), len(lines))
+        if note_slice and expected is None and not whole else ""
+    )
     result = _file_read_result(text, target, runtime)
     if isinstance(result, InstructionToolResult):
         return InstructionSourceToolResult(
             output=text, repository_instructions=result.repository_instructions,
-            source_reference=reference, recovery=expected is not None,
+            source_reference=reference, recovery=expected is not None, slice_note=note,
         )
-    return SourceToolResult(output=text, source_reference=reference, recovery=expected is not None)
+    return SourceToolResult(
+        output=text, source_reference=reference, recovery=expected is not None, slice_note=note,
+    )
 
 
 async def _workspace_slice_result(
@@ -406,6 +457,20 @@ def _file_read_result(text: str, target: Path, runtime: object) -> ToolResult:
     if not observation.targets and not observation.notices:
         return ToolResult(output=text)
     return InstructionToolResult(output=text, repository_instructions=observation)
+
+
+# AD-1361 (#1743 item 2): a refusal names the nearest action this agent has. A sentence names no tool but the one
+# refused: that tool ran, so it was offered, and a tool cannot see the rest of the offer (AD-1240 offers read_file
+# alone as the recovery reader). Where no tool fits, the agent's reply is the action. Each sentence is kept clear of
+# decomposer._CAPABILITY_GAP_RE (tests/test_ad1361_refusal_next_actions.py).
+_READ_REFUSAL_NEXT = (
+    "Do not repeat this call with the same path: read another file, or say in your reply which file you needed."
+)
+_LIST_REFUSAL_NEXT = "Do not repeat this call with the same path: list another directory."
+_WRITE_REFUSAL_NEXT = (
+    "Do not repeat this call: leave this file as it is, go on with the rest of your task, "
+    "and say in your reply what change you wanted."
+)
 
 
 # --------------------------------------------------------------------------
@@ -469,7 +534,7 @@ class ReadFileTool:
                     raise WorkspaceResultError("source_changed") from exc
                 if not isinstance(exc, FileAccessDenied):
                     raise  # BF-948: only the policy's refusal carries the refusal mark; any other error is a failure
-                return ToolResult(error=f"read_file refused: {exc}")
+                return ToolResult(error=f"read_file refused: {exc}. {_READ_REFUSAL_NEXT}")  # AD-1361: and the next action
             if read is not None:
                 read.scope.validate(str(target), read.directive)
             offset = params.get("offset")
@@ -483,14 +548,17 @@ class ReadFileTool:
                 start = int(offset or 0) if offset is not None or limit is not None else None
                 end = (start or 0) + int(limit) if limit is not None else None
                 return await drained_result_io(
-                    lambda: _verified_source_result(target, self._runtime, read, start, end),
+                    lambda: _verified_source_result(target, self._runtime, read, start, end, note_slice=True),
                 )
             text = target.read_text(encoding="utf-8")
             if offset is not None or limit is not None:
                 lines = text.splitlines()
                 start = int(offset or 0)
                 end = start + int(limit) if limit is not None else len(lines)
-                text = "\n".join(lines[start:end])
+                first, last, _ = slice(start, end).indices(len(lines))
+                # AD-1361 (#1743 item 1): the slice, then the note naming the whole it is a slice of.
+                note = _read_file_slice_note(first, max(first, last), len(lines))
+                text = with_slice_note("\n".join(lines[start:end]), note)
             return _file_read_result(text, target, self._runtime)
         except WorkspaceResultError as exc:
             return RecoveryFailureToolResult(error=exc.code, delivery_error=exc.code)
@@ -618,7 +686,7 @@ class ListFilesTool:
                     permitted_roots=permitted, relative_base=_PROJECT_ROOT,
                 )
             except FileAccessDenied as exc:
-                return ToolResult(error=f"list_files refused: {exc}")
+                return ToolResult(error=f"list_files refused: {exc}. {_LIST_REFUSAL_NEXT}")  # AD-1361: and the next action
             # BF-972 (#1803): the glob and each match's policy check run in one worker thread, off the event loop.
             files, truncated = await asyncio.to_thread(_listed_matches, base, pattern, protected, exempt, permitted)
             if truncated:  # BF-972: the listing says it stopped, and how to narrow it
@@ -898,7 +966,8 @@ _STANDING_ORDERS_NAME_REFUSAL = (
     "digits, '_' or '-', for example 'engineering'"
 )
 _STANDING_ORDERS_DENIED = (
-    "standing_orders_lookup: that standing-orders file is not readable on this vessel"
+    "standing_orders_lookup: that standing-orders file is not readable on this vessel. "
+    "Do not repeat this call for it: say in your reply which file you needed."  # AD-1361: the next action
 )
 
 
@@ -1097,15 +1166,15 @@ class WriteFileTool:
             refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: write_file
             if refused is not None:
                 logger.warning("AD-1344 WriteFileTool refused operation=write_file reason_code=constitution_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (AD-1344 rule): write_file names the next action
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: write_file
             if refused is not None:
                 logger.warning("BF-943 WriteFileTool refused operation=write_file reason_code=captain_document_refused")
-                return ToolResult(error=f"write_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
+                return ToolResult(error=f"write_file refused: {refused}. {_WRITE_REFUSAL_NEXT}")  # BF-975 (#1806): marked, so the two fault detectors skip it; AD-1361: the next action
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: write_file
             if refused is not None:
                 logger.warning("BF-911 WriteFileTool refused operation=write_file reason_code=protected_write_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (BF-911 rule): write_file names the next action
             target = _resolve_path(path_text)  # AD-1344: write_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")
@@ -1194,15 +1263,15 @@ class EditFileTool:
             refused = constitution_write_refusal(path_text, _PROJECT_ROOT)  # AD-1344: edit_file
             if refused is not None:
                 logger.warning("AD-1344 EditFileTool refused operation=edit_file reason_code=constitution_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (AD-1344 rule): edit_file names the next action
             refused = captain_document_write_refusal(path_text, _PROJECT_ROOT)  # BF-943: edit_file
             if refused is not None:
                 logger.warning("BF-943 EditFileTool refused operation=edit_file reason_code=captain_document_refused")
-                return ToolResult(error=f"edit_file refused: {refused}")  # BF-975 (#1806): marked, so the two fault detectors skip it
+                return ToolResult(error=f"edit_file refused: {refused}. {_WRITE_REFUSAL_NEXT}")  # BF-975 (#1806): marked, so the two fault detectors skip it; AD-1361: the next action
             refused = protected_write_refusal(path_text, root=_PROJECT_ROOT, runtime=self._runtime)  # BF-911: edit_file
             if refused is not None:
                 logger.warning("BF-911 EditFileTool refused operation=edit_file reason_code=protected_write_refused")
-                return ToolResult(error=refused)
+                return ToolResult(error=f"{refused}. {_WRITE_REFUSAL_NEXT}")  # AD-1361 (BF-911 rule): edit_file names the next action
             target = _resolve_path(path_text)  # AD-1344: edit_file, the text the rule judged
             strict_target = (context or {}).get("_strict_native_target")
             strict_root = (context or {}).get("_strict_native_root")

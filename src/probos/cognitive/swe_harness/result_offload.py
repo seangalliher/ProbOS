@@ -40,6 +40,7 @@ from probos.cognitive.swe_harness.tool_call import (
 from probos.cognitive.swe_harness.tools import (
     CodebaseReadSourceTool, InstructionSourceToolResult, ReadFileTool,
     RecoveryFailureToolResult, SourceToolResult, WorkspaceSliceToolResult,
+    with_slice_note,
 )
 from probos.execution.workspace_results import (
     CANONICAL_MAX_BYTES,
@@ -541,9 +542,10 @@ def _source_frame(reference: SourceRef, capture: CanonicalCapture, allowance: in
         count += 1
     if not count:
         raise WorkspaceResultError("source_window_unavailable")
+    # AD-1361 (#1743 item 1): the frame names the whole file the observed lines are a part of.
     return (
         f"[original source v1; raw_sha256={reference.raw_sha256}; "
-        f"observed lines {reference.line_start}:{reference.line_end}]\n"
+        f"observed lines {reference.line_start}:{reference.line_end} of {reference.total_lines}]\n"
         f"Outline: {capture.outline}\n"
         "No copy was written. Ordinary zero-based line slicing/newline semantics apply. "
         "Same-run recovery checks identity, revision and digest. Next top-level turn or "
@@ -625,6 +627,10 @@ async def _prepare_result(captured: CapturedConversion, context: DeliveryContext
         reference = raw.workspace_slice.reference if isinstance(raw, WorkspaceSliceToolResult) else raw.source_reference
         return with_result_delivery(producer, ResultDelivery("recovered", text, reference))
     if encoded_size <= TOOL_RESULT_THRESHOLD_BYTES:
+        if isinstance(raw, (SourceToolResult, InstructionSourceToolResult)) and raw.slice_note:
+            # AD-1361 (#1743 item 1): a fresh sliced read_file states the whole it is a slice of. The note follows
+            # the slice in what the model is shown; the threshold above was measured on the slice alone.
+            return captured.result(with_slice_note(text, raw.slice_note))
         return captured.legacy_result()
     capture = canonical_capture(captured)
     if context.remaining_iterations < 2:

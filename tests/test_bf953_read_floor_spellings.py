@@ -65,8 +65,12 @@ from tests.test_bf948_list_files_read_policy import SECRET_NAME, _OUTSIDE, _PROT
 
 WINDOWS = pytest.mark.skipif(os.name != "nt", reason="BF-953: these are Windows path spellings")
 _CONTENT = b"bf953 fixture"
-_READ_PROTECTED = "read_file refused: path is protected: the runtime's data directory or a config file"
-_READ_OUTSIDE = "read_file refused: path is outside every readable root"
+# AD-1361 (#1743 item 2): read_file's policy refusal now ends with the next action.
+_READ_NEXT = (
+    ". Do not repeat this call with the same path: read another file, or say in your reply which file you needed."
+)
+_READ_PROTECTED = "read_file refused: path is protected: the runtime's data directory or a config file" + _READ_NEXT
+_READ_OUTSIDE = "read_file refused: path is outside every readable root" + _READ_NEXT
 _FLOOR_REASON = "path is protected: the runtime's data directory or a config file"
 _OUTSIDE_REASON = "path is outside every readable root"
 _UNVERIFIED_REASON = "path cannot be verified against the protected roots"
@@ -563,7 +567,7 @@ async def test_a_floor_that_cannot_be_read_refuses_a_share_spelling_and_nothing_
     assert _decide(str(scene.allowed / "allowed note long name.txt"), **roots)[0] == "admitted"
     reader = ReadFileTool(_runtime(scene, read_roots=[scene.root]))
     answered = await reader.invoke({"path": shared})
-    assert answered.error == f"read_file refused: {_UNVERIFIED_REASON}" and answered.output is None
+    assert answered.error == f"read_file refused: {_UNVERIFIED_REASON}{_READ_NEXT}" and answered.output is None
 
 
 def _device_spelling(target: Path) -> str | None:
@@ -795,7 +799,7 @@ async def test_a_named_stream_of_a_floor_file_is_refused_and_one_of_a_neighbour_
     config_stream = await reader.invoke({"path": str(lay.config) + ":zz"})
     assert config_stream.error == _READ_PROTECTED and config_stream.output is None
     vault_stream = await reader.invoke({"path": str(vault) + ":zz"})
-    assert vault_stream.error == f"read_file refused: {_LEAF_REASON}" and vault_stream.output is None
+    assert vault_stream.error == f"read_file refused: {_LEAF_REASON}{_READ_NEXT}" and vault_stream.output is None
     assert protected_write_refusal(str(lay.config) + ":zz", runtime=runtime) is not None, "the write side refuses the name"
     neighbour_stream = await reader.invoke({"path": str(lay.neighbour) + ":zz"})
     assert neighbour_stream.error is None and "stream fixture" in repr(neighbour_stream.output)

@@ -1960,6 +1960,16 @@ AD-1346 M3e4d12 is the twelfth part of M3e4d and part (d) of register R160. The 
 - *Residual, accepted.* Registers R166 and R167 of the contract.
 - *Reversal.* Revert the M3e4d12 commits.
 
+### AD-1361 -- A sliced read_file states the whole it is a slice of, and the native tools' refusals name the next action (2026-11-18, #1743)
+
+- *Scope.* `cognitive/swe_harness/tools.py` (`with_slice_note`, `_read_file_slice_note`, `SourceToolResult.slice_note`, the refusal sentences), `cognitive/swe_harness/result_offload.py` (the legacy branch of `_prepare_result`, `_source_frame`), tests. #1743 items 1 and 2. Item 6 is one bullet in `prompts/review-criteria.md` section 8 and takes no number. Contract `prompts/ad-1361-tool-results-state-the-whole-and-refusals-name-the-next-action.md`.
+- *The note.* Lines as `str.splitlines` counts them, the range actually returned, three fixed texts (more follows, reaches the end, no lines), placed after the slice. It follows BF-889's `read_page` sections.
+- *Placement by path.* The plain path puts it in the text. The verified path carries it beside the text, and the AD-1240 legacy delivery appends it. A note inside the verified text was rejected: it would count against the per-read bound (BF-946) and the source frame's line count. A recovery re-read and an artifact slice carry none, because their frame named the whole (`of N` on the source frame; `chars` in the artifact outline).
+- *Refusals.* A refusal says what was refused and why, then one sentence naming the nearest action this agent has. Where no tool fits, that action is the agent's reply. No sentence names a tool but the one refused: a tool cannot see the agent's offer, and AD-1240 offers `read_file` alone as the recovery reader, so the `list_files` the first build named could be refused unrun (review round 1). Appending keeps BF-948's mark and the identity of repeated texts, so the fault detectors decide as before. The first family is `tools.py`. #1722 S3 keeps the agent-work refusals, and the other families follow on #1743.
+- *Rejected.* A typed note rendered by the loop (more code for the same effect). Reserving room in the frames for a note on recovery reads (it moves the AD-1240 accounting). Covering `codebase_read_source` now (it needs its own 1-based sentence). Editing the rule texts in `builder_paths.py` and `file_access.py` (other writers return them).
+- *Residual.* Recorded limits L1 to L12 of the contract.
+- *Reversal.* Revert the AD-1361 commits. Item 6's bullet is reverted on its own.
+
 ### BF-946 -- A read-only call's failed delivery comes back to the agent as an error, and the run goes on (2026-11-02, #1723)
 
 - *Scope.* `cognitive/swe_harness/agentic_loop.py` (`_continues_after_failed_delivery`, `_delivery_stop`, `format_tool_result_content`), `cognitive/swe_harness/result_offload.py` (`retry_delivery_error`, `_OversizedFrame`, `_log_delivery_failure`, `DeliveryContext.tool_name`), tests. Contract `prompts/bf-946-read-only-delivery-failure-continues.md`.

@@ -682,7 +682,12 @@ async def test_a_config_path_attribute_that_raises_is_refused_not_reported_missi
             outcomes.append((await EditFileTool(vessel).invoke(edit, context)).error)
         except Exception as exc:  # r1's route under the dispatch context: NoEffectFailure("file_not_found")
             outcomes.append(f"raised {type(exc).__name__}")
-    assert outcomes == [refusal, refusal], outcomes
+    # AD-1361 (#1743 item 2): edit_file returns the rule's refusal followed by the next action.
+    answered = (
+        f"{refusal}. Do not repeat this call: leave this file as it is, go on with the rest of your task, "
+        "and say in your reply what change you wanted."
+    )
+    assert outcomes == [answered, answered], outcomes
     assert (layout.checkout / "config" / "other.yaml").read_text(encoding="utf-8") == "other: 1\n"
     assert _unchanged(layout)
 
