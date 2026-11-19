@@ -19,7 +19,7 @@ None of these occurs in the repository today. A grep for `StallWatchdog|probos-s
 
 Three CI Python shards have stalled. Each printed `[ 99%]`, then printed nothing until the 45-minute job limit (`ci.yml:27`) cancelled it with `##[error]The operation was canceled.`:
 - run 44395509240 (shard 1, 2026-11-18): `[ 99%]` 12.6 minutes into `Run tests`;
-- run 41764125537 (shard 1, 2026-11-04): `[ 99%]` at 13.8 minutes;
+- run 41764125537 (shard 1, 2026-11-04): `[ 99%]` 13.4 minutes into `Run tests`;
 - #1452 item 8 (run 36907487200, before the sharding).
 
 In each, the runner's cleanup ended `uv` and five `python` processes (the controller and gw0 to gw3), so no process of the shard had exited. A hung test would have failed at pytest-timeout's 180 s (`pyproject.toml:190`), so the stall is outside one test.
@@ -64,7 +64,7 @@ Heavier designs rejected:
   - **Why 600 s:**
     - The longest healthy silent stretch is one test phase, because each phase report re-arms.
     - CI's per-phase caps are pytest-timeout's 180 s, the AD-1192 capacity test's 300 s (`tests/test_ad1192_owned_steps_store.py:2888`), the AD-1198 gates' 300 and 480 s, and three #1419 cases at 600 s (`tests/test_issue1419_failed_start_rollback.py:2822,2844,2874,2943`). `tests/ablation` (3600 s) skips without live backends.
-    - Worker collection, which emits no events, ends long before 600 s (the whole shard reached `[ 99%]` in 12.6 to 13.8 minutes).
+    - Worker collection, which emits no events, ends long before 600 s (the whole shard reached `[ 99%]` in 12.6 to 13.4 minutes).
     - A stall that starts at about 14 minutes gives dumps at about 24 and 34 minutes, before the 38-minute step limit. Two dumps 10 minutes apart separate a deadlock (the same stack twice) from slow progress.
     - A dump never changes an outcome (`exit=False`), so an early dump costs only a file with content.
   - **`repeat=True`.**
@@ -92,7 +92,7 @@ Heavier designs rejected:
     - BF-892's guard forbids `multiprocessing` launch APIs in `src`.
   - Recorded as L6, with no `os.register_at_fork` hook. Such a hook is process-global and cannot be unregistered, so it would leak into the in-process unit tests.
 - **D6. `ci.yml`.**
-  - **`timeout-minutes: 38` on `Run tests`.** Hung runs reached `[ 99%]` at 12.6 and 13.8 minutes, and BF-322 measured 18 to 22 minutes for the whole unsharded suite. 38 minutes is about 2.5 times a healthy shard and leaves at least 7 minutes of the job's 45 for setup (about 2) and the two uploads. M0-11 measures green runs.
+  - **`timeout-minutes: 38` on `Run tests`.** Hung runs reached `[ 99%]` at 12.6 and 13.4 minutes, and BF-322 measured 18 to 22 minutes for the whole unsharded suite. 38 minutes is about 2.5 times a healthy shard and leaves at least 7 minutes of the job's 45 for setup (about 2) and the two uploads. M0-11 measures green runs.
   - **The rationale comment sits between `- name: Run tests` and `run:`, beside the BF-322 and BF-657 text,** which stays in place.
   - **`ci.yml:78` is unchanged (`!cancelled()`).** After a step limit the job is not cancelled, so the evidence uploads. Its partial content is a second signal: a worker missing from `shard-K/` never reached session finish. The summary job then fails at `Require every shard to succeed`, as for any red shard, before downloading anything. `always()` there would only upload evidence of a cancelled job, which nothing reads.
 - **D7. Pins.** Each changed pin, and why it still guards what it guarded, is listed in section 8.
