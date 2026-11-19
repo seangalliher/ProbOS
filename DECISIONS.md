@@ -1708,6 +1708,19 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Config-reader check.* It stays report-only. Under-reporting from a check that gates nothing costs no build. A version that resolves each read to its owning model comes first if the Captain decides to enforce it.
 - *Reversal.* Revert the commits: the consultation raises `TypeError` again, the golden's lines and message go, and the reference returns to leaf headings without the three sections.
 
+### BF-985 -- A CI shard that stalls writes the stacks of its controller and workers, and a step limit lets them upload (2026-11-19, #1820)
+
+- *Scope.* `scripts/_ci_shard_pytest_plugin.py` (two options, `StallWatchdog`, its wiring in `pytest_configure`), `.github/workflows/ci.yml` (a 38-minute limit on `Run tests`, `--probos-shard-stack-dir`, the `Upload stall stack dumps` step), the pins in `tests/test_ci_shards.py` and `tests/test_ci_shard_pytest_plugin.py`, and the P2.7 row. `scripts/ci_shards.py` and the `python-tests` job are unchanged. From bf-983 F2 (#1820); #1452 item 8 proposed the watchdog. Contract `prompts/bf-985-ci-stall-stack-dumps.md`.
+- *D1 (where the dumps go).* One file per pytest process, `faulthandler-<controller|gwN>.txt`, kept for the process's life. They go in their own directory and artifact (`ci-shard-stacks-K`), uploaded on `failure() || cancelled()` before the evidence upload; a normal run leaves them empty. Rejected: the evidence directory (`verify` rejects any entry but `shard-K/<worker>.json`, so every run would fail) and a verifier exception for them (it widens the exactly-once proof's input for a diagnostic).
+- *D2 (the watchdog).* `faulthandler.dump_traceback_later(600, repeat=True)`. It is armed at session start and re-armed:
+  - by every test event the process sees, at most once per 30 s;
+  - unconditionally after `pytest_exception_interact`, where pytest's faulthandler plugin cancels the one per-process timer;
+  - at session finish and unconfigure.
+
+  It is never cancelled, so the controller, or the one process under `-n 0`, is dumped if a leftover non-daemon thread holds it at exit (xdist ends a worker still alive 10 s after its run, so with the 600 s bound a worker held at exit leaves no dump). `faulthandler_timeout` > 0 is refused beside it. Rejected: cancelling at session finish (it blinds the end-of-run window the three stalls point to); pytest's `faulthandler_timeout` (inside one test only, and it shares the timer); a Python watchdog thread (it needs the GIL).
+- *D3 (ending the stall).* `timeout-minutes: 38` on `Run tests`: the step fails and the job is not cancelled, so both uploads run (`actions/runner` `StepsRunner.cs`). The evidence upload keeps `!cancelled()`, and `python-tests` fails at `Require every shard to succeed` as for any red shard. Rejected: `always()` on the evidence upload (nothing reads a cancelled job's evidence), a longer job limit, an automatic retry.
+- *Residual.* The stall's cause stays unknown until the first stall's `ci-shard-stacks-K` is read. L1 to L9 of the contract. *Reversal.* Revert the commits; only seven-day artifacts remain.
+
 ### A judged withdrawal is recorded apart from a lost action, with its reason, and a retried think settles once (2026-11-17, #1807)
 
 - *Scope.* `cognitive/action_billets.py` (the marker, the cap, `withdrawal_reason`, the billet's clause), `cognitive/action_accounting.py` (`withdrawn` in `PRE_EXTRACTION`; a keyword `withdrawal` on `unaccounted` and `settle_intended_actions`; INFO for a withdrawal), `proactive.py` (`withdrawal_outside_blocks`, the silence gate and the two settles that follow it). One new test file. No config, event type or schema change. Contract `prompts/withdrawal-reason-ledger.md`.
