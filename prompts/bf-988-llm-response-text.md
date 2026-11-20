@@ -2,7 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-20
 
-**Amended by:** the orchestrator, 2026-11-20: first-hand verification of the premises and the corrections listed in section 16; and, after review round 1, Amendment A1 (section 17), whose corrections are also made in place in sections 2, 3, 5, 7.1, 7.4, 7.5, 8.2, 10, 14, 15 and 16. The Architect's text is otherwise unchanged.
+**Amended by:** the orchestrator, 2026-11-20: first-hand verification of the premises and the corrections listed in section 16; and, after review round 1, Amendment A1 (section 17), whose corrections are also made in place in sections 2, 3, 5, 7.1, 7.4, 7.5, 8.2, 10, 14, 15 and 16; and, after review round 2, Amendment A2 (section 18; the Architect's consult `94fea1e5`), which corrects the rollout record again in sections 3, 7.3, 7.4, 8.2 and 16 and in the REPLACE texts of 17.4. The Architect's text is otherwise unchanged.
 
 **Status:** build-ready. Issue #1523; it stays open for its other items, and the PR says `Refs #1523`. One BF number. BF-988 appears only in REPLACE text, the new file's path and text, and tracker text, never in a SEARCH.
 
@@ -13,6 +13,7 @@
 **Milestones:**
 - M1: the new test file first (red), then `types.py` and `guided_reminiscence.py` (green). Tier LOW.
 - M2: the trackers and the generated ledger pair.
+- A1 and A2 (after review rounds 1 and 2): the pairs of sections 17 and 18, one Builder delegation each; one local commit for the source and tests and one for the trackers and the regenerated ledger pair.
 
 Each milestone is one Builder delegation and one local commit. After M2, run one broad gate: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf-988-1523 --receipt logs/gates/bf-988-1523.receipt.json`.
 
@@ -96,11 +97,11 @@ Hiding the fields would cost diagnostic value in logs and assertion messages and
 
 **D5 -- persisted history and the rollout (corrected in review round 1).** No Counselor profile or Ward Room DM was ever written by a reminiscence session (section 0, row 5), so none holds repr text or a session's 0.5. The only persisted 0.5s are `episodic_recall_probe` rows in the qualification store. They leave the 20-result drift window after up to 19 further runs; the auto-captured baseline row does not (below).
 
-Effect, measured on the real store and detector (probe `probe_f1_f2.py`; `drift_detector.py:135-250`). The window is the newest 20 rows and includes the new row, so an agent whose last N rows (N at most 19) are exactly 0.5 gets z = +-sqrt(N) on its first measured score, whatever that score is (a constant history has no spread), and the 0.5 rows stay in the window. With N = 19 and a steady score the next runs give |z| = 3.00, 2.38, 2.00 and then 1.73: up to four consecutive runs signal per agent (critical, then critical or warning, then warning twice), and the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding (N = 4 with a new score of 0.7 gives no signal; N = 9 with 0.9 gives a warning, not a critical). A stored result that is not exactly 0.5 (a skipped 1.0 row, or an accidental parse of a reply) lowers z.
+Effect, measured on the real store and detector (probes `probe_f1_f2.py` and `probe_b988_r2.py`; `drift_detector.py:135-250`). The detector reads the newest 20 conclusive stored rows (inconclusive ones are dropped), the new one included. If an agent's N earlier rows (2 <= N <= 19) are all exactly 0.5, its first measured score x gives z = sign(x - 0.5) * sqrt(N), unless x is 0.5 or differs from it by less than the detector's spread guard (`std_dev < 1e-9`, `drift_detector.py:181`; for N = 19, |x - 0.5| below about 5e-9): then z = 0 and the result is normal. sqrt(N) reaches the warning sigma (2.0) at N = 4 and the critical sigma (3.0) at N = 9, and both cutoffs depend on floating-point rounding (N = 4 with x = 0.7 gives normal; N = 9 with x = 0.9 gives a warning, and with x = 0.8 a critical). With N = 19 and a steady x the next runs give |z| = 4.36, 3.00, 2.38, 2.00 and then 1.73: up to four consecutive non-normal detections per agent, then normal, and the 0.5 rows stay in the window while they do. A stored result that is not exactly 0.5 (a skipped 1.0 row, or an accidental parse of a reply) lowers z.
 
 What reads the stored rows (enumerated over `src/probos`):
-- the Counselor: a critical drift runs an assessment, and a DM follows only if it warrants one (`counselor.py:1475-1536`, `:2449-2459`); a warning only logs;
-- the Tier-3 `scaffold_decomposition` of `__crew__`, which reads each crew member's latest stored Tier-1 score (`collective_tests.py:155-222`) and so moves and signals the same way (`drift_check_tiers` is [1, 2, 3], `config.py:3648`);
+- the Counselor: a critical drift event runs an assessment, and a DM follows only if it warrants one (`counselor.py:1475-1536`, `:2449-2459`); a warning only logs. A detection is not an emission: `_emit_drift_events` allows one event per agent and test per `drift_cooldown_seconds` (3600 s, held in memory; `drift_detector.py:461-488`), so each weekly scheduled run emits and `qualification run`s less than an hour apart emit once;
+- the Tier-3 `scaffold_decomposition` of `__crew__` (`drift_check_tiers` is [1, 2, 3], `config.py:3648`), which is not a per-agent series: it is one aggregate over every crew member's latest personality, recall and confabulation scores (`collective_tests.py:155-222`), written 1 + crew-size times per run (once in each agent's Tier-3 pass and once in the collective pass: `drift_detector.py:316-372`, `qualification.py:475-509`), so its z depends on crew size, run order and its own history, and it need not signal when the individuals do. Measured: a single-aggregate series moving 0.6667 to 0.7308 gave z 3.0 after 10 rows and 4.36 after 20 (probe `probe_b988_r2.py`); the real scheduler with 14 crew, after 10 earlier cycles on the legacy 0.5 recall, wrote 15 rows per cycle and gave z 1.61 (normal) when the recall scored 0.9, while all 14 individual recall reports were critical (probe `probe_b988_r2_sched2.py`);
 - the Vitals Monitor, which repeats a `medical_alert` on every 5 s heartbeat while any latest report is critical (`vitals_monitor.py:176-190`, `:345-356`), one Diagnostician LLM call each (measured: 3 alerts and 3 calls in 3 heartbeats; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change);
 - shell and compare displays (`commands_qualification.py`, `qualification.py:578-612`). No billet requires the probe, and the skill bridge maps three other tests.
 
@@ -502,7 +503,7 @@ REPLACE:
 ```markdown
 # ProbOS Progress
 
-**BF-988 (2026-11-20), #1523 F-19 -- an LLM reply's text is read through one reader, so guided reminiscence never takes a response's repr as its text.** `LLMResponse` has `content` and no `text`, so the three `response.text ... if hasattr(response, 'text') else str(response)` reads in `cognitive/guided_reminiscence.py` (`score_recall`, `build_therapeutic_response`, `run_session`) took the dataclass repr: a reply that is only a number scored 0.5 (a number inside a sentence was parsed out of the repr by accident), and the therapeutic message and recalled text were the repr. New `probos.types.llm_response_text` (an `error` reply reads ""; a `str` `content`; else a `str` `text`; else "", never the repr) replaces the three reads. In production only the AD-566 D2 `episodic_recall_probe` reached the defect, and it is now measured: an agent whose stored history is all 0.5 can signal drift on up to four consecutive runs (the first one or two critical), the Tier-3 `scaffold_decomposition` of `__crew__` moves with it, and a critical report makes the Vitals Monitor repeat its alert on every heartbeat until the next run (#1839, BF-990, edge-triggers that and lands no later than this change); DECISIONS has the figures. The probe now reports a judge that failed or answered no number as inconclusive (`GuidedReminiscenceEngine.score_recall_outcome`, the BF-711 rule), so an outage is neither a drift sample nor a baseline. The Counselor's sessions never reached the reads: `select_episodes_for_session` calls the async `recent_for_agent` without `await` and raises at `len()`, caught by the Counselor. That defect, and that both AD-541c practice and AD-541d sessions take their "recall" from a memoryless fast-tier call, are filed as #1838 (BF-989), since repairing the `await` alone would turn on confabulation diagnoses built on that call. Seven other `.text` readers of a reply are filed on #1820. New `tests/test_bf988_llm_response_text.py`. Contract `prompts/bf-988-llm-response-text.md`.
+**BF-988 (2026-11-20), #1523 F-19 -- an LLM reply's text is read through one reader, so guided reminiscence never takes a response's repr as its text.** `LLMResponse` has `content` and no `text`, so the three `response.text ... if hasattr(response, 'text') else str(response)` reads in `cognitive/guided_reminiscence.py` (`score_recall`, `build_therapeutic_response`, `run_session`) took the dataclass repr: a reply that is only a number scored 0.5 (a number inside a sentence was parsed out of the repr by accident), and the therapeutic message and recalled text were the repr. New `probos.types.llm_response_text` (an `error` reply reads ""; a `str` `content`; else a `str` `text`; else "", never the repr) replaces the three reads. In production only the AD-566 D2 `episodic_recall_probe` reached the defect, and it is now measured: an agent whose earlier stored results are all 0.5 can be flagged by the drift detector on up to four consecutive runs (the first one or two critical; each weekly run emits, but `qualification run`s less than an hour apart emit once), the Tier-3 `scaffold_decomposition` of `__crew__` is one aggregate over the crew that moves with the inputs and need not signal when the individuals do, and a critical report made the Vitals Monitor repeat its alert on every heartbeat until the next run (#1839, BF-990, sends it once per new report and lands no later than this change); DECISIONS has the figures. The probe now reports a judge that failed or answered no number as inconclusive (`GuidedReminiscenceEngine.score_recall_outcome`, the BF-711 rule), and the collective probe, whose result is inconclusive when any Tier-1 input it reads is, passes it on, so an outage is neither a drift sample nor a baseline in either series. The Counselor's sessions never reached the reads: `select_episodes_for_session` calls the async `recent_for_agent` without `await` and raises at `len()`, caught by the Counselor. That defect, and that both AD-541c practice and AD-541d sessions take their "recall" from a memoryless fast-tier call, are filed as #1838 (BF-989), since repairing the `await` alone would turn on confabulation diagnoses built on that call. Seven other `.text` readers of a reply are filed on #1820. New `tests/test_bf988_llm_response_text.py`. Contract `prompts/bf-988-llm-response-text.md`.
 ```
 
 ### 7.5 `DECISIONS.md` (M2)
@@ -518,12 +519,12 @@ REPLACE:
 - *Mechanism.* `LLMResponse` (`types.py`) has `content` and no `text`. The three reads in `guided_reminiscence.py` fell back to `str(response)`, the dataclass repr, which also carries AD-1327's `answered_model` provider text.
 - *Repair.* `probos.types.llm_response_text(response) -> str`, beside `LLMResponse`: a non-empty `str` `error` reads ""; then a `str` `content`, stripped; then a `str` `text`, stripped (test doubles); else "". The three sites call it. An "" reply scores 0.5 (unparseable), falls to the template, or recalls "".
 - *Reach.* Production reached only `score_recall` through `EpisodicRecallProbe` (AD-566 D2): 0.5 for a reply that is only a number, which passed its 0.5 threshold, now measured. The Counselor's session raises `TypeError` at `select_episodes_for_session` (`recent_for_agent` is async and is called without `await`) before any read; the item's repr DM was reproduced by calling `build_therapeutic_response` directly. No profile or DM holds a session's output.
-- *Effect, recorded (review round 1 corrected it).* The detector reads the newest 20 stored rows, with the new row in the window, so an agent whose last N rows (N at most 19) are exactly 0.5 gets z = +-sqrt(N) on its first measured score, whatever that score is (a constant history has no spread), and the 0.5 rows stay in the window. With N = 19 and a steady score the next runs give 3.00, 2.38, 2.00 and then 1.73 (a probe on the real store and detector): up to four consecutive runs signal per agent, critical, then critical or warning, then warning twice, and the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding (N = 4 with a new score of 0.7 gives no signal; N = 9 with 0.9 gives a warning, not a critical). Each signal emits `QUALIFICATION_DRIFT_DETECTED`: the Counselor runs an assessment on a critical one and sends a DM only when it warrants one; the Tier-3 `scaffold_decomposition` of `__crew__` reads each crew member's latest stored score, so it moves and signals the same way; and while any latest report is critical the Vitals Monitor repeats its `medical_alert` on every 5 s heartbeat until the next run replaces the report, one Diagnostician LLM call each (measured on the real classes; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change).
+- *Effect, recorded (review rounds 1 and 2 corrected it).* The detector reads the newest 20 conclusive stored rows (inconclusive ones are dropped), the new one included. If an agent's N earlier rows (2 <= N <= 19) are all exactly 0.5, its first measured score x gives z = sign(x - 0.5) * sqrt(N), unless x is 0.5 or differs from it by less than the detector's spread guard (`std_dev < 1e-9`; for N = 19, |x - 0.5| below about 5e-9): then z = 0 and the result is normal. sqrt(N) reaches the warning sigma (2.0) at N = 4 and the critical sigma (3.0) at N = 9, and both cutoffs depend on floating-point rounding (N = 4 with x = 0.7 gives normal; N = 9 with x = 0.9 gives a warning). With N = 19 and a steady x the next runs give |z| = 4.36, 3.00, 2.38, 2.00 and then 1.73: up to four consecutive non-normal detections per agent, then normal. A detection is not an emission: `QUALIFICATION_DRIFT_DETECTED` fires at most once per agent and test per `drift_cooldown_seconds` (3600 s, held in memory and cleared on restart), so each weekly scheduled run (604800 s) emits, but of several `qualification run`s less than an hour apart only the first does. The Counselor runs an assessment on an emitted critical event and sends a DM only when it warrants one. The Tier-3 `scaffold_decomposition` of `__crew__` is not a per-agent series. It is one aggregate over every crew member's latest personality, recall and confabulation scores, written 1 + crew-size times per run (once in each agent's Tier-3 pass and once in the collective pass), so its z depends on crew size, run order and its own history, and it need not signal when the individuals do. Measured: a single-aggregate series moving 0.6667 to 0.7308 gave z 3.0 after 10 rows and 4.36 after 20; the real scheduler with 14 crew, after 10 earlier cycles on the legacy 0.5 recall, wrote 15 rows and gave z 1.61 (normal) when the recall scored 0.9, while all 14 individual recall reports were critical. While any latest report is critical the Vitals Monitor repeats its `medical_alert` on every 5 s heartbeat until the next run replaces the report, one Diagnostician LLM call each (measured on the real classes; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change).
 - *Rollout.* The first automatic run is seven days after a boot (the loop sleeps one interval first); `qualification run` starts the same path on demand, so the transient decays with the number of runs, not with weeks. The auto-captured baseline of 0.5 is not replaced (`run_test` takes one only when none exists; `run_baseline` and `set_baseline` have no caller in `src`), so `direction` stays measured from 0.5 (#1820, item bf-988 R6). No migration, and none in code: discounting the old rows is a new heuristic or a change of stored data on a live vessel, which is the Captain's. The operator's options are `qualification.drift_check_enabled`, `drift_warning_sigma`, `drift_critical_sigma` and `drift_check_tiers`, and a restart (the cached reports are in memory). The live count needs the data store (#1193) and is not taken.
-- *Judge failure (review round 1, F2).* On the base a judge that failed or answered no number was stored as `score=0.5, passed=True, inconclusive=False`, a measurement; against a history of measured scores it reads as a decline (z -4.36 after 19 results of 0.9). `GuidedReminiscenceEngine.score_recall_outcome` returns `RecallScore(score, inconclusive)` and `score_recall` keeps its float contract and delegates: a failed call or a reply with no number is inconclusive, decided by branch and not by value (a judge that says 0.5 is a measurement; no client, the Jaccard path, is a measurement). `EpisodicRecallProbe` then returns `inconclusive=True`, `passed=False` and an `error` (`k/n episodes: reason`; the `error` is also what keeps `run_test` from taking the run as a baseline), the BF-711 pattern of `communication_benchmarks.py`.
+- *Judge failure (review round 1, F2).* On the base a judge that failed or answered no number was stored as `score=0.5, passed=True, inconclusive=False`, a measurement; against a history of measured scores it reads as a decline (z -4.36 after 19 results of 0.9). `GuidedReminiscenceEngine.score_recall_outcome` returns `RecallScore(score, inconclusive)` and `score_recall` keeps its float contract and delegates: a failed call or a reply with no number is inconclusive, decided by branch and not by value (a judge that says 0.5 is a measurement; no client, the Jaccard path, is a measurement). `EpisodicRecallProbe` then returns `inconclusive=True`, `passed=False` and an `error` (`k/n episodes: reason`; the `error` is also what keeps `run_test` from taking the run as a baseline), the BF-711 pattern of `communication_benchmarks.py`. `ScaffoldDecompositionProbe`, which reads each crew member's latest Tier-1 row, marks its own result inconclusive (`passed=False`, an `error` naming the tests, the inputs in `details`) when any input it reads is inconclusive, so a judge outage neither moves nor baselines the collective series (review round 2, R2-1); an input that timed out is still dropped from its mean, as before.
 - *Decided by the Architect.* None of the six conditions is met: an additive internal helper, no schema, control, spend or boundary; a measurement is turned on, not a feature. Review round 1 (consult `2a7391b7`): the corrected effect is inside the envelope; the Vitals repetition was measured first, as the consult required, and is #1839 (BF-990); the judge-failure repair belongs to this change.
 - *Rejected.* A `text` property on `LLMResponse` (switches on six features at once; two names for one field); `repr=False` on the AD-1327 fields (no reader uses the repr as text after this; diagnostics lose it); the selection `await` (it would turn on Counselor diagnoses built on a memoryless fast-tier recall); repairing the other readers now (each changes a feature's behaviour); an in-code discount of the stored 0.5 rows (a new heuristic, or a change of stored data on a live vessel).
-- *Filed.* The selection `await` and the AD-541c/d recall design (#1838, BF-989); seven other `.text` readers, adoption of this reader by the three existing ones, and a census asserting zero (#1820); the Vitals Monitor's alert on every heartbeat (#1839, BF-990); the permanent 0.5 baseline (#1820, item bf-988 R6).
+- *Filed.* The selection `await` and the AD-541c/d recall design (#1838, BF-989); seven other `.text` readers, adoption of this reader by the three existing ones, and a census asserting zero (#1820); the Vitals Monitor's alert on every heartbeat (#1839, BF-990); the permanent 0.5 baseline (#1820, item bf-988 R6); the shell, `compare`, the completion event and the latest snapshot showing an inconclusive row as a score, and the collective "no data" skip row stored as a measured 0.0 (#1820, item bf-988 R8).
 - *Reversal.* Revert the commits.
 
 ### BF-970 -- Every Ship's Records reader reads a frontmatter block one way: one nesting check at 64, and no reader reads the base's cut (2026-11-20, #1801)
@@ -547,7 +548,7 @@ Change `- [ ] **F-19 (Medium, pre-existing)` to `- [x] **F-19 (Medium, pre-exist
 
 > F-19 fixed by BF-988 (PR #...). An `LLMResponse` has `content`, not `text`, so guided reminiscence read the dataclass repr. One reader, `probos.types.llm_response_text`, now serves all three sites, and it never returns a repr.
 >
-> In production only the AD-566 episodic recall probe reached the defect: its score was 0.5 for a reply that is only a number, which nearly always passed. It is now measured, so **expect drift signals, and more than the one I first wrote (04:58Z)**. Each agent whose stored results are all 0.5 gets a critical signal on its first measured run and up to three more on the following runs (|z| 4.36, 3.00, 2.38, 2.00 for 19 stored results of 0.5 and a steady score; the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding), and the Tier-3 `scaffold_decomposition` of `__crew__` moves with it. A critical report makes the Counselor run an assessment (a DM only when it warrants one) and, until the next run, made the Vitals Monitor broadcast its alert on every heartbeat for one Diagnostician LLM call each; BF-990 (#1839, in the same pull request) now sends it once per report. The first measured run is at the earliest seven days after a boot, or when `qualification run` is used. It comes from the change of measurement, not from the agents. Before that run you can change `qualification.drift_check_enabled`, `drift_warning_sigma`, `drift_critical_sigma` or `drift_check_tiers`, or restart (the cached reports are in memory). The auto-captured baseline of 0.5 stays, so `direction` is measured from 0.5 (#1820, item bf-988 R6). A judge that failed or answered no number is now inconclusive, not a measured 0.5. Reminiscence sessions never reached the defect, because they fail earlier at episode selection (a missing `await`). That defect is filed as #1838 (BF-989), together with the finding that the session's "recall" is a memoryless fast-tier call. Seven other readers of the same shape are filed on #1820.
+> In production only the AD-566 episodic recall probe reached the defect: its score was 0.5 for a reply that is only a number, which nearly always passed. It is now measured, so **expect drift signals, and more than the one I first wrote (04:58Z)**. An agent whose N earlier stored results are all 0.5 gets z = sqrt(N) on its first measured score (zero if the score is 0.5 itself): a warning from N = 4 and a critical from N = 9, the cutoffs depending on floating-point rounding; with 19 such results and a steady score the next runs give |z| 4.36, 3.00, 2.38, 2.00 and 1.73, so up to four consecutive weekly runs can flag an agent, and each weekly run emits its drift event (`qualification run`s less than an hour apart emit once). The Counselor runs an assessment on a critical event and sends a DM only when it warrants one. The Tier-3 `scaffold_decomposition` of `__crew__` is one aggregate over the crew, written 1 + crew-size times per run; it moves with the inputs but need not signal when the individuals do (measured with 14 crew: z 1.61, normal, while every individual recall report was critical). Until the next run a critical report made the Vitals Monitor broadcast its alert on every heartbeat for one Diagnostician LLM call each; BF-990 (#1839, in the same pull request) now sends it once per new report. The first measured run is at the earliest seven days after a boot, or when `qualification run` is used. It comes from the change of measurement, not from the agents. Before that run you can change `qualification.drift_check_enabled`, `drift_warning_sigma`, `drift_critical_sigma` or `drift_check_tiers`, or restart (the cached reports are in memory). The auto-captured baseline of 0.5 stays, so `direction` is measured from 0.5 (#1820, item bf-988 R6). A judge that failed or answered no number is now inconclusive, not a measured 0.5, and the collective probe passes that on. Reminiscence sessions never reached the defect, because they fail earlier at episode selection (a missing `await`). That defect is filed as #1838 (BF-989), together with the finding that the session's "recall" is a memoryless fast-tier call. Seven other readers of the same shape are filed on #1820.
 
 ## 9. What this does NOT change
 
@@ -664,7 +665,8 @@ Each premise below was run first-hand on `cc601a72` (the merge of #1837; its tre
 | P3: the Counselor path is dead in production | A probe over `probos.cognitive.episodic_mock.MockEpisodicMemory` holding one episode: `run_session("a1")` raises `TypeError: object of type 'coroutine' has no len()` and the client is called 0 times; the control (a synchronous double returning the same episode) tests one episode with 3 client calls. Through the Counselor (`_initiate_reminiscence_session`, four episodes): over the real memory no DM, event, profile, cooldown or LLM call; over the control one DM, one event, one profile, one cooldown and 7 calls. History: the await-less line is in the engine's creating commit `92b99a47` (2026-04-04), and `async def recent_for_agent` is in `d52a333a` (2026-03-25). |
 | P4: the measured effect on the base | `score_recall` over `LLMResponse(content="0.9")` returns 0.5; the therapeutic message is the 325-character repr. **Amendment:** a reply with a bare number inside a sentence is parsed out of the repr by accident: "The score is 0.8 out of 1" scores 0.8 and "I would say 0.6 maybe" scores 0.6, while "0.8" and "Score: 0.75." score 0.5. So "always 0.5" became "0.5 for a reply that is only a number" in sections 1, 7.4, 7.5, 8.1 and 8.2. |
 | P6: #1837 does not overlap | The base is the merge commit `cc601a72`, whose tree equals `1c5a6ff9`'s. |
-| D5: the drift figure | **Corrected in review round 1** (section 3, D5; section 17): z = +/- sqrt(N) holds for the first measured run only. With the 0.5 rows still in the window the next runs give 3.00, 2.38 and 2.00 (up to four signals per agent), the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding, and the Tier-3 `__crew__` series and the Vitals Monitor read the same rows. A critical drift makes the Counselor run an assessment, and a DM follows only if the assessment already warrants one (`counselor.py:1475-1536`, `:2449-2459`). |
+| D5: the drift figure | **Corrected in review rounds 1 and 2** (section 3, D5; sections 17 and 18): z = +/- sqrt(N) holds for the first measured run only, and only for a score that differs from 0.5. With the 0.5 rows still in the window the next runs give 3.00, 2.38 and 2.00 (up to four detections per agent, each weekly one emitted), the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding, and the Vitals Monitor reads the same rows; the Tier-3 `__crew__` series is one aggregate that need not follow the individuals. A critical drift makes the Counselor run an assessment, and a DM follows only if the assessment already warrants one (`counselor.py:1475-1536`, `:2449-2459`). |
+| **Review round 2 (Amendment A2)** | R2-1 and R2-2 reproduced first-hand on the real store, detector, scaffold probe and scheduler (section 18): the collective aggregate moved from 0.6667 to 0.7308 and was published as a measurement when the recall judge failed (z 3.0 after 9 earlier rows, 4.36 after 19), and the record's sentences about the first run, emission and the collective series were wrong in the three ways the review named. The Architect's decisions (consult `94fea1e5`): an inconclusive Tier-1 input makes the collective result inconclusive (C1; a timeout is unchanged), the three corrections are as worded in section 3 and the trackers, R2-3 is item bf-988 R8 of #1820. The Architect's code was applied as given except that the details dict is built before the result. The new tests on the committed source: 4 failed, 39 passed (T13 to T16 fail; T17 and T18 are controls); the A2 mutation campaign: 11 of 11 rows killed (18.5). |
 | AV1: no client defines `complete_sync` | `def complete_sync(` occurs nowhere in `src`. |
 | AV7: no billet requires the probe | `episodic_recall_probe` occurs outside tests and archived prompts only at `qualification_tests.py:345` and in an era decisions file. |
 | The census | 12 read sites of `.text` on a `complete()` result in 10 files (an AST pass over `src/probos`, with positive controls): 3 here; 7 wrong in the same way (`avatars/render_verification.py:294`, `avatars/vision_intent_divergence.py:209`, `cognitive/self_render_verify.py:141`, `cognitive/counselor.py:913`, `tools/browser/actions.py:1299`, `tools/browser/compute_use.py:213`, `tools/browser/llm_classifier.py:154`); 2 that read `content` first and are right (`cognitive/insights.py:317`, `cognitive/schedule_parser.py:174`). |
@@ -1122,7 +1124,7 @@ SEARCH:
 ```
 REPLACE:
 ```markdown
-**BF-988 (2026-11-20), #1523 F-19 -- an LLM reply's text is read through one reader, so guided reminiscence never takes a response's repr as its text.** `LLMResponse` has `content` and no `text`, so the three `response.text ... if hasattr(response, 'text') else str(response)` reads in `cognitive/guided_reminiscence.py` (`score_recall`, `build_therapeutic_response`, `run_session`) took the dataclass repr: a reply that is only a number scored 0.5 (a number inside a sentence was parsed out of the repr by accident), and the therapeutic message and recalled text were the repr. New `probos.types.llm_response_text` (an `error` reply reads ""; a `str` `content`; else a `str` `text`; else "", never the repr) replaces the three reads. In production only the AD-566 D2 `episodic_recall_probe` reached the defect, and it is now measured: an agent whose stored history is all 0.5 can signal drift on up to four consecutive runs (the first one or two critical), the Tier-3 `scaffold_decomposition` of `__crew__` moves with it, and a critical report makes the Vitals Monitor repeat its alert on every heartbeat until the next run (#1839, BF-990, edge-triggers that and lands no later than this change); DECISIONS has the figures. The probe now reports a judge that failed or answered no number as inconclusive (`GuidedReminiscenceEngine.score_recall_outcome`, the BF-711 rule), so an outage is neither a drift sample nor a baseline. The Counselor's sessions never reached the reads: `select_episodes_for_session` calls the async `recent_for_agent` without `await` and raises at `len()`, caught by the Counselor. That defect, and that both AD-541c practice and AD-541d sessions take their "recall" from a memoryless fast-tier call, are filed as #1838 (BF-989), since repairing the `await` alone would turn on confabulation diagnoses built on that call. Seven other `.text` readers of a reply are filed on #1820. New `tests/test_bf988_llm_response_text.py`. Contract `prompts/bf-988-llm-response-text.md`.
+**BF-988 (2026-11-20), #1523 F-19 -- an LLM reply's text is read through one reader, so guided reminiscence never takes a response's repr as its text.** `LLMResponse` has `content` and no `text`, so the three `response.text ... if hasattr(response, 'text') else str(response)` reads in `cognitive/guided_reminiscence.py` (`score_recall`, `build_therapeutic_response`, `run_session`) took the dataclass repr: a reply that is only a number scored 0.5 (a number inside a sentence was parsed out of the repr by accident), and the therapeutic message and recalled text were the repr. New `probos.types.llm_response_text` (an `error` reply reads ""; a `str` `content`; else a `str` `text`; else "", never the repr) replaces the three reads. In production only the AD-566 D2 `episodic_recall_probe` reached the defect, and it is now measured: an agent whose earlier stored results are all 0.5 can be flagged by the drift detector on up to four consecutive runs (the first one or two critical; each weekly run emits, but `qualification run`s less than an hour apart emit once), the Tier-3 `scaffold_decomposition` of `__crew__` is one aggregate over the crew that moves with the inputs and need not signal when the individuals do, and a critical report made the Vitals Monitor repeat its alert on every heartbeat until the next run (#1839, BF-990, sends it once per new report and lands no later than this change); DECISIONS has the figures. The probe now reports a judge that failed or answered no number as inconclusive (`GuidedReminiscenceEngine.score_recall_outcome`, the BF-711 rule), and the collective probe, whose result is inconclusive when any Tier-1 input it reads is, passes it on, so an outage is neither a drift sample nor a baseline in either series. The Counselor's sessions never reached the reads: `select_episodes_for_session` calls the async `recent_for_agent` without `await` and raises at `len()`, caught by the Counselor. That defect, and that both AD-541c practice and AD-541d sessions take their "recall" from a memoryless fast-tier call, are filed as #1838 (BF-989), since repairing the `await` alone would turn on confabulation diagnoses built on that call. Seven other `.text` readers of a reply are filed on #1820. New `tests/test_bf988_llm_response_text.py`. Contract `prompts/bf-988-llm-response-text.md`.
 ```
 
 **A1-18.** `DECISIONS.md`: the entry's effect, decision, rejection and filing bullets, corrected (F1, F2).
@@ -1136,12 +1138,12 @@ SEARCH:
 ```
 REPLACE:
 ```markdown
-- *Effect, recorded (review round 1 corrected it).* The detector reads the newest 20 stored rows, with the new row in the window, so an agent whose last N rows (N at most 19) are exactly 0.5 gets z = +-sqrt(N) on its first measured score, whatever that score is (a constant history has no spread), and the 0.5 rows stay in the window. With N = 19 and a steady score the next runs give 3.00, 2.38, 2.00 and then 1.73 (a probe on the real store and detector): up to four consecutive runs signal per agent, critical, then critical or warning, then warning twice, and the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding (N = 4 with a new score of 0.7 gives no signal; N = 9 with 0.9 gives a warning, not a critical). Each signal emits `QUALIFICATION_DRIFT_DETECTED`: the Counselor runs an assessment on a critical one and sends a DM only when it warrants one; the Tier-3 `scaffold_decomposition` of `__crew__` reads each crew member's latest stored score, so it moves and signals the same way; and while any latest report is critical the Vitals Monitor repeats its `medical_alert` on every 5 s heartbeat until the next run replaces the report, one Diagnostician LLM call each (measured on the real classes; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change).
+- *Effect, recorded (review rounds 1 and 2 corrected it).* The detector reads the newest 20 conclusive stored rows (inconclusive ones are dropped), the new one included. If an agent's N earlier rows (2 <= N <= 19) are all exactly 0.5, its first measured score x gives z = sign(x - 0.5) * sqrt(N), unless x is 0.5 or differs from it by less than the detector's spread guard (`std_dev < 1e-9`; for N = 19, |x - 0.5| below about 5e-9): then z = 0 and the result is normal. sqrt(N) reaches the warning sigma (2.0) at N = 4 and the critical sigma (3.0) at N = 9, and both cutoffs depend on floating-point rounding (N = 4 with x = 0.7 gives normal; N = 9 with x = 0.9 gives a warning). With N = 19 and a steady x the next runs give |z| = 4.36, 3.00, 2.38, 2.00 and then 1.73: up to four consecutive non-normal detections per agent, then normal. A detection is not an emission: `QUALIFICATION_DRIFT_DETECTED` fires at most once per agent and test per `drift_cooldown_seconds` (3600 s, held in memory and cleared on restart), so each weekly scheduled run (604800 s) emits, but of several `qualification run`s less than an hour apart only the first does. The Counselor runs an assessment on an emitted critical event and sends a DM only when it warrants one. The Tier-3 `scaffold_decomposition` of `__crew__` is not a per-agent series. It is one aggregate over every crew member's latest personality, recall and confabulation scores, written 1 + crew-size times per run (once in each agent's Tier-3 pass and once in the collective pass), so its z depends on crew size, run order and its own history, and it need not signal when the individuals do. Measured: a single-aggregate series moving 0.6667 to 0.7308 gave z 3.0 after 10 rows and 4.36 after 20; the real scheduler with 14 crew, after 10 earlier cycles on the legacy 0.5 recall, wrote 15 rows and gave z 1.61 (normal) when the recall scored 0.9, while all 14 individual recall reports were critical. While any latest report is critical the Vitals Monitor repeats its `medical_alert` on every 5 s heartbeat until the next run replaces the report, one Diagnostician LLM call each (measured on the real classes; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change).
 - *Rollout.* The first automatic run is seven days after a boot (the loop sleeps one interval first); `qualification run` starts the same path on demand, so the transient decays with the number of runs, not with weeks. The auto-captured baseline of 0.5 is not replaced (`run_test` takes one only when none exists; `run_baseline` and `set_baseline` have no caller in `src`), so `direction` stays measured from 0.5 (#1820, item bf-988 R6). No migration, and none in code: discounting the old rows is a new heuristic or a change of stored data on a live vessel, which is the Captain's. The operator's options are `qualification.drift_check_enabled`, `drift_warning_sigma`, `drift_critical_sigma` and `drift_check_tiers`, and a restart (the cached reports are in memory). The live count needs the data store (#1193) and is not taken.
-- *Judge failure (review round 1, F2).* On the base a judge that failed or answered no number was stored as `score=0.5, passed=True, inconclusive=False`, a measurement; against a history of measured scores it reads as a decline (z -4.36 after 19 results of 0.9). `GuidedReminiscenceEngine.score_recall_outcome` returns `RecallScore(score, inconclusive)` and `score_recall` keeps its float contract and delegates: a failed call or a reply with no number is inconclusive, decided by branch and not by value (a judge that says 0.5 is a measurement; no client, the Jaccard path, is a measurement). `EpisodicRecallProbe` then returns `inconclusive=True`, `passed=False` and an `error` (`k/n episodes: reason`; the `error` is also what keeps `run_test` from taking the run as a baseline), the BF-711 pattern of `communication_benchmarks.py`.
+- *Judge failure (review round 1, F2).* On the base a judge that failed or answered no number was stored as `score=0.5, passed=True, inconclusive=False`, a measurement; against a history of measured scores it reads as a decline (z -4.36 after 19 results of 0.9). `GuidedReminiscenceEngine.score_recall_outcome` returns `RecallScore(score, inconclusive)` and `score_recall` keeps its float contract and delegates: a failed call or a reply with no number is inconclusive, decided by branch and not by value (a judge that says 0.5 is a measurement; no client, the Jaccard path, is a measurement). `EpisodicRecallProbe` then returns `inconclusive=True`, `passed=False` and an `error` (`k/n episodes: reason`; the `error` is also what keeps `run_test` from taking the run as a baseline), the BF-711 pattern of `communication_benchmarks.py`. `ScaffoldDecompositionProbe`, which reads each crew member's latest Tier-1 row, marks its own result inconclusive (`passed=False`, an `error` naming the tests, the inputs in `details`) when any input it reads is inconclusive, so a judge outage neither moves nor baselines the collective series (review round 2, R2-1); an input that timed out is still dropped from its mean, as before.
 - *Decided by the Architect.* None of the six conditions is met: an additive internal helper, no schema, control, spend or boundary; a measurement is turned on, not a feature. Review round 1 (consult `2a7391b7`): the corrected effect is inside the envelope; the Vitals repetition was measured first, as the consult required, and is #1839 (BF-990); the judge-failure repair belongs to this change.
 - *Rejected.* A `text` property on `LLMResponse` (switches on six features at once; two names for one field); `repr=False` on the AD-1327 fields (no reader uses the repr as text after this; diagnostics lose it); the selection `await` (it would turn on Counselor diagnoses built on a memoryless fast-tier recall); repairing the other readers now (each changes a feature's behaviour); an in-code discount of the stored 0.5 rows (a new heuristic, or a change of stored data on a live vessel).
-- *Filed.* The selection `await` and the AD-541c/d recall design (#1838, BF-989); seven other `.text` readers, adoption of this reader by the three existing ones, and a census asserting zero (#1820); the Vitals Monitor's alert on every heartbeat (#1839, BF-990); the permanent 0.5 baseline (#1820, item bf-988 R6).
+- *Filed.* The selection `await` and the AD-541c/d recall design (#1838, BF-989); seven other `.text` readers, adoption of this reader by the three existing ones, and a census asserting zero (#1820); the Vitals Monitor's alert on every heartbeat (#1839, BF-990); the permanent 0.5 baseline (#1820, item bf-988 R6); the shell, `compare`, the completion event and the latest snapshot showing an inconclusive row as a score, and the collective "no data" skip row stored as a measured 0.0 (#1820, item bf-988 R8).
 ```
 
 ### 17.5 Generated: the ledger pair (A1)
@@ -1169,3 +1171,429 @@ After 17.4, run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`
 4. The consumers accept it: `QualificationHarness.run_test` takes no baseline from an errored run (`qualification.py:443-448`); `DriftDetector._analyze_single` drops inconclusive rows (`drift_detector.py:150`); `ScaffoldDecompositionProbe` skips results with an `error` (`collective_tests.py:199`); the store round-trips `inconclusive` and `error` (`qualification.py:342-366`).
 5. The corrected effect in D5, 7.4, 7.5, 8.2 and 16 holds against `drift_detector.py:135-250` and the consumers named in section 5. Outside the SEARCH blocks of 17.4, which quote the text they replace, no sentence still says "once" or "one drift signal", and none says every recall scored 0.5.
 6. The two files outside the tests and trackers that change are `guided_reminiscence.py` and `qualification_tests.py`, and in the first only `RecallScore`, `score_recall`'s delegation and `score_recall_outcome` differ from the committed candidate.
+
+## 18. Amendment A2: review round 2 (gpt-6.1-sol, REQUEST CHANGES), three findings
+
+Review round 2 of the delta `5040f508..b2911fc0` (finished 07:01Z; `next/adq/b6/a1/review-b988-r2.out.md`) found three things. The orchestrator reproduced R2-1 and R2-2 first-hand (probes `probe_b988_r2.py`, `probe_b988_r2_sched.py` and `probe_b988_r2_sched2.py` on `b2911fc0`; evidence `probe-b988-r2.cand.out.txt`, `probe-b988-r2-sched.cand.out.txt`, `probe-b988-r2-sched2.cand.out.txt`) and took the decisions below through the Architect (read-only consult `94fea1e5`, 2026-11-20). The review also noted that T12 passes on the base: it is a compatibility control (a judge that says 0.5 is a measurement), not a regression discriminator, so section 17's "T9 to T12" is read that way (on the unrepaired source the new cases of A1 gave 10 failures and 27 passes over 37).
+
+| Finding | Reviewer's class | Verified | Disposition |
+|---|---|---|---|
+| R2-1: failed judges still produce measured collective drift | P2, injected-only, regression: yes | Reproduced. The Tier-3 `ScaffoldDecompositionProbe` skips a Tier-1 row only when `result.error is not None` (`collective_tests.py:199`), so with the recall row errored and inconclusive the aggregate moves from 0.6667 (`tests_measured` 3) to 0.7308 (2) and is published with `inconclusive=False`, `error=None`; the real `DriftDetector` over the `__crew__` series reads that as z 3.0 (warning) after 9 earlier rows and 4.3589 (critical) after 19, and `run_test` auto-baselines it. The "no data" skip row is score 0.0, `passed=True`, `error=None` | **Fixed here** (Architect, C1): a Tier-1 input that is inconclusive makes the collective result inconclusive (D8) |
+| R2-2: the corrected rollout record still conflates detector results with downstream behavior | P3, ordinary, regression: yes | Reproduced on the real store and detector: N = 19 legacy rows then a measured 0.5 gives z 0.0, and 0.5000000005 gives 0.0 (the spread guard); 0.6 and 0.9 give 4.3589. `_emit_drift_events` has a 3600 s cooldown per agent and test, so weekly runs emit and `qualification run`s inside an hour emit once. The scheduler writes the collective series 1 + crew-size times per run: 15 rows for 14 crew, z 1.61 (normal) while all 14 individual recall reports were critical | **Corrected** in D5 and the sentences that repeat it (sections 3, 7.3, 7.4, 8.2, 16, the REPLACE texts of 17.4) and in the trackers (D8's wording from the Architect) |
+| R2-3: summary and comparison consumers discard inconclusive status | P3, injected-only, not a regression | Read: `qualification.py:311-322,587-599` and `commands_qualification.py:198-228` show a stored inconclusive row as a score and `compare` reports its decline; the base's comparison did the same | **Recorded** on #1820 as item bf-988 R8 (the Architect's decision; no filing), with the acceptance below; no code here |
+
+Sections 3, 7.3, 7.4, 8.2, 16 and the REPLACE texts of 17.4 above were corrected in place so that they show the final state; 18.1 to 18.3 hold the SEARCH/REPLACE pairs that move the files as committed (`collective_tests.py` and the test file at `7fc7ab04`; the trackers at `7fc7ab04`, which hold the text of A1) to that state. Where an older sentence of sections 0 to 17 disagrees with this section, this section governs.
+
+**D8: how the collective probe treats an inconclusive input (R2-1; decided by the Architect, option C1).**
+- `ScaffoldDecompositionProbe` reads each crew member's latest Tier-1 row for the tests with `threshold > 0` (personality 0.6, recall 0.5, confabulation 0.7; temperament is 0.0 and out). A row with `inconclusive=True` (a failed judge, or a BF-711 harness exception) makes the result `inconclusive=True`, `passed=False` and `error="k Tier-1 result(s) inconclusive: <sorted test names>"`. `score` is the aggregate over the measured inputs, 0.0 if there are none, kept for forensics as the recall probe keeps `avg_accuracy`. `details["inconclusive_inputs"]` lists `"<agent_id>:<test>"` and exists only when it is non-empty, so a measured run is byte-identical to the base. Both flags are needed: the drift detector drops `inconclusive` rows (`drift_detector.py:150`), and `run_test` takes no baseline from a result with an `error` (`qualification.py:444`).
+- A row that carries an `error` and is not inconclusive (a timeout: it may be a hung agent, `qualification.py:90-91`) is still dropped from its test's mean and the result is a measurement. Not changed here.
+- "Every input inconclusive" is not "no data": it returns the inconclusive result with score 0.0, not the skip row. The skip row itself (`_skip_result`: score 0.0, `passed=True`, `error=None`, stored as a measured 0.0 and auto-baselined, returned for no rows or timeout rows only) is old debt, recorded on #1820 as item bf-988 R8 (v).
+- Only `ScaffoldDecompositionProbe` reads Tier-1 rows (the only reads of the store in `collective_tests.py` are its `_qualification_store` lookup and `store.get_latest`); the other four Tier-3 probes, registered with it at `runtime.py:3172`, need no rule.
+- Recorded effect: a BF-711 harness-exception row (`qualification.py:440`) was dropped from the mean and the result published; it now makes the result inconclusive. Same marker, same rule.
+- Rejected: **C2** (any `error` makes it inconclusive: it changes how a timeout is read, beyond BF-988); **C3** alone; **C5** (record and not fix: a regression a repair introduced is fixed).
+- No shared contract changes (the Architect, Q4): `TestResult.error` and `inconclusive` exist and are persisted; no signature, event type, config field or gate changes; the only consumer-visible change is that existing fields carry `inconclusive=True` on `__crew__` rows, which the detector and `run_test` already handle. Round 3 reviews the delta, and the record edits are in it.
+
+**R2-3 acceptance, as recorded on #1820 (item bf-988 R8).** (i) The shell summary shows an inconclusive row as `inconclusive: <error>`, not as a score, and leaves it out of the pass count and the pass rate. (ii) `compare` reports "not measured", with no delta or significance, when either side is inconclusive. (iii) The completion event payload and the latest snapshot carry `inconclusive` and `error`. (iv) A test: a measured 0.9 baseline followed by a failed-judge run; the shell names the run inconclusive and `compare` reports no decline. (v) Same class, inherited: the collective "no data" skip row is stored as a measured 0.0 with `passed=True` and auto-baselined; make it a skip that is neither baselined nor in the drift history.
+
+**Milestone A2** (one Builder delegation, tier LOW, then one local commit for the source and tests and one for the trackers): 18.1, 18.2 and 18.3 in order. Focused gate: `pytest tests/test_bf988_llm_response_text.py tests/test_ad566e_collective_tests.py tests/test_ad566c_drift_detection.py tests/test_ad566a_qualification_harness.py -q -n 0`.
+
+### 18.1 `src/probos/cognitive/collective_tests.py` (A2)
+
+**A2-1.** `src/probos/cognitive/collective_tests.py`: the two collections that carry the inputs a failed judge leaves unmeasured
+
+SEARCH:
+```python
+        per_test_multipliers: dict[str, float] = {}
+```
+REPLACE:
+```python
+        per_test_multipliers: dict[str, float] = {}
+        # BF-988 (#1523): an input whose judge failed is not a measurement, so the aggregate is not either.
+        inconclusive_inputs: list[str] = []  # "<agent_id>:<test_name>"
+        inconclusive_tests: set[str] = set()
+```
+
+**A2-2.** `src/probos/cognitive/collective_tests.py`: an input row whose own result is inconclusive is recorded, and no longer read as a measurement; a row dropped for an error alone (a timeout) is still dropped
+
+SEARCH:
+```python
+                result = await store.get_latest(cid, test_name)
+                if result is not None and result.error is None:
+                    test_actuals.append(result.score)
+```
+REPLACE:
+```python
+                result = await store.get_latest(cid, test_name)
+                if result is not None and result.inconclusive:
+                    inconclusive_inputs.append(f"{cid}:{test_name}")
+                    inconclusive_tests.add(test_name)
+                elif result is not None and result.error is None:
+                    test_actuals.append(result.score)
+```
+
+**A2-3.** `src/probos/cognitive/collective_tests.py`: the "no data" skip only when nothing at all was read: inconclusive inputs are not an absence of data
+
+SEARCH:
+```python
+        if not thresholds:
+            return _skip_result(self.name, "no_tier1_data")
+```
+REPLACE:
+```python
+        if not thresholds and not inconclusive_inputs:
+            return _skip_result(self.name, "no_tier1_data")
+```
+
+**A2-4.** `src/probos/cognitive/collective_tests.py`: the means are 0.0 when no input was measured
+
+SEARCH:
+```python
+        # Architecture multiplier
+        mean_actual = sum(actual_scores) / len(actual_scores)
+        mean_threshold = sum(thresholds) / len(thresholds)
+        multiplier = mean_actual / max(mean_threshold, 0.01)
+```
+REPLACE:
+```python
+        # Architecture multiplier
+        mean_actual = sum(actual_scores) / len(actual_scores) if actual_scores else 0.0
+        mean_threshold = sum(thresholds) / len(thresholds) if thresholds else 0.0
+        multiplier = mean_actual / max(mean_threshold, 0.01)
+```
+
+**A2-5.** `src/probos/cognitive/collective_tests.py`: the details are built before the result, and name the inconclusive inputs, only when there are any
+
+SEARCH:
+```python
+        score = min(1.0, multiplier / 2.0)
+```
+REPLACE:
+```python
+        score = min(1.0, multiplier / 2.0)
+
+        details: dict[str, Any] = {
+            "skipped": False,
+            "architecture_multiplier": round(multiplier, 4),
+            "mean_actual": round(mean_actual, 4),
+            "mean_threshold": round(mean_threshold, 4),
+            "agents_measured": len(crew_ids),
+            "tests_measured": len(per_test_multipliers),
+            "per_test_multipliers": per_test_multipliers,
+        }
+        if inconclusive_inputs:
+            details["inconclusive_inputs"] = inconclusive_inputs
+```
+
+**A2-6.** `src/probos/cognitive/collective_tests.py`: the result: not passed, an error that names the tests, and the inconclusive flag, when any input was inconclusive
+
+SEARCH:
+```python
+            score=round(score, 4),
+            passed=score >= self.threshold,
+            timestamp=time.time(),
+            duration_ms=duration_ms,
+            details={
+                "skipped": False,
+                "architecture_multiplier": round(multiplier, 4),
+                "mean_actual": round(mean_actual, 4),
+                "mean_threshold": round(mean_threshold, 4),
+                "agents_measured": len(crew_ids),
+                "tests_measured": len(per_test_multipliers),
+                "per_test_multipliers": per_test_multipliers,
+            },
+        )
+```
+REPLACE:
+```python
+            score=round(score, 4),
+            passed=not inconclusive_inputs and score >= self.threshold,
+            timestamp=time.time(),
+            duration_ms=duration_ms,
+            details=details,
+            error=(
+                f"{len(inconclusive_inputs)} Tier-1 result(s) inconclusive: "
+                f"{', '.join(sorted(inconclusive_tests))}"
+            ) if inconclusive_inputs else None,
+            inconclusive=bool(inconclusive_inputs),
+        )
+```
+
+### 18.2 `tests/test_bf988_llm_response_text.py` (A2)
+
+**A2-7.** `tests/test_bf988_llm_response_text.py`: imports: the async context manager and iterator the helper uses
+
+SEARCH:
+```python
+import time
+from pathlib import Path
+```
+REPLACE:
+```python
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from pathlib import Path
+```
+
+**A2-8.** `tests/test_bf988_llm_response_text.py`: imports: the collective probe and the drift detector
+
+SEARCH:
+```python
+from probos.cognitive.guided_reminiscence import (
+```
+REPLACE:
+```python
+from probos.cognitive.collective_tests import ScaffoldDecompositionProbe
+from probos.cognitive.drift_detector import DriftDetector
+from probos.cognitive.guided_reminiscence import (
+```
+
+**A2-9.** `tests/test_bf988_llm_response_text.py`: imports: the stored-result type (aliased, so that pytest does not collect it) and the two other Tier-1 probes the helper registers, and the qualification config
+
+SEARCH:
+```python
+from probos.cognitive.qualification import QualificationHarness, QualificationStore
+from probos.cognitive.qualification_tests import EpisodicRecallProbe
+from probos.types import LLMResponse, llm_response_text
+```
+REPLACE:
+```python
+from probos.cognitive.qualification import QualificationHarness, QualificationStore
+from probos.cognitive.qualification import TestResult as StoredResult
+from probos.cognitive.qualification_tests import ConfabulationProbe, EpisodicRecallProbe, PersonalityProbe
+from probos.config import QualificationConfig
+from probos.types import LLMResponse, llm_response_text
+```
+
+**A2-10.** `tests/test_bf988_llm_response_text.py`: imports: the collective tests' own crew double and runtime builder
+
+SEARCH:
+```python
+    MockRegistry,
+)
+
+_SCORE = "0.8"
+```
+REPLACE:
+```python
+    MockRegistry,
+)
+from tests.test_ad566e_collective_tests import MockCrewAgent, _build_runtime
+
+_SCORE = "0.8"
+```
+
+**A2-11.** `tests/test_bf988_llm_response_text.py`: T13 to T18 and their helpers: the collective probe over a stored failed judge (an inconclusive input makes its result inconclusive and never a baseline; the drift detector drops it; no measured input is not a skip; a timeout and an all-measured run are as before)
+
+SEARCH:
+```python
+    assert all("judge" not in e for e in result.details["per_episode"])
+```
+REPLACE:
+```python
+    assert all("judge" not in e for e in result.details["per_episode"])
+
+
+# -- T13 to T18: the collective probe inherits a failed judge (review round 2, R2-1) -------------------
+
+_FAILED_JUDGE = {"passed": False, "error": f"3/3 episodes: {_RAISED}", "inconclusive": True}  # as the recall probe stores one
+
+
+def _tier1_row(agent_id: str, test_name: str, score: float, ts: float = 1000.0, **fields: Any) -> StoredResult:
+    base: dict[str, Any] = {
+        "agent_id": agent_id, "test_name": test_name, "tier": 1, "score": score, "passed": True,
+        "timestamp": ts, "duration_ms": 1.0,
+    }
+    return StoredResult(**{**base, **fields})
+
+
+def _collective_row(score: float, ts: float) -> StoredResult:
+    return StoredResult(
+        agent_id="__crew__", test_name="scaffold_decomposition", tier=3, score=score, passed=True,
+        timestamp=ts, duration_ms=1.0,
+    )
+
+
+@asynccontextmanager
+async def _collective(
+    tmp_path: Path,
+    *,
+    recall: dict[str, Any] | None = None,
+    personality: dict[str, Any] | None = None,
+    confabulation: dict[str, Any] | None = None,
+    emitted: list[str] | None = None,
+) -> AsyncIterator[tuple[QualificationStore, QualificationHarness, MagicMock]]:
+    """Two crew members' stored Tier-1 rows (personality 1.0, recall 0.5, confabulation 0.9, each with the given
+    extra fields), a real store and harness holding the real probes, and a runtime that reaches them."""
+    store = QualificationStore(data_dir=tmp_path)
+    await store.start()
+    try:
+        harness = QualificationHarness(
+            store=store, emit_event_fn=None if emitted is None else (lambda name, _payload: emitted.append(name)),
+        )
+        for probe in (PersonalityProbe(), EpisodicRecallProbe(), ConfabulationProbe(), ScaffoldDecompositionProbe()):
+            harness.register_test(probe)
+        for agent_id in ("a1", "a2"):
+            await store.save_result(_tier1_row(agent_id, "bfi2_personality_probe", 1.0, **(personality or {})))
+            await store.save_result(_tier1_row(agent_id, "episodic_recall_probe", 0.5, **(recall or {})))
+            await store.save_result(_tier1_row(agent_id, "confabulation_probe", 0.9, **(confabulation or {})))
+        runtime = _build_runtime(agents=[MockCrewAgent("a1"), MockCrewAgent("a2")], harness=harness, store=store)
+        yield store, harness, runtime
+    finally:
+        await store.stop()
+
+
+async def test_a_failed_judge_makes_the_collective_result_inconclusive(tmp_path: Path) -> None:
+    async with _collective(tmp_path, recall=_FAILED_JUDGE) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert result.inconclusive is True
+    assert result.passed is False
+    assert result.error == "2 Tier-1 result(s) inconclusive: episodic_recall_probe"
+    assert result.details["inconclusive_inputs"] == ["a1:episodic_recall_probe", "a2:episodic_recall_probe"]
+    assert result.score == pytest.approx(0.7308)  # the aggregate over the inputs that were measured, kept for forensics
+
+
+async def test_an_inconclusive_collective_result_is_never_a_baseline(tmp_path: Path) -> None:
+    emitted: list[str] = []
+    async with _collective(tmp_path, recall=_FAILED_JUDGE, emitted=emitted) as (store, harness, runtime):
+        first = await harness.run_test("__crew__", "scaffold_decomposition", runtime)
+        assert first.inconclusive is True
+        assert first.is_baseline is False
+        assert await store.get_baseline("__crew__", "scaffold_decomposition") is None
+        assert "qualification_baseline_set" not in emitted
+
+        for agent_id in ("a1", "a2"):  # the judge recovers: the same series takes its baseline from a measurement
+            await store.save_result(_tier1_row(agent_id, "episodic_recall_probe", 0.9, ts=2000.0))
+        second = await harness.run_test("__crew__", "scaffold_decomposition", runtime)
+        assert second.inconclusive is False
+        assert second.is_baseline is True
+        assert "qualification_baseline_set" in emitted
+
+
+async def test_an_inconclusive_collective_result_stays_out_of_the_drift_history(tmp_path: Path) -> None:
+    async with _collective(tmp_path, recall=_FAILED_JUDGE) as (store, harness, runtime):
+        detector = DriftDetector(store, QualificationConfig())
+        for i in range(19):  # the earlier weekly aggregates, all measured
+            await store.save_result(_collective_row(0.6667, ts=100.0 + i))
+        run = await harness.run_test("__crew__", "scaffold_decomposition", runtime)
+        assert run.inconclusive is True
+
+        signal = (await detector.analyze_agent("__crew__", ["scaffold_decomposition"])).signals[0]
+        assert (signal.severity, signal.sample_count) == ("normal", 19)
+
+        # the control: the same aggregate stored as a measurement is critical drift
+        await store.save_result(_collective_row(run.score, ts=run.timestamp + 1.0))
+        control = (await detector.analyze_agent("__crew__", ["scaffold_decomposition"])).signals[0]
+        assert control.severity == "critical"
+
+
+async def test_a_collective_result_with_no_measured_input_is_inconclusive_and_not_a_skip(tmp_path: Path) -> None:
+    async with _collective(
+        tmp_path, recall=_FAILED_JUDGE, personality=_FAILED_JUDGE, confabulation=_FAILED_JUDGE,
+    ) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert result.inconclusive is True
+    assert result.details["skipped"] is False
+    assert result.score == 0.0
+    assert result.error == "6 Tier-1 result(s) inconclusive: bfi2_personality_probe, confabulation_probe, episodic_recall_probe"
+
+
+async def test_an_input_that_timed_out_is_still_dropped_from_the_aggregate(tmp_path: Path) -> None:
+    async with _collective(tmp_path, recall={"passed": False, "error": "Test timed out"}) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert (result.inconclusive, result.error, result.passed) == (False, None, True)
+    assert result.details["tests_measured"] == 2
+    assert "inconclusive_inputs" not in result.details
+    assert result.score == pytest.approx(0.7308)
+
+
+async def test_a_collective_result_over_measured_inputs_is_what_it_was(tmp_path: Path) -> None:
+    async with _collective(tmp_path) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert (result.inconclusive, result.error, result.passed) == (False, None, True)
+    assert result.details["tests_measured"] == 3
+    assert "inconclusive_inputs" not in result.details
+    assert result.score == pytest.approx(0.6667)
+```
+
+### 18.3 The trackers (A2)
+
+The BF-988 entries move to the corrected text of sections 7.3 and 7.4. The SEARCH blocks quote the text they replace, by design.
+
+**A2-12.** `PROGRESS.md`: the BF-988 paragraph: the drift effect without the claims the second review round refuted (every weekly run emits, runs inside the cooldown do not; the collective series is one aggregate that need not follow), and the collective probe passes an inconclusive input on
+
+SEARCH:
+```markdown
+**BF-988 (2026-11-20), #1523 F-19 -- an LLM reply's text is read through one reader, so guided reminiscence never takes a response's repr as its text.** `LLMResponse` has `content` and no `text`, so the three `response.text ... if hasattr(response, 'text') else str(response)` reads in `cognitive/guided_reminiscence.py` (`score_recall`, `build_therapeutic_response`, `run_session`) took the dataclass repr: a reply that is only a number scored 0.5 (a number inside a sentence was parsed out of the repr by accident), and the therapeutic message and recalled text were the repr. New `probos.types.llm_response_text` (an `error` reply reads ""; a `str` `content`; else a `str` `text`; else "", never the repr) replaces the three reads. In production only the AD-566 D2 `episodic_recall_probe` reached the defect, and it is now measured: an agent whose stored history is all 0.5 can signal drift on up to four consecutive runs (the first one or two critical), the Tier-3 `scaffold_decomposition` of `__crew__` moves with it, and a critical report makes the Vitals Monitor repeat its alert on every heartbeat until the next run (#1839, BF-990, edge-triggers that and lands no later than this change); DECISIONS has the figures. The probe now reports a judge that failed or answered no number as inconclusive (`GuidedReminiscenceEngine.score_recall_outcome`, the BF-711 rule), so an outage is neither a drift sample nor a baseline. The Counselor's sessions never reached the reads: `select_episodes_for_session` calls the async `recent_for_agent` without `await` and raises at `len()`, caught by the Counselor. That defect, and that both AD-541c practice and AD-541d sessions take their "recall" from a memoryless fast-tier call, are filed as #1838 (BF-989), since repairing the `await` alone would turn on confabulation diagnoses built on that call. Seven other `.text` readers of a reply are filed on #1820. New `tests/test_bf988_llm_response_text.py`. Contract `prompts/bf-988-llm-response-text.md`.
+```
+REPLACE:
+```markdown
+**BF-988 (2026-11-20), #1523 F-19 -- an LLM reply's text is read through one reader, so guided reminiscence never takes a response's repr as its text.** `LLMResponse` has `content` and no `text`, so the three `response.text ... if hasattr(response, 'text') else str(response)` reads in `cognitive/guided_reminiscence.py` (`score_recall`, `build_therapeutic_response`, `run_session`) took the dataclass repr: a reply that is only a number scored 0.5 (a number inside a sentence was parsed out of the repr by accident), and the therapeutic message and recalled text were the repr. New `probos.types.llm_response_text` (an `error` reply reads ""; a `str` `content`; else a `str` `text`; else "", never the repr) replaces the three reads. In production only the AD-566 D2 `episodic_recall_probe` reached the defect, and it is now measured: an agent whose earlier stored results are all 0.5 can be flagged by the drift detector on up to four consecutive runs (the first one or two critical; each weekly run emits, but `qualification run`s less than an hour apart emit once), the Tier-3 `scaffold_decomposition` of `__crew__` is one aggregate over the crew that moves with the inputs and need not signal when the individuals do, and a critical report made the Vitals Monitor repeat its alert on every heartbeat until the next run (#1839, BF-990, sends it once per new report and lands no later than this change); DECISIONS has the figures. The probe now reports a judge that failed or answered no number as inconclusive (`GuidedReminiscenceEngine.score_recall_outcome`, the BF-711 rule), and the collective probe, whose result is inconclusive when any Tier-1 input it reads is, passes it on, so an outage is neither a drift sample nor a baseline in either series. The Counselor's sessions never reached the reads: `select_episodes_for_session` calls the async `recent_for_agent` without `await` and raises at `len()`, caught by the Counselor. That defect, and that both AD-541c practice and AD-541d sessions take their "recall" from a memoryless fast-tier call, are filed as #1838 (BF-989), since repairing the `await` alone would turn on confabulation diagnoses built on that call. Seven other `.text` readers of a reply are filed on #1820. New `tests/test_bf988_llm_response_text.py`. Contract `prompts/bf-988-llm-response-text.md`.
+```
+
+**A2-13.** `DECISIONS.md`: the effect bullet: when the first measured score gives sqrt(N) and when it gives zero, up to four detections, detection is not emission, and what the collective series does
+
+SEARCH:
+```markdown
+- *Effect, recorded (review round 1 corrected it).* The detector reads the newest 20 stored rows, with the new row in the window, so an agent whose last N rows (N at most 19) are exactly 0.5 gets z = +-sqrt(N) on its first measured score, whatever that score is (a constant history has no spread), and the 0.5 rows stay in the window. With N = 19 and a steady score the next runs give 3.00, 2.38, 2.00 and then 1.73 (a probe on the real store and detector): up to four consecutive runs signal per agent, critical, then critical or warning, then warning twice, and the cutoffs at exactly N = 4 and N = 9 depend on floating-point rounding (N = 4 with a new score of 0.7 gives no signal; N = 9 with 0.9 gives a warning, not a critical). Each signal emits `QUALIFICATION_DRIFT_DETECTED`: the Counselor runs an assessment on a critical one and sends a DM only when it warrants one; the Tier-3 `scaffold_decomposition` of `__crew__` reads each crew member's latest stored score, so it moves and signals the same way; and while any latest report is critical the Vitals Monitor repeats its `medical_alert` on every 5 s heartbeat until the next run replaces the report, one Diagnostician LLM call each (measured on the real classes; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change).
+```
+REPLACE:
+```markdown
+- *Effect, recorded (review rounds 1 and 2 corrected it).* The detector reads the newest 20 conclusive stored rows (inconclusive ones are dropped), the new one included. If an agent's N earlier rows (2 <= N <= 19) are all exactly 0.5, its first measured score x gives z = sign(x - 0.5) * sqrt(N), unless x is 0.5 or differs from it by less than the detector's spread guard (`std_dev < 1e-9`; for N = 19, |x - 0.5| below about 5e-9): then z = 0 and the result is normal. sqrt(N) reaches the warning sigma (2.0) at N = 4 and the critical sigma (3.0) at N = 9, and both cutoffs depend on floating-point rounding (N = 4 with x = 0.7 gives normal; N = 9 with x = 0.9 gives a warning). With N = 19 and a steady x the next runs give |z| = 4.36, 3.00, 2.38, 2.00 and then 1.73: up to four consecutive non-normal detections per agent, then normal. A detection is not an emission: `QUALIFICATION_DRIFT_DETECTED` fires at most once per agent and test per `drift_cooldown_seconds` (3600 s, held in memory and cleared on restart), so each weekly scheduled run (604800 s) emits, but of several `qualification run`s less than an hour apart only the first does. The Counselor runs an assessment on an emitted critical event and sends a DM only when it warrants one. The Tier-3 `scaffold_decomposition` of `__crew__` is not a per-agent series. It is one aggregate over every crew member's latest personality, recall and confabulation scores, written 1 + crew-size times per run (once in each agent's Tier-3 pass and once in the collective pass), so its z depends on crew size, run order and its own history, and it need not signal when the individuals do. Measured: a single-aggregate series moving 0.6667 to 0.7308 gave z 3.0 after 10 rows and 4.36 after 20; the real scheduler with 14 crew, after 10 earlier cycles on the legacy 0.5 recall, wrote 15 rows and gave z 1.61 (normal) when the recall scored 0.9, while all 14 individual recall reports were critical. While any latest report is critical the Vitals Monitor repeats its `medical_alert` on every 5 s heartbeat until the next run replaces the report, one Diagnostician LLM call each (measured on the real classes; existing behaviour for any critical drift; edge-triggered by #1839, BF-990, which lands no later than this change).
+```
+
+**A2-14.** `DECISIONS.md`: the judge-failure bullet: the collective probe passes an inconclusive input on
+
+SEARCH:
+```markdown
+- *Judge failure (review round 1, F2).* On the base a judge that failed or answered no number was stored as `score=0.5, passed=True, inconclusive=False`, a measurement; against a history of measured scores it reads as a decline (z -4.36 after 19 results of 0.9). `GuidedReminiscenceEngine.score_recall_outcome` returns `RecallScore(score, inconclusive)` and `score_recall` keeps its float contract and delegates: a failed call or a reply with no number is inconclusive, decided by branch and not by value (a judge that says 0.5 is a measurement; no client, the Jaccard path, is a measurement). `EpisodicRecallProbe` then returns `inconclusive=True`, `passed=False` and an `error` (`k/n episodes: reason`; the `error` is also what keeps `run_test` from taking the run as a baseline), the BF-711 pattern of `communication_benchmarks.py`.
+```
+REPLACE:
+```markdown
+- *Judge failure (review round 1, F2).* On the base a judge that failed or answered no number was stored as `score=0.5, passed=True, inconclusive=False`, a measurement; against a history of measured scores it reads as a decline (z -4.36 after 19 results of 0.9). `GuidedReminiscenceEngine.score_recall_outcome` returns `RecallScore(score, inconclusive)` and `score_recall` keeps its float contract and delegates: a failed call or a reply with no number is inconclusive, decided by branch and not by value (a judge that says 0.5 is a measurement; no client, the Jaccard path, is a measurement). `EpisodicRecallProbe` then returns `inconclusive=True`, `passed=False` and an `error` (`k/n episodes: reason`; the `error` is also what keeps `run_test` from taking the run as a baseline), the BF-711 pattern of `communication_benchmarks.py`. `ScaffoldDecompositionProbe`, which reads each crew member's latest Tier-1 row, marks its own result inconclusive (`passed=False`, an `error` naming the tests, the inputs in `details`) when any input it reads is inconclusive, so a judge outage neither moves nor baselines the collective series (review round 2, R2-1); an input that timed out is still dropped from its mean, as before.
+```
+
+**A2-15.** `DECISIONS.md`: the filed bullet: the shell, `compare`, the completion event and the latest snapshot show an inconclusive row as a score, and the collective skip row is stored as a measured 0.0 (#1820, item bf-988 R8)
+
+SEARCH:
+```markdown
+- *Filed.* The selection `await` and the AD-541c/d recall design (#1838, BF-989); seven other `.text` readers, adoption of this reader by the three existing ones, and a census asserting zero (#1820); the Vitals Monitor's alert on every heartbeat (#1839, BF-990); the permanent 0.5 baseline (#1820, item bf-988 R6).
+```
+REPLACE:
+```markdown
+- *Filed.* The selection `await` and the AD-541c/d recall design (#1838, BF-989); seven other `.text` readers, adoption of this reader by the three existing ones, and a census asserting zero (#1820); the Vitals Monitor's alert on every heartbeat (#1839, BF-990); the permanent 0.5 baseline (#1820, item bf-988 R6); the shell, `compare`, the completion event and the latest snapshot showing an inconclusive row as a score, and the collective "no data" skip row stored as a measured 0.0 (#1820, item bf-988 R8).
+```
+
+### 18.4 Generated: the ledger pair (A2)
+
+After 18.3, run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`. It regenerates `docs/development/open-ads-report.md` and `docs/development/ad-ledger-snapshot.json`; do not paste them. Verify with `--check` and `tests/test_ad1184_ad_ledger.py`.
+
+### 18.5 Mutation rows (A2; one more campaign over the new rows, restore between rows)
+
+| # | Site | Mutate to | Killed by |
+|---|---|---|---|
+| R-20 | `if result is not None and result.inconclusive:` | `if False:` | T13, T14, T15, T16 |
+| R-21 | `elif result is not None and result.error is None:` | `elif result is not None:` (a timeout read as a measurement) | T17 |
+| R-22 | `if not thresholds and not inconclusive_inputs:` | `if not thresholds:` | T16 |
+| R-23 | `passed=not inconclusive_inputs and score >= self.threshold,` | `passed=score >= self.threshold,` | T13 |
+| R-24 | `inconclusive=bool(inconclusive_inputs),` | `inconclusive=False,` | T13, T14, T15, T16 |
+| R-25 | `) if inconclusive_inputs else None,` (the error) | `) if False else None,` | T13, T14 |
+| R-26 | `if inconclusive_inputs:` (the details key) | `if True:` | T17, T18 |
+| R-27 | `mean_actual = ... if actual_scores else 0.0` | `mean_actual = sum(actual_scores) / len(actual_scores)` | T16 |
+| R-28 | `inconclusive_inputs.append(f"{cid}:{test_name}")` | `inconclusive_inputs.append(test_name)` | T13 |
+| R-29 | `inconclusive_tests.add(test_name)` | `pass` | T13 |
+| R-30 | `f"{len(inconclusive_inputs)} Tier-1 result(s) inconclusive: "` | `f"{len(inconclusive_tests)} ..."` | T13 |
+
+The cases: T13 `test_a_failed_judge_makes_the_collective_result_inconclusive`; T14 `test_an_inconclusive_collective_result_is_never_a_baseline`; T15 `test_an_inconclusive_collective_result_stays_out_of_the_drift_history`; T16 `test_a_collective_result_with_no_measured_input_is_inconclusive_and_not_a_skip`; T17 `test_an_input_that_timed_out_is_still_dropped_from_the_aggregate`; T18 `test_a_collective_result_over_measured_inputs_is_what_it_was`. On the committed source T13 to T16 fail and T17 and T18 pass.
+
+### 18.6 Reviewer properties for the delta (properties to verify, not attack scenarios)
+
+1. A Tier-1 input row with `inconclusive=True` makes the collective result `inconclusive=True`, `passed=False` and `error` of the form `k Tier-1 result(s) inconclusive: <tests>`; the result of a run in which no input is inconclusive has the same fields and `details` keys as the base (no `inconclusive_inputs` key, `error` None).
+2. The detector drops such a result from the `__crew__` history and `run_test` takes no baseline from it (T14, T15, with the control that the same aggregate stored as a measurement is critical drift); a timeout row is dropped from the mean as before (T17); every input inconclusive returns the inconclusive result and not the skip row (T16); the skip row for no data is unchanged.
+3. No other consumer of `ScaffoldDecompositionProbe`'s result breaks: the harness stores the new fields, `commands_qualification` and the shell show the result as they show any other (R2-3 is the open item), and the four other Tier-3 probes are untouched.
+4. The D5, 7.3, 7.4, 8.2 and 16 sentences about the rollout say what the detector gives: a first measured score of 0.5 (or one inside the spread guard) gives z 0, the next runs of a steady score give four non-normal detections at most, a detection is not an emission (the cooldown), and the collective series is one aggregate written 1 + crew-size times per run that need not signal when the individuals do; and no sentence outside a SEARCH block still says "whatever that score is", "each signal emits" or that the collective "signals the same way".
+5. The trackers' BF-988 entries say the same, and the only files that change are `collective_tests.py`, the BF-988 test file, the contract, `PROGRESS.md`, `DECISIONS.md` and the ledger pair.
