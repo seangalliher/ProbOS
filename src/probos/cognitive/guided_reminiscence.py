@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any
 
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
+from probos.types import llm_response_text
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,7 @@ class GuidedReminiscenceEngine:
                     tier="fast",
                     max_tokens=10,
                 ))
-                score_text = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                score_text = llm_response_text(response)  # BF-988 (#1523 F-19): never the response's repr
                 # Extract first float-like value
                 for token in score_text.split():
                     try:
@@ -367,7 +368,7 @@ class GuidedReminiscenceEngine:
                     tier="fast",
                     max_tokens=150,
                 ))
-                text = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                text = llm_response_text(response)  # BF-988 (#1523 F-19): "" falls to the template
                 if text:
                     return text
             except Exception:
@@ -410,7 +411,7 @@ class GuidedReminiscenceEngine:
                         tier="fast",
                         max_tokens=200,
                     ))
-                    recalled_text = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                    recalled_text = llm_response_text(response)  # BF-988 (#1523 F-19)
                 except Exception:
                     logger.debug("AD-541d: LLM recall failed for %s", ep_id[:8], exc_info=True)
 

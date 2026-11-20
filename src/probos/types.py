@@ -374,6 +374,28 @@ class LLMResponse:
     applied_system_suffix: str = ""
 
 
+def llm_response_text(response: object) -> str:
+    """BF-988 (#1523 F-19): the text of an LLM client's reply, stripped; "" when it holds none.
+
+    ``LLMResponse`` carries its text in ``content`` and has no ``text`` attribute. A reply whose
+    ``error`` is a non-empty ``str`` is not an answer and reads "" (the clients answer a refused or
+    failed call with ``content=""`` and ``error`` set). Otherwise a ``str`` ``content`` is the text;
+    an object whose ``content`` is not a ``str`` (a test double) is read by its ``str`` ``text``.
+    Anything else reads "": never ``str(response)``, whose dataclass repr is not an answer and
+    carries the provider's ``answered_model`` text (AD-1327).
+    """
+    error = getattr(response, "error", None)
+    if isinstance(error, str) and error:
+        return ""
+    content = getattr(response, "content", None)
+    if isinstance(content, str):
+        return content.strip()
+    text = getattr(response, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+    return ""
+
+
 class EscalationTier(Enum):
     """Escalation cascade levels."""
 
