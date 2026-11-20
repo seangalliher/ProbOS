@@ -15,13 +15,14 @@ Subcommands:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
 from probos.agents.medical.diagnostic_levels import parse_level
 from probos.experience import panels
 from probos.types import IntentMessage
+from probos.utils.json_extract import extract_json
 
 if TYPE_CHECKING:
     from probos.runtime import ProbOSRuntime
@@ -34,6 +35,29 @@ _USAGE = (
     "  focus: optional subsystem (e.g. trust_network, hebbian_router)\n"
     "Examples: /diagnostic | /diagnostic L2 | /diagnostic L1 trust_network"
 )
+
+
+def _diagnosis_from_result(result: Any) -> tuple[dict[str, Any], str]:
+    """BF-991: the diagnosis dict in an IntentResult's ``result``, and any text that is not one.
+
+    ``CognitiveAgent.act`` returns the LLM's text, so ``result`` is a str: the JSON
+    the Diagnostician was told to write at L3..L1, and "" at L4/L5, which make no
+    LLM call (AD-700c). A dict passes through unchanged. Returns
+    ``(diagnosis, unparsed_text)``; the second item is "" unless the text holds no
+    JSON object.
+    """
+    if isinstance(result, dict):
+        return result, ""
+    text = "" if result is None else str(result)
+    if not text.strip():
+        return {}, ""
+    try:
+        parsed = extract_json(text)
+    except ValueError:
+        return {}, text
+    if not isinstance(parsed, dict):
+        return {}, text
+    return parsed, ""
 
 
 async def cmd_diagnostic(
@@ -68,9 +92,28 @@ async def cmd_diagnostic(
                 params={"level": level.value, "focus": focus},
             )
         )
-        result = intent_result.result if intent_result else None
-        panel = panels.render_diagnostic_result(result or {}, level=level)
+        if intent_result is not None and not intent_result.success:
+            console.print(
+                f"Diagnostic failed: {intent_result.error or 'no error given'}",
+                style="red",
+                markup=False,
+            )
+            return
+        diagnosis, unparsed = _diagnosis_from_result(
+            intent_result.result if intent_result else None
+        )
+        panel = panels.render_diagnostic_result(diagnosis, level=level)
         console.print(panel)
+        if unparsed:
+            # The LLM's own words, shown as text: never parsed as Rich markup.
+            console.print("The Diagnostician's reply is not a JSON diagnosis:", style="yellow")
+            console.print(unparsed, markup=False)
+        if level.llm_tier is None:
+            console.print(
+                f"No LLM analysis at this depth (AD-700c): {level.value} makes no LLM call.",
+                style="dim",
+                markup=False,
+            )
     except Exception as e:  # noqa: BLE001 — slash commands must not propagate
         logger.warning(
             "Diagnostic command failed (level=%s focus=%s): %s",
@@ -78,4 +121,5 @@ async def cmd_diagnostic(
             focus,
             e,
         )
-        console.print(f"[red]Diagnostic error: {e}[/red]")
+        # BF-991: the error text is foreign text; as markup, a "[/x]" in it raises again here.
+        console.print(f"Diagnostic error: {e}", style="red", markup=False)
