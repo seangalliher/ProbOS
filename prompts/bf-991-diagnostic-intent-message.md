@@ -2,9 +2,11 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-20
 
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-20 (amendment A1, section 17)
+
 **Verified by:** the orchestrator, 2026-11-20: every pair and every check of section 15 was run on an oracle tree before the Builder started (section 16). One count of section 6 is corrected there: after D1-D2 the new file has 7 green and 7 red.
 
-**Status:** build-ready: the oracle checks of section 15 passed (section 16). Issue #1840; the PR says `Refs #1840`. One BF number, BF-991, taken in the issue title. AV3 shows no collision. The number appears only in REPLACE text, new-file text, new-file paths and tracker text, never in a SEARCH, except where a SEARCH quotes BF-990's tracker text, which already names it.
+**Status:** build-ready: the oracle checks of section 15 passed (section 16). Issue #1840; the PR says `Refs #1840`. One BF number, BF-991, taken in the issue title. AV3 shows no collision. The number appears only in REPLACE text, new-file text, new-file paths and tracker text, never in a SEARCH, except where a SEARCH quotes BF-990's tracker text, which already names it, and A1-3's SEARCH (section 17), which quotes the comment that M1 added. Amended by A1 after review round 1 (section 17).
 
 **Base:** `e8e660b8` (`e8e660b8562a8e529ab31762226c9e602dae9444`), the merge commit of PR #1841 (BF-988 and BF-990; merged 2026-11-20 11:12:59Z). Its tree, `3298a74c`, is the tree of `3331b4ac`, the head of #1841, which this contract was written against and whose oracle run is section 16. `git diff --stat cc601a72 3331b4ac` lists 13 files and none of the three source files edited here (`diagnostician.py`, `commands_diagnostic.py`, `panels.py`), nor `cognitive_agent.py`, `json_extract.py` or the three existing test files of the gate. Build on `origin/main`; if it has moved past this commit, run `audit\oracle_apply_b991.py --dry` against the new tree first.
 
@@ -16,12 +18,14 @@
   2. Apply D1 and D2 (`diagnostician.py`) only, and run the **premise gate**: test 8 must fail with output containing `Diagnostic error: 'str' object has no attribute 'get'`, and tests 1 to 7 must pass. If test 8 passes instead, stop and report; C1 to C4 are then dropped.
   3. Apply C1 to C4 (`commands_diagnostic.py`) and P1 (`panels.py`). Run the focused gate: green.
 - **M2:** the trackers (7.5 to 7.8) and the generated ledger pair (7.9).
+- **M3** (A1, tier LOW): section 17.
 
 Each milestone is one Builder delegation and one local commit, in order. **The Builder does not commit**; the orchestrator commits by plumbing. No commit subject in the PR carries an `AD-` or `BF-` token. Suggested subjects:
 - M1: `Read the diagnostic level from the message params and print the parsed diagnosis`
 - M2: `Record the diagnostic repair in the status and decisions entries`
+- M3: `Print the diagnostic reply and errors as received, without emoji codes or highlighting`
 
-After M2, run one broad gate: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf-991-1840 --receipt logs/gates/bf-991-1840.receipt.json`.
+After M3, run one broad gate: `d:/ProbOS/.venv/Scripts/python.exe scripts/run_test_gate.py --label bf-991-1840 --receipt logs/gates/bf-991-1840.receipt.json`.
 
 **Captain:** no Captain condition applies. This repairs a Captain-run command that is always registered (`shell.py:120`, `:336`). The spend is what AD-700/700c designed: at most one LLM call per invocation (L1 `deep`, L2 and L3 `fast`, none at L4 and L5). There is no new spend path, background trigger, schema, control or boundary.
 
@@ -74,7 +78,7 @@ The `/diagnostic` command fails on every call (#1840). Two faults lie on one pat
    - At L4 and L5 (`level.llm_tier is None`) one line says there is no LLM analysis at this depth (AD-700c).
 3. **Fault 2b.**
    - The panel's value cells become `rich.text.Text`, which is never parsed as markup.
-   - Every handler line that prints text the handler did not write (the raw reply, the failure text, the exception text) is printed with `markup=False`.
+   - Every handler line that prints text the handler did not write (the raw reply, the failure text, the exception text) is printed with `markup=False, emoji=False, highlight=False`, so it is shown as received (A1).
 
 **Rejected heavier designs:**
 - Making the base `perceive` copy top-level keys. That changes a shared contract used by 19 overrides and breaks AD-432/BF-698's rule that the dict branch adds nothing it was not given (`cognitive_agent.py:3060-3067`).
@@ -92,14 +96,14 @@ The `/diagnostic` command fails on every call (#1840). Two faults lie on one pat
 | 3 | An `isinstance` guard only (`intent.get` on a dict, else the default) | **Wrong**: the command's level is dropped and every call runs at L3. This is mutation M2b |
 | 4 | Base `perceive` copies top-level keys | Rejected, see section 2 |
 
-`params` wins because the `IntentDescriptor` declares `level` under `params` (`diagnostician.py:48-56`), and the only producer sends it there (AV1). A `params` key whose value is `None` falls through to the flat form. A `params` value that is not a dict (a hand-built `{"params": None}`) is read as absent.
+`params` wins because the `IntentDescriptor` declares `level` under `params` (`diagnostician.py:48-56`), and the only producer sends it there (AV1). A `params` key whose value is `None` falls through to the flat form.
 
 **D2. Parse in the handler**, not in the agent. The decision rank is in consult `87e8824a`. Text that holds no JSON object is shown, not swallowed: the Captain sees what the LLM said. The `isinstance(parsed, dict)` check covers the fenced branch of `extract_json`, which can return a list (`json_extract.py:34-37`).
 
-**D3. Markup: `rich.markup.escape` is out; `Text` cells and `markup=False` are in.**
+**D3. Foreign text: `rich.markup.escape` is out; `Text` cells and `markup=False, emoji=False, highlight=False` are in.**
 - Escaping the values in the handler fails for `evidence`, which the panel renders with `str(list)` (`panels.py:686`). The list's repr doubles the backslash that `escape` adds, and Rich reads two backslashes before a tag as one literal backslash followed by a live tag (`rich/markup.py:88-98`). The `MarkupError` stays.
 - A `Text` cell is never parsed, whatever the value's type. The panel has one caller (AV2), so the change is contained.
-- The handler's own three prints of foreign text use `markup=False` for the same reason. Test 13 covers the existing `except` line, test 11 the failure line and test 10 the raw-text line.
+- The handler's own three prints of foreign text use `markup=False` for the same reason, and `emoji=False, highlight=False` because `markup=False` stops only the markup parse: Rich still turns `:warning:` into a sign and, on a terminal, colours numbers, booleans and brackets (section 17). Tests 13, 11 and 10 cover the `except` line, the failure line and the raw-text line on a terminal console; test 12 covers the panel cells the same way.
 - These are in BF-991 because they become reachable only once fault 2 is repaired (LLM text first reaches the panel through this change). The `except` line is the same handler's same rule; leaving it would also leave an inconsistency the Diff Reviewer would flag.
 
 **D4. The L4/L5 line.** `No LLM analysis at this depth (AD-700c): <level> makes no LLM call.` It is printed after the panel, whenever `level.llm_tier is None`. The scan's metrics are not shown; that gap is item bf-991 F1 on #1820 (section 8.3).
@@ -147,14 +151,14 @@ The `/diagnostic` command fails on every call (#1840). Two faults lie on one pat
 | 7 | `test_params_win_over_a_top_level_level` | `params.level=L1` with top-level `L5` gives L1, `deep` |
 | 8 | `test_the_handler_prints_the_parsed_diagnosis` | Real handler, L3: `marker-1840` and `Diagnostic L3` shown; no `Diagnostic error`; 1 call |
 | 9 | `test_the_handler_at_l4_prints_the_panel_and_the_no_llm_line` | `Diagnostic L4`, the AD-700c line, no error, 0 calls, scan awaited once |
-| 10 | `test_a_reply_that_is_not_a_diagnosis_is_printed_as_text[text-with-brackets, fenced-json-array]` | The raw text is printed literally under the panel; no error |
-| 11 | `test_a_failed_result_prints_its_error_and_no_panel` | `Diagnostic failed: boom [/x]`; no `Root cause` |
-| 12 | `test_llm_text_in_the_panel_is_shown_as_text_not_markup` | `[/x] stray tag` and `[core]` are shown; no error |
-| 13 | `test_an_error_text_that_looks_like_markup_is_printed_not_raised` | `Diagnostic error: bad [/x] tag` is printed and nothing propagates |
+| 10 | `test_a_reply_that_is_not_a_diagnosis_is_printed_as_text[text-with-brackets, fenced-json-array]` | The empty panel (`Root cause`) and the raw text, unbroken on a terminal console; no error |
+| 11 | `test_a_failed_result_prints_its_error_and_no_panel` | `Diagnostic failed: boom [/x] :warning: 42 True` unbroken on a terminal console; no `Root cause` |
+| 12 | `test_llm_text_in_the_panel_is_shown_as_text_not_markup` | `[/x] :warning: 42 True stray tag` and `[core]` unbroken on a terminal console; no error |
+| 13 | `test_an_error_text_that_looks_like_markup_is_printed_not_raised` | `Diagnostic error: bad [/x] :warning: 42 True tag` unbroken on a terminal console; nothing propagates |
 
 **Predicted red/green** (14 cases):
 
-| # | Base (only 7.1 added) | After D1-D2 only (premise gate) | After M1 |
+| # | Base (only 7.1 added) | After D1-D2 only (premise gate) | After M1 and A1 |
 |---|---|---|---|
 | 1-5 | red: `AttributeError: 'IntentMessage' object has no attribute 'get'` raised by `handle_intent` | green | green |
 | 6 | **green** (the flat dict works on the base) | green | green |
@@ -166,7 +170,7 @@ The `/diagnostic` command fails on every call (#1840). Two faults lie on one pat
 | 12 | red | red (`'str' ... 'get'`) | green |
 | 13 | red: `MarkupError` propagates from `cmd_diagnostic` | red | green |
 
-Base: 13 red, 1 green. After D1-D2: 7 green, 7 red. After M1: 14 green. The three existing files stay green in all three columns, with one exception: the M3 mutant (section 10) turns three `test_ad700_*` cases red.
+Base: 13 red, 1 green. After D1-D2: 7 green, 7 red. After M1 and A1: 14 green. The three existing files stay green in all three columns, with one exception: the M3 mutant (section 10) turns three `test_ad700_*` cases red.
 
 ## 7. The contract
 
@@ -205,6 +209,8 @@ from probos.types import IntentMessage, IntentResult
 
 _MARKER = "W-1840"
 _FOCUS = "focus-bf991"
+# Text Rich rewrites unless told not to: an emoji code, and a number and a boolean it highlights on a terminal.
+_LITERAL = ":warning: 42 True"
 _DIAG_JSON = (
     '{"severity": "high", "category": "agent", "affected_components": ["x"], '
     '"root_cause": "marker-1840", "evidence": [], "recommended_treatment": "none", '
@@ -265,11 +271,20 @@ async def _diagnose(agent: DiagnosticianAgent, level: str, focus: str = "") -> I
     )
 
 
-def _shell(agent: Any) -> tuple[SimpleNamespace, Console, StringIO]:
-    """The ship as the handler reads it: one healthy agent in the ``medical_diagnostician`` pool."""
+def _shell(agent: Any, *, terminal: bool = False) -> tuple[SimpleNamespace, Console, StringIO]:
+    """The ship as the handler reads it: one healthy agent in the ``medical_diagnostician`` pool.
+
+    ``terminal=True`` gives a console that writes ANSI codes whatever the environment says,
+    so Rich's styles, and any highlighting, show in the buffer.
+    """
     pool = SimpleNamespace(healthy_agents=[agent.id], registry=SimpleNamespace(get=lambda _agent_id: agent))
     buf = StringIO()
-    console = Console(file=buf, force_terminal=False, width=120)
+    if terminal:
+        console = Console(
+            file=buf, force_terminal=True, color_system="standard", legacy_windows=False, no_color=False, width=120
+        )
+    else:
+        console = Console(file=buf, force_terminal=False, width=120)
     return SimpleNamespace(pools={"medical_diagnostician": pool}), console, buf
 
 
@@ -371,52 +386,56 @@ async def test_the_handler_at_l4_prints_the_panel_and_the_no_llm_line() -> None:
 @pytest.mark.parametrize(
     ("reply", "shown"),
     [
-        ("Ship nominal [x] no JSON here", "Ship nominal [x] no JSON here"),
+        (f"Ship nominal [x] {_LITERAL} no JSON here", f"Ship nominal [x] {_LITERAL} no JSON here"),
         ("```json\n[1, 2]\n```", "[1, 2]"),
     ],
     ids=["text-with-brackets", "fenced-json-array"],
 )
 async def test_a_reply_that_is_not_a_diagnosis_is_printed_as_text(reply: str, shown: str) -> None:
     agent, llm, _ = _agent(reply)
-    runtime, console, buf = _shell(agent)
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
     assert "Diagnostic error" not in out, out
-    assert "Diagnostic L3" in out, out
+    assert "Root cause" in out, out
     assert shown in out, out
     assert llm.complete.await_count == 1
 
 
 async def test_a_failed_result_prints_its_error_and_no_panel() -> None:
-    failed = IntentResult(intent_id="i-bf991", agent_id="diag-bf991", success=False, error="boom [/x]")
+    failed = IntentResult(
+        intent_id="i-bf991", agent_id="diag-bf991", success=False, error=f"boom [/x] {_LITERAL}"
+    )
     agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(return_value=failed))
-    runtime, console, buf = _shell(agent)
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
-    assert "Diagnostic failed: boom [/x]" in out, out
+    assert f"Diagnostic failed: boom [/x] {_LITERAL}" in out, out
     assert "Root cause" not in out, out
 
 
 async def test_llm_text_in_the_panel_is_shown_as_text_not_markup() -> None:
     reply = (
-        '{"severity": "low", "category": "agent", "root_cause": "[/x] stray tag", '
-        '"evidence": ["pool [core] low"], "recommended_treatment": "none"}'
+        '{"severity": "low", "category": "agent", "root_cause": "[/x] '
+        + _LITERAL
+        + ' stray tag", "evidence": ["pool [core] low"], "recommended_treatment": "none"}'
     )
     agent, _, _ = _agent(reply)
-    runtime, console, buf = _shell(agent)
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
     assert "Diagnostic error" not in out, out
-    assert "[/x] stray tag" in out, out
+    assert f"[/x] {_LITERAL} stray tag" in out, out
     assert "[core]" in out, out
 
 
 async def test_an_error_text_that_looks_like_markup_is_printed_not_raised() -> None:
-    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(side_effect=RuntimeError("bad [/x] tag")))
-    runtime, console, buf = _shell(agent)
+    error = RuntimeError(f"bad [/x] {_LITERAL} tag")
+    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(side_effect=error))
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
-    assert "Diagnostic error: bad [/x] tag" in out, out
+    assert f"Diagnostic error: bad [/x] {_LITERAL} tag" in out, out
 ```
 
 ### 7.2 `src/probos/agents/medical/diagnostician.py` (M1)
@@ -546,6 +565,8 @@ REPLACE:
                 f"Diagnostic failed: {intent_result.error or 'no error given'}",
                 style="red",
                 markup=False,
+                emoji=False,
+                highlight=False,
             )
             return
         diagnosis, unparsed = _diagnosis_from_result(
@@ -554,9 +575,9 @@ REPLACE:
         panel = panels.render_diagnostic_result(diagnosis, level=level)
         console.print(panel)
         if unparsed:
-            # The LLM's own words, shown as text: never parsed as Rich markup.
+            # The LLM's own words, shown as received: no markup, emoji codes or highlighting.
             console.print("The Diagnostician's reply is not a JSON diagnosis:", style="yellow")
-            console.print(unparsed, markup=False)
+            console.print(unparsed, markup=False, emoji=False, highlight=False)
         if level.llm_tier is None:
             console.print(
                 f"No LLM analysis at this depth (AD-700c): {level.value} makes no LLM call.",
@@ -577,8 +598,8 @@ REPLACE:
             focus,
             e,
         )
-        # BF-991: the error text is foreign text; as markup, a "[/x]" in it raises again here.
-        console.print(f"Diagnostic error: {e}", style="red", markup=False)
+        # BF-991: the error text is foreign text, printed as received; as markup, a "[/x]" in it raises again here.
+        console.print(f"Diagnostic error: {e}", style="red", markup=False, emoji=False, highlight=False)
 ```
 
 ### 7.4 `src/probos/experience/panels.py` (M1, P1)
@@ -733,7 +754,7 @@ After 7.5 to 7.8, run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledg
 
 ## 10. Mutation rows (one campaign; restore between rows; run only the listed killers)
 
-The run after M1 with all edits applied is the campaign's base. Record the base tree and the sha256 of `diagnostician.py`, `commands_diagnostic.py`, `panels.py` and the new test file. On a later tree whose four files match, do not rerun; rerun a row only if its file differs. Rows M8 to M10 cover the decisions this contract adds (D3, D4).
+The run after M1 with all edits applied is the campaign's base. Record the base tree and the sha256 of `diagnostician.py`, `commands_diagnostic.py`, `panels.py` and the new test file. On a later tree whose four files match, do not rerun; rerun a row only if its file differs. Rows M8 to M10 cover the decisions this contract adds (D3, D4). Rows M11a to M13b cover A1 (section 17).
 
 | # | Site | Mutate to | Killed by |
 |---|---|---|---|
@@ -747,8 +768,14 @@ The run after M1 with all edits applied is the campaign's base. Record the base 
 | M6b | C2: `if not isinstance(parsed, dict): return {}, text` | (deleted) | 10[fenced-json-array] |
 | M7 | C3: the `if intent_result is not None and not intent_result.success:` block | (deleted) | 11 |
 | M8 | P1: the seven `Text(...)` wraps | the original `str` / markup cells | 12 |
-| M9 | C4: `console.print(f"Diagnostic error: {e}", style="red", markup=False)` | `console.print(f"[red]Diagnostic error: {e}[/red]")` | 13 |
+| M9 | C4: `console.print(f"Diagnostic error: {e}", style="red", markup=False, emoji=False, highlight=False)` | `console.print(f"[red]Diagnostic error: {e}[/red]")` | 13 |
 | M10 | C3: the `if level.llm_tier is None:` print | (deleted) | 9 |
+| M11a | A1-1: the failure print | drop `emoji=False` | 11 |
+| M11b | A1-1: the failure print | drop `highlight=False` | 11 |
+| M12a | A1-2: the reply print | drop `emoji=False` | 10[text-with-brackets] |
+| M12b | A1-2: the reply print | drop `highlight=False` | 10[both] |
+| M13a | A1-3: the exception print | drop `emoji=False` | 13 |
+| M13b | A1-3: the exception print | drop `highlight=False` | 13 |
 
 **Unchanged-file check:** `git diff --stat <base> HEAD` lists exactly the three source files, the new test file, `PROGRESS.md`, `DECISIONS.md`, the ledger pair, and this prompt.
 
@@ -816,6 +843,7 @@ git diff --stat cc601a72 3331b4ac -- <the three source files, cognitive_agent.py
 
 - `MagicMock` is truthy, so `not intent_result.success` is `False` for `test_ad700a`'s default mock, and its dict result passes through C2 unchanged.
 - `console.print` accepts `style` and `markup`. With `force_terminal=False`, the buffer holds plain text and no ANSI codes.
+- With `_shell(..., terminal=True)`, styles are written as ANSI codes whatever `NO_COLOR`, `FORCE_COLOR`, `TTY_COMPATIBLE` or the platform say (`rich/console.py:707-712`, `:726-728`, `:939-940`). A line with one style is one code, the text and one reset (probe `probe_rich_literal.py`), so text printed with `highlight=False` and `emoji=False` stays unbroken in the buffer.
 - Test 13's base red comes from the `MarkupError` raised by the `except` print (`rich/markup.py:167-169`; the message quotes `'[/x]'`).
 - Test 12's M8 red: the panel print raises `MarkupError` and is caught; the C4 line then prints `Diagnostic error: ...` literally, so the assertion `"Diagnostic error" not in out` fails.
 - Test 6's base column is green: the base reads `intent.get` on a dict, and that works. Test 6 exists to kill M2a and M3 and to pin the premise of the fallback.
@@ -823,7 +851,7 @@ git diff --stat cc601a72 3331b4ac -- <the three source files, cognitive_agent.py
 ## 13. Prior art and blind spots
 
 - **Internal:** consult `87e8824a` (the ranked decisions); the orchestrator's premise probe (`G:\tmp\r1probe\probe_b991_premise.py`) and its perceive-override census. AD-432/BF-698 bound the base's dict branch, and this contract keeps it.
-- **External:** none searched. This is ProbOS-specific plumbing with no outside design analogue. The one third-party fact it relies on (Rich's markup parse and `escape`) was read from the installed Rich source, not from documentation. No overdue reference project applies.
+- **External:** none searched. This is ProbOS-specific plumbing with no outside design analogue. The third-party facts it relies on are Rich's: the markup parse and `escape`, read from the installed source, and the emoji and highlight passes that `markup=False` leaves on (`rich/console.py:1437-1462`), measured by the orchestrator's probe `probe_rich_literal.py`. No overdue reference project applies.
 - **Blind spots, recorded:**
   - L4 shows no metrics: #1820 bf-991 F1.
   - L2 is not exercised by a test. It shares L3's tier and code path, and the probe measured it (1 call, `fast`).
@@ -834,7 +862,7 @@ git diff --stat cc601a72 3331b4ac -- <the three source files, cognitive_agent.py
 
 1. `perceive` reads `params["level"]` from the observation first; reads the argument's top-level `level` only when that is `None` and the argument is a `dict`; never calls `.get` on a non-dict. Every key it writes (`level`, `level_rank`, `level_llm_tier`, `context`) is unchanged.
 2. The handler never passes a non-dict to `render_diagnostic_result`. A failed result prints its error and returns before any panel. A reply with no JSON object is printed (not dropped), with `markup=False`.
-3. Every handler print of foreign text (the reply, the failure text, the exception text) has `markup=False`, and every panel value cell is a `Text`. No `rich.markup.escape` is introduced.
+3. Every handler print of foreign text (the reply, the failure text, the exception text) has `markup=False, emoji=False, highlight=False`, and every panel value cell is a `Text`. Tests 10 to 13 show that text unbroken on a terminal console. No `rich.markup.escape` is introduced.
 4. No change outside the three source files, the new test, the two trackers and the ledger pair. BF-990's text is amended only by the bracketed insertions, and its prompt is untouched.
 5. The tests drive the real `DiagnosticianAgent` (no `__new__`, no stubbed base) and the real `cmd_diagnostic`, and use no `MockLLMClient`. Test 6 asserts its premise. No assertion pins the faulty behaviour.
 6. No commit subject carries an `AD-` or `BF-` token.
@@ -879,3 +907,257 @@ Every pair of section 7 was applied to a scratch worktree by `audit\oracle_apply
 | O9 | After #1841 merged: `gh issue list --state all --search "BF-991 in:title"` finds #1840 only; `git log --all -i --grep=BF-991` finds nothing; `prompts/bf-99*` holds only the BF-990 prompt; `open-ads-report.md` names BF-991 as next free. |
 
 The premises, measured outside the tree (probe `probe_b991_premise.py`, premises asserted): the control `medical_alert` succeeds with 1 call; the issue's `AttributeError` is raised with 0 calls; with the first fault bypassed, `IntentResult.result` is a `str` at every level (`''` with 0 calls at L5 and L4; JSON text with 1 call on tier `fast` at L3 and L2, and on `deep` at L1); the real handler prints `Diagnostic error: 'str' object has no attribute 'get'` at L3 and L1 and a panel at L4; the real base `perceive` over `{'intent', 'level'}` keeps no `level`. The census (`enum_perceive_overrides.py`, controls held): of 19 `perceive` overrides in classes that descend from `CognitiveAgent`, only the Diagnostician calls `.get` on its argument without a guard.
+
+## 17. Amendment A1: review round 1 (gpt-6.1-sol, REQUEST CHANGES), two findings
+
+Review round 1 of `5ee64550` (8 minutes; `next/adq/b7/review-b991-r1.out.md`) found two things and nothing else. By execution it also found: 13 of 14 new cases fail on a full reversion; L5, L4, L3, L2 and L1 make 0, 0, 1, 1 and 1 LLM calls; the real `/diagnostic` dispatch works through the handler, the agent and the journal. The orchestrator reproduced finding 1 first-hand (probe `probe_rich_literal.py`, premises asserted). The decisions are the Architect's (read-only consult `7b52af2c`, 2026-11-20).
+
+| Finding | Reviewer's class | Verified | Disposition |
+|---|---|---|---|
+| R1-1: `markup=False` stops markup parsing only. Rich still turns `:warning:` into a sign and, on a terminal, highlights numbers, booleans and brackets in the three prints of foreign text | P2, ordinary, regression of the new prints | Probe: `markup=False` prints the sign and colours `[`, `/x`, `42` and `True`; adding `emoji=False, highlight=False` prints the text literally, and a `style="red"` line stays uniformly red | **Fixed**: the three prints also pass `emoji=False, highlight=False` (17.1). Tests 10 to 13 print text holding `:warning: 42 True` on a terminal console (17.2) |
+| R1-2: D1 claimed a non-dict `params` is "read as absent" | P3, injected-only, not a regression | The real base `perceive` raises first (`cognitive_agent.py:3100`, `AttributeError: 'NoneType' object has no attribute 'get'`) | **Sentence deleted** (D1). The `isinstance(params, dict)` guard stays; no claim rests on it |
+
+Rejected: `Text(...)` objects for the prints, because it makes the tracker sentences "with `markup=False`" false, which means two tracker pairs and a ledger regeneration. A helper, because it adds a name for three calls and one mutant would cover all three prints. A `**` keyword dict, because it is less readable. The per-print form follows `src/probos/__main__.py:3039` and `:3048` (`markup=False, emoji=False`).
+
+Sections 2, 3 (D1, D3), 6, 7.1, 7.3, 10, 12, 13 and 14, and the header, were corrected in place. The blocks below move the files as committed at `5ee64550` to the state those sections now show. Where an older sentence disagrees with this section, this section governs. No tracker or ledger text changes: `PROGRESS.md` and `DECISIONS.md` say the handler prints foreign text "with `markup=False`", which stays true.
+
+**Milestone M3** (one Builder delegation, tier LOW): 17.1, then 17.2. Focused gate: section 4's command. Commits: this contract alone, then the source and the test.
+
+### 17.1 `src/probos/experience/commands/commands_diagnostic.py` (A1, pairs A1-1 to A1-3; 125 to 127 lines)
+
+**A1-1.** SEARCH (once, `:96-100` of the committed file):
+```python
+            console.print(
+                f"Diagnostic failed: {intent_result.error or 'no error given'}",
+                style="red",
+                markup=False,
+            )
+```
+REPLACE:
+```python
+            console.print(
+                f"Diagnostic failed: {intent_result.error or 'no error given'}",
+                style="red",
+                markup=False,
+                emoji=False,
+                highlight=False,
+            )
+```
+
+**A1-2.** SEARCH (once, `:108-110` of the committed file):
+```python
+            # The LLM's own words, shown as text: never parsed as Rich markup.
+            console.print("The Diagnostician's reply is not a JSON diagnosis:", style="yellow")
+            console.print(unparsed, markup=False)
+```
+REPLACE:
+```python
+            # The LLM's own words, shown as received: no markup, emoji codes or highlighting.
+            console.print("The Diagnostician's reply is not a JSON diagnosis:", style="yellow")
+            console.print(unparsed, markup=False, emoji=False, highlight=False)
+```
+
+**A1-3.** SEARCH (once, `:124-125` of the committed file):
+```python
+        # BF-991: the error text is foreign text; as markup, a "[/x]" in it raises again here.
+        console.print(f"Diagnostic error: {e}", style="red", markup=False)
+```
+REPLACE:
+```python
+        # BF-991: the error text is foreign text, printed as received; as markup, a "[/x]" in it raises again here.
+        console.print(f"Diagnostic error: {e}", style="red", markup=False, emoji=False, highlight=False)
+```
+
+### 17.2 `tests/test_bf991_diagnostic_intent_message.py` (A1, pairs A1-4 to A1-9; 244 to 259 lines)
+
+**A1-4.** SEARCH (once, `:31-32` of the committed file):
+```python
+_MARKER = "W-1840"
+_FOCUS = "focus-bf991"
+```
+REPLACE:
+```python
+_MARKER = "W-1840"
+_FOCUS = "focus-bf991"
+# Text Rich rewrites unless told not to: an emoji code, and a number and a boolean it highlights on a terminal.
+_LITERAL = ":warning: 42 True"
+```
+
+**A1-5.** SEARCH (once, `:93-98` of the committed file):
+```python
+def _shell(agent: Any) -> tuple[SimpleNamespace, Console, StringIO]:
+    """The ship as the handler reads it: one healthy agent in the ``medical_diagnostician`` pool."""
+    pool = SimpleNamespace(healthy_agents=[agent.id], registry=SimpleNamespace(get=lambda _agent_id: agent))
+    buf = StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    return SimpleNamespace(pools={"medical_diagnostician": pool}), console, buf
+```
+REPLACE:
+```python
+def _shell(agent: Any, *, terminal: bool = False) -> tuple[SimpleNamespace, Console, StringIO]:
+    """The ship as the handler reads it: one healthy agent in the ``medical_diagnostician`` pool.
+
+    ``terminal=True`` gives a console that writes ANSI codes whatever the environment says,
+    so Rich's styles, and any highlighting, show in the buffer.
+    """
+    pool = SimpleNamespace(healthy_agents=[agent.id], registry=SimpleNamespace(get=lambda _agent_id: agent))
+    buf = StringIO()
+    if terminal:
+        console = Console(
+            file=buf, force_terminal=True, color_system="standard", legacy_windows=False, no_color=False, width=120
+        )
+    else:
+        console = Console(file=buf, force_terminal=False, width=120)
+    return SimpleNamespace(pools={"medical_diagnostician": pool}), console, buf
+```
+
+**A1-6.** SEARCH (once, `:196-212` of the committed file):
+```python
+@pytest.mark.parametrize(
+    ("reply", "shown"),
+    [
+        ("Ship nominal [x] no JSON here", "Ship nominal [x] no JSON here"),
+        ("```json\n[1, 2]\n```", "[1, 2]"),
+    ],
+    ids=["text-with-brackets", "fenced-json-array"],
+)
+async def test_a_reply_that_is_not_a_diagnosis_is_printed_as_text(reply: str, shown: str) -> None:
+    agent, llm, _ = _agent(reply)
+    runtime, console, buf = _shell(agent)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert "Diagnostic error" not in out, out
+    assert "Diagnostic L3" in out, out
+    assert shown in out, out
+    assert llm.complete.await_count == 1
+```
+REPLACE:
+```python
+@pytest.mark.parametrize(
+    ("reply", "shown"),
+    [
+        (f"Ship nominal [x] {_LITERAL} no JSON here", f"Ship nominal [x] {_LITERAL} no JSON here"),
+        ("```json\n[1, 2]\n```", "[1, 2]"),
+    ],
+    ids=["text-with-brackets", "fenced-json-array"],
+)
+async def test_a_reply_that_is_not_a_diagnosis_is_printed_as_text(reply: str, shown: str) -> None:
+    agent, llm, _ = _agent(reply)
+    runtime, console, buf = _shell(agent, terminal=True)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert "Diagnostic error" not in out, out
+    assert "Root cause" in out, out
+    assert shown in out, out
+    assert llm.complete.await_count == 1
+```
+
+**A1-7.** SEARCH (once, `:215-222` of the committed file):
+```python
+async def test_a_failed_result_prints_its_error_and_no_panel() -> None:
+    failed = IntentResult(intent_id="i-bf991", agent_id="diag-bf991", success=False, error="boom [/x]")
+    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(return_value=failed))
+    runtime, console, buf = _shell(agent)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert "Diagnostic failed: boom [/x]" in out, out
+    assert "Root cause" not in out, out
+```
+REPLACE:
+```python
+async def test_a_failed_result_prints_its_error_and_no_panel() -> None:
+    failed = IntentResult(
+        intent_id="i-bf991", agent_id="diag-bf991", success=False, error=f"boom [/x] {_LITERAL}"
+    )
+    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(return_value=failed))
+    runtime, console, buf = _shell(agent, terminal=True)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert f"Diagnostic failed: boom [/x] {_LITERAL}" in out, out
+    assert "Root cause" not in out, out
+```
+
+**A1-8.** SEARCH (once, `:225-236` of the committed file):
+```python
+async def test_llm_text_in_the_panel_is_shown_as_text_not_markup() -> None:
+    reply = (
+        '{"severity": "low", "category": "agent", "root_cause": "[/x] stray tag", '
+        '"evidence": ["pool [core] low"], "recommended_treatment": "none"}'
+    )
+    agent, _, _ = _agent(reply)
+    runtime, console, buf = _shell(agent)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert "Diagnostic error" not in out, out
+    assert "[/x] stray tag" in out, out
+    assert "[core]" in out, out
+```
+REPLACE:
+```python
+async def test_llm_text_in_the_panel_is_shown_as_text_not_markup() -> None:
+    reply = (
+        '{"severity": "low", "category": "agent", "root_cause": "[/x] '
+        + _LITERAL
+        + ' stray tag", "evidence": ["pool [core] low"], "recommended_treatment": "none"}'
+    )
+    agent, _, _ = _agent(reply)
+    runtime, console, buf = _shell(agent, terminal=True)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert "Diagnostic error" not in out, out
+    assert f"[/x] {_LITERAL} stray tag" in out, out
+    assert "[core]" in out, out
+```
+
+**A1-9.** SEARCH (once, `:239-244` of the committed file):
+```python
+async def test_an_error_text_that_looks_like_markup_is_printed_not_raised() -> None:
+    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(side_effect=RuntimeError("bad [/x] tag")))
+    runtime, console, buf = _shell(agent)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert "Diagnostic error: bad [/x] tag" in out, out
+```
+REPLACE:
+```python
+async def test_an_error_text_that_looks_like_markup_is_printed_not_raised() -> None:
+    error = RuntimeError(f"bad [/x] {_LITERAL} tag")
+    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(side_effect=error))
+    runtime, console, buf = _shell(agent, terminal=True)
+    await cmd_diagnostic(runtime, console, "L3")
+    out = buf.getvalue()
+    assert f"Diagnostic error: bad [/x] {_LITERAL} tag" in out, out
+```
+
+### 17.3 Predicted red and green
+
+- With only 17.2 on the `5ee64550` tree: 10[text-with-brackets], 10[fenced-json-array], 11 and 13 red, because the sign or the highlight codes break the expected substring. The other 10 cases, test 12 included, are green: `Text` cells already print literally, so test 12 kills nothing new and measures the claim of property 3.
+- After 17.1: 14 green. Section 4's gate: 58 passed.
+
+### 17.4 Mutation rows (A1)
+
+Rerun the whole campaign on the final files: the rows of section 10 and the six rows M11a to M13b, each killed by exactly its listed tests. Record the sha256 of the LF text of `commands_diagnostic.py` and of the test file.
+
+### 17.5 Review round 2: properties to verify
+
+1. The delta changes only the two files plus this contract; no tracker or ledger file changes.
+2. Each of the three prints of foreign text carries `markup=False, emoji=False, highlight=False`, and each new kwarg has a row of 17.4 with a killer.
+3. Tests 10 to 13 assert the foreign text unbroken on a terminal console; tests 8 and 9 are unchanged in effect.
+4. The deleted D1 sentence is not restated anywhere.
+5. The claims of the amended sections are true of the files: the header's sentence about the BF number in a SEARCH names A1-3; sections 2, 3, 6, 7.1, 7.3, 10, 12, 13, 14 and 17 agree on which prints carry which keyword arguments and which tests pin them; the case count stays 14.
+
+### 17.6 The orchestrator's first-hand checks (2026-11-20, the oracle tree at `3331b4ac` with the M1 files, before the Builder started)
+
+| P | Check | Result |
+|---|---|---|
+| P1 | The nine SEARCH blocks against the files of `5ee64550` (`audit\build_a1_pairs_b991.py`, `audit\a1_tools_b991.py`) | Each occurs exactly once at its turn, and the files end at 127 lines (`commands_diagnostic.py`) and 259 lines (the test file), as 17.1 and 17.2 state |
+| P2 | 17.2 alone on the M1 files, the new file at `-n 0` | 4 failed, 10 passed, as 17.3 predicts: 10[text-with-brackets], 10[fenced-json-array], 11 and 13 fail. Test 13's output shows the sign (`\u26a0`) in place of `:warning:` and colour codes around `[`, `/`, `x`, `]`, `42` and `True` |
+| P3 | 17.1 on top, then the focused gate of section 4 | All 14 new cases green; 58 passed (14 new, 44 in the three existing files). `Root cause` is unbroken in the terminal output, so the panel marker of test 10 holds |
+| P4 | The whole campaign (`audit\mutants_bf991.py`): the 12 rows of section 10, the six rows of 17.4, and three evidence rows X1 to X3 (the `markup=False` of each print dropped one at a time) | All 21 rows killed, each by exactly its listed tests and no other case. M12a is killed by 10[text-with-brackets] alone and M12b by both cases of test 10. X1, X2 and X3 are killed by test 11, 10[text-with-brackets] and 13 |
+| P5 | The files after A1, the base of the record (sha256 is of the LF text; section 16's values are of the oracle's files as they lay on disk, CRLF for the source files and LF for the test file) | `commands_diagnostic.py`: blob `ff93e01767fa2dc5ed8c30f5b9bd582a29cfb043`, sha256 `bd89aa964032a9b34a32c5d7ceceecf625c0f99d0e522ea67ec85946a7c90c52`. The test file: blob `169af6abec4cbf87937f1ffce23e209994de93a0`, sha256 `916e0bee0e1ffc7e804890c8012e4633fbf46fd25eacea966610f418385d3cf9`. `diagnostician.py` and `panels.py` are unchanged |
+| P6 | The consult's pointers into the installed Rich (15.0.0) | `rich/console.py:707-712` (colour system), `:726-728` (`no_color`), `:939-940` (`force_terminal`), `:1437` and `:1453-1454` (emoji), `:1462` (highlighter) hold what the consult says |
+| P7 | The same gap in `/scout` (`G:\tmp\r1probe\probe_scout_literal.py`, premises asserted: the control with all three keyword arguments is literal) | Present: see 17.7 |
+
+### 17.7 New item on #1820 (bf-991 F2)
+
+`- [ ] **bf-991 F2 (P3, Low; pre-existing, not a regression of BF-991): /scout prints the Scout's report and its error text with markup=False only, so Rich still turns an emoji code in them into a sign and, on a terminal, colours their numbers, booleans and brackets.**` Evidence: `src/probos/experience/commands/commands_knowledge.py:155` (`console.print(output, markup=False)`) and `:157` (`Scout error: ...`, `markup=False`); the comment at `:154` names BF-935 A2. Rich runs its emoji and highlight passes on a `str` whatever `markup` says (`rich/console.py:1437-1462`). Probe `probe_scout_literal.py` on a terminal console (2026-11-20, premises asserted): a report holding `Report [x] :warning: 42 True end` prints `\u26a0` in place of `:warning:` and wraps `[`, `]`, `42` and `True` in colour codes, and an error holding `boom [/x] :warning: 42 True end` does the same inside the red line. BF-991 amendment A1 repairs the same fault in `/diagnostic`. **Smallest repair:** add `emoji=False, highlight=False` to the two prints and pin each with a terminal-console case, as `tests/test_bf991_diagnostic_intent_message.py` does. `rg -n "markup=False" src/probos --glob "*.py"` (2026-11-20, `5ee64550`) lists nine call sites: the four of `commands_diagnostic.py` (three repaired by A1, the fourth the handler's own text), the two of `/scout`, `src/probos/__main__.py:3039` and `:3048` (both already `emoji=False`), and `:3007` (a refusal that quotes a configured path; the repair should check it). No site in `src/probos` used `highlight=False` before A1. **Nearest neighbour:** #1674 (closed, BF-935) and #1840 (BF-991).
