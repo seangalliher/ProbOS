@@ -49,6 +49,10 @@ class VitalsMonitorAgent(HeartbeatAgent):
     # In memory only, like the drift scheduler's cache it mirrors. A class-level default: the value is replaced,
     # never mutated, and an agent built without __init__ (tests/test_bf069_llm_health.py) reads it too.
     _critical_drift_held: frozenset[tuple[str, float]] = frozenset()
+    # BF-990: sends of that alert for one critical set before an undelivered edge is used up. The bus does
+    # not raise for a handler that failed or timed out: it returns [] or a failed result.
+    _DRIFT_ALERT_SENDS = 3
+    _critical_drift_misses: int = 0
 
     def __init__(self, pool: str = "medical", interval: float = 5.0, **kwargs: Any) -> None:
         super().__init__(pool=pool, interval=interval, **kwargs)
@@ -179,8 +183,8 @@ class VitalsMonitorAgent(HeartbeatAgent):
 
         # AD-566c: Qualification drift metrics
         # BF-990 (#1839): each critical report's identity, for the alert's edge. Kept out of
-        # ``metrics``: the window reaches the Diagnostician's LLM context (``scan_now``'s
-        # ``recent_history``) and ``info()``.
+        # ``metrics``: ``scan_now`` returns the window as ``recent_history`` and ``info()`` reports
+        # the last metrics.
         critical_drift: frozenset[tuple[str, float]] = frozenset()
         _drift_scheduler = getattr(rt, "_drift_scheduler", None)
         if _drift_scheduler:
@@ -295,7 +299,8 @@ class VitalsMonitorAgent(HeartbeatAgent):
         Every alert repeats on each pulse while its condition holds, except the qualification
         drift alert (BF-990, #1839): ``critical_drift`` is the set of critical reports held now,
         as ``(agent_id, report timestamp)``, and that alert fires only when it holds one the last
-        pulse did not.
+        pulse did not. An alert that no handler confirmed is sent again on the next pulse, up to
+        ``_DRIFT_ALERT_SENDS`` sends for one critical set.
         """
         alerts: list[dict[str, Any]] = []
 
@@ -370,7 +375,8 @@ class VitalsMonitorAgent(HeartbeatAgent):
         # BF-990 (#1839): edge-triggered. The drift scheduler holds each report until its next run
         # (weekly), so a level check sent this alert on every pulse and the Diagnostician spent an
         # LLM call on each. It fires when a critical report appears that the last pulse did not
-        # hold. The memory is replaced on every pulse, so a pulse holding none re-arms it.
+        # hold. The memory is replaced on every pulse, so a pulse holding none re-arms it. An alert
+        # that no handler confirmed re-arms it too, for at most ``_DRIFT_ALERT_SENDS`` sends.
         previous_drift = self._critical_drift_held
         self._critical_drift_held = critical_drift
         if critical_drift - previous_drift:
@@ -384,6 +390,8 @@ class VitalsMonitorAgent(HeartbeatAgent):
                 "alert": f"{drift_critical} agent(s) showing critical qualification drift",
                 "timestamp": metrics["timestamp"],
             })
+        else:
+            self._critical_drift_misses = 0
 
         # Broadcast alerts via intent bus
         for alert_data in alerts:
@@ -392,12 +400,23 @@ class VitalsMonitorAgent(HeartbeatAgent):
                 params=alert_data,
             )
             try:
-                await rt.intent_bus.broadcast(intent, timeout=5.0)
+                results = await rt.intent_bus.broadcast(intent, timeout=5.0)
+                delivered = any(r.success for r in results)
             except Exception as e:
                 logger.debug("Failed to broadcast medical alert: %s", e)
-                if alert_data["metric"] == "qualification_drift":
-                    # BF-990: an edge alert that was not sent re-arms, so the next pulse retries it.
+                delivered = False
+            if alert_data["metric"] == "qualification_drift":
+                # BF-990: the bus returns [] for a handler that timed out and a failed result for one
+                # that raised, so "delivered" is a successful result, not the absence of an exception.
+                self._critical_drift_misses = 0 if delivered else self._critical_drift_misses + 1
+                if 0 < self._critical_drift_misses < self._DRIFT_ALERT_SENDS:
                     self._critical_drift_held = previous_drift
+                elif self._critical_drift_misses:
+                    logger.warning(
+                        "Qualification drift alert undelivered after %d sends; not retried until the critical reports change",
+                        self._critical_drift_misses,
+                    )
+                    self._critical_drift_misses = 0
 
     @property
     def window(self) -> list[dict[str, Any]]:
