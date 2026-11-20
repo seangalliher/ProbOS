@@ -246,6 +246,7 @@ async def test_a_block_holding_64_collections_open_is_unparsed_in_every_reader_f
     assert any(refused in record.getMessage() for record in caplog.records if record.levelno == logging.WARNING)
 
 
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-970 (#1801): its premise loads a block as deep as the limit with PyYAML and overflows its loader
 async def test_a_search_over_a_corpus_holding_a_block_nested_400_deep_returns_the_other_records(store, monkeypatch):
     """T5, acceptance 3. A block nesting 400 collections deep, and one as deep as the recursion limit (past what PyYAML loads), are
     unparsed: the search returns the other records to every reader and finds those two for the Captain and their owner only, and
@@ -274,6 +275,7 @@ async def test_a_search_over_a_corpus_holding_a_block_nested_400_deep_returns_th
 
 
 @pytest.mark.parametrize("loader", _LOADERS, ids=lambda loader: loader.__name__)
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-970 (#1801): its premise loads a 63-level block from 40 frames below the limit, and the check runs there
 def test_the_nesting_check_answers_from_a_nearly_exhausted_stack_and_stops_at_the_limit(loader):
     """T6. The check reads the parser's event stream and builds no node, so it needs a few frames whatever the depth: from a stack
     40 frames below the recursion limit, where PyYAML cannot load a 63-level block, it answers for 63, 64 and ten times the limit.

@@ -651,6 +651,7 @@ def _nested(depth: int, style: str) -> str:
     pytest.param(64, "block", id="block-at-the-limit"),
     pytest.param(600, "block", id="block-past-the-base-recursion"),
 ])
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-970 (#1801): its 600-level premise reads the base's way and overflows PyYAML's loader
 def test_a_frontmatter_nesting_64_collections_or_more_is_unparsed_in_both_readings(tmp_path: Path, depth: int, style: str) -> None:
     """BF-970 (#1801) replaces A5's depth arrangement, which this case pinned (libyaml for a block below 100 levels, the base's
     call above, its ``RecursionError`` included): every reader reads a block holding 64 collections open at once, or more, as
@@ -674,6 +675,7 @@ def test_a_frontmatter_nesting_64_collections_or_more_is_unparsed_in_both_readin
     pytest.param(150, id="below-the-base-recursion"),
     pytest.param(600, id="past-the-base-recursion"),
 ])
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-970 (#1801): its 600-level premise reads the base's way and overflows PyYAML's loader
 async def test_a_deeply_nested_record_is_unparsed_in_every_reader(
     tmp_path: Path, depth: int,
 ) -> None:
@@ -771,6 +773,7 @@ def test_the_nesting_check_counts_open_collections_and_leaves_a_parse_error_to_t
         assert frontmatter_module.load_frontmatter("broken: [unclosed", loader) == ({}, True), loader
 
 
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-970 (#1801): its premise reads a block as deep as the limit the base's way and overflows PyYAML's loader
 def test_parse_document_never_raises_recursion_error_for_nesting(tmp_path: Path) -> None:
     """BF-970 (#1801) replaces A6's frontier case, which pinned ``_parse_document`` to the base's ``RecursionError`` depth (it had
     to stay the base's own text, called from the base's frame). A block nesting 64 collections deep or more is unparsed before any

@@ -86,6 +86,7 @@ def test_a_value_is_never_in_the_message():
     assert _SECRET not in str(info.value)
 
 
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-970 (#1801): the 600-level write overflows PyYAML's representer before the depth check
 def test_a_mapping_nested_too_deeply_is_a_value_error_not_a_recursion_error():
     # BF-970 (#1801): a mapping holding 64 collections open at once or more is refused (no reader loads it), so the written case is
     # 63 deep (the outer mapping and 62 more), where it was 101 (_nested(100)) before the limit.
