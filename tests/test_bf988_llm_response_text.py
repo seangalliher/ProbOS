@@ -13,6 +13,8 @@ compatibility cases (the four in ``test_ad541d_guided_reminiscence.py`` stay as 
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,13 +22,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.cognitive.collective_tests import ScaffoldDecompositionProbe
+from probos.cognitive.drift_detector import DriftDetector
 from probos.cognitive.guided_reminiscence import (
     GuidedReminiscenceEngine,
     RecallClassification,
     RecallResult,
 )
 from probos.cognitive.qualification import QualificationHarness, QualificationStore
-from probos.cognitive.qualification_tests import EpisodicRecallProbe
+from probos.cognitive.qualification import TestResult as StoredResult
+from probos.cognitive.qualification_tests import ConfabulationProbe, EpisodicRecallProbe, PersonalityProbe
+from probos.config import QualificationConfig
 from probos.types import LLMResponse, llm_response_text
 from tests.test_ad541d_guided_reminiscence import _make_counselor, _make_episode
 from tests.test_ad566b_baseline_tests import (
@@ -35,6 +41,7 @@ from tests.test_ad566b_baseline_tests import (
     MockEpisodicMemory,
     MockRegistry,
 )
+from tests.test_ad566e_collective_tests import MockCrewAgent, _build_runtime
 
 _SCORE = "0.8"
 _RECALL = "the ship status was checked and it was nominal"
@@ -323,3 +330,129 @@ async def test_a_judge_that_replies_0_5_is_a_measurement() -> None:
     assert (result.inconclusive, result.error, result.passed) == (False, None, True)
     assert result.score == pytest.approx(0.5)
     assert all("judge" not in e for e in result.details["per_episode"])
+
+
+# -- T13 to T18: the collective probe inherits a failed judge (review round 2, R2-1) -------------------
+
+_FAILED_JUDGE = {"passed": False, "error": f"3/3 episodes: {_RAISED}", "inconclusive": True}  # as the recall probe stores one
+
+
+def _tier1_row(agent_id: str, test_name: str, score: float, ts: float = 1000.0, **fields: Any) -> StoredResult:
+    base: dict[str, Any] = {
+        "agent_id": agent_id, "test_name": test_name, "tier": 1, "score": score, "passed": True,
+        "timestamp": ts, "duration_ms": 1.0,
+    }
+    return StoredResult(**{**base, **fields})
+
+
+def _collective_row(score: float, ts: float) -> StoredResult:
+    return StoredResult(
+        agent_id="__crew__", test_name="scaffold_decomposition", tier=3, score=score, passed=True,
+        timestamp=ts, duration_ms=1.0,
+    )
+
+
+@asynccontextmanager
+async def _collective(
+    tmp_path: Path,
+    *,
+    recall: dict[str, Any] | None = None,
+    personality: dict[str, Any] | None = None,
+    confabulation: dict[str, Any] | None = None,
+    emitted: list[str] | None = None,
+) -> AsyncIterator[tuple[QualificationStore, QualificationHarness, MagicMock]]:
+    """Two crew members' stored Tier-1 rows (personality 1.0, recall 0.5, confabulation 0.9, each with the given
+    extra fields), a real store and harness holding the real probes, and a runtime that reaches them."""
+    store = QualificationStore(data_dir=tmp_path)
+    await store.start()
+    try:
+        harness = QualificationHarness(
+            store=store, emit_event_fn=None if emitted is None else (lambda name, _payload: emitted.append(name)),
+        )
+        for probe in (PersonalityProbe(), EpisodicRecallProbe(), ConfabulationProbe(), ScaffoldDecompositionProbe()):
+            harness.register_test(probe)
+        for agent_id in ("a1", "a2"):
+            await store.save_result(_tier1_row(agent_id, "bfi2_personality_probe", 1.0, **(personality or {})))
+            await store.save_result(_tier1_row(agent_id, "episodic_recall_probe", 0.5, **(recall or {})))
+            await store.save_result(_tier1_row(agent_id, "confabulation_probe", 0.9, **(confabulation or {})))
+        runtime = _build_runtime(agents=[MockCrewAgent("a1"), MockCrewAgent("a2")], harness=harness, store=store)
+        yield store, harness, runtime
+    finally:
+        await store.stop()
+
+
+async def test_a_failed_judge_makes_the_collective_result_inconclusive(tmp_path: Path) -> None:
+    async with _collective(tmp_path, recall=_FAILED_JUDGE) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert result.inconclusive is True
+    assert result.passed is False
+    assert result.error == "2 Tier-1 result(s) inconclusive: episodic_recall_probe"
+    assert result.details["inconclusive_inputs"] == ["a1:episodic_recall_probe", "a2:episodic_recall_probe"]
+    assert result.score == pytest.approx(0.7308)  # the aggregate over the inputs that were measured, kept for forensics
+
+
+async def test_an_inconclusive_collective_result_is_never_a_baseline(tmp_path: Path) -> None:
+    emitted: list[str] = []
+    async with _collective(tmp_path, recall=_FAILED_JUDGE, emitted=emitted) as (store, harness, runtime):
+        first = await harness.run_test("__crew__", "scaffold_decomposition", runtime)
+        assert first.inconclusive is True
+        assert first.is_baseline is False
+        assert await store.get_baseline("__crew__", "scaffold_decomposition") is None
+        assert "qualification_baseline_set" not in emitted
+
+        for agent_id in ("a1", "a2"):  # the judge recovers: the same series takes its baseline from a measurement
+            await store.save_result(_tier1_row(agent_id, "episodic_recall_probe", 0.9, ts=2000.0))
+        second = await harness.run_test("__crew__", "scaffold_decomposition", runtime)
+        assert second.inconclusive is False
+        assert second.is_baseline is True
+        assert "qualification_baseline_set" in emitted
+
+
+async def test_an_inconclusive_collective_result_stays_out_of_the_drift_history(tmp_path: Path) -> None:
+    async with _collective(tmp_path, recall=_FAILED_JUDGE) as (store, harness, runtime):
+        detector = DriftDetector(store, QualificationConfig())
+        for i in range(19):  # the earlier weekly aggregates, all measured
+            await store.save_result(_collective_row(0.6667, ts=100.0 + i))
+        run = await harness.run_test("__crew__", "scaffold_decomposition", runtime)
+        assert run.inconclusive is True
+
+        signal = (await detector.analyze_agent("__crew__", ["scaffold_decomposition"])).signals[0]
+        assert (signal.severity, signal.sample_count) == ("normal", 19)
+
+        # the control: the same aggregate stored as a measurement is critical drift
+        await store.save_result(_collective_row(run.score, ts=run.timestamp + 1.0))
+        control = (await detector.analyze_agent("__crew__", ["scaffold_decomposition"])).signals[0]
+        assert control.severity == "critical"
+
+
+async def test_a_collective_result_with_no_measured_input_is_inconclusive_and_not_a_skip(tmp_path: Path) -> None:
+    async with _collective(
+        tmp_path, recall=_FAILED_JUDGE, personality=_FAILED_JUDGE, confabulation=_FAILED_JUDGE,
+    ) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert result.inconclusive is True
+    assert result.details["skipped"] is False
+    assert result.score == 0.0
+    assert result.error == "6 Tier-1 result(s) inconclusive: bfi2_personality_probe, confabulation_probe, episodic_recall_probe"
+
+
+async def test_an_input_that_timed_out_is_still_dropped_from_the_aggregate(tmp_path: Path) -> None:
+    async with _collective(tmp_path, recall={"passed": False, "error": "Test timed out"}) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert (result.inconclusive, result.error, result.passed) == (False, None, True)
+    assert result.details["tests_measured"] == 2
+    assert "inconclusive_inputs" not in result.details
+    assert result.score == pytest.approx(0.7308)
+
+
+async def test_a_collective_result_over_measured_inputs_is_what_it_was(tmp_path: Path) -> None:
+    async with _collective(tmp_path) as (_store, _harness, runtime):
+        result = await ScaffoldDecompositionProbe().run("any", runtime)
+
+    assert (result.inconclusive, result.error, result.passed) == (False, None, True)
+    assert result.details["tests_measured"] == 3
+    assert "inconclusive_inputs" not in result.details
+    assert result.score == pytest.approx(0.6667)
