@@ -97,6 +97,8 @@ async def cmd_diagnostic(
                 f"Diagnostic failed: {intent_result.error or 'no error given'}",
                 style="red",
                 markup=False,
+                emoji=False,
+                highlight=False,
             )
             return
         diagnosis, unparsed = _diagnosis_from_result(
@@ -105,9 +107,9 @@ async def cmd_diagnostic(
         panel = panels.render_diagnostic_result(diagnosis, level=level)
         console.print(panel)
         if unparsed:
-            # The LLM's own words, shown as text: never parsed as Rich markup.
+            # The LLM's own words, shown as received: no markup, emoji codes or highlighting.
             console.print("The Diagnostician's reply is not a JSON diagnosis:", style="yellow")
-            console.print(unparsed, markup=False)
+            console.print(unparsed, markup=False, emoji=False, highlight=False)
         if level.llm_tier is None:
             console.print(
                 f"No LLM analysis at this depth (AD-700c): {level.value} makes no LLM call.",
@@ -121,5 +123,5 @@ async def cmd_diagnostic(
             focus,
             e,
         )
-        # BF-991: the error text is foreign text; as markup, a "[/x]" in it raises again here.
-        console.print(f"Diagnostic error: {e}", style="red", markup=False)
+        # BF-991: the error text is foreign text, printed as received; as markup, a "[/x]" in it raises again here.
+        console.print(f"Diagnostic error: {e}", style="red", markup=False, emoji=False, highlight=False)

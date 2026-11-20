@@ -30,6 +30,8 @@ from probos.types import IntentMessage, IntentResult
 
 _MARKER = "W-1840"
 _FOCUS = "focus-bf991"
+# Text Rich rewrites unless told not to: an emoji code, and a number and a boolean it highlights on a terminal.
+_LITERAL = ":warning: 42 True"
 _DIAG_JSON = (
     '{"severity": "high", "category": "agent", "affected_components": ["x"], '
     '"root_cause": "marker-1840", "evidence": [], "recommended_treatment": "none", '
@@ -90,11 +92,20 @@ async def _diagnose(agent: DiagnosticianAgent, level: str, focus: str = "") -> I
     )
 
 
-def _shell(agent: Any) -> tuple[SimpleNamespace, Console, StringIO]:
-    """The ship as the handler reads it: one healthy agent in the ``medical_diagnostician`` pool."""
+def _shell(agent: Any, *, terminal: bool = False) -> tuple[SimpleNamespace, Console, StringIO]:
+    """The ship as the handler reads it: one healthy agent in the ``medical_diagnostician`` pool.
+
+    ``terminal=True`` gives a console that writes ANSI codes whatever the environment says,
+    so Rich's styles, and any highlighting, show in the buffer.
+    """
     pool = SimpleNamespace(healthy_agents=[agent.id], registry=SimpleNamespace(get=lambda _agent_id: agent))
     buf = StringIO()
-    console = Console(file=buf, force_terminal=False, width=120)
+    if terminal:
+        console = Console(
+            file=buf, force_terminal=True, color_system="standard", legacy_windows=False, no_color=False, width=120
+        )
+    else:
+        console = Console(file=buf, force_terminal=False, width=120)
     return SimpleNamespace(pools={"medical_diagnostician": pool}), console, buf
 
 
@@ -196,49 +207,53 @@ async def test_the_handler_at_l4_prints_the_panel_and_the_no_llm_line() -> None:
 @pytest.mark.parametrize(
     ("reply", "shown"),
     [
-        ("Ship nominal [x] no JSON here", "Ship nominal [x] no JSON here"),
+        (f"Ship nominal [x] {_LITERAL} no JSON here", f"Ship nominal [x] {_LITERAL} no JSON here"),
         ("```json\n[1, 2]\n```", "[1, 2]"),
     ],
     ids=["text-with-brackets", "fenced-json-array"],
 )
 async def test_a_reply_that_is_not_a_diagnosis_is_printed_as_text(reply: str, shown: str) -> None:
     agent, llm, _ = _agent(reply)
-    runtime, console, buf = _shell(agent)
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
     assert "Diagnostic error" not in out, out
-    assert "Diagnostic L3" in out, out
+    assert "Root cause" in out, out
     assert shown in out, out
     assert llm.complete.await_count == 1
 
 
 async def test_a_failed_result_prints_its_error_and_no_panel() -> None:
-    failed = IntentResult(intent_id="i-bf991", agent_id="diag-bf991", success=False, error="boom [/x]")
+    failed = IntentResult(
+        intent_id="i-bf991", agent_id="diag-bf991", success=False, error=f"boom [/x] {_LITERAL}"
+    )
     agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(return_value=failed))
-    runtime, console, buf = _shell(agent)
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
-    assert "Diagnostic failed: boom [/x]" in out, out
+    assert f"Diagnostic failed: boom [/x] {_LITERAL}" in out, out
     assert "Root cause" not in out, out
 
 
 async def test_llm_text_in_the_panel_is_shown_as_text_not_markup() -> None:
     reply = (
-        '{"severity": "low", "category": "agent", "root_cause": "[/x] stray tag", '
-        '"evidence": ["pool [core] low"], "recommended_treatment": "none"}'
+        '{"severity": "low", "category": "agent", "root_cause": "[/x] '
+        + _LITERAL
+        + ' stray tag", "evidence": ["pool [core] low"], "recommended_treatment": "none"}'
     )
     agent, _, _ = _agent(reply)
-    runtime, console, buf = _shell(agent)
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
     assert "Diagnostic error" not in out, out
-    assert "[/x] stray tag" in out, out
+    assert f"[/x] {_LITERAL} stray tag" in out, out
     assert "[core]" in out, out
 
 
 async def test_an_error_text_that_looks_like_markup_is_printed_not_raised() -> None:
-    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(side_effect=RuntimeError("bad [/x] tag")))
-    runtime, console, buf = _shell(agent)
+    error = RuntimeError(f"bad [/x] {_LITERAL} tag")
+    agent = SimpleNamespace(id="diag-bf991", handle_intent=AsyncMock(side_effect=error))
+    runtime, console, buf = _shell(agent, terminal=True)
     await cmd_diagnostic(runtime, console, "L3")
     out = buf.getvalue()
-    assert "Diagnostic error: bad [/x] tag" in out, out
+    assert f"Diagnostic error: bad [/x] {_LITERAL} tag" in out, out
