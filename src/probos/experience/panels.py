@@ -672,25 +672,28 @@ def render_diagnostic_result(
     table.add_column("Field", style="cyan", no_wrap=True)
     table.add_column("Value", overflow="fold")
 
-    table.add_row("Severity", f"[{severity_color}]{severity}[/{severity_color}]")
-    table.add_row("Category", str(result.get("category") or "--"))
+    # BF-991 (#1840): every value below is LLM text, so each cell is a ``Text``
+    # and is never parsed as Rich markup (a stray closing tag such as "[/x]"
+    # raises MarkupError when rendered as markup).
+    table.add_row("Severity", Text(severity, style=severity_color))
+    table.add_row("Category", Text(str(result.get("category") or "--")))
 
     affected = result.get("affected_components") or []
     if isinstance(affected, list):
         affected_str = ", ".join(str(a) for a in affected) if affected else "--"
     else:
         affected_str = str(affected)
-    table.add_row("Affected", affected_str)
+    table.add_row("Affected", Text(affected_str))
 
-    table.add_row("Root cause", str(result.get("root_cause") or "--"))
-    table.add_row("Evidence", str(result.get("evidence") or "--"))
+    table.add_row("Root cause", Text(str(result.get("root_cause") or "--")))
+    table.add_row("Evidence", Text(str(result.get("evidence") or "--")))
     table.add_row(
         "Recommended treatment",
-        str(result.get("recommended_treatment") or "--"),
+        Text(str(result.get("recommended_treatment") or "--")),
     )
     table.add_row(
         "Treatment intent",
-        str(result.get("treatment_intent") or "--"),
+        Text(str(result.get("treatment_intent") or "--")),
     )
 
     return Panel(
