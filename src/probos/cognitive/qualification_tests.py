@@ -433,6 +433,7 @@ class EpisodicRecallProbe:
         # Test recall on each episode
         per_episode = []
         total_accuracy = 0.0
+        unmeasured: list[str] = []  # BF-711: a judge that failed or answered no number measured nothing
 
         for episode in episodes:
             # Build expected summary for scoring comparison
@@ -449,26 +450,32 @@ class EpisodicRecallProbe:
             recalled_text = await _send_probe(agent, probe_msg)
 
             # Score
-            accuracy = await engine.score_recall(recalled_text, expected_summary)
+            scored = await engine.score_recall_outcome(recalled_text, expected_summary)
+            accuracy = scored.score
             classification = engine.classify_recall(
                 recalled_text, expected_summary, episode, accuracy,
             )
 
-            per_episode.append({
+            entry = {
                 "episode_id": str(episode_id),
                 "accuracy": accuracy,
                 "classification": classification.value,
-            })
+            }
+            if scored.inconclusive:
+                entry["judge"] = scored.inconclusive
+                unmeasured.append(scored.inconclusive)
+            per_episode.append(entry)
             total_accuracy += accuracy
 
         avg_accuracy = total_accuracy / len(per_episode) if per_episode else 0.0
+        inconclusive = bool(unmeasured)
 
         return TestResult(
             agent_id=agent_id,
             test_name=self.name,
             tier=self.tier,
             score=avg_accuracy,
-            passed=avg_accuracy >= self.threshold,
+            passed=not inconclusive and avg_accuracy >= self.threshold,
             timestamp=time.time(),
             duration_ms=(time.time() - t0) * 1000,
             details={
@@ -476,6 +483,8 @@ class EpisodicRecallProbe:
                 "per_episode": per_episode,
                 "skipped": False,
             },
+            error=f"{len(unmeasured)}/{len(per_episode)} episodes: {unmeasured[0]}" if inconclusive else None,
+            inconclusive=inconclusive,
         )
 
 

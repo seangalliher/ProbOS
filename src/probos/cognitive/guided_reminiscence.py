@@ -48,6 +48,18 @@ class RecallResult:
     timestamp: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True)
+class RecallScore:
+    """A recall score, and why it is not a measurement when it is not (BF-711).
+
+    ``inconclusive`` is empty for a measurement. It names the reason when the score is the 0.5
+    fallback: the judge call failed, or its reply held no number.
+    """
+
+    score: float
+    inconclusive: str = ""
+
+
 @dataclass
 class ReminiscenceResult:
     """Aggregate result of a full reminiscence session."""
@@ -216,13 +228,17 @@ class GuidedReminiscenceEngine:
     # ------------------------------------------------------------------
 
     async def score_recall(self, recalled_text: str, expected_summary: str) -> float:
-        """Score recall accuracy.
+        """Score recall accuracy: the score of ``score_recall_outcome``."""
+        return (await self.score_recall_outcome(recalled_text, expected_summary)).score
+
+    async def score_recall_outcome(self, recalled_text: str, expected_summary: str) -> RecallScore:
+        """Score recall accuracy and say, in ``inconclusive``, why a 0.5 is the fallback and not a measurement (BF-711).
 
         Uses LLM for semantic scoring if available; falls back to Jaccard.
         LLM failure degrades to 0.5 (uncertain — don't punish).
         """
         if not expected_summary:
-            return 1.0
+            return RecallScore(1.0)
 
         if self._llm_client:
             try:
@@ -244,19 +260,19 @@ class GuidedReminiscenceEngine:
                 for token in score_text.split():
                     try:
                         val = float(token.strip(".,"))
-                        return max(0.0, min(1.0, val))
+                        return RecallScore(max(0.0, min(1.0, val)))
                     except ValueError:
                         continue
-                return 0.5  # LLM returned unparseable — uncertain
-            except Exception:
+                return RecallScore(0.5, "judge returned unparseable output")  # LLM returned unparseable — uncertain
+            except Exception as exc:
                 logger.debug("AD-541d: LLM scoring failed, falling back to Jaccard", exc_info=True)
-                return 0.5  # Degrade gracefully
+                return RecallScore(0.5, f"judge call failed: {type(exc).__name__}")  # Degrade gracefully
 
         # Fallback: Jaccard similarity
-        return jaccard_similarity(
+        return RecallScore(jaccard_similarity(
             text_to_words(recalled_text),
             text_to_words(expected_summary),
-        )
+        ))
 
     def classify_recall(
         self,
