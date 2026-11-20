@@ -2502,22 +2502,31 @@ class CounselorAgent(CognitiveAgent):
         last = self._reminiscence_cooldowns.get(agent_id, float("-inf"))
         if (time.monotonic() - last) < self._REMINISCENCE_COOLDOWN_SECONDS:
             return
+        # BF-989 (#1838): the cooldown is taken before the session, with no await between check and set, so a
+        # failed or unmeasured session and a second trigger (post-dream, retrieval concern) run at most one
+        # session per agent per cooldown.
+        self._reminiscence_cooldowns[agent_id] = time.monotonic()
 
         try:
             result = await self._reminiscence_engine.run_session(agent_id)
         except Exception:
-            logger.debug("AD-541d: Reminiscence session failed for %s", agent_id[:8], exc_info=True)
+            # BF-989: WARNING, not DEBUG (log-and-degrade); the cooldown bounds it to once per agent per cooldown
+            logger.warning("AD-541d: Reminiscence session failed for %s", agent_id[:8], exc_info=True)
             return
 
         if result.episodes_tested == 0:
-            return  # No episodes to test
-
-        self._reminiscence_cooldowns[agent_id] = time.monotonic()
+            # BF-989: nothing was measured, so no profile write, DM or event
+            logger.info(
+                "AD-541d: Reminiscence session for %s measured no episode (%s)",
+                callsign, "; ".join(result.unmeasured) or "no episodes",
+            )
+            return
 
         # Update CognitiveProfile
         profile = await self._get_or_create_profile(agent_id)
         profile.memory_integrity_score = result.overall_accuracy
-        profile.confabulation_rate = result.confabulation_rate
+        # BF-989: confabulation_rate is not written here. AD-568d/e own it (an EMA) and source_governance
+        # reads it to downgrade retrieval; the session's rate stays in its event and the engine's history.
         profile.last_reminiscence = time.time()
         profile.reminiscence_sessions += 1
 
@@ -2542,16 +2551,11 @@ class CounselorAgent(CognitiveAgent):
                 "accurate_count": result.accurate_count,
                 "confabulated_count": result.confabulated_count,
                 "contaminated_count": result.contaminated_count,
+                "unmeasured": len(result.unmeasured),  # BF-989: episodes held out of the counts above
             })
 
-        # Confabulation rate alarm → amber alert
-        if result.confabulation_rate >= self._confabulation_alert_threshold:
-            profile.alert_level = "amber"
-            if self._profile_store:
-                try:
-                    await self._profile_store.save_profile(profile)
-                except Exception:
-                    logger.debug("AD-541d: Alert level save failed", exc_info=True)
+        # BF-989 (#1838): no alert level is written here. add_assessment owns alert_level, and the "amber" this
+        # wrote is a level agents_at_alert and the /counselor router do not count.
 
         logger.info(
             "AD-541d: Reminiscence session for %s — %d tested, accuracy=%.2f, confab=%.2f",

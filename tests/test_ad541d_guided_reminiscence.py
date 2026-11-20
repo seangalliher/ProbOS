@@ -452,7 +452,11 @@ class TestD3CounselorIntegration:
 
     @pytest.mark.asyncio
     async def test_reminiscence_updates_profile_scores(self):
-        """Test 24: Session updates memory_integrity_score, confabulation_rate, etc."""
+        """Test 24: Session updates memory_integrity_score, last_reminiscence and the session count.
+
+        BF-989 (#1838): it no longer writes confabulation_rate. AD-568d/e own that field (an EMA) and
+        source_governance reads it to downgrade retrieval; the session's rate stays in its event.
+        """
         mock_engine = AsyncMock()
         mock_engine.run_session = AsyncMock(return_value=ReminiscenceResult(
             agent_id="a1", episodes_tested=3, overall_accuracy=0.6,
@@ -463,17 +467,23 @@ class TestD3CounselorIntegration:
         agent = _make_counselor(
             _reminiscence_engine=mock_engine,
             _profile_store=store,
+            _cognitive_profiles={"a1": CognitiveProfile(agent_id="a1", confabulation_rate=0.12)},
         )
         await agent._initiate_reminiscence_session("a1", trigger="test")
         profile = agent._cognitive_profiles["a1"]
         assert profile.memory_integrity_score == pytest.approx(0.6)
-        assert profile.confabulation_rate == pytest.approx(0.1)
+        assert profile.confabulation_rate == pytest.approx(0.12)  # BF-989: the owners' value, not the session's 0.1
         assert profile.reminiscence_sessions == 1
         assert profile.last_reminiscence > 0
 
     @pytest.mark.asyncio
-    async def test_confabulation_escalates_alert_level(self):
-        """Test 25: confabulation_rate >= 0.3 sets alert_level to amber."""
+    async def test_confabulation_leaves_alert_level(self):
+        """Test 25: a session's confabulation_rate >= 0.3 leaves alert_level as it was.
+
+        BF-989 (#1838): renamed from test_confabulation_escalates_alert_level, which pinned the defect as the
+        contract: it asserted "amber", a level agents_at_alert and the /counselor router do not count, written
+        from a session whose recall was a memoryless model's. add_assessment owns alert_level.
+        """
         mock_engine = AsyncMock()
         mock_engine.run_session = AsyncMock(return_value=ReminiscenceResult(
             agent_id="a1", episodes_tested=3, overall_accuracy=0.2,
@@ -485,10 +495,11 @@ class TestD3CounselorIntegration:
             _reminiscence_engine=mock_engine,
             _profile_store=store,
             _confabulation_alert_threshold=0.3,
+            _cognitive_profiles={"a1": CognitiveProfile(agent_id="a1", alert_level="yellow")},
         )
         await agent._initiate_reminiscence_session("a1", trigger="test")
         profile = agent._cognitive_profiles["a1"]
-        assert profile.alert_level == "amber"
+        assert profile.alert_level == "yellow"
 
 
 # ==================================================================
