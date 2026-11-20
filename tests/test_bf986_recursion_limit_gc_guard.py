@@ -145,6 +145,13 @@ _GUARDED = (  # every test function whose passing path overflows the Python stac
     ("tests.test_ad1197_signed_envelopes", "test_a_body_too_deep_for_rfc8785_is_never_signed"),
     ("tests.test_ad1197_signed_envelopes", "test_an_inbound_signed_body_too_deep_for_rfc8785_is_rejected"),
     ("tests.test_bf904b_sealed_core_observation", "test_a_policy_that_cannot_be_read_observes_nothing_and_the_build_commits"),
+    ("tests.test_bf940_s2_dump_frontmatter", "test_a_mapping_nested_too_deeply_is_a_value_error_not_a_recursion_error"),
+    ("tests.test_bf952_records_keyword_search", "test_a_frontmatter_nesting_64_collections_or_more_is_unparsed_in_both_readings"),
+    ("tests.test_bf952_records_keyword_search", "test_a_deeply_nested_record_is_unparsed_in_every_reader"),
+    ("tests.test_bf952_records_keyword_search", "test_parse_document_never_raises_recursion_error_for_nesting"),
+    ("tests.test_bf970_frontmatter_reading", "test_a_search_over_a_corpus_holding_a_block_nested_400_deep_returns_the_other_records"),
+    ("tests.test_bf970_frontmatter_reading", "test_the_nesting_check_answers_from_a_nearly_exhausted_stack_and_stops_at_the_limit"),
+    ("tests.test_ad1127_crew_session_lifecycle_recovery", "test_install_recovery_plan_rejects_hostile_metadata_before_await"),
 )
 
 
@@ -271,7 +278,13 @@ def test_conftest_offers_the_guard_to_every_test() -> None:
 
 
 @pytest.mark.parametrize(
-    ("module", "name"), _GUARDED, ids=["ad1197-outbound", "ad1197-inbound", "bf904b-unreadable-policy"],
+    ("module", "name"),
+    _GUARDED,
+    ids=[
+        "ad1197-outbound", "ad1197-inbound", "bf904b-unreadable-policy",
+        "bf940-s2-dump-too-deep", "bf952-both-readings", "bf952-every-reader", "bf952-parse-document",
+        "bf970-search-400-deep", "bf970-exhausted-stack", "ad1127-cyclic-metadata",
+    ],
 )
 def test_every_test_that_overflows_the_python_stack_asks_for_the_guard(module: str, name: str) -> None:
     function = getattr(importlib.import_module(module), name)

@@ -2,10 +2,13 @@
 
 Ship's Records documents and SKILL.md files open with ``---``, hold YAML, and close with a line of their own. The base cut
 each at the first two ``---`` it found, inside a YAML value too, so a value holding ``---`` was cut short and the keys after
-it left the frontmatter. This module frames a document (``split_frontmatter`` and ``base_split_frontmatter`` load nothing); each
-caller loads the block in its own frame, so PyYAML's recursion frontier stays where it was (BF-952 A6, L30). It imports nothing of
-ProbOS (``utils`` holds pure helpers any layer may import). BF-940 slice 2 adds ``dump_frontmatter``, the writers' half: the one
-place a frontmatter mapping becomes YAML text, so that a document the store writes is a document the store reads (L24).
+it left the frontmatter. This module frames a document (``split_frontmatter`` and ``base_split_frontmatter`` load nothing).
+BF-970 (#1801) adds ``load_frontmatter``, the one reading of a Ship's Records frontmatter block: it checks the nesting with a
+parse that does not recurse (``frontmatter_nests_too_deep``) and loads only below ``FRONTMATTER_DEPTH_LIMIT``, so no reader's
+answer depends on the frames above it (this replaces BF-952 A6's frame arrangement). It imports nothing of ProbOS (``utils``
+holds pure helpers any layer may import). BF-940 slice 2 adds ``dump_frontmatter``, the writers' half: the one place a
+frontmatter mapping becomes YAML text, so that a document the store writes is a document the store reads (L24); it refuses
+what ``load_frontmatter`` would not load (BF-970).
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ def base_split_frontmatter(text: str) -> tuple[str | None, str]:
 
     ``block`` is what stands between the opener and the next ``---``, inside a value too, and ``rest`` is what follows it, not
     stripped; ``(None, text)`` for a text that does not begin with ``---`` or holds no later one. It is the rule's answer for a
-    text with no closing line (L18), and the cut a reader reads where the rule's block does not load but this one does (A1, F1).
+    text with no closing line (L18). BF-940 A1 read this cut where the rule's block did not load; BF-970 (#1801) removed that.
     Wherever ``split_frontmatter`` returns a block this returns one too, and it is that block up to its first ``---`` (U4).
     """
     parts = text.split("---", 2) if text.startswith("---") else []
@@ -53,11 +56,67 @@ def base_split_frontmatter(text: str) -> tuple[str | None, str]:
     return None, text
 
 
+#: BF-970 (#1801): a frontmatter whose YAML holds this many collections open at once, or more, is not loaded by any reader and is
+#: not written by ``dump_frontmatter``. The top-level mapping counts as one; a mapping or a sequence, flow or block, opens one more;
+#: an alias opens none (the value it names was built where its anchor stands). PyYAML's composer recurses about two Python frames a
+#: level, so a load below this depth needs a fixed number of frames whatever the caller's stack.
+FRONTMATTER_DEPTH_LIMIT = 64
+
+
+def frontmatter_nests_too_deep(text: str, loader: Any = yaml.SafeLoader) -> bool:
+    """BF-970 (#1801): whether ``text``, parsed with ``loader``, holds ``FRONTMATTER_DEPTH_LIMIT`` collections open at once.
+
+    It reads the parser's event stream, which neither PyYAML's parser nor libyaml's builds by recursion, and stops at the event
+    that reaches the limit, so its answer does not depend on the caller's stack and its work is bounded by the length of ``text``:
+    no node is built and no alias is followed. Siblings add no depth. A parse error before the limit, a ``YAMLError``, is
+    ``False``: the load that follows, with the same ``loader``, meets the same error below the limit and reads it as YAML's
+    refusal. BF-970 A2 (round 1 F4): any other exception of the parser propagates, as it does from the load: PyYAML's scanner
+    raises ``ValueError`` for an escape past U+10FFFF (``"\\U00110000"``), and each reader handles it as a constructor's error
+    (contract D4, L12).
+    """
+    depth = 0
+    try:
+        for event in yaml.parse(text, Loader=loader):
+            if isinstance(event, yaml.CollectionStartEvent):
+                depth += 1
+                if depth >= FRONTMATTER_DEPTH_LIMIT:
+                    return True
+            elif isinstance(event, yaml.CollectionEndEvent):
+                depth -= 1
+    except yaml.YAMLError:
+        return False  # a parse error before the limit: the load reads YAML's refusal
+    return False
+
+
+def load_frontmatter(block: str, loader: Any = yaml.SafeLoader) -> tuple[Any, bool]:
+    """BF-970 (#1801): a frontmatter block as every Ship's Records reader reads it: ``(frontmatter, unparsed)``.
+
+    ``unparsed`` is True, and ``frontmatter`` ``{}``, for a block YAML refuses (a ``YAMLError``) or one that holds
+    ``FRONTMATTER_DEPTH_LIMIT`` collections open at once or more (:func:`frontmatter_nests_too_deep`, checked first with the
+    same ``loader``). Otherwise ``frontmatter`` is the load's value, ``{}`` for a falsy one, and ``unparsed`` is False; with the
+    default loader that value is ``yaml.safe_load``'s. Any other error of the check or the load propagates, as from ``yaml.safe_load``: a
+    constructor's ``ValueError`` (``updated: 2026-13-05``) included. No ``RecursionError`` comes from the nesting: the load
+    runs only below the limit.
+    """
+    if frontmatter_nests_too_deep(block, loader):
+        return {}, True
+    try:
+        return yaml.load(block, Loader=loader) or {}, False
+    except yaml.YAMLError:
+        return {}, True
+
+
+class _NestsTooDeep(yaml.YAMLError):
+    """BF-970: the text ``safe_dump`` wrote holds ``FRONTMATTER_DEPTH_LIMIT`` collections open at once, which no reader loads."""
+
+
 _UNWRITABLE = (yaml.YAMLError, RecursionError)
 
 
 def _dump(mapping: dict[Any, Any]) -> str:
     text = yaml.safe_dump(mapping, default_flow_style=False, sort_keys=False)
+    if frontmatter_nests_too_deep(text):  # BF-970: checked before the read-back load, which recurses
+        raise _NestsTooDeep("frontmatter nests too deep")
     if type(yaml.safe_load(text)) is not dict:
         raise yaml.YAMLError("frontmatter did not read back as a mapping")
     return text
@@ -74,9 +133,10 @@ def dump_frontmatter(mapping: dict[Any, Any]) -> str:
     refuses is a ``ValueError``. ``safe_load`` builds a tuple for exactly two tags, ``!!omap`` and ``!!pairs`` (a list of
     tuples), so a mapping holding one is written as a list of lists: the readers load it, as lists, not as the ordered mapping
     or the pairs it was (BF-940 A1, F2). The text is then loaded once more, because ``safe_dump`` writes what ``safe_load``
-    refuses (a tuple as a mapping key). A value nested beyond the recursion limit is a ``ValueError`` too. The message names
-    the top-level keys at fault and the error's type, never a value (AD-1140's fail-fast tier); the caller has touched no file
-    yet.
+    refuses (a tuple as a mapping key). BF-970 (#1801): a mapping whose text holds ``FRONTMATTER_DEPTH_LIMIT`` (64)
+    collections open at once or more is a ``ValueError`` (no reader loads it: :func:`load_frontmatter`), checked before the
+    read-back load, and so is one nested beyond the recursion limit. The message names the top-level keys at fault and the
+    error's type, or the limit, never a value (AD-1140's fail-fast tier); the caller has touched no file yet.
     """
     try:
         return _dump(mapping)
@@ -87,6 +147,11 @@ def dump_frontmatter(mapping: dict[Any, Any]) -> str:
                 _dump({key: value})
             except _UNWRITABLE:
                 keys.append(str(key))
+        if isinstance(exc, (_NestsTooDeep, RecursionError)):  # BF-970: what no reader loads is not written
+            raise ValueError(
+                "frontmatter key(s) %s nest %d or more collections deep, which no reader loads; flatten them"
+                % (", ".join(keys) or "(none singly)", FRONTMATTER_DEPTH_LIMIT)
+            ) from exc
         raise ValueError(
             "frontmatter key(s) %s hold a value that cannot be written so that it reads back (%s); use strings, numbers, "
             "booleans, None, dates, and lists or mappings of them" % (", ".join(keys) or "(none singly)", type(exc).__name__)

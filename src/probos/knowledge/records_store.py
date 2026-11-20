@@ -17,7 +17,7 @@ import yaml
 
 from probos.cognitive.provenance import record_write_time
 from probos.execution.command_env import trusted_command_env
-from probos.utils.frontmatter import base_split_frontmatter, dump_frontmatter, split_frontmatter
+from probos.utils.frontmatter import dump_frontmatter, load_frontmatter, split_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +139,9 @@ def _unparsed_gate(rel_path: str) -> dict[str, Any]:
     Its classification and its author are unknown, so it is private, and its author is nobody, except under
     ``notebooks/<callsign>/``, where the notebook's owner is the author. ``None`` equals no reader id (the anonymous ``""``
     included), so only the owner is its author; the Captain and a reader that named no identity pass the rules as they do for any
-    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the document's path in the
-    repository, as the walk of the search names it and as ``read_entry`` resolves it.
+    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the path the document resolves
+    to in the repository, as ``read_entry`` resolves it, so a contained link takes its target's owner; BF-970 A2 (round 1 F1): the
+    search names it so too (:func:`_resolved_rel_path`), not by the lexical path of its walk.
     """
     parts = rel_path.split("/")
     owner = parts[1] if len(parts) >= 3 and parts[0] == "notebooks" else None
@@ -271,14 +272,11 @@ _SEARCH_BM25_B = 0.75
 _SEARCH_LIMIT = 20
 #: BF-952: the search loads frontmatter with libyaml when it is installed (it parses every record on
 #: each call, and PyYAML's pure-Python scanner was about a third of that cost). Every other reader
-#: loads as the base did, with ``yaml.safe_load`` (A5, round 5). ``_search_load_frontmatter`` reads as
-#: the base did a frontmatter libyaml cannot load, for any reason (A4), and one nesting
-#: ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep or more (A5).
+#: loads as the base did, with ``yaml.SafeLoader`` (A5, round 5). BF-970 (#1801): every reader loads through
+#: :func:`probos.utils.frontmatter.load_frontmatter`, which reads a block holding ``FRONTMATTER_DEPTH_LIMIT`` (64)
+#: collections open at once or more as unparsed, with either loader; the search reads with PyYAML a block libyaml
+#: cannot build or reads as nothing (A4). This replaces A5's separate search limit of 100.
 _RECORDS_YAML_LOADER: Any = yaml.CSafeLoader if getattr(yaml, "__with_libyaml__", False) else yaml.SafeLoader
-#: BF-952 A5: the search hands libyaml only a block nesting fewer than this many collections deep. Below
-#: it PyYAML's pure-Python composer builds the block too; from about 330 levels it raises
-#: ``RecursionError`` (the base's reading), and a block that deep is read with the base's call.
-_SEARCH_LIBYAML_DEPTH_LIMIT = 100
 
 
 def _search_query_terms(query: str) -> list[str]:
@@ -308,142 +306,80 @@ def _search_field_text(value: Any) -> str:
     return ""
 
 
-def _load_frontmatter(block: str) -> Any:
-    """BF-952 A5: a frontmatter block loaded exactly as the base loaded it, with ``yaml.safe_load``.
+def _load_document(raw: str) -> tuple[Any, str, bool]:
+    """BF-970 (#1801): a document as every reader but the search's first pass reads it: ``(frontmatter, body, unparsed)``.
 
-    A falsy value or a ``YAMLError`` is ``{}``. Any other error propagates, as on the base: a constructor's
-    (``updated: 2026-13-05`` raises ``ValueError``) and PyYAML's ``RecursionError`` for a block nesting about 330
-    collections deep.
+    The framing every reader shares (:func:`probos.utils.frontmatter.split_frontmatter`) and the one load
+    (:func:`probos.utils.frontmatter.load_frontmatter` with ``yaml.SafeLoader``: ``yaml.safe_load``'s reading below the
+    nesting limit). A document with no frontmatter block (no opener, or no closing line: L18) is ``({}, raw, False)``. A block
+    YAML refuses, or one holding ``FRONTMATTER_DEPTH_LIMIT`` collections open at once or more, is ``({}, body, True)``, and the
+    access rules read :func:`_unparsed_gate` for it. BF-940 A1 is gone: the base's cut of the text is never read in the block's
+    place. A constructor's error (``updated: 2026-13-05``) propagates, as from ``yaml.safe_load``.
     """
-    try:
-        return yaml.safe_load(block) or {}
-    except yaml.YAMLError:  # A5: the base's own catch; a constructor error or a RecursionError propagates
-        return {}
-
-
-def _block_unparsed(block: str) -> bool:
-    """BF-940 slice 4 (L19): whether ``yaml.safe_load``, the base's call, refuses a frontmatter block with a ``YAMLError``.
-
-    That is the one way a block reads as ``{}`` without holding nothing: broken YAML, or a tag ``safe_load`` refuses (the
-    ``!!python/tuple`` an older ``write_entry`` wrote). A block that loads to nothing (blank, ``[]``) is not refused. Any other error
-    (a constructor's ``ValueError``, a ``RecursionError``) is not caught here: ``read_entry`` raises on it and the search withholds it.
-    """
-    try:
-        yaml.safe_load(block)
-    except yaml.YAMLError:
-        return True
-    return False
-
-
-def _frontmatter_unparsed(raw: str, frontmatter: Any) -> bool:
-    """BF-940 slice 4 (L19): whether the document ``raw``, which a reader read as ``frontmatter``, has a frontmatter that did not load.
-
-    ``frontmatter`` is ``_parse_document``'s reading or the search's. A reading that holds something loaded. A document with no
-    frontmatter block (no opener, or no closing line: L18) has none to refuse. What is left reads as ``{}``, and only the block
-    says why: it loads to nothing, or YAML refused it (the ``YAMLError`` caught below). The block is the one the readers load
-    (:func:`probos.utils.frontmatter.split_frontmatter`); where it reads as nothing and the base's cut of the text reads as
-    something, the reading holds something and this is ``False`` (A1).
-
-    BF-940 slice 4, round 1 (F1): the block is loaded here, in this frame, and not through :func:`_block_unparsed`. PyYAML's composer
-    recurses about two Python frames for each level a block nests, so a frame between a caller and ``yaml.safe_load`` costs a nesting
-    level at every other stack depth: a document that nests deep and then ends in a YAML error was read by ``_parse_document``, which
-    the caller runs in its own frame, and raised ``RecursionError`` here one level sooner. Loaded from the caller's frame, this call
-    stops at the nesting ``_parse_document``'s does for ``read_entry``, ``list_entries``, ``publish`` and update-in-place, and has two
-    frames to spare below the search's own PyYAML reading (:func:`_search_read_document`, :func:`_search_load_frontmatter`,
-    :func:`_load_frontmatter`). :func:`_block_unparsed` is for :func:`_base_reading_admits`, whose own reading is one frame in too.
-    """
-    if frontmatter:
-        return False
-    block, _ = split_frontmatter(raw)
+    block, rest = split_frontmatter(raw)
     if block is None:  # no frontmatter block (L18): there is none to refuse
-        return False
-    try:
-        yaml.safe_load(block)  # F1: loaded here, in this frame, not through a helper (see the docstring)
-    except yaml.YAMLError:
-        return True
-    return False
+        return {}, raw, False
+    frontmatter, unparsed = load_frontmatter(block)
+    return frontmatter, rest.strip(), unparsed
 
 
-def _nests_below(block: str, limit: int) -> bool:
-    """BF-952 A5: whether libyaml parses ``block`` and its collections nest fewer than ``limit`` deep.
+def _search_read_frontmatter(block: str) -> tuple[Any, bool]:
+    """BF-952 A4, A5; BF-970 (#1801): a frontmatter block as the search's first pass reads it: ``(frontmatter, unparsed)``.
 
-    It reads the loader's event stream, which the parser produces without recursing, and stops at ``limit``, so it
-    is safe however deep the block. Siblings add no depth. A block that does not parse is not below the limit.
+    With libyaml installed, libyaml's reading (:func:`probos.utils.frontmatter.load_frontmatter` with ``_RECORDS_YAML_LOADER``)
+    stands where it holds something: RK8's one admitted difference (BF-940 slice 4, L11). A block libyaml cannot build, for any
+    reason (A4), reads as nothing, or holds ``FRONTMATTER_DEPTH_LIMIT`` collections open at once or more is read as ``read_entry``
+    reads it: PyYAML's value, ``({}, True)`` for a block it refuses or one that deep, or its constructor's error (A6).
     """
-    depth = 0
-    try:
-        for event in yaml.parse(block, Loader=_RECORDS_YAML_LOADER):
-            if isinstance(event, yaml.CollectionStartEvent):
-                depth += 1
-                if depth >= limit:
-                    return False
-            elif isinstance(event, yaml.CollectionEndEvent):
-                depth -= 1
-    except Exception:  # A5: not a swallow; the base's call then reads it: its value, {} or its error (A6)
-        return False
-    return True
+    if _RECORDS_YAML_LOADER is not yaml.SafeLoader:
+        try:
+            frontmatter, _ = load_frontmatter(block, _RECORDS_YAML_LOADER)
+        except Exception:  # A4: libyaml cannot build the block, for any reason, so PyYAML's reading decides
+            frontmatter = None
+        if frontmatter:
+            return frontmatter, False
+    return load_frontmatter(block)
 
 
-def _search_load_frontmatter(block: str) -> Any:
-    """BF-952 A1, A4, A5: a frontmatter block as the search loads it: libyaml where it is safe, else as the base did.
-
-    With libyaml installed and the block nesting fewer than ``_SEARCH_LIBYAML_DEPTH_LIMIT`` collections deep, the
-    block is libyaml's value, ``{}`` for a falsy one. That differs from the base where PyYAML's scanner refuses the
-    block (RK8: a tab after a key). A block libyaml cannot load, for any reason (A4), and one nesting deeper (A5),
-    is read by :func:`_load_frontmatter`, the base's call: its value, ``{}`` for a ``YAMLError``, or its error (A6).
-    """
-    if _RECORDS_YAML_LOADER is yaml.SafeLoader or not _nests_below(block, _SEARCH_LIBYAML_DEPTH_LIMIT):
-        return _load_frontmatter(block)
-    try:
-        frontmatter = yaml.load(block, Loader=_RECORDS_YAML_LOADER)
-    except Exception:  # A4 (round 4): libyaml cannot load the block, so it is read as the base read it
-        return _load_frontmatter(block)
-    return frontmatter or {}
-
-
-def _search_read_document(raw: str) -> tuple[Any, str, str | None]:
-    """BF-952 A5: a document's frontmatter and body as the search reads them, and its frontmatter block.
+def _search_read_document(raw: str) -> tuple[Any, str, str | None, bool]:
+    """BF-952 A5; BF-970 (#1801): a document as the search's first pass reads it: ``(frontmatter, body, block, unparsed)``.
 
     The framing every reader shares (BF-940: :func:`probos.utils.frontmatter.split_frontmatter`) and the search's load
-    (:func:`_search_load_frontmatter`). The block (``None`` for a document with no frontmatter) lets the search check
-    a record it would return against the base's reading (:func:`_base_reading_admits`). BF-940 A1: where the block reads as
-    nothing (it does not load) and the base's cut of the text (:func:`base_split_frontmatter`) reads as something, the
-    document reads as the base read it, as ``RecordsStore._parse_document`` reads it; the block returned stays the rule's.
+    (:func:`_search_read_frontmatter`). The block (``None`` for a document with no frontmatter) lets the search check a record
+    it would return against ``read_entry``'s reading (:func:`_base_reading_admits`). ``unparsed`` is True where the reading is
+    ``{}`` because YAML refused the block or it nests too deep; the walk then applies :func:`_unparsed_gate`. BF-940 A1 is gone:
+    the base's cut of the text is never read in the block's place.
     """
     block, rest = split_frontmatter(raw)
     if block is None:
-        return {}, raw, None
-    frontmatter = _search_load_frontmatter(block)
-    if not frontmatter:
-        base_block, base_rest = base_split_frontmatter(raw)
-        base_frontmatter = _search_load_frontmatter(base_block)
-        if base_frontmatter:
-            return base_frontmatter, base_rest.strip(), block
-    return frontmatter, rest.strip(), block
+        return {}, raw, None, False
+    frontmatter, unparsed = _search_read_frontmatter(block)
+    return frontmatter, rest.strip(), block, unparsed
 
 
 def _base_reading_admits(
-    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str,
+    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str | None,
 ) -> bool:
-    """BF-952 A5: whether the base's reading of a frontmatter block admits this reader at ``scope``.
+    """BF-952 A5: whether ``read_entry``'s reading of a frontmatter block admits this reader at ``scope``.
 
-    That reading is ``read_entry``'s and the semantic index's (:func:`_load_frontmatter`). The search returns a
-    record only where it admits the reader too, so no difference between libyaml's reading and the base's, known
-    (RK8) or not, can show a reader a record the base's reading withholds (RK15; BF-679). BF-940 A1: ``read_entry`` reads the
-    base's cut where the block reads as nothing and the cut reads as something, so this reading does too; the cut is the block
-    up to its first ``---`` (:func:`base_split_frontmatter`; U4 pins it). BF-940 slice 4 (L19): where that reading is ``{}`` because
-    YAML refuses the block, the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the document's path in the
-    repository), as ``read_entry`` does.
+    That reading is :func:`probos.utils.frontmatter.load_frontmatter` with ``yaml.SafeLoader``, ``read_entry``'s and the
+    semantic index's. The search returns a record only where it admits the reader too, so no difference between libyaml's
+    reading and PyYAML's, known (RK8) or not, can show a reader a record ``read_entry`` withholds (RK15; BF-679). BF-940 slice 4
+    (L19), BF-970 (#1801): where the block is unparsed (YAML refuses it, or it holds ``FRONTMATTER_DEPTH_LIMIT`` collections open
+    at once or more) the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the path the document resolves
+    to in the repository), as ``read_entry`` does. BF-940 A1 is gone: the base's cut is never read. BF-970 A2 (round 1 F1): a
+    ``path`` of ``None`` (the search could not resolve it) names no owner, so an unparsed block is withheld (fail closed); a
+    parsed one does not read ``path``.
     """
     try:
-        frontmatter = _load_frontmatter(block)
-        if not frontmatter:
-            frontmatter = _load_frontmatter(block.partition("---")[0]) or frontmatter
-            if not frontmatter and _block_unparsed(block):  # BF-940 slice 4 (L19): the same document read_entry withholds
-                frontmatter = _unparsed_gate(path)
-    except Exception:  # A5: read_entry raises on this block (a constructor error, a RecursionError)
+        frontmatter, unparsed = load_frontmatter(block)  # read_entry's reading (yaml.SafeLoader)
+    except Exception:  # A5: read_entry raises on this block (a constructor error)
         logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
         return False  # A5: the search withholds what read_entry raises on
+    if unparsed:  # BF-940 slice 4 (L19), BF-970: the same document read_entry withholds
+        if path is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+            return False
+        frontmatter = _unparsed_gate(path)
     return type(frontmatter) is dict and record_is_readable(
         frontmatter, scope=scope, reader_id=reader_id, reader_department=reader_department,
     )
@@ -501,7 +437,9 @@ def _search_records(
     repository is skipped before it is read, as :meth:`RecordsStore.list_entries` skips it.
     """
     repo = root.resolve()  # BF-958: root is the repository, resolved or as configured
-    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
+    # BF-970 A2 (round 1 F1): each entry carries its file, so the second reading names an unparsed document's owner by the path
+    # it resolves to; ``rel_path``, the walk's lexical path, stays the result's ``path`` and the ranking's last key.
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None, Path]] = []
     for md_file in sorted(_markdown_files(search_path, strict=False)):
         rel_path = str(md_file.relative_to(root)).replace("\\", "/")
         if rel_path.startswith("_archived/"):
@@ -519,12 +457,12 @@ def _search_records(
             logger.debug("Skipping unreadable file", exc_info=True)
             continue
         try:
-            frontmatter, content_text, block = _search_read_document(raw)
+            frontmatter, content_text, block, unparsed = _search_read_document(raw)
         except Exception:
             # A1, A5: YAML accepted the frontmatter and its constructor raised (``updated: 2026-13-05``
-            # is a ``ValueError``, not a ``YAMLError``), or it nests too deep for PyYAML's composer
-            # (``RecursionError``). ``read_entry`` raises for such a record; the search withholds it
-            # rather than end every search or read it as ``{}``.
+            # is a ``ValueError``, not a ``YAMLError``). ``read_entry`` raises for such a record; the search
+            # withholds it rather than end every search or read it as ``{}``. BF-970: a block nesting too deep
+            # is unparsed, so no ``RecursionError`` comes from the nesting.
             logger.debug("BF-952: skipping %s, whose frontmatter cannot be constructed", rel_path, exc_info=True)
             continue
         if type(frontmatter) is not dict:
@@ -537,16 +475,24 @@ def _search_records(
         # did not load as {} it applies the stand-in, private to the owner of its notebook directory, so a record only the Captain may
         # read is not found for another reader and cannot move the scores that reader is shown (BF-952 A4). Where it reads the document
         # as something else, the ordinary rules decide on that reading and nothing more is specified for it (L11). The second reading
-        # withholds more and never gives more (L11).
+        # withholds more and never gives more (L11). BF-970: the verdict is the first pass's own, from inside the try above.
+        # BF-970 A2 (round 1 F1): the stand-in's owner comes from the path the document resolves to, as read_entry's does, so a
+        # contained link under notebooks/bob/ to alice's unparsed note is alice's here too; resolved only where an owner is needed.
+        gate = frontmatter
+        if unparsed:  # BF-970 A2 (round 1 F1): only an unparsed document needs an owner
+            resolved = _resolved_rel_path(md_file, repo)
+            if resolved is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+                continue
+            gate = _unparsed_gate(resolved)
         if not record_is_readable(
-            _unparsed_gate(rel_path) if _frontmatter_unparsed(raw, frontmatter) else frontmatter,
+            gate,
             scope=scope,
             reader_id=reader_id,
             reader_department=reader_department,
         ):
             continue
         weights, length = _search_record_counts(frontmatter, content_text, terms)
-        readable.append((rel_path, frontmatter, content_text, weights, length, block))
+        readable.append((rel_path, frontmatter, content_text, weights, length, block, md_file))
     if not readable:
         return []
 
@@ -558,8 +504,8 @@ def _search_records(
         rarity[term] = math.log(1.0 + (count - holders + 0.5) / (holders + 0.5))
     total_rarity = sum(rarity[term] for term in terms)
 
-    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None]] = []
-    for rel_path, frontmatter, content_text, weights, length, block in readable:
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None, Path]] = []
+    for rel_path, frontmatter, content_text, weights, length, block, md_file in readable:
         matched = [term for term in terms if term in weights]
         if not matched:
             continue
@@ -577,14 +523,16 @@ def _search_records(
             "frontmatter": frontmatter,
             "score": coverage,
             "snippet": content_text[:200],
-        }, block))
+        }, block, md_file))
     ranked.sort(key=lambda pair: pair[0])
     results: list[dict] = []
-    for _, result, block in ranked:
+    for _, result, block, md_file in ranked:
         # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
         # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        # BF-970 A2 (round 1 F1): its stand-in's owner comes from the path it resolves to (None: withheld if unparsed).
         if block is not None and not _base_reading_admits(
-            block, scope=scope, reader_id=reader_id, reader_department=reader_department, path=result["path"],
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+            path=_resolved_rel_path(md_file, repo),
         ):
             continue
         results.append(result)
@@ -601,6 +549,19 @@ def _resolves_inside(path: Path, repo: Path) -> bool:
         return path.resolve().is_relative_to(repo)
     except RuntimeError:
         return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+
+
+def _resolved_rel_path(md_file: Path, repo: Path) -> str | None:
+    """BF-970 A2 (round 1 F1): the path ``md_file`` resolves to, relative to ``repo`` (the resolved repository) with ``/``:
+    the path ``read_entry`` names a document by (:meth:`RecordsStore._safe_path`), so the search's stand-in for an unparsed
+    document (:func:`_unparsed_gate`) names the owner ``read_entry``'s does, and a contained link under ``notebooks/bob/`` to
+    alice's note is alice's. ``None`` where it does not resolve inside ``repo`` now (a link loop, an ``OSError``, or a link moved
+    outside since the walk checked it); the caller withholds an unparsed document then. Never raises."""
+    try:
+        return md_file.resolve().relative_to(repo).as_posix()
+    except (OSError, RuntimeError, ValueError):  # fail closed: no owner can be named
+        logger.debug("BF-970: the search cannot resolve %s inside the records repository", md_file, exc_info=True)
+        return None
 
 
 def _contained(path: Path, repo: Path, rel_path: str, reader: str) -> bool:
@@ -809,7 +770,7 @@ class RecordsStore:
         that default is applied to documents authored long before it existed.
         Ignored on create, where there is nothing to preserve.
 
-        BF-940 slice 4 (L19): an update-in-place of a document whose frontmatter did not load (YAML refused it) proceeds as before and
+        BF-940 slice 4 (L19), BF-970: an update-in-place of a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) proceeds as before and
         replaces it, since the store's own writers and ``seed_manuals`` overwrite by design; its ``created`` time and ``revision``
         cannot be carried and restart, so a WARNING names the path (the replaced version stays in git history).
         """
@@ -847,8 +808,8 @@ class RecordsStore:
         if file_path.exists():
             try:
                 existing_raw = file_path.read_text(encoding="utf-8")
-                existing_fm, _ = self._parse_document(existing_raw)
-                if _frontmatter_unparsed(existing_raw, existing_fm):  # BF-940 slice 4 (L19): said, not refused (seed_manuals overwrites)
+                existing_fm, _, existing_unparsed = _load_document(existing_raw)  # BF-970: the reading and its verdict, one load
+                if existing_unparsed:  # BF-940 slice 4 (L19): said, not refused (seed_manuals overwrites)
                     logger.warning(
                         "BF-940 slice 4 (L19): %s is rewritten in place and its frontmatter did not load: its created time and revision "
                         "are not carried, and the replaced version stays in git history", path,
@@ -1531,7 +1492,7 @@ class RecordsStore:
 
         Returns {"frontmatter": {...}, "content": "..."} or None if denied.
 
-        BF-940 slice 4 (L19): a document whose frontmatter did not load (YAML refused it) reads as ``{}`` and is private to the owner of
+        BF-940 slice 4 (L19), BF-970: a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) reads as ``{}`` and is private to the owner of
         its ``notebooks/<callsign>/`` directory: it is returned to that owner and to the Captain, and denied to every other reader, the
         anonymous ``""`` included. ``RecordsStore.list_entries`` marks its entry (:data:`FRONTMATTER_UNPARSED_KEY`); this mapping is
         unchanged.
@@ -1541,14 +1502,15 @@ class RecordsStore:
             return None
 
         raw = file_path.read_text(encoding="utf-8")
-        frontmatter, content = self._parse_document(raw)
+        frontmatter, content, unparsed = _load_document(raw)  # BF-970: the reading and its verdict, one load
 
         # Classification check — Captain has unrestricted read access
         if reader_id != "captain":
-            # BF-940 slice 4 (L19): a frontmatter that did not load names no classification, so the document is private to its owner
+            # BF-940 slice 4 (L19), BF-970: a frontmatter that did not load, or nests too deep, names no classification, so the
+            # document is private to its owner
             gate = (
                 _unparsed_gate(file_path.relative_to(self._repo_path.resolve()).as_posix())
-                if _frontmatter_unparsed(raw, frontmatter) else frontmatter
+                if unparsed else frontmatter
             )
             # BF-966 (#1797): a classification that is not exactly one of the four labels is private.
             doc_class = effective_classification(gate.get("classification", "ship"))
@@ -1594,7 +1556,7 @@ class RecordsStore:
         document whose ``tags`` hold a nested list, mapping or set, or are a number or nothing, is listed or not by the tags it
         holds and never aborts the listing.
 
-        BF-940 slice 4 (L19): the entry of a document whose frontmatter did not load (YAML refused it) reads ``{}`` as before and carries
+        BF-940 slice 4 (L19), BF-970: the entry of a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) reads ``{}`` and carries
         :data:`FRONTMATTER_UNPARSED_KEY` set to ``True``; no other entry has the key. The listing is not reader-scoped, so it lists such
         a document for every caller, as it lists a private one.
         """
@@ -1620,8 +1582,7 @@ class RecordsStore:
                     )
                     continue
                 raw = md_file.read_text(encoding="utf-8")
-                fm, _ = self._parse_document(raw)
-                unparsed = _frontmatter_unparsed(raw, fm)  # BF-940 slice 4 (L19)
+                fm, _, unparsed = _load_document(raw)  # BF-940 slice 4 (L19), BF-970: the reading and its verdict, one load
             except OSError:
                 if strict:  # A5 (O5): a file the walk listed is never "no document", whatever the read's error
                     raise  # AD-1341 S4 (A2): a file that exists but cannot be read now is never "no document"
@@ -1680,7 +1641,7 @@ class RecordsStore:
     async def publish(self, path: str, author: str) -> None:
         """Promote a document from draft to published status.
 
-        BF-940 slice 4 (L19): a document whose frontmatter did not load (YAML refused it) is not published. ``publish`` writes back what
+        BF-940 slice 4 (L19), BF-970: a document whose frontmatter did not load (YAML refused it, or it nests 64 collections deep or more) is not published. ``publish`` writes back what
         it read, which for such a document is ``{}``, so it would replace the author, the classification and the times with a status
         and the note would read ``ship``. It raises ``ValueError`` naming the path, for the Captain too, and writes nothing.
         """
@@ -1689,9 +1650,9 @@ class RecordsStore:
             raise FileNotFoundError(f"Record not found: {path}")
 
         raw = file_path.read_text(encoding="utf-8")
-        fm, content = self._parse_document(raw)
+        fm, content, unparsed = _load_document(raw)  # BF-970: the reading and its verdict, one load
 
-        if _frontmatter_unparsed(raw, fm):
+        if unparsed:
             raise ValueError(f"The frontmatter of {path} does not load, so it is not published: fix the file first")
 
         if fm.get("author") != author and author != "captain":
@@ -1732,9 +1693,9 @@ class RecordsStore:
         reader cannot move the scores it is shown (one that only the second
         reading withholds can: L7). A record whose frontmatter is a non-empty YAML list or a truthy
         scalar, or one YAML's constructor cannot build (``updated: 2026-13-05``),
-        is skipped; one whose frontmatter does not parse (``read_entry`` reads it
-        as ``{}``, unless the base's earlier cut of it parses and it reads as that:
-        A3; BF-940 A1, #1686) is private to the owner of its
+        is skipped; one whose frontmatter does not parse, or nests 64 collections
+        deep or more (``read_entry`` reads it as ``{}``; the base's cut is never
+        read: BF-970, #1801), is private to the owner of its
         ``notebooks/<callsign>/`` directory (BF-940 slice 4, L19). At any
         ``scope``, with either loader, no reader but that owner, the Captain and a
         reader that named no identity finds it, and no reader that named an
@@ -1888,26 +1849,14 @@ class RecordsStore:
         """Parse YAML frontmatter + content from a markdown document.
 
         BF-940 (#1686): the frontmatter ends at the first later line of only hyphens, so a value holding ``---``
-        stays whole (:func:`probos.utils.frontmatter.split_frontmatter`). The YAML is loaded here, in this frame,
-        so PyYAML's recursion frontier is the one the base had (BF-952 A6, L30). BF-940 A1: where the block reads as nothing
-        (it does not load) and the base's cut of the text reads as something, the document reads as the base read it.
+        stays whole (:func:`probos.utils.frontmatter.split_frontmatter`). BF-970 (#1801): the document is read by
+        :func:`_load_document`, every reader's one reading; a block YAML refuses, or one nesting 64 collections deep or
+        more, reads as ``{}``, and the base's cut of the text is never read in its place (BF-940 A1 is gone). The callers
+        that must know whether ``{}`` means unparsed (``read_entry``, ``list_entries``, ``publish``, update-in-place) call
+        :func:`_load_document` itself; the scans call this.
         """
-        block, rest = split_frontmatter(raw)
-        if block is None:
-            return {}, raw
-        try:
-            fm = yaml.safe_load(block) or {}
-        except yaml.YAMLError:
-            fm = {}
-        if not fm:  # A1: the base's cut may read where the whole block does not (a tag safe_load refuses, after a ---)
-            base_block, base_rest = base_split_frontmatter(raw)
-            try:
-                base_fm = yaml.safe_load(base_block) or {}
-            except yaml.YAMLError:
-                base_fm = {}
-            if base_fm:
-                return base_fm, base_rest.strip()
-        return fm, rest.strip()
+        frontmatter, body, _ = _load_document(raw)
+        return frontmatter, body
 
     def _safe_path(self, user_path: str) -> Path:
         """Validate and resolve a user-supplied path, preventing traversal.

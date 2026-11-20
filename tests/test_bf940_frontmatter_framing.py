@@ -77,7 +77,8 @@ def _base_read(raw: str) -> tuple[Any, str]:
 
 
 def _oracle(raw: str) -> tuple[Any, str]:
-    """The rule as a loop over the lines, not a pattern, and A1's fallback: what every reader's reading is compared with."""
+    """The rule as a loop over the lines, not a pattern: what every reader's reading is compared with. BF-970 (#1801) removed A1's
+    fallback, so a block that does not load reads as nothing whatever the base's cut of the text reads."""
     block = rest = None
     if raw.startswith("---"):
         found = _closing(raw)
@@ -91,10 +92,6 @@ def _oracle(raw: str) -> tuple[Any, str]:
         frontmatter = yaml.safe_load(block) or {}
     except yaml.YAMLError:
         frontmatter = {}
-    if not frontmatter:  # A1: a block that reads as nothing reads as the base read the text, where the base read something
-        earlier = _base_read(raw)
-        if earlier[0]:
-            return earlier
     return frontmatter, rest.strip()
 
 
@@ -218,12 +215,11 @@ def test_a_skill_file_without_three_hyphens_in_its_frontmatter_reads_and_rewrite
     assert _rewritten(path).department == "operations" and get_skill_body(path) == _SKILL_BODY
 
 
-async def test_a_private_note_with_three_hyphens_in_its_topic_stays_private_when_its_metrics_cannot_load(tmp_path, monkeypatch):
-    """A1 (round 1, F1): ``yaml.dump`` writes a tuple as ``!!python/tuple``, which ``safe_load`` refuses. The base cut this note's
-    block at the ``---`` in the topic, before ``metrics``, so the tag was never loaded and the note stayed alice's; the rule read
-    the whole block, got ``{}`` and so ``ship``: every reader was shown it and alice's own ``publish`` raised ``PermissionError``.
-    A block that reads as nothing now reads as the base read the text, where the base's cut reads. A tuple with no ``---`` before
-    it reads ``{}`` on both trees (L10): not asserted here."""
+async def test_a_note_with_three_hyphens_in_its_topic_whose_metrics_cannot_load_is_private_to_its_owner(tmp_path, monkeypatch):
+    """BF-970 (#1801) removed A1 (round 1, F1), which read this note's base cut, the block up to the ``---`` in its topic, where
+    ``safe_load`` refused the ``!!python/tuple`` in its metrics. The cut named alice and ``private`` here, but a cut that names no
+    classification read as ``ship`` (#1801's first problem). The block does not load, so the note is unparsed: private to the owner
+    of ``notebooks/alice/`` (BF-940 slice 4, L19), read as ``{}``, and refused by ``publish``, whatever its cut says."""
     store = await _store(tmp_path, monkeypatch)
     path = "notebooks/alice/review---nominal.md"  # BF-940 slice 2: the writer no longer writes the tag, so the document is hand-made
     raw = "---\nauthor: alice\nclassification: private\nstatus: draft\ntopic: review---nominal\nmetrics:\n  sample: !!python/tuple\n  - 1\n  - 2\n---\n\ncoolant private body\n"
@@ -233,9 +229,10 @@ async def test_a_private_note_with_three_hyphens_in_its_topic_stays_private_when
     assert await store.read_entry(path, reader_id="bob") is None
     assert await store.search("coolant", reader_id="bob") == []
     own = await store.read_entry(path, reader_id="alice")
-    assert own is not None and own["frontmatter"].get("classification") == "private" and own["frontmatter"].get("author") == "alice"
+    assert own is not None and own["frontmatter"] == {}  # BF-970: unparsed; A1 read the cut here
     assert [hit["path"] for hit in await store.search("coolant", reader_id="alice")] == [path]
-    await store.publish(path, "alice")
+    with pytest.raises(ValueError):
+        await store.publish(path, "alice")  # BF-970: publish refuses an unparsed note (BF-940 slice 4, G2); A1 published the cut
     assert await store.read_entry(path, reader_id="bob") is None
 
 
@@ -253,7 +250,7 @@ async def test_the_search_shows_a_reader_no_note_that_read_entry_withholds_where
     assert await store.read_entry(path, reader_id="bob") is None
     assert await store.search("warp", reader_id="bob") == []
     own = await store.read_entry(path, reader_id="alice")
-    assert own is not None and own["frontmatter"].get("classification") == "private"
+    assert own is not None and own["frontmatter"] == {}  # BF-970 (#1801): PyYAML refuses the block, so it is unparsed; A1 read the cut
     assert [hit["path"] for hit in await store.search("warp", reader_id="alice")] == [path]
 
 
@@ -295,8 +292,8 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
         ),
         pytest.param(
             "---\nauthor: alice\nclassification: private --- inline\nWarp notes, in prose.\n---\nmore warp notes\n",
-            {"author": "alice", "classification": "private"}, "inline\nWarp notes, in prose.\n---\nmore warp notes", {"alice"},
-            id="then-prose-and-a-rule-reads-as-the-base-read-it",
+            {}, "more warp notes", {"alice"},  # BF-970 (#1801): A1 is gone, so the block that does not load is unparsed (owner: alice)
+            id="then-prose-and-a-rule-is-unparsed",
         ),
         pytest.param(
             "---\nauthor: alice\nclassification: private --- inline\nclassification: ship\n---\nwarp notes\n",
@@ -312,7 +309,7 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
     ):
         """The four BF-952 T20 / round-3 shapes that have a closing line after the inline marker. The base read each as alice's
         private note. Where the whole block loads (the 1st, 3rd and 4th) the inline marker now ends nothing and the shape reads to
-        its closing line, as here (L3); where it does not (the 2nd, prose after a key) the shape reads as the base read it (A1).
+        its closing line, as here (L3); where it does not (the 2nd, prose after a key) it is unparsed (BF-970 removed A1).
         Each is asserted through ``_parse_document``, ``read_entry`` and the search for alice and for bob, as BF-952's T20 asserted
         it (F2): the readers listed are the ones shown the record. No writer in the repository makes such a document.
         BF-966 (#1797) amends L3 for the 1st: its classification, ``private --- inline``, is not one of the four labels,
@@ -327,36 +324,36 @@ class TestAValueHoldingThreeHyphensIsNotCutShort:
         assert found == {who: [path] if who in readers else [] for who in ("alice", "bob")}
 
     def test_every_document_of_the_grid_reads_by_the_rule(self, tmp_path):
-        """BF-952's T22 over its 3,747 shapes, rewritten: both readers read each as ``_oracle`` does (the rule, then A1's fallback),
-        a constructor error included. Premise: ``reframed`` names 2,388 of them (the rule frames them otherwise than the base). The
-        number the contract claims, asserted last: 2,110 of them, and no other, are returned otherwise than ``_base_read`` returns
-        them, by either reader, an error compared by its name. The other 278 read as the base reads them: A1's fallback gives 90 of
-        the 2,200 that M2 changed back, and the rest raise the same error or read alike."""
+        """BF-952's T22 over its 3,747 shapes, rewritten: both readers read each as ``_oracle`` does (the rule; BF-970, #1801,
+        removed A1's fallback), a constructor error included. Premise: ``reframed`` names 2,388 of them (the rule frames them
+        otherwise than the base). The number the contract claims, asserted last: 2,200 of them, and no other, are returned otherwise
+        than ``_base_read`` returns them, by either reader, an error compared by its name: BF-940's 2,110 and the 90 that A1's fallback
+        gave back to the base's reading (BF-940 contract, D7). The other 188 raise the same error or read alike."""
         store, shapes = _bare(tmp_path), grid()
         assert len(shapes) == 3747 and sum(map(reframed, shapes)) == 2388, "premise: the grid and its reframed shapes"
         differ = [s for s in shapes if _read_or_error(store._parse_document, s) != _read_or_error(_oracle, s) or _read_or_error(_search_read, s) != _read_or_error(_oracle, s)]
         assert differ == [], (len(differ), differ[:3])
         moved = [s for s in shapes if _read_or_error(store._parse_document, s) != _read_or_error(_base_read, s) or _read_or_error(_search_read, s) != _read_or_error(_base_read, s)]
-        assert len(moved) == 2110 and all(map(reframed, moved)), "claim: 2,110 shapes read otherwise than on the base, all of them reframed"
+        assert len(moved) == 2200 and all(map(reframed, moved)), "claim: 2,200 shapes read otherwise than on the base, all of them reframed"
 
     @pytest.mark.parametrize(("raw", "read"), [
         pytest.param(
             "---\nauthor: alice\nclassification: private\ntopic: review---nominal\nmetrics:\n  sample: !!python/tuple\n  - 1\n  - 2\n---\n\ncoolant body\n",
-            ({"author": "alice", "classification": "private", "topic": "review"}, "nominal\nmetrics:\n  sample: !!python/tuple\n  - 1\n  - 2\n---\n\ncoolant body"),
-            id="a-tag-safe-load-refuses-after-three-hyphens-reads-as-the-base-read-it",
+            ({}, "coolant body"),  # BF-970 (#1801): unparsed; A1 read the cut
+            id="a-tag-safe-load-refuses-after-three-hyphens-is-unparsed",
         ),
-        pytest.param("---\n- a\n- b---c\nfoo: bar\n---\nbody", (["a", "b"], "c\nfoo: bar\n---\nbody"), id="a-cut-that-is-a-list-is-taken-as-the-base-took-it"),
-        pytest.param("---\nkey: [unclosed\ntopic: a---b\n---\nbody", ({}, "body"), id="a-cut-that-does-not-load-either-reads-as-the-rule-reads-it"),
+        pytest.param("---\n- a\n- b---c\nfoo: bar\n---\nbody", ({}, "body"), id="a-block-that-does-not-load-whose-cut-is-a-list-is-unparsed"),
+        pytest.param("---\nkey: [unclosed\ntopic: a---b\n---\nbody", ({}, "body"), id="a-cut-that-does-not-load-either-is-unparsed"),
         pytest.param(
             "---\nauthor: alice\nclassification: private\ntopic: a --- b\nupdated: 2026-13-05\n---\nbody", "ValueError",
             id="a-constructor-error-after-three-hyphens-is-not-a-parse-failure-L13",
         ),
     ])
-    def test_a_block_that_does_not_load_reads_as_the_base_read_the_text_where_the_cut_loads(self, tmp_path, raw, read):
-        """A1 (F1), through both readers. The first row is F1's note as a document. The second has a cut that is a list, taken as
-        the base took it (the search then withholds it: a mapping is required). The third has a cut that does not load either, so
-        the rule's reading stands, its body included. The last pins the trigger: a constructor error is not a parse failure, so it
-        raises, as the base raised for the same YAML (L13)."""
+    def test_a_block_that_does_not_load_reads_as_nothing_whatever_its_cut_reads(self, tmp_path, raw, read):
+        """BF-970 (#1801) removed A1 (F1), through both readers: a block YAML refuses reads as ``{}`` with the rule's body, whatever
+        the base's cut of the text reads. The first row is F1's note as a document (its cut named alice and ``private``); the
+        second's cut is a list; the third's does not load either. The last pins the trigger: a constructor error is not a parse
+        failure, so it raises, as the base raised for the same YAML (L13)."""
         assert _read_or_error(_bare(tmp_path)._parse_document, raw) == read
         assert _read_or_error(_search_read, raw) == read
 
