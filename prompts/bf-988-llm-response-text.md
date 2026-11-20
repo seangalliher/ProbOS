@@ -1159,7 +1159,7 @@ After 17.4, run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`
 | R-16 | engine: `f"judge call failed: {type(exc).__name__}"` | `""` | T9[raises], T10[raises] |
 | R-17 | engine: `"judge returned unparseable output"` | `""` | T9[prose], T9[error-reply], T10[error-reply], T11 |
 | R-18 | engine: `return RecallScore(1.0)` | `return RecallScore(1.0, "x")` | the empty-summary test |
-| R-19 | engine: `score_recall`'s `.score` | `return 0.0` | T2, T8 |
+| R-19 | engine: `score_recall`'s `.score` | `return 0.0` | T2, T4, T5 |
 
 ### 17.7 Reviewer properties for the delta (properties to verify, not attack scenarios)
 
@@ -1167,5 +1167,5 @@ After 17.4, run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`
 2. `score_recall_outcome` marks exactly two branches inconclusive, the raised judge call and the reply without a number, and decides by branch: a judge that says "0.5", an empty expected summary and the no-client Jaccard path are measurements.
 3. `EpisodicRecallProbe` returns `inconclusive=True`, `passed=False` and an `error` of the form `k/n episodes: reason` when any episode's judge failed, keeps `score` as the mean, adds `judge` to the failed episodes' entries only, and is unchanged for a run with no failed judge (`error` None, `inconclusive` False, `passed` by the threshold).
 4. The consumers accept it: `QualificationHarness.run_test` takes no baseline from an errored run (`qualification.py:443-448`); `DriftDetector._analyze_single` drops inconclusive rows (`drift_detector.py:150`); `ScaffoldDecompositionProbe` skips results with an `error` (`collective_tests.py:199`); the store round-trips `inconclusive` and `error` (`qualification.py:342-366`).
-5. The corrected effect in D5, 7.4, 7.5, 8.2 and 16 holds against `drift_detector.py:135-250` and the consumers named in section 5; no sentence still says "once" or "one drift signal", and none says every recall scored 0.5.
+5. The corrected effect in D5, 7.4, 7.5, 8.2 and 16 holds against `drift_detector.py:135-250` and the consumers named in section 5. Outside the SEARCH blocks of 17.4, which quote the text they replace, no sentence still says "once" or "one drift signal", and none says every recall scored 0.5.
 6. The two files outside the tests and trackers that change are `guided_reminiscence.py` and `qualification_tests.py`, and in the first only `RecallScore`, `score_recall`'s delegation and `score_recall_outcome` differ from the committed candidate.
