@@ -1586,6 +1586,31 @@ class EpisodicMemory:
             logger.debug("AD-607: recall anomaly gate failed", exc_info=True)
             return False
 
+    def _drop_security_anomalies(
+        self,
+        episodes: list[Episode],
+        *,
+        query: str = "",
+        anchor_query: Any = None,
+    ) -> list[Episode]:
+        """BF-984 (#1830): AD-607's recall verdict over the episodes a read is about to return.
+
+        The shared filter of the public reads that build their result without the per-candidate verdict
+        (``recall_for_agent_with_confidence``, ``recent_for_agent``, ``recent``, ``recall_by_intent``,
+        ``retrieve_contrastive_episodes`` and ``get_by_ids(for_evidence=True)``). Applied to the final list, after
+        AD-1293's exclusion, so it checks only what the read returns, and an enforced drop shortens the result rather
+        than promoting another episode. Unbound (no config) the list is returned unchanged; with every ``enforce_*``
+        flag false every episode is kept and an anomaly is reported. The public reads that return episodes without
+        the verdict, and why, are listed in tests/test_bf984_recall_gate_coverage.py, which fails on any public read
+        that is neither gated nor listed. ``getattr``: test modules build an EpisodicMemory with ``__new__``.
+        """
+        if getattr(self, "_security_config", None) is None:
+            return episodes
+        return [
+            episode for episode in episodes
+            if not self._security_anomaly_drop(episode, query=query, anchor_query=anchor_query)
+        ]
+
     def set_retroactive_evolver(self, evolver: Any) -> None:
         """AD-608: Wire the retroactive evolver for store-time evolution."""
         self._retroactive_evolver = evolver
@@ -2418,7 +2443,9 @@ class EpisodicMemory:
         ordered = [by_id[eid] for eid in episode_ids if eid in by_id]
         if not for_evidence:
             return ordered
-        return self._drop_self_contradicted(ordered, False)  # AD-1293 (#1200)
+        # BF-984 (#1830): an evidence caller also gets AD-607's recall verdict. The bare call stays unfiltered
+        # (history: erasure resolves through it, and the fusion tails gate what they hydrate).
+        return self._drop_security_anomalies(self._drop_self_contradicted(ordered, False))  # AD-1293 (#1200)
 
     async def update_episode_metadata(
         self,
@@ -3731,6 +3758,8 @@ class EpisodicMemory:
         contrastive = self._drop_self_contradicted(
             contrastive, include_self_contradicted
         )
+        # BF-984 (#1830): AD-607's recall verdict, before the CONTRASTIVE_RECALL report, which names what is returned.
+        contrastive = self._drop_security_anomalies(contrastive, query=query)
 
         # AD-655: emit CONTRASTIVE_RECALL when an emit hook is wired
         emit = getattr(self, "_emit_event", None)
@@ -4054,8 +4083,11 @@ class EpisodicMemory:
 
         # AD-1293 (#1200): exclude after sovereign fusion, for the same reason
         # as the global path -- the fusion tail re-hydrates ids via get_by_ids.
+        # BF-984 (#1830): AD-607's recall verdict at the same point, for the same reason (it also covers the
+        # sparse-hydrated ids), and before the band reset, so an enforced drop that empties the recall reports "none".
         _pre_exclusion = episodes
         episodes = self._drop_self_contradicted(episodes, include_self_contradicted)
+        episodes = self._drop_security_anomalies(episodes, query=query)
         if _pre_exclusion and not episodes:
             confidence = dataclasses.replace(confidence, band="none")
 
@@ -4177,7 +4209,11 @@ class EpisodicMemory:
         # AD-1293 (#1200): after the k-cap, so an excluded episode shortens the
         # result rather than promoting an older one -- the safe direction, and
         # it keeps the single-pass scan this fallback exists to be.
-        return self._drop_self_contradicted(episodes, include_self_contradicted)
+        # BF-984 (#1830): AD-607's recall verdict, after the exclusion and for the same reason. No query or anchor
+        # view: a recency read is judged on provenance.
+        return self._drop_security_anomalies(
+            self._drop_self_contradicted(episodes, include_self_contradicted)
+        )
 
     async def recall_by_intent(
         self, intent_type: str, k: int = 5,
@@ -4220,7 +4256,10 @@ class EpisodicMemory:
             if len(episodes) >= k:
                 break
 
-        return self._drop_self_contradicted(episodes, include_self_contradicted)  # AD-1293
+        # BF-984 (#1830): AD-607's recall verdict, after the exclusion; no anchor view (provenance only).
+        return self._drop_security_anomalies(
+            self._drop_self_contradicted(episodes, include_self_contradicted)  # AD-1293
+        )
 
     async def recent(
         self, k: int = 10, *, include_self_contradicted: bool = False,
@@ -4244,12 +4283,14 @@ class EpisodicMemory:
         paired = list(zip(result["ids"], result["metadatas"], result["documents"]))
         paired.sort(key=lambda x: x[1].get("timestamp", 0), reverse=True)
 
-        return self._drop_self_contradicted(  # AD-1293 (#1200)
-            [
-                self._metadata_to_episode(doc_id, document, metadata)
-                for doc_id, metadata, document in paired[:k]
-            ],
-            include_self_contradicted,
+        return self._drop_security_anomalies(  # BF-984 (#1830): AD-607's recall verdict, after the exclusion
+            self._drop_self_contradicted(  # AD-1293 (#1200)
+                [
+                    self._metadata_to_episode(doc_id, document, metadata)
+                    for doc_id, metadata, document in paired[:k]
+                ],
+                include_self_contradicted,
+            )
         )
 
     async def get_embeddings(self, episode_ids: list[str]) -> dict[str, list[float]]:
