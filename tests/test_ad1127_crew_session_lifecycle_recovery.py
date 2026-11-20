@@ -1263,6 +1263,7 @@ async def test_install_recovery_plan_detaches_children_before_first_await(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("malformed_kind", ["subclass", "cycle", "scalar"])
+@pytest.mark.usefixtures("gc_quiet_at_recursion_limit")  # BF-986 census (#1754), item bf-986 F3 of #1820: the cycle case recurses to the Python stack limit
 async def test_install_recovery_plan_rejects_hostile_metadata_before_await(
     tmp_path: Path,
     malformed_kind: str,

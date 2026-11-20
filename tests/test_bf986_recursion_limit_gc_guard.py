@@ -151,6 +151,7 @@ _GUARDED = (  # every test function whose passing path overflows the Python stac
     ("tests.test_bf952_records_keyword_search", "test_parse_document_never_raises_recursion_error_for_nesting"),
     ("tests.test_bf970_frontmatter_reading", "test_a_search_over_a_corpus_holding_a_block_nested_400_deep_returns_the_other_records"),
     ("tests.test_bf970_frontmatter_reading", "test_the_nesting_check_answers_from_a_nearly_exhausted_stack_and_stops_at_the_limit"),
+    ("tests.test_ad1127_crew_session_lifecycle_recovery", "test_install_recovery_plan_rejects_hostile_metadata_before_await"),
 )
 
 
@@ -282,7 +283,7 @@ def test_conftest_offers_the_guard_to_every_test() -> None:
     ids=[
         "ad1197-outbound", "ad1197-inbound", "bf904b-unreadable-policy",
         "bf940-s2-dump-too-deep", "bf952-both-readings", "bf952-every-reader", "bf952-parse-document",
-        "bf970-search-400-deep", "bf970-exhausted-stack",
+        "bf970-search-400-deep", "bf970-exhausted-stack", "ad1127-cyclic-metadata",
     ],
 )
 def test_every_test_that_overflows_the_python_stack_asks_for_the_guard(module: str, name: str) -> None:
