@@ -642,67 +642,62 @@ def _nested(depth: int, style: str) -> str:
 
 
 @pytest.mark.parametrize(("depth", "style"), [
-    pytest.param(99, "flow", id="flow-just-below-the-search-limit"),
-    pytest.param(100, "flow", id="flow-at-the-search-limit"),
-    pytest.param(150, "flow", id="flow-below-the-base-limit"),
-    pytest.param(600, "flow", id="flow-past-the-base-limit"),
-    pytest.param(150, "block", id="block-below-the-base-limit"),
-    pytest.param(600, "block", id="block-past-the-base-limit"),
+    pytest.param(63, "flow", id="flow-just-below-the-limit"),
+    pytest.param(64, "flow", id="flow-at-the-limit"),
+    pytest.param(100, "flow", id="flow-at-the-old-search-limit"),
+    pytest.param(150, "flow", id="flow-below-the-base-recursion"),
+    pytest.param(600, "flow", id="flow-past-the-base-recursion"),
+    pytest.param(63, "block", id="block-just-below-the-limit"),
+    pytest.param(64, "block", id="block-at-the-limit"),
+    pytest.param(600, "block", id="block-past-the-base-recursion"),
 ])
-def test_a_deeply_nested_frontmatter_reads_as_on_the_base(tmp_path: Path, depth: int, style: str) -> None:
-    """A5 (round 5, finding 1): libyaml loads a frontmatter nesting about 330 collections deep or more, where the
-    base's ``yaml.safe_load`` raised ``RecursionError``, which is not a ``YAMLError``; through A4 every reader read
-    what the base raised on. Every reader but the search now reads with the base's call, and the search hands
-    libyaml only a block nesting fewer than 100 deep. Each shape reads under ``_parse_document`` (the base's own
-    text, A6) and the search as on the base, the ``RecursionError`` included."""
+def test_a_frontmatter_nesting_64_collections_or_more_is_unparsed_in_both_readings(tmp_path: Path, depth: int, style: str) -> None:
+    """BF-970 (#1801) replaces A5's depth arrangement, which this case pinned (libyaml for a block below 100 levels, the base's
+    call above, its ``RecursionError`` included): every reader reads a block holding 64 collections open at once, or more, as
+    unparsed, ``({}, body)``, with either loader, and one of 63 as before. The base raised ``RecursionError`` for 600 levels."""
     raw = _nested(depth, style)
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
-    expected = _read_or_error(_base_read, raw)
-    if depth >= 600:  # premise: the shape is the class round 5 found
-        assert expected == "RecursionError"
-        if _LIBYAML:
-            assert type(yaml.load(raw.split("---", 2)[1], Loader=yaml.CSafeLoader)) is dict
-    else:  # premise: PyYAML reads it
-        assert type(expected[0]) is dict and expected[0]["classification"] == "ship"
+    if depth >= 600:  # premise: the base's reading of this class raised
+        assert _read_or_error(_base_read, raw) == "RecursionError"
+    if depth < 64:
+        expected = _base_read(raw)
+        assert type(expected[0]) is dict and expected[0]["classification"] == "ship"  # premise: PyYAML reads it
+    else:
+        expected = ({}, "warp core notes")
     assert _read_or_error(store._parse_document, raw) == expected
     assert _read_or_error(_search_read, raw) == expected
+    assert records_store_module._search_read_document(raw)[3] is (depth >= 64)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("depth", [
-    pytest.param(150, id="below-the-base-limit"),
-    pytest.param(600, id="past-the-base-limit"),
+    pytest.param(150, id="below-the-base-recursion"),
+    pytest.param(600, id="past-the-base-recursion"),
 ])
-async def test_a_deeply_nested_record_is_read_listed_published_and_found_as_on_the_base(
+async def test_a_deeply_nested_record_is_unparsed_in_every_reader(
     tmp_path: Path, depth: int,
 ) -> None:
-    """A5 (round 5, finding 1), through the real readers. Through A4 libyaml read a 600-level frontmatter for every
-    reader: ``read_entry`` returned it, ``list_entries`` listed it and update-in-place kept its ``created``. On the
-    base ``read_entry`` and ``publish`` raised ``RecursionError`` and ``list_entries`` skipped the record, and they
-    do again; the search withholds it. Below the base's limit every reader reads it, as on the base."""
+    """BF-970 (#1801), through the real readers; it replaces A5's case, which pinned the base's ``RecursionError`` (600) and the
+    base's reading (150). A record whose frontmatter holds 64 collections open or more is unparsed: private to the owner of its
+    notebook directory (BF-940 slice 4, L19), read as ``{}`` by the Captain, listed with the key, refused by ``publish``, and found
+    by the search for the Captain and its owner only."""
     raw = _nested(depth, "flow")
     store = await _store(tmp_path)
     path = "notebooks/alice/nested.md"
     target = store.repo_path / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(raw, encoding="utf-8")
-    base = _read_or_error(_base_read, raw)
     if depth >= 600:
-        assert base == "RecursionError"  # premise
-        with pytest.raises(RecursionError):
-            await store.read_entry(path, reader_id="captain")
-        with pytest.raises(RecursionError):
-            await store.publish(path, author="captain")
-        assert await store.list_entries("notebooks") == []
-        assert await _paths(store, "warp", reader_id="captain") == []
-    else:
-        frontmatter, body = base
-        assert await store.read_entry(path, reader_id="bob") == {
-            "frontmatter": frontmatter, "content": body, "path": path,
-        }
-        listed = [(entry["path"], entry["frontmatter"]) for entry in await store.list_entries("notebooks")]
-        assert listed == [(path, frontmatter)]
-        assert await _paths(store, "warp", reader_id="bob") == [path]
+        assert _read_or_error(_base_read, raw) == "RecursionError"  # premise: the base raised for this class
+    assert await store.read_entry(path, reader_id="captain") == {"frontmatter": {}, "content": "warp core notes", "path": path}
+    assert await store.read_entry(path, reader_id="bob") is None
+    with pytest.raises(ValueError):
+        await store.publish(path, author="captain")
+    key = records_store_module.FRONTMATTER_UNPARSED_KEY
+    assert [(entry["path"], entry["frontmatter"], entry.get(key)) for entry in await store.list_entries("notebooks")] == [(path, {}, True)]
+    assert await _paths(store, "warp", reader_id="captain") == [path]
+    assert await _paths(store, "warp", reader_id="alice") == [path]
+    assert await _paths(store, "warp", reader_id="bob") == []
 
 
 @pytest.mark.asyncio
@@ -728,8 +723,8 @@ async def test_the_search_returns_no_record_the_base_reading_withholds(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(f"---\nauthor: alice\n{frontmatter_line}\n---\n\nwarp warp core notes\n", encoding="utf-8")
     _write(store, "reports/open.md", "warp report")
-    monkeypatch.setattr(
-        records_store_module, "_search_load_frontmatter", lambda block: {"author": "alice", "classification": "ship"},
+    monkeypatch.setattr(  # BF-970 (#1801): the search's first-pass reading returns (frontmatter, unparsed)
+        records_store_module, "_search_read_frontmatter", lambda block: ({"author": "alice", "classification": "ship"}, False),
     )
     for reader, shown in readers.items():
         expected = sorted(([hidden] if shown else []) + ["reports/open.md"])
@@ -759,63 +754,52 @@ async def test_a_record_only_libyaml_reads_is_found_only_where_both_readings_adm
     assert await _paths(store, "warp", reader_id="bob") == []
 
 
-def test_libyaml_is_given_only_a_block_nesting_fewer_than_the_limit_deep() -> None:
-    """A5: ``_nests_below`` counts open collections in the parser's event stream, so siblings add no depth, and a
-    block that does not parse is not below the limit (the base's call reads it)."""
-    limit = records_store_module._SEARCH_LIBYAML_DEPTH_LIMIT
-    assert limit == 100
-    nests_below = records_store_module._nests_below
-    assert nests_below("nest: " + "[" * 98 + "]" * 98, limit)  # 99 deep, the mapping included
-    assert not nests_below("nest: " + "[" * 99 + "]" * 99, limit)  # 100 deep
-    assert nests_below("tags: [" + ", ".join(["[warp]"] * 150) + "]", limit)  # 3 deep, 152 collections
-    assert not nests_below("broken: [unclosed", limit)
+def test_the_nesting_check_counts_open_collections_and_leaves_a_parse_error_to_the_load() -> None:
+    """BF-970 (#1801) replaces ``_nests_below`` and ``_SEARCH_LIBYAML_DEPTH_LIMIT`` (100, the search's alone) with one check for
+    every reader, ``frontmatter_nests_too_deep``, at ``FRONTMATTER_DEPTH_LIMIT`` (64), with the loader the load uses. It counts
+    open collections in the parser's event stream, so siblings add no depth, and a block that does not parse is left to the
+    load, which reads YAML's refusal."""
+    from probos.utils import frontmatter as frontmatter_module
+
+    assert frontmatter_module.FRONTMATTER_DEPTH_LIMIT == 64
+    too_deep = frontmatter_module.frontmatter_nests_too_deep
+    for loader in [yaml.SafeLoader, *([yaml.CSafeLoader] if _LIBYAML else [])]:
+        assert not too_deep("nest: " + "[" * 62 + "]" * 62, loader), loader  # 63 deep, the mapping included
+        assert too_deep("nest: " + "[" * 63 + "]" * 63, loader), loader  # 64 deep
+        assert not too_deep("tags: [" + ", ".join(["[warp]"] * 150) + "]", loader), loader  # 3 deep, 152 collections
+        assert not too_deep("broken: [unclosed", loader), loader
+        assert frontmatter_module.load_frontmatter("broken: [unclosed", loader) == ({}, True), loader
 
 
-def _frontier(read: Any) -> int:
-    """A6 (round 6, finding 1): the deepest flow nesting ``read`` reads when called from here, by bisection.
-
-    PyYAML's composer recurses about two Python frames a nesting level, so where a reader raises ``RecursionError``
-    depends on the frames between its caller and ``yaml.safe_load``. Every reader compared is called from this frame.
-    """
-    low, high = 2, sys.getrecursionlimit()
-    assert _read_or_error(read, _nested(low, "flow")) != "RecursionError"  # premise: the low end reads
-    assert _read_or_error(read, _nested(high, "flow")) == "RecursionError"  # premise: the high end raises
-    while high - low > 1:
-        middle = (low + high) // 2
-        if _read_or_error(read, _nested(middle, "flow")) == "RecursionError":
-            high = middle
-        else:
-            low = middle
-    return low
-
-
-def test_parse_document_raises_at_the_base_recursion_frontier(tmp_path: Path) -> None:
-    """A6 (round 6, finding 1): A5 sent ``_parse_document`` through two more frames before ``yaml.safe_load``, so a
-    document nesting one level below the base's limit raised ``RecursionError`` where the base read it, and
-    update-in-place reset its ``created``, ``revision`` and classification. ``_parse_document`` is the base's own
-    text again: called from the same frame as the base's (``_base_read``), it reads to the same depth."""
+def test_parse_document_never_raises_recursion_error_for_nesting(tmp_path: Path) -> None:
+    """BF-970 (#1801) replaces A6's frontier case, which pinned ``_parse_document`` to the base's ``RecursionError`` depth (it had
+    to stay the base's own text, called from the base's frame). A block nesting 64 collections deep or more is unparsed before any
+    load, so ``_parse_document`` reads ``({}, body)`` however deep the block and whatever the stack."""
     store = RecordsStore(RecordsConfig(repo_path=str(tmp_path / "ship-records"), auto_commit=False))
-    assert _frontier(store._parse_document) == _frontier(_base_read)
+    limit = sys.getrecursionlimit()
+    assert _read_or_error(_base_read, _nested(limit, "flow")) == "RecursionError"  # premise: the base's reading raised at this depth
+    for depth in (64, limit, 10 * limit):
+        assert _read_or_error(store._parse_document, _nested(depth, "flow")) == ({}, "warp core notes"), depth
 
 
 @pytest.mark.asyncio
-async def test_read_entry_reads_with_parse_document_as_on_the_base(
+async def test_read_entry_reads_with_the_one_document_reading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A6 (round 6, finding 1): ``read_entry`` reads a document with ``self._parse_document(raw)``, the base's own
-    call, so its reading and the depth at which it raises ``RecursionError`` are the base's from every caller. A5
-    called a module function two frames deeper instead."""
+    """BF-970 (#1801) replaces A6's delegation case (``read_entry`` had to call ``self._parse_document(raw)``, the base's own text,
+    for the base's recursion frontier). ``read_entry`` reads a document once, with ``_load_document``, the reading every reader
+    but the search's first pass shares; it returns the verdict too."""
     store = await _store(tmp_path)
     path = "notebooks/alice/warp.md"
     _write(store, path, "warp core notes", author="alice")
     parsed: list[str] = []
-    parse = store._parse_document
+    load = records_store_module._load_document
 
-    def _recording(raw: str) -> tuple[dict, str]:
+    def _recording(raw: str) -> tuple[Any, str, bool]:
         parsed.append(raw)
-        return parse(raw)
+        return load(raw)
 
-    monkeypatch.setattr(store, "_parse_document", _recording)
+    monkeypatch.setattr(records_store_module, "_load_document", _recording)
     entry = await store.read_entry(path, reader_id="captain")
     assert entry is not None and entry["content"] == "warp core notes"
     assert parsed == [(store.repo_path / path).read_text(encoding="utf-8")]

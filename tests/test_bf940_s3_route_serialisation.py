@@ -9,8 +9,9 @@ over ``tmp_path`` with ``~`` moved, hand-made records, the real router through `
 
 The writer's depth stop is pydantic-core's recursion guard, a compiled constant that differs by platform (the read route's body first fails at nesting 97
 on Windows and 253 on Linux), so no test pins a depth: the module asks its own ``TypeAdapter(Any)`` at import where the read route's body and a listing's
-stop, and derives every depth below from the answer. The reader's own stop (``RecursionError`` at about 490 levels on Windows and on Linux, Python 3.12) is
-that of pure-Python PyYAML and does not depend on the writer. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
+stop, and derives every depth below from the answer. BF-970 (#1801): the reader now stops first. A frontmatter holding ``FRONTMATTER_DEPTH_LIMIT`` (64)
+collections open at once, or more, is unparsed (read as ``{}``), below the writer's stop on every platform, so no record the reader parses is too deep for
+a route; the nesting rows left ``_UNWRITABLE`` and the cases that drove them now pin that. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
 route is sent or in the YAML of a hand-made record: a literal one cannot be written to a file as UTF-8.
 
 The class is strict xfail until M2 (each case fails at an ``assert`` of its own body on the unfixed tree, after its premise); the
@@ -40,6 +41,7 @@ from probos.knowledge.backlinks import KnowledgeBrowserService
 from probos.knowledge.provo import project_record_frontmatter
 from probos.knowledge.records_store import RecordsStore
 from probos.routers.records import router
+from probos.utils import frontmatter as frontmatter_module
 
 _HEALTHY = "---\nauthor: alice\nclassification: ship\ntopic: healthy\ntags: [coolant]\n---\n\ncoolant healthy body\n"
 _NOTE = "notebooks/alice/ok.md"
@@ -101,7 +103,7 @@ _READ_LIMIT = _first_refused(_read_body)
 _LISTING_LIMIT = _first_refused(_listing_body)
 _JUST_BELOW = _LISTING_LIMIT - 5  # written by the read route and by every listing, on any platform
 _JUST_OVER = _LISTING_LIMIT + 5  # refused by the read route and by every listing, on any platform
-_FAR_OVER = _READ_LIMIT + 50  # refused likewise, and far inside the reader's reach: the reader raised RecursionError at about 490 levels
+_FAR_OVER = _READ_LIMIT + 50  # refused likewise (BF-970: the reader reads a frontmatter this deep as unparsed; only the premise below uses it)
 assert _READ_LIMIT == _LISTING_LIMIT + 2 and _LISTING_LIMIT > 5, "premise: the writer stops a listing's body two levels before the read route's"
 assert (
     _writes(_listing_body({"meta": _mapping(_JUST_BELOW)}))
@@ -109,13 +111,11 @@ assert (
     and not _writes(_read_body({"meta": _mapping(_FAR_OVER)}))
 ), "premise: each depth the cases use is on the side of the writer's limit that its case needs"
 
-# (the YAML value of one key, a text that must never reach a log line). ``nested-over-limit`` is five levels over a listing's limit, so over the read
-# route's too; ``nested-far-over-limit`` is fifty levels over the read route's, a record the reader still parses with room to spare. Each case asserts
-# that the reader parsed its record, so a reader that stops sooner fails at a premise line, not at a status. ``lone-surrogate`` is the ASCII YAML
-# escape, never a literal one.
+# (the YAML value of one key, a text that must never reach a log line). BF-970 (#1801): the two nesting rows (five levels over a listing's limit,
+# fifty over the read route's) left this list: the reader reads a frontmatter that deep as unparsed, ``{}``, which every route writes
+# (``test_a_record_nested_past_the_readers_limit_is_answered_as_unparsed``). Each case asserts that the reader parsed its record, so a reader that
+# stops sooner fails at a premise line, not at a status. ``lone-surrogate`` is the ASCII YAML escape, never a literal one.
 _UNWRITABLE = [
-    pytest.param("{a: " * _JUST_OVER + _MARKER + "}" * _JUST_OVER, _MARKER, id="nested-over-limit"),
-    pytest.param("{a: " * _FAR_OVER + _MARKER + "}" * _FAR_OVER, _MARKER, id="nested-far-over-limit"),
     pytest.param("!!binary //4=", "xff", id="bytes-not-utf-8"),
     pytest.param("&a [*a]", "[...]", id="holds-itself"),
     pytest.param('"\\ud800"', "ud800", id="lone-surrogate"),
@@ -217,23 +217,29 @@ async def test_a_record_holding_every_shape_the_reader_builds_is_answered_as_it_
 
 
 @pytest.mark.parametrize("url", [pytest.param(_READ, id="read"), *_LISTINGS])
-async def test_a_record_just_below_the_writers_limit_is_answered_by_every_route(tmp_path, url):
-    """Guard: five levels below the depth at which the writer stops a listing's body, the record is answered on the read route and in every listing."""
-    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _LOG: _HEALTHY, _BAD_NOTE: _record("meta", _nested(_JUST_BELOW)), _BAD_LOG: _record("meta", _nested(_JUST_BELOW))})
-    assert await store.read_entry(_BAD_NOTE, reader_id="captain") is not None, "premise: the reader parsed the record"
+async def test_the_deepest_record_the_reader_parses_is_answered_by_every_route(tmp_path, url):
+    """Guard. BF-970 (#1801): this stood five levels below the writer's listing limit; the reader now stops first, so the deepest
+    record it parses, 63 collections open at once (the record's mapping and 62 nested ones), is answered on the read route and in
+    every listing, on any platform."""
+    depth = frontmatter_module.FRONTMATTER_DEPTH_LIMIT - 2
+    assert depth < _LISTING_LIMIT, "premise: the reader's deepest record is within the writer's listing limit"
+    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _LOG: _HEALTHY, _BAD_NOTE: _record("meta", _nested(depth)), _BAD_LOG: _record("meta", _nested(depth))})
+    entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+    assert entry is not None and entry["frontmatter"]["meta"] == _mapping(depth), "premise: the reader parsed the record"
     response = _get(store, url)
     assert response.status_code == 200 and "case.md" in response.text
 
 
-async def test_a_record_beyond_the_readers_own_limit_keeps_its_answers(tmp_path):
-    """Guard: the reader raises ``RecursionError`` for 600 levels, the read route answers its 503 and a listing leaves the record out, as before."""
+async def test_a_record_nested_past_the_readers_limit_is_answered_as_unparsed(tmp_path):
+    """BF-970 (#1801): this pinned the reader's ``RecursionError`` for 600 levels (the read route's 503, the record left out of a
+    listing). The reader now reads a frontmatter that deep, or 64 levels and more, as unparsed: the Captain reads ``{}``, the read
+    route answers it, and a listing lists it with the key ``list_entries`` sets."""
     store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("meta", _nested(600))})
-    with pytest.raises(RecursionError):
-        await store.read_entry(_BAD_NOTE, reader_id="captain")
+    assert await store.read_entry(_BAD_NOTE, reader_id="captain") == {"frontmatter": {}, "content": "coolant case body", "path": _BAD_NOTE}
     read = _get(store, _READ)
-    assert read.status_code == 503 and read.json()["availability"]["code"] == "records.read_failed"
+    assert read.status_code == 200 and read.json()["frontmatter"] == {}
     listing = _get(store, "/api/records/documents")
-    assert listing.status_code == 200 and [item["path"] for item in _items(listing)] == [_NOTE]
+    assert listing.status_code == 200 and [item["path"] for item in _items(listing)] == [_BAD_NOTE, _NOTE]
 
 
 @pytest.mark.parametrize(("value", "marker"), _UNWRITABLE)
@@ -248,7 +254,7 @@ async def test_the_provenance_projection_of_a_record_the_writer_cannot_write_is_
 @pytest.mark.parametrize("url", ["/api/records/backlinks/notebooks/alice/case.md", "/api/records/timeline"])
 async def test_the_backlinks_and_the_timeline_answer_a_record_whose_unwritable_value_they_do_not_carry(tmp_path, url):
     """Guard: the backlinks carry a record's tags and topic slug and the timeline its department and day, so a topic that is not text reaches neither body."""
-    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("topic", _nested(_FAR_OVER))})
+    store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("topic", "!!binary //4=")})  # BF-970: bytes; that nesting is now read as {}
     assert await store.read_entry(_BAD_NOTE, reader_id="captain") is not None, "premise: the reader parsed the record"
     assert _get(store, url).status_code == 200
 
@@ -289,21 +295,20 @@ class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
         assert _shape(url, response.json()) == _shape(url, reference.json())
         assert "left out of the listing" in caplog.text and "case.md" in caplog.text and marker not in caplog.text
 
-    async def test_a_record_the_read_route_can_write_is_left_out_of_a_listing_two_levels_deeper(self, tmp_path):
-        """A listing nests a record two levels below the body's top, so the writer stops two levels sooner there than on the read route: a window around the listing's limit, derived at import, is scanned through the real store."""
+    async def test_no_record_the_reader_parses_is_too_deep_for_a_listing(self, tmp_path):
+        """BF-970 (#1801): this case scanned a window around the listing's limit through the real store for the first depth a
+        listing refused. The reader now reads a frontmatter holding 64 collections open or more as unparsed, so no depth it parses
+        reaches that limit: 63 levels are parsed and listed, 64 are read as ``{}`` and listed with the key, on any platform."""
+        limit = frontmatter_module.FRONTMATTER_DEPTH_LIMIT
+        assert limit - 2 < _LISTING_LIMIT, "premise: the deepest record the reader parses is within the listing's limit"
         store = _make_store(tmp_path, {_NOTE: _HEALTHY})
-        found = None
-        for depth in range(_LISTING_LIMIT - 3, _LISTING_LIMIT + 3):
+        for depth, parsed in ((limit - 2, True), (limit - 1, False)):
             (store.repo_path / _BAD_NOTE).write_text(_record("meta", _nested(depth)), encoding="utf-8")
             entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
-            if not _writes(_listing_body(entry["frontmatter"])):
-                found = depth
-                break
-        assert found == _LISTING_LIMIT and _writes(entry), "premise: the first depth at which a listing's body is refused is the derived limit, and the read route's body still writes there"
-        assert _get(store, _READ).status_code == 200, "premise: the read route answers the record"
-        response = _get(store, "/api/records/documents")
-        assert response.status_code == 200
-        assert [item["path"] for item in _items(response)] == [_NOTE]
+            assert ("meta" in entry["frontmatter"]) is parsed, depth
+            response = _get(store, "/api/records/documents")
+            assert response.status_code == 200
+            assert [item["path"] for item in _items(response)] == [_BAD_NOTE, _NOTE], depth
 
     async def test_the_captains_log_limit_counts_the_records_it_returns(self, tmp_path):
         def entry(created: str, extra: str = "") -> str:
@@ -311,7 +316,7 @@ class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
 
         store = _make_store(tmp_path, {
             "captains-log/a.md": entry("2026-01-01"), "captains-log/b.md": entry("2026-02-01"),
-            "captains-log/c.md": entry("2026-03-01", f"meta: {_nested(_FAR_OVER)}\n"),
+            "captains-log/c.md": entry("2026-03-01", "meta: !!binary //4=\n"),  # BF-970: bytes the writer refuses; that nesting now reads as {}
         })
         healthy = _make_store(tmp_path / "healthy", {"captains-log/a.md": entry("2026-01-01"), "captains-log/b.md": entry("2026-02-01")})
         assert [item["path"] for item in _items(_get(healthy, "/api/records/captains-log?limit=1"))] == ["captains-log/b.md"], "premise: b is the newest healthy entry"
@@ -320,7 +325,7 @@ class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
         assert response.status_code == 200
         assert [item["path"] for item in _items(response)] == ["captains-log/b.md"]
 
-    @pytest.mark.parametrize(("value", "marker"), [_UNWRITABLE[1], _UNWRITABLE[2], _UNWRITABLE[4]])
+    @pytest.mark.parametrize(("value", "marker"), [_UNWRITABLE[0], _UNWRITABLE[2]])  # BF-970: the nesting row left _UNWRITABLE; bytes and the lone surrogate stay
     async def test_the_graph_answers_a_record_whose_topic_the_writer_cannot_write_with_its_own_envelope(self, tmp_path, caplog, value, marker):
         assert _get(_make_store(tmp_path / "healthy", {_NOTE: _HEALTHY}), "/api/records/graph").status_code == 200, "premise: the healthy graph is answered"
         store = _make_store(tmp_path / "both", {_NOTE: _HEALTHY, _BAD_NOTE: _record("topic", value)})

@@ -68,8 +68,9 @@ def test_the_base_framing_cuts_at_the_first_two_hyphen_runs(text, framed):
 
 
 def test_the_base_cut_is_the_rules_block_up_to_its_first_hyphen_run():
-    """A1: the search's second reading holds only the rule's block and reads the base's cut as ``block.partition("---")[0]``.
-    Wherever the rule frames a text with a block, the base frames it with one, and that block is this."""
+    """Wherever the rule frames a text with a block, the base frames it with one, and that block is the rule's up to its first
+    ``---``. BF-970 (#1801) removed A1, the search's reading of that cut; the property stays, because ``base_split_frontmatter`` is
+    still the rule's answer for a text with no closing line (L18)."""
     for text in _documents(941):
         block, _ = split_frontmatter(text)
         base_block, _ = base_split_frontmatter(text)
