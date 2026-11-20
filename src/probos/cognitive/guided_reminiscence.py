@@ -9,8 +9,11 @@ This is the clinical follow-up when automated screening (AD-541c SRT) flags prob
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -19,6 +22,25 @@ from probos.cognitive.similarity import jaccard_similarity, text_to_words
 from probos.types import llm_response_text
 
 logger = logging.getLogger(__name__)
+
+# BF-989 (#1838): phrases by which a recall says the agent does not remember. Below 0.3 the novel-word analysis
+# classified each probed abstention CONFABULATED or CONTAMINATED (the orchestrator's probe on the base).
+_ABSTENTION_RE = re.compile(
+    r"\b(?:don't remember|do not remember|don't recall|do not recall|can't recall|cannot recall"
+    r"|unable to recall|no memory of|not sure)\b"
+)
+# A clause boundary: punctuation, or a word that joins a claim to a hedge ("I'm not sure, but then ...").
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;,:]|\b(?:but|and|then|although|though|however|because)\b")
+
+
+def _is_abstention(recalled_text: str) -> bool:
+    """True when every clause of the recall holds an abstention phrase (BF-989).
+
+    A hedge followed by a claim has a clause without one, so it is classified on its content as before.
+    """
+    text = recalled_text.lower().replace("\u2019", "'")
+    clauses = [clause for clause in _CLAUSE_SPLIT_RE.split(text) if clause.strip()]
+    return bool(clauses) and all(_ABSTENTION_RE.search(clause) for clause in clauses)
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +98,9 @@ class ReminiscenceResult:
     therapeutic_message: str = ""
     timestamp: float = field(default_factory=time.time)
     duration_ms: float = 0.0
+    # BF-989 (#1838): why each episode that was not measured was not ("<episode id>: <reason>"), or the one
+    # session-level reason; episodes_tested and every count and mean cover measured episodes only.
+    unmeasured: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -109,12 +134,18 @@ class GuidedReminiscenceEngine:
         *,
         max_episodes_per_session: int = 3,
         confabulation_alert_threshold: float = 0.3,
+        recall_fn: Callable[[str, str], Awaitable[str]] | None = None,
+        recall_timeout_seconds: float = 120.0,
     ) -> None:
         self._episodic_memory = episodic_memory
         self._llm_client = llm_client
         self._config = config
         self._max_episodes_per_session = max_episodes_per_session
         self._confabulation_alert_threshold = confabulation_alert_threshold
+        # BF-989 (#1838): the agent's own recall, (agent_id, prompt) -> reply, bounded per episode. None means a
+        # session measures nothing; llm_client is only the judge and the message writer, never the recall.
+        self._recall_fn = recall_fn
+        self._recall_timeout_seconds = recall_timeout_seconds
         # In-memory session history per agent for trend analysis
         self._session_history: dict[str, list[ReminiscenceResult]] = {}
 
@@ -122,19 +153,22 @@ class GuidedReminiscenceEngine:
     # Episode selection
     # ------------------------------------------------------------------
 
-    def select_episodes_for_session(
+    async def select_episodes_for_session(
         self, agent_id: str, k: int = 3,
     ) -> list:
         """Select episodes for a reminiscence session.
 
         Prefers: (a) multi-agent episodes (richer ground truth),
         (b) older timestamps, (c) not the most recent (avoid trivial recall).
+
+        BF-989 (#1838): ``recent_for_agent`` is a coroutine on both memories and is awaited; called without
+        ``await`` it raised at ``len()``, so no session ever read an episode.
         """
         if not self._episodic_memory:
             return []
 
         try:
-            episodes = self._episodic_memory.recent_for_agent(agent_id, k=k * 2)
+            episodes = await self._episodic_memory.recent_for_agent(agent_id, k=k * 2)
         except Exception:
             logger.debug("AD-541d: Failed to retrieve episodes for %s", agent_id[:8], exc_info=True)
             return []
@@ -297,6 +331,10 @@ class GuidedReminiscenceEngine:
         if not recalled_words:
             return RecallClassification.PARTIAL
 
+        # BF-989 (#1838): a recall that only says the agent does not remember is an omission, not a commission
+        if _is_abstention(recalled_text):
+            return RecallClassification.PARTIAL
+
         # Words in recall NOT in expected — novel content
         novel_words = recalled_words - expected_words
         novel_ratio = len(novel_words) / len(recalled_words) if recalled_words else 0
@@ -349,8 +387,9 @@ class GuidedReminiscenceEngine:
             template = (
                 "I noticed some gaps between your recall and your Ship Memory. "
                 "That's not unusual — it happens to the best of us. "
-                "Let me share what actually happened so we can align your memory "
-                "with the verified records."
+                # BF-989 (#1838): the message carries no record, so it promises none
+                "Let's review your Ship Memory records together so we can align "
+                "your memory with what was recorded."
             )
         elif contaminated > 0:
             template = (
@@ -363,8 +402,8 @@ class GuidedReminiscenceEngine:
             template = (
                 "Let's look at a couple of things together. Some of your "
                 "recollections had gaps, but that's what these sessions are for. "
-                "I'll share the verified records so we can work through the "
-                "differences."
+                "Let's review your Ship Memory records together and work through "  # BF-989: no records are shared
+                "the differences."
             )
 
         if self._llm_client:
@@ -376,7 +415,9 @@ class GuidedReminiscenceEngine:
                     f"recall performance: {accurate}/{total} accurate, "
                     f"{confabulated} confabulated, {contaminated} contaminated. "
                     "Use validation therapy principles — don't argue, validate their "
-                    "experience, then gently redirect to verified facts. "
+                    "experience, then invite them to review their Ship Memory records together. "
+                    # BF-989 (#1838): the prompt gives no episode, so the message may state none
+                    "Do not state any fact about the episodes. "
                     "Keep it to 2-3 sentences."
                 )
                 response = await self._llm_client.complete(LLMRequest(
@@ -397,11 +438,22 @@ class GuidedReminiscenceEngine:
     # ------------------------------------------------------------------
 
     async def run_session(self, agent_id: str) -> ReminiscenceResult:
-        """Run a full reminiscence session for an agent."""
+        """Run a full reminiscence session for an agent.
+
+        BF-989 (#1838): the recall is the agent's own, through ``recall_fn``; with none, the session measures
+        nothing and makes no LLM call (never a model's recall in the agent's place). An empty, failed or
+        timed-out recall and an inconclusive judge (BF-711) leave the episode out of every count and mean,
+        with its reason in ``unmeasured``.
+        """
         start = time.monotonic()
         result = ReminiscenceResult(agent_id=agent_id, timestamp=time.time())
 
-        episodes = self.select_episodes_for_session(
+        if self._recall_fn is None:
+            result.unmeasured.append("no agent recall source")
+            result.duration_ms = (time.monotonic() - start) * 1000
+            return result
+
+        episodes = await self.select_episodes_for_session(
             agent_id, k=self._max_episodes_per_session,
         )
         if not episodes:
@@ -417,22 +469,29 @@ class GuidedReminiscenceEngine:
             recall_prompt = self.build_recall_prompt(agent_id, episode)
             expected = self.build_expected_summary(episode)
 
-            # Get agent's recall via LLM
-            recalled_text = ""
-            if self._llm_client:
-                try:
-                    from probos.types import LLMRequest
-                    response = await self._llm_client.complete(LLMRequest(
-                        prompt=recall_prompt,
-                        tier="fast",
-                        max_tokens=200,
-                    ))
-                    recalled_text = llm_response_text(response)  # BF-988 (#1523 F-19)
-                except Exception:
-                    logger.debug("AD-541d: LLM recall failed for %s", ep_id[:8], exc_info=True)
+            # BF-989: the agent's own recall (AD-566's path in production), bounded per episode
+            try:
+                reply = await asyncio.wait_for(
+                    self._recall_fn(agent_id, recall_prompt), self._recall_timeout_seconds,
+                )
+            except TimeoutError:
+                result.unmeasured.append(f"{ep_id}: recall timed out")
+                continue
+            except Exception as exc:
+                logger.warning("BF-989: recall failed for %s, episode %s", agent_id[:8], ep_id[:8], exc_info=True)
+                result.unmeasured.append(f"{ep_id}: recall failed: {type(exc).__name__}")
+                continue
+            recalled_text = reply.strip() if isinstance(reply, str) else ""
+            if not recalled_text:
+                result.unmeasured.append(f"{ep_id}: empty recall")
+                continue
 
-            # Score and classify
-            accuracy = await self.score_recall(recalled_text, expected)
+            # Score and classify; a judge that failed or gave no number measured nothing (BF-711)
+            scored = await self.score_recall_outcome(recalled_text, expected)
+            if scored.inconclusive:
+                result.unmeasured.append(f"{ep_id}: {scored.inconclusive}")
+                continue
+            accuracy = scored.score
             classification = self.classify_recall(recalled_text, expected, episode, accuracy)
 
             rr = RecallResult(

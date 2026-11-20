@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from probos.cognitive.qualification import TestResult
@@ -68,6 +69,23 @@ async def _send_probe(agent: Any, message: str) -> str:
             exc_info=True,
         )
         return ""
+
+
+def agent_recall_fn(registry: Any) -> Callable[[str, str], Awaitable[str]]:
+    """The agent's own recall for guided reminiscence (BF-989, #1838), through ``_send_probe``.
+
+    ``_send_probe`` marks the intent ``_qualification_test``, which suppresses episode storage
+    (``CognitiveAgent.handle_intent``), so a recall attempt never becomes an episode that a later
+    session could select as ground truth. An agent the registry does not hold recalls "".
+    """
+
+    async def _recall(agent_id: str, prompt: str) -> str:
+        agent = registry.get(agent_id)
+        if agent is None:
+            return ""
+        return await _send_probe(agent, prompt)
+
+    return _recall
 
 
 async def _llm_extract_float(llm_client: Any, prompt: str) -> float | None:

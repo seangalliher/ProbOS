@@ -6276,6 +6276,7 @@ async def finalize_startup(
             if config.dreaming.reminiscence_enabled:
                 try:
                     from probos.cognitive.guided_reminiscence import GuidedReminiscenceEngine
+                    from probos.cognitive.qualification_tests import agent_recall_fn  # BF-989
 
                     reminiscence_engine = GuidedReminiscenceEngine(
                         episodic_memory=runtime.episodic_memory,
@@ -6283,6 +6284,8 @@ async def finalize_startup(
                         config=config.dreaming,
                         max_episodes_per_session=config.dreaming.reminiscence_episodes_per_session,
                         confabulation_alert_threshold=config.dreaming.reminiscence_confabulation_alert,
+                        # BF-989 (#1838): the agent's own recall (AD-566's path); llm_client only judges and writes
+                        recall_fn=agent_recall_fn(runtime.registry),
                     )
                     counselor_agent.set_reminiscence_engine(reminiscence_engine)
                     counselor_agent.configure_reminiscence(
