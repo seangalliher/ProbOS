@@ -68,8 +68,11 @@ def frontmatter_nests_too_deep(text: str, loader: Any = yaml.SafeLoader) -> bool
 
     It reads the parser's event stream, which neither PyYAML's parser nor libyaml's builds by recursion, and stops at the event
     that reaches the limit, so its answer does not depend on the caller's stack and its work is bounded by the length of ``text``:
-    no node is built and no alias is followed. Siblings add no depth. A parse error before the limit is ``False``: the load that
-    follows, with the same ``loader``, meets the same error below the limit and reads it as YAML's refusal.
+    no node is built and no alias is followed. Siblings add no depth. A parse error before the limit, a ``YAMLError``, is
+    ``False``: the load that follows, with the same ``loader``, meets the same error below the limit and reads it as YAML's
+    refusal. BF-970 A2 (round 1 F4): any other exception of the parser propagates, as it does from the load: PyYAML's scanner
+    raises ``ValueError`` for an escape past U+10FFFF (``"\\U00110000"``), and each reader handles it as a constructor's error
+    (contract D4, L12).
     """
     depth = 0
     try:
@@ -91,7 +94,7 @@ def load_frontmatter(block: str, loader: Any = yaml.SafeLoader) -> tuple[Any, bo
     ``unparsed`` is True, and ``frontmatter`` ``{}``, for a block YAML refuses (a ``YAMLError``) or one that holds
     ``FRONTMATTER_DEPTH_LIMIT`` collections open at once or more (:func:`frontmatter_nests_too_deep`, checked first with the
     same ``loader``). Otherwise ``frontmatter`` is the load's value, ``{}`` for a falsy one, and ``unparsed`` is False; with the
-    default loader that value is ``yaml.safe_load``'s. Any other error of the load propagates, as from ``yaml.safe_load``: a
+    default loader that value is ``yaml.safe_load``'s. Any other error of the check or the load propagates, as from ``yaml.safe_load``: a
     constructor's ``ValueError`` (``updated: 2026-13-05``) included. No ``RecursionError`` comes from the nesting: the load
     runs only below the limit.
     """

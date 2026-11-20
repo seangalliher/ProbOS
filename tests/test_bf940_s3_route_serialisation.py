@@ -9,9 +9,11 @@ over ``tmp_path`` with ``~`` moved, hand-made records, the real router through `
 
 The writer's depth stop is pydantic-core's recursion guard, a compiled constant that differs by platform (the read route's body first fails at nesting 97
 on Windows and 253 on Linux), so no test pins a depth: the module asks its own ``TypeAdapter(Any)`` at import where the read route's body and a listing's
-stop, and derives every depth below from the answer. BF-970 (#1801): the reader now stops first. A frontmatter holding ``FRONTMATTER_DEPTH_LIMIT`` (64)
-collections open at once, or more, is unparsed (read as ``{}``), below the writer's stop on every platform, so no record the reader parses is too deep for
-a route; the nesting rows left ``_UNWRITABLE`` and the cases that drove them now pin that. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
+stop, and derives every depth below from the answer. BF-970 (#1801): the reader now stops first. A frontmatter whose text holds ``FRONTMATTER_DEPTH_LIMIT`` (64)
+collections open at once, or more, is unparsed (read as ``{}``), below the writer's stop on every platform, so no record nested that deep in its text is too
+deep for a route; the nesting rows left ``_UNWRITABLE`` and the cases that drove them now pin that. BF-970 A2 (round 1 F3): an alias opens no collection in
+the text and builds a loaded value deeper than it, so a record the reader parses can still be too deep for a listing's body and not for the read route's
+(``_ALIAS_LINKS``); the class keeps that window. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
 route is sent or in the YAML of a hand-made record: a literal one cannot be written to a file as UTF-8.
 
 The class is strict xfail until M2 (each case fails at an ``assert`` of its own body on the unfixed tree, after its premise); the
@@ -48,7 +50,6 @@ _NOTE = "notebooks/alice/ok.md"
 _LOG = "captains-log/ok.md"
 _BAD_NOTE = "notebooks/alice/case.md"
 _BAD_LOG = "captains-log/case.md"
-_MARKER = "VALUE-MARKER-917"
 _LONE = "\ud800"  # a lone surrogate: a JSON escape gives one to ``json.loads``, a YAML escape to the reader; never write one to a file
 _JSON = {"content-type": "application/json"}
 _READ = f"/api/records/documents/{_BAD_NOTE}"
@@ -110,6 +111,39 @@ assert (
     and not _writes(_read_body({"meta": _mapping(_JUST_OVER)}))
     and not _writes(_read_body({"meta": _mapping(_FAR_OVER)}))
 ), "premise: each depth the cases use is on the side of the writer's limit that its case needs"
+
+
+def _chain(links: int) -> str:
+    """A flow list of ``links`` anchored lists, each holding the one before it by an alias. As text it holds three collections
+    open at once (the record's mapping, this list, one anchored list), whatever ``links`` is: an alias opens none."""
+    return "[" + ", ".join(["&n0 [x]", *(f"&n{i} [*n{i - 1}]" for i in range(1, links))]) + "]"
+
+
+def _chain_value(links: int) -> list[Any]:
+    """What ``_chain(links)`` loads to: its last list nests ``links`` lists deep, each holding the one before it."""
+    value: list[Any] = ["x"]
+    chain = [value]
+    for _ in range(1, links):
+        value = [value]
+        chain.append(value)
+    return chain
+
+
+def _first_alias_window() -> int:
+    """The least chain whose record the read route's body can hold and a listing's cannot, asked of the writer that runs."""
+    start = max(2, _LISTING_LIMIT - 10)
+    assert _writes(_listing_body({"meta": _chain_value(start)})), "premise: the scan starts below a listing's limit"
+    for links in range(start, _READ_LIMIT + 10):
+        frontmatter = {"meta": _chain_value(links)}
+        if _writes(_read_body(frontmatter)) and not _writes(_listing_body(frontmatter)):
+            return links
+    raise AssertionError("premise: no chain falls between a listing's limit and the read route's")
+
+
+# BF-970 A2 (round 1 F3): the reader's limit counts collections open at once in the TEXT, and an alias opens none (L8), so a record
+# the reader parses can load to a value as deep as the writer's limit. This chain is the first whose record the read route writes and
+# a listing's body, two levels deeper, does not; the writer's stop is platform-dependent, so it is derived like the depths above.
+_ALIAS_LINKS = _first_alias_window()
 
 # (the YAML value of one key, a text that must never reach a log line). BF-970 (#1801): the two nesting rows (five levels over a listing's limit,
 # fifty over the read route's) left this list: the reader reads a frontmatter that deep as unparsed, ``{}``, which every route writes
@@ -295,10 +329,11 @@ class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
         assert _shape(url, response.json()) == _shape(url, reference.json())
         assert "left out of the listing" in caplog.text and "case.md" in caplog.text and marker not in caplog.text
 
-    async def test_no_record_the_reader_parses_is_too_deep_for_a_listing(self, tmp_path):
+    async def test_no_record_whose_text_the_reader_parses_nests_too_deep_for_a_listing(self, tmp_path):
         """BF-970 (#1801): this case scanned a window around the listing's limit through the real store for the first depth a
-        listing refused. The reader now reads a frontmatter holding 64 collections open or more as unparsed, so no depth it parses
-        reaches that limit: 63 levels are parsed and listed, 64 are read as ``{}`` and listed with the key, on any platform."""
+        listing refused. The reader now reads a frontmatter whose text holds 64 collections open or more as unparsed, so no text
+        nesting it parses reaches that limit: 63 levels are parsed and listed, 64 are read as ``{}`` and listed with the key, on any
+        platform. BF-970 A2 (round 1 F3): a loaded value can still be deeper than its text (an alias); the next case keeps the window."""
         limit = frontmatter_module.FRONTMATTER_DEPTH_LIMIT
         assert limit - 2 < _LISTING_LIMIT, "premise: the deepest record the reader parses is within the listing's limit"
         store = _make_store(tmp_path, {_NOTE: _HEALTHY})
@@ -309,6 +344,28 @@ class TestARecordTheReaderParsedIsAnsweredByEveryRoute:
             response = _get(store, "/api/records/documents")
             assert response.status_code == 200
             assert [item["path"] for item in _items(response)] == [_BAD_NOTE, _NOTE], depth
+
+    async def test_a_record_whose_aliases_load_too_deep_for_a_listing_is_left_out_and_read_by_the_read_route(self, tmp_path, caplog):
+        """A2-T4, BF-970 A2 (round 1 F3). The window the case above scanned is still reachable by a record the reader parses: the
+        reader's limit counts collections open at once in the text, and an alias opens none, so a chain of ``_ALIAS_LINKS``
+        anchored lists, three levels deep as text, loads as deep as the read route's body allows. The read route writes it; a
+        listing, whose body holds the record two levels deeper, leaves it out (``_writable``) and lists the rest. A check of each
+        record alone, not inside the listing's body, would keep it, and the listing would be the unhandled 500."""
+        value = _chain(_ALIAS_LINKS)
+        block = f"author: alice\nclassification: ship\nmeta: {value}\ntags: [coolant]\n"
+        assert _record("meta", value) == f"---\n{block}---\n\ncoolant case body\n", "premise: the block is the record's"
+        assert not frontmatter_module.frontmatter_nests_too_deep(block), "premise: the text is within the reader's limit"
+        assert _ALIAS_LINKS > frontmatter_module.FRONTMATTER_DEPTH_LIMIT, "premise: the loaded value is deeper than any text the reader parses"
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("meta", value)})
+        entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+        assert entry is not None and entry["frontmatter"]["meta"] == _chain_value(_ALIAS_LINKS), "premise: the reader parsed the record"
+        assert _writes(_read_body(entry["frontmatter"])) and not _writes(_listing_body(entry["frontmatter"])), "premise: the window"
+        read = _get(store, _READ)
+        assert read.status_code == 200 and read.json()["frontmatter"]["meta"] == _chain_value(_ALIAS_LINKS)
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            listing = _get(store, "/api/records/documents")
+        assert listing.status_code == 200 and [item["path"] for item in _items(listing)] == [_NOTE]
+        assert "left out of the listing" in caplog.text and "case.md" in caplog.text
 
     async def test_the_captains_log_limit_counts_the_records_it_returns(self, tmp_path):
         def entry(created: str, extra: str = "") -> str:

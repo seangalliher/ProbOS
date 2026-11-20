@@ -139,8 +139,9 @@ def _unparsed_gate(rel_path: str) -> dict[str, Any]:
     Its classification and its author are unknown, so it is private, and its author is nobody, except under
     ``notebooks/<callsign>/``, where the notebook's owner is the author. ``None`` equals no reader id (the anonymous ``""``
     included), so only the owner is its author; the Captain and a reader that named no identity pass the rules as they do for any
-    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the document's path in the
-    repository, as the walk of the search names it and as ``read_entry`` resolves it.
+    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the path the document resolves
+    to in the repository, as ``read_entry`` resolves it, so a contained link takes its target's owner; BF-970 A2 (round 1 F1): the
+    search names it so too (:func:`_resolved_rel_path`), not by the lexical path of its walk.
     """
     parts = rel_path.split("/")
     owner = parts[1] if len(parts) >= 3 and parts[0] == "notebooks" else None
@@ -357,7 +358,7 @@ def _search_read_document(raw: str) -> tuple[Any, str, str | None, bool]:
 
 
 def _base_reading_admits(
-    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str,
+    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str | None,
 ) -> bool:
     """BF-952 A5: whether ``read_entry``'s reading of a frontmatter block admits this reader at ``scope``.
 
@@ -365,8 +366,10 @@ def _base_reading_admits(
     semantic index's. The search returns a record only where it admits the reader too, so no difference between libyaml's
     reading and PyYAML's, known (RK8) or not, can show a reader a record ``read_entry`` withholds (RK15; BF-679). BF-940 slice 4
     (L19), BF-970 (#1801): where the block is unparsed (YAML refuses it, or it holds ``FRONTMATTER_DEPTH_LIMIT`` collections open
-    at once or more) the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the document's path in the
-    repository), as ``read_entry`` does. BF-940 A1 is gone: the base's cut is never read.
+    at once or more) the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the path the document resolves
+    to in the repository), as ``read_entry`` does. BF-940 A1 is gone: the base's cut is never read. BF-970 A2 (round 1 F1): a
+    ``path`` of ``None`` (the search could not resolve it) names no owner, so an unparsed block is withheld (fail closed); a
+    parsed one does not read ``path``.
     """
     try:
         frontmatter, unparsed = load_frontmatter(block)  # read_entry's reading (yaml.SafeLoader)
@@ -374,6 +377,8 @@ def _base_reading_admits(
         logger.debug("BF-952: withholding a record the base's reading cannot build", exc_info=True)
         return False  # A5: the search withholds what read_entry raises on
     if unparsed:  # BF-940 slice 4 (L19), BF-970: the same document read_entry withholds
+        if path is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+            return False
         frontmatter = _unparsed_gate(path)
     return type(frontmatter) is dict and record_is_readable(
         frontmatter, scope=scope, reader_id=reader_id, reader_department=reader_department,
@@ -432,7 +437,9 @@ def _search_records(
     repository is skipped before it is read, as :meth:`RecordsStore.list_entries` skips it.
     """
     repo = root.resolve()  # BF-958: root is the repository, resolved or as configured
-    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
+    # BF-970 A2 (round 1 F1): each entry carries its file, so the second reading names an unparsed document's owner by the path
+    # it resolves to; ``rel_path``, the walk's lexical path, stays the result's ``path`` and the ranking's last key.
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None, Path]] = []
     for md_file in sorted(_markdown_files(search_path, strict=False)):
         rel_path = str(md_file.relative_to(root)).replace("\\", "/")
         if rel_path.startswith("_archived/"):
@@ -469,15 +476,23 @@ def _search_records(
         # read is not found for another reader and cannot move the scores that reader is shown (BF-952 A4). Where it reads the document
         # as something else, the ordinary rules decide on that reading and nothing more is specified for it (L11). The second reading
         # withholds more and never gives more (L11). BF-970: the verdict is the first pass's own, from inside the try above.
+        # BF-970 A2 (round 1 F1): the stand-in's owner comes from the path the document resolves to, as read_entry's does, so a
+        # contained link under notebooks/bob/ to alice's unparsed note is alice's here too; resolved only where an owner is needed.
+        gate = frontmatter
+        if unparsed:  # BF-970 A2 (round 1 F1): only an unparsed document needs an owner
+            resolved = _resolved_rel_path(md_file, repo)
+            if resolved is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+                continue
+            gate = _unparsed_gate(resolved)
         if not record_is_readable(
-            _unparsed_gate(rel_path) if unparsed else frontmatter,
+            gate,
             scope=scope,
             reader_id=reader_id,
             reader_department=reader_department,
         ):
             continue
         weights, length = _search_record_counts(frontmatter, content_text, terms)
-        readable.append((rel_path, frontmatter, content_text, weights, length, block))
+        readable.append((rel_path, frontmatter, content_text, weights, length, block, md_file))
     if not readable:
         return []
 
@@ -489,8 +504,8 @@ def _search_records(
         rarity[term] = math.log(1.0 + (count - holders + 0.5) / (holders + 0.5))
     total_rarity = sum(rarity[term] for term in terms)
 
-    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None]] = []
-    for rel_path, frontmatter, content_text, weights, length, block in readable:
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None, Path]] = []
+    for rel_path, frontmatter, content_text, weights, length, block, md_file in readable:
         matched = [term for term in terms if term in weights]
         if not matched:
             continue
@@ -508,14 +523,16 @@ def _search_records(
             "frontmatter": frontmatter,
             "score": coverage,
             "snippet": content_text[:200],
-        }, block))
+        }, block, md_file))
     ranked.sort(key=lambda pair: pair[0])
     results: list[dict] = []
-    for _, result, block in ranked:
+    for _, result, block, md_file in ranked:
         # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
         # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        # BF-970 A2 (round 1 F1): its stand-in's owner comes from the path it resolves to (None: withheld if unparsed).
         if block is not None and not _base_reading_admits(
-            block, scope=scope, reader_id=reader_id, reader_department=reader_department, path=result["path"],
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+            path=_resolved_rel_path(md_file, repo),
         ):
             continue
         results.append(result)
@@ -532,6 +549,19 @@ def _resolves_inside(path: Path, repo: Path) -> bool:
         return path.resolve().is_relative_to(repo)
     except RuntimeError:
         return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+
+
+def _resolved_rel_path(md_file: Path, repo: Path) -> str | None:
+    """BF-970 A2 (round 1 F1): the path ``md_file`` resolves to, relative to ``repo`` (the resolved repository) with ``/``:
+    the path ``read_entry`` names a document by (:meth:`RecordsStore._safe_path`), so the search's stand-in for an unparsed
+    document (:func:`_unparsed_gate`) names the owner ``read_entry``'s does, and a contained link under ``notebooks/bob/`` to
+    alice's note is alice's. ``None`` where it does not resolve inside ``repo`` now (a link loop, an ``OSError``, or a link moved
+    outside since the walk checked it); the caller withholds an unparsed document then. Never raises."""
+    try:
+        return md_file.resolve().relative_to(repo).as_posix()
+    except (OSError, RuntimeError, ValueError):  # fail closed: no owner can be named
+        logger.debug("BF-970: the search cannot resolve %s inside the records repository", md_file, exc_info=True)
+        return None
 
 
 def _contained(path: Path, repo: Path, rel_path: str, reader: str) -> bool:

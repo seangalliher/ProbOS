@@ -13,7 +13,7 @@ import logging
 import re
 import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -744,23 +744,28 @@ class CognitiveSkillCatalog:
         if not entry:
             raise ValueError(f"Skill '{name}' not found in catalog")
 
-        # Apply metadata updates
+        # Apply metadata updates. BF-970 A2 (round 1 F2): to a copy, which SKILL.md is rewritten from; the cached entry, the same
+        # object, takes them only after the rewrite succeeded, so a rewrite dump_frontmatter refuses (64 levels or more, a
+        # ValueError) or a value that does not convert leaves the cache, SKILL.md and SQLite as they were.
+        updated = replace(entry)  # BF-970 A2 (round 1 F2): the cache changes only after the rewrite
         if "department" in metadata:
-            entry.department = str(metadata["department"])
+            updated.department = str(metadata["department"])
         if "skill_id" in metadata:
-            entry.skill_id = str(metadata["skill_id"])
+            updated.skill_id = str(metadata["skill_id"])
         if "min_proficiency" in metadata:
-            entry.min_proficiency = int(metadata["min_proficiency"])
+            updated.min_proficiency = int(metadata["min_proficiency"])
         if "min_rank" in metadata:
-            entry.min_rank = str(metadata["min_rank"])
+            updated.min_rank = str(metadata["min_rank"])
         if "intents" in metadata:
-            entry.intents = list(metadata["intents"])
+            updated.intents = list(metadata["intents"])
 
         # Rewrite SKILL.md frontmatter to include metadata block
-        skill_md = entry.skill_dir / "SKILL.md"
+        skill_md = updated.skill_dir / "SKILL.md"
         if skill_md.exists():
-            self._rewrite_frontmatter(skill_md, entry)
+            self._rewrite_frontmatter(skill_md, updated)
 
+        for attribute in ("department", "skill_id", "min_proficiency", "min_rank", "intents"):
+            setattr(entry, attribute, getattr(updated, attribute))  # BF-970 A2 (round 1 F2): the rewrite succeeded
         await self.register(entry)
         logger.info("AD-596d: Enriched skill '%s' with metadata %s", name, list(metadata.keys()))
 

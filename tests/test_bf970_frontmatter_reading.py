@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 import yaml
 
+from probos.cognitive.skill_catalog import CognitiveSkillCatalog
 from probos.config import RecordsConfig
 from probos.knowledge import records_store as records_store_module
 from probos.knowledge.records_store import FRONTMATTER_UNPARSED_KEY, RecordsStore
@@ -34,6 +35,8 @@ _LOADERS = [yaml.SafeLoader, *([yaml.CSafeLoader] if _LIBYAML else [])]
 _A1_BLOCK = "a: x --- y\nclassification: private\nauthor: alice\nsample: !!python/tuple [1, 2]\n"
 #: A block PyYAML refuses (a tab after a key) and libyaml reads, whose base cut (``a: x``) loads and names no classification.
 _TAB_BLOCK = "a: x --- y\nnote:\tabc\n"
+#: BF-970 A2 (round 1 F1): a block both loaders refuse (an unclosed flow list), with no ``---`` in it: unparsed since BF-940 slice 4.
+_REFUSED_BLOCK = "author: alice\nclassification: ship\nbad: [unclosed\n"
 
 
 def _make_store(root: Path) -> RecordsStore:
@@ -146,6 +149,29 @@ def _alias_block(shape: str) -> str:
         anchors = ["n0: &n0 [x]", *(f"n{i}: &n{i} [*n{i - 1}, *n{i - 1}]" for i in range(1, 23))]
         top = 22
     return "author: alice\nclassification: ship\n" + "\n".join(anchors) + f"\ngraph: *n{top}\n"
+
+
+def _alias(monkeypatch: pytest.MonkeyPatch, link: Path, target: Path) -> None:
+    """BF-970 A2 (round 1 F1): a contained alias, ``link`` resolving to ``target`` inside the repository (BF-958 lists and reads
+    one). A real file link where the host can make one; where it cannot (WinError 1314, as in BF-958's tests), a stand-in: a copy
+    of the target's bytes, which a link would read, and ``Path.resolve`` mapping ``link`` to ``target``, which a link would resolve
+    to. The premise line holds for either."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != 1314:  # ERROR_PRIVILEGE_NOT_HELD; anything else is the fixture's
+            raise
+        link.write_bytes(target.read_bytes())
+        real_resolve = Path.resolve
+        aliased = real_resolve(link)
+
+        def resolve(self: Path, strict: bool = False) -> Path:
+            resolved = real_resolve(self, strict)
+            return real_resolve(target, strict) if resolved == aliased else resolved
+
+        monkeypatch.setattr(Path, "resolve", resolve)
+    assert link.resolve() == target.resolve(), "premise: the alias resolves to its target, inside the repository"
 
 
 async def test_a_document_only_its_cut_reads_is_unparsed_in_every_reader(store):
@@ -338,3 +364,78 @@ async def test_an_alias_graph_opens_no_collection_and_reads_as_before_in_bounded
     assert time.perf_counter() - started < 30.0  # a hang guard, as AD-1341 S5's
     assert entry is not None and entry["frontmatter"]["classification"] == "ship"
     assert found == [path]
+
+
+@pytest.mark.parametrize("shape", ["deep", "refused", "tab"])
+async def test_a_contained_alias_of_an_unparsed_note_is_its_targets_in_the_search_as_in_read_entry(store, monkeypatch, shape):
+    """A2-T1, BF-970 A2 (round 1 F1; BF-679 parity). ``read_entry`` names an unparsed note's owner from the path the note resolves
+    to; the search named it from its walk's lexical path. So a contained link ``notebooks/bob/alias.md`` to alice's unparsed note
+    was withheld from bob by ``read_entry`` and shown to him by the search: since BF-940 slice 4 for a block YAML refuses
+    (``refused``), and since BF-970 for one nesting 64 collections deep (``deep``), which the base read. Both readings of the search
+    now name the owner from the resolved path. ``tab`` is read by libyaml and refused by PyYAML, so under libyaml only the second
+    reading applies the stand-in (mutation row A2-M4). The owner and the Captain still find the note and its alias."""
+    block = {"deep": _nest(_LIMIT), "refused": _REFUSED_BLOCK, "tab": _TAB_BLOCK}[shape]
+    assert records_store_module._load_document(_raw(block))[2] is True, "premise: read_entry's reading is unparsed"
+    note, alias = "notebooks/alice/note.md", "notebooks/bob/alias.md"
+    _hand_made(store, note, _raw(block))
+    _alias(monkeypatch, store.repo_path / alias, store.repo_path / note)
+    _healthy(store, "reports/open.md", "warp open body")
+    assert await store.read_entry(alias, reader_id="bob") is None
+    assert (await store.read_entry(alias, reader_id="alice"))["frontmatter"] == {}
+    for loader in _LOADERS:
+        monkeypatch.setattr(records_store_module, "_RECORDS_YAML_LOADER", loader)
+        assert await _found(store, "bob") == ["reports/open.md"], loader
+        assert set(await _found(store, "alice")) == {note, alias, "reports/open.md"}, loader
+        assert set(await _found(store, "captain")) == {note, alias, "reports/open.md"}, loader
+
+
+async def test_an_unparsed_note_whose_resolved_path_cannot_be_named_is_withheld_by_the_search(store, monkeypatch):
+    """A2-T2, BF-970 A2 (round 1 F1). Where the search cannot name the path an unparsed note resolves to now (a link moved outside,
+    a loop or an ``OSError`` since its walk checked it), it cannot name the owner ``read_entry`` would, so it withholds the note
+    from every reader, the owner and the Captain included, as it withholds what ``read_entry`` cannot answer (BF-952 A5). A parsed
+    record does not read the path and is still found."""
+    note = "notebooks/alice/deep.md"
+    _hand_made(store, note, _raw(_nest(_LIMIT)))
+    _healthy(store, "reports/open.md", "warp open body")
+    assert note in await _found(store, "alice") and note in await _found(store, "captain"), "premise: the owner and the Captain find it"
+    repo = store.repo_path.resolve()
+    assert records_store_module._resolved_rel_path(store.repo_path.parent / "outside.md", repo) is None
+    assert records_store_module._resolved_rel_path(store.repo_path / note, repo) == note
+    monkeypatch.setattr(records_store_module, "_resolved_rel_path", lambda md_file, repo: None)
+    for reader in ("alice", "captain"):
+        assert await _found(store, reader) == ["reports/open.md"], reader
+    admits = records_store_module._base_reading_admits
+    assert admits(_nest(_LIMIT), scope="ship", reader_id="captain", reader_department="", path=None) is False
+    assert admits(_nest(_LIMIT - 1), scope="ship", reader_id="bob", reader_department="", path=None) is True
+
+
+@pytest.mark.parametrize("depth", [_LIMIT - 1, _LIMIT])
+async def test_enrich_skill_changes_its_cached_entry_only_after_the_rewrite_succeeds(tmp_path, depth):
+    """A2-T3, BF-970 A2 (round 1 F2). The catalog reads SKILL.md with its own ``yaml.safe_load`` (no nesting check: register R1), so
+    it imports a skill whose frontmatter holds 64 collections open at once, and ``dump_frontmatter`` refuses the rewrite an
+    enrichment makes of it (the base wrote it). ``enrich_skill`` updated its cached entry before that rewrite, so the cache named the
+    new department while SKILL.md and SQLite kept the old one until a restart. The updates now go to a copy, and the cached entry,
+    the same object, takes them only after the rewrite: at 64 the call raises and nothing changes; at 63 the skill is enriched."""
+    skills_dir = tmp_path / "config" / "skills"
+    skills_dir.mkdir(parents=True)
+    catalog = CognitiveSkillCatalog(skills_dir=skills_dir)
+    source = tmp_path / "sources" / "deep_skill"
+    source.mkdir(parents=True)
+    block = f"name: deep_skill\ndescription: A skill whose frontmatter nests deep\n{_nest(depth)}"
+    assert frontmatter_module.frontmatter_nests_too_deep(block) is (depth >= _LIMIT), "premise: the depth, from PyYAML's events"
+    (source / "SKILL.md").write_text(f"---\n{block}---\n\nDo the deep thing.\n", encoding="utf-8")
+    entry = await catalog.import_skill(source)
+    assert entry.department == "*" and catalog.get_entry("deep_skill") is entry, "premise: the catalog imported the skill"
+    skill_md = skills_dir / "deep_skill" / "SKILL.md"
+    before = skill_md.read_bytes()
+    update = catalog.enrich_skill("deep_skill", {"department": "engineering", "intents": ["probe"]})
+    if depth >= _LIMIT:
+        with pytest.raises(ValueError, match=f"nest {_LIMIT} or more collections deep"):
+            await update
+        assert skill_md.read_bytes() == before
+        assert (entry.department, entry.intents) == ("*", [])
+    else:
+        assert await update is entry
+        assert (entry.department, entry.intents) == ("engineering", ["probe"])
+        assert "probos-department: engineering" in skill_md.read_text(encoding="utf-8")
+    assert catalog.get_entry("deep_skill") is entry
