@@ -2619,6 +2619,703 @@ REPLACE:
 
 After M4, `item bf-986 F3` of #1820 is ticked by the orchestrator after the merge (section 15), and only that item: #1820 stays open.
 
+## 18. Amendment A2: review round 1 (gpt-6.1-sol), five findings repaired
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-20
+
+Base: committed head `3ac41487` (tree `7daf8475`). Apply in the order given. Each SEARCH occurs exactly once in its file at its turn. LF line endings, ASCII only.
+
+### 18.1 Decisions
+
+- **A2-D1 (F1).** The search's stand-in for an unparsed document names its owner from the path the file resolves to. That is `read_entry`'s path (`_safe_path`, `:1482`), not the walk's lexical `rel_path`.
+  - The first pass resolves only where `unparsed` is true. The second reading resolves each candidate it checks: it already runs a pure-Python PyYAML check and load per candidate, so one `Path.resolve` is small beside it.
+  - `_resolved_rel_path` returns `None` on `OSError`, `RuntimeError` (a link loop) or `ValueError` (outside the repository). `None` withholds an unparsed record from every reader, the Captain included. This matches BF-952 A5: the search withholds what `read_entry` cannot answer.
+  - The result's `"path"` and the ranking key stay lexical.
+  - The seam already existed (BF-940 slice 4) for blocks YAML refuses. BF-970 widened it to blocks nesting 64 levels or more and to A1 shapes, so it is closed here.
+- **A2-D2 (F2).** `enrich_skill` applies the update to a copy (`dataclasses.replace`) and rewrites SKILL.md from the copy. Only then does the cached entry (the same object) take the five fields. A rewrite `dump_frontmatter` refuses, or a value that fails to convert, leaves the cache, SKILL.md and SQLite unchanged.
+  - Rejected: putting the catalog's readers on `load_frontmatter` (register R1; it changes what an import accepts).
+- **A2-D3 (F3).** The listing window stays pinned by an alias chain. The reader's limit counts collections open in the text and an alias opens none, so a record the reader parses can load to a value the read route's body can hold and a listing's body, two levels deeper, cannot. The chain length is derived at import from the writer that runs.
+- **A2-D4 (F4, F5).** Two docstrings are narrowed to `YAMLError`, and the catch is not widened. `_MARKER` is deleted.
+
+### 18.2 Contract corrections (supersessions; the text above is not edited)
+
+An appended amendment cannot carry SEARCH blocks against its own contract: each SEARCH text would then occur twice in the file. These statements therefore supersede the text above.
+
+- **D4, first paragraph:** "and the check (a parse) cannot raise one" is replaced by:
+  > and the check (a parse) raises one only where PyYAML's scanner does while the events are read: a double-quoted escape past U+10FFFF (`"\U00110000"`) raises `ValueError` from `chr()`. The check does not catch it, so it propagates from `load_frontmatter`, and each reader handles it as the table's constructor error, as the base did (L12).
+- **D7, `enrich_skill` bullet:** "`enrich_skill` raises, and SKILL.md is untouched" is replaced by:
+  > `enrich_skill` raises, and SKILL.md, its cached entry and SQLite are untouched (A2-D2).
+- **Section 9:**
+  - R10 is retired: its line no longer exists, and A2-M2 is its equivalent.
+  - The campaign of record stands for R4-R9 only under the condition in 18.6.
+  - R1-R3 and R11-R15 rerun on the A2 head, with A2-M1 to A2-M10.
+- **Section 10:**
+  - `_unparsed_gate` changes in its docstring only.
+  - `enrich_skill` changes (A2-D2); `_rewrite_frontmatter` and the catalog's readers do not.
+  - `routers/records.py` is unchanged; A2-M10 mutates it only to prove A2-T4.
+- **Header and section 8 counts:** the new file holds 18 cases with libyaml (17 without). The s3 file gains one case and renames one.
+- **New limits:**
+  - **L12 (A2, F4).** An exception of PyYAML's parser that is not a `YAMLError` (the scanner's `ValueError` for `"\U00110000"`) propagates from `frontmatter_nests_too_deep` and `load_frontmatter`. `read_entry` and `publish` raise; `list_entries` and the search skip the document; `_base_reading_admits` returns False; update-in-place replaces it. This is the same on the base (measured in round 1). The catch is not widened, because a broad catch would read an unexplained parser fault as unparsed.
+  - **L13 (A2, F1).** The search calls `Path.resolve` once per unparsed record in the first pass and once per candidate the second reading checks (at most the matched records; it stops at 20 returned). Not measured: retake the PR's cost measurement (listing, search, 120 records) on the A2 head.
+
+### 18.3 Blocks: `src/probos/knowledge/records_store.py` (file order)
+
+**A2-1.** `src/probos/knowledge/records_store.py`. `_unparsed_gate`'s docstring.
+SEARCH:
+```
+    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the document's path in the
+    repository, as the walk of the search names it and as ``read_entry`` resolves it.
+    """
+```
+REPLACE:
+```
+    private document (:func:`record_is_readable`, :meth:`RecordsStore.read_entry`). ``rel_path`` is the path the document resolves
+    to in the repository, as ``read_entry`` resolves it, so a contained link takes its target's owner; BF-970 A2 (round 1 F1): the
+    search names it so too (:func:`_resolved_rel_path`), not by the lexical path of its walk.
+    """
+```
+
+**A2-2.** `src/probos/knowledge/records_store.py`. `_base_reading_admits`'s signature.
+SEARCH:
+```
+def _base_reading_admits(
+    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str,
+) -> bool:
+```
+REPLACE:
+```
+def _base_reading_admits(
+    block: str, *, scope: str, reader_id: str | None, reader_department: str, path: str | None,
+) -> bool:
+```
+
+**A2-3.** `src/probos/knowledge/records_store.py`. Its docstring.
+SEARCH:
+```
+    at once or more) the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the document's path in the
+    repository), as ``read_entry`` does. BF-940 A1 is gone: the base's cut is never read.
+    """
+```
+REPLACE:
+```
+    at once or more) the rules read the document's stand-in (:func:`_unparsed_gate` of ``path``, the path the document resolves
+    to in the repository), as ``read_entry`` does. BF-940 A1 is gone: the base's cut is never read. BF-970 A2 (round 1 F1): a
+    ``path`` of ``None`` (the search could not resolve it) names no owner, so an unparsed block is withheld (fail closed); a
+    parsed one does not read ``path``.
+    """
+```
+
+**A2-4.** `src/probos/knowledge/records_store.py`. Its body.
+SEARCH:
+```
+    if unparsed:  # BF-940 slice 4 (L19), BF-970: the same document read_entry withholds
+        frontmatter = _unparsed_gate(path)
+```
+REPLACE:
+```
+    if unparsed:  # BF-940 slice 4 (L19), BF-970: the same document read_entry withholds
+        if path is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+            return False
+        frontmatter = _unparsed_gate(path)
+```
+
+**A2-5.** `src/probos/knowledge/records_store.py`. `_search_records`: the readable list carries the file.
+SEARCH:
+```
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
+```
+REPLACE:
+```
+    # BF-970 A2 (round 1 F1): each entry carries its file, so the second reading names an unparsed document's owner by the path
+    # it resolves to; ``rel_path``, the walk's lexical path, stays the result's ``path`` and the ranking's last key.
+    readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None, Path]] = []
+```
+
+**A2-6.** `src/probos/knowledge/records_store.py`. The first pass's gate.
+SEARCH:
+```
+        # withholds more and never gives more (L11). BF-970: the verdict is the first pass's own, from inside the try above.
+        if not record_is_readable(
+            _unparsed_gate(rel_path) if unparsed else frontmatter,
+            scope=scope,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        ):
+            continue
+        weights, length = _search_record_counts(frontmatter, content_text, terms)
+        readable.append((rel_path, frontmatter, content_text, weights, length, block))
+```
+REPLACE:
+```
+        # withholds more and never gives more (L11). BF-970: the verdict is the first pass's own, from inside the try above.
+        # BF-970 A2 (round 1 F1): the stand-in's owner comes from the path the document resolves to, as read_entry's does, so a
+        # contained link under notebooks/bob/ to alice's unparsed note is alice's here too; resolved only where an owner is needed.
+        gate = frontmatter
+        if unparsed:  # BF-970 A2 (round 1 F1): only an unparsed document needs an owner
+            resolved = _resolved_rel_path(md_file, repo)
+            if resolved is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)
+                continue
+            gate = _unparsed_gate(resolved)
+        if not record_is_readable(
+            gate,
+            scope=scope,
+            reader_id=reader_id,
+            reader_department=reader_department,
+        ):
+            continue
+        weights, length = _search_record_counts(frontmatter, content_text, terms)
+        readable.append((rel_path, frontmatter, content_text, weights, length, block, md_file))
+```
+
+**A2-7.** `src/probos/knowledge/records_store.py`. The ranking loop.
+SEARCH:
+```
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None]] = []
+    for rel_path, frontmatter, content_text, weights, length, block in readable:
+```
+REPLACE:
+```
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any], str | None, Path]] = []
+    for rel_path, frontmatter, content_text, weights, length, block, md_file in readable:
+```
+
+**A2-8.** `src/probos/knowledge/records_store.py`. The second reading.
+SEARCH:
+```
+            "snippet": content_text[:200],
+        }, block))
+    ranked.sort(key=lambda pair: pair[0])
+    results: list[dict] = []
+    for _, result, block in ranked:
+        # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
+        # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        if block is not None and not _base_reading_admits(
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department, path=result["path"],
+        ):
+            continue
+```
+REPLACE:
+```
+            "snippet": content_text[:200],
+        }, block, md_file))
+    ranked.sort(key=lambda pair: pair[0])
+    results: list[dict] = []
+    for _, result, block, md_file in ranked:
+        # A5 (round 5): a record is returned only where the base's reading of it, read_entry's and the
+        # semantic index's, admits this reader too. A record with no frontmatter reads as {} for both.
+        # BF-970 A2 (round 1 F1): its stand-in's owner comes from the path it resolves to (None: withheld if unparsed).
+        if block is not None and not _base_reading_admits(
+            block, scope=scope, reader_id=reader_id, reader_department=reader_department,
+            path=_resolved_rel_path(md_file, repo),
+        ):
+            continue
+```
+
+**A2-9.** `src/probos/knowledge/records_store.py`. The new helper, after `_resolves_inside`.
+SEARCH:
+```
+    try:
+        return path.resolve().is_relative_to(repo)
+    except RuntimeError:
+        return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+```
+REPLACE:
+```
+    try:
+        return path.resolve().is_relative_to(repo)
+    except RuntimeError:
+        return False  # Path.resolve raised RuntimeError: a link loop resolves nowhere, so it is outside
+
+
+def _resolved_rel_path(md_file: Path, repo: Path) -> str | None:
+    """BF-970 A2 (round 1 F1): the path ``md_file`` resolves to, relative to ``repo`` (the resolved repository) with ``/``:
+    the path ``read_entry`` names a document by (:meth:`RecordsStore._safe_path`), so the search's stand-in for an unparsed
+    document (:func:`_unparsed_gate`) names the owner ``read_entry``'s does, and a contained link under ``notebooks/bob/`` to
+    alice's note is alice's. ``None`` where it does not resolve inside ``repo`` now (a link loop, an ``OSError``, or a link moved
+    outside since the walk checked it); the caller withholds an unparsed document then. Never raises."""
+    try:
+        return md_file.resolve().relative_to(repo).as_posix()
+    except (OSError, RuntimeError, ValueError):  # fail closed: no owner can be named
+        logger.debug("BF-970: the search cannot resolve %s inside the records repository", md_file, exc_info=True)
+        return None
+```
+
+### 18.4 Blocks: `src/probos/utils/frontmatter.py`, `src/probos/cognitive/skill_catalog.py`
+
+**A2-10.** `src/probos/utils/frontmatter.py`. `frontmatter_nests_too_deep`'s docstring (F4).
+SEARCH:
+```
+    no node is built and no alias is followed. Siblings add no depth. A parse error before the limit is ``False``: the load that
+    follows, with the same ``loader``, meets the same error below the limit and reads it as YAML's refusal.
+    """
+```
+REPLACE:
+```
+    no node is built and no alias is followed. Siblings add no depth. A parse error before the limit, a ``YAMLError``, is
+    ``False``: the load that follows, with the same ``loader``, meets the same error below the limit and reads it as YAML's
+    refusal. BF-970 A2 (round 1 F4): any other exception of the parser propagates, as it does from the load: PyYAML's scanner
+    raises ``ValueError`` for an escape past U+10FFFF (``"\\U00110000"``), and each reader handles it as a constructor's error
+    (contract D4, L12).
+    """
+```
+
+**A2-11.** `src/probos/utils/frontmatter.py`. `load_frontmatter`'s docstring (F4).
+SEARCH:
+```
+    default loader that value is ``yaml.safe_load``'s. Any other error of the load propagates, as from ``yaml.safe_load``: a
+```
+REPLACE:
+```
+    default loader that value is ``yaml.safe_load``'s. Any other error of the check or the load propagates, as from ``yaml.safe_load``: a
+```
+
+**A2-12.** `src/probos/cognitive/skill_catalog.py`. The import.
+SEARCH:
+```
+from dataclasses import dataclass, field
+```
+REPLACE:
+```
+from dataclasses import dataclass, field, replace
+```
+
+**A2-13.** `src/probos/cognitive/skill_catalog.py`. `enrich_skill` (F2).
+SEARCH:
+```
+        # Apply metadata updates
+        if "department" in metadata:
+            entry.department = str(metadata["department"])
+        if "skill_id" in metadata:
+            entry.skill_id = str(metadata["skill_id"])
+        if "min_proficiency" in metadata:
+            entry.min_proficiency = int(metadata["min_proficiency"])
+        if "min_rank" in metadata:
+            entry.min_rank = str(metadata["min_rank"])
+        if "intents" in metadata:
+            entry.intents = list(metadata["intents"])
+
+        # Rewrite SKILL.md frontmatter to include metadata block
+        skill_md = entry.skill_dir / "SKILL.md"
+        if skill_md.exists():
+            self._rewrite_frontmatter(skill_md, entry)
+
+        await self.register(entry)
+```
+REPLACE:
+```
+        # Apply metadata updates. BF-970 A2 (round 1 F2): to a copy, which SKILL.md is rewritten from; the cached entry, the same
+        # object, takes them only after the rewrite succeeded, so a rewrite dump_frontmatter refuses (64 levels or more, a
+        # ValueError) or a value that does not convert leaves the cache, SKILL.md and SQLite as they were.
+        updated = replace(entry)  # BF-970 A2 (round 1 F2): the cache changes only after the rewrite
+        if "department" in metadata:
+            updated.department = str(metadata["department"])
+        if "skill_id" in metadata:
+            updated.skill_id = str(metadata["skill_id"])
+        if "min_proficiency" in metadata:
+            updated.min_proficiency = int(metadata["min_proficiency"])
+        if "min_rank" in metadata:
+            updated.min_rank = str(metadata["min_rank"])
+        if "intents" in metadata:
+            updated.intents = list(metadata["intents"])
+
+        # Rewrite SKILL.md frontmatter to include metadata block
+        skill_md = updated.skill_dir / "SKILL.md"
+        if skill_md.exists():
+            self._rewrite_frontmatter(skill_md, updated)
+
+        for attribute in ("department", "skill_id", "min_proficiency", "min_rank", "intents"):
+            setattr(entry, attribute, getattr(updated, attribute))  # BF-970 A2 (round 1 F2): the rewrite succeeded
+        await self.register(entry)
+```
+
+### 18.5 Blocks: tests
+
+**A2-14.** `tests/test_bf970_frontmatter_reading.py`. The catalog import.
+SEARCH:
+```
+from probos.config import RecordsConfig
+```
+REPLACE:
+```
+from probos.cognitive.skill_catalog import CognitiveSkillCatalog
+from probos.config import RecordsConfig
+```
+
+**A2-15.** `tests/test_bf970_frontmatter_reading.py`. A block YAML refuses whose text holds no `---`.
+SEARCH:
+```
+_TAB_BLOCK = "a: x --- y\nnote:\tabc\n"
+```
+REPLACE:
+```
+_TAB_BLOCK = "a: x --- y\nnote:\tabc\n"
+#: BF-970 A2 (round 1 F1): a block both loaders refuse (an unclosed flow list), with no ``---`` in it: unparsed since BF-940 slice 4.
+_REFUSED_BLOCK = "author: alice\nclassification: ship\nbad: [unclosed\n"
+```
+
+**A2-16.** `tests/test_bf970_frontmatter_reading.py`. The alias helper, after `_alias_block`.
+SEARCH:
+```
+    return "author: alice\nclassification: ship\n" + "\n".join(anchors) + f"\ngraph: *n{top}\n"
+```
+REPLACE:
+```
+    return "author: alice\nclassification: ship\n" + "\n".join(anchors) + f"\ngraph: *n{top}\n"
+
+
+def _alias(monkeypatch: pytest.MonkeyPatch, link: Path, target: Path) -> None:
+    """BF-970 A2 (round 1 F1): a contained alias, ``link`` resolving to ``target`` inside the repository (BF-958 lists and reads
+    one). A real file link where the host can make one; where it cannot (WinError 1314, as in BF-958's tests), a stand-in: a copy
+    of the target's bytes, which a link would read, and ``Path.resolve`` mapping ``link`` to ``target``, which a link would resolve
+    to. The premise line holds for either."""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) != 1314:  # ERROR_PRIVILEGE_NOT_HELD; anything else is the fixture's
+            raise
+        link.write_bytes(target.read_bytes())
+        real_resolve = Path.resolve
+        aliased = real_resolve(link)
+
+        def resolve(self: Path, strict: bool = False) -> Path:
+            resolved = real_resolve(self, strict)
+            return real_resolve(target, strict) if resolved == aliased else resolved
+
+        monkeypatch.setattr(Path, "resolve", resolve)
+    assert link.resolve() == target.resolve(), "premise: the alias resolves to its target, inside the repository"
+```
+
+**A2-17.** `tests/test_bf970_frontmatter_reading.py`. Four new functions (six cases) at the end of the file.
+SEARCH:
+```
+    assert time.perf_counter() - started < 30.0  # a hang guard, as AD-1341 S5's
+    assert entry is not None and entry["frontmatter"]["classification"] == "ship"
+    assert found == [path]
+```
+REPLACE:
+```
+    assert time.perf_counter() - started < 30.0  # a hang guard, as AD-1341 S5's
+    assert entry is not None and entry["frontmatter"]["classification"] == "ship"
+    assert found == [path]
+
+
+@pytest.mark.parametrize("shape", ["deep", "refused", "tab"])
+async def test_a_contained_alias_of_an_unparsed_note_is_its_targets_in_the_search_as_in_read_entry(store, monkeypatch, shape):
+    """A2-T1, BF-970 A2 (round 1 F1; BF-679 parity). ``read_entry`` names an unparsed note's owner from the path the note resolves
+    to; the search named it from its walk's lexical path. So a contained link ``notebooks/bob/alias.md`` to alice's unparsed note
+    was withheld from bob by ``read_entry`` and shown to him by the search: since BF-940 slice 4 for a block YAML refuses
+    (``refused``), and since BF-970 for one nesting 64 collections deep (``deep``), which the base read. Both readings of the search
+    now name the owner from the resolved path. ``tab`` is read by libyaml and refused by PyYAML, so under libyaml only the second
+    reading applies the stand-in (mutation row A2-M4). The owner and the Captain still find the note and its alias."""
+    block = {"deep": _nest(_LIMIT), "refused": _REFUSED_BLOCK, "tab": _TAB_BLOCK}[shape]
+    assert records_store_module._load_document(_raw(block))[2] is True, "premise: read_entry's reading is unparsed"
+    note, alias = "notebooks/alice/note.md", "notebooks/bob/alias.md"
+    _hand_made(store, note, _raw(block))
+    _alias(monkeypatch, store.repo_path / alias, store.repo_path / note)
+    _healthy(store, "reports/open.md", "warp open body")
+    assert await store.read_entry(alias, reader_id="bob") is None
+    assert (await store.read_entry(alias, reader_id="alice"))["frontmatter"] == {}
+    for loader in _LOADERS:
+        monkeypatch.setattr(records_store_module, "_RECORDS_YAML_LOADER", loader)
+        assert await _found(store, "bob") == ["reports/open.md"], loader
+        assert set(await _found(store, "alice")) == {note, alias, "reports/open.md"}, loader
+        assert set(await _found(store, "captain")) == {note, alias, "reports/open.md"}, loader
+
+
+async def test_an_unparsed_note_whose_resolved_path_cannot_be_named_is_withheld_by_the_search(store, monkeypatch):
+    """A2-T2, BF-970 A2 (round 1 F1). Where the search cannot name the path an unparsed note resolves to now (a link moved outside,
+    a loop or an ``OSError`` since its walk checked it), it cannot name the owner ``read_entry`` would, so it withholds the note
+    from every reader, the owner and the Captain included, as it withholds what ``read_entry`` cannot answer (BF-952 A5). A parsed
+    record does not read the path and is still found."""
+    note = "notebooks/alice/deep.md"
+    _hand_made(store, note, _raw(_nest(_LIMIT)))
+    _healthy(store, "reports/open.md", "warp open body")
+    assert note in await _found(store, "alice") and note in await _found(store, "captain"), "premise: the owner and the Captain find it"
+    repo = store.repo_path.resolve()
+    assert records_store_module._resolved_rel_path(store.repo_path.parent / "outside.md", repo) is None
+    assert records_store_module._resolved_rel_path(store.repo_path / note, repo) == note
+    monkeypatch.setattr(records_store_module, "_resolved_rel_path", lambda md_file, repo: None)
+    for reader in ("alice", "captain"):
+        assert await _found(store, reader) == ["reports/open.md"], reader
+    admits = records_store_module._base_reading_admits
+    assert admits(_nest(_LIMIT), scope="ship", reader_id="captain", reader_department="", path=None) is False
+    assert admits(_nest(_LIMIT - 1), scope="ship", reader_id="bob", reader_department="", path=None) is True
+
+
+@pytest.mark.parametrize("depth", [_LIMIT - 1, _LIMIT])
+async def test_enrich_skill_changes_its_cached_entry_only_after_the_rewrite_succeeds(tmp_path, depth):
+    """A2-T3, BF-970 A2 (round 1 F2). The catalog reads SKILL.md with its own ``yaml.safe_load`` (no nesting check: register R1), so
+    it imports a skill whose frontmatter holds 64 collections open at once, and ``dump_frontmatter`` refuses the rewrite an
+    enrichment makes of it (the base wrote it). ``enrich_skill`` updated its cached entry before that rewrite, so the cache named the
+    new department while SKILL.md and SQLite kept the old one until a restart. The updates now go to a copy, and the cached entry,
+    the same object, takes them only after the rewrite: at 64 the call raises and nothing changes; at 63 the skill is enriched."""
+    skills_dir = tmp_path / "config" / "skills"
+    skills_dir.mkdir(parents=True)
+    catalog = CognitiveSkillCatalog(skills_dir=skills_dir)
+    source = tmp_path / "sources" / "deep_skill"
+    source.mkdir(parents=True)
+    block = f"name: deep_skill\ndescription: A skill whose frontmatter nests deep\n{_nest(depth)}"
+    assert frontmatter_module.frontmatter_nests_too_deep(block) is (depth >= _LIMIT), "premise: the depth, from PyYAML's events"
+    (source / "SKILL.md").write_text(f"---\n{block}---\n\nDo the deep thing.\n", encoding="utf-8")
+    entry = await catalog.import_skill(source)
+    assert entry.department == "*" and catalog.get_entry("deep_skill") is entry, "premise: the catalog imported the skill"
+    skill_md = skills_dir / "deep_skill" / "SKILL.md"
+    before = skill_md.read_bytes()
+    update = catalog.enrich_skill("deep_skill", {"department": "engineering", "intents": ["probe"]})
+    if depth >= _LIMIT:
+        with pytest.raises(ValueError, match=f"nest {_LIMIT} or more collections deep"):
+            await update
+        assert skill_md.read_bytes() == before
+        assert (entry.department, entry.intents) == ("*", [])
+    else:
+        assert await update is entry
+        assert (entry.department, entry.intents) == ("engineering", ["probe"])
+        assert "probos-department: engineering" in skill_md.read_text(encoding="utf-8")
+    assert catalog.get_entry("deep_skill") is entry
+```
+
+**A2-18.** `tests/test_bf940_s3_route_serialisation.py`. The module docstring (F3).
+SEARCH:
+```
+and derives every depth below from the answer. BF-970 (#1801): the reader now stops first. A frontmatter holding ``FRONTMATTER_DEPTH_LIMIT`` (64)
+collections open at once, or more, is unparsed (read as ``{}``), below the writer's stop on every platform, so no record the reader parses is too deep for
+a route; the nesting rows left ``_UNWRITABLE`` and the cases that drove them now pin that. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
+```
+REPLACE:
+```
+and derives every depth below from the answer. BF-970 (#1801): the reader now stops first. A frontmatter whose text holds ``FRONTMATTER_DEPTH_LIMIT`` (64)
+collections open at once, or more, is unparsed (read as ``{}``), below the writer's stop on every platform, so no record nested that deep in its text is too
+deep for a route; the nesting rows left ``_UNWRITABLE`` and the cases that drove them now pin that. BF-970 A2 (round 1 F3): an alias opens no collection in
+the text and builds a loaded value deeper than it, so a record the reader parses can still be too deep for a listing's body and not for the read route's
+(``_ALIAS_LINKS``); the class keeps that window. A lone surrogate reaches a record as an ASCII escape, ``\\ud800``, in the JSON a notebook
+```
+
+**A2-19.** `tests/test_bf940_s3_route_serialisation.py`. Delete the unused `_MARKER` (F5).
+SEARCH:
+```
+_BAD_LOG = "captains-log/case.md"
+_MARKER = "VALUE-MARKER-917"
+```
+REPLACE:
+```
+_BAD_LOG = "captains-log/case.md"
+```
+
+**A2-20.** `tests/test_bf940_s3_route_serialisation.py`. The alias chain and its window, derived at import (F3).
+SEARCH:
+```
+), "premise: each depth the cases use is on the side of the writer's limit that its case needs"
+```
+REPLACE:
+```
+), "premise: each depth the cases use is on the side of the writer's limit that its case needs"
+
+
+def _chain(links: int) -> str:
+    """A flow list of ``links`` anchored lists, each holding the one before it by an alias. As text it holds three collections
+    open at once (the record's mapping, this list, one anchored list), whatever ``links`` is: an alias opens none."""
+    return "[" + ", ".join(["&n0 [x]", *(f"&n{i} [*n{i - 1}]" for i in range(1, links))]) + "]"
+
+
+def _chain_value(links: int) -> list[Any]:
+    """What ``_chain(links)`` loads to: its last list nests ``links`` lists deep, each holding the one before it."""
+    value: list[Any] = ["x"]
+    chain = [value]
+    for _ in range(1, links):
+        value = [value]
+        chain.append(value)
+    return chain
+
+
+def _first_alias_window() -> int:
+    """The least chain whose record the read route's body can hold and a listing's cannot, asked of the writer that runs."""
+    start = max(2, _LISTING_LIMIT - 10)
+    assert _writes(_listing_body({"meta": _chain_value(start)})), "premise: the scan starts below a listing's limit"
+    for links in range(start, _READ_LIMIT + 10):
+        frontmatter = {"meta": _chain_value(links)}
+        if _writes(_read_body(frontmatter)) and not _writes(_listing_body(frontmatter)):
+            return links
+    raise AssertionError("premise: no chain falls between a listing's limit and the read route's")
+
+
+# BF-970 A2 (round 1 F3): the reader's limit counts collections open at once in the TEXT, and an alias opens none (L8), so a record
+# the reader parses can load to a value as deep as the writer's limit. This chain is the first whose record the read route writes and
+# a listing's body, two levels deeper, does not; the writer's stop is platform-dependent, so it is derived like the depths above.
+_ALIAS_LINKS = _first_alias_window()
+```
+
+**A2-21.** `tests/test_bf940_s3_route_serialisation.py`. Rename and qualify the rewritten case, and add the alias window case (F3).
+SEARCH:
+```
+    async def test_no_record_the_reader_parses_is_too_deep_for_a_listing(self, tmp_path):
+        """BF-970 (#1801): this case scanned a window around the listing's limit through the real store for the first depth a
+        listing refused. The reader now reads a frontmatter holding 64 collections open or more as unparsed, so no depth it parses
+        reaches that limit: 63 levels are parsed and listed, 64 are read as ``{}`` and listed with the key, on any platform."""
+        limit = frontmatter_module.FRONTMATTER_DEPTH_LIMIT
+        assert limit - 2 < _LISTING_LIMIT, "premise: the deepest record the reader parses is within the listing's limit"
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY})
+        for depth, parsed in ((limit - 2, True), (limit - 1, False)):
+            (store.repo_path / _BAD_NOTE).write_text(_record("meta", _nested(depth)), encoding="utf-8")
+            entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+            assert ("meta" in entry["frontmatter"]) is parsed, depth
+            response = _get(store, "/api/records/documents")
+            assert response.status_code == 200
+            assert [item["path"] for item in _items(response)] == [_BAD_NOTE, _NOTE], depth
+
+    async def test_the_captains_log_limit_counts_the_records_it_returns(self, tmp_path):
+```
+REPLACE:
+```
+    async def test_no_record_whose_text_the_reader_parses_nests_too_deep_for_a_listing(self, tmp_path):
+        """BF-970 (#1801): this case scanned a window around the listing's limit through the real store for the first depth a
+        listing refused. The reader now reads a frontmatter whose text holds 64 collections open or more as unparsed, so no text
+        nesting it parses reaches that limit: 63 levels are parsed and listed, 64 are read as ``{}`` and listed with the key, on any
+        platform. BF-970 A2 (round 1 F3): a loaded value can still be deeper than its text (an alias); the next case keeps the window."""
+        limit = frontmatter_module.FRONTMATTER_DEPTH_LIMIT
+        assert limit - 2 < _LISTING_LIMIT, "premise: the deepest record the reader parses is within the listing's limit"
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY})
+        for depth, parsed in ((limit - 2, True), (limit - 1, False)):
+            (store.repo_path / _BAD_NOTE).write_text(_record("meta", _nested(depth)), encoding="utf-8")
+            entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+            assert ("meta" in entry["frontmatter"]) is parsed, depth
+            response = _get(store, "/api/records/documents")
+            assert response.status_code == 200
+            assert [item["path"] for item in _items(response)] == [_BAD_NOTE, _NOTE], depth
+
+    async def test_a_record_whose_aliases_load_too_deep_for_a_listing_is_left_out_and_read_by_the_read_route(self, tmp_path, caplog):
+        """A2-T4, BF-970 A2 (round 1 F3). The window the case above scanned is still reachable by a record the reader parses: the
+        reader's limit counts collections open at once in the text, and an alias opens none, so a chain of ``_ALIAS_LINKS``
+        anchored lists, three levels deep as text, loads as deep as the read route's body allows. The read route writes it; a
+        listing, whose body holds the record two levels deeper, leaves it out (``_writable``) and lists the rest. A check of each
+        record alone, not inside the listing's body, would keep it, and the listing would be the unhandled 500."""
+        value = _chain(_ALIAS_LINKS)
+        block = f"author: alice\nclassification: ship\nmeta: {value}\ntags: [coolant]\n"
+        assert _record("meta", value) == f"---\n{block}---\n\ncoolant case body\n", "premise: the block is the record's"
+        assert not frontmatter_module.frontmatter_nests_too_deep(block), "premise: the text is within the reader's limit"
+        assert _ALIAS_LINKS > frontmatter_module.FRONTMATTER_DEPTH_LIMIT, "premise: the loaded value is deeper than any text the reader parses"
+        store = _make_store(tmp_path, {_NOTE: _HEALTHY, _BAD_NOTE: _record("meta", value)})
+        entry = await store.read_entry(_BAD_NOTE, reader_id="captain")
+        assert entry is not None and entry["frontmatter"]["meta"] == _chain_value(_ALIAS_LINKS), "premise: the reader parsed the record"
+        assert _writes(_read_body(entry["frontmatter"])) and not _writes(_listing_body(entry["frontmatter"])), "premise: the window"
+        read = _get(store, _READ)
+        assert read.status_code == 200 and read.json()["frontmatter"]["meta"] == _chain_value(_ALIAS_LINKS)
+        with caplog.at_level(logging.WARNING, logger="probos.routers.records"):
+            listing = _get(store, "/api/records/documents")
+        assert listing.status_code == 200 and [item["path"] for item in _items(listing)] == [_NOTE]
+        assert "left out of the listing" in caplog.text and "case.md" in caplog.text
+
+    async def test_the_captains_log_limit_counts_the_records_it_returns(self, tmp_path):
+```
+
+### 18.6 Blocks: trackers
+
+**A2-22.** `PROGRESS.md`. A substring of line 5 (the BF-970 Fix bullet).
+SEARCH:
+```
+`tests/test_bf970_frontmatter_reading.py` adds 12 cases;
+```
+REPLACE:
+```
+Review round 1 (Amendment A2): the search names an unparsed document's owner from the path it resolves to, as `read_entry` does, so a contained link under one notebook to another's unparsed note is not shown to the link's directory owner (a gap since BF-940 slice 4 for a block YAML refuses; withheld where the path cannot be resolved), and `enrich_skill` changes its cached entry only after SKILL.md is rewritten, so the writer's refusal leaves the cache, the file and SQLite alike. `tests/test_bf970_frontmatter_reading.py` adds 18 cases (17 without libyaml), and the route tests keep the listing window with an alias chain;
+```
+
+**A2-23.** `DECISIONS.md`. The BF-970 entry.
+SEARCH:
+```
+- *Residual.* L1 to L11 of the contract. *Reversal.* Revert the BF-970 commits.
+```
+REPLACE:
+```
+- *D6 (review round 1, A2).* The search's stand-in for an unparsed document names its owner from the path the document resolves to, `read_entry`'s, not the walk's lexical path; it is resolved only where an owner is needed, and the document is withheld where it cannot be (fail closed). `enrich_skill` applies an enrichment to a copy and to its cached entry only after the rewrite succeeds. Rejected: moving the catalog's readers onto `load_frontmatter` (register R1: it changes what an import accepts).
+- *Residual.* L1 to L13 of the contract. *Reversal.* Revert the BF-970 commits.
+```
+
+### 18.7 Tests added by A2
+
+| Id | File | Cases | Proves | On head `3ac41487` |
+|---|---|---|---|---|
+| A2-T1 | test_bf970 | 3 (`deep`, `refused`, `tab`) | F1 parity in both readings; owner and Captain still admitted | fails at the bob search line (all three) |
+| A2-T2 | test_bf970 | 1 | F1 fail closed; a parsed record is unaffected | fails at `_resolved_rel_path` (missing attribute) |
+| A2-T3 | test_bf970 | 2 (63, 64) | F2: the cache changes only after the rewrite | 64 fails at the department line; 63 passes (control) |
+| A2-T4 | s3 | 1 | F3: the listing window through an alias | passes (guard); kills A2-M10 |
+
+None reaches the recursion limit: the deepest Python recursion is a 64-level PyYAML load or dump, which T7 and T8 already run unguarded. None carries `gc_quiet_at_recursion_limit`, so the guard's 10 entries are unchanged. Focused gate: `pytest tests/test_bf970_frontmatter_reading.py tests/test_bf940_s3_route_serialisation.py tests/test_ad596d_external_skill_import.py tests/test_ad596e_skill_validation.py tests/test_bf952_records_keyword_search.py tests/test_bf679_oracle_records_reader_identity.py tests/test_bf958_records_link_containment.py tests/test_bf940_s4_*.py -q -n 0`.
+
+### 18.8 Mutation rows (each Line occurs once, stripped, in its file on the A2 head)
+
+| # | File | Line (stripped) | Mutate to | Killed by |
+|---|---|---|---|---|
+| A2-M1 | records_store | `gate = _unparsed_gate(resolved)` | `gate = _unparsed_gate(rel_path)` | **A2-T1** (deep, refused, tab) |
+| A2-M2 | records_store | `gate = _unparsed_gate(resolved)` | `gate = frontmatter` (R10's equivalent) | **T2**, A2-T1, s4 `:340` |
+| A2-M3 | records_store | `if resolved is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)` | `if False:` | **A2-T2** (`AttributeError` out of the search) |
+| A2-M4 | records_store | `path=_resolved_rel_path(md_file, repo),` | `path=result["path"],` | **A2-T1[tab]** under `CSafeLoader` (libyaml hosts; equivalent without libyaml, as R14) |
+| A2-M5 | records_store | `if path is None:  # BF-970 A2 (round 1 F1): no owner can be named, so the document is withheld (fail closed)` | `if False:` | **A2-T2** (the Captain line of the direct call) |
+| A2-M6 | records_store | `return md_file.resolve().relative_to(repo).as_posix()` | `return md_file.relative_to(repo).as_posix()` | **A2-T1** |
+| A2-M7 | records_store | `except (OSError, RuntimeError, ValueError):  # fail closed: no owner can be named` | `except (OSError, RuntimeError):` | **A2-T2** (the `outside.md` line) |
+| A2-M8 | skill_catalog | `updated = replace(entry)  # BF-970 A2 (round 1 F2): the cache changes only after the rewrite` | `updated = entry` | **A2-T3[64]** |
+| A2-M9 | skill_catalog | `setattr(entry, attribute, getattr(updated, attribute))  # BF-970 A2 (round 1 F2): the rewrite succeeded` | `pass` | **A2-T3[63]**, ad596d `test_enrich_adds_metadata` |
+| A2-M10 | routers/records.py | `if _writes({key: [record]}):` | `if _writes(record):` | **A2-T4** (HTTP 500) |
+
+**Campaign.**
+- The new bare `if unparsed:` in the first pass carries a comment, so R13's stripped `if unparsed:` (in `publish`) stays unique.
+- R10 is retired.
+- On the A2 head, rerun R1-R3, R11-R15 and A2-M1 to A2-M10 against the six R-campaign test files plus `test_ad596d_external_skill_import.py`.
+- R4-R9 stand if `ast.dump(ast.parse(src))` of `utils/frontmatter.py` with every docstring `Expr` removed is equal for the campaign blob and the A2 blob (A2-10 and A2-11 change docstrings only). Otherwise rerun them.
+- Every row must be killed by at least its bold case. A survivor is a hard stop for the Architect, except A2-M4 without libyaml (record it).
+
+### 18.9 Review scope
+
+The next round is a **delta review** of A2. No public signature, persisted format, config field, event type, route body or test another component relies on changes:
+- `_base_reading_admits` is private, and `str | None` widens its parameter compatibly.
+- `enrich_skill` keeps its signature, its return value (the same object) and its success behaviour.
+
+Properties for the reviewer to verify:
+1. The 7-tuple and 4-tuple unpacking in both passes, and the reuse of `md_file` as the second loop's variable.
+2. The search's result `"path"` and its ranking key are still the lexical `rel_path`.
+3. An unparsed record whose resolution fails is withheld from every reader. A parsed record never depends on resolution, except for one `Path.resolve` in the second reading.
+4. `enrich_skill` mutates nothing the caller can see before `_rewrite_frontmatter` returns.
+5. A2-T4's window is derived, not hard-coded, and asserts its premises.
+
+### 18.10 Verified Against Codebase (2026-11-20, head `3ac41487`)
+
+```
+records_store.py:136   def _unparsed_gate(rel_path: str) -> dict[str, Any]:
+records_store.py:142-143  "``rel_path`` is the document's path in the / repository, as the walk of the search names it and as ``read_entry`` resolves it."
+records_store.py:359-360  def _base_reading_admits( ... path: str,
+records_store.py:376-377  if unparsed: ... frontmatter = _unparsed_gate(path)
+records_store.py:434   repo = root.resolve()
+records_store.py:435   readable: list[tuple[str, dict[str, Any], str, dict[str, float], int, str | None]] = []
+records_store.py:437   rel_path = str(md_file.relative_to(root)).replace("\\", "/")   (lexical)
+records_store.py:441   if not _resolves_inside(md_file, repo):
+records_store.py:473   _unparsed_gate(rel_path) if unparsed else frontmatter,
+records_store.py:492-493  ranked: list[...]; for rel_path, ..., block in readable:
+records_store.py:514-518  for _, result, block in ranked: ... path=result["path"],
+records_store.py:531-534  _resolves_inside body
+records_store.py:1470  file_path = self._safe_path(path)
+records_store.py:1482  _unparsed_gate(file_path.relative_to(self._repo_path.resolve()).as_posix())
+records_store.py:1711-1712  asyncio.to_thread(_search_records, ...)
+records_store.py:1836  resolved = (self._repo_path / user_path).resolve()
+tests/test_bf970_frontmatter_reading.py:177, :240-241  direct _base_reading_admits(..., path=<str>) calls (still valid)
+tests/test_bf952_records_keyword_search.py:344  wraps _base_reading_admits for thread recording only (no argument assertions)
+tests/test_bf958_records_link_containment.py:65-75  _file_link: WinError 1314 skip pattern
+utils/frontmatter.py:66-85  frontmatter_nests_too_deep; :83 except yaml.YAMLError only
+utils/frontmatter.py:94  "Any other error of the load propagates"
+utils/frontmatter.py:149  "frontmatter key(s) %s nest %d or more collections deep, ..."
+skill_catalog.py:16    from dataclasses import dataclass, field   (no other `replace` in the file)
+skill_catalog.py:55-73  @dataclass CognitiveSkillEntry (all fields init)
+skill_catalog.py:747-764  enrich_skill mutates the cached entry, then _rewrite_frontmatter, then register
+skill_catalog.py:307-309  register: self._cache[entry.name] = entry
+routers/records.py:48-67  _writable; :59 if _writes({key: [record]}):
+tests/test_bf940_s3_route_serialisation.py:12-14 (docstring), :51 _MARKER (no other use), :92-112 (_first_refused, limits, premise), :298-311 (rewritten case)
+PROGRESS.md:5  "`tests/test_bf970_frontmatter_reading.py` adds 12 cases;" (only count of the new file in the trackers)
+DECISIONS.md:1669  "- *Residual.* L1 to L11 of the contract. *Reversal.* Revert the BF-970 commits."
+```
+
+**Absence verified.** Claim: `_base_reading_admits` and `_unparsed_gate` have no callers beyond the store and the tests listed. Run: Grep `_base_reading_admits|_unparsed_gate|_search_records\(` over `*.py`. Found: records_store `:136/:359/:377/:417/:473/:517/:1482`, test_bf940_framing `:243` (docstring), test_bf952 `:344`, test_bf970 `:5/:177/:239`. Holds: yes.
+
+**Prior art.** None reviewed: this is a bug-fix amendment with no outside analogue. The design follows the repository's own rule, BF-958 `_safe_path` resolution parity.
+
 ## For the register (#1820; filing policy: consolidated there, not new issues)
 
 - **R1 (new, P3; injected-only: an operator-installed or imported SKILL.md).**
