@@ -55,7 +55,7 @@ Projects appear here only as technical design references. Positioning against th
 
 | Project | Last reviewed | Depth | Where recorded |
 |---|---|---|---|
-| RAGFlow | 2026-05-08 | absorption | `ragflow-absorption.md` |
+| RAGFlow | 2026-11-20 | checked | `ragflow-absorption.md`; BF-984 (#1830) Prior Art, `prompts/bf-984-recall-gate-every-read.md` (a search found nothing on RAGFlow retrieval-time filtering; nothing new) |
 | LoCoMo benchmark | 2026-05-08 | absorption | `locomo-benchmark-absorption.md` |
 | Memvid | 2026-10-22 | absorption | `memvid-evaluation.md`; AD-1341 S1 (#1569) Prior Art (append-only frames match the content-hash key; nothing new) |
 | AI Meets Brain memory survey (arXiv 2512.23343) | 2026-10-24 | absorption | `agent-memory-survey-absorption.md`; AD-1341 S2 (#1569) Prior Art, `prompts/ad-1341-s2-inherited-label.md` (abstract only; nothing on inheritance labelling) |

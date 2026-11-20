@@ -2214,6 +2214,18 @@ def _cmd_backup_reclaim(args: argparse.Namespace) -> int:
     return 0
 
 
+def _log_rebuild_memory_event(event_type: object, data: dict | None = None) -> None:
+    """BF-984 (#1830): the memory gates' event emitter for ``probos rebuild-episodic``, which has no event bus.
+
+    Logs each event's type and episode id at WARNING; never the episode's text, the matched pattern or the reason.
+    """
+    logging.getLogger(__name__).warning(
+        "rebuild-episodic: %s for episode %s",
+        getattr(event_type, "value", event_type),
+        (data or {}).get("episode_id", ""),
+    )
+
+
 def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
     """Handle ``probos rebuild-episodic`` (AD-819).
 
@@ -2288,11 +2300,15 @@ def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
             return 0
 
         # Real rebuild: stand up an EpisodicMemory bound to the same
-        # ChromaDB the runtime would use, then store synthesized
-        # episodes through its public ``store(Episode)`` API so all the
-        # gates fire normally (AD-610 storage gate, AD-607h security
-        # gate, content-hash computation, etc.).
+        # ChromaDB the runtime would use, bind its gates as startup does
+        # (BF-984, #1830: ``bind_episodic_memory_gates``, shared with
+        # ``init_cognitive_services``), then store synthesized episodes
+        # through its public ``store(Episode)`` API, so the AD-610 storage
+        # gate (when ``storage_gate.enabled``) and the AD-607h store gate run
+        # on every rebuilt episode. With no event bus here, the gates' events
+        # are logged at WARNING (``_log_rebuild_memory_event``).
         from probos.cognitive.episodic import EpisodicMemory
+        from probos.startup.cognitive_services import bind_episodic_memory_gates
         from probos.types import Episode
 
         cfg, _cfg_path = _load_config_with_fallback(getattr(args, "config", None))
@@ -2309,6 +2325,8 @@ def _cmd_rebuild_episodic(args: argparse.Namespace) -> int:
         await em.start()
 
         try:
+            # BF-984 (#1830): inside the try, so a binding that raises still stops the memory.
+            bind_episodic_memory_gates(em, cfg, _log_rebuild_memory_event)
             # Snapshot existing episode ids so re-runs are fast-skip.
             existing_ids: set[str] = set()
             try:
