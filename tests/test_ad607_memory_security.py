@@ -199,7 +199,9 @@ class TestProvenanceIntegrity:
 
     def test_validate_provenance_direct_no_correlation_passes(self) -> None:
         # BF-938 (#1680): this pinned "fails" (direct_source_missing_correlation_id). The Captain retired that rule on
-        # 2026-11-18 until AD-1360 (#1828) restores it as a check that the id resolves to an AD-492 chain.
+        # 2026-11-18. AD-1360 (#1828) restores it only for a direct episode stored after
+        # security.memory.correlation_cutoff, which defaults to 0.0 (judges none), so with no cutoff this still passes
+        # (tests/test_ad1360_s1_cycle_trace.py).
         assert validate_provenance(make_episode(correlation_id="")) == (True, "")
         # The two remaining reasons still fire on a direct episode with no correlation id.
         assert validate_provenance(make_episode(correlation_id="", agent_ids=[])) == (False, "missing_agent_ids")

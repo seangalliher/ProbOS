@@ -7,7 +7,9 @@ it references no other config model and no module-level helper in
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
+from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -159,6 +161,38 @@ class MemorySecurityConfig(BaseModel):
     enforce_store: bool = False         # AD-607h opt-in: reject prompt-injection at store time
     anchor_mismatch_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     dp_min_cohort_size: int = Field(default=3, ge=1)
+    # AD-1360 (#1828): 0.0 ships the correlation rule off; AD-1360 S3 sets it in the supported profile after the replay.
+    correlation_cutoff: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "AD-1360: AD-607b judges a direct episode's AD-492 correlation id only when the episode was stored "
+            "strictly after this instant (epoch seconds, or an ISO-8601 time with a UTC offset). 0.0: never judged."
+        ),
+    )
+
+    @field_validator("correlation_cutoff", mode="before")
+    @classmethod
+    def _correlation_cutoff_instant(cls, value: object) -> object:
+        """AD-1360: epoch seconds or an ISO-8601 time with an offset; never a bool, a naive time or a non-finite value."""
+        if isinstance(value, bool):
+            raise ValueError("correlation_cutoff is epoch seconds or an ISO-8601 time, not a bool")
+        if isinstance(value, str):
+            text = value.strip()
+            try:
+                value = float(text)
+            except ValueError:
+                try:
+                    value = datetime.fromisoformat(text)
+                except ValueError as exc:
+                    raise ValueError(f"correlation_cutoff is neither epoch seconds nor an ISO-8601 time: {text!r}") from exc
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                raise ValueError("correlation_cutoff needs a UTC offset, for example 2026-12-01T00:00:00+00:00")
+            return value.timestamp()
+        if isinstance(value, (int, float)) and not math.isfinite(value):
+            raise ValueError("correlation_cutoff must be finite")
+        return value
 
 
 class HolodeckBirthChamberConfig(BaseModel):

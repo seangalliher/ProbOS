@@ -51,6 +51,7 @@ class MockEpisodicMemory:
         self._security_config: Any = None
         self._security_gate: Any = None
         self._security_event_emitter: Any = None
+        self._cycle_registry: Any = None  # AD-1360: stored and never applied, as the AD-607 slots above
         self._store_write_lock = asyncio.Lock()
         self._available = True
 
@@ -92,6 +93,10 @@ class MockEpisodicMemory:
     def set_security_event_emitter(self, emitter: Any) -> None:
         """AD-607 (BF-938 R1): stored and never called; the mock emits no security event."""
         self._security_event_emitter = emitter
+
+    def set_cycle_registry(self, registry: Any) -> None:
+        """AD-1360 (#1828): stored and never applied; the mock records no correlation verdict."""
+        self._cycle_registry = registry
 
     def embedding_migration_required(
         self,

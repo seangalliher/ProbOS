@@ -22,6 +22,7 @@ from typing import Any
 
 from probos.admission.seam import check_at
 from probos.admission.taxonomy import EFFECT_STORE_WRITE
+from probos.cycle_trace import CycleIdResolver, judge_correlation_id  # AD-1360 (#1828)
 from probos.cognitive.importance_scorer import compute_importance
 from probos.cognitive.affect_scorer import score_affect
 from probos.cognitive.similarity import jaccard_similarity
@@ -1477,6 +1478,7 @@ class EpisodicMemory:
         self._security_config: Any = None  # AD-607: memory security config (validates recall)
         self._security_gate: Any = None  # AD-607h: store-time prompt-injection gate
         self._security_event_emitter: Any = None  # AD-607: emit hook for security events
+        self._cycle_registry: CycleIdResolver | None = None  # AD-1360 (#1828): bound by set_cycle_registry
         self._store_write_lock = asyncio.Lock()
         self._store_tails: dict[str, list[asyncio.Event]] = {}  # AD-1340 R3: see _get_store_tails
 
@@ -1512,6 +1514,10 @@ class EpisodicMemory:
         are swallowed so security-event emission never breaks the memory path.
         """
         self._security_event_emitter = emitter
+
+    def set_cycle_registry(self, registry: CycleIdResolver | None) -> None:
+        """AD-1360 (#1828): the registry ``store()`` checks an episode's AD-492 correlation id against."""
+        self._cycle_registry = registry
 
     def _emit_security_event(self, event_type: Any, payload: dict) -> None:
         """AD-607: emit a security event through the wired emitter (if any).
@@ -1563,8 +1569,11 @@ class EpisodicMemory:
                 "anomalies": list(validation.anomalies),
                 "score": float(validation.score),
             })
-            # Provenance-specific event (separate audit channel)
-            ok, reason = validate_provenance(episode)
+            # Provenance-specific event (separate audit channel). AD-1360 (#1828): judged with the cutoff the verdict
+            # above used, so the event names the reason that fired.
+            from probos.cognitive.memory_security import configured_correlation_cutoff
+
+            ok, reason = validate_provenance(episode, correlation_cutoff=configured_correlation_cutoff(config))
             if not ok:
                 self._emit_security_event(EventType.MEMORY_PROVENANCE_GAP, {
                     "episode_id": getattr(episode, "id", ""),
@@ -2214,6 +2223,16 @@ class EpisodicMemory:
                     episode = dataclasses.replace(episode, anchors=new_anchors)
                     anomaly_window_manager.record_episode_stamped()
 
+            # AD-1360 (#1828): the record AD-607b's correlation rule reads, written here and nowhere else; whatever the
+            # producer set is replaced. The id is checked once, now, against the bound cycle-id registry ("unchecked"
+            # when none is bound, so a missing binding shows on the record instead of passing).
+            episode = dataclasses.replace(
+                episode,
+                stored_at=time.time(),
+                correlation_verdict=judge_correlation_id(
+                    episode.correlation_id, getattr(self, "_cycle_registry", None),
+                ),
+            )
             metadata = self._episode_to_metadata(episode)
             document = self._prepare_document(episode)
 
@@ -4458,6 +4477,10 @@ class EpisodicMemory:
             "stability": float(ep.stability),
             # AD-979f: affective-salience retrieval slot (0.0 = neutral)
             "affect_salience": float(ep.affect_salience),
+            # AD-1360 (#1828): the store-time record (store() writes it; seed() and _force_update keep what the
+            # episode carries). Not in compute_episode_hash, so no stored hash changes.
+            "stored_at": float(ep.stored_at),
+            "correlation_verdict": ep.correlation_verdict or "",
         }
         # AD-570: Promote key anchor fields for ChromaDB where-clause filtering
         if ep.anchors:
@@ -4621,6 +4644,15 @@ class EpisodicMemory:
             affect_salience = float(metadata.get("affect_salience", 0.0))
         except (TypeError, ValueError):
             affect_salience = 0.0
+        # AD-1360 (#1828): the store-time record. A row stored before AD-1360 lacks both keys and reads (0.0, ""),
+        # which AD-607b never judges.
+        try:
+            stored_at = float(metadata.get("stored_at", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            stored_at = 0.0
+        correlation_verdict = metadata.get("correlation_verdict", "")
+        if not isinstance(correlation_verdict, str):
+            correlation_verdict = ""
         return Episode(
             id=doc_id,
             timestamp=round(float(metadata.get("timestamp", 0.0)), 6),
@@ -4652,6 +4684,8 @@ class EpisodicMemory:
             stability=stability,
             # AD-979f: affective-salience retrieval slot
             affect_salience=affect_salience,
+            stored_at=stored_at,  # AD-1360 (#1828)
+            correlation_verdict=correlation_verdict,  # AD-1360 (#1828)
         )
 
     # ---- AD-567b: Salience-weighted recall pipeline --------------------

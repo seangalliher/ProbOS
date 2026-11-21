@@ -1051,6 +1051,7 @@ AD-607: Memory security framework configuration.
 | `enforce_store` | `bool` | `False` | — |  |
 | `anchor_mismatch_threshold` | `float` | `0.7` | ≥ 0.0, ≤ 1.0 |  |
 | `dp_min_cohort_size` | `int` | `3` | ≥ 1 |  |
+| `correlation_cutoff` | `float` | `0.0` | ≥ 0.0 | AD-1360: AD-607b judges a direct episode's AD-492 correlation id only when the episode was stored strictly after this instant (epoch seconds, or an ISO-8601 time with a UTC offset). 0.0: never judged. |
 
 ## `security.permissions`
 

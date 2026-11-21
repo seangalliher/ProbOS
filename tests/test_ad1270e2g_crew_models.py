@@ -188,7 +188,9 @@ EXPECTED_DUMPS: dict[str, dict[str, object]] = {   'AssignmentConfig': {'enabled
                                 # BF-926 (#1656): enforce_leak_guard is deleted; it promised redaction nothing performed.
                                 'enforce_store': False,
                                 'anchor_mismatch_threshold': 0.7,
-                                'dp_min_cohort_size': 3},
+                                'dp_min_cohort_size': 3,
+                                # AD-1360 (#1828): added after the move; 0.0 judges no episode.
+                                'correlation_cutoff': 0.0},
     'NamingConfig': {   'enabled': True,
                         'captain_ship_override': '',
                         'extra_banned_words': []},
@@ -278,7 +280,7 @@ EXPECTED_BOUND_COUNTS: dict[str, int] = {
     "HolodeckBirthChamberConfig": 4,
     "HolodeckScenarioConfig": 4,
     "HolodeckTeamSimulationConfig": 4,
-    "MemorySecurityConfig": 3,
+    "MemorySecurityConfig": 4,  # AD-1360 (#1828): correlation_cutoff (ge 0.0)
     "NamingConfig": 0,
     "OrdersConfig": 4,
     "PermissionsConfig": 0,
@@ -592,7 +594,7 @@ def test_every_declared_bound_is_still_enforced(name: str) -> None:
 def test_the_bound_table_is_exhaustive_and_not_all_zero() -> None:
     """Premise on both halves: exhaustive, and not trivially satisfiable."""
     assert set(EXPECTED_BOUND_COUNTS) == set(MOVED_MODELS)
-    assert sum(EXPECTED_BOUND_COUNTS.values()) == 30
+    assert sum(EXPECTED_BOUND_COUNTS.values()) == 31  # AD-1360 (#1828): MemorySecurityConfig 3 -> 4
     assert sum(1 for c in EXPECTED_BOUND_COUNTS.values() if c) == 8
 
 

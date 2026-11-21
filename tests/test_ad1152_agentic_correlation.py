@@ -345,6 +345,9 @@ async def _off_observation(
     assert config["records"].pop("git_lock_stale_minutes") == 10.0
     assert config["records"].pop("git_uncommitted_warn_paths") == 50
     assert config["records"].pop("git_last_commit_warn_hours") == 24.0
+    # AD-1360's inert correlation cutoff (0.0 judges no episode) was added to the memory-security section after this
+    # capture too.
+    assert config["security"]["memory"].pop("correlation_cutoff") == 0.0
     # Deleted fields and changed defaults (BF-983, #1676). Each one moved the digest, which was refreshed by measurement
     # (_DEFAULT_CONFIG_RULE); the line names what the pinned digest no longer contains, or now contains.
     # BF-924 (#1654) removed the Counselor's four unread fields.
