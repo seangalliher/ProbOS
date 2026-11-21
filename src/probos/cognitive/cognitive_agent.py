@@ -7828,10 +7828,12 @@ class CognitiveAgent(BaseAgent):
                 "error": outcome["reason"] or None,
             }
 
-        # AD-573: Record action to working memory (all pathways)
+        # AD-573: Record action to working memory (all pathways). BF-989 (#1838): not for a qualification interaction
+        # (the marker that skips its episode and its conclusion, AD-566a): a recall probe's reply is not an action
+        # the agent took, and the next turn would read it back as one.
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm:
+            if _wm and not intent.params.get("_qualification_test"):
                 action_summary = self._summarize_action(intent, decision, result)
                 if action_summary:
                     _wm.record_action(
@@ -7841,10 +7843,11 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("AD-573: Working memory action record failed", exc_info=True)
 
-        # AD-669: Record conclusion for cross-thread sharing
+        # AD-669: Record conclusion for cross-thread sharing. BF-989 (#1838): a qualification interaction leaves no
+        # conclusion, in working memory or as a thought episode (the marker that skips its episode, AD-566a).
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm:
+            if _wm and not intent.params.get("_qualification_test"):
                 _conclusion_summary = self._extract_conclusion_summary(decision, result)
                 if _conclusion_summary:
                     _conclusion_type = self._classify_conclusion(intent, decision)
@@ -7867,10 +7870,14 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("AD-669: Conclusion recording failed", exc_info=True)
 
-        # AD-645 Phase 3: Store composition brief as metacognitive memory
+        # AD-645 Phase 3: Store composition brief as metacognitive memory. BF-989 (#1838): not for a qualification
+        # interaction (the marker that skips its episode, AD-566a).
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm and decision.get("sub_task_chain") and decision.get("_composition_brief"):
+            if (
+                _wm and not intent.params.get("_qualification_test")
+                and decision.get("sub_task_chain") and decision.get("_composition_brief")
+            ):
                 brief = decision["_composition_brief"]
                 if isinstance(brief, dict):
                     # Build a human-readable summary from the brief

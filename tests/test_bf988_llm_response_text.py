@@ -89,13 +89,19 @@ class _ObjectClient:
         return object()
 
 
+async def _agent_recall(_agent_id: str, _prompt: str) -> str:
+    """The agent's own recall (BF-989): the engine no longer asks the client for it."""
+    return _RECALL
+
+
 def _engine(client: Any, episodes: list | None = None) -> GuidedReminiscenceEngine:
     memory = MagicMock()
-    # Synchronous on purpose: select_episodes_for_session calls recent_for_agent without await
-    # (filed with BF-988), so only a synchronous double reaches run_session's reads.
-    memory.recent_for_agent = MagicMock(return_value=list(episodes or []))
+    # BF-989 (#1838): async, as on both memories; the selection now awaits recent_for_agent, which the
+    # synchronous double (filed with BF-988) stood in for. The recall is recall_fn's; the client judges and
+    # writes the message.
+    memory.recent_for_agent = AsyncMock(return_value=list(episodes or []))
     return GuidedReminiscenceEngine(
-        episodic_memory=memory, llm_client=client, max_episodes_per_session=3,
+        episodic_memory=memory, llm_client=client, max_episodes_per_session=3, recall_fn=_agent_recall,
     )
 
 
@@ -191,8 +197,18 @@ async def test_run_session_reads_each_reply_content() -> None:
 
 
 async def test_run_session_never_recalls_a_repr() -> None:
-    result = await _engine(_Client(recall=""), _episodes()).run_session("a1")
-    assert [r.recalled_text for r in result.recall_results] == ["", "", ""]
+    # BF-989 (#1838): the recall now comes from recall_fn, so the client is never asked for it; the recalled
+    # text is the agent's reply, never a response's repr. Was: the client's empty recall read as "".
+    prompts: list[str] = []
+
+    class _Recording(_Client):
+        async def complete(self, request: Any, **kwargs: Any) -> LLMResponse:
+            prompts.append(request.prompt)
+            return await super().complete(request, **kwargs)
+
+    result = await _engine(_Recording(recall="a model's recall"), _episodes()).run_session("a1")
+    assert [r.recalled_text for r in result.recall_results] == [_RECALL] * 3
+    assert not any(p.startswith("I'd like to review") for p in prompts)
 
 
 # -- T5: the .text compatibility case ---------------------------------------------

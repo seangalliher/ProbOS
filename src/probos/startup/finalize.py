@@ -6276,15 +6276,24 @@ async def finalize_startup(
             if config.dreaming.reminiscence_enabled:
                 try:
                     from probos.cognitive.guided_reminiscence import GuidedReminiscenceEngine
+                    from probos.cognitive.qualification_tests import agent_recall_fn  # BF-989
 
+                    # BF-989 round 1: episodes carry the sovereign UUID; the registry, callsigns, profiles and DMs key by
+                    # slot id (BF-907). The identity registry is set at Phase 2 entry, before finalize.
+                    reminiscence_identities = getattr(runtime, "identity_registry", None)
+                    reminiscence_resolve_slot = (
+                        reminiscence_identities.resolve_slot_id if reminiscence_identities is not None else None
+                    )
                     reminiscence_engine = GuidedReminiscenceEngine(
                         episodic_memory=runtime.episodic_memory,
                         llm_client=getattr(runtime, 'llm_client', None),
                         config=config.dreaming,
                         max_episodes_per_session=config.dreaming.reminiscence_episodes_per_session,
                         confabulation_alert_threshold=config.dreaming.reminiscence_confabulation_alert,
+                        # BF-989 (#1838): the agent's own recall (AD-566's path); llm_client only judges and writes
+                        recall_fn=agent_recall_fn(runtime.registry, resolve_slot=reminiscence_resolve_slot),
                     )
-                    counselor_agent.set_reminiscence_engine(reminiscence_engine)
+                    counselor_agent.set_reminiscence_engine(reminiscence_engine, resolve_slot=reminiscence_resolve_slot)
                     counselor_agent.configure_reminiscence(
                         cooldown_hours=config.dreaming.reminiscence_cooldown_hours,
                         concern_threshold=config.dreaming.reminiscence_concern_threshold,
