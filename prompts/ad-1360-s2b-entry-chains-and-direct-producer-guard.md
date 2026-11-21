@@ -1556,3 +1556,318 @@ Every pair of section 7 was applied to a scratch worktree by `audit\contract_too
 - The vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`. The cutoff ships at 0.0, so no recall result changes until S3 arms it.
 - That System QA, the renderer and `teach_procedure` store the id is pinned by the guard and the entry-call census only (no crossing case drives them); that a device episode is reached inside a cycle is not tested, only that the writers forward the bound id.
 - The producers section 4 lists as outside any cycle by design (D13) and the unclassified residual still store `""` or an id nothing issued; S3's replay reports them.
+
+## 16. Repair after review round 1 (2026-11-21)
+
+Round 1 (`gpt-6.1-sol`, 28 minutes, the committed candidate `8c8ce27a..9facefd9`) requested changes: one finding, P2, reach injected-only, new in this slice, size findings 0. The orchestrator reproduced it before repairing it (section 16.9), and the Architect decided to fix it in this batch, at all three sites, with one predicate (consult `36e52865`, recorded on #1828).
+
+**R1. A mock made with a spec passes `isinstance`, and its `issue()` returns another mock.** Three checks decide whether a runtime's `cycle_registry` attribute is a registry: `issue_entry_id` (this slice), the agent's `_cycle_registry` getter (S1, which this slice's work-item scope relies on) and `_register_promoted_work_item` (S2a). Each used `isinstance(x, CycleIdRegistry)`. A `MagicMock(spec=CycleIdRegistry)`, a `Mock(spec=CycleIdRegistry)` or a `create_autospec(CycleIdRegistry, instance=True)` passes it, because its `__class__` reads as the spec. `issue()` then returns a mock, `issue_entry_id` hands it to the producer as the id, ChromaDB refuses the metadata value and the episode is lost (the feedback engine, the ground-truth writer and the DM route stored 0 rows where the base stored 1), and the work-item scope registered an id in a mock, so the episode recorded `unresolved` where the base recorded `empty`. Nothing in `src` or `tests` builds such a mock and production builds the one real registry; the code's own docstrings already said that a test runtime's mock must not count. Repair: one predicate, `cycle_trace.is_cycle_registry(obj)`, which is `issubclass(type(obj), CycleIdRegistry)`: true for a registry and for an instance of a subclass, false for None, a namespace and every mock. The three sites call it.
+
+No design decision is open: the Architect's ruling fixes the scope and the form. S1's getter keeps its interface (it only refuses more), so S1's approval stands. Nothing in sections 1 to 15 changes except the number of cases of the entry-chains test file, which is 16 instead of 13 (section 16.4; the tracker of section 16.5 says 16).
+
+### 16.1 `src/probos/cycle_trace.py` (M-R1)
+
+**RC0.** SEARCH:
+```
+  a verification) an id the registry issued, so the episodes it stores record their own chain.
+```
+REPLACE:
+```
+  a verification) an id the registry issued, so the episodes it stores record their own chain. ``is_cycle_registry``
+  says whether an object is a real registry (a mock is not, spec'd or not).
+```
+**RC1.** SEARCH:
+```
+def issue_entry_id(registry: object, *, kind: str) -> str:
+```
+REPLACE:
+```
+def is_cycle_registry(obj: object) -> bool:
+    """AD-1360 S2b: True for a ``CycleIdRegistry`` or an instance of a subclass, False for anything else.
+
+    Not ``isinstance``: a mock made with ``spec=CycleIdRegistry`` or ``create_autospec`` passes it, because its
+    ``__class__`` reads as the spec, and its ``issue()`` returns another mock. The type is what a real registry has.
+    """
+    return issubclass(type(obj), CycleIdRegistry)
+
+
+def issue_entry_id(registry: object, *, kind: str) -> str:
+```
+**RC2.** SEARCH:
+```
+    ``CycleIdRegistry`` (none, or a test runtime's MagicMock attribute), "": an id nothing issued would only turn the
+    episode's verdict from empty into unresolved or unchecked. Raises ValueError for a blank or non-str ``kind``.
+```
+REPLACE:
+```
+    real ``CycleIdRegistry`` (``is_cycle_registry``: not None, and not a test runtime's MagicMock attribute, spec'd or
+    not), "": an id nothing issued would only turn the episode's verdict from empty into unresolved or unchecked.
+    Raises ValueError for a blank or non-str ``kind``.
+```
+**RC3.** SEARCH:
+```
+    return registry.issue(kind=kind) if isinstance(registry, CycleIdRegistry) else ""
+```
+REPLACE:
+```
+    return registry.issue(kind=kind) if is_cycle_registry(registry) else ""
+```
+
+### 16.2 `src/probos/cognitive/cognitive_agent.py` (M-R1)
+
+**RD1.** SEARCH:
+```
+    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, new_cycle_id, unbind_cycle,
+```
+REPLACE:
+```
+    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, is_cycle_registry, new_cycle_id, unbind_cycle,
+```
+**RD2.** SEARCH:
+```
+        Only a ``CycleIdRegistry`` counts: a test runtime's MagicMock attribute would otherwise issue a MagicMock id.
+        """
+        registry = getattr(getattr(self, "_runtime", None), "cycle_registry", None)
+        return registry if isinstance(registry, CycleIdRegistry) else None
+```
+REPLACE:
+```
+        Only a real ``CycleIdRegistry`` counts (``is_cycle_registry``): a test runtime's MagicMock attribute, spec'd or
+        not, would otherwise issue a MagicMock id.
+        """
+        registry = getattr(getattr(self, "_runtime", None), "cycle_registry", None)
+        return registry if is_cycle_registry(registry) else None
+```
+
+### 16.3 `src/probos/cognitive/turn_promotion.py` (M-R1)
+
+**RE1.** SEARCH:
+```
+from probos.cycle_trace import CycleIdRegistry  # AD-1360 (#1828)
+```
+REPLACE:
+```
+from probos.cycle_trace import is_cycle_registry  # AD-1360 (#1828)
+```
+**RE2.** SEARCH:
+```
+    Nothing is registered without a ``CycleIdRegistry`` on the runtime or for a blank id.
+    """
+    registry = getattr(runtime, "cycle_registry", None)
+    if isinstance(registry, CycleIdRegistry) and type(work_item_id) is str and work_item_id.strip():
+```
+REPLACE:
+```
+    Nothing is registered without a real ``CycleIdRegistry`` on the runtime (not a spec'd mock) or for a blank id.
+    """
+    registry = getattr(runtime, "cycle_registry", None)
+    if is_cycle_registry(registry) and type(work_item_id) is str and work_item_id.strip():
+```
+
+### 16.4 `tests/test_ad1360_s2b_entry_chains.py` (M-R1)
+
+Three cases are added at the end (E14: the predicate and `issue_entry_id` on every kind of stand-in; E15: the agent's getter and a promoted work item's registration; E16: the chain, with an autospec registry on the runtime, to the stored rows), and E1 runs its stray-registry checks over every stand-in. The file has 16 cases.
+
+**RT1.** SEARCH:
+```
+from unittest.mock import AsyncMock, MagicMock, patch
+```
+REPLACE:
+```
+from unittest.mock import AsyncMock, MagicMock, Mock, create_autospec, patch
+```
+**RT2.** SEARCH:
+```
+from probos.cognitive.cognitive_agent import CognitiveAgent
+```
+REPLACE:
+```
+from probos.cognitive import turn_promotion
+from probos.cognitive.cognitive_agent import CognitiveAgent
+```
+**RT3.** SEARCH:
+```
+    entry_scope,
+    issue_entry_id,
+```
+REPLACE:
+```
+    entry_scope,
+    is_cycle_registry,
+    issue_entry_id,
+```
+**RT4.** SEARCH:
+```
+        _knowledge_store=None, workflow_cache=None, cycle_registry=registry, _record_error=MagicMock(),
+    )
+```
+REPLACE:
+```
+        _knowledge_store=None, workflow_cache=None, cycle_registry=registry, _record_error=MagicMock(),
+    )
+
+
+class _Subclass(CycleIdRegistry):
+    """A registry of a subclass is a registry."""
+
+
+def _fakes() -> list[Any]:
+    """What is not a registry: nothing, a namespace, a plain mock, and the mocks that name the registry class as their
+    spec (they pass ``isinstance``, and their ``issue()`` returns another mock)."""
+    return [
+        None, SimpleNamespace(), MagicMock(), MagicMock(spec=CycleIdRegistry), Mock(spec=CycleIdRegistry),
+        create_autospec(CycleIdRegistry, instance=True),
+    ]
+```
+**RT5.** SEARCH:
+```
+    for stray in (None, MagicMock(), SimpleNamespace()):
+```
+REPLACE:
+```
+    for stray in _fakes():
+```
+**RT6.** SEARCH:
+```
+        assert issue_entry_id(registry, kind="hxi_post") == "0123456789ab" and len(registry) == held
+```
+REPLACE:
+```
+        assert issue_entry_id(registry, kind="hxi_post") == "0123456789ab" and len(registry) == held
+        assert {issue_entry_id(fake, kind="hxi_post") for fake in _fakes()} == {"0123456789ab"}  # a bound id needs none
+```
+**RT7.** SEARCH:
+```
+    with entry_scope(MagicMock(), kind="nl_request") as bound:
+        assert bound == current_cycle_id() == ""
+```
+REPLACE:
+```
+    for fake in _fakes():
+        with entry_scope(fake, kind="nl_request") as bound:
+            assert bound == current_cycle_id() == ""
+```
+**RT8.** SEARCH:
+```
+    assert {kw.arg: ast.unparse(kw.value) for kw in calls[0].keywords}.get("cycle_registry") == "cycle_registry"
+```
+REPLACE:
+```
+    assert {kw.arg: ast.unparse(kw.value) for kw in calls[0].keywords}.get("cycle_registry") == "cycle_registry"
+
+
+# -- E14 to E16: a mock that names the registry class as its spec is not a registry --------------------------------------
+
+
+def test_only_a_real_registry_is_a_cycle_registry() -> None:
+    assert is_cycle_registry(CycleIdRegistry()) and is_cycle_registry(_Subclass())
+    assert not is_cycle_registry(CycleIdRegistry)  # the class is not an instance of itself
+    for fake in _fakes():
+        assert not is_cycle_registry(fake)
+    assert {issue_entry_id(fake, kind="hxi_post") for fake in _fakes()} == {""}
+    registry = _Subclass()
+    assert registry.kind_of(issue_entry_id(registry, kind="hxi_post")) == "hxi_post"
+
+
+def test_a_mock_runtime_registry_is_no_registry_for_the_agent_or_a_promoted_work_item() -> None:
+    for fake in _fakes():
+        agent = _Agent()
+        agent._runtime = SimpleNamespace(cycle_registry=fake)
+        assert agent._cycle_registry is None and len(agent._issue_cycle_id()) == 12
+        turn_promotion._register_promoted_work_item(SimpleNamespace(cycle_registry=fake), "ad1360workitem")
+    spec = create_autospec(CycleIdRegistry, instance=True)
+    turn_promotion._register_promoted_work_item(SimpleNamespace(cycle_registry=spec), "ad1360workitem")
+    spec.register.assert_not_called()
+    for real in (CycleIdRegistry(), _Subclass()):
+        agent = _Agent()
+        agent._runtime = SimpleNamespace(cycle_registry=real)
+        assert agent._cycle_registry is real
+        turn_promotion._register_promoted_work_item(SimpleNamespace(cycle_registry=real), "ad1360workitem")
+        assert real.kind_of("ad1360workitem") == "work_item"
+
+
+async def test_a_mock_registry_on_the_runtime_costs_no_episode_and_certifies_no_id(
+    memory: EpisodicMemory, registry: CycleIdRegistry, tmp_path: Path,
+) -> None:
+    from probos.routers.agents import agent_chat
+    from probos.runtime import ProbOSRuntime
+
+    fake = create_autospec(CycleIdRegistry, instance=True)  # ``registry`` stays the one the memory judges ids by
+    engine = FeedbackEngine(
+        trust_network=MagicMock(), hebbian_router=MagicMock(), episodic_memory=memory, cycle_registry=fake,
+    )
+    assert (await engine.apply_execution_feedback(TaskDAG(nodes=[]), True, "Survey the coolant loop")).episode_stored
+    writer = VerificationEpisodeWriter(runtime=SimpleNamespace(episodic_memory=memory, cycle_registry=fake))
+    assert await writer.write(GroundTruthResult(
+        verified=False, score=0.0, agent_id="ad1360-agent", claimed_summary="Surveyed the coolant loop on deck four.",
+    ))
+    rt = _route_runtime(tmp_path, modes=False)
+    rt.registry.get.return_value.sovereign_id = "ad1360-dm-agent"
+    rt.episodic_memory = memory
+    rt.cycle_registry = fake
+    rt.intent_bus.send = AsyncMock(return_value=IntentResult(
+        intent_id="ad1360-intent", agent_id="ad1360-dm-agent", success=True, result=_REPLY,
+    ))
+    with patch("probos.routers.agents.is_crew_agent", return_value=True):
+        await agent_chat("test-agent", _chat_request(_QUESTION), rt)
+    host = SimpleNamespace(episodic_memory=memory, identity_registry=None)
+
+    async def _run(**_kwargs: Any) -> str:
+        await ProbOSRuntime._store_mcp_invoke_episode(
+            host, server_url="mcp.ad1360", tool="survey", tier="open", success=True, agent_id="ad1360-survey",
+        )
+        return "Acknowledged; surveying the coolant loop."
+
+    agent = _Agent()
+    agent._runtime = SimpleNamespace(cycle_registry=fake, chat_thread_store=None, work_item_store=None)
+    agent._run_agentic_dispatch = _run  # type: ignore[method-assign]
+    result = await agent._handle_work_item_dispatch(IntentMessage(
+        intent="work_item_dispatched", params={"work_item_id": "ad1360fakeitem", "title": "Survey"},
+        target_agent_id=agent.id,
+    ))
+    assert result.success and current_cycle_id() == ""
+    needles = ("Survey the coolant loop", "Surveyed the coolant loop", "[1:1 with", "[mcp_invoke] survey on mcp.ad1360")
+    assert [_one(memory, needle) for needle in needles] == [("", VERDICT_EMPTY)] * 4
+    assert fake.method_calls == [] and not registry.resolves("ad1360fakeitem")
+```
+
+### 16.5 `PROGRESS.md` (M-R1)
+
+**TR1.** SEARCH (substring of S2b's entry in `PROGRESS.md`, once): `(13 cases) from real producers`. REPLACE: `(16 cases) from real producers`.
+
+### 16.6 `DECISIONS.md` (M-R1)
+
+**TR2.** SEARCH (substring of the last S2b bullet, once): `both pass the think's id meanwhile.` REPLACE:
+```
+both pass the think's id meanwhile.
+- *S2b repair after review round 1.* Three checks decide whether a runtime's `cycle_registry` attribute is a registry (`issue_entry_id`, `CognitiveAgent._cycle_registry`, `_register_promoted_work_item`); each used `isinstance`, which a mock made with `spec=CycleIdRegistry` or `create_autospec` passes, and whose `issue()` returns another mock, so the producers lost the episode. They call `cycle_trace.is_cycle_registry` (`issubclass(type(obj), CycleIdRegistry)`: a registry or an instance of a subclass, not a mock). Decided by the Architect (consult `36e52865`): fixed in this batch at all three sites, not recorded. Pinned by three cases of `tests/test_ad1360_s2b_entry_chains.py`.
+```
+
+### 16.7 Mutation rows (campaign on the repaired tree; restore between rows)
+
+`mutants_gen.py` over `audit\rows_ad1360s2br1.py`: each row changes one line of the repaired tree in place and runs the entry-chains test file (16 cases, all green before the row).
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RS1 | `issue_entry_id` back to `isinstance(registry, CycleIdRegistry)` | E1, E14, E16 |
+| RS2 | `is_cycle_registry` returns `isinstance(obj, CycleIdRegistry)` | E1, E14, E15, E16 |
+| RS3 | `is_cycle_registry` narrowed to `type(obj) is CycleIdRegistry` | E14, E15 |
+| RS4 | the agent's getter back to `isinstance(registry, CycleIdRegistry)` | E15, E16 |
+| RS5 | the promoted work item registers into any non-None registry | E15 |
+
+### 16.8 Properties for the round-2 Diff Reviewer (the delta only)
+
+Verify at least one end-to-end path by execution: a runtime whose `cycle_registry` is `create_autospec(CycleIdRegistry, instance=True)`, a real ChromaDB-backed `EpisodicMemory` and the real feedback engine, ground-truth writer, DM route and work-item dispatch: each stores exactly one episode with the empty id, and the mock is never called.
+1. `is_cycle_registry` is true for `CycleIdRegistry()` and an instance of a subclass, and false for None, `SimpleNamespace()`, `MagicMock()`, `MagicMock(spec=CycleIdRegistry)`, `Mock(spec=CycleIdRegistry)`, `create_autospec(CycleIdRegistry, instance=True)` and the class itself.
+2. No `isinstance(..., CycleIdRegistry)` remains in `src/probos` that decides whether an object is a registry; `rg "isinstance\(.*CycleIdRegistry" src` finds none, and the other readers of a registry (`runtime.py`'s own, the memory's resolver binding in S1) are not affected.
+3. The three sites behave as before for a real registry: `issue_entry_id` returns the bound id when one is bound (whatever the registry), else an id the registry issued under the kind; `_cycle_registry` returns the registry; a work item registers when its id is a non-blank `str`.
+4. `turn_promotion.py` no longer imports `CycleIdRegistry` and nothing else in it used the name; `cycle_trace.py` still imports only the standard library; the import order of the touched files is kept.
+5. The three new cases and the changed E1 delete, loosen or skip nothing; E14 to E16 fail on the S2b head (E14 and E15 by the spec'd mocks, E16 by the lost episodes) and pass after the repair; each row of section 16.7 fails its named killers.
+
+### 16.9 The orchestrator's first-hand checks of the repair (2026-11-21, an oracle tree detached at `9facefd9` with the S2a repair applied)
+
+| O | Result |
+|---|---|
+| R1 | The finding was reproduced before the repair: the new cases on the unrepaired source (pairs RT1 to RT8 only, with the predicate standing in as `isinstance`, the previous check): **4 failed, 12 passed**. E1 fails because `issue_entry_id` of a `MagicMock(spec=CycleIdRegistry)` returns `<MagicMock name='mock.issue()'>` where `""` is expected; E14 because the predicate accepts the spec'd mock; E15 because the agent's getter returns it; E16 because the feedback engine's episode is not stored (`Failed to store feedback episode: Expected metadata value to be a str, int, float, bool, SparseVector, list, or None, got <MagicMock name='mock.issue()'`), the symptom the reviewer's probes found. |
+| R2 | After the pairs of 16.1 to 16.6: **16 passed** (the entry-chains file). Every SEARCH occurs exactly once, in files that are CRLF throughout. |
+| R3 | The campaign of 16.7: baseline of 16 cases green; **killed 5, differs 0, survived 0, invalid 0**; every named killer failed. |
