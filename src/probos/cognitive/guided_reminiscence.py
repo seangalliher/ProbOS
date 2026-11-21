@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Any
 
 from probos.cognitive.similarity import jaccard_similarity, text_to_words
-from probos.types import llm_response_text
+from probos.types import MemorySource, llm_response_text
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ class GuidedReminiscenceEngine:
         (b) older timestamps, (c) not the most recent (avoid trivial recall).
 
         BF-989 (#1838): ``recent_for_agent`` is a coroutine on both memories and is awaited; called without
-        ``await`` it raised at ``len()``, so no session ever read an episode.
+        ``await`` it raised at ``len()``, so no session ever read an episode. A reflection is never selected.
         """
         if not self._episodic_memory:
             return []
@@ -181,6 +181,12 @@ class GuidedReminiscenceEngine:
             logger.debug("AD-541d: Failed to retrieve episodes for %s", agent_id[:8], exc_info=True)
             return []
 
+        if not episodes:
+            return []
+
+        # BF-989 (#1838): a reflection is the agent's own derived thought (a stored conclusion, AD-606, or a dream's
+        # consolidation, AD-599), not what happened, so it is no ground truth for a recall test. Nothing left: no session.
+        episodes = [ep for ep in episodes if getattr(ep, "source", "") != MemorySource.REFLECTION.value]
         if not episodes:
             return []
 

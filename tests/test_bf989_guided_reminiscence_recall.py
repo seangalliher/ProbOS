@@ -30,9 +30,10 @@ from probos.cognitive.guided_reminiscence import (
 )
 from probos.cognitive.llm_client import MockLLMClient
 from probos.cognitive.qualification_tests import agent_recall_fn
+from probos.config import SystemConfig
 from probos.identity import AgentIdentityRegistry
 from probos.substrate.registry import AgentRegistry
-from probos.types import IntentDescriptor, IntentResult, LLMResponse
+from probos.types import IntentDescriptor, IntentMessage, IntentResult, LLMResponse
 from tests.test_ad541d_guided_reminiscence import _make_counselor, _make_episode
 
 _MESSAGE = "Thank you for reviewing these with me. Let's look at your Ship Memory records together."
@@ -484,3 +485,60 @@ async def test_a_reply_that_is_not_a_recall_names_its_reason(reply: Any, reason:
     recall = agent_recall_fn(SimpleNamespace(get=lambda key: _Agent() if key == _SLOT else None))
     with pytest.raises(RecallUnavailable, match=f"^{reason}$"):
         await recall(_SLOT, "What happened?")
+
+
+# -- R5 to R7: review round 2 (a session leaves nothing behind, and selects no reflection) ----------------------------
+
+
+async def test_the_selection_leaves_out_the_agents_own_reflections() -> None:
+    memory = MockEpisodicMemory()
+    for i, source in enumerate(["direct", "reflection", "direct", "reflection", "direct"]):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=["a1"], source=source))
+    selected = await GuidedReminiscenceEngine(episodic_memory=memory).select_episodes_for_session("a1", k=3)
+    assert [(ep.id, ep.source) for ep in selected] == [("ep-0", "direct"), ("ep-2", "direct"), ("ep-4", "direct")]
+
+
+async def test_a_memory_of_reflections_alone_leaves_a_session_nothing_to_test() -> None:
+    memory, recall = MockEpisodicMemory(), _Recall()
+    for i in range(3):
+        await memory.store(
+            _make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=["a1"], source="reflection"),
+        )
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3, recall_fn=recall,
+    )
+    result = await engine.run_session("a1")
+    assert (result.episodes_tested, recall.calls) == (0, [])
+
+
+def _real_agent(memory: MockEpisodicMemory) -> CognitiveAgent:
+    return _crew_class()(
+        llm_client=_CountingLLM(), runtime=SimpleNamespace(episodic_memory=memory, config=SystemConfig()),
+    )
+
+
+async def test_a_qualification_turn_leaves_no_episode_and_no_conclusion() -> None:
+    seen = []
+    for marked in (True, False):
+        memory = MockEpisodicMemory()
+        agent = _real_agent(memory)
+        params = {"text": "What do you recall?", **({"_qualification_test": True} if marked else {})}
+        await agent.handle_intent(IntentMessage(intent="bf989_probe", params=params, target_agent_id=agent.id))
+        stored = [ep.source for ep in await memory.recent_for_agent(agent.id, k=10)]
+        seen.append((stored, len(agent._working_memory.get_active_conclusions())))
+    # The unmarked control concludes and stores a reflection, so the pair can tell the two turns apart.
+    assert seen == [([], 0), (["reflection"], 1)]
+
+
+async def test_a_session_over_a_real_agent_stores_nothing_and_never_selects_its_own_replies() -> None:
+    memory, registry = MockEpisodicMemory(), AgentRegistry()
+    agent = _real_agent(memory)
+    await registry.register(agent)
+    for i in range(4):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[agent.id]))
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3, recall_fn=agent_recall_fn(registry),
+    )
+    sessions = [await engine.run_session(agent.id) for _ in range(2)]
+    assert [[r.episode_id for r in s.recall_results] for s in sessions] == [["ep-0", "ep-1", "ep-2"]] * 2
+    assert sorted(ep.id for ep in await memory.recent_for_agent(agent.id, k=10)) == ["ep-0", "ep-1", "ep-2", "ep-3"]

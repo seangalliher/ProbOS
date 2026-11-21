@@ -7841,10 +7841,11 @@ class CognitiveAgent(BaseAgent):
         except Exception:
             logger.debug("AD-573: Working memory action record failed", exc_info=True)
 
-        # AD-669: Record conclusion for cross-thread sharing
+        # AD-669: Record conclusion for cross-thread sharing. BF-989 (#1838): a qualification interaction leaves no
+        # conclusion, in working memory or as a thought episode (the marker that skips its episode, AD-566a).
         try:
             _wm = getattr(self, '_working_memory', None)
-            if _wm:
+            if _wm and not intent.params.get("_qualification_test"):
                 _conclusion_summary = self._extract_conclusion_summary(decision, result)
                 if _conclusion_summary:
                     _conclusion_type = self._classify_conclusion(intent, decision)
