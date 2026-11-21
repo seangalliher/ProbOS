@@ -95,6 +95,11 @@ class CredentialStore:
         self._store_loaded = False
         # AD-1337: the first load can run in a worker thread (S2's priming get) while rotate() runs on the loop.
         self._store_lock = threading.Lock()
+        # AD-1337: rotate() bumps a name's generation, and a get() that began before it (S2's priming get runs in a
+        # worker thread) publishes to _cache and _last_resolved only if the generation is unchanged. A lock of its
+        # own: nothing holds it while taking _store_lock, so the two never nest.
+        self._generations: dict[str, int] = {}
+        self._publish_lock = threading.Lock()
         # AD-1337: True after a load that failed; get() keeps AD-456's empty store, the secret masker reads the file.
         self._store_load_failed = False
         # AD-456c: per-tier credential lookup gate. Default False preserves
@@ -203,10 +208,12 @@ class CredentialStore:
                 self._emit_rotated(name, source="env", persisted=False)
                 return False
 
-        self._store[name] = value
-        # Invalidate cache so next get(...) resolves fresh.
-        self._cache.pop(name, None)
-        self._last_resolved.pop(name, None)  # AD-1337: the old value is no longer masked
+        with self._publish_lock:  # AD-1337: one step, so a get() in flight cannot republish the old value after it
+            self._store[name] = value
+            self._generations[name] = self._generations.get(name, 0) + 1
+            # Invalidate cache so next get(...) resolves fresh.
+            self._cache.pop(name, None)
+            self._last_resolved.pop(name, None)  # AD-1337: the old value is no longer masked
 
         try:
             tmp = self._store_path.with_suffix(".json.tmp")
@@ -340,7 +347,10 @@ class CredentialStore:
                 return value
             del self._cache[name]
 
-        # Resolution chain
+        # Resolution chain. AD-1337: the name's generation is read first, so a rotate() during _resolve is seen
+        # below and the value it replaced is not published.
+        with self._publish_lock:
+            generation = self._generations.get(name, 0)
         value = self._resolve(spec)
 
         # Log access
@@ -349,8 +359,12 @@ class CredentialStore:
 
         # Cache if found
         if value:
-            self._cache[name] = (value, time.monotonic() + self._cache_ttl)
-            self._last_resolved[name] = value  # AD-1337: kept past the TTL for the secret masker
+            with self._publish_lock:
+                # AD-1337: a rotate() since the generation was read replaced this value. It is still returned (it
+                # was current when this call began) but neither cached nor kept for the secret masker.
+                if self._generations.get(name, 0) == generation:
+                    self._cache[name] = (value, time.monotonic() + self._cache_ttl)
+                    self._last_resolved[name] = value  # AD-1337: kept past the TTL for the secret masker
 
         return value
 

@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 from urllib.parse import quote, quote_plus
@@ -45,6 +46,10 @@ DEFAULT_FLOOR: int = 8
 #: value is left as it is here, and the render seam (AD-1337 S3) masks the text the model is shown.
 DEFAULT_MAX_DEPTH: int = 32
 DEFAULT_MAX_NODES: int = 10_000
+
+#: Not measured: how long a tool call waits for the startup priming (AD-1337 S2) before it runs without it. The
+#: priming's CLI step has a 5 s timeout (``CredentialStore._resolve``); the extra second covers the store file's load.
+DEFAULT_PRIMING_TIMEOUT_S: float = 6.0
 
 #: What the caller gets instead of the text or the output when a pass fails.
 MASKING_FAILED_TEXT: str = "tool output withheld: secret masking failed"
@@ -327,6 +332,32 @@ class SecretMasker:
         self._max_depth = max_depth
         self._max_nodes = max_nodes
         self._table: tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]] | None = None
+        # AD-1337 S2: while the startup priming runs, the monotonic time it stops being waited for; None otherwise.
+        # One attribute, read and replaced whole, so the worker thread and the loop need no lock.
+        self._priming_deadline: float | None = None
+
+    def begin_priming(self, timeout_s: float = DEFAULT_PRIMING_TIMEOUT_S) -> None:
+        """AD-1337 S2: a value is being primed. ``priming_pending`` is True until ``end_priming``, or for at most
+        ``timeout_s`` seconds. ``ValueError`` unless ``timeout_s`` is positive."""
+        if not timeout_s > 0:
+            raise ValueError("timeout_s must be positive")
+        self._priming_deadline = time.monotonic() + timeout_s
+
+    def end_priming(self) -> None:
+        """AD-1337 S2: the priming has finished, or failed. Safe from any thread and more than once."""
+        self._priming_deadline = None
+
+    def priming_pending(self) -> bool:
+        """AD-1337 S2: whether a tool call should wait for the priming. Past its bound this ends the priming, with
+        one WARNING: the call then runs, masked with every value the masker knows without it."""
+        deadline = self._priming_deadline
+        if deadline is None:
+            return False
+        if time.monotonic() < deadline:
+            return True
+        self._priming_deadline = None
+        logger.warning("AD-1337: secret priming did not finish in time; tool calls no longer wait for it")
+        return False
 
     def mask_text(self, text: str) -> MaskOutcome:
         """Replace every form of every known value in ``text``. ``TypeError`` for anything but a ``str``."""

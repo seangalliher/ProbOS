@@ -733,22 +733,41 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     runtime.secret_masker = SecretMasker(
         credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
     )
+    # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
+    # with what the priming adds. Marked before the task exists, so no call can run between the two.
+    runtime.secret_masker.begin_priming()
     runtime.secret_masking_prime_task = asyncio.create_task(
-        _prime_secret_masking(store), name="secret_masking_prime",
+        _prime_secret_masking(store, runtime.secret_masker), name="secret_masking_prime",
     )
     return runtime.secret_masker
 
 
-async def _prime_secret_masking(store: Any) -> None:
+def _prime_secret_masking_worker(store: Any, masker: Any) -> str | None:
+    """AD-1337 S2: the priming's worker-thread body.
+
+    ``get`` keeps the GitHub value for the masker, whichever step resolves it. The empty ``mask_text`` pass then
+    loads the store file and builds the masker's pattern table here, so neither happens on the loop at the first
+    tool call, even when the environment answered ``get`` before the store file was read. ``end_priming`` runs last
+    whatever happened, so a failure releases the tool calls waiting on the priming.
+    """
+    try:
+        return store.get("github", requester="secret_masking")
+    finally:
+        masker.mask_text("")  # never raises for a str: a failed pass logs its type only (AD-1337 D7)
+        masker.end_priming()
+
+
+async def _prime_secret_masking(store: Any, masker: Any) -> None:
     """AD-1337 S2: resolve the GitHub credential once, in a worker thread, so a token only ``gh auth token`` knows is
-    masked from the first tool call; ``get`` keeps it for the masker, which reads it on every pass.
+    masked from the first tool call: ``_wire_secret_masker`` marks the masker priming, and every registry call waits
+    until the worker ends it (``ToolExecutor._invoke_once``), for at most the masker's ``DEFAULT_PRIMING_TIMEOUT_S``.
 
     The read keeps ``get``'s department and tier gates. It writes no access row (``_log_access`` needs a running loop
     in its own thread), and the value goes to the masker only, as the masker's own store read does. A failure, or no
     ``gh``, only means a CLI-only token is masked after its first ``get``; startup never waits on this task.
     """
     try:
-        value = await asyncio.to_thread(store.get, "github", requester="secret_masking")
+        value = await asyncio.to_thread(_prime_secret_masking_worker, store, masker)
     except Exception as exc:
         logger.warning("AD-1337: priming the github credential for masking failed (%s)", type(exc).__name__)
         return

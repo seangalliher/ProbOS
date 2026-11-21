@@ -176,6 +176,35 @@ def _raise_values(_store: CredentialStore) -> tuple[tuple[str, str], ...]:
     raise RuntimeError(TOKEN)
 
 
+class _PrimingPolls:
+    """Stands in for a masker's ``priming_pending``: records each answer and sets ``held`` once ``count`` answers
+    have held a call, so a test knows the calls are waiting without sleeping."""
+
+    def __init__(self, masker: SecretMasker, monkeypatch: pytest.MonkeyPatch, *, count: int) -> None:
+        self.original = masker.priming_pending
+        self.count = count
+        self.answers: list[bool] = []
+        self.held = asyncio.Event()
+        monkeypatch.setattr(masker, "priming_pending", self)
+
+    def __call__(self) -> bool:
+        answer = self.original()
+        self.answers.append(answer)
+        if sum(self.answers) >= self.count:
+            self.held.set()
+        return answer
+
+
+async def _held(polls: _PrimingPolls, calls: list[asyncio.Task[Any]]) -> bool:
+    """Whether ``polls`` saw its count of held answers while every call in ``calls`` was still waiting. A gate that
+    lets a call through makes that call finish first, so this returns False instead of hanging."""
+    held = asyncio.ensure_future(polls.held.wait())
+    done, _ = await asyncio.wait({held, *calls}, return_when=asyncio.FIRST_COMPLETED)
+    if held not in done:
+        held.cancel()
+    return held in done and not any(call.done() for call in calls)
+
+
 # -- N1 to N5: where the seam sits ------------------------------------------------------------------------------
 
 
@@ -450,27 +479,50 @@ def test_secret_masked_is_a_routed_durable_member() -> None:
 # -- N16 to N19: startup wiring, priming, and the construction census ---------------------------------------------
 
 
-async def test_finalize_builds_one_masker_on_the_runtime_and_primes_github_off_the_loop(
+async def test_finalize_primes_github_off_the_loop_and_every_executor_waits_for_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    entered, release = threading.Event(), threading.Event()
     calls: list[tuple[list[str], int]] = []
 
     def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
         calls.append((list(argv), threading.get_ident()))
+        entered.set()
+        assert release.wait(10.0)  # gh answers only after the tool calls below are waiting
         return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
 
     monkeypatch.setattr(
         "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
     )
     runtime = SimpleNamespace(credential_store=_store(tmp_path))
+    tools = (_EchoTool("echo", f"cli={CLI_TOKEN}"), _EchoTool("echo", f"cli={CLI_TOKEN}"))
+    try:
+        masker = finalize._wire_secret_masker(runtime=runtime)
 
-    masker = finalize._wire_secret_masker(runtime=runtime)
-
-    assert isinstance(masker, SecretMasker) and runtime.secret_masker is masker
-    assert isinstance(runtime.secret_registry, SecretRegistry)
-    task = runtime.secret_masking_prime_task
-    assert isinstance(task, asyncio.Task) and task.get_name() == "secret_masking_prime"
+        assert isinstance(masker, SecretMasker) and runtime.secret_masker is masker
+        assert isinstance(runtime.secret_registry, SecretRegistry)
+        task = runtime.secret_masking_prime_task
+        assert isinstance(task, asyncio.Task) and task.get_name() == "secret_masking_prime"
+        assert masker.priming_pending() is True  # marked before the task can run
+        assert await asyncio.to_thread(entered.wait, 10.0)  # the priming is inside gh, as on a real boot
+        polls = _PrimingPolls(masker, monkeypatch, count=2)
+        # Built as finalize builds the runtime's executor and as dispatch builds its own (N19 pins both sources).
+        executors = (
+            ToolExecutor(registry=_registry(tools[0]), secret_masker=runtime.secret_masker),
+            DispatchToolExecutor(
+                registry=_registry(tools[1]), secret_masker=agentic_dispatch._runtime_secret_masker(runtime),
+            ),
+        )
+        window = [asyncio.create_task(executor.invoke("agent-1", "echo", {})) for executor in executors]
+        assert await _held(polls, window) is True
+        assert [tool.calls for tool in tools] == [0, 0]  # held before the registry, so a raising tool is held too
+    finally:
+        release.set()
     await task
+    assert polls.original() is False  # the worker ended the priming
+    results = await asyncio.gather(*window)
+    assert [result.output for result in results] == [f"cli={PLACEHOLDER}"] * 2
+    assert [tool.calls for tool in tools] == [1, 1]
     assert [argv for argv, _ in calls] == [["gh", "auth", "token"]]
     assert calls[0][1] != threading.get_ident()
     assert masker.mask_text(f"out {CLI_TOKEN}").text == f"out {PLACEHOLDER}"
@@ -493,15 +545,20 @@ async def test_priming_never_raises_and_a_missing_gh_only_leaves_the_value_unpri
 ) -> None:
     caplog.set_level(logging.INFO, logger="probos.startup.finalize")
     store = _store(tmp_path)
-    await finalize._prime_secret_masking(store)
+    masker = SecretMasker(credential_store=store, registry=SecretRegistry(), env_source=EnvSecretSource({}))
+    masker.begin_priming()
+    await finalize._prime_secret_masking(store, masker)
     assert "github credential primed for masking (found=False)" in caplog.text
+    assert masker.priming_pending() is False
 
     def _boom(*_args: Any, **_kwargs: Any) -> None:
         raise RuntimeError(TOKEN)
 
     monkeypatch.setattr(store, "get", _boom)
-    await finalize._prime_secret_masking(store)
+    masker.begin_priming()
+    await finalize._prime_secret_masking(store, masker)
     assert "priming the github credential for masking failed (RuntimeError)" in caplog.text
+    assert masker.priming_pending() is False  # a failed priming releases the waiting calls too
     assert TOKEN not in caplog.text
 
 
@@ -625,3 +682,87 @@ async def test_priming_reads_github_as_the_secret_masking_system_requester(
     # The requester is how the store attributes a read (_log_access writes agent_type=requester): a system read
     # must never look like a crew member's, and it carries no department or tier.
     assert reads == [(("github",), {"requester": "secret_masking"})]
+
+
+# -- N22 to N24: the priming's bound, a read across a rotation, and where the store file first loads -------------
+
+
+async def test_a_priming_that_never_ends_holds_a_call_only_until_its_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    masker = _masker(tmp_path)
+    assert masker.priming_pending() is False  # nothing primes it, so no call waits (every bare executor, N10)
+    for bad in (0, -1.0):
+        with pytest.raises(ValueError):
+            masker.begin_priming(bad)
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(secret_masking, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    masker.begin_priming(secret_masking.DEFAULT_PRIMING_TIMEOUT_S)
+    assert masker.priming_pending() is True
+    masker.end_priming()
+    masker.end_priming()  # a second end is harmless
+    assert masker.priming_pending() is False
+
+    masker.begin_priming(secret_masking.DEFAULT_PRIMING_TIMEOUT_S)  # and nothing ever ends it
+    polls = _PrimingPolls(masker, monkeypatch, count=2)
+    tool = _EchoTool("echo", f"token={TOKEN}")
+    executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+    call = asyncio.create_task(executor.invoke("agent-1", "echo", {}))
+    try:
+        assert await _held(polls, [call]) is True  # two answers from one call: the gate keeps checking
+        assert tool.calls == 0
+    finally:
+        clock.now += secret_masking.DEFAULT_PRIMING_TIMEOUT_S
+    result = await asyncio.wait_for(call, timeout=10.0)
+    assert result.output == f"token={PLACEHOLDER}" and tool.calls == 1  # it runs, masked with what is known
+    assert polls.original() is False
+    assert caplog.text.count("secret priming did not finish") == 1
+
+
+def test_a_get_in_flight_cannot_undo_a_rotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        entered.set()
+        assert release.wait(10.0)
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    store = _store(tmp_path)
+    got: list[str | None] = []
+    reader = threading.Thread(target=lambda: got.append(store.get("github", requester="secret_masking")))
+    reader.start()
+    try:
+        assert entered.wait(10.0)  # the get is in the CLI step: it found no stored value
+        assert store.rotate("github", TOKEN) is True
+    finally:
+        release.set()
+        reader.join(10.0)
+    assert not reader.is_alive() and got == [CLI_TOKEN]  # the value that was current when the get began
+    assert store.get("github", requester="test") == TOKEN  # the rotation stands
+    masker = SecretMasker(credential_store=store, registry=SecretRegistry(), env_source=EnvSecretSource({}))
+    assert masker.mask_text(f"{CLI_TOKEN} {TOKEN}").text == f"{CLI_TOKEN} {PLACEHOLDER}"
+
+
+async def test_priming_loads_the_store_file_off_the_loop_whichever_step_resolves_github(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", CLI_TOKEN)  # get answers at the environment step, before the store file
+    reads: list[int] = []
+    original = probos.credential_store._read_store_file
+
+    def _recording_read(path: Path) -> dict[str, str]:
+        reads.append(threading.get_ident())
+        return original(path)
+
+    monkeypatch.setattr("probos.credential_store._read_store_file", _recording_read)
+    runtime = SimpleNamespace(credential_store=_store(tmp_path, {"vault": VAULT_A}))
+
+    masker = finalize._wire_secret_masker(runtime=runtime)
+    await runtime.secret_masking_prime_task
+
+    assert len(reads) == 1 and reads[0] != threading.get_ident()  # loaded once, in the priming's worker thread
+    assert masker.mask_text(f"{VAULT_A} {CLI_TOKEN}").text == f"<secret:vault> {PLACEHOLDER}"
+    assert len(reads) == 1  # the first pass on the loop read no file
