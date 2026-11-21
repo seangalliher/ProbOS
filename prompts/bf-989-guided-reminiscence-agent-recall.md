@@ -2322,3 +2322,251 @@ After the trackers: `PROGRESS.md` `bc81b247a62bb199c40a9e41b868828d4ca0d4c6` and
 **What the orchestrator changed in the Architect's draft of the repair** (the rest is the draft's): the pair labels are `GX1` and so on where the draft wrote `G-R1`; the test pairs import `RecallUnavailable` at the top of the file (TX1 holds the parenthesised import, and TX2 and TX3 drop the draft's function-level imports, which were there for a red column and would leave a stale comment); pair AX3 (AD-541d test 12 keeps testing the empty selection, the reviewer's note) and the tracker pairs PX1-PX4 and DX1-DX4 are the orchestrator's own; the evidence of item bf-989 R4 in 17.10 is the probe of RO6, narrowed to the callers that were read (`drift_detector._get_crew_agent_ids`, which returns `agent.id`, and `commands_qualification.py`), where the draft read it without running anything.
 
 What the tests and the probes do not show, stated plainly: no vessel has run a session, so the live registry's contents, the live agents' replies and the cost of a live session are not measured; the sovereign-to-slot mapping is exercised with a real `AgentIdentityRegistry`, and the stop reason with a real `CognitiveAgent`, `AgentStopService` and `ConcurrencyManager`, but every other agent in the tests is a double; `_checked_recall` recognises four shapes (no reply, the stop metadata, a failed reply, `[NO_RESPONSE]`), so a successful reply whose text is itself a refusal ("I can't say") reaches the judge as before, and its precision stays item bf-989 R2; the self-session and the handler's latency stay item bf-989 R3; a key with no live agent takes no cooldown, so a departed agent's triggers each log one INFO line (item bf-989 R5).
+
+## 18. Repair after review round 2 (2026-11-21)
+
+Review round 2 (Diff Reviewer, `gpt-6.1-sol`, the candidate `86b9c156..3aacc4c7`, 45 minutes, a clean detached worktree) returned REQUEST CHANGES: one P1, one P2 and one P3. The Architect ruled on all three (consult `25c6536d`, read-only, recorded on #1838). **Round 3 reviews this delta only**: nothing here changes a public signature, a persisted format, an event payload or a test another component relies on. The branch is `fix/bf989-reminiscence-agent-recall-20261120`; the base of this repair is `3aacc4c70d6fe3ccfdbea45e64e9cc0ace2101f2`.
+
+| F | Severity and reach | Finding | Decision |
+|---|---|---|---|
+| F1 | P1, ordinary reach, regression (activated by the round-1 repair; the writer pre-existed) | A session's recall replies become reflection episodes and working-memory conclusions. `_qualification_test` is read in one place, `_store_action_episode` (`cognitive_agent.py:12707`); the AD-669 block of `_run_cognitive_lifecycle` (`:7844-7868`) ignores it, records a conclusion and persists it through `ThoughtStore.store_thought` (`thought_store.py:100-130`, one caller in `src`, `cognitive_agent.py:8820`, reached only from `:7863`). The next session then selects those reflections as ground truth. | **Fixed here.** The marker skips the whole AD-669 block (Y1), and the selection leaves out `reflection` episodes (Y4). |
+| F2 | P2, reach only with more than one live slot of a crew type | The check-in DM is delivered by the Ward Room's 8-character DM key (`dm_channel_name`, AD-453; `find_targets_for_agent` notifies the first alive crew agent whose id prefix is in the channel name, AD-407d) and can reach another slot. | **Not fixed here.** #1820 R8, owned by the Ward Room: the real fix is a DM key or per-thread recipient that uses the full id, a persisted-format change on a path every DM uses, and a mention would resolve to the first live slot of the type as well (`CallsignRegistry.resolve`). The shipped fleet has one slot per crew type (section 18.10, RO2), so there is no ordinary reach. The trackers say what the DM does not guarantee (DY2, PY2). |
+| F3 | P3, pre-existing (the base behaves the same) | The post-dream route is unreachable: `DreamScheduler.force_dream()` (`dreaming.py:3253`) calls `len()` on the int `DreamReport.episodes_replayed`, and the Counselor's reminiscence branch (`counselor.py:1123`, `:1151`) sits behind the empty intervention-target return and reads `retrieval_results`, which the payload does not carry. | #1820 R6. |
+
+**Decisions (the Architect, consult `25c6536d`).**
+- **D-r2-1 (the whole block).** The marker skips the whole AD-669 block, not only the persistence call: the working-memory conclusion is shared across threads by design, so a recall reply would otherwise reach the agent's real cognition as a conclusion. This is the documented intent of the marker (`qualification.py:15`, `qualification_tests.py:114`, `communication_benchmarks.py:197`) and it covers every qualification producer (`qualification_tests.py:54`, `communication_benchmarks.py:206`): after this change none of them leaves a thought or a conclusion. It stays inside #1838.
+- **D-r2-2 (the filter).** `select_episodes_for_session` leaves out `reflection` episodes. After the merge, sessions run for real and would select reflections that earlier probe runs wrote (R7). A reflection is the agent's own derived thought, so scoring a recall against it is circular. The filter runs after `recent_for_agent`'s k-cap, so a recency window dominated by reflections shortens the selection, and with nothing left the session is unmeasured (the honest result).
+- **D-r2-3 (the DM).** No code change. The two facts that decide it are in 18.10 (RO2).
+
+### 18.1 `src/probos/cognitive/cognitive_agent.py` (M-R3)
+
+**Y1.** SEARCH:
+```
+        # AD-669: Record conclusion for cross-thread sharing
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm:
+                _conclusion_summary = self._extract_conclusion_summary(decision, result)
+```
+REPLACE:
+```
+        # AD-669: Record conclusion for cross-thread sharing. BF-989 (#1838): a qualification interaction leaves no
+        # conclusion, in working memory or as a thought episode (the marker that skips its episode, AD-566a).
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm and not intent.params.get("_qualification_test"):
+                _conclusion_summary = self._extract_conclusion_summary(decision, result)
+```
+
+### 18.2 `src/probos/cognitive/guided_reminiscence.py` (M-R3)
+
+**Y2.** SEARCH:
+```
+from probos.types import llm_response_text
+```
+REPLACE:
+```
+from probos.types import MemorySource, llm_response_text
+```
+**Y3.** SEARCH:
+```
+        ``await`` it raised at ``len()``, so no session ever read an episode.
+        """
+```
+REPLACE:
+```
+        ``await`` it raised at ``len()``, so no session ever read an episode. A reflection is never selected.
+        """
+```
+**Y4.** SEARCH:
+```
+        if not episodes:
+            return []
+
+        # Skip the most recent episode (too easy) if we have more than k
+```
+REPLACE:
+```
+        if not episodes:
+            return []
+
+        # BF-989 (#1838): a reflection is the agent's own derived thought (a stored conclusion, AD-606, or a dream's
+        # consolidation, AD-599), not what happened, so it is no ground truth for a recall test. Nothing left: no session.
+        episodes = [ep for ep in episodes if getattr(ep, "source", "") != MemorySource.REFLECTION.value]
+        if not episodes:
+            return []
+
+        # Skip the most recent episode (too easy) if we have more than k
+```
+
+### 18.3 `src/probos/cognitive/qualification_tests.py` (M-R3)
+
+**Y5.** SEARCH:
+```
+    The intent is marked ``_qualification_test``, which suppresses episode storage (``CognitiveAgent.handle_intent``),
+    so a recall attempt never becomes an episode that a later session could select as ground truth.
+```
+REPLACE:
+```
+    The intent is marked ``_qualification_test``, which suppresses episode, working-memory conclusion and thought
+    storage (``CognitiveAgent``'s episode hook and its AD-669 conclusion block, BF-989 round 2), so a recall attempt
+    never becomes an episode that a later session could select as ground truth.
+```
+
+### 18.4 `tests/test_bf989_guided_reminiscence_recall.py` (M-R3)
+
+**Y6.** SEARCH:
+```
+from probos.cognitive.qualification_tests import agent_recall_fn
+from probos.identity import AgentIdentityRegistry
+from probos.substrate.registry import AgentRegistry
+from probos.types import IntentDescriptor, IntentResult, LLMResponse
+```
+REPLACE:
+```
+from probos.cognitive.qualification_tests import agent_recall_fn
+from probos.config import SystemConfig
+from probos.identity import AgentIdentityRegistry
+from probos.substrate.registry import AgentRegistry
+from probos.types import IntentDescriptor, IntentMessage, IntentResult, LLMResponse
+```
+**Y7.** SEARCH:
+```
+    with pytest.raises(RecallUnavailable, match=f"^{reason}$"):
+        await recall(_SLOT, "What happened?")
+```
+REPLACE:
+```
+    with pytest.raises(RecallUnavailable, match=f"^{reason}$"):
+        await recall(_SLOT, "What happened?")
+
+
+# -- R5 to R7: review round 2 (a session leaves nothing behind, and selects no reflection) ----------------------------
+
+
+async def test_the_selection_leaves_out_the_agents_own_reflections() -> None:
+    memory = MockEpisodicMemory()
+    for i, source in enumerate(["direct", "reflection", "direct", "reflection", "direct"]):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=["a1"], source=source))
+    selected = await GuidedReminiscenceEngine(episodic_memory=memory).select_episodes_for_session("a1", k=3)
+    assert [(ep.id, ep.source) for ep in selected] == [("ep-0", "direct"), ("ep-2", "direct"), ("ep-4", "direct")]
+
+
+async def test_a_memory_of_reflections_alone_leaves_a_session_nothing_to_test() -> None:
+    memory, recall = MockEpisodicMemory(), _Recall()
+    for i in range(3):
+        await memory.store(
+            _make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=["a1"], source="reflection"),
+        )
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3, recall_fn=recall,
+    )
+    result = await engine.run_session("a1")
+    assert (result.episodes_tested, recall.calls) == (0, [])
+
+
+def _real_agent(memory: MockEpisodicMemory) -> CognitiveAgent:
+    return _crew_class()(
+        llm_client=_CountingLLM(), runtime=SimpleNamespace(episodic_memory=memory, config=SystemConfig()),
+    )
+
+
+async def test_a_qualification_turn_leaves_no_episode_and_no_conclusion() -> None:
+    seen = []
+    for marked in (True, False):
+        memory = MockEpisodicMemory()
+        agent = _real_agent(memory)
+        params = {"text": "What do you recall?", **({"_qualification_test": True} if marked else {})}
+        await agent.handle_intent(IntentMessage(intent="bf989_probe", params=params, target_agent_id=agent.id))
+        stored = [ep.source for ep in await memory.recent_for_agent(agent.id, k=10)]
+        seen.append((stored, len(agent._working_memory.get_active_conclusions())))
+    # The unmarked control concludes and stores a reflection, so the pair can tell the two turns apart.
+    assert seen == [([], 0), (["reflection"], 1)]
+
+
+async def test_a_session_over_a_real_agent_stores_nothing_and_never_selects_its_own_replies() -> None:
+    memory, registry = MockEpisodicMemory(), AgentRegistry()
+    agent = _real_agent(memory)
+    await registry.register(agent)
+    for i in range(4):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[agent.id]))
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3, recall_fn=agent_recall_fn(registry),
+    )
+    sessions = [await engine.run_session(agent.id) for _ in range(2)]
+    assert [[r.episode_id for r in s.recall_results] for s in sessions] == [["ep-0", "ep-1", "ep-2"]] * 2
+    assert sorted(ep.id for ep in await memory.recent_for_agent(agent.id, k=10)) == ["ep-0", "ep-1", "ep-2", "ep-3"]
+```
+
+### 18.5 `PROGRESS.md` (M-R3)
+
+**PY1.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` AD-566's path, whose `_qualification_test` marker suppresses episode storage); with no `recall_fn` ``
+REPLACE: `` AD-566's path, whose `_qualification_test` marker suppresses episode, working-memory conclusion and thought storage; the session's selection leaves out reflections, the agent's own derived thoughts); with no `recall_fn` ``
+
+**PY2.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` (31 cases). Not measured: how often a live session runs and the live effect of its DM. Open items bf-989 R1 to R5 of #1820. ``
+REPLACE: `` (35 cases). The check-in DM is delivered by the Ward Room's 8-character DM key, so with more than one live slot of a crew type it may reach another slot; the shipped fleet has one (R8). Not measured: how often a live session runs, the live effect of its DM and how many reflections earlier probe runs left in memory (R7). Open items bf-989 R1 to R8 of #1820. ``
+
+### 18.6 `DECISIONS.md` (M-R3)
+
+**DY1.** A substring inside the BF-989 entry's Recall source bullet (once).
+
+SEARCH (substring): `` its `_qualification_test` marker suppresses episode storage, so a recall attempt is never later selected as ground truth. ``
+REPLACE: `` its `_qualification_test` marker suppresses episode, working-memory conclusion and thought storage (review round 2 found that the conclusion block, AD-669, and the thought it persists, AD-606, ignored it, so a session left reflections that the next one selected), so a recall attempt is never later selected as ground truth; the selection also leaves out `reflection` episodes, the agent's own derived thoughts, which are no ground truth (a recency window dominated by them shortens the selection, and with none left the session is unmeasured). ``
+
+**DY2.** A substring inside the BF-989 entry's Writes bullet (once).
+
+SEARCH (substring): `` (the DM channel is otherwise unroutable) ``
+REPLACE: `` (the DM channel is otherwise unroutable; delivery then routes by the Ward Room's 8-character DM key, AD-453 and AD-407d, so with more than one live slot sharing a prefix the check-in may reach another slot, #1820 R8, and the shipped fleet has one slot per crew type) ``
+
+**DY3.** The BF-989 entry's Effect bullet (once).
+
+SEARCH (substring): `` - *Effect.* Not measured: how often a live session runs, and the live effect of its DM. ``
+REPLACE: `` - *Effect.* Not measured: how often a live session runs, the live effect of its DM and how many reflections earlier probe runs (AD-566a-d, AD-642, the memory probes) left in memory (#1820 R7). ``
+
+**DY4.** The BF-989 entry's Residual bullet (once).
+
+SEARCH (substring): `` - *Residual.* #1820 items bf-989 R1 to R5. *Reversal.* Revert the BF-989 commits; nothing stored needs migration. ``
+REPLACE: `` - *Residual.* #1820 items bf-989 R1 to R8. *Reversal.* Revert the BF-989 commits; nothing stored needs migration. ``
+
+### 18.7 Issue texts
+
+**Closure comment on #1838 (amends 8.1 and 17.10).** The paragraph that says the recall attempt "stores no episode" becomes: "the recall goes through the agent's own turn, marked `_qualification_test`, which suppresses episode, working-memory conclusion and thought storage; the selection leaves out reflection episodes". Add one sentence: "The check-in DM is delivered by the Ward Room's 8-character DM key: with more than one live slot of a crew type it may reach another slot (#1820 R8); the shipped fleet has one slot per crew type."
+
+**New items on #1820 (after R4 and R5 of 17.10).**
+- **R6 (bf-989 round 2, F3; pre-existing, not a regression).** The post-dream reminiscence route is unreachable. `DreamScheduler.force_dream()` (`dreaming.py:3253`) calls `len()` on the int `DreamReport.episodes_replayed`, and the completion event is lost to a `TypeError`. The Counselor branch (`counselor.py:1123`, `:1151`) sits behind the empty intervention-target return and reads `retrieval_results`, which the completion payload does not carry. Direct initiation works (a session starts). Repair the scalar serialization and the producer/reader contract, and separate the reminiscence branch from the intervention guard.
+- **R7 (bf-989 round 2).** Reflection episodes that earlier qualification runs wrote (AD-566a-d, AD-642, the memory probes: the AD-669 block ignored the marker) stay in memory. They are not deleted (optimize, never delete). The number on the live store is not measured. After BF-989 they no longer reach a reminiscence session; other recall paths can still surface them, and a recency window dominated by them leaves the session's selection short or empty (the session is then unmeasured). Measure the count on a copy of the live store, then decide whether a recall-side filter or a one-off tag is warranted.
+- **R8 (bf-989 round 2, F2; pre-existing, Ward Room).** A DM routes by an 8-character key per id: `dm_channel_name` (AD-453) cuts each id to 8 characters, `find_targets_for_agent` notifies the first alive crew agent whose id prefix is in the channel name (AD-407d), `CallsignRegistry.resolve` picks the first live slot of a type, and the channel subscribes only the creator's pair. With more than one live slot of a crew type a Counselor check-in (and any DM) can reach another slot; the reviewer reproduced it with two live agents (`surgeon_medical_surgeon_1_...` asked, `surgeon_medical_surgeon_0_...` notified). The shipped fleet has one slot per crew type. The real fix needs a DM key or a per-thread recipient that uses the full id, a persisted-format change on a path every DM uses.
+
+### 18.8 Mutation rows (campaign of record on the repaired tree; restore between rows; each killer at `-n 0`)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RN1 | the AD-669 guard removed (`if _wm:`) | `test_a_qualification_turn_leaves_no_episode_and_no_conclusion`, `test_a_session_over_a_real_agent_stores_nothing_and_never_selects_its_own_replies` |
+| RN2 | the guard reads a misspelt marker | the same two |
+| RN3 | the selection filter removed | `test_the_selection_leaves_out_the_agents_own_reflections`, `test_a_memory_of_reflections_alone_leaves_a_session_nothing_to_test` |
+| RN4 | the selection filter inverted (`==`) | the same two (and the selection and session tests over ordinary episodes) |
+
+### 18.9 Properties for the round-3 Diff Reviewer (the delta only)
+
+1. The marker skips the whole AD-669 block: no working-memory conclusion and no thought episode for any intent whose params carry `_qualification_test`, for both producers of the marker (`qualification_tests.py:54` and `communication_benchmarks.py:206`); an intent without it records and persists as before (`test_ad669_conclusion_sharing.py`, `test_ad606_think_in_memory.py`).
+2. `store_thought` has one caller in `src` (`cognitive_agent.py:8820`), reached only from the guarded block, and the one other lifecycle episode writer, `_store_action_episode`, still skips the marker.
+3. `select_episodes_for_session` has one caller (`run_session`); with the filter a session over a memory of reflections alone tests nothing, asks no model and writes nothing; an ordinary episode is selected exactly as before (the AD-541d and BF-989 selection tests over `direct` episodes pass unedited).
+4. No signature, persisted format, event payload or test that another component relies on changes; the tracker text claims no more than the delta does (no claim that the DM always reaches the subject's slot).
+
+### 18.10 The orchestrator's first-hand checks of the repair (2026-11-21, an oracle tree detached at `3aacc4c7` whose touched files hold the candidate's text; the pairs of 18.1 to 18.6 applied by tool; blobs equal the hand-applied ones)
+
+| # | Check | Result |
+|---|---|---|
+| RO1 | E1: the four new tests (18.4) alone on the unrepaired candidate | 4 failed, 31 passed (35 cases in the file): the selection kept a reflection (`ep-1`) among the three; a memory of reflections alone gave a session three episodes to test; the marked turn stored a `reflection` and one conclusion; the second session selected other episodes than the first, after the first wrote three reflections. |
+| RO2 | The two facts behind the decision on F2 | (a) `rg -n "target_size" src/probos/startup/agent_fleet.py`: every pool the fleet creates for a crew agent type (architect, scout, counselor, the four officers, the medical and science pools) has `target_size=1`; the pools with more than one agent are the built-in, utility, introspect and skills pools and the opt-in SWE specialists, none of which is an ontology crew type. (b) The probe `probe_crew_prefix.py` (premises asserted before the answer: the ontology loaded 16 crew types, at least ten; the grouping finds a collision between two synthetic names) found that the 8-character prefixes of the 16 shipped crew types are all distinct, and the legacy fallback set adds none. An id starts `{agent_type}_{pool}_`, so a type shorter than 8 characters (`scout`, `builder`, `surgeon`, `yeoman`) keeps an underscore and pool characters in its prefix; none of the 16 types is the start of another. The ontology of another vessel could name more types; that is not measured. |
+| RO3 | F1 by hand (not the reviewer's word) | A real `CognitiveAgent` subclass (`_BF989Crew`-shaped, a model double that answers one prose sentence) run through `handle_intent` on `SimpleNamespace(episodic_memory=<recording memory>, config=SystemConfig())`: on the candidate, with `_qualification_test` set, memory held one `reflection` episode and the agent's working memory one conclusion, exactly as without the marker. With the repair, the marked turn leaves neither (the unmarked control still leaves both). The reply `{"intents": []}` (the default `MockLLMClient` answer) is dropped by the thought store's raw-JSON rule, so the control needs a prose reply. |
+| RO4 | After the pairs: the new tests and the five named consumer files | `tests/test_bf989_guided_reminiscence_recall.py`, `test_ad541d_guided_reminiscence.py`, `test_ad606_think_in_memory.py`, `test_ad669_conclusion_sharing.py`, `test_ad566a_qualification_harness.py`, `test_ad642_communication_benchmarks.py`: 157 passed. |
+| RO5 | The consumer set: 57 files (the 52 of the round-1 consolidated check and the 5 more that the delta's vocabulary finds: `_qualification_test`, `record_conclusion`, `get_active_conclusions`, `ThoughtStore`, `select_episodes_for_session`, `agent_recall_fn`) | 1737 passed, 2 skipped under the default embeddings (325 s) and the same under `PROBOS_EMBEDDINGS=local` (352 s). |
+| RO6 | The campaign (18.8), `audit/rows_bf989r3.py`, the five test files above as the campaign's tests | 4 rows, 4 KILLED, none survived, differs 0, invalid 0; every named killer failed: RN1 by 2, RN2 by 2, RN3 by exactly the 2 named, RN4 by 16 (14 more). The tree was restored (the four blobs and the two trackers equal the table's). |
+| RO7 | The checkpoint blobs | `cognitive_agent.py` `94fa448a8c1bc98f44ec903f373777d19381183e`; `guided_reminiscence.py` `a4e27caff7bbde2d11da65137cd80bbed15496f3`; `qualification_tests.py` `849de5a6664eb06cdaa7cfb7166c0a838b8b5e5d`; `tests/test_bf989_guided_reminiscence_recall.py` `9c6df9250ff69b3b39fc6e23c55f5cc9401ff10c`; `PROGRESS.md` `98d0e35c46508bb0578230c1f2614be791156442`; `DECISIONS.md` `28373e9dd53afe66d5e63a70b3a80b7d45d59768`. |
+| RO8 | What the orchestrator added to the Architect's answer | Y5 (the docstring of `agent_recall_fn` said the marker suppresses episode storage only, which is the claim F1 falsified); the shape of the tests (the Architect named the `_CrewAgent` pattern of the AD-606 tests and a `SimpleNamespace` runtime: the lighter `_crew_class()` already in this file, a `MockEpisodicMemory` and `SystemConfig()` were enough, and the paired unmarked control stores a `reflection`, so the test can tell the two turns apart); the tracker pairs PY1, PY2 and DY1 to DY4 with the Architect's wording for the DM and the residuals; the F3 line `dreaming.py:3253` read first-hand (`DreamReport.episodes_replayed` is an `int` at `types.py:885`; `len()` of it raises inside the `try` that emits `dream_complete`, which logs at DEBUG and loses the event). |
+| RO9 | What the tests do not show | The live store: how many reflections earlier probe runs left, and whether a recency window dominated by them starves the selection (R7). A ChromaDB-backed memory: the new tests run over `MockEpisodicMemory`, while the reviewer's probe (4 episodes to 7 on the candidate) used ChromaDB; the writer is the same `EpisodicMemory.store` call. A real model: only a prose reply is stored as a thought, and the tests use one. The second producer of the marker (`communication_benchmarks.py:206`): it is covered by the same guard and its tests pass, but no test of it asserts that it leaves no conclusion. The Ward Room's delivery: unchanged, and F2 stays open as R8. |
