@@ -10,7 +10,10 @@ builds, and real ToolResult values:
 - N22-N25: the environment source decides by name only, and its rule only narrows BF-890's;
 - N26-N31: masked_credential_values: each source, no CLI and no access row, rotation, its only caller;
 - N32-N37: padded values, a non-ASCII value, an unpadded base64, a config double, the floor argument, and a form
-  found only across the join of a result's strings.
+  found only across the join of a result's strings;
+- N38-N43 (review round 1): an unreadable store withholds the output until its file is removed or repaired; a
+  first load in another thread cannot undo a rotation; the walk's node budget; a shared form's label; a label
+  that holds a value; a store file that is not an object of strings loads as AD-456 loaded it.
 Does not prove: any seam (AD-1337 S2, S3), the masking event (S2), or the cost of a pass (the orchestrator's probe).
 No test reads the process environment's values: every environment is a dict the test builds.
 """
@@ -569,3 +572,184 @@ def test_a_form_found_only_across_the_join_leaves_the_result_as_it_is(tmp_path: 
     result = ToolResult(output=["nul", "value-123"])
     masked = masker.mask_result(result)
     assert masked.result is result and masked.names == frozenset() and masked.failed is False
+
+
+# -- N38 to N43: review round 1 (the store's file, a first load in another thread, the node budget, labels) ---
+
+
+@pytest.mark.parametrize("damage", ["truncated", "directory"])
+def test_an_unreadable_store_withholds_the_output_until_its_file_is_repaired(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, damage: str,
+) -> None:
+    path = tmp_path / "secrets.json"
+    if damage == "truncated":
+        path.write_text('{"github": "' + TOKEN, encoding="utf-8")  # the raw value is in a file a tool could print
+    else:
+        path.mkdir()  # reading a directory raises an OSError (IsADirectoryError, or PermissionError on Windows)
+    store = CredentialStore(store_path=path)
+    masker = _masker(store)
+    caplog.set_level(logging.DEBUG)
+    for _ in range(2):  # a later pass does not take the failed load for an empty store either
+        assert masker.mask_text(f"t {TOKEN}") == MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    assert masker.mask_result(ToolResult(output=TOKEN)).failed is True
+    errors = [record for record in caplog.records if record.name == secret_masking.logger.name]
+    assert len(errors) == 3 and all(r.levelno == logging.ERROR and r.exc_info is None for r in errors)
+    legacy = [record for record in caplog.records if record.name == "probos.credential_store"]
+    assert len(legacy) == 1 and legacy[0].levelno == logging.WARNING  # AD-456's one warning; the load ran once
+    assert TOKEN not in caplog.text
+    assert store.get("github", requester="test") is None  # AD-456's policy for get: an empty store
+    logged = len(caplog.records)
+    if damage == "directory":
+        path.rmdir()
+    else:
+        path.unlink()
+    # removed: the store is empty, as it is for get, so the pass succeeds with no value to mask
+    assert masker.mask_text(f"t {TOKEN}") == MaskOutcome(f"t {TOKEN}", frozenset(), False)
+    assert all(record.levelno < logging.ERROR for record in caplog.records[logged:])
+    path.write_text(json.dumps({"github": TOKEN}), encoding="utf-8")
+    assert masker.mask_text(f"t {TOKEN}") == MaskOutcome("t <secret:github>", frozenset({"github"}), False)
+    assert store.get("github", requester="test") is None  # the masker reads the file; what get returns is unchanged
+
+
+class _ReportingLock:
+    """The store's load lock; the thread named ``rotator`` reports when it reaches it."""
+
+    def __init__(self, reached: threading.Event) -> None:
+        self._inner = threading.Lock()
+        self._reached = reached
+
+    def __enter__(self) -> None:
+        if threading.current_thread().name == "rotator":
+            self._reached.set()
+        self._inner.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._inner.release()
+
+
+@pytest.mark.parametrize("first_read", ["masker", "get"])
+def test_a_first_load_in_another_thread_cannot_undo_a_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_read: str,
+) -> None:
+    store = _store(tmp_path, {"github": "old-github-token-1"})
+    read, resume, rotator_waits_or_is_done = threading.Event(), threading.Event(), threading.Event()
+
+    def loads(text: str) -> Any:
+        parsed = json.loads(text)
+        if threading.current_thread().name == "reader":
+            read.set()  # the reader has parsed the old file and stored nothing yet
+            resume.wait(timeout=10.0)
+        return parsed
+
+    monkeypatch.setattr(
+        "probos.credential_store.json",
+        SimpleNamespace(loads=loads, dumps=json.dumps, JSONDecodeError=json.JSONDecodeError),
+    )
+    store._store_lock = _ReportingLock(rotator_waits_or_is_done)  # type: ignore[assignment]
+    rotated: list[bool] = []
+
+    def first_load() -> None:
+        if first_read == "masker":
+            masked_credential_values(store)
+        else:
+            store.get("github", requester="test")
+
+    def rotate() -> None:
+        rotated.append(store.rotate("github", "new-github-token-2"))
+        rotator_waits_or_is_done.set()
+
+    reader = threading.Thread(target=first_load, name="reader")
+    rotator = threading.Thread(target=rotate, name="rotator")
+    try:
+        reader.start()
+        assert read.wait(timeout=10.0)
+        rotator.start()
+        assert rotator_waits_or_is_done.wait(timeout=10.0)  # done (no lock), or waiting for the reader's load
+    finally:
+        resume.set()
+        for thread in (reader, rotator):
+            if thread.ident is not None:
+                thread.join(timeout=10.0)
+    assert not reader.is_alive() and not rotator.is_alive() and rotated == [True]
+    assert json.loads((tmp_path / "secrets.json").read_text(encoding="utf-8")) == {"github": "new-github-token-2"}
+    assert ("github", "new-github-token-2") in masked_credential_values(store)
+    assert _masker(store).mask_text("new-github-token-2").text == "<secret:github>"
+
+
+def test_the_walk_visits_at_most_max_nodes_and_copies_only_what_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    masker = _masker(_store(tmp_path, {"github": TOKEN}))
+    walk = masker._map_strings
+    calls, drawn = [0], [0]
+
+    def counted_walk(*args: Any) -> Any:
+        calls[0] += 1
+        return walk(*args)
+
+    def counted_enumerate(iterable: Any) -> Any:
+        for pair in enumerate(iterable):
+            drawn[0] += 1
+            yield pair
+
+    monkeypatch.setattr(masker, "_map_strings", counted_walk)
+    monkeypatch.setattr(secret_masking, "enumerate", counted_enumerate, raising=False)
+    flat = ToolResult(output=["x"] * 200_000 + [TOKEN])
+    assert masker.mask_result(flat).result is flat  # the value past the budget is left to the render seam
+    assert calls[0] == DEFAULT_MAX_NODES  # the list and 9,999 items, in one walk (no hit, so no second walk)
+    assert drawn[0] == DEFAULT_MAX_NODES  # 9,999 items walked and one drawn before the stop; no further iteration
+    small = _masker(_store(tmp_path, {"github": TOKEN}), max_nodes=3)
+    as_dict = small.mask_result(ToolResult(output={"a": TOKEN, "b": TOKEN, "c": TOKEN})).result.output
+    assert list(as_dict.items()) == [("a", "<secret:github>"), ("b", "<secret:github>"), ("c", TOKEN)]
+    as_tuple = small.mask_result(ToolResult(output=(TOKEN, TOKEN, TOKEN))).result.output
+    assert type(as_tuple) is tuple and as_tuple == ("<secret:github>", "<secret:github>", TOKEN)
+    ordered = ToolResult(output=OrderedDict({TOKEN: TOKEN}))
+    assert small.mask_result(ordered).result is ordered  # only an exact dict is walked; its keys are never nodes
+
+
+def test_a_form_two_values_share_is_labelled_by_the_smaller_label(tmp_path: Path) -> None:
+    smaller_value, larger_value = "Aabcdefghijkl", "Babcdefghijkl"
+    shared = base64.b64encode(b"abcdefghijkl").decode("ascii")
+    assert shared in secret_forms(smaller_value) & secret_forms(larger_value)  # premise: one aligned form, two values
+    masker = _masker(_store(tmp_path, {"z-label": smaller_value, "a-label": larger_value}))
+    assert masker.mask_text(f"x {shared} y").text == "x <secret:a-label> y"
+
+
+def test_a_label_that_holds_a_value_is_shown_as_unnamed(tmp_path: Path) -> None:
+    registry = SecretRegistry()
+    registry.register("tok-ABCD1234efgh", "tok-ABCD1234efgh")
+    registry.register("vault:tok-WXYZ5678ijkl", "tok-WXYZ5678ijkl")
+    masker = _masker(_store(tmp_path, {"github": TOKEN}), registry=registry)
+    out = masker.mask_text(f"x tok-ABCD1234efgh y tok-WXYZ5678ijkl z {TOKEN}")
+    assert out.text == "x <secret:unnamed> y <secret:unnamed> z <secret:github>"
+    assert out.names == frozenset({"unnamed", "github"}) and masker.mask_text(out.text).text is out.text
+
+
+@pytest.mark.parametrize(
+    ("content", "text", "names", "got"),
+    [
+        (["github", 5], f"t {TOKEN}", frozenset(), None),
+        (
+            {"github": TOKEN, "count": 5, "nested": {"depth": 2}},
+            "t <secret:github>",
+            frozenset({"github"}),
+            TOKEN,
+        ),
+    ],
+    ids=["array", "non-string-values"],
+)
+def test_a_store_file_that_is_not_an_object_of_strings_loads_as_ad456_loaded_it(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    content: Any,
+    text: str,
+    names: frozenset[str],
+    got: str | None,
+) -> None:
+    path = tmp_path / "secrets.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    store = CredentialStore(store_path=path)
+    caplog.set_level(logging.WARNING)
+    assert _masker(store).mask_text(f"t {TOKEN}") == MaskOutcome(text, names, False)  # a string entry only
+    assert store.get("github", requester="test") == got  # AD-456: an array is an empty store; the rest is skipped
+    assert not caplog.records  # no AD-456 warning, and no masking failure

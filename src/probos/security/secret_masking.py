@@ -260,7 +260,8 @@ class SecretMasker:
     """AD-1337: replaces every form of every known credential value with ``<secret:NAME>``.
 
     One per runtime (built by AD-1337 S2). ``mask_text`` and ``mask_result`` may run on any thread: the registry is
-    locked, the store's dicts are copied before they are read, and the pattern table is replaced whole.
+    locked, the store's first load is locked and its dicts are copied before they are read, and the pattern table is
+    replaced whole.
     """
 
     def __init__(
@@ -362,32 +363,38 @@ class SecretMasker:
         forms: dict[str, str] = {}
         for value, label in values:
             for form in secret_forms(value, self._floor):
-                forms.setdefault(form, label)
-        patterns = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
+                forms[form] = min(label, forms.get(form, label))  # D3: the smaller label wins a shared form
+        ordered = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
+        # D9: a label that holds a form would put a value in the placeholder and in ``names``.
+        unsafe = {label for label in set(forms.values()) if _present(ordered, label)}
+        patterns = tuple((form, UNNAMED_LABEL if label in unsafe else label) for form, label in ordered)
         self._table = (values, patterns)
         return patterns
 
     def _map_strings(self, value: Any, apply: Callable[[str], str], depth: int, visited: list[int]) -> Any:
         """``value`` with ``apply`` run on each string inside exact dicts, lists and tuples, within the bounds.
 
-        Returns ``value`` itself when no string changed. Dict keys are not rewritten, so two keys cannot collide.
+        A node is ``value`` itself, an item of an exact list or tuple, or a value of an exact dict; keys are not
+        nodes and are never rewritten, so two keys cannot collide. ``visited`` counts one walk's nodes: once it
+        reaches ``max_nodes`` the walk stops and leaves the rest as it is (the render seam, AD-1337 S3, masks the
+        text the model is shown). A container is copied only when one of its nodes changed, so with no change
+        ``value`` itself comes back.
         """
         visited[0] += 1
-        if visited[0] > self._max_nodes:
-            return value
         if isinstance(value, str):
             return apply(value)
-        if depth >= self._max_depth:
-            return value
         kind = type(value)
-        if kind is dict:
-            items = [(key, self._map_strings(item, apply, depth + 1, visited)) for key, item in value.items()]
-            if all(new is old for (_, new), old in zip(items, value.values())):
-                return value
-            return dict(items)
-        if kind is list or kind is tuple:
-            mapped = [self._map_strings(item, apply, depth + 1, visited) for item in value]
-            if all(new is old for new, old in zip(mapped, value)):
-                return value
-            return kind(mapped)
-        return value
+        if depth >= self._max_depth or (kind is not dict and kind is not list and kind is not tuple):
+            return value
+        copy: Any = None
+        for slot, item in (value.items() if kind is dict else enumerate(value)):
+            if visited[0] >= self._max_nodes:
+                break  # AD-1337: the budget is spent
+            new = self._map_strings(item, apply, depth + 1, visited)
+            if new is not item:
+                if copy is None:
+                    copy = dict(value) if kind is dict else list(value)
+                copy[slot] = new
+        if copy is None:
+            return value
+        return tuple(copy) if kind is tuple else copy
