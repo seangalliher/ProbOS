@@ -2,8 +2,9 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21
 **Revised by:** claude-architect (Claude Code, Opus 5.5), 2026-11-21, rev1
+**Revised by:** claude-architect (Claude Code, Opus 5.5), 2026-11-21, section 17 (repair after review round 1)
 
-**Status:** rev1. Proven as a draft on an oracle where S3 sat on S1 before its section 17 repair and on S2 rev0: the tests alone gave a collection error, and with all pairs 18 passed. Rev1 was proven on the rev1 oracle and again on the final base (section 16). Batch 1 is S1 + S2 + S3: one PR (`Refs #1560`), one broad gate. S3 must not merge alone. Decision: consult `4bb6d748` (on #1560, comment 7064966284), corrected here in D2 and D8. No Captain condition.
+**Status:** rev1, repaired after review round 1 by section 17, which amends 7.1, 7.2, 10 and the trackers and edits `crew_verifier.py` and the AD-1320 blob pin. Proven as a draft on an oracle where S3 sat on S1 before its section 17 repair and on S2 rev0: the tests alone gave a collection error, and with all pairs 18 passed. Rev1 was proven on the rev1 oracle and again on the final base (section 16). Batch 1 is S1 + S2 + S3: one PR (`Refs #1560`), one broad gate. S3 must not merge alone. Decision: consult `4bb6d748` (on #1560, comment 7064966284), corrected here in D2 and D8. No Captain condition.
 
 **Rev1 changes (2026-11-21):**
 - X10 now anchors on `class SecretHandle:` and its docstring line. The old anchor, the end of `_map_strings`, was rewritten by S1's section 17 repair (RB3). Both helpers keep their text.
@@ -73,6 +74,8 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 | `cognitive/dm/reply_pipeline.py` | The tier-1 browser result is masked before `mark_executed` and the episode |
 | `security/secret_masking.py` | `secret_masker_of`, `mask_route_result` (placed above `class SecretHandle`) |
 | `tests/test_ad1195_durable_producers.py` | The render module joins `SECRET_MASKED`'s producer row; no count changes |
+| `cognitive/crew_verifier.py` (section 17) | The session correction's runtime projection carries the runtime's masker |
+| `tests/test_ad1320_agentic_budget_awareness.py` (section 17) | The `native_builder.py` blob pin moves to S3's blob |
 
 **Heavier designs rejected:**
 - A constructor keyword: it would change the AD-1152 golden (P6).
@@ -96,6 +99,9 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 | `secret_masking.py` gains two module functions above `SecretHandle` | S1's census of `masked_credential_values` (`test_ad1337_secret_masking.py:516-520`) | Unchanged: neither function names it |
 | Owned-steps view / `WorkPullReceipt` hit | `agentic_dispatch.py:4150-4154` (an acknowledgement needs `presentation.output == rendered`); `result_offload.py:603-608` | Fail closed: a masked view is not acknowledged; a receipt longer than the bound becomes a delivery failure |
 | `self_query` after a producer hit | `agentic_loop.py:2846-2877` | Fail closed: the model is told `self_query: presentation check failed.` (N8) |
+| `native_builder.py`'s five lines (X8) | AD-1320's blob pin (`test_ad1320_agentic_budget_awareness.py:625`) | Missed by rev1; re-pinned by section 17 (no `budget_awareness`, unchanged) |
+| `_SessionCorrectionRuntime` gains a defaulted field | `test_ad1126:1773`, `test_ad1241:2529`, `test_ad1190:1507-1560`, `test_ad1205:1695`, `test_ad1346_admission_shadow_crew:244` | Unchanged: none compares the field list; `secret_masker_of` gives None for their doubles |
+| A withheld delivered result has no delivery | `_delivery_stop`, BF-946, `DeliveryRun.promised` | A failed delivery keeps its extension, so the stop is unchanged; a dropped delivery leaves its masked payload, reservation and reader offer, as an admitted one does |
 
 **Not checked:** a live run, or the vessel.
 
@@ -125,12 +131,13 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
   - Masking the capture changes no digest comparison (P9, P10). A large `read_file` of a file that holds a secret is still delivered as a source frame, its recovery is re-read through the executor and masked again, and `raw_sha256` stays the file's.
   - Fail closed:
     - a placeholder longer than its value can push a line past `_source_frame`'s allowance (`source_line_too_large`), or a receipt past `_admit`; either becomes a typed delivery failure;
-    - a capture pass that fails is replaced by a withheld result's capture.
+    - a capture pass that fails is replaced by a withheld result's capture;
+    - a final pass that fails, or a delivered frame that holds a known value, gives a withheld result with no delivered frame; a frame is never rewritten (section 17).
 - **D5 (event, (f)).**
   - `SECRET_MASKED` with S2's eight keys:
     - `seam: "render"`;
     - `tool_id`: `tool_record_identity(name)`, None when strict;
-    - `invocation_id`: the model's tool-call id (`ToolCallResult.id`, at most 128 characters), None when strict;
+    - `invocation_id`: the model's tool-call id (`ToolCallResult.id`, at most 128 characters, holding no known value), None when strict;
     - `operation_id` and `attempt_id` from the strict `EffectCorrelation`;
     - `names` (at most 16), `names_omitted` and `failed`.
   - At most one per tool result: both passes share one `RenderMask`.
@@ -155,10 +162,15 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
   | `_McpTool.invoke` bridge calls | A registered tool's body: the producer seam |
   | `MCPToolAdapter.invoke` | Never constructed in `src` (asserted) |
   | `submit_mcp_invoke_with_consensus` | Reaches a model through `_McpTool` (producer seam) or a DAG's reflect (S5) |
+  | `AgenticLoop._execute_one_tool` `self._executor.invoke` (section 17) | The loop's executor: the producer seam, then the render seam |
+  | `DispatchToolExecutor.invoke` `super().invoke` (section 17) | The executor itself |
+  | `_EffectDispatchMixin.dispatch` `invoke(context)` (section 17) | The broker's callback, `ToolExecutor`'s `invoke_reserved` |
+  | `verify_repair` `executor.invoke` (section 17) | The runtime's `ToolExecutor`; reads `error` only |
+  | `BrowserTool.open_captain_session` `self.invoke` (section 17) | The Captain's session open: HXI answer only |
 
 - **D8 (S5, scope).** `Decomposer.reflect` writes DAG node results (mesh `stdout`, `decomposer.py:710-714`) into a model prompt and logs it at DEBUG (`:491`). No seam covers it. That is a separate route class, so it is AD-1337 S5, in batch 2 with S4, and #1560 closes after both.
 
-## 5. Tests: new file `tests/test_ad1337_render_seam.py` (16 cases, 18 items)
+## 5. Tests: new file `tests/test_ad1337_render_seam.py` (16 cases, 18 items; 18 cases, 23 items after section 17)
 
 | N | Case |
 |---|---|
@@ -178,6 +190,8 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 | N14 | Census: every result the loop hands the model passes the render seam |
 | N15 | Census: every route past the executor is masked or has a reason |
 | N16 | `secret_masker_of` and `mask_route_result` |
+| N17 | A session correction's projected dispatch masks; every dispatch run is handed its caller's runtime or that projection (section 17) |
+| N18 | A delivered frame that holds a known value, or whose pass fails, or whose output pass fails, is withheld and never rewritten; a clean frame is delivered (x4, section 17) |
 
 - **Base (`089895c1`):** collection error `ModuleNotFoundError: No module named 'probos.cognitive.swe_harness.render_masking'`.
 - **After M1:** 18 passed.
@@ -1315,6 +1329,10 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 - **ad-1337 R6** (Low).
   - *Reach:* a value cut short before a seam sees it: a leaf past the producer walk's bounds that BF-728's shape renderer truncates (`tool_call.py:444-470`).
   - *Gap:* the seams match whole forms only.
+- **ad-1337 R8** (Low; R7 is S1's round-3 finding, recorded in the same splice).
+  - *Reach:* a session correction whose tool output holds a value.
+  - *Evidence:* S3 N17 (masked).
+  - *Gap:* no `SECRET_MASKED` is recorded, because the correction projection is event-neutral by design (AD-1126); only the WARNING log records it.
 
 ## 9. What this does NOT change
 
@@ -1328,7 +1346,7 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 | Row | Mutant (lines changed) | Killed by |
 |---|---|---|
 | M9 | `RenderMask.capture` returns `captured` as its first statement (1) | N3, N9 |
-| M10 | `RenderMask.final`: the masking `if` becomes `if False:` (1) | N3, N5, N6, N7, N8 (render) |
+| M10 | `RenderMask._mask_final` (section 17): `if isinstance(result.output, str):` becomes `if False:` (1) | N3, N5, N6, N7, N8 (render) |
 | M17 | Delete the `result = mask_route_result(...)` statement in `reply_pipeline` (3) | N12, N15 |
 | M19 | Dispatch: `loop.secret_masker = None` (1) | N13 |
 | T1 | Native builder: `loop.secret_masker = None` (1) | N13 |
@@ -1336,7 +1354,7 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 | T3 | Delete the `tcr = await render.final(...)` statement (3) | N5, N7, N14 |
 | T4 | Parallel: `by_index[index] = ToolCallResult(...)` without the `final` wrapper (5) | N6, N14 |
 | T5 | `capture`: a failed pass returns `captured` (1) | N4 |
-| T6 | `"invocation_id": call_id` in strict mode too (1) | N4, N7 |
+| T6 | `"invocation_id": self._carried_call_id(masker, result.id),` in strict mode too (section 17) (1) | N7 (N4's masker fails, so its id is left out either way) |
 | T7 | `_emit` drops `await emitted` (1) | N4 |
 | T8 | `secret_masker_of` returns the raw attribute (1) | N16 |
 | T9 | `mask_route_result` returns a non-`ToolResult` as it is (1) | N12, N16 |
@@ -1345,7 +1363,7 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 | T12 | `_emit`: `"names_omitted": 0,` (1) (campaign row X4) | N3 (17 labels must give a count of 1) |
 | T13 | `_emit`: `"names": names,` without the slice (1) | N3 (17 labels must give 16) |
 | T14 | `CALL_ID_MAX_CHARS = 100000` (1) (campaign row X12) | N3 (a 129-character id must be None; the test uses literals, not the constant) |
-| T15 | `_emit`: `len(result.id) < CALL_ID_MAX_CHARS` (1) | N3 (a 128-character id must be kept) |
+| T15 | `_carried_call_id` (section 17): `len(call_id) >= CALL_ID_MAX_CHARS` (1) | N3 (a 128-character id must be kept) |
 | T16 | Loop: `strict=strict` becomes `strict=False` in X5's `render.final(...)` (1) (campaign row X17) | N7 (the strict payload must have `tool_id` and `invocation_id` None) |
 | T17 | Parallel: `strict=False` becomes `strict=True` in X3 (1) | N6 (`invocation_id == "fixture-call"`) |
 | T18 | Loop: `correlation=trace_correlation` becomes `correlation=None` in X5 (1) | N7 (`operation_id == "op-s3"`, `attempt_id == "at-s3"`) |
@@ -1462,7 +1480,7 @@ git ls-files --eol (the eight edited files on main)   i/lf w/crlf
 1. Every `ToolCallResult` that `_execute_one_tool` returns, other than the constant BF-965 refusal and an `InvocationRefusal`, passes `RenderMask.final` before the effect correlation is attached. That `final` receives the call's own `strict` flag and `trace_correlation`. The parallel conversion passes its own `final` with `strict=False`, which is correct because that branch re-raises under the strict profile (`agentic_loop.py:2557-2560`). Every AD-1240 capture passes `RenderMask.capture` before `prepare_result`.
 2. Without a masker, or with no match, every object is returned as it is (the same text, capture and result) and no event is emitted. The AD-1152 and AD-1240 goldens are unchanged.
 3. No value, form or position reaches a log line, an event payload or an exception message. The render payload has exactly S2's eight keys, at most 16 labels with the rest counted, and a call id of at most 128 characters. A strict call carries no tool id and no call id.
-4. A failed pass withholds (the capture is replaced by a withheld result's; the final text is `MASKING_FAILED_TEXT`). Nothing raises out of the seam, and an emitter failure never unmasks.
+4. A failed pass withholds (the capture is replaced by a withheld result's; the final text is `MASKING_FAILED_TEXT`, and a withheld result carries no delivered frame except a failed delivery's fixed code). A delivered frame is checked as the model reads it; one that holds a known value is withheld, never rewritten. The call id is carried only when it holds no known value. Nothing raises out of the seam, and an emitter failure never unmasks.
 5. Both `AgenticLoop` constructions assign `secret_masker_of(<their tool_executor>)` right after construction. The slot refuses a non-masker. There is no constructor keyword and no new `AgenticLoop` method.
 6. The tier-1 browser result is masked before `mark_executed` and the episode. A non-`ToolResult` is withheld only when a masker exists.
 7. Every N15 row's reason is true of the code it names. S2's census strings and AD-1343's inventory are unchanged.
@@ -1472,6 +1490,7 @@ git ls-files --eol (the eight edited files on main)   i/lf w/crlf
 ## 15. Acceptance
 
 - [ ] Section 5's prediction holds: a collection error on `089895c1`, then 18 passed after M1. The focused gate is green.
+- [ ] Section 17.8's prediction holds: 6 failed and 17 passed with the test pairs alone on `25944b39`, then 23 passed; rows U1 to U12 are killed by their named cases.
 - [ ] Mutation rows M9, M10, M17, M19 and T1 to T18 are killed by the named cases (section 10's rerun set on the rev1 oracle).
 - [ ] Section 12's `rg` and diff checks hold, and `check_architecture_principles.py --check` passes.
 - [ ] TR1 to TR4 are applied, and the ledger is regenerated and checked.
@@ -1500,3 +1519,778 @@ Every pair of section 7 was applied to scratch worktrees by `audit\contract_tool
 - A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`, and the DAG reflect route (S5) and the per-run vault registrations (S4) are not in this slice.
 - A render seam driven by a real model: the cases use the loop's own doubles, which is what section 5 names.
 - The full suite: it runs once for the batch, after this slice.
+
+---
+
+## 17. Repair after review round 1 (2026-11-21)
+
+**Base:** `25944b39` (batch 1 head), with the S2 repair already applied to S2's files.
+
+**Milestones:**
+
+| M | Content | Tier | Review |
+|---|---|---|---|
+| M3 | 17.2 (tests first), then 17.3, 17.4, 17.5 | HIGH, security control | **Full** review (round 1 found High defects, and `RenderMask.final`'s return shape changes) |
+| M4 | 17.6, 17.7, then `gen_ad_ledger.py` and its `--check` | LOW | Delta |
+
+**Commit subjects:**
+- M3: `Withhold a frame the render seam cannot mask and carry the masker into a correction`
+- M4: `Record the render seam repair in the status and decisions entries`
+
+### 17.1 Classification and decisions
+
+| F | Fix | Where |
+|---|---|---|
+| F1 | `_SessionCorrectionRuntime.secret_masker`, filled from `secret_masker_of(runtime)` | RV1 to RV4 |
+| F2 | `final` checks the delivered frame and withholds one that changes; it never rewrites one | RM2 |
+| F3 | `_carried_call_id`: the id is kept only when the mask pass returns it unchanged | RM2 |
+| F4 | Every withhold goes through `_withheld`, which drops a non-failed delivery | RM2 |
+| F5 | N15 reads every `invoke` call; five new `ROUTES` rows; two new assertions | RT5 to RT7 |
+| Wide run | AD-1320 blob re-pin | RP1 |
+
+**Heavier designs rejected:**
+- A `without_result_delivery` helper in `tool_call.py`. It would be the owner's natural home, but it edits AD-1240's module and breaks section 12's empty-diff check, for one caller.
+- Rewriting the frame with placeholders. A masked worked path points the recovery at a file that does not exist.
+- An emitter in the projection. It would widen the event-neutral projection (AD-1126, `test_ad1126:1812`), so it is recorded as R8 instead (renumbered by the orchestrator: R7 is S1's round-3 finding F7).
+
+**Conditional for the Builder:** if the S2 repair changed how S2's `test_a_dispatch_run_shows_the_model_the_placeholder_and_emits_secret_masked` readies its masker, apply the same step in N17, with the same lines, and record it in the report.
+
+### 17.2 `tests/test_ad1337_render_seam.py` (M3, written first)
+
+**RT1.** SEARCH:
+```
+import probos
+from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
+from probos.cognitive.swe_harness.tool_call import (
+    ToolCallResult,
+    capture_tool_result,
+    result_delivery,
+    tool_registration_to_llm_definition,
+)
+from probos.events import EventType
+from probos.security import secret_masking
+from probos.security.secret_masking import (
+    MASKING_FAILED_TEXT,
+```
+REPLACE:
+```
+import probos
+from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+from probos.cognitive.crew_verifier import _session_correction_runtime
+from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
+from probos.cognitive.swe_harness.tool_call import (
+    DelegatedToolCallResult,
+    InstructionToolCallResult,
+    ToolCallResult,
+    capture_tool_result,
+    result_delivery,
+    tool_registration_to_llm_definition,
+    with_result_delivery,
+)
+from probos.events import EventType
+from probos.execution.workspace_results import ResultDelivery
+from probos.repository_instructions import InstructionObservation
+from probos.security import secret_masking
+from probos.security.secret_masking import (
+    MASKING_FAILED_TEXT,
+    MaskOutcome,
+```
+
+**RT2.** SEARCH:
+```
+from tests import test_ad1240_tool_result_delivery as delivery_tests
+from tests import test_ad745_episode_anchor as action_tests
+from tests.fixtures import ad1343_seam_census as seam_census
+from tests.fixtures.ad1343_seam_registry import DIRECT_TOOL_INVOKES
+from tests.offered_tools import offer
+from tests.test_ad1147_parallel_tools import _RecordingEmit
+from tests.test_ad1240_tool_result_delivery import (
+```
+REPLACE:
+```
+from tests import test_ad1240_tool_result_delivery as delivery_tests
+from tests import test_ad1337_executor_seam as executor_tests
+from tests import test_ad745_episode_anchor as action_tests
+from tests.fixtures import ad1343_seam_census as seam_census
+from tests.fixtures.ad1343_seam_registry import DIRECT_TOOL_INVOKES
+from tests.offered_tools import offer
+from tests.test_ad1147_parallel_tools import _RecordingEmit
+from tests.test_ad1224_durable_tool_start import _dispatch_runtime, _offering_store
+from tests.test_ad1240_tool_result_delivery import (
+```
+
+**RT3.** Extends N3. SEARCH:
+```
+    assert [(p["invocation_id"], p["names"], p["names_omitted"]) for p in _masked(capped)] == [
+        ("i" * 128, sorted(many)[:16], 1), (None, sorted(many)[:16], 1),
+    ]
+```
+REPLACE:
+```
+    assert [(p["invocation_id"], p["names"], p["names_omitted"]) for p in _masked(capped)] == [
+        ("i" * 128, sorted(many)[:16], 1), (None, sorted(many)[:16], 1),
+    ]
+
+    # The call id is the model's: one that holds a known value is left out of the event while the text is masked.
+    leaky = _RecordingEmit()
+    shown = await RenderMask(_real_masker(tmp_path / "leaky")).final(
+        ToolCallResult(id=f"call_{TOKEN}", output=f"c {TOKEN}"),
+        emit_fn=leaky, tool_name="fixture_result", strict=False, correlation=None,
+    )
+    assert shown.output == f"c {PLACEHOLDER}"
+    assert [(p["invocation_id"], p["names"]) for p in _masked(leaky)] == [(None, ["github"])]
+    assert [form for form in secret_forms(TOKEN) if form in json.dumps(leaky.events)] == []
+```
+
+**RT4.** Extends N4. SEARCH:
+```
+    assert again.output == MASKING_FAILED_TEXT
+    assert "SECRET_MASKED could not be emitted at the render seam" in caplog.text and TOKEN not in caplog.text
+```
+REPLACE:
+```
+    assert again.output == MASKING_FAILED_TEXT
+    assert "SECRET_MASKED could not be emitted at the render seam" in caplog.text and TOKEN not in caplog.text
+
+    # A withheld delivered result keeps no frame the model would read instead, but keeps an instruction or delegation
+    # extension; a failed delivery keeps its own fixed frame, so the run still stops on it (BF-946).
+    observation, evidence = InstructionObservation(), DelegationEvidence(status="completed")
+    for plain, kind in (
+        (ToolCallResult(id="d", output="z"), ToolCallResult),
+        (
+            InstructionToolCallResult(id="d", output="z", repository_instructions=observation),
+            InstructionToolCallResult,
+        ),
+        (DelegatedToolCallResult(id="d", output="z", evidence=evidence), DelegatedToolCallResult),
+    ):
+        held = await RenderMask(masker).final(
+            with_result_delivery(plain, ResultDelivery("workspace", "Outline: a frame")),
+            emit_fn=None, tool_name="t", strict=False, correlation=None,
+        )
+        assert type(held) is kind and result_delivery(held) is None
+        assert (held.id, held.output, held.is_error) == ("d", MASKING_FAILED_TEXT, True)
+        assert getattr(held, "repository_instructions", observation) is observation
+        assert getattr(held, "evidence", evidence) is evidence
+    stopped = with_result_delivery(
+        ToolCallResult(id="d", output="z"), ResultDelivery("failed", "!", code="capture_limit"),
+    )
+    kept = await RenderMask(masker).final(stopped, emit_fn=None, tool_name="t", strict=False, correlation=None)
+    assert result_delivery(kept) is result_delivery(stopped)
+    assert (kept.output, kept.is_error) == (MASKING_FAILED_TEXT, True)
+```
+
+**RT5.** Adds five `ROUTES` rows. SEARCH:
+```
+    ("src/probos/runtime.py", "ProbOSRuntime.submit_mcp_invoke_with_consensus", "invoke", "self.mcp_bridge"):
+        "reaches a model through _McpTool.invoke (producer seam) or a decomposed DAG's reflect (AD-1337 S5)",
+}
+```
+REPLACE:
+```
+    ("src/probos/runtime.py", "ProbOSRuntime.submit_mcp_invoke_with_consensus", "invoke", "self.mcp_bridge"):
+        "reaches a model through _McpTool.invoke (producer seam) or a decomposed DAG's reflect (AD-1337 S5)",
+    ("src/probos/cognitive/swe_harness/agentic_loop.py", "AgenticLoop._execute_one_tool", "invoke", "self._executor"):
+        "the loop's executor: the producer seam, then the render seam (N14)",
+    ("src/probos/cognitive/agentic_dispatch.py", "DispatchToolExecutor.invoke", "invoke", "super()"):
+        "the executor itself (ToolExecutor.invoke): the producer seam masks what it returns",
+    ("src/probos/execution/effect_broker.py", "_EffectDispatchMixin.dispatch", "invoke", ""):
+        "the broker's callback: its one caller hands it ToolExecutor's invoke_reserved (asserted below)",
+    ("src/probos/cognitive/repair_verification.py", "verify_repair", "invoke", "executor"):
+        "the runtime's ToolExecutor (the producer seam); the retry reads only result.error, for its signature",
+    ("src/probos/tools/browser/tool.py", "BrowserTool.open_captain_session", "invoke", "self"):
+        "the Captain's own session open: its one caller, the browser router, returns the answer to the Captain "
+        "(asserted below); no model or record reads it",
+}
+```
+
+**RT6.** The head of N15. SEARCH:
+```
+def test_every_route_past_the_tool_executor_is_masked_or_has_a_recorded_reason() -> None:
+    found: set[tuple[str, str, str, str]] = set()
+    for path in sorted(seam_census.PACKAGE.rglob("*.py")):
+        visitor = _RouteCalls(path.relative_to(seam_census.ROOT).as_posix())
+        visitor.visit(ast.parse(path.read_bytes()))
+        found |= {(c.file, c.function, c.callee, c.receiver) for c in visitor.calls}
+    found |= {
+        (c.file, c.function, c.callee, c.receiver) for c in seam_census.census()
+        if c.callee == "invoke" and c.receiver.split(".")[-1].endswith(("tool", "bridge"))
+    }
+    assert found == set(ROUTES), sorted(found ^ set(ROUTES))
+```
+REPLACE:
+```
+def test_every_route_past_the_tool_executor_is_masked_or_has_a_recorded_reason() -> None:
+    found: set[tuple[str, str, str, str]] = set()
+    captain_opens: list[str] = []
+    broker_dispatches: list[tuple[str, list[str]]] = []
+    for path in sorted(seam_census.PACKAGE.rglob("*.py")):
+        rel = path.relative_to(seam_census.ROOT).as_posix()
+        tree = ast.parse(path.read_bytes())
+        visitor = _RouteCalls(rel)
+        visitor.visit(tree)
+        found |= {(c.file, c.function, c.callee, c.receiver) for c in visitor.calls}
+        for node in ast.walk(tree):
+            if _callee(node) == "open_captain_session":
+                captain_opens.append(rel)
+            elif _callee(node) == "dispatch" and ast.unparse(node.func).endswith("broker.dispatch"):
+                broker_dispatches.append((rel, [ast.unparse(arg) for arg in node.args]))
+    # Every invoke call, whatever its receiver: a filter on the receiver's name hid five (review round 1).
+    found |= {(c.file, c.function, c.callee, c.receiver) for c in seam_census.census() if c.callee == "invoke"}
+    assert found == set(ROUTES), sorted(found ^ set(ROUTES))
+```
+
+**RT7.** The tail of N15. SEARCH:
+```
+        < seam_census.first_line(step, seam_census.calls("mask_route_result"))
+        < seam_census.first_line(step, seam_census.calls("mark_executed"))
+    )
+
+
+def test_the_route_helpers_mask_a_tool_result_and_withhold_anything_else(
+```
+REPLACE:
+```
+        < seam_census.first_line(step, seam_census.calls("mask_route_result"))
+        < seam_census.first_line(step, seam_census.calls("mark_executed"))
+    )
+    assert captain_opens == ["src/probos/routers/browser_stream.py"]
+    opened = seam_census.function("src/probos/routers/browser_stream.py", "open_browser_session")
+    assert "await browser_tool.open_captain_session(body.url)" in {
+        ast.unparse(node.value) for node in ast.walk(opened) if isinstance(node, ast.Return) and node.value is not None
+    }
+    assert broker_dispatches == [("src/probos/tools/executor.py", ["request", "invoke_reserved"])]
+
+
+def test_the_route_helpers_mask_a_tool_result_and_withhold_anything_else(
+```
+
+**RT8.** Adds N17 and N18 at the end of the file. SEARCH:
+```
+    assert mask_route_result(masker, ToolResult(output={"text": TOKEN}), route="r").output == {"text": PLACEHOLDER}
+    assert "AD-1337: route=r masked names=['github']" in caplog.text and TOKEN not in caplog.text
+```
+REPLACE:
+```
+    assert mask_route_result(masker, ToolResult(output={"text": TOKEN}), route="r").output == {"text": PLACEHOLDER}
+    assert "AD-1337: route=r masked names=['github']" in caplog.text and TOKEN not in caplog.text
+
+
+# -- N17 and N18: the repair after review round 1 (section 17) ------------------------------------------------------
+
+
+async def test_a_session_correction_masks_what_its_tools_return(tmp_path: Path) -> None:
+    masker = _real_masker(tmp_path)
+    for projected in (False, True):
+        tool = executor_tests._EchoTool("echo_dispatch", f"correction result {TOKEN}")
+        runtime = _dispatch_runtime(
+            registry=executor_tests._registry(tool), event_log=None,
+            perm_store=await _offering_store("agent-s2", "echo_dispatch"),
+        )
+        runtime.secret_masker = masker
+        runtime.emit_event = executor_tests._Events()
+        target = (
+            _session_correction_runtime(runtime, agent_id="agent-s2", department="engineering", rank="lieutenant")
+            if projected else runtime
+        )
+        llm = executor_tests._CapturingLLM("echo_dispatch")
+
+        await WorkItemAgenticExecutor(llm_client=llm).run(
+            agent_id="agent-s2", instructions="Test instructions.", task_text="use the probe", runtime=target,
+        )
+
+        assert tool.calls == 1, projected  # premise: the tool ran, through the projection too
+        shown = repr(llm.requests[1])
+        assert PLACEHOLDER in shown and TOKEN not in shown, projected
+    assert target.secret_masker is masker  # the projection carries the runtime's masker
+
+    # Every dispatch run is handed the runtime its caller was given, or this one projection: a new projection would
+    # add a spelling here, and needs a case like the one above.
+    handed: set[str] = set()
+    for path in sorted(_SRC.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_bytes())):
+            keywords = {k.arg: k.value for k in node.keywords} if isinstance(node, ast.Call) else {}
+            if "task_text" in keywords and "runtime" in keywords:
+                value = keywords["runtime"]
+                handed.add(f"{_callee(value)}()" if isinstance(value, ast.Call) else ast.unparse(value))
+    assert handed == {"runtime", "self._runtime", "_session_correction_runtime()"}
+
+
+@pytest.mark.parametrize("case", ["clean", "known_root", "frame_fails", "output_fails"])
+async def test_a_delivered_frame_that_cannot_be_masked_is_withheld_not_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    owned = tmp_path / "rig" / (f"own-{TOKEN}" if case == "known_root" else "own")
+    owned.mkdir(parents=True)
+    runtime, executor, context = _environment(owned)
+    assert (TOKEN in str(runtime.workspace_results.root)) == (case == "known_root")  # premise
+    registration = runtime.tool_registry.register(_RawTool(ToolResult(output="HEAD\n" + "y" * 20000)))
+    masker = _real_masker(tmp_path / "masker")
+    real, passes = masker.mask_text, []
+
+    def _injected(text: str) -> MaskOutcome:
+        # The injected faults: the pass over the frame fails, or every pass after the capture fails.
+        passes.append(text)
+        if (case == "frame_fails" and "Outline:" in text) or (case == "output_fails" and len(passes) > 1):
+            return MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+        return real(text)
+
+    monkeypatch.setattr(masker, "mask_text", _injected)
+    emit = _RecordingEmit()
+    llm = _FakeLLM([_turn(), _done()])
+    loop = AgenticLoop(
+        llm_client=llm, tool_executor=executor, max_iterations=3, tool_result_max_chars=6000,
+        structured_tool_messages=True, workspace_results=runtime.workspace_results, event_emit_fn=emit,
+    )
+    loop.secret_masker = masker
+
+    async with _started(runtime):
+        result = await loop.run(
+            system_prompt="fixture", user_message="recover",
+            tools=[tool_registration_to_llm_definition(registration)], context=context,
+        )
+
+    shown = _last_result(llm.requests[1])
+    recorded = result.tool_results[0]
+    assert [form for form in secret_forms(TOKEN) if form in _requests_text(llm)] == []
+    if case == "clean":
+        assert "Outline:" in shown and result_delivery(recorded).status == "workspace"
+        assert _masked(emit) == []
+        return
+    # The model is shown the withheld text, never the frame, and the recorded result carries no delivery.
+    assert shown == MASKING_FAILED_TEXT
+    assert type(recorded) is ToolCallResult and result_delivery(recorded) is None
+    assert (recorded.output, recorded.is_error) == (MASKING_FAILED_TEXT, True)
+    [payload] = _masked(emit)
+    assert (payload["names"], payload["failed"], payload["invocation_id"]) == (
+        ["github"] if case == "known_root" else [], True, None if case == "output_fails" else "fixture-call",
+    )
+```
+
+**RT9.** (Added by the orchestrator: RT4 builds a real `DelegationEvidence`, because `DelegatedToolCallResult.__post_init__` refuses any other object.) SEARCH:
+```
+from probos.tools.executor import ToolExecutor, tool_record_identity
+```
+REPLACE:
+```
+from probos.tools.delegation_evidence import DelegationEvidence
+from probos.tools.executor import ToolExecutor, tool_record_identity
+```
+
+**Stop condition for the Builder.** Stop and report, without adapting the test, if any of these happens after the code pairs:
+- N15's assertion message names a key outside the 19;
+- N17's `handed` set holds a spelling outside the three;
+- N18 finds a form of the token anywhere in the requests other than the tool message.
+
+Each would be a new route or leak, not a fixture to update.
+
+### 17.3 `src/probos/cognitive/swe_harness/render_masking.py` (M3)
+
+**RM1.** SEARCH:
+```
+from probos.cognitive.swe_harness.tool_call import CapturedConversion, ToolCallResult, capture_tool_result
+```
+REPLACE:
+```
+from probos.cognitive.swe_harness.tool_call import (
+    CapturedConversion,
+    DelegatedToolCallResult,
+    InstructionToolCallResult,
+    ToolCallResult,
+    capture_tool_result,
+    result_delivery,
+)
+```
+
+**RM2.** SEARCH (`render_masking.py:98-141` on `25944b39`):
+```
+    async def final(
+        self,
+        result: ToolCallResult,
+        *,
+        emit_fn: Callable[..., Any] | None,
+        tool_name: object,
+        strict: bool,
+        correlation: EffectCorrelation | None,
+    ) -> ToolCallResult:
+        """Mask the text this call hands the model, then emit ``SECRET_MASKED`` once if either pass masked or failed.
+
+        A failed pass withholds: the output becomes ``MASKING_FAILED_TEXT`` and the result an error.
+        """
+        if self._masker is not None and isinstance(result.output, str):
+            outcome = self._masker.mask_text(result.output)
+            if outcome.failed:
+                from probos.security.secret_masking import MASKING_FAILED_TEXT
+
+                self._failed = True
+                result = replace(result, output=MASKING_FAILED_TEXT, is_error=True)
+            elif outcome.text is not result.output:
+                self._names |= outcome.names
+                result = replace(result, output=outcome.text)
+        if self._names or self._failed:
+            await self._emit(emit_fn, result, tool_name=tool_name, strict=strict, correlation=correlation)
+        return result
+
+    async def _emit(
+        self,
+        emit_fn: Callable[..., Any] | None,
+        result: ToolCallResult,
+        *,
+        tool_name: object,
+        strict: bool,
+        correlation: EffectCorrelation | None,
+    ) -> None:
+        from probos.events import EventType
+
+        names = sorted(self._names)
+        call_id = result.id if type(result.id) is str and len(result.id) <= CALL_ID_MAX_CHARS else None
+        payload = {
+            "seam": "render",
+            "tool_id": None if strict else tool_record_identity(tool_name),
+            "invocation_id": None if strict else call_id,
+```
+REPLACE:
+```
+    async def final(
+        self,
+        result: ToolCallResult,
+        *,
+        emit_fn: Callable[..., Any] | None,
+        tool_name: object,
+        strict: bool,
+        correlation: EffectCorrelation | None,
+    ) -> ToolCallResult:
+        """Mask the text this call hands the model, then emit ``SECRET_MASKED`` once if either pass masked or withheld.
+
+        The model reads a delivered result's frame instead of its output (``format_tool_result_content``), so the frame
+        is checked too. A failed pass, or a frame that holds a known value, withholds (``_withheld``).
+        """
+        masker = self._masker
+        if masker is None:
+            return result
+        result = self._mask_final(masker, result)
+        if self._names or self._failed:
+            await self._emit(masker, emit_fn, result, tool_name=tool_name, strict=strict, correlation=correlation)
+        return result
+
+    def _mask_final(self, masker: SecretMasker, result: ToolCallResult) -> ToolCallResult:
+        if isinstance(result.output, str):
+            outcome = masker.mask_text(result.output)
+            if outcome.failed:
+                return self._withheld(result)
+            if outcome.text is not result.output:
+                self._names |= outcome.names
+                result = replace(result, output=outcome.text)
+        delivery = result_delivery(result)
+        if delivery is not None:
+            # A frame is never rewritten: a masked worked path would send the recovery to a file that does not exist.
+            # One that holds a known value (a workspace root or a source path that contains one) is withheld, and so
+            # is one whose pass failed (its text is then MASKING_FAILED_TEXT, which differs too).
+            framed = masker.mask_text(delivery.presentation)
+            if framed.text is not delivery.presentation:
+                self._names |= framed.names
+                return self._withheld(result)
+        return result
+
+    def _withheld(self, result: ToolCallResult) -> ToolCallResult:
+        """``result`` as an error whose output is ``MASKING_FAILED_TEXT``, with no frame the model would read instead.
+
+        A failed delivery keeps its extension: its frame is a fixed code, and the run still stops on it (BF-946). Any
+        other delivery is dropped; an instruction or delegation extension is kept as it was.
+        """
+        from probos.security.secret_masking import MASKING_FAILED_TEXT
+
+        self._failed = True
+        delivery = result_delivery(result)
+        if delivery is None or delivery.status == "failed":
+            return replace(result, output=MASKING_FAILED_TEXT, is_error=True)
+        kept = {"id": result.id, "output": MASKING_FAILED_TEXT, "is_error": True, "duration_ms": result.duration_ms}
+        if isinstance(result, DelegatedToolCallResult):
+            return DelegatedToolCallResult(**kept, evidence=result.evidence)
+        if isinstance(result, InstructionToolCallResult):
+            return InstructionToolCallResult(**kept, repository_instructions=result.repository_instructions)
+        return ToolCallResult(**kept)
+
+    @staticmethod
+    def _carried_call_id(masker: SecretMasker, call_id: object) -> str | None:
+        """The model's tool-call id for the payload, or None: not a str, longer than ``CALL_ID_MAX_CHARS``, or holding
+        a known value. The id is the model's (its JSON is unchecked), so it is checked like the text and never masked
+        into the record; a failed pass returns ``MASKING_FAILED_TEXT``, which leaves it out too."""
+        if type(call_id) is not str or len(call_id) > CALL_ID_MAX_CHARS:
+            return None
+        return call_id if masker.mask_text(call_id).text is call_id else None
+
+    async def _emit(
+        self,
+        masker: SecretMasker,
+        emit_fn: Callable[..., Any] | None,
+        result: ToolCallResult,
+        *,
+        tool_name: object,
+        strict: bool,
+        correlation: EffectCorrelation | None,
+    ) -> None:
+        from probos.events import EventType
+
+        names = sorted(self._names)
+        payload = {
+            "seam": "render",
+            "tool_id": None if strict else tool_record_identity(tool_name),
+            "invocation_id": None if strict else self._carried_call_id(masker, result.id),
+```
+
+### 17.4 `src/probos/cognitive/crew_verifier.py` (M3)
+
+**RV1.** SEARCH:
+```
+    from probos.cognitive.verifier_independence import VerifierJudgePolicy
+    from probos.consensus.trust import TrustNetwork
+    from probos.substrate.registry import AgentRegistry
+```
+REPLACE:
+```
+    from probos.cognitive.verifier_independence import VerifierJudgePolicy
+    from probos.consensus.trust import TrustNetwork
+    from probos.security.secret_masking import SecretMasker
+    from probos.substrate.registry import AgentRegistry
+```
+
+**RV2.** SEARCH:
+```
+    emit_event: None = None
+    event_emit_fn: None = None
+    fault_observer: ToolFaultObservationPort | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedSessionCorrectionOutcome:
+```
+REPLACE:
+```
+    emit_event: None = None
+    event_emit_fn: None = None
+    fault_observer: ToolFaultObservationPort | None = None
+    # AD-1337 S3 (#1560): the runtime's masker, so the correction's dispatch executor and loop mask what its tools
+    # return (agentic_dispatch reads it through secret_masker_of). A filter over tool output, not runtime authority.
+    secret_masker: SecretMasker | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _NormalizedSessionCorrectionOutcome:
+```
+
+**RV3.** SEARCH:
+```
+    """Build one event-neutral governed capability projection for correction."""
+    from probos.cognitive.agentic_dispatch import register_mesh_intent_tools
+```
+REPLACE:
+```
+    """Build one event-neutral governed capability projection for correction."""
+    from probos.cognitive.agentic_dispatch import register_mesh_intent_tools
+    from probos.security.secret_masking import secret_masker_of
+```
+
+**RV4.** SEARCH:
+```
+        fault_observer=(
+            ToolFaultObservationPort(observer.observe_tool_run)
+            if observer is not None else None
+        ),
+    )
+```
+REPLACE:
+```
+        fault_observer=(
+            ToolFaultObservationPort(observer.observe_tool_run)
+            if observer is not None else None
+        ),
+        secret_masker=secret_masker_of(runtime),
+    )
+```
+
+### 17.5 `tests/test_ad1320_agentic_budget_awareness.py` (M3)
+
+**RP1.** SEARCH:
+```
+    # The blob before #1796 was 24179141cc441e31e176227fc767b39b950ac976.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "6641aa6aa67c91244efc6189d7044397bd46eaf1"
+```
+REPLACE:
+```
+    # The blob before #1796 was 24179141cc441e31e176227fc767b39b950ac976.
+    # AD-1337 S3 (#1560): native_builder.py now assigns the render seam's masker slot from its executor (a two-line
+    # comment, one import, one blank line, one assignment); the protected property (no budget_awareness in this
+    # file) is unchanged.
+    # The blob before AD-1337 S3 was 6641aa6aa67c91244efc6189d7044397bd46eaf1.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "5f0fac6ffc9ef52e0c4f04068f65df9832f24877"
+```
+
+### 17.6 `PROGRESS.md` (M4)
+
+**TP1.** SEARCH (occurs once): `` Measured by `tests/test_ad1337_render_seam.py` (16 cases, 18 items) ``
+
+REPLACE: `` Measured by `tests/test_ad1337_render_seam.py` (18 cases, 23 items) ``
+
+**TP2.** SEARCH (occurs once):
+```
+three censuses pin the loop's mask positions, each loop's masker source and the 14 routes past the executor. Not measured: a live run.
+```
+REPLACE:
+```
+four censuses pin the loop's mask positions, each loop's masker source, the runtime each dispatch run is handed and the 19 routes past the executor. Review round 1's repair: a session correction's runtime projection carries the masker (it masked nothing before); a delivered frame that holds a known value, or whose pass fails, is withheld rather than rewritten, because the model reads the frame and not the output; a call id that holds a known value is left out of the event. Not measured: a live run.
+```
+
+### 17.7 `DECISIONS.md` (M4)
+
+**TD1.** SEARCH (occurs once):
+```
+and a strict call carries neither it nor a tool id. A failed pass withholds.
+```
+REPLACE:
+```
+and a strict call carries neither it nor a tool id; an id that holds a known value is left out, not masked (review round 1). A failed pass withholds. The model reads a delivered result's frame, not its output, so the final pass checks the frame too and withholds one that holds a known value (a workspace root or source path containing one) rather than rewrite it: a masked worked path would send the recovery to a file that does not exist. A withheld result keeps no delivered frame, except a failed delivery's fixed code, on which the run still stops (BF-946).
+```
+
+**TD2.** SEARCH (occurs once):
+```
+the Captain's ACK (HXI only), the internal MCP app tools (game state), and the MCP bridge with its callers.
+```
+REPLACE:
+```
+the Captain's ACK and session open (HXI only), the internal MCP app tools (game state), the MCP bridge with its callers, and the executor paths (the loop's, the dispatch executor's, the broker's callback, the repair retry). The census reads every `invoke` call whatever its receiver: review round 1 found that a filter on the receiver's name had hidden five. A session correction's runtime projection carries the runtime's masker (a filter over tool output, not authority); the projection stays event-neutral, so a correction masks but emits no `SECRET_MASKED` (#1820 ad-1337 R8). A census pins the runtime each dispatch run is handed.
+```
+
+There is no change to the `*Residual.*` line. The residual numbering is the orchestrator's: R7 is S1's round-3 finding F7, so this item is R8 (TD2 and correction C14 say R8), and the priming-window seam of S2's repair is R9; the #1820 splice records R7 to R9.
+
+### 17.8 Counts and the focused gate
+
+**S3's file:**
+
+| Run | Prediction |
+|---|---|
+| On `25944b39`: S3's file now holds 18 cases, 23 items; the test pairs alone | **6 failed, 17 passed** |
+| After every pair | **23 passed** |
+
+The 6 that fail on the tests alone:
+- N3: the call id holds the token;
+- N4: the extension block, because the delivery is kept;
+- N17: the projected model saw the token;
+- N18, three items: `known_root`, `frame_fails` and `output_fails`. On the old code each delivers the frame.
+
+N15 passes on the tests alone, because F5's repair is test-only.
+
+**AD-1320:** `test_native_builder_and_continue_or_ask_are_untouched_negative_pins` fails on `25944b39` and passes after RP1.
+
+**Focused gate, `-n 0`:**
+- Section 12's 34 files;
+- `tests/test_ad1320_agentic_budget_awareness.py`;
+- `tests/test_ad1126_verified_finalization.py`, `tests/test_ad1241_mcp_offer_budget.py`, `tests/test_ad1190_delegation_tree_budget.py`, `tests/test_ad1346_admission_shadow_crew.py`, `tests/test_ad860_crew_verifier.py`.
+
+Then `check_architecture_principles.py --check`, and `gen_ad_ledger.py --check`. Commit a regenerated ledger in M4 if `--check` asks for one.
+
+### 17.9 Mutation rows (one change each; restore between rows)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| U1 | `_mask_final`: `if delivery is not None:` becomes `if False:` | N18[known_root], N18[frame_fails] |
+| U2 | `_mask_final`: the frame branch's `return self._withheld(result)` becomes `return result` | N18[known_root], N18[frame_fails] |
+| U3 | `_mask_final`: delete `self._names \|= framed.names` | N18[known_root] |
+| U4 | `_mask_final`: the output branch's `return self._withheld(result)` becomes `return replace(result, output=outcome.text, is_error=True)` | N4, N18[output_fails] |
+| U5 | `_withheld`: `if delivery is None or delivery.status == "failed":` becomes `if True:` | N4, N18[known_root, frame_fails, output_fails] |
+| U6 | `_withheld`: the same line becomes `if delivery is None:` | N4 (the failed delivery must be kept) |
+| U7 | `_withheld`: `if isinstance(result, DelegatedToolCallResult):` becomes `if False:` | N4 |
+| U8 | `_withheld`: `if isinstance(result, InstructionToolCallResult):` becomes `if False:` | N4 |
+| U9 | `_withheld`: delete `self._failed = True` | N18[known_root, frame_fails, output_fails] |
+| U10 | `_carried_call_id`: the return becomes `return call_id` | N3, N18[output_fails] |
+| U11 | `final`: `if masker is None:` becomes `if False:` | N2 |
+| U12 | `crew_verifier.py`: `secret_masker=secret_masker_of(runtime),` becomes `secret_masker=None,` | N17 |
+
+Section 10's M10, T6 and T15 are restated by C10 to C12 below. All other rows stand as written.
+
+**Campaign of record:** `render_masking.py`'s `final` and `_emit` and S3's test file both change, so the section 10 sha256 rule makes this a whole rerun on the M3 candidate: M9, M10, M17, M19, T1 to T18 (as amended), U1 to U12 and E1. Record each edited file's sha256. E1 stays equivalent.
+
+### 17.10 Round-2 review: properties to verify (full review, delta `25944b39..`)
+
+1. A session correction's dispatch masks:
+   - run N17;
+   - revert RV4 alone and confirm N17 fails;
+   - confirm the projection gains only `secret_masker` and stays event-neutral (`test_ad1126:1773` passes).
+2. No delivered frame that holds a known value reaches the model, and no frame is rewritten:
+   - run N18;
+   - revert RM2's frame block alone and confirm `known_root` and `frame_fails` fail.
+3. Every withheld result carries no delivered frame, except a failed delivery, which keeps its fixed code so `_delivery_stop` and BF-946 behave as before. Instruction and delegation extensions survive (N4).
+4. The payload keeps S2's eight keys:
+   - `invocation_id` is the model's id only when the mask pass returned it unchanged (N3, N18[output_fails]);
+   - `tool_id` is `tool_record_identity` with no catalog (`executor.py:312-326`);
+   - `operation_id` and `attempt_id` come only from the trusted correlation.
+5. N15 enumerates every `invoke` call, and each of the five new reasons is true of its code:
+   - `executor.py:895` is the broker's only dispatch;
+   - `browser_stream.py:186` returns the answer to the router;
+   - `repair_verification.py:231-247` reads only `error`.
+6. Without a masker, or with no match, every object comes back as it is, and the AD-1240 golden is unchanged (N2, N11).
+7. RP1's blob equals `git rev-parse <candidate>:src/probos/cognitive/swe_harness/native_builder.py`.
+8. The diff touches only the files of 17.2 to 17.7 and the ledger. No `AgenticLoop` method or constructor keyword is added. `tool_call.py`, `result_offload.py`, `tools/` and `startup/` are unchanged from `25944b39`.
+
+### 17.11 Verified Against Codebase (2026-11-21, `ob11` at `25944b39`)
+
+```
+read render_masking.py:1-163        98-141 RM2 SEARCH; 25 RM1 SEARCH; 31 SecretMasker under TYPE_CHECKING
+read tool_call.py:680-693, 736-749, 876-911   DeliveryToolCallResult family; result_delivery; with_result_delivery
+read workspace_results.py:350-367   ResultDelivery(status, presentation, reference=None, code=None); failed validates code
+read result_offload.py:287-295, 405-418, 438-448, 575-677   admit -> promised; offer; delivery_failure; frames at 651, 673
+read agentic_loop.py:870-891 (frame is what the model reads), 1263-1296 (_delivery_stop), 1757-1773, 2951-2991
+read crew_verifier.py:85-92, 621-635, 1013-1024, 1266-1291   RV1-RV4 SEARCH text, each once
+rg "import TrustNetwork|emit_event: None = None|fault_observer: ToolFaultObservationPort|if observer is not None else None" crew_verifier.py
+  90, 632, 634, 1289 (each once)
+read secret_masking.py:43-84, 193-229, 297-336   MaskOutcome; MASKING_FAILED_TEXT; secret_masker_of; no __slots__
+read executor.py:312-326 (tool_record_identity), 880-904 (broker.dispatch(request, invoke_reserved, ...))
+read browser/tool.py:1317-1387; routers/browser_stream.py:172-186; repair_verification.py:167-248
+read effect_broker.py:454-548 (dispatch; bare invoke(context) at 548, no nested def)
+read tests/fixtures/ad1343_seam_census.py:1-204 (Visitor records Name and Attribute callees, receiver unparse)
+read tests/test_ad1337_render_seam.py:1-645; test_ad1337_executor_seam.py:83-252; test_ad1240:151-191, 677-719, 1876-1925
+read tests/test_ad1320_agentic_budget_awareness.py:616-628
+git rev-parse 25944b39:...native_builder.py 5d8a5eb4:...native_builder.py   5f0fac6f..., 6641aa6a...
+rg -c on PROGRESS.md / DECISIONS.md for TP1, TP2, TD1, TD2 SEARCH text   1 each
+read tests/test_layer_boundaries.py:14-53   security is not a checked layer
+read swe_harness/tools.py:494-497   read_file's description is static (no path)
+read probe_b11s3_r1.py (the orchestrator's): F1 rig agent-s2/engineering/lieutenant; F2 root "own-"+TOKEN
+```
+
+**Absence Verified (2026-11-21):**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No other call is passed as `runtime=` | `rg -n "\bruntime=[A-Za-z_][A-Za-z_0-9.]*\(" src/probos` | `crew_verifier.py:2155` only | yes |
+| `runtime=` beside `task_text=` is spelled three ways | `rg "task_text=" src/probos`, then `rg "^\s+runtime=" src/probos`; `rg "runtime=" crew_executor.py crew_finalizer.py` | `runtime` (agentic_dispatch 4365; cognitive_agent 2361, 2546, 5210, 5816), `self._runtime` (agent_work_runner 646, crew_verifier 1670, delegate_task_tool 498), the projection; crew_executor and crew_finalizer have no `runtime=` | yes |
+| No test compares the projection's fields | `rg "__slots__\|dataclass_fields\|fields\(\|asdict\(proj\|vars\(proj"` in the six files that use it | `test_ad1190:824, :1540` and `test_ad1205:761` (other classes); `test_ad1346:245` (`vars(projection.tool_registry)`) | yes |
+| The `invoke` calls in src | `rg -n "\.invoke\(" src/probos`; `rg -n "(^\|[^.\w])invoke\(" src/probos` | the 9 old rows plus `agentic_dispatch:1562` (`super()`), `effect_broker:548` (bare), `repair_verification:222`, `browser/tool:1361`, `agentic_loop:2764`; everything else is a def, a comment or a docstring | yes, subject to N15 |
+| `open_captain_session` has one caller | `rg open_captain_session src/probos` | `browser_stream.py:186` | yes |
+| `broker.dispatch` has one caller | `rg "broker\.dispatch\(" src` | `executor.py:895` | yes |
+| No doc names the pinned blob | `rg "6641aa6a\|5f0fac6f"` | this test plus two historical prompts | yes |
+| No test reads `RenderMask` internals | `rg "_emit\(\|_failed\|_names\|CALL_ID_MAX_CHARS" tests/test_ad1337*.py` | none of `RenderMask`'s | yes |
+| `_session_correction_runtime` builds one object | `rg "_SessionCorrectionRuntime\(" src` | `crew_verifier.py:1267` | yes |
+
+### 17.12 The orchestrator's first-hand checks
+
+The 20 operations of this section (RT1 to RT9, RM1, RM2, RV1 to RV4, RP1, TP1, TP2, TD1, TD2) were applied to a scratch worktree detached at `25944b39` (the committed S3 head) after S2's repair of its own section 17 (the order the real tree gets them in), by `audit\contract_tools.py apply --prefix 17.` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (an empty redirected home; BF-919) and each probe through `run_probe_homeguard.ps1`; a bare `pytest` was not used: it imports `D:\ProbOS\src` and fails for the wrong reason.
+
+| R | Result |
+|---|---|
+| R1 | All 20 operations are found by `contract_tools.py list --prefix 17.`; every SEARCH occurs exactly once on `25944b39` after S2's 18 operations (the code, the test and the tracker pairs alike). The six files change by +245 -24 lines: `render_masking.py` 63 and 14 (162 to 211 lines), `crew_verifier.py` 6 and 0, `tests/test_ad1337_render_seam.py` 168 and 6 (644 to 806 lines; 18 cases, 23 items), `tests/test_ad1320_agentic_budget_awareness.py` 5 and 1, `PROGRESS.md` one line and `DECISIONS.md` two lines replaced in place. Blobs after all 20 operations: `render_masking.py` `a3ee21b9`, `crew_verifier.py` `a9cefe62`, the render seam test file `a09d60e1`, the AD-1320 test file `b45b228a`, and, with S2's repair applied as well, `PROGRESS.md` `6d596ba2` and `DECISIONS.md` `590906df`. No added line is non-ASCII. |
+| R2 | **The tests alone** (RT1 to RT9 applied, the code pairs not; RT4 and RT9 as the last paragraph says): **6 failed, 17 passed** in 48 s, exactly the prediction of 17.8, each for its stated reason: N3 on its id assertion (the event carries the model's call id `call_tok-...` where `None` is expected); N4 on the extension block (the result is still a `DeliveryToolCallResult` where a plain `ToolCallResult` is expected); N17 on its `projected` case (the model's request does not hold the placeholder); N18 on three items: `known_root` on its list of known values left in the frame the model reads (`['tok-...']` where `[]` is expected), and `frame_fails` and `output_fails` on the model's frame (the workspace frame where the withheld text is expected). N15 passes on the tests alone (F5's repair is test-only). |
+| R3 | After all 20 operations: S3's file alone **23 passed** (18 cases, 23 items), and S2's file, S3's file and `tests/test_ad1320_agentic_budget_awareness.py` together **121 passed** in 59 s. The AD-1320 case `test_native_builder_and_continue_or_ask_are_untouched_negative_pins` fails on `25944b39` (the blob of `native_builder.py` is `5f0fac6f...`, the pin says `6641aa6a...`) and passes after RP1. |
+| R4 | **The reproductions of review round 1, before and after** (`probe_b11s3_r1.py`, one case per finding, each beside a control that is clean on both trees; before in `evidence-b11s3r1-probe.txt`, after in `evidence-b11s3r1-probe-cand.txt`). F1: before the repair, the projected runtime of a session correction carries no masker and the model saw the raw token; after it the projected runtime masks (`target_carries_a_masker` True). F2: before, the delivered frame, which holds a path component with a known value, reaches the model (`model_frame_chars` 734, 0 render events); after it the delivery is withheld (`delivery_status` null, the model's frame is 43 characters, the withheld text), the recorded output is clean and one render event was emitted. F3: before, the event's `invocation_id` held the known value (`call_tok-...`); after it is `None`. F4: before, after a failed final pass the model was given the workspace frame; after it the model gets the withheld text. F5: before, `BrowserTool.open_captain_session` was in neither `ROUTES` nor `DIRECT_TOOL_INVOKES` (the census saw its `invoke(self)` and its filter dropped it); after it is in `ROUTES`. |
+| R5 | **The campaign** (`audit\mutants_gen.py`, `rows_ad1337s3r1.py`): the rows of section 17.9 (U1 to U12) and the rows of section 10 that this section changes or restates (M9, M10, M17, M19 and T1 to T17 as amended), rerun on the candidate with S3's and S2's test files (47 baseline cases, all passing), plus my extra rows X1 to X23; 55 rows in all: **killed 54, differed 0, survived 1, invalid 0**. Every named killer failed in every row. The survivor is E1, the equivalent mutant the contract expects: with the `if emit_fn is None: return` in `_emit` removed, a missing emitter raises a `TypeError` that the `except Exception` below it catches, so the only difference is one more WARNING line, which no case reads. The home was empty after each run. |
+| R6 | **Static checks.** `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`). `AgenticLoop` is unchanged at 1738 lines and 13 methods; `RenderMask` has 141 lines and 7 methods, `SecretMaskerSlot` 22 lines and 3, `_SessionCorrectionRuntime` 16 lines and no method (an AST count). `native_builder.py`'s blob on `25944b39` is `5f0fac6ffc9e...`, the value RP1 pins (it was `6641aa6a...` on `5d8a5eb4`). `rg -l "RenderMask\|SecretMaskerSlot" src` finds exactly `render_masking.py` and `agentic_loop.py`; `crew_verifier.py` names `secret_masker_of` on one import and one assignment. `git diff 25944b39 --stat` lists only the files of 17.2 to 17.7 and S2's seven files. `gen_ad_ledger.py --check` is not run here: the trackers change, and M4 regenerates the ledger. |
+| R7 | **The wide consumer run on `25944b39`** (263 test files touching the loop, the dispatch, the render seam, the crew verifier, the projection and the executor; `evidence-b11wide-def.txt`): 5 failed, 11042 passed, 14 skipped. Triage, each rerun alone on the candidate and on the main baseline `5d8a5eb4`: the AD-1320 pin is S3's (RP1 repairs it, R3); two `tests/ablation/test_sigma_harness_structural.py` cases fail identically on `5d8a5eb4` (the file is in the gate's release exclusions); two `test_ad1324_terminal_context` cases pass alone on both trees and fail only under load (flakes). No other consumer fails. |
+| R8 | **The consolidated focused set on the candidate** (the 34 files of section 12, `tests/test_ad1320_agentic_budget_awareness.py`, the projection consumers and `tests/test_ad860_crew_verifier.py`: 46 files, `-n 0`, default embedding mode, a tree with S2's 18 operations and these 20 applied): **3565 passed, 14 skipped** in 1039 s (the skips are AD-1240's POSIX-only cases). The run repeats on the committed head, in both embedding modes. |
+| R9 | **S3 on the repaired S2**: S2's section 17 applied first, then these 20 operations: every SEARCH occurs exactly once in that order, the trackers included (S2's repair and S3's repair edit different lines of `PROGRESS.md` and `DECISIONS.md`). |
+
+**What the orchestrator changed in the Architect's section 17:** RT4's evidence fixture and a new pair RT9 (RT4 built the delegated result with `evidence=object()`, which raises `TypeError: delegated call result requires typed evidence` on `tool_call.py:752`; it now builds `DelegationEvidence(status="completed")`, and RT9 adds the import `from probos.tools.delegation_evidence import DelegationEvidence` before the `probos.tools.executor` import); the residual numbering (R7 is S1's round-3 finding F7, so the session-correction event gap is R8 and S2's priming-window route seam is R9). The test pairs were rerun red and green after the change: R2 and R3 are the results after it. TD1 and TD2 carry the new numbering and were edited after the oracle runs of R2 to R8, which ran with their earlier text (the `DECISIONS.md` blob above is the final one); no test reads them, and the check of every SEARCH in R9 was repeated on the real tree. Nothing else in the pairs, the tests or the rows.
+
+**What these checks do not show.**
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
+- A session correction's masking event: the projection stays event-neutral, so no `SECRET_MASKED` event is emitted for a masked correction (R8 of the follow-up list); N17 pins that the text is masked.
+- The route seam of the priming window (R9 of the follow-up list).
