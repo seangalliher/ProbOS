@@ -1553,7 +1553,7 @@ Every pair of section 7 was applied to scratch worktrees by `audit\contract_tool
 
 **Behaviour of the gate:**
 - **Loop blocked.** The worker ends the priming by writing an attribute, without the loop, and waiting calls resume when the loop runs. If the loop was blocked past the bound and the priming had not ended, the next poll ends it with one WARNING.
-- **Several waiting calls.** Each polls on its own, and all resume within 10 ms of the end.
+- **Several waiting calls.** Each polls on its own, and all resume within one poll of the end: 25 ms since section 18 (RE1), plus up to one 15.625 ms clock tick on Windows. *Corrected by section 18 (2026-11-21):* this said 10 ms, a poll below the Windows clock resolution that checks once per loop pass while the loop has other work (review round 2, F1).
 - **Shutdown.** Unchanged: the prime task is held and not cancelled, and `gh` is bounded at 5 s. A waiting call is cancelled with its own task.
 - **Strict broker.** The wait happens inside a reserved attempt, well under the 120 s lease (`config.py:3871`).
 - **Timing.** The wait counts in `duration_ms`.
@@ -1960,6 +1960,8 @@ async def _await_secret_priming(masker: "SecretMasker | None") -> None:
         await asyncio.sleep(_SECRET_PRIMING_POLL_S)
 ```
 
+*Corrected by section 18 (2026-11-21):* RC10's `_SECRET_PRIMING_POLL_S = 0.01` is below the Windows loop's 15.625 ms clock resolution, so a waiting call checked the priming once per loop pass whenever the loop had other ready work (review round 2, F1). RE1 raises it to 0.025 and RE2 names it in the docstring. RC1's `_held` used `asyncio.ensure_future`; RE4 replaces it with `asyncio.create_task` (F2).
+
 ### 17.6 `src/probos/startup/finalize.py`
 
 **RC11.** No line here may name S1's store-values function (S1's N31 is a text scan). SEARCH:
@@ -2268,4 +2270,295 @@ The 18 operations of this section (RC1 to RC18) were applied to a scratch worktr
 **What these checks do not show.**
 - The route seam the Architect recorded as the follow-up (the Captain's direct-message tier-1 browser route in `reply_pipeline.py` does not pass through the executor, so the priming gate does not hold it: a window of about one to six seconds at boot, on a page that shows the CLI-only token); no test runs it.
 - The 6 s bound is the CLI's 5 s timeout plus one; R5 measured the CLI's answer at 68 to 217 ms (one outlier of 1202 ms), never near the bound.
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
+
+---
+
+## 18. Repair after review round 2 (2026-11-21)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21, rev3
+
+**Base.** The Builder starts from the S3 head. S3's commits after `ef66019b` do not touch `executor.py` or `tests/test_ad1337_executor_seam.py`, so those two files equal `ef66019b`. The anchors in `PROGRESS.md` and `DECISIONS.md` are in S2's own entries, and each occurs exactly once at `ef66019b` and at `1a1a4782`. Every edited file is `i/lf w/crlf`: match and write each with its own line endings. ASCII only.
+
+**Milestones** (one Builder delegation each; the Builder runs no test):
+
+| M | Content | Commit subject |
+|---|---|---|
+| M5 | 18.4 (RE3 to RE5, tests first), then 18.3 (RE1, RE2) | `Poll the masking priming above the loop's clock resolution` |
+| M6 | RE6, RE7, then `gen_ad_ledger.py` and `--check` as in 7.13 | `Record the priming poll interval` |
+
+### 18.1 Findings and decisions
+
+| Finding | Severity / reach | Decision | Pairs |
+|---|---|---|---|
+| F1: `_SECRET_PRIMING_POLL_S = 0.01` (`executor.py:1025`) is below the Windows loop's 15.625 ms clock resolution. While the loop has other ready work, each waiting call checks the priming once per loop pass (35,144 checks in 141 ms in the orchestrator's probe; 23,570 in 127 ms in the reviewer's). | P2, ordinary (startup); a regression of RC10 | Raise the poll to 25 ms. N25 pins it two ways: above both the host's resolution and 15.625 ms, and at most one check per call per 10 ms on a real, busy loop. N25 also covers a cancelled waiting call. | RE1, RE2, RE3, RE5 |
+| F2: `_held` uses `asyncio.ensure_future` (`test_ad1337_executor_seam.py:201`), which Engineering Principles, Async Discipline (`engineering-principles.md:84`) forbids | P3, test standards; a regression of RC1 | `asyncio.create_task` | RE4 |
+
+**Behaviour after the repair:**
+- **Latency.** A call waiting in the window resumes within one poll of `end_priming`: 25 ms on Linux, and at most about 31 ms on Windows (25 ms plus one tick). The window itself lasts 70 to 200 ms for a real `gh`.
+- **Busy loop.** Each waiting call makes at most one check per clock tick (about 15.6 ms on Windows) or per 25 ms (Linux), whatever else the loop runs.
+- **Unchanged:** the bound (`DEFAULT_PRIMING_TIMEOUT_S`, 6 s, one WARNING), cancellation (it lands in `asyncio.sleep`; nothing in `executor.py` catches `CancelledError`), and the rule that a bare executor never waits.
+
+### 18.2 Rejected designs
+
+- **An event per waiter, set from the worker thread** (`call_soon_threadsafe(event.set)`). It would add a public callback API to S1's approved `SecretMasker`, registration and cancellation bookkeeping, and capture of a loop across threads. All of that would buy only an exact wake, which nothing needs at 25 ms. 17.2 already rejected an `asyncio.Event` on the masker. This would change if a consumer needs sub-tick wake latency in the priming window.
+- **A poll computed from `time.get_clock_info`** (`max(0.025, 2 * resolution)`). It adds an import and import-time logic for a clock coarser than 15.625 ms, and no supported clock is that coarse. If one appears, N25's host-resolution assertion fails and names it.
+- **A first-call fast path plus a longer poll.** The first check already happens before any sleep (`while ... priming_pending()`), so it adds nothing.
+
+### 18.3 `src/probos/tools/executor.py`
+
+**RE1.** SEARCH:
+```
+#: AD-1337 S2: how often a registry call waiting for the masker's startup priming checks it again.
+_SECRET_PRIMING_POLL_S = 0.01
+```
+REPLACE:
+```
+#: AD-1337 S2: how often a registry call waiting for the masker's startup priming checks it again. It must exceed
+#: the loop's clock resolution (15.625 ms on Windows): asyncio runs a timer due within one resolution on its next
+#: pass, so a shorter sleep becomes one check per pass whenever the loop has other ready work (review round 2).
+_SECRET_PRIMING_POLL_S = 0.025
+```
+
+**RE2.** SEARCH:
+```
+    in that window is held before the registry runs, which covers a result and a raised exception's text alike. It
+    polls, so it holds no worker thread and works on any loop. The masker bounds the wait
+    (``DEFAULT_PRIMING_TIMEOUT_S``) and then lets every call through; without a masker, or with one nobody primes,
+```
+REPLACE:
+```
+    in that window is held before the registry runs, which covers a result and a raised exception's text alike. It
+    polls every ``_SECRET_PRIMING_POLL_S``, so it holds no worker thread and works on any loop. The masker bounds the
+    wait (``DEFAULT_PRIMING_TIMEOUT_S``) and then lets every call through; without a masker, or with one nobody primes,
+```
+
+### 18.4 `tests/test_ad1337_executor_seam.py`
+
+**RE3.** SEARCH:
+```
+import subprocess
+import threading
+from collections.abc import Iterator
+```
+REPLACE:
+```
+import subprocess
+import threading
+import time
+from collections.abc import Iterator
+```
+
+**RE4.** SEARCH:
+```
+    held = asyncio.ensure_future(polls.held.wait())
+```
+REPLACE:
+```
+    held = asyncio.create_task(polls.held.wait())
+```
+
+**RE5.** SEARCH:
+```
+    assert len(reads) == 1 and reads[0] != threading.get_ident()  # loaded once, in the priming's worker thread
+    assert masker.mask_text(f"{VAULT_A} {CLI_TOKEN}").text == f"<secret:vault> {PLACEHOLDER}"
+    assert len(reads) == 1  # the first pass on the loop read no file
+```
+REPLACE:
+```
+    assert len(reads) == 1 and reads[0] != threading.get_ident()  # loaded once, in the priming's worker thread
+    assert masker.mask_text(f"{VAULT_A} {CLI_TOKEN}").text == f"<secret:vault> {PLACEHOLDER}"
+    assert len(reads) == 1  # the first pass on the loop read no file
+
+
+# -- N25: the wait on a real, busy loop ------------------------------------------------------------------------------
+
+
+async def test_on_a_busy_real_loop_waiting_calls_poll_sparingly_and_a_cancelled_one_never_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # asyncio runs a timer due within one clock resolution on its next pass, so a poll at or below it (15.625 ms on
+    # Windows, about 1 ns on Linux) is one check per pass whenever the loop has other ready work. The first assertion
+    # holds that on every host; the poll count below shows it on a coarse clock, and catches a zero sleep anywhere.
+    poll_s = probos.tools.executor._SECRET_PRIMING_POLL_S
+    assert poll_s > max(time.get_clock_info("monotonic").resolution, 0.015625)
+    masker = _masker(tmp_path)
+    masker.begin_priming(secret_masking.DEFAULT_PRIMING_TIMEOUT_S)
+    polls = _PrimingPolls(masker, monkeypatch, count=5)
+    tool = _EchoTool("echo", f"token={TOKEN}")
+    executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+    stop, spins = asyncio.Event(), [0]
+
+    async def _spin() -> None:
+        """Other ready work, as at startup: while this runs the loop never blocks in its selector."""
+        while not stop.is_set():
+            spins[0] += 1
+            await asyncio.sleep(0)
+
+    loop = asyncio.get_running_loop()
+    spinner = asyncio.create_task(_spin())
+    started = loop.time()
+    calls = [asyncio.create_task(executor.invoke("agent-1", "echo", {})) for _ in range(5)]
+    try:
+        assert await _held(polls, calls) is True
+        calls[4].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await calls[4]
+        await asyncio.sleep(0.15)  # the window: four calls wait on the real clock while the loop stays busy
+        masker.end_priming()
+        results = await asyncio.wait_for(asyncio.gather(*calls[:4]), timeout=10.0)
+        elapsed = loop.time() - started
+    finally:
+        masker.end_priming()
+        stop.set()
+        await asyncio.gather(spinner, *calls, return_exceptions=True)
+    assert [result.output for result in results] == [f"token={PLACEHOLDER}"] * 4
+    assert tool.calls == 4  # the cancelled call never reached the registry
+    assert spins[0] >= 100  # premise: the loop had other ready work throughout the window
+    # At most one check per call per 10 ms of the window, plus its first and last: a 25 ms poll makes about one per
+    # 15.6 ms tick on Windows and one per 25 ms on Linux; the unrepaired 10 ms poll made tens of thousands on Windows.
+    assert len(polls.answers) <= len(calls) * (elapsed / 0.010 + 2), (len(polls.answers), elapsed)
+```
+
+N25 sleeps for one 0.15 s window and runs in about 0.2 s. Every task it creates (the spinner and five calls) is held and awaited in `finally`. It patches no global module: `_PrimingPolls` patches one instance attribute. It does not touch `secret_masking.time`, so the masker reads the real clock, and the 6 s bound is never reached.
+
+### 18.5 `PROGRESS.md`
+
+**RE6.** SEARCH:
+```
+test_ad1337_executor_seam.py` (24 cases): a call made while the priming is inside `gh` waits
+```
+REPLACE:
+```
+test_ad1337_executor_seam.py` (25 cases): waiting calls on a busy real loop check the priming at most once per 10 ms each and a cancelled one never runs; a call made while the priming is inside `gh` waits
+```
+
+### 18.6 `DECISIONS.md`
+
+**RE7.** SEARCH (a substring of S2's *Priming (S2)* line; it occurs once at `ef66019b` and at `1a1a4782`):
+```
+a 10 ms poll that holds no thread)
+```
+REPLACE:
+```
+a 25 ms poll that holds no thread; it must exceed the loop's clock resolution, 15.625 ms on Windows, because asyncio runs a timer due within one resolution on its next pass, and review round 2 measured a shorter poll checking tens of thousands of times in 0.15 s on a busy loop)
+```
+
+### 18.7 Tests and predicted counts
+
+| N | Change | Property |
+|---|---|---|
+| `_held` | Edited (RE4) | Same behaviour, through `create_task`. N16 and N22 are unchanged. |
+| N25 | New (RE3, RE5) | The poll exceeds the host's clock resolution and 15.625 ms. Five calls wait on a real loop that always has ready work. One is cancelled, raises `CancelledError` and never reaches the registry. The other four resume masked after `end_priming`. The check count stays at or below 5 * (elapsed / 10 ms + 2). |
+
+- **Test pairs only (RE3 to RE5) on the base: 24 passed, 1 failed** on every host. N25 fails at its first assertion (`0.01 > 0.015625` is False).
+- **All pairs: 25 passed** (25 items, no parametrize).
+- **On Windows** (the gate host), the unrepaired poll with N25's first line removed fails the count assertion by two to three orders of magnitude (about 35,000 checks against a bound near 90). The repaired poll makes about 55. **On Linux CI** (`ubuntu-latest`), a 10 ms poll does not spin: the count assertion cannot tell 10 ms from 25 ms (about 85 checks against about 90), and the first assertion carries the property. A zero sleep fails the count on every host.
+- S1's file and S3's file: counts unchanged, all pass. Neither exercises the priming wait.
+
+### 18.8 Mutation rows
+
+These rows run on the M5 candidate, restoring between rows. Rerun R1m to R3m (the rows on the wait, whose test helper changed). The other `executor.py` rows (S1m to S10m, S19m, S21m) stand: RE1 and RE2 change a constant and a comment, which cannot revive a mutant at another line. The test changes only add kills.
+
+| Row | Mutant (one line) | Killed by |
+|---|---|---|
+| R13m | `_SECRET_PRIMING_POLL_S = 0.025` to `= 0.01` | N25: the first assertion on every host, and the count on Windows |
+| R14m | `await asyncio.sleep(_SECRET_PRIMING_POLL_S)` to `await asyncio.sleep(0)` | N25: the count, on every host |
+| R1m (rerun) | Delete the gate line in `_invoke_once` | N16, N22, N25 (`_held` is False) |
+| R2m (rerun) | Move the gate line to just before the seam | N16 |
+| R3m (rerun) | `_await_secret_priming`: `while` to `if` | N22. N25 survives it, as expected. |
+
+Cancellation propagation is checked by N25 and by reading, not by a mutant: swallowing `CancelledError` takes more than one changed line. F2 is checked by grep (18.10), not by a mutant.
+
+### 18.9 What this does NOT change
+
+- `secret_masking.py`: `begin_priming`, `end_priming`, `priming_pending` and `DEFAULT_PRIMING_TIMEOUT_S`.
+- `finalize.py` and `credential_store.py` (the priming worker, the warm-up, the fence).
+- The `ToolExecutor` class: still 489 lines and 13 methods, because the constant and the helper are module-level.
+- S3's files and S3's imports from S2's test file: `_calls_building_a_tool_executor`, `_EchoTool`, `_registry`, `_Events`, `_CapturingLLM`.
+- The `SECRET_MASKED` payload, events and config.
+
+### 18.10 Deterministic checks
+
+- **Focused gate at `-n 0`:**
+  - The three AD-1337 test files.
+  - `test_ad448_wrapped_tool_executor.py`, `test_ad1224_durable_tool_start.py`, `test_ad1316_governed_effect_broker.py`, `test_ad856_agentic_dispatch.py`.
+  - `test_ad1324_srp_layout.py`, `test_ad1270b_architecture_fitness.py`, `test_ad1184_ad_ledger.py`.
+- **Contention:** also run `test_ad1337_executor_seam.py` once at `-n 16` together with the executor and broker files, to show N25 holds under contention.
+- `rg -n "ensure_future" tests/test_ad1337_executor_seam.py tests/test_ad1337_secret_masking.py tests/test_ad1337_render_seam.py src/probos/tools/executor.py` finds nothing.
+- `rg -n _SECRET_PRIMING_POLL_S src` finds exactly three hits in `executor.py`: the definition, the docstring and the sleep.
+- `rg -n "a 10 ms poll" DECISIONS.md` finds nothing.
+- `check_architecture_principles.py --check` exits 0, and `ToolExecutor` is 489 lines and 13 methods.
+- `git diff <S3 head> --stat` lists only `executor.py`, the S2 test file, `PROGRESS.md` and `DECISIONS.md`, plus the ledger pair if it is regenerated.
+- Run N25 with `-W error` and confirm there is no "Task was destroyed but it is pending".
+
+### 18.11 Verified Against Codebase (2026-11-21, `ef66019b`)
+
+```
+grep _SECRET_PRIMING_POLL_S|_await_secret_priming (repo)
+  executor.py:726 gate call; :1025 constant 0.01; :1028 def; :1038 sleep; prompt :1947, :1950, :1960, :2164
+read executor.py:1024-1038      comment, constant, docstring (:1030-1036), while/sleep
+read secret_masking.py:335-360  _priming_deadline, begin/end/priming_pending; DEFAULT_PRIMING_TIMEOUT_S :52
+read tests/test_ad1337_executor_seam.py:1-240, :479-768   imports :9-21 (no time); _PrimingPolls :179; _held :198-205 (ensure_future :201); N16 :482; N22 :690 (patches secret_masking.time :699); N24 :749-768 (last lines :766-768)
+grep "^(async )?def test_"      24 cases
+grep CancelledError|except BaseException executor.py   none
+grep engineering-principles.md:84   "Never use asyncio.ensure_future()"
+git ls-files --eol              executor.py, test file, PROGRESS.md, DECISIONS.md, the prompt: i/lf w/crlf
+grep -o "a 10 ms poll that holds no thread)" DECISIONS.md   :1673 only; git show 1a1a4782:DECISIONS.md: count 1
+grep -o "(24 cases): a call made while the priming is inside `gh` waits" PROGRESS.md   :5; at 1a1a4782: count 1
+git diff --stat ef66019b 1a1a4782   no executor.py or S2 test file
+git show 1a1a4782:tests/test_ad1337_render_seam.py   uses executor_tests._EchoTool/_registry/_Events/_CapturingLLM and _calls_building_a_tool_executor; "priming": 0
+grep runs-on .github/workflows   ci.yml:17, :116, :143 ubuntu-latest
+grep "### 17.6 " prompt          :1963 only; "10 ms" prompt: :95 (masking p99, unrelated), :1556
+```
+
+**Absence verified (2026-11-21):**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No other `ensure_future` in AD-1337 code or tests | Grep `ensure_future\|get_event_loop\(\|run_until_complete` over `tests/test_ad1337_*.py`, `executor.py`, `finalize.py`, `secret_masking.py`, `credential_store.py`, `render_masking.py` | `test_ad1337_executor_seam.py:201` only | yes |
+| No other reader of the constant | `rg _SECRET_PRIMING_POLL_S` (repo) | `executor.py:1025`, `:1038`; the prompt | yes |
+| No S2 test sleeps on a real clock today | Grep `asyncio\.sleep` in `tests/test_ad1337_*.py` | `test_ad1337_secret_masking.py:486`, `:490` (`sleep(0)`) only | yes |
+| PROGRESS states no interval | `grep -c "10 ms" PROGRESS.md` | 0 | yes |
+| No `time` name in the S2 test file to shadow | Grep `\btime\b` | `:699`, `setattr(secret_masking, "time", ...)` (a module attribute) | yes |
+
+**Prior art.** This is a repair of ProbOS plumbing, so no reference-project review was done. One search grounded the mechanism: CPython's loop moves timers due within one clock resolution to the ready queue on the next pass ([bpo-20505](https://www.python.org/pipermail/python-bugs-list/2014-February/231867.html), [bpo-31539](https://bugs.python.org/issue31539)). On Windows, `time.monotonic()` (GetTickCount64) is usually about 15.6 ms coarse ([asyncio-platforms](https://chromium.googlesource.com/external/github.com/python/cpython/+/b2b0a337098e60fa9f84df7b53d191fbd8d4fc67/Doc/library/asyncio-platforms.rst)). Adopted: a poll above the resolution.
+
+### 18.12 Properties for the round-3 delta reviewer
+
+Review only the repair: `git diff ef66019b..HEAD -- src/probos/tools/executor.py tests/test_ad1337_executor_seam.py`, plus S2's entries in `PROGRESS.md` and `DECISIONS.md` (S3's entries in those files belong to S3's review). Execute the checks; do not only read.
+
+1. **The poll.** `_SECRET_PRIMING_POLL_S` exceeds `time.get_clock_info("monotonic").resolution` and 15.625 ms. Rerun your `rv-cancel-poll-cost` probe on the candidate: the counts should match your 20 ms control, not the 10 ms rows.
+2. **Cancellation.** A waiting call cancelled on the direct path and on the broker path raises `CancelledError` and never calls `check_and_invoke`. The broker's durable state is `cancelled_before_effect`.
+3. **Unchanged.** Before `end_priming` or the bound, the registry runs on no path. Expiry still gives exactly one WARNING. A bare executor, or a masker nobody primes, adds no sleep.
+4. **N25.** It fails on `ef66019b`'s `executor.py` on every host (first assertion). On Windows it also fails on the count with that assertion removed. It passes on the candidate, leaves no pending task, and sleeps for only one 0.15 s window.
+5. **F2.** `_held` uses `create_task`, and the AD-1337 files contain no `ensure_future`.
+6. **No shared contract changed.** The constant is private, and the helpers S3 imports are byte-identical. `ToolExecutor` is still 489 lines and 13 methods.
+
+### 18.13 Acceptance
+
+- [ ] 18.7's predictions hold: 24 passed and 1 failed with the test pairs only, then 25 passed with all pairs. The focused gate in 18.10 is green.
+- [ ] R13m and R14m are killed by N25, and R1m to R3m are rerun as listed.
+- [ ] RE6 and RE7 are applied, and the ledger is regenerated and checked.
+- [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+### 18.14 The orchestrator's first-hand checks
+
+The 7 operations of this section (RE1 to RE7) were applied to a scratch worktree detached at `1a1a4782` (the S3 head, which the Builder starts from; S2's files there equal `ef66019b`) by `audit\contract_tools.py apply --prefix 18.` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (an empty redirected home; BF-919) and each probe through `run_probe_homeguard.ps1`; a bare `pytest` was not used: it imports `D:\ProbOS\src` and fails for the wrong reason. The contract text corrections C1 and C2 were applied first to the committed contract; their SEARCH text occurs once each.
+
+| R | Result |
+|---|---|
+| R1 | All 7 operations are found by `contract_tools.py list --prefix 18.`; every SEARCH occurs exactly once on `1a1a4782` (the code, the test and the tracker pairs alike), and again on the scratch tree that holds section 17's operations without S3. Four files change by +59 -7 lines: `executor.py` 6 and 4, the test file 51 and 1, `PROGRESS.md` and `DECISIONS.md` one line each replaced in place. Blobs after all 7 operations: `executor.py` `dec8f91d`, the test file `b86c6ce0`, `PROGRESS.md` `4a4f674e`, `DECISIONS.md` `87be6516`. No added line is non-ASCII. |
+| R2 | **The tests alone** (RE3 to RE5 applied, the code pairs not): **1 failed, 24 passed** in 20 s, exactly the prediction of 18.7: N25 fails at its first assertion, `assert 0.01 > 0.015625`. |
+| R3 | **N25's count assertion alone discriminates here.** With N25's first assertion removed by a scratch edit and the poll still at 10 ms, N25 fails on its count: 5,658 checks against a bound of 80.5 (`5 * (0.141 / 0.01 + 2)`); the premise holds on this host (`ProactorEventLoop`, `time.get_clock_info("monotonic").resolution` 0.015625). After all 7 operations the test file alone: **25 passed**; S1's file, the S2 file and S3's file together: **145 passed** in 52 s (97 + 25 + 23); N25 alone under `-W error`: 1 passed in 4.3 s, with no pending-task warning. |
+| R4 | **The finding's reproduction, before and after** (`probe_b11s2_poll.py`, which measures the module's own default; evidence `evidence-b11s2r2-poll-base.txt` and `evidence-b11s2r2-poll-cand.txt`; four tasks awaiting the real `_await_secret_priming` over a real masker for 150 ms). On `1a1a4782` the default is 10 ms: an idle loop makes 44 checks, a loop with other ready work makes **35,832 in 141 ms**. On the candidate the default is 25 ms: an idle loop makes 24 checks and the busy loop **40**. The probe's own table (an interval of 20 ms: 44; 50 ms: 20) shows the same on the busy loop. Reviewer round 2's report is therefore right that the defect needs other ready work: an idle loop makes 44 checks at 10 ms too. |
+| R5 | **The campaign** (`audit\mutants_gen.py`, `rows_ad1337s2r2.py`; a tree holding section 17's and this section's operations, the S2 test file alone, 25 baseline cases, all passing): the rows R13m and R14m of 18.8, the reruns of R1m to R3m, and my extra rows Z1 and Z2: 7 rows, **killed 7, differed 0, survived 0, invalid 0**. Every named killer failed: R13m by N25's first assertion and R14m by its count; R1m by N16, N22 and N25; R2m by N16 (and two more); R3m by N22, with N25 passing, as 18.8 says it does; Z1 (the sleep shortened to a tenth of the poll) by N25's count and Z2 (the poll exactly 15.625 ms) by N25's first assertion. The home was empty after each run. |
+| R6 | **Static checks.** `rg -n "ensure_future"` over the three AD-1337 test files and `executor.py` finds nothing; `rg -n _SECRET_PRIMING_POLL_S src` finds exactly three lines in `executor.py` (the definition, the docstring and the sleep); `rg -n "a 10 ms poll" DECISIONS.md` finds nothing; `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`); `ToolExecutor` is 489 lines and 13 methods (an AST count); `git diff 1a1a4782 --stat` lists only the four files above. `gen_ad_ledger.py --check` is not run here: the trackers change, and M6 regenerates the ledger. |
+| R7 | **The focused gate of 18.10** (the three AD-1337 test files, the executor and broker files `test_ad448_wrapped_tool_executor`, `test_ad1224_durable_tool_start`, `test_ad1316_governed_effect_broker` and `test_ad856_agentic_dispatch`, and `test_ad1324_srp_layout`, `test_ad1270b_architecture_fitness` and `test_ad1184_ad_ledger`: 10 files) on the candidate with 4 workers, so that N25 runs while other tests load the host: **520 passed** in 242 s. |
+| R8 | **The first repair's committed head** (`ef66019b`), the 41-file consolidated set of S2, `-n 0`, in both embedding modes: **2356 passed, 5 skipped** in each (1099 s and 1090 s), run before this section was drafted; the aiosqlite leak of `tests/test_new_crew_auto_welcome.py` (the same four threads on `5d8a5eb4`) kept both processes alive after their summary lines, and each was ended after its summary. The run repeats on the head this section produces. |
+
+**What the orchestrator changed in the Architect's section 18:** the single `x` multiplication sign of the N25 row in 18.7 (`5 * (elapsed / 10 ms + 2)`; the section must be ASCII); nothing in the pairs, the test or the rows. I added two rows to 18.8 (Z1: the sleep shortened to a tenth of the poll, below the clock resolution; Z2: the poll set to exactly the clock resolution, 0.015625), which exercise N25's two assertions at their boundary.
+
+**What these checks do not show.**
+- A Linux host: on `ubuntu-latest` a 10 ms poll does not spin, so the count assertion of N25 cannot tell 10 ms from 25 ms there, and the first assertion carries the property (the Architect's 18.7 says so).
 - A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
