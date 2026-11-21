@@ -3773,6 +3773,7 @@ async def _agent_chat_impl(
     # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+    from probos.cycle_trace import result_cycle_id  # AD-1360 (#1828)
     from probos.dm_reply import DmReply, ToolInvocations, require_rendered  # AD-1248
     _owned_steps_view = None
     _owned_steps_views: dict[
@@ -3845,6 +3846,7 @@ async def _agent_chat_impl(
         owned_steps_views=_owned_steps_views,
         owned_steps_feedback=_owned_steps_capture_feedback,
         plan_mode_gate=_plan_mode_gate,  # AD-1156
+        cycle_id=result_cycle_id(result),  # AD-1360 (#1828): the agent cycle this reply came from
     ))
     await pipeline.run()
     response = pipeline.build_response()

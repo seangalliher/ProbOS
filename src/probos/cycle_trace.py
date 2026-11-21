@@ -11,6 +11,8 @@ episode; nothing checked that an episode's id came from a cycle. This module hol
 * ``CURRENT_CYCLE_ID`` carries the bound id. An awaited coroutine runs in its caller's context and a task copies the
   context it was created in (PEP 567), so code inside a bound cycle reads the id without a parameter. ``bind_cycle``
   returns the token ``unbind_cycle`` resets in a ``finally``, as ``admission/carrier.py`` does for the work ticket.
+  AD-1360 S2a: ``cycle_scope`` binds a cycle's id again for work done for it after it has ended (the DM reply's steps,
+  a proactive think's posts), and ``result_cycle_id`` reads that id off the cycle's ``IntentResult``.
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from typing import Final, Protocol
 
@@ -70,6 +73,29 @@ def unbind_cycle(token: Token[str]) -> None:
         CURRENT_CYCLE_ID.reset(token)
     except (RuntimeError, ValueError):
         pass
+
+
+@contextmanager
+def cycle_scope(chain_id: str = "") -> Iterator[str]:
+    """Bind ``chain_id`` for the block, or keep the bound id when it is blank or not a str; yields the id bound inside.
+
+    On exit, by return, raise or cancellation, the id bound before the block is back, whatever the block bound in this
+    context without resetting. For work done for a cycle after the cycle has ended (AD-1360 S2a).
+    """
+    bound = chain_id if type(chain_id) is str and chain_id.strip() else CURRENT_CYCLE_ID.get()
+    token = CURRENT_CYCLE_ID.set(bound)
+    try:
+        yield bound
+    finally:
+        unbind_cycle(token)
+
+
+def result_cycle_id(result: object) -> str:
+    """The AD-492 id a cognitive cycle's ``IntentResult`` carries in ``metadata["correlation_id"]``; "" when there is no
+    result, its metadata is not a dict, or the value is not a non-blank str."""
+    metadata = getattr(result, "metadata", None)
+    chain_id = metadata.get("correlation_id") if type(metadata) is dict else None
+    return chain_id if type(chain_id) is str and chain_id.strip() else ""
 
 
 class CycleIdResolver(Protocol):

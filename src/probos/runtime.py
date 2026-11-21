@@ -147,7 +147,7 @@ from probos.types import (
 
 from probos.agent_onboarding import AgentOnboardingService
 from probos.crew_utils import is_crew_agent
-from probos.cycle_trace import CycleIdRegistry  # AD-1360 (#1828)
+from probos.cycle_trace import CycleIdRegistry, current_cycle_id  # AD-1360 (#1828)
 from probos.dream_adapter import DreamAdapter
 from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
@@ -5237,6 +5237,8 @@ class ProbOSRuntime:
                 ],
                 dag_summary={},
                 anchors=AnchorFrame(channel="mcp", trigger_type="mcp_invoke"),
+                # AD-1360 (#1828): the agent's cycle when the agentic loop invokes the tool inside one; "" outside one.
+                correlation_id=current_cycle_id(),
             )
             await self.episodic_memory.store(episode)
         except Exception:
