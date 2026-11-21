@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         EffectPermit,
         GovernedEffectBrokerProtocol,
     )
+    from probos.security.secret_masking import SecretMasker
     from probos.tools.protocol import ToolResult
 
 logger = logging.getLogger(__name__)
@@ -481,6 +482,10 @@ class InvocationContext:
     record_started: bool = field(default=False, init=False)
     record_completed: bool = field(default=False, init=False)
     start_event_id: int | None = field(default=None, init=False)
+    # AD-1337 S2: set by the producer seam (_mask_registry_result): the labels it masked, never a value, and
+    # whether the pass failed and withheld the output. Read by the SECRET_MASKED post-hook only.
+    secrets_masked: tuple[str, ...] = field(default=(), init=False)
+    secret_masking_failed: bool = field(default=False, init=False)
 
 
 class ToolExecutor:
@@ -504,9 +509,11 @@ class ToolExecutor:
         *,
         registry: Any,
         effect_broker: "GovernedEffectBrokerProtocol | None" = None,
+        secret_masker: "SecretMasker | None" = None,
     ) -> None:
         self._registry = registry
         self._effect_broker = effect_broker
+        self._secret_masker = _checked_secret_masker(secret_masker)  # AD-1337 S2: None masks nothing
         self._pre_hooks: list[PreHook] = []
         self._post_hooks: list[PostHook] = []
         self._terminal_hooks: list[PostHook] = []
@@ -760,6 +767,8 @@ class ToolExecutor:
                     ) from exc
             raise
 
+        if self._secret_masker is not None:  # AD-1337 S2: the producer seam, before the timing and every post-hook
+            result = _mask_registry_result(self._secret_masker, ctx, result)
         ctx.duration_ms = max(0.0, (time.perf_counter() - ctx.start_time) * 1000)
 
         for hook in self._post_hooks:
@@ -959,6 +968,11 @@ class ToolExecutor:
         return len(self._pre_hooks) + len(self._post_hooks) + len(self._terminal_hooks)
 
     @property
+    def secret_masker(self) -> "SecretMasker | None":
+        """AD-1337 S2: the masker applied to every result the registry returns, or None."""
+        return self._secret_masker
+
+    @property
     def protected_effects_enabled(self) -> bool:
         """Whether this executor crosses the strict governed-effect boundary."""
         return self._effect_broker is not None
@@ -967,6 +981,42 @@ class ToolExecutor:
 def _invocation(ctx: dict[str, Any]) -> InvocationContext | None:
     invocation = ctx.get("invocation")
     return invocation if type(invocation) is InvocationContext else None
+
+
+def _checked_secret_masker(masker: Any) -> "SecretMasker | None":
+    """AD-1337 S2: the executor's masker is a ``SecretMasker`` or None; anything else is a wiring bug."""
+    if masker is None:
+        return None
+    from probos.security.secret_masking import SecretMasker
+
+    if not isinstance(masker, SecretMasker):
+        raise TypeError("secret_masker must be a SecretMasker or None")
+    return masker
+
+
+def _mask_registry_result(masker: "SecretMasker", ctx: InvocationContext, result: Any) -> "ToolResult":
+    """AD-1337 S2: the producer seam, for every result the registry returns, before the timing, the post-hooks,
+    the broker and the caller see it.
+
+    The paths that never reach the registry are not masked here: an ambiguous name, a pre-hook abort and a dispatch
+    guard return fixed text, and a raised exception never becomes a ``ToolResult`` here. Its text reaches the model
+    as ``Tool X failed: ...``, which the render seam (AD-1337 S3) masks. A pass that fails, or a registry answer that
+    is not a ``ToolResult``, withholds the output (fail closed).
+    """
+    from probos.security.secret_masking import MASKING_FAILED_TEXT
+    from probos.tools.protocol import ToolResult
+
+    if not isinstance(result, ToolResult):
+        logger.error(
+            "AD-1337: tool=%s returned %s, not a ToolResult; the output is withheld",
+            ctx.record_tool_id, type(result).__name__,
+        )
+        ctx.secret_masking_failed = True
+        return ToolResult(error=MASKING_FAILED_TEXT)
+    masked = masker.mask_result(result)
+    ctx.secrets_masked = tuple(sorted(masked.names))
+    ctx.secret_masking_failed = masked.failed
+    return masked.result
 
 
 def _retained_metadata(
@@ -1507,4 +1557,61 @@ def wire_tool_invocation_hooks(
         work_item_id_provider=work_item_id_provider,
     )
     executor.add_post_hook(make_audit_hook(emit_fn=emit_fn))
+    wire_secret_masked_event(executor, emit_fn=emit_fn)  # AD-1337 S2: inert without a masker
     return wired
+
+
+#: AD-1337 S2: the most labels one SECRET_MASKED event lists; the rest are counted in ``names_omitted``.
+SECRET_MASKED_MAX_NAMES = 16
+
+
+def make_secret_masked_hook(emit_fn: Callable[[Any, dict[str, Any]], None]) -> PostHook:
+    """AD-1337 S2: emit ``SECRET_MASKED`` once for a call whose output the producer seam masked or withheld.
+
+    The payload holds labels (``github``, ``env:NAME``), never a value, a form or a position. It names no agent:
+    ``invocation_id`` (ordinary) or ``operation_id`` (strict) is the correlation id of the call's ``TOOL_INVOKED``
+    row, which carries the identity in that mode's own form, and a strict call's tool id is left out for the same
+    reason. ``SECRET_MASKED`` is a routed DURABLE member, so the runtime's emit writes its events.db row.
+    """
+
+    def secret_masked_hook(ctx: dict[str, Any], result: "ToolResult") -> None:
+        from probos.events import EventType
+
+        invocation = _invocation(ctx)
+        if invocation is None or not (invocation.secrets_masked or invocation.secret_masking_failed):
+            return
+        names = invocation.secrets_masked
+        payload = {
+            "seam": "producer",
+            "tool_id": invocation.record_tool_id if invocation.operation_id is None else None,
+            "invocation_id": invocation.invocation_id,
+            "operation_id": invocation.operation_id,
+            "attempt_id": invocation.attempt_id,
+            "names": list(names[:SECRET_MASKED_MAX_NAMES]),
+            "names_omitted": max(0, len(names) - SECRET_MASKED_MAX_NAMES),
+            "failed": invocation.secret_masking_failed,
+        }
+        try:
+            emit_fn(EventType.SECRET_MASKED, payload)
+        except Exception:
+            logger.warning(
+                "AD-1337: SECRET_MASKED could not be emitted for tool=%s; the output stays masked",
+                payload["tool_id"],
+            )
+
+    return secret_masked_hook
+
+
+def wire_secret_masked_event(
+    executor: ToolExecutor,
+    *,
+    emit_fn: Callable[[Any, dict[str, Any]], None] | None,
+) -> bool:
+    """AD-1337 S2: add the ``SECRET_MASKED`` post-hook when ``executor`` masks and events can be emitted.
+
+    Inert (False, no hook) for an executor built without a masker, so a bare executor's hook count is unchanged.
+    """
+    if executor.secret_masker is None or emit_fn is None:
+        return False
+    executor.add_post_hook(make_secret_masked_hook(emit_fn))
+    return True

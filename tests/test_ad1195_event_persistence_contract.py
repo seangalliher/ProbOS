@@ -391,7 +391,7 @@ _GOLDEN_GRANDFATHERED = frozenset({
     "ZPD_SCENARIO_CALIBRATED",
 })
 
-# DECL-4: the 29 routed values of the contract's DURABLE table (section 3.8), plus AD-1326's.
+# DECL-4: the 30 routed values of the contract's DURABLE table (section 3.8), plus AD-1326's and AD-1337's.
 _CONTRACT_ROUTED_VALUES = frozenset({
     "capability_request_filed", "capability_request_decided", "capability_request_fulfilled",
     "tool_permission_denied", "tool_intervention_required",
@@ -404,6 +404,7 @@ _CONTRACT_ROUTED_VALUES = frozenset({
     "work_item_status_changed", "work_item_quarantined", "crew_task_started", "crew_task_completed",
     "config_changed",
     "procedure_challenge_decided",
+    "secret_masked",
 })
 
 _CONTRACT_OPERATIONAL = frozenset({
@@ -444,7 +445,7 @@ def _problem_lines(text: str, kind: str) -> list[str]:
 
 
 def test_every_member_is_declared_or_grandfathered_never_both() -> None:
-    """DECL-1: 395 members = 41 declared + 354 grandfathered, disjoint.
+    """DECL-1: 396 members = 42 declared + 354 grandfathered, disjoint (AD-1337 S2 declared SECRET_MASKED).
 
     AD-1270 (#1324) slice 4c deleted BOOT_CAMP_PHASE_ADVANCED with its one producer (AD-509's
     tracker): 397 -> 396, 356 -> 355; and BOOT_CAMP_PHASE_ADVANCE with AD-638's phases 2 and 3:
@@ -454,7 +455,7 @@ def test_every_member_is_declared_or_grandfathered_never_both() -> None:
     declared = set(ep.DECLARATIONS)
     assert not declared & ep.GRANDFATHERED
     assert declared | ep.GRANDFATHERED == names
-    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (395, 41, 354)
+    assert (len(names), len(declared), len(ep.GRANDFATHERED)) == (396, 42, 354)
     assert isinstance(ep.GRANDFATHERED, frozenset)
     assert ep.assert_complete(EventType.__members__) is None
 
@@ -505,13 +506,13 @@ def test_snapshot_only_shrinks() -> None:
 
 
 def test_declared_counts_and_routed_values_match_the_contract() -> None:
-    """DECL-4: 37 DURABLE (8 owner, 29 routed), 4 OPERATIONAL, 0 DIAGNOSTIC."""
+    """DECL-4: 38 DURABLE (8 owner, 30 routed), 4 OPERATIONAL, 0 DIAGNOSTIC."""
     counts = Counter(ep.DECLARATIONS.values())
-    assert counts == {Persistence.DURABLE: 37, Persistence.OPERATIONAL: 4}
+    assert counts == {Persistence.DURABLE: 38, Persistence.OPERATIONAL: 4}
     assert counts[Persistence.DIAGNOSTIC] == 0
     assert len(ep.OWNER_RECORDS) == 8
     assert ROUTED_VALUES == _CONTRACT_ROUTED_VALUES
-    assert len(ROUTED_VALUES) == 29
+    assert len(ROUTED_VALUES) == 30
     operational = {name for name, cls in ep.DECLARATIONS.items() if cls is Persistence.OPERATIONAL}
     assert operational == _CONTRACT_OPERATIONAL
     assert not any(ep.is_routed(name) for name in operational)
@@ -589,4 +590,4 @@ def test_every_member_keeps_str_equality_and_pickle_identity() -> None:
         )
     ]
     assert broken == []
-    assert len(EventType) == 395  # AD-1270 (#1324) slice 4c: BOOT_CAMP_PHASE_ADVANCED and BOOT_CAMP_PHASE_ADVANCE deleted
+    assert len(EventType) == 396  # AD-1270 (#1324) slice 4c deleted two members; AD-1337 S2 (#1560) added SECRET_MASKED
