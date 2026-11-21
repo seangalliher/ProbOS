@@ -22,7 +22,14 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from probos.cognitive.swe_harness.tool_call import CapturedConversion, ToolCallResult, capture_tool_result
+from probos.cognitive.swe_harness.tool_call import (
+    CapturedConversion,
+    DelegatedToolCallResult,
+    InstructionToolCallResult,
+    ToolCallResult,
+    capture_tool_result,
+    result_delivery,
+)
 from probos.tools.executor import SECRET_MASKED_MAX_NAMES, tool_record_identity
 from probos.tools.protocol import ToolResult
 
@@ -104,26 +111,69 @@ class RenderMask:
         strict: bool,
         correlation: EffectCorrelation | None,
     ) -> ToolCallResult:
-        """Mask the text this call hands the model, then emit ``SECRET_MASKED`` once if either pass masked or failed.
+        """Mask the text this call hands the model, then emit ``SECRET_MASKED`` once if either pass masked or withheld.
 
-        A failed pass withholds: the output becomes ``MASKING_FAILED_TEXT`` and the result an error.
+        The model reads a delivered result's frame instead of its output (``format_tool_result_content``), so the frame
+        is checked too. A failed pass, or a frame that holds a known value, withholds (``_withheld``).
         """
-        if self._masker is not None and isinstance(result.output, str):
-            outcome = self._masker.mask_text(result.output)
-            if outcome.failed:
-                from probos.security.secret_masking import MASKING_FAILED_TEXT
+        masker = self._masker
+        if masker is None:
+            return result
+        result = self._mask_final(masker, result)
+        if self._names or self._failed:
+            await self._emit(masker, emit_fn, result, tool_name=tool_name, strict=strict, correlation=correlation)
+        return result
 
-                self._failed = True
-                result = replace(result, output=MASKING_FAILED_TEXT, is_error=True)
-            elif outcome.text is not result.output:
+    def _mask_final(self, masker: SecretMasker, result: ToolCallResult) -> ToolCallResult:
+        if isinstance(result.output, str):
+            outcome = masker.mask_text(result.output)
+            if outcome.failed:
+                return self._withheld(result)
+            if outcome.text is not result.output:
                 self._names |= outcome.names
                 result = replace(result, output=outcome.text)
-        if self._names or self._failed:
-            await self._emit(emit_fn, result, tool_name=tool_name, strict=strict, correlation=correlation)
+        delivery = result_delivery(result)
+        if delivery is not None:
+            # A frame is never rewritten: a masked worked path would send the recovery to a file that does not exist.
+            # One that holds a known value (a workspace root or a source path that contains one) is withheld, and so
+            # is one whose pass failed (its text is then MASKING_FAILED_TEXT, which differs too).
+            framed = masker.mask_text(delivery.presentation)
+            if framed.text is not delivery.presentation:
+                self._names |= framed.names
+                return self._withheld(result)
         return result
+
+    def _withheld(self, result: ToolCallResult) -> ToolCallResult:
+        """``result`` as an error whose output is ``MASKING_FAILED_TEXT``, with no frame the model would read instead.
+
+        A failed delivery keeps its extension: its frame is a fixed code, and the run still stops on it (BF-946). Any
+        other delivery is dropped; an instruction or delegation extension is kept as it was.
+        """
+        from probos.security.secret_masking import MASKING_FAILED_TEXT
+
+        self._failed = True
+        delivery = result_delivery(result)
+        if delivery is None or delivery.status == "failed":
+            return replace(result, output=MASKING_FAILED_TEXT, is_error=True)
+        kept = {"id": result.id, "output": MASKING_FAILED_TEXT, "is_error": True, "duration_ms": result.duration_ms}
+        if isinstance(result, DelegatedToolCallResult):
+            return DelegatedToolCallResult(**kept, evidence=result.evidence)
+        if isinstance(result, InstructionToolCallResult):
+            return InstructionToolCallResult(**kept, repository_instructions=result.repository_instructions)
+        return ToolCallResult(**kept)
+
+    @staticmethod
+    def _carried_call_id(masker: SecretMasker, call_id: object) -> str | None:
+        """The model's tool-call id for the payload, or None: not a str, longer than ``CALL_ID_MAX_CHARS``, or holding
+        a known value. The id is the model's (its JSON is unchecked), so it is checked like the text and never masked
+        into the record; a failed pass returns ``MASKING_FAILED_TEXT``, which leaves it out too."""
+        if type(call_id) is not str or len(call_id) > CALL_ID_MAX_CHARS:
+            return None
+        return call_id if masker.mask_text(call_id).text is call_id else None
 
     async def _emit(
         self,
+        masker: SecretMasker,
         emit_fn: Callable[..., Any] | None,
         result: ToolCallResult,
         *,
@@ -134,11 +184,10 @@ class RenderMask:
         from probos.events import EventType
 
         names = sorted(self._names)
-        call_id = result.id if type(result.id) is str and len(result.id) <= CALL_ID_MAX_CHARS else None
         payload = {
             "seam": "render",
             "tool_id": None if strict else tool_record_identity(tool_name),
-            "invocation_id": None if strict else call_id,
+            "invocation_id": None if strict else self._carried_call_id(masker, result.id),
             "operation_id": correlation.operation_id if correlation is not None else None,
             "attempt_id": correlation.attempt_id if correlation is not None else None,
             "names": names[:SECRET_MASKED_MAX_NAMES],

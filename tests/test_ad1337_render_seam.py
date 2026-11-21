@@ -19,32 +19,43 @@ from unittest.mock import MagicMock
 import pytest
 
 import probos
+from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
+from probos.cognitive.crew_verifier import _session_correction_runtime
 from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
 from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
 from probos.cognitive.swe_harness.tool_call import (
+    DelegatedToolCallResult,
+    InstructionToolCallResult,
     ToolCallResult,
     capture_tool_result,
     result_delivery,
     tool_registration_to_llm_definition,
+    with_result_delivery,
 )
 from probos.events import EventType
+from probos.execution.workspace_results import ResultDelivery
+from probos.repository_instructions import InstructionObservation
 from probos.security import secret_masking
 from probos.security.secret_masking import (
     MASKING_FAILED_TEXT,
+    MaskOutcome,
     SecretMasker,
     mask_route_result,
     secret_forms,
     secret_masker_of,
 )
+from probos.tools.delegation_evidence import DelegationEvidence
 from probos.tools.executor import ToolExecutor, tool_record_identity
 from probos.tools.protocol import ToolResult, ToolType
 from probos.tools.registry import ToolRegistry
 from tests import test_ad1240_tool_result_delivery as delivery_tests
+from tests import test_ad1337_executor_seam as executor_tests
 from tests import test_ad745_episode_anchor as action_tests
 from tests.fixtures import ad1343_seam_census as seam_census
 from tests.fixtures.ad1343_seam_registry import DIRECT_TOOL_INVOKES
 from tests.offered_tools import offer
 from tests.test_ad1147_parallel_tools import _RecordingEmit
+from tests.test_ad1224_durable_tool_start import _dispatch_runtime, _offering_store
 from tests.test_ad1240_tool_result_delivery import (
     _FakeLLM,
     _RawTool,
@@ -247,6 +258,16 @@ async def test_both_passes_share_one_event_that_names_labels_only(
         ("i" * 128, sorted(many)[:16], 1), (None, sorted(many)[:16], 1),
     ]
 
+    # The call id is the model's: one that holds a known value is left out of the event while the text is masked.
+    leaky = _RecordingEmit()
+    shown = await RenderMask(_real_masker(tmp_path / "leaky")).final(
+        ToolCallResult(id=f"call_{TOKEN}", output=f"c {TOKEN}"),
+        emit_fn=leaky, tool_name="fixture_result", strict=False, correlation=None,
+    )
+    assert shown.output == f"c {PLACEHOLDER}"
+    assert [(p["invocation_id"], p["names"]) for p in _masked(leaky)] == [(None, ["github"])]
+    assert [form for form in secret_forms(TOKEN) if form in json.dumps(leaky.events)] == []
+
 
 async def test_a_failed_pass_withholds_and_a_strict_event_names_no_tool_or_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
@@ -282,6 +303,32 @@ async def test_a_failed_pass_withholds_and_a_strict_event_names_no_tool_or_call(
     )
     assert again.output == MASKING_FAILED_TEXT
     assert "SECRET_MASKED could not be emitted at the render seam" in caplog.text and TOKEN not in caplog.text
+
+    # A withheld delivered result keeps no frame the model would read instead, but keeps an instruction or delegation
+    # extension; a failed delivery keeps its own fixed frame, so the run still stops on it (BF-946).
+    observation, evidence = InstructionObservation(), DelegationEvidence(status="completed")
+    for plain, kind in (
+        (ToolCallResult(id="d", output="z"), ToolCallResult),
+        (
+            InstructionToolCallResult(id="d", output="z", repository_instructions=observation),
+            InstructionToolCallResult,
+        ),
+        (DelegatedToolCallResult(id="d", output="z", evidence=evidence), DelegatedToolCallResult),
+    ):
+        held = await RenderMask(masker).final(
+            with_result_delivery(plain, ResultDelivery("workspace", "Outline: a frame")),
+            emit_fn=None, tool_name="t", strict=False, correlation=None,
+        )
+        assert type(held) is kind and result_delivery(held) is None
+        assert (held.id, held.output, held.is_error) == ("d", MASKING_FAILED_TEXT, True)
+        assert getattr(held, "repository_instructions", observation) is observation
+        assert getattr(held, "evidence", evidence) is evidence
+    stopped = with_result_delivery(
+        ToolCallResult(id="d", output="z"), ResultDelivery("failed", "!", code="capture_limit"),
+    )
+    kept = await RenderMask(masker).final(stopped, emit_fn=None, tool_name="t", strict=False, correlation=None)
+    assert result_delivery(kept) is result_delivery(stopped)
+    assert (kept.output, kept.is_error) == (MASKING_FAILED_TEXT, True)
 
 
 # -- N5 to N8: what the loop hands the model ------------------------------------------------------------------------
@@ -597,19 +644,37 @@ ROUTES: dict[tuple[str, str, str, str], str] = {
         "never constructed in src (asserted below)",
     ("src/probos/runtime.py", "ProbOSRuntime.submit_mcp_invoke_with_consensus", "invoke", "self.mcp_bridge"):
         "reaches a model through _McpTool.invoke (producer seam) or a decomposed DAG's reflect (AD-1337 S5)",
+    ("src/probos/cognitive/swe_harness/agentic_loop.py", "AgenticLoop._execute_one_tool", "invoke", "self._executor"):
+        "the loop's executor: the producer seam, then the render seam (N14)",
+    ("src/probos/cognitive/agentic_dispatch.py", "DispatchToolExecutor.invoke", "invoke", "super()"):
+        "the executor itself (ToolExecutor.invoke): the producer seam masks what it returns",
+    ("src/probos/execution/effect_broker.py", "_EffectDispatchMixin.dispatch", "invoke", ""):
+        "the broker's callback: its one caller hands it ToolExecutor's invoke_reserved (asserted below)",
+    ("src/probos/cognitive/repair_verification.py", "verify_repair", "invoke", "executor"):
+        "the runtime's ToolExecutor (the producer seam); the retry reads only result.error, for its signature",
+    ("src/probos/tools/browser/tool.py", "BrowserTool.open_captain_session", "invoke", "self"):
+        "the Captain's own session open: its one caller, the browser router, returns the answer to the Captain "
+        "(asserted below); no model or record reads it",
 }
 
 
 def test_every_route_past_the_tool_executor_is_masked_or_has_a_recorded_reason() -> None:
     found: set[tuple[str, str, str, str]] = set()
+    captain_opens: list[str] = []
+    broker_dispatches: list[tuple[str, list[str]]] = []
     for path in sorted(seam_census.PACKAGE.rglob("*.py")):
-        visitor = _RouteCalls(path.relative_to(seam_census.ROOT).as_posix())
-        visitor.visit(ast.parse(path.read_bytes()))
+        rel = path.relative_to(seam_census.ROOT).as_posix()
+        tree = ast.parse(path.read_bytes())
+        visitor = _RouteCalls(rel)
+        visitor.visit(tree)
         found |= {(c.file, c.function, c.callee, c.receiver) for c in visitor.calls}
-    found |= {
-        (c.file, c.function, c.callee, c.receiver) for c in seam_census.census()
-        if c.callee == "invoke" and c.receiver.split(".")[-1].endswith(("tool", "bridge"))
-    }
+        for node in ast.walk(tree):
+            if _callee(node) == "open_captain_session":
+                captain_opens.append(rel)
+            elif _callee(node) == "dispatch" and ast.unparse(node.func).endswith("broker.dispatch"):
+                broker_dispatches.append((rel, [ast.unparse(arg) for arg in node.args]))
+    # Every invoke call, whatever its receiver: a filter on the receiver's name hid five (review round 1).
+    found |= {(c.file, c.function, c.callee, c.receiver) for c in seam_census.census() if c.callee == "invoke"}
     assert found == set(ROUTES), sorted(found ^ set(ROUTES))
     assert {(k[0], k[1], k[3]) for k in ROUTES if k[2] == "invoke" and k[3].endswith("tool")} == set(DIRECT_TOOL_INVOKES)
     assert not [
@@ -625,6 +690,12 @@ def test_every_route_past_the_tool_executor_is_masked_or_has_a_recorded_reason()
         < seam_census.first_line(step, seam_census.calls("mask_route_result"))
         < seam_census.first_line(step, seam_census.calls("mark_executed"))
     )
+    assert captain_opens == ["src/probos/routers/browser_stream.py"]
+    opened = seam_census.function("src/probos/routers/browser_stream.py", "open_browser_session")
+    assert "await browser_tool.open_captain_session(body.url)" in {
+        ast.unparse(node.value) for node in ast.walk(opened) if isinstance(node, ast.Return) and node.value is not None
+    }
+    assert broker_dispatches == [("src/probos/tools/executor.py", ["request", "invoke_reserved"])]
 
 
 def test_the_route_helpers_mask_a_tool_result_and_withhold_anything_else(
@@ -642,3 +713,94 @@ def test_the_route_helpers_mask_a_tool_result_and_withhold_anything_else(
     assert type(withheld) is ToolResult and (withheld.output, withheld.error) == (None, MASKING_FAILED_TEXT)
     assert mask_route_result(masker, ToolResult(output={"text": TOKEN}), route="r").output == {"text": PLACEHOLDER}
     assert "AD-1337: route=r masked names=['github']" in caplog.text and TOKEN not in caplog.text
+
+
+# -- N17 and N18: the repair after review round 1 (section 17) ------------------------------------------------------
+
+
+async def test_a_session_correction_masks_what_its_tools_return(tmp_path: Path) -> None:
+    masker = _real_masker(tmp_path)
+    for projected in (False, True):
+        tool = executor_tests._EchoTool("echo_dispatch", f"correction result {TOKEN}")
+        runtime = _dispatch_runtime(
+            registry=executor_tests._registry(tool), event_log=None,
+            perm_store=await _offering_store("agent-s2", "echo_dispatch"),
+        )
+        runtime.secret_masker = masker
+        runtime.emit_event = executor_tests._Events()
+        target = (
+            _session_correction_runtime(runtime, agent_id="agent-s2", department="engineering", rank="lieutenant")
+            if projected else runtime
+        )
+        llm = executor_tests._CapturingLLM("echo_dispatch")
+
+        await WorkItemAgenticExecutor(llm_client=llm).run(
+            agent_id="agent-s2", instructions="Test instructions.", task_text="use the probe", runtime=target,
+        )
+
+        assert tool.calls == 1, projected  # premise: the tool ran, through the projection too
+        shown = repr(llm.requests[1])
+        assert PLACEHOLDER in shown and TOKEN not in shown, projected
+    assert target.secret_masker is masker  # the projection carries the runtime's masker
+
+    # Every dispatch run is handed the runtime its caller was given, or this one projection: a new projection would
+    # add a spelling here, and needs a case like the one above.
+    handed: set[str] = set()
+    for path in sorted(_SRC.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_bytes())):
+            keywords = {k.arg: k.value for k in node.keywords} if isinstance(node, ast.Call) else {}
+            if "task_text" in keywords and "runtime" in keywords:
+                value = keywords["runtime"]
+                handed.add(f"{_callee(value)}()" if isinstance(value, ast.Call) else ast.unparse(value))
+    assert handed == {"runtime", "self._runtime", "_session_correction_runtime()"}
+
+
+@pytest.mark.parametrize("case", ["clean", "known_root", "frame_fails", "output_fails"])
+async def test_a_delivered_frame_that_cannot_be_masked_is_withheld_not_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    owned = tmp_path / "rig" / (f"own-{TOKEN}" if case == "known_root" else "own")
+    owned.mkdir(parents=True)
+    runtime, executor, context = _environment(owned)
+    assert (TOKEN in str(runtime.workspace_results.root)) == (case == "known_root")  # premise
+    registration = runtime.tool_registry.register(_RawTool(ToolResult(output="HEAD\n" + "y" * 20000)))
+    masker = _real_masker(tmp_path / "masker")
+    real, passes = masker.mask_text, []
+
+    def _injected(text: str) -> MaskOutcome:
+        # The injected faults: the pass over the frame fails, or every pass after the capture fails.
+        passes.append(text)
+        if (case == "frame_fails" and "Outline:" in text) or (case == "output_fails" and len(passes) > 1):
+            return MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+        return real(text)
+
+    monkeypatch.setattr(masker, "mask_text", _injected)
+    emit = _RecordingEmit()
+    llm = _FakeLLM([_turn(), _done()])
+    loop = AgenticLoop(
+        llm_client=llm, tool_executor=executor, max_iterations=3, tool_result_max_chars=6000,
+        structured_tool_messages=True, workspace_results=runtime.workspace_results, event_emit_fn=emit,
+    )
+    loop.secret_masker = masker
+
+    async with _started(runtime):
+        result = await loop.run(
+            system_prompt="fixture", user_message="recover",
+            tools=[tool_registration_to_llm_definition(registration)], context=context,
+        )
+
+    shown = _last_result(llm.requests[1])
+    recorded = result.tool_results[0]
+    assert [form for form in secret_forms(TOKEN) if form in _requests_text(llm)] == []
+    if case == "clean":
+        assert "Outline:" in shown and result_delivery(recorded).status == "workspace"
+        assert _masked(emit) == []
+        return
+    # The model is shown the withheld text, never the frame, and the recorded result carries no delivery.
+    assert shown == MASKING_FAILED_TEXT
+    assert type(recorded) is ToolCallResult and result_delivery(recorded) is None
+    assert (recorded.output, recorded.is_error) == (MASKING_FAILED_TEXT, True)
+    [payload] = _masked(emit)
+    assert (payload["names"], payload["failed"], payload["invocation_id"]) == (
+        ["github"] if case == "known_root" else [], True, None if case == "output_fails" else "fixture-call",
+    )
