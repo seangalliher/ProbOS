@@ -66,7 +66,7 @@ _PRODUCER_FILES: dict[str, tuple[str, ...]] = {
     "CREW_TASK_COMPLETED": ("cognitive/crew_synth.py",),
     "CONFIG_CHANGED": ("runtime_config_service.py",),
     "PROCEDURE_CHALLENGE_DECIDED": ("cognitive/procedure_challenger.py",),
-    "SECRET_MASKED": ("tools/executor.py",),
+    "SECRET_MASKED": ("tools/executor.py", "cognitive/swe_harness/render_masking.py"),
 }
 
 # Owner members ACCEPT-1 drives through the writer that owns their row.

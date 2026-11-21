@@ -1538,10 +1538,9 @@ def _runtime_secret_masker(runtime: Any) -> Any:
     """AD-1337 S2: ``runtime.secret_masker`` when it is a real ``SecretMasker`` (startup/finalize.py builds it),
     else None: a runtime finalize never ran on (a test double) masks nothing, and a ``MagicMock`` attribute is not
     handed to the executor, which would refuse it."""
-    from probos.security.secret_masking import SecretMasker
+    from probos.security.secret_masking import secret_masker_of
 
-    masker = getattr(runtime, "secret_masker", None)
-    return masker if isinstance(masker, SecretMasker) else None
+    return secret_masker_of(runtime)  # AD-1337 S3: the one filter every seam that takes a masker shares
 
 
 class DispatchToolExecutor(
@@ -4183,6 +4182,11 @@ class WorkItemAgenticExecutor:
             **resolve_event_correlation_settings(_agentic_loop_cfg),
             **_loop_kwargs,
         )
+        # AD-1337 S3 (#1560): the render seam masks with this run's executor's masker, assigned after construction for
+        # the reason AD-1240 gives below (the AD-1152 golden pins the constructor keywords).
+        from probos.security.secret_masking import secret_masker_of
+
+        loop.secret_masker = secret_masker_of(executor)
         # AD-1240: the owner is assigned after construction (never as a constructor
         # keyword), so every loop double that pins the constructor keywords is
         # unaffected. The run context carries the SAME authorized registry view this

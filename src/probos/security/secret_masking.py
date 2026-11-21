@@ -195,6 +195,34 @@ def _log_failure(exc: Exception) -> None:
     logger.error("AD-1337: secret masking failed (%s); the output is withheld", type(exc).__name__)
 
 
+def secret_masker_of(holder: object) -> SecretMasker | None:
+    """AD-1337 S3: ``holder.secret_masker`` when it is a real ``SecretMasker``, else None.
+
+    For a seam that takes its masker from what it is given (a runtime, a tool executor): a holder without one, or a
+    test double whose attribute is a ``MagicMock``, masks nothing rather than handing on something that is no masker.
+    """
+    masker = getattr(holder, "secret_masker", None)
+    return masker if isinstance(masker, SecretMasker) else None
+
+
+def mask_route_result(masker: SecretMasker | None, result: Any, *, route: str) -> Any:
+    """AD-1337 S3: mask a tool result a route takes past the tool executor, before the route records it.
+
+    ``result`` itself without a masker. With one, a ``ToolResult`` is masked as the producer seam masks it and a hit is
+    logged at WARNING with its labels; anything else is withheld (``ToolResult(error=MASKING_FAILED_TEXT)``), because
+    a route that cannot be masked must not pass its text on.
+    """
+    if masker is None:
+        return result
+    if not isinstance(result, ToolResult):
+        logger.error("AD-1337: route=%s got %s, not a ToolResult; the output is withheld", route, type(result).__name__)
+        return ToolResult(error=MASKING_FAILED_TEXT)
+    masked = masker.mask_result(result)
+    if masked.names:
+        logger.warning("AD-1337: route=%s masked names=%s", route, sorted(masked.names))
+    return masked.result
+
+
 class SecretHandle:
     """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
 

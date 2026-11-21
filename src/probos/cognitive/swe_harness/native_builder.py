@@ -157,6 +157,11 @@ class NativeBuilderHarness:
             ),
         )
 
+        # AD-1337 S3 (#1560): the render seam masks with this harness's executor's masker (the runtime's, from
+        # finalize), assigned after construction like the AD-1240 owner below; a test double's executor gives None.
+        from probos.security.secret_masking import secret_masker_of
+
+        loop.secret_masker = secret_masker_of(self._executor)
         # AD-1240: assigned after construction, never as a keyword. The run context
         # carries the SAME authorized registry view this harness's executor serves,
         # only when a real owner was injected.
