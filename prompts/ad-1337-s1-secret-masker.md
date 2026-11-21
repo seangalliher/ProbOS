@@ -3,6 +3,7 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21 (rev2)
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21 (rev3: section 17, the repair after review round 1)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21 (rev4: section 18, the repair after review round 2)
 
 **Status:** oracle-proven twice.
 - **Draft:** 67 passed.
@@ -2112,3 +2113,363 @@ Prior-art review: not applicable. This repairs review findings and adds no new c
 - On `3e8248b0`, `_load_store` still holds the inline `isinstance(raw, dict)` and `isinstance(value, str)` checks (they are in RA3's SEARCH), and RA5's SEARCH shows that `masked_credential_values` strips only what is in `_store`.
 
 I wrote no agent memory.
+
+---
+
+## 18. Repair after review round 2 (2026-11-21)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21
+
+Round 2 (`gpt-6.1-sol`, 24 minutes, the delta `3e8248b0..53696f68`) requested changes with one new finding, F6. F1, F2, F4 and F5 are resolved. F3 waits on F6.
+
+**F6 (P3, injected faults only).** D9 checked each label but not the whole placeholder. It then substituted `unnamed` without checking `<secret:unnamed>` itself. A value inside placeholder text, such as `secret:unnamed` at floor 8 or `unnamed` at floor 5, therefore reached the output and `names`, and masking the output again changed it. The orchestrator reproduced this on both `3e8248b0` and `53696f68`: cases A and B through `secret_label`'s fallback, which M1 shipped, and cases C and D through D9's fallback. Every output D9 changes already held a known value before the repair, so this is the pre-existing class rather than a regression. It is fixed here because the repair's D9 claim, which S2's event relies on, must be true.
+
+**The repair:**
+- One helper, `_placeholder(label)`, renders the text that `_substitute` writes, and D9 checks that same text.
+- A label whose placeholder contains a form of any known value is shown as `UNNAMED_LABEL`.
+- If any label is shown as `unnamed` and `<secret:unnamed>` itself contains a form, no placeholder is safe. `_patterns` then raises `UnsafePlaceholderError` (a `ValueError`, raised with no arguments) and caches nothing.
+- The existing handlers in `mask_text` (`:301-303`) and `mask_result` (`:338-341`) catch it. They return `MASKING_FAILED_TEXT` with `failed=True` and empty `names`, and log one ERROR line naming `UnsafePlaceholderError`, with no traceback and no value. `mask_result` keeps `duration_ms` and `metadata`.
+- Every pass fails until the values change. Once they do, the table is rebuilt.
+- On a pass that succeeds, `names` holds only final labels. A label is a substring of its placeholder, so no label in `names` contains a form.
+
+**Simpler test, same behaviour.** The condition reads `if unsafe and ...` instead of "some final label is `UNNAMED_LABEL`". The two are equivalent: when `<secret:unnamed>` contains a form, a label that `secret_label` turned into `unnamed` is itself in `unsafe`.
+
+**Rejected heavier designs:**
+- Fail lazily only on a pass that renders the unsafe label. This needs a sentinel path through `_substitute` and `names` to save availability in a case only injected faults reach.
+- A chain of fallback labels. Any fixed fallback can be defeated by a crafted value, so it still needs the fail-closed path.
+- Rejecting forms that straddle a placeholder's edge. This would withhold every pass for a real password ending in `<`, and such a form reveals nothing.
+
+**What sections 1 to 17 say that this overrides:**
+1. Section 4:
+   - **D9** becomes: "A label whose placeholder `<secret:LABEL>` contains a form of any known value is shown as `unnamed`. If `<secret:unnamed>` then contains one, building the table raises `UnsafePlaceholderError` and every pass fails closed (D7) until the values change."
+   - **D7** adds: "including a table in which no placeholder is safe (D9)."
+2. 17.8 property 6 is replaced by 18.6 properties 1 to 3.
+3. RB2's comment is replaced by RC4.
+4. RD3's last clause is replaced by RS1, and RP2's label clause by RQ2.
+5. Sections 5 and 17: 93 cases become 97. N42 is extended (its existing assertions stay) and N44 is added with 4 cases.
+6. 17.6: RM16's line changed, and RN2 restates it. RM17 is unchanged and still killed by N42.
+7. Section 13, blind spots, adds two items:
+   - A form that straddles a placeholder's edge is not checked (see RS1).
+   - A crafted value inside `<secret:unnamed>`, together with any label that falls back, withholds every pass, including passes with no match. This is intended (D7) and only injected faults reach it.
+
+**Milestone M-R2** (one Builder delegation; the Builder applies the pairs and runs no test):
+- Commit subject: `Check the whole placeholder in the secret masker, and withhold when none is safe`
+- Tier: HIGH, because it is a security property. No shared contract changes: public signatures are the same and there is one new public name, `UnsafePlaceholderError`. The GPT Diff Reviewer reviews the delta from `53696f68`.
+- Effort: about 10 Builder tool calls.
+- Line endings: `PROGRESS.md` and `DECISIONS.md` are `i/lf w/crlf`, so match each with its own endings. The source and test files are LF. Every pair is ASCII.
+
+### 18.1 `src/probos/security/secret_masking.py` (M-R2)
+
+**RC1.** SEARCH:
+```
+def _present(patterns: tuple[tuple[str, str], ...], text: str) -> tuple[tuple[str, str], ...]:
+    return tuple(item for item in patterns if item[0] in text)
+```
+REPLACE:
+```
+def _present(patterns: tuple[tuple[str, str], ...], text: str) -> tuple[tuple[str, str], ...]:
+    return tuple(item for item in patterns if item[0] in text)
+
+
+def _placeholder(label: str) -> str:
+    """The text that replaces an occurrence: ``_substitute`` writes it and D9 checks it, so the two cannot differ."""
+    return f"<secret:{label}>"
+
+
+class UnsafePlaceholderError(ValueError):
+    """AD-1337 D9: ``<secret:unnamed>`` holds a form of a known value, so no placeholder is safe and every pass
+    fails closed (D7). Raised without arguments: its message holds no value and no form."""
+```
+**RC2.** SEARCH:
+```
+        pieces.append(text[cursor:start])
+        pieces.append(f"<secret:{label}>")
+        cursor = end
+```
+REPLACE:
+```
+        pieces.append(text[cursor:start])
+        pieces.append(_placeholder(label))
+        cursor = end
+```
+**RC3.** SEARCH:
+```
+    def _patterns(self) -> tuple[tuple[str, str], ...]:
+        """``(form, label)``, longest first; rebuilt only when the values differ from the last pass's."""
+```
+REPLACE:
+```
+    def _patterns(self) -> tuple[tuple[str, str], ...]:
+        """``(form, label)``, longest first; rebuilt only when the values differ from the last pass's.
+
+        D9: a label whose placeholder holds a form is shown as ``UNNAMED_LABEL``; if ``<secret:unnamed>`` holds one
+        too, no placeholder is safe: ``UnsafePlaceholderError`` is raised and nothing is cached, so every pass
+        fails closed until the values change.
+        """
+```
+**RC4.** SEARCH:
+```
+        ordered = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
+        # D9: a label that holds a form would put a value in the placeholder and in ``names``.
+        unsafe = {label for label in set(forms.values()) if _present(ordered, label)}
+        patterns = tuple((form, UNNAMED_LABEL if label in unsafe else label) for form, label in ordered)
+        self._table = (values, patterns)
+```
+REPLACE:
+```
+        ordered = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
+        # D9: a placeholder that holds a form would put a value in the output, and its label one in ``names``.
+        unsafe = {label for label in set(forms.values()) if _present(ordered, _placeholder(label))}
+        patterns = tuple((form, UNNAMED_LABEL if label in unsafe else label) for form, label in ordered)
+        if unsafe and _present(ordered, _placeholder(UNNAMED_LABEL)):
+            raise UnsafePlaceholderError  # D9: no placeholder is safe; the pass's handler withholds (D7)
+        self._table = (values, patterns)
+```
+
+### 18.2 `tests/test_ad1337_secret_masking.py` (M-R2)
+
+**RU1.** SEARCH:
+```
+  that holds a value; a store file that is not an object of strings loads as AD-456 loaded it.
+```
+REPLACE:
+```
+  that holds a value; a store file that is not an object of strings loads as AD-456 loaded it;
+- N44 (review round 2): while the fallback placeholder would hold a known value, every pass is withheld.
+```
+**RU2.** SEARCH:
+```
+    registry.register("vault:tok-WXYZ5678ijkl", "tok-WXYZ5678ijkl")
+    masker = _masker(_store(tmp_path, {"github": TOKEN}), registry=registry)
+    out = masker.mask_text(f"x tok-ABCD1234efgh y tok-WXYZ5678ijkl z {TOKEN}")
+    assert out.text == "x <secret:unnamed> y <secret:unnamed> z <secret:github>"
+    assert out.names == frozenset({"unnamed", "github"}) and masker.mask_text(out.text).text is out.text
+```
+REPLACE:
+```
+    registry.register("vault:tok-WXYZ5678ijkl", "tok-WXYZ5678ijkl")
+    registry.register("site", "secret:site")  # round 2: the placeholder holds the value, the label does not
+    masker = _masker(_store(tmp_path, {"github": TOKEN}), registry=registry)
+    out = masker.mask_text(f"x tok-ABCD1234efgh y tok-WXYZ5678ijkl z {TOKEN}")
+    assert out.text == "x <secret:unnamed> y <secret:unnamed> z <secret:github>"
+    assert out.names == frozenset({"unnamed", "github"}) and masker.mask_text(out.text).text is out.text
+    site = masker.mask_text("v secret:site w")
+    assert site == MaskOutcome("v <secret:unnamed> w", frozenset({"unnamed"}), False)
+    assert masker.mask_text(site.text).text is site.text
+```
+**RU3.** SEARCH:
+```
+    assert store.get("github", requester="test") == got  # AD-456: an array is an empty store; the rest is skipped
+    assert not caplog.records  # no AD-456 warning, and no masking failure
+```
+REPLACE:
+```
+    assert store.get("github", requester="test") == got  # AD-456: an array is an empty store; the rest is skipped
+    assert not caplog.records  # no AD-456 warning, and no masking failure
+
+
+# -- N44: review round 2 (a fallback placeholder that holds a value) ------------------------------------------------
+
+
+@pytest.mark.parametrize("unnamed_by", ["label-holds-a-value", "not-a-plain-label"])
+@pytest.mark.parametrize(
+    ("floor", "second"),
+    [(DEFAULT_FLOOR, "secret:unnamed"), (5, "unnamed")],
+    ids=["floor-8", "floor-5"],
+)
+def test_a_fallback_placeholder_that_holds_a_value_withholds_every_pass_until_the_values_change(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, floor: int, second: str, unnamed_by: str,
+) -> None:
+    first = "tok-ABCD1234efgh"
+    assert second in "<secret:unnamed>" and len(second) >= floor  # premise: the fallback placeholder holds a form
+    control = SecretRegistry()
+    control.register("vault", second)
+    plain = _masker(_store(tmp_path / "control"), registry=control, floor=floor)
+    shown = plain.mask_text(f"x {second} y")  # no label falls back to unnamed, so nothing is withheld
+    assert shown == MaskOutcome("x <secret:vault> y", frozenset({"vault"}), False)
+    assert plain.mask_text(shown.text).text is shown.text
+    registry = SecretRegistry()
+    registry.register(first if unnamed_by == "label-holds-a-value" else "bad name!", first)
+    handle = registry.register("vault", second)
+    masker = _masker(_store(tmp_path / "fallback"), registry=registry, floor=floor)
+    caplog.set_level(logging.DEBUG)
+    withheld = MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    assert masker.mask_text(f"x {first} y") == withheld
+    assert masker.mask_text("no known value here") == withheld  # the table fails, so every pass does
+    result = ToolResult(output={"k": f"x {first} y"}, error=f"e {second}", duration_ms=3.0, metadata={"op": 1})
+    masked = masker.mask_result(result)
+    assert type(masked.result) is ToolResult and masked.result.output is None and masked.failed is True
+    assert masked.result.error == MASKING_FAILED_TEXT and masked.names == frozenset()
+    assert masked.result.duration_ms == 3.0 and masked.result.metadata == {"op": 1}
+    errors = [record for record in caplog.records if record.name == secret_masking.logger.name]
+    assert len(errors) == 3 and all(r.levelno == logging.ERROR and r.exc_info is None for r in errors)
+    assert all("UnsafePlaceholderError" in r.getMessage() for r in errors)
+    assert not any(first in r.getMessage() or second in r.getMessage() for r in errors)
+    handle.release()  # the values change, so the table is rebuilt and the fallback is safe again
+    logged = len(caplog.records)
+    assert masker.mask_text(f"x {first} y") == MaskOutcome("x <secret:unnamed> y", frozenset({"unnamed"}), False)
+    assert all(record.levelno < logging.ERROR for record in caplog.records[logged:])
+```
+
+### 18.3 `PROGRESS.md` (M-R2)
+
+RQ1 and RQ2 both edit line 3. Each SEARCH occurs exactly once on `53696f68`.
+
+**RQ1.** SEARCH:
+```
+Measured by `tests/test_ad1337_secret_masking.py` (93 cases):
+```
+REPLACE:
+```
+Measured by `tests/test_ad1337_secret_masking.py` (97 cases):
+```
+**RQ2.** SEARCH:
+```
+and a label that holds a value is shown as `unnamed`;
+```
+REPLACE:
+```
+and a label whose placeholder would hold a value is shown as `unnamed`, and every pass is withheld while `<secret:unnamed>` itself would hold one;
+```
+
+### 18.4 `DECISIONS.md` (M-R2)
+
+**RS1.** SEARCH:
+```
+and a label that holds a form of a known value is shown as `unnamed`, so no value reaches a placeholder or `names`.
+```
+REPLACE:
+```
+and a label whose placeholder holds a form of a known value is shown as `unnamed`; when `<secret:unnamed>` itself holds one, building the table raises `UnsafePlaceholderError` and every pass fails closed until the values change. So no placeholder, and no label in `names`, holds a form of a known value. A form that straddles a placeholder's edge is not checked: its characters come from the public label and the tool's own text, so it shows nothing the output did not, though masking such text again can change it.
+```
+**RS2.** SEARCH:
+```
+- *Measured.* `tests/test_ad1337_secret_masking.py` (93 cases),
+```
+REPLACE:
+```
+- *Measured.* `tests/test_ad1337_secret_masking.py` (97 cases),
+```
+**RS3.** SEARCH:
+```
+the node budget and the labels.
+```
+REPLACE:
+```
+the node budget, the labels and a fallback placeholder that would hold a value.
+```
+
+Ledger: rerun `gen_ad_ledger.py` and then `--check` after M-R2. Expect no change, because no AD heading changed.
+
+### 18.5 Mutation rows (campaign on the repaired tree; one changed line each; restore between rows)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RN1 | `_patterns`: `_present(ordered, _placeholder(label))` -> `_present(ordered, label)` (round 1's check) | N42 (`v <secret:site> w`) |
+| RN2 | the same line: `if _present(ordered, _placeholder(label))` -> `if False` (restates RM16) | N42, N44 [all four] |
+| RN3 | `if unsafe and _present(...)` -> `if _present(...)` | N44 [all four] (the control is withheld) |
+| RN4 | `if unsafe and _present(...)` -> `if False:` | N44 [all four] (`<secret:unnamed>` comes back) |
+| RN5 | `raise UnsafePlaceholderError` -> `raise ValueError` | N44 [all four] (the type name in the ERROR line) |
+| RN6 | insert `self._table = (values, patterns)` above the `if unsafe and` line | N44 [all four] (the second pass returns its text) |
+
+**Rows deliberately left out:**
+- `_substitute`: `pieces.append(_placeholder(label))` -> `pieces.append(f"<secret:{label}>")` is equivalent by construction.
+- RM17 (`UNNAMED_LABEL if label in unsafe else label` -> `label`) is on an unchanged line and N42 still kills it. N44 does not, because the table raises either way.
+
+### 18.6 Checks for the repair (in place of 17.7 for this round)
+
+**Prediction** (read from the code, not run):
+- **The tests alone** (RU1 to RU3 on `53696f68`, the code pairs not applied): **92 passed, 5 failed**.
+  - N42 fails on its new `site` assertion. It gets `'v <secret:site> w'`, because round 1 checks the label `site` alone.
+  - N44's four cases fail on the first withheld assertion. Each gets `MaskOutcome('x <secret:unnamed> y', frozenset({'unnamed'}), False)`.
+  - N44's control passes before that point.
+- **After every pair:** **97 passed** (93 + 4).
+
+**Focused gate** (`-n 0`): section 12's 17 files plus `tests/test_ad1337_executor_seam.py`. Then apply S2's and S3's contracts on top of the repaired S1 and confirm two things. First, every SEARCH in them still occurs exactly once. Neither contract edits `secret_masking.py` or anchors on any line RQ1, RQ2 or RS1 to RS3 changes (see Absence). Second, their new files still pass.
+
+**Static checks:**
+- `rg -n "<secret:\{" src/probos/security/secret_masking.py` finds exactly one line, in `_placeholder`.
+- `rg -n "UnsafePlaceholderError" src` finds only `secret_masking.py`.
+- `rg -n "logger\." src/probos/security/secret_masking.py` finds exactly one call, in `_log_failure`.
+- `rg -n "^import |^from " src/probos/security/secret_masking.py` is unchanged from `53696f68`.
+- `git diff 53696f68 -- src/probos/credential_store.py` is empty.
+- Section 18 and the changed files are ASCII.
+
+**Campaign:** RN1 to RN6 only. No row in sections 10 or 17.6 targets a changed line except RM16, which RN2 restates. The tests only add assertions and cases, so they can kill more but never fewer.
+
+**Broad gate:** unchanged, once for batch 1, after S3.
+
+### 18.7 Properties for the round-3 Diff Reviewer (the delta `53696f68..`)
+
+1. For every label in a table `_patterns` returns, `_placeholder(label)` contains no form of any known value, at every floor of 1 or more. So no label in `names` contains one either, because a label is a substring of its placeholder.
+2. A label whose placeholder contains a form is shown as `UNNAMED_LABEL` in every placeholder and in `names`.
+3. If any label falls back and `<secret:unnamed>` contains a form:
+   - `_patterns` raises `UnsafePlaceholderError` with no arguments and caches nothing.
+   - `mask_text` and `mask_result` return `MASKING_FAILED_TEXT` with `failed=True` and empty `names`.
+   - `mask_result` keeps `duration_ms` and `metadata`.
+   - Each withheld pass logs exactly one ERROR line, which names `UnsafePlaceholderError` and has no traceback, value or form.
+   - Once the values change, the next pass rebuilds the table, and no ERROR is logged if it is safe.
+4. When no label falls back, a value that lies inside `<secret:unnamed>` is masked normally and nothing is withheld (N44's control).
+5. `_substitute` and the D9 check render placeholders through the same `_placeholder`.
+6. Nothing else changes:
+   - The outputs of N1 to N43 are the same. N42's original assertions are intact.
+   - Public signatures are unchanged, and the only new public name is `UnsafePlaceholderError`.
+   - `credential_store.py` is unchanged.
+7. Tests: N44 and the extended N42 each fail on `53696f68` for the reason stated in 18.6. No case is deleted, loosened or skipped. No test sleeps, patches the global `json` or `subprocess` module, or reads the process environment.
+8. The claims in `PROGRESS.md` and `DECISIONS.md` match the code. The straddle limit and the availability cost of failing closed are stated, not hidden.
+
+### 18.8 The orchestrator's first-hand checks of the repair (2026-11-21)
+
+The 12 operations of this section were applied to a scratch worktree detached at `53696f68` (the committed S1 repair) by `audit\contract_tools.py apply --prefix 18.` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (an empty redirected home; BF-919) and each probe through `run_probe_homeguard.ps1`; a bare `pytest` was not used: it imports `D:\ProbOS\src` and fails for the wrong reason.
+
+| R | Result |
+|---|---|
+| R1 | All 12 operations (RC1 to RC4, RU1 to RU3, RQ1, RQ2, RS1 to RS3) are found by `contract_tools.py list --prefix 18.`; every SEARCH occurs exactly once on `53696f68` (the code, the test and the tracker pairs alike). The four files change by +73 -8 lines: `secret_masking.py` 21 and 4, the test file 49 and 1, `PROGRESS.md` one line and `DECISIONS.md` two lines changed in place. `credential_store.py` is not touched. Blobs after all 12 operations: `secret_masking.py` `793604d6`, the test file `a11fce41`, `PROGRESS.md` `6c5b1db7`, `DECISIONS.md` `b0945d45`. |
+| R2 | **The tests alone** (RU1 to RU3 applied, the code pairs not): **5 failed, 92 passed** in 7.6 s, exactly the prediction of 18.6, each for its stated reason. N42 fails on its new `site` assertion (test file line 729): the text is `'v <secret:site> w'` where `'v <secret:unnamed> w'` is expected, because round 1 checks the label `site` alone. N44's four cases each fail on the first withheld assertion: the pass returns the unwithheld outcome, `failed=False`. N44's control (the plain label) passes before that point. |
+| R3 | After all 12 operations the test file alone: **97 passed** (93 + 4) in 1.9 s. |
+| R4 | **The F6 reproductions** (`probe_b11s1_review2.py`; before the repair in `evidence-b11s1r2-f6-prev.txt` and `evidence-b11s1r2-f6-repair.txt`, after it in `evidence-b11s1r2-f6-fixed.txt`; the control, a plain label with no fallback, prints False and False on all three). Cases A to D each returned `<secret:unnamed>` holding a known value before the repair. Now each returns the withheld text with `failed=True` and empty `names`, and masking that text again changes nothing. Each withheld pass logs one ERROR line, `AD-1337: secret masking failed (UnsafePlaceholderError); the output is withheld`: the type name, and no value, form or traceback. |
+| R5 | **A random search of the property itself** (`probe_b11s1_review3.py`: 20,000 configurations from a fixed seed; one to three values built from fragments of the placeholder text, `secret:`, `unnamed`, `<`, `>`, plus short tokens, at floors 1 to 8; labels plain, not plain, or equal to their value; every check recomputed from the unchanged `secret_forms` and `secret_label`, not from the table code under test). Before the repair, on `53696f68`: **4,719 of the 20,000 leave a placeholder holding a form of a known value** (so the search discriminates), and 4,714 outputs change when masked again. After the repair: **0 placeholders holding a form (P1), 0 raises that are not justified (P2), 0 failures without a raise (P3)**; 4,670 configurations raise `UnsafePlaceholderError` (each is followed by a withheld pass with empty `names`) and 15,330 build a table; 0 outputs are non-idempotent and 0 hold a form. The straddle limit of RS1 did not show in this search; it stays documented. |
+| R6 | **The campaign** (`audit\mutants_gen.py`, `rows_ad1337s1r4.py`: RN1 to RN6 of 18.5 plus my extra rows RX1 to RX3 on the repaired tree): **killed 9, differed 0, survived 0, invalid 0**. Every named killer failed: RN1 by N42 (and one more case), RN2 by N42 and the four N44 cases, RN3 to RN6 by the four N44 cases, RX1 (`_placeholder(UNNAMED_LABEL)` checked as the bare label) by the two floor-8 N44 cases, RX2 (`if unsafe or ...`) by N42 (and four more cases), RX3 (`UnsafePlaceholderError(BaseException)`, which the handlers' `except Exception` would not catch) by the four N44 cases. The rows of section 10 and 17.6 are not rerun: no line they mutate changed except RM16, which RN2 restates. |
+| R7 | **Static checks.** `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`); `rg -n "<secret:\{" src/probos/security/secret_masking.py` finds exactly one line (152, in `_placeholder`); `rg -n "UnsafePlaceholderError" src` finds only `secret_masking.py` (the class, the docstring of `_patterns` and the raise); `rg -n "logger\." src/probos/security/secret_masking.py` finds exactly one call (`_log_failure`); the import lines of the file are unchanged from `53696f68`; `git diff 53696f68 -- src/probos/credential_store.py` is empty; the four changed files add no non-ASCII character; `SecretMasker` has 6 methods and 149 lines (an AST count). |
+| R8 | **S2 and S3 on the repaired S1** (a scratch tree detached at `70763ad6`, S1 repaired plus S2's contract and its first milestone; then these 12 operations; then S2's `TR1` and `TR2`; then all 17 operations of S3's rev1 contract): every SEARCH of S2's two tracker pairs and of S3's 17 operations still occurs exactly once (the tracker anchors included), neither contract edits a line this section changes, and the ledger regenerated there differs from the one regenerated on the same contracts without this section only in its `captured_at`, `head` and `subject_count`. The three new test files and the closest consumers (S1's 97 cases, S2's 21, S3's 18, the four AD-1195 files, the ledger, layer-boundary, SRP-layout and fitness tests, 11 files): **818 passed** in 133 s. |
+
+**What the orchestrator changed in the Architect's section 18:** nothing in the pairs, the tests or the rows; this table replaces the placeholder of 18.8.
+
+**What these checks do not show.**
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data` (the vessel has no `secrets.json`), and until S2 and S3 land nothing calls the masker.
+- The consolidated focused set (18.6) on the Builder's own output: it runs once on the committed head, in both embedding modes, before the round-3 review.
+- A form that starts inside a placeholder and continues into the tool's own text: RS1 documents it and R5 did not reach it.
+
+---
+
+## Verified against `rv1337` (`53696f68`; Read/Grep, 2026-11-21)
+
+```
+secret_masking.py: UNNAMED_LABEL :52; secret_label :111-113; _present :146-147 (the only "def _present" here);
+  _substitute :176-178 (pieces.append(f"<secret:{label}>") :177, the only such line in src);
+  _log_failure :183-185; mask_text except :301-303; mask_result _patterns() :313, except :338-341;
+  _patterns :357-358 (def + one-line docstring), D9 :367-371 (comment :368, unsafe :369, patterns :370, cache :371)
+tests/test_ad1337_secret_masking.py: docstring :14-16; imports :38-53 (DEFAULT_FLOOR, MASKING_FAILED_TEXT,
+  MaskOutcome, SecretRegistry, secret_masking, ToolResult, logging); N19 "bad name!" -> unnamed :319-323;
+  N42 :718-725; N43 end :754-755; floor=5 case :563-564 (value "Zq7#k": no form in "<secret:five>")
+DECISIONS.md:1664 "...is shown as `unnamed`, so no value reaches a placeholder or `names`." once;
+  :1668 "(93 cases)" and "the node budget and the labels." once each
+PROGRESS.md:3 "Measured by ... (93 cases):" once; "and a label that holds a value is shown as `unnamed`;" once
+orchestrator.agent.md:44 convergence rule; :52 the round-three brake
+ad-1337-s2-producer-seam.md:107 (b1337b) event payload: "No agent id, no value, no form, no position."
+```
+
+## Absence verified (2026-11-21)
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| `_placeholder` and `UnsafePlaceholderError` are new names | Grep `_placeholder\b\|UnsafePlaceholderError` over `rv1337/src/probos/security` | none | yes |
+| No row in sections 10 or 17.6 targets the placeholder line | Grep `secret:\{label\}` in the contract (b1337b) | only :891, the code of 7.2 | yes |
+| The S2 and S3 contracts neither edit `secret_masking.py` nor anchor on a changed tracker sentence | Grep `^### .*secret_masking\.py\|D9\|<secret:unnamed>` and `label that holds\|93 cases\|node budget\|no value reaches a placeholder` in `ad-1337-s[23]*.md` (b1337b) | only S2:1513 (a recorded run, "S1's file (93 cases)") and S2:1338 (S2's own file) | yes. These are the copies in `b1337b` (`5177e709`); if the S2 and S3 contracts have moved on since, the SEARCH re-check in 18.6 covers that |
+| No existing case hits the new raise | Read every registered and stored value in the test file (`:114-755`). At floor 8, an 8-character substring of a placeholder must be a raw or JSON form containing `<`, `:` or `>`, and no case value contains `secret:`. The one floor-5 case (`:563`) has no form in `<secret:five>` | none | yes (read, not run) |
+
+Prior-art review: not applicable. This repairs a review finding and adds no new capability.
+
+---
+
+**Evidence I could not gather:** I ran no tests (this was a read-only session). The 92/5 and 97 counts, and the claim that N1 to N43 keep their outputs, come from reading the code. I wrote no agent memory and edited no repository file.
