@@ -201,6 +201,21 @@ async def test_the_reply_steps_run_with_the_cycle_bound_and_the_outer_id_comes_b
     assert seen == ["feedfacecafe", "feedfacecafe", "feedfacecafe", "0123456789ab"]
 
 
+async def test_a_step_that_changes_the_cycle_id_binds_the_new_one_for_the_steps_after_it() -> None:
+    seen: list[str] = []
+    pipeline = DmReplyPipeline(_ctx(cycle_id="feedfacecafe"))
+
+    async def adopts() -> None:
+        seen.append(current_cycle_id())
+        pipeline.ctx.cycle_id = "0123456789ab"
+
+    async def probe() -> None:
+        seen.append(current_cycle_id())
+
+    await pipeline._run_steps((adopts, probe))
+    assert seen == ["feedfacecafe", "0123456789ab"] and current_cycle_id() == ""
+
+
 # -- N4 to N8: crossing, from a real cycle (or inside one) to the stored record -------------------------------------
 
 
@@ -221,6 +236,59 @@ async def test_the_captains_dm_route_stores_the_turn_with_the_agents_cycle_id(
     chain_id = result_cycle_id(results[0])
     assert len(results) == 1 and registry.kind_of(chain_id) == "cognitive_cycle" and current_cycle_id() == ""
     assert _only(_records(memory), "[1:1 with") == (chain_id, VERDICT_RESOLVED)
+
+
+async def test_a_dm_whose_reply_the_gate_retried_stores_the_id_of_the_cycle_that_answered(
+    memory: EpisodicMemory, registry: CycleIdRegistry, tmp_path: Path,
+) -> None:
+    from probos.routers.agents import agent_chat
+
+    agent = _Agent()
+    agent._runtime = _cycle_runtime(memory, registry)
+    results: list[IntentResult] = []
+    cycle = _recording(agent, results)
+    answers = iter((_REPLY + " []", _OBSERVATION))  # the real gate rejects an empty tag pair and asks again
+
+    async def _send(intent: IntentMessage, **kwargs: Any) -> IntentResult:
+        agent.answer = next(answers)
+        return await cycle(intent, **kwargs)
+
+    rt = _route_runtime(tmp_path, modes=False)
+    rt.registry.get.return_value.sovereign_id = "ad1360-dm-agent"
+    rt.episodic_memory = memory
+    rt.intent_bus.send = AsyncMock(side_effect=_send)
+    with patch("probos.routers.agents.is_crew_agent", return_value=True):
+        await agent_chat("test-agent", _chat_request(_QUESTION), rt)
+    assert len(results) == 2
+    first, retry = (result_cycle_id(result) for result in results)
+    assert first != retry and registry.kind_of(first) == registry.kind_of(retry) == "cognitive_cycle"
+    assert _only(_records(memory), "[1:1 with") == (retry, VERDICT_RESOLVED) and current_cycle_id() == ""
+
+
+async def test_a_retry_result_that_carries_no_cycle_id_leaves_the_first_cycles_id_in_place(
+    memory: EpisodicMemory, registry: CycleIdRegistry, tmp_path: Path,
+) -> None:
+    from probos.routers.agents import agent_chat
+
+    agent = _Agent()
+    agent._runtime = _cycle_runtime(memory, registry)
+    results: list[IntentResult] = []
+    cycle = _recording(agent, results)
+
+    async def _send(intent: IntentMessage, **kwargs: Any) -> IntentResult:
+        if results:  # the retry: a result no cycle built, so it carries no id
+            return IntentResult(intent_id=intent.id, agent_id=agent.id, success=True, result=_OBSERVATION)
+        agent.answer = _REPLY + " []"  # the real gate rejects an empty tag pair and asks again
+        return await cycle(intent, **kwargs)
+
+    rt = _route_runtime(tmp_path, modes=False)
+    rt.registry.get.return_value.sovereign_id = "ad1360-dm-agent"
+    rt.episodic_memory = memory
+    rt.intent_bus.send = AsyncMock(side_effect=_send)
+    with patch("probos.routers.agents.is_crew_agent", return_value=True):
+        await agent_chat("test-agent", _chat_request(_QUESTION), rt)
+    assert len(results) == 1 and rt.intent_bus.send.await_count == 2
+    assert _only(_records(memory), "[1:1 with") == (result_cycle_id(results[0]), VERDICT_RESOLVED)
 
 
 async def test_a_shell_session_turn_stores_its_episode_with_the_agents_cycle_id(

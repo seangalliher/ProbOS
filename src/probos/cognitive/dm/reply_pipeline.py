@@ -37,7 +37,7 @@ from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     assess_write_claim,
     disclosure_for,
 )
-from probos.cycle_trace import cycle_scope  # AD-1360 (#1828)
+from probos.cycle_trace import cycle_scope, result_cycle_id  # AD-1360 (#1828)
 from probos.dm_reply import DmReply, ToolInvocations  # AD-1248 / AD-1295
 from probos.hooks.bus import HookEvent
 
@@ -570,9 +570,10 @@ class DmReplyPipeline:
         is never asked (A-3), so a reply outside plan mode runs as before."""
         gate = self.ctx.plan_mode_gate
         # AD-1360 (#1828): the steps run after the agent's cycle has ended and store episodes and post to the Ward Room
-        # for it, so its AD-492 id is bound while they run; the id bound before is back afterwards.
-        with cycle_scope(self.ctx.cycle_id):
-            for step in steps:
+        # for it, so its AD-492 id is bound while each runs; the id bound before is back afterwards. Bound per step:
+        # step 1 can adopt a retry's reply, and with it the id of the cycle that answered.
+        for step in steps:
+            with cycle_scope(self.ctx.cycle_id):
                 try:
                     if gate is not None and self._plan_mode_holds_back(step, gate):
                         continue
@@ -704,6 +705,9 @@ class DmReplyPipeline:
                                 retry_result.cleaned_text
                             )
                         )
+                        # AD-1360 (#1828): the reply now comes from the retry's own cycle, so the steps after this one
+                        # (the DM episode, the Ward Room posts) belong to it; a retry result with no id keeps this one.
+                        self.ctx.cycle_id = result_cycle_id(retry_resp) or self.ctx.cycle_id
                         logger.info(
                             "AD-724-1: DM retry for agent %s — "
                             "original_warnings=%s retry_warnings=%s",
