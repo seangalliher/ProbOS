@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21 (rev2)
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21 (rev3: section 17, the repair after review round 1)
 
 **Status:** oracle-proven twice.
 - **Draft:** 67 passed.
@@ -1439,3 +1440,675 @@ Every pair of section 7 was applied to a scratch worktree by `audit\contract_too
 - Any seam, the event, or the vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`, and until S2 and S3 land, nothing calls the masker.
 - The cost of a pass over a container of more than 10,000 nodes, or the walk bounds (32, 10,000) and the floor (8): none of the three was measured.
 - A live boot: S1 reads neither the vessel's `.env`, its traces nor its store.
+
+---
+
+## 17. Repair after review round 1 (2026-11-21)
+
+Round 1 (`gpt-6.1-sol`, 45 minutes, the committed candidate `5d8a5eb4..3e8248b0`) requested changes: five findings and no size findings. The orchestrator reproduced all five against a passing control before this repair (`evidence-b11s1-review1.txt`). Every finding is fixed here. No #1820 item is added, and R1 to R3 are unchanged.
+
+**Amended after the orchestrator's campaign (2026-11-21).** Three of the orchestrator's extra mutation rows survived the repair: its R1, R2 and R3 in `audit\rows_ad1337s1r3.py`, which are not the R1 to R3 named above. No case removed the store file after a failed load, wrote a store that is a JSON array, or wrote a store that holds a value that is not a string.
+- N38 now removes the damaged file before it repairs it.
+- The new case N43 pins AD-456's reading of the file.
+- RM18 to RM20 restate the three rows.
+- No code pair changed.
+
+**F1 (P1). A store that cannot be read was taken for an empty one.** `_load_store` catches `JSONDecodeError` and `OSError`, keeps `_store` empty and sets `_store_loaded`. The pass then succeeded and the value went out unmasked, and repairing the file changed nothing. Repair:
+- `_load_store` also sets `_store_load_failed`. For `get`, AD-456's policy is unchanged: an empty store and one warning.
+- While that flag is set, `masked_credential_values` reads the file again on every call through the new module function `_read_store_file`, the same parse `_load_store` now uses. A read that fails raises, so the masker withholds the output: one ERROR line with the exception type and no traceback, per D7.
+- Once the file is removed, the pass succeeds with an empty store, as `get` has. Once it reads again, the pass masks what the file holds. `get` still returns what it did before.
+- Not rate-limited: each ERROR line pairs with one withheld output.
+- Reach today: the vessel has no `secrets.json`, so the availability cost falls only on a hand-written damaged file.
+
+**F2 (P2, re-rated). A first load in another thread could undo a rotation.** A thread that had read the old file stored it after a `rotate` had stored and saved the new value, so the next pass missed the new value. C4's docstring claim ("at worst repeats the same writes") is false. Repair:
+- `_load_store`'s body runs under a store-owned `threading.Lock` (`_store_lock`), so the store loads once. A `rotate` that arrives during a load waits for it, then writes.
+- Reach: S2's priming `get` runs a first load in a worker thread; `rotate` has no production caller but is AD-456's public operator API.
+- No other lock is needed. Under the GIL each dict copy in `masked_credential_values` is one step. Every interleaving of `rotate`'s three writes with the two copies leaves the masker either with the state before the rotation or with a superset of the state after it.
+- `get` can store an old value in `_cache` and `_last_resolved` after a concurrent `rotate`. For `_cache` that is AD-456's existing behaviour. For `_last_resolved` it only over-masks the old value, because the store still names the new one.
+
+**F3 (P3, re-rated). A label could hold a value.** A label that holds a form of a known value now becomes `unnamed` when the table is rebuilt, so no value reaches a placeholder, `names` or S2's event.
+
+**F4 (P2). `max_nodes` bounded the callbacks, not the walk.** A node is the output itself, an item of an exact `list` or `tuple`, or a value of an exact `dict` (keys are not nodes). A walk makes at most `max_nodes` calls. Iteration stops once the budget is spent, and a container is copied only when one of its nodes changed. Q4 is unchanged: what lies past the budget is left to the render seam.
+
+**F5 (P3). A shared form ignored D3's tie-break.** `_patterns` now gives a shared form the smaller label.
+
+**What sections 1 to 16 say that this overrides:**
+1. Section 0, P1: "`_load_store` is idempotent, so a concurrent first call at worst repeats the same writes" is false. The load now runs once, under `_store_lock`.
+2. Section 4:
+   - D1 adds: "After a load that failed, the JSON store's file is read on every call while it exists, and a read that fails raises."
+   - D3 is unchanged and now holds for a shared form.
+   - D5 adds the node definition, the stop and copy-on-change from F4.
+   - D7 adds: "including a store whose load failed and whose file still cannot be read."
+   - New **D9 (labels):** a label that contains a form of any known value is shown as `unnamed`.
+3. Section 5: 84 cases become 93, with rows N38 to N43 (17.3). The repair's prediction is in 17.7.
+4. Section 7.3, C4: its docstring sentence on thread safety is replaced by RA4.
+5. Section 10: M25's line no longer exists; RM8, RM8b and RM9 replace it. M26 and M27 target changed lines; RM14 and RM13 restate them.
+6. Section 12: replaced by 17.7 for this round.
+7. Section 13, blind spots, adds:
+   - A secrets file created or edited by hand after the first load is read by neither `get` nor the masker until restart (AD-456 loads once).
+   - A `rotate` after a failed load overwrites the damaged file with the in-memory store (AD-456 behaviour, unchanged; `rotate` has no production caller).
+8. Section 14: properties 2, 3, 5, 7, 8, 9 and 10 are restated in 17.8.
+9. TR1 and TR2: amended by 17.4 and 17.5.
+
+**Milestone M-R1** (one Builder delegation; the Builder applies the pairs and runs no test):
+- Commit subject: `Repair the secret masker after review: unreadable store, first-load lock, walk budget, labels`
+- Tier: HIGH. It changes a shared contract, the credential store's load, so the GPT Diff Reviewer does one full review of the delta.
+- Effort: about 14 Builder tool calls.
+- Line endings: `credential_store.py`, `PROGRESS.md` and `DECISIONS.md` are `i/lf w/crlf`, so match each with its own endings. The two other files are LF. Every pair is ASCII.
+
+### 17.1 `src/probos/credential_store.py` (M-R1)
+
+**RA1.** SEARCH:
+```
+import subprocess
+import time
+```
+REPLACE:
+```
+import subprocess
+import threading
+import time
+```
+**RA2.** SEARCH:
+```
+        self._store: dict[str, str] = {}
+        self._store_loaded = False
+```
+REPLACE:
+```
+        self._store: dict[str, str] = {}
+        self._store_loaded = False
+        # AD-1337: the first load can run in a worker thread (S2's priming get) while rotate() runs on the loop.
+        self._store_lock = threading.Lock()
+        # AD-1337: True after a load that failed; get() keeps AD-456's empty store, the secret masker reads the file.
+        self._store_load_failed = False
+```
+**RA3.** SEARCH:
+```
+    def _load_store(self) -> None:
+        """Lazy-load the JSON-backed store. Idempotent."""
+        if self._store_loaded or self._store_path is None:
+            return
+        if self._store_path.exists():
+            try:
+                raw = json.loads(self._store_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    for key, value in raw.items():
+                        if isinstance(key, str) and isinstance(value, str):
+                            self._store[key] = value
+            except (json.JSONDecodeError, OSError):
+                logger.warning(
+                    "AD-456: secrets store read failed (path=%s); "
+                    "starting with empty store",
+                    self._store_path, exc_info=True,
+                )
+        self._store_loaded = True
+```
+REPLACE:
+```
+    def _load_store(self) -> None:
+        """Lazy-load the JSON-backed store. Idempotent.
+
+        AD-1337: the body runs under ``_store_lock``, so the store loads once and a first load in a worker thread
+        cannot store a value it read before a ``rotate`` replaced it. A read that fails leaves ``get`` AD-456's empty
+        store, as before, and sets ``_store_load_failed`` so ``masked_credential_values`` reads the file itself.
+        """
+        with self._store_lock:
+            if self._store_loaded or self._store_path is None:
+                return
+            if self._store_path.exists():
+                try:
+                    self._store.update(_read_store_file(self._store_path))
+                except (json.JSONDecodeError, OSError):
+                    self._store_load_failed = True
+                    logger.warning(
+                        "AD-456: secrets store read failed (path=%s); "
+                        "starting with empty store",
+                        self._store_path, exc_info=True,
+                    )
+            self._store_loaded = True
+```
+**RA4.** SEARCH:
+```
+    not a method: ``CredentialStore`` is at the 15-method SRP review trigger. Safe from a worker thread: each dict
+    is copied before it is read, and ``_load_store`` is idempotent, so a concurrent first call at worst repeats the
+    same writes.
+    """
+```
+REPLACE:
+```
+    not a method: ``CredentialStore`` is at the 15-method SRP review trigger. Safe from a worker thread: the first
+    load runs under the store's ``_store_lock``, so it cannot undo a concurrent ``rotate``, and each dict is copied
+    in one step before it is read. After a load that failed (``_store_load_failed``), ``get`` keeps AD-456's empty
+    store, but the file can still hold values a tool could print: it is read on every call while it exists, and a
+    read that fails raises, so the masker withholds the output (AD-1337 D7) until the file reads again.
+    """
+```
+**RA5.** SEARCH:
+```
+    store._load_store()
+    pairs.extend((name, value) for name, value in dict(store._store).items() if value.strip())
+```
+REPLACE:
+```
+    store._load_store()
+    pairs.extend((name, value) for name, value in dict(store._store).items() if value.strip())
+    if store._store_load_failed and store._store_path is not None and store._store_path.exists():
+        pairs.extend((name, value) for name, value in _read_store_file(store._store_path).items() if value.strip())
+```
+**RA6.** SEARCH:
+```
+def masked_credential_values(store: CredentialStore) -> tuple[tuple[str, str], ...]:
+```
+REPLACE:
+```
+def _read_store_file(path: Path) -> dict[str, str]:
+    """AD-456's reading of the JSON store at ``path``: its ``str``-to-``str`` entries, ``{}`` for JSON that is not
+    an object. Raises what reading or parsing raises. AD-1337: ``_load_store`` and ``masked_credential_values``
+    share it, so the two cannot disagree on what the file holds."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return {}
+    return {key: value for key, value in raw.items() if isinstance(key, str) and isinstance(value, str)}
+
+
+def masked_credential_values(store: CredentialStore) -> tuple[tuple[str, str], ...]:
+```
+
+### 17.2 `src/probos/security/secret_masking.py` (M-R1)
+
+**RB1.** SEARCH:
+```
+    One per runtime (built by AD-1337 S2). ``mask_text`` and ``mask_result`` may run on any thread: the registry is
+    locked, the store's dicts are copied before they are read, and the pattern table is replaced whole.
+```
+REPLACE:
+```
+    One per runtime (built by AD-1337 S2). ``mask_text`` and ``mask_result`` may run on any thread: the registry is
+    locked, the store's first load is locked and its dicts are copied before they are read, and the pattern table is
+    replaced whole.
+```
+**RB2.** SEARCH:
+```
+        forms: dict[str, str] = {}
+        for value, label in values:
+            for form in secret_forms(value, self._floor):
+                forms.setdefault(form, label)
+        patterns = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
+        self._table = (values, patterns)
+        return patterns
+```
+REPLACE:
+```
+        forms: dict[str, str] = {}
+        for value, label in values:
+            for form in secret_forms(value, self._floor):
+                forms[form] = min(label, forms.get(form, label))  # D3: the smaller label wins a shared form
+        ordered = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
+        # D9: a label that holds a form would put a value in the placeholder and in ``names``.
+        unsafe = {label for label in set(forms.values()) if _present(ordered, label)}
+        patterns = tuple((form, UNNAMED_LABEL if label in unsafe else label) for form, label in ordered)
+        self._table = (values, patterns)
+        return patterns
+```
+**RB3.** SEARCH:
+```
+    def _map_strings(self, value: Any, apply: Callable[[str], str], depth: int, visited: list[int]) -> Any:
+        """``value`` with ``apply`` run on each string inside exact dicts, lists and tuples, within the bounds.
+
+        Returns ``value`` itself when no string changed. Dict keys are not rewritten, so two keys cannot collide.
+        """
+        visited[0] += 1
+        if visited[0] > self._max_nodes:
+            return value
+        if isinstance(value, str):
+            return apply(value)
+        if depth >= self._max_depth:
+            return value
+        kind = type(value)
+        if kind is dict:
+            items = [(key, self._map_strings(item, apply, depth + 1, visited)) for key, item in value.items()]
+            if all(new is old for (_, new), old in zip(items, value.values())):
+                return value
+            return dict(items)
+        if kind is list or kind is tuple:
+            mapped = [self._map_strings(item, apply, depth + 1, visited) for item in value]
+            if all(new is old for new, old in zip(mapped, value)):
+                return value
+            return kind(mapped)
+        return value
+```
+REPLACE:
+```
+    def _map_strings(self, value: Any, apply: Callable[[str], str], depth: int, visited: list[int]) -> Any:
+        """``value`` with ``apply`` run on each string inside exact dicts, lists and tuples, within the bounds.
+
+        A node is ``value`` itself, an item of an exact list or tuple, or a value of an exact dict; keys are not
+        nodes and are never rewritten, so two keys cannot collide. ``visited`` counts one walk's nodes: once it
+        reaches ``max_nodes`` the walk stops and leaves the rest as it is (the render seam, AD-1337 S3, masks the
+        text the model is shown). A container is copied only when one of its nodes changed, so with no change
+        ``value`` itself comes back.
+        """
+        visited[0] += 1
+        if isinstance(value, str):
+            return apply(value)
+        kind = type(value)
+        if depth >= self._max_depth or (kind is not dict and kind is not list and kind is not tuple):
+            return value
+        copy: Any = None
+        for slot, item in (value.items() if kind is dict else enumerate(value)):
+            if visited[0] >= self._max_nodes:
+                break  # AD-1337: the budget is spent
+            new = self._map_strings(item, apply, depth + 1, visited)
+            if new is not item:
+                if copy is None:
+                    copy = dict(value) if kind is dict else list(value)
+                copy[slot] = new
+        if copy is None:
+            return value
+        return tuple(copy) if kind is tuple else copy
+```
+
+### 17.3 `tests/test_ad1337_secret_masking.py` (M-R1)
+
+**RT1.** SEARCH:
+```
+- N32-N37: padded values, a non-ASCII value, an unpadded base64, a config double, the floor argument, and a form
+  found only across the join of a result's strings.
+```
+REPLACE:
+```
+- N32-N37: padded values, a non-ASCII value, an unpadded base64, a config double, the floor argument, and a form
+  found only across the join of a result's strings;
+- N38-N43 (review round 1): an unreadable store withholds the output until its file is removed or repaired; a
+  first load in another thread cannot undo a rotation; the walk's node budget; a shared form's label; a label
+  that holds a value; a store file that is not an object of strings loads as AD-456 loaded it.
+```
+**RT2.** SEARCH:
+```
+    assert masked.result is result and masked.names == frozenset() and masked.failed is False
+```
+REPLACE:
+```
+    assert masked.result is result and masked.names == frozenset() and masked.failed is False
+
+
+# -- N38 to N43: review round 1 (the store's file, a first load in another thread, the node budget, labels) ---
+
+
+@pytest.mark.parametrize("damage", ["truncated", "directory"])
+def test_an_unreadable_store_withholds_the_output_until_its_file_is_repaired(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, damage: str,
+) -> None:
+    path = tmp_path / "secrets.json"
+    if damage == "truncated":
+        path.write_text('{"github": "' + TOKEN, encoding="utf-8")  # the raw value is in a file a tool could print
+    else:
+        path.mkdir()  # reading a directory raises an OSError (IsADirectoryError, or PermissionError on Windows)
+    store = CredentialStore(store_path=path)
+    masker = _masker(store)
+    caplog.set_level(logging.DEBUG)
+    for _ in range(2):  # a later pass does not take the failed load for an empty store either
+        assert masker.mask_text(f"t {TOKEN}") == MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    assert masker.mask_result(ToolResult(output=TOKEN)).failed is True
+    errors = [record for record in caplog.records if record.name == secret_masking.logger.name]
+    assert len(errors) == 3 and all(r.levelno == logging.ERROR and r.exc_info is None for r in errors)
+    legacy = [record for record in caplog.records if record.name == "probos.credential_store"]
+    assert len(legacy) == 1 and legacy[0].levelno == logging.WARNING  # AD-456's one warning; the load ran once
+    assert TOKEN not in caplog.text
+    assert store.get("github", requester="test") is None  # AD-456's policy for get: an empty store
+    logged = len(caplog.records)
+    if damage == "directory":
+        path.rmdir()
+    else:
+        path.unlink()
+    # removed: the store is empty, as it is for get, so the pass succeeds with no value to mask
+    assert masker.mask_text(f"t {TOKEN}") == MaskOutcome(f"t {TOKEN}", frozenset(), False)
+    assert all(record.levelno < logging.ERROR for record in caplog.records[logged:])
+    path.write_text(json.dumps({"github": TOKEN}), encoding="utf-8")
+    assert masker.mask_text(f"t {TOKEN}") == MaskOutcome("t <secret:github>", frozenset({"github"}), False)
+    assert store.get("github", requester="test") is None  # the masker reads the file; what get returns is unchanged
+
+
+class _ReportingLock:
+    """The store's load lock; the thread named ``rotator`` reports when it reaches it."""
+
+    def __init__(self, reached: threading.Event) -> None:
+        self._inner = threading.Lock()
+        self._reached = reached
+
+    def __enter__(self) -> None:
+        if threading.current_thread().name == "rotator":
+            self._reached.set()
+        self._inner.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._inner.release()
+
+
+@pytest.mark.parametrize("first_read", ["masker", "get"])
+def test_a_first_load_in_another_thread_cannot_undo_a_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_read: str,
+) -> None:
+    store = _store(tmp_path, {"github": "old-github-token-1"})
+    read, resume, rotator_waits_or_is_done = threading.Event(), threading.Event(), threading.Event()
+
+    def loads(text: str) -> Any:
+        parsed = json.loads(text)
+        if threading.current_thread().name == "reader":
+            read.set()  # the reader has parsed the old file and stored nothing yet
+            resume.wait(timeout=10.0)
+        return parsed
+
+    monkeypatch.setattr(
+        "probos.credential_store.json",
+        SimpleNamespace(loads=loads, dumps=json.dumps, JSONDecodeError=json.JSONDecodeError),
+    )
+    store._store_lock = _ReportingLock(rotator_waits_or_is_done)  # type: ignore[assignment]
+    rotated: list[bool] = []
+
+    def first_load() -> None:
+        if first_read == "masker":
+            masked_credential_values(store)
+        else:
+            store.get("github", requester="test")
+
+    def rotate() -> None:
+        rotated.append(store.rotate("github", "new-github-token-2"))
+        rotator_waits_or_is_done.set()
+
+    reader = threading.Thread(target=first_load, name="reader")
+    rotator = threading.Thread(target=rotate, name="rotator")
+    try:
+        reader.start()
+        assert read.wait(timeout=10.0)
+        rotator.start()
+        assert rotator_waits_or_is_done.wait(timeout=10.0)  # done (no lock), or waiting for the reader's load
+    finally:
+        resume.set()
+        for thread in (reader, rotator):
+            if thread.ident is not None:
+                thread.join(timeout=10.0)
+    assert not reader.is_alive() and not rotator.is_alive() and rotated == [True]
+    assert json.loads((tmp_path / "secrets.json").read_text(encoding="utf-8")) == {"github": "new-github-token-2"}
+    assert ("github", "new-github-token-2") in masked_credential_values(store)
+    assert _masker(store).mask_text("new-github-token-2").text == "<secret:github>"
+
+
+def test_the_walk_visits_at_most_max_nodes_and_copies_only_what_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    masker = _masker(_store(tmp_path, {"github": TOKEN}))
+    walk = masker._map_strings
+    calls, drawn = [0], [0]
+
+    def counted_walk(*args: Any) -> Any:
+        calls[0] += 1
+        return walk(*args)
+
+    def counted_enumerate(iterable: Any) -> Any:
+        for pair in enumerate(iterable):
+            drawn[0] += 1
+            yield pair
+
+    monkeypatch.setattr(masker, "_map_strings", counted_walk)
+    monkeypatch.setattr(secret_masking, "enumerate", counted_enumerate, raising=False)
+    flat = ToolResult(output=["x"] * 200_000 + [TOKEN])
+    assert masker.mask_result(flat).result is flat  # the value past the budget is left to the render seam
+    assert calls[0] == DEFAULT_MAX_NODES  # the list and 9,999 items, in one walk (no hit, so no second walk)
+    assert drawn[0] == DEFAULT_MAX_NODES  # 9,999 items walked and one drawn before the stop; no further iteration
+    small = _masker(_store(tmp_path, {"github": TOKEN}), max_nodes=3)
+    as_dict = small.mask_result(ToolResult(output={"a": TOKEN, "b": TOKEN, "c": TOKEN})).result.output
+    assert list(as_dict.items()) == [("a", "<secret:github>"), ("b", "<secret:github>"), ("c", TOKEN)]
+    as_tuple = small.mask_result(ToolResult(output=(TOKEN, TOKEN, TOKEN))).result.output
+    assert type(as_tuple) is tuple and as_tuple == ("<secret:github>", "<secret:github>", TOKEN)
+    ordered = ToolResult(output=OrderedDict({TOKEN: TOKEN}))
+    assert small.mask_result(ordered).result is ordered  # only an exact dict is walked; its keys are never nodes
+
+
+def test_a_form_two_values_share_is_labelled_by_the_smaller_label(tmp_path: Path) -> None:
+    smaller_value, larger_value = "Aabcdefghijkl", "Babcdefghijkl"
+    shared = base64.b64encode(b"abcdefghijkl").decode("ascii")
+    assert shared in secret_forms(smaller_value) & secret_forms(larger_value)  # premise: one aligned form, two values
+    masker = _masker(_store(tmp_path, {"z-label": smaller_value, "a-label": larger_value}))
+    assert masker.mask_text(f"x {shared} y").text == "x <secret:a-label> y"
+
+
+def test_a_label_that_holds_a_value_is_shown_as_unnamed(tmp_path: Path) -> None:
+    registry = SecretRegistry()
+    registry.register("tok-ABCD1234efgh", "tok-ABCD1234efgh")
+    registry.register("vault:tok-WXYZ5678ijkl", "tok-WXYZ5678ijkl")
+    masker = _masker(_store(tmp_path, {"github": TOKEN}), registry=registry)
+    out = masker.mask_text(f"x tok-ABCD1234efgh y tok-WXYZ5678ijkl z {TOKEN}")
+    assert out.text == "x <secret:unnamed> y <secret:unnamed> z <secret:github>"
+    assert out.names == frozenset({"unnamed", "github"}) and masker.mask_text(out.text).text is out.text
+
+
+@pytest.mark.parametrize(
+    ("content", "text", "names", "got"),
+    [
+        (["github", 5], f"t {TOKEN}", frozenset(), None),
+        (
+            {"github": TOKEN, "count": 5, "nested": {"depth": 2}},
+            "t <secret:github>",
+            frozenset({"github"}),
+            TOKEN,
+        ),
+    ],
+    ids=["array", "non-string-values"],
+)
+def test_a_store_file_that_is_not_an_object_of_strings_loads_as_ad456_loaded_it(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    content: Any,
+    text: str,
+    names: frozenset[str],
+    got: str | None,
+) -> None:
+    path = tmp_path / "secrets.json"
+    path.write_text(json.dumps(content), encoding="utf-8")
+    store = CredentialStore(store_path=path)
+    caplog.set_level(logging.WARNING)
+    assert _masker(store).mask_text(f"t {TOKEN}") == MaskOutcome(text, names, False)  # a string entry only
+    assert store.get("github", requester="test") == got  # AD-456: an array is an empty store; the rest is skipped
+    assert not caplog.records  # no AD-456 warning, and no masking failure
+```
+
+### 17.4 `PROGRESS.md` (M-R1)
+
+RP1 and RP2 both edit line 3. Each SEARCH occurs exactly once on `3e8248b0`.
+
+**RP1.** SEARCH:
+```
+Measured by `tests/test_ad1337_secret_masking.py` (84 cases):
+```
+REPLACE:
+```
+Measured by `tests/test_ad1337_secret_masking.py` (93 cases):
+```
+**RP2.** SEARCH:
+```
+a failing pass withholds the output and logs only the exception type. Not measured:
+```
+REPLACE:
+```
+a failing pass withholds the output and logs only the exception type, and so does every pass while the JSON store's file cannot be read after its load failed, until the file reads again or is removed (`get` keeps AD-456's empty store); a store file that is a JSON array, or that holds values that are not strings, loads as AD-456 loaded it; a first load in another thread cannot undo a rotation; a form two values share takes the smaller label, and a label that holds a value is shown as `unnamed`; the walk visits at most 10,000 nodes and stops there. Not measured:
+```
+
+### 17.5 `DECISIONS.md` (M-R1)
+
+**RD1.** SEARCH:
+```
+because it is still the effective value.
+```
+REPLACE:
+```
+because it is still the effective value. The first load runs under the store's lock, so a load in a worker thread (S2's priming `get`) cannot undo a concurrent `rotate`; a dict copy is one step, so the masker holds no lock while it reads.
+```
+**RD2.** SEARCH:
+```
+- *Fail closed.* A failing pass withholds the output (`tool output withheld: secret masking failed`) and logs the exception type only.
+```
+REPLACE:
+```
+- *Fail closed.* A failing pass withholds the output (`tool output withheld: secret masking failed`) and logs the exception type only. After a load of the JSON store that failed, `get` keeps AD-456's empty store, but the masker reads the file on every pass and a read that fails fails the pass: a damaged secrets file still holds values a tool can print, so the output is withheld until the file reads again or is removed.
+```
+**RD3.** SEARCH:
+```
+Overlapping occurrences become one span.
+```
+REPLACE:
+```
+Overlapping occurrences become one span. A form two values share takes the smaller label, and a label that holds a form of a known value is shown as `unnamed`, so no value reaches a placeholder or `names`.
+```
+**RD4.** SEARCH:
+```
+- *Measured.* `tests/test_ad1337_secret_masking.py` (84 cases), including a non-ASCII value in five forms, padded and unpadded values, and the floor argument. On the oracle, `mask_text` over 1 MiB with 50 values and no hit took 22 ms, and `mask_result` over 10,000 short strings with 50 values took 12.7 ms. A 30,000-case merge fuzz left no form behind and kept every uncovered character. Not measured: the walk bounds (32, 10,000).
+```
+REPLACE:
+```
+- *Measured.* `tests/test_ad1337_secret_masking.py` (93 cases), including a non-ASCII value in five forms, padded and unpadded values, the floor argument, an unreadable store until it is removed or repaired, a store file that is not an object of strings, a first load racing a rotation, the node budget and the labels. On the oracle, `mask_text` over 1 MiB with 50 values and no hit took 22 ms, and `mask_result` over 10,000 short strings with 50 values took 12.7 ms. A 30,000-case merge fuzz left no form behind and kept every uncovered character. A walk makes at most `max_nodes` calls and stops iterating there; a container is copied only when one of its nodes changed. Not measured: the walk bounds (32, 10,000).
+```
+
+Ledger: rerun `gen_ad_ledger.py` and then `--check` after M-R1. Expect no change, because no AD heading changed.
+
+### 17.6 Mutation rows (campaign on the repaired tree; one changed line each; restore between rows)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RM1 | `_load_store`: `with self._store_lock:` -> `if True:` | N39 [masker], N39 [get] |
+| RM2 | `_load_store`: `self._store_load_failed = True` -> `pass` | N38 [2] |
+| RM3 | `_load_store`: `self._store.update(_read_store_file(self._store_path))` -> `pass` | N26, N29 |
+| RM4 | `masked_credential_values`: `if store._store_load_failed and ...:` -> `if False:` | N38 [2] |
+| RM5 | `masked_credential_values`: the file-read `pairs.extend(...)` -> `pass` | N38 [2] (after the repair) |
+| RM6 | `masked_credential_values`: insert `store._store.update(_read_store_file(store._store_path))` in that branch | N38 [2] (the last `get`) |
+| RM8 | `_map_strings`: `if visited[0] >= self._max_nodes:` -> `>` | N15, N40 |
+| RM8b | the same line -> `if False:` | N15, N40 |
+| RM9 | `_map_strings`: `break` -> `continue` | N40 (`drawn`) |
+| RM10 | `_map_strings`: `if new is not item:` -> `if True:` | N12, N37 |
+| RM11 | `_map_strings`: inner `if copy is None:` -> `if True:` | N12, N15 |
+| RM12 | `_map_strings`: `return tuple(copy) if kind is tuple else copy` -> `return copy` | N12, N40 |
+| RM13 | `_map_strings` gate: `kind is not dict` -> `not isinstance(value, dict)` (restates M27) | N40 (`OrderedDict`) |
+| RM14 | `_map_strings` gate: `depth >= self._max_depth` -> `False` (restates M26) | N15 |
+| RM15 | `_patterns`: `forms[form] = min(...)` -> `forms.setdefault(form, label)` | N41 |
+| RM16 | `_patterns`: `if _present(ordered, label)` -> `if False` | N42 |
+| RM17 | `_patterns`: `UNNAMED_LABEL if label in unsafe else label` -> `label` | N42 |
+| RM18 | `masked_credential_values`: drop `and store._store_path.exists()` from the file-read condition (orchestrator's R1) | N38 [2] (the pass after the removal: `FileNotFoundError`, so it is withheld) |
+| RM19 | `_read_store_file`: `if not isinstance(raw, dict):` -> `if False:` (orchestrator's R2) | N43 [array] (`list.items` raises `AttributeError` in `_load_store`, so the pass is withheld) |
+| RM20 | `_read_store_file`: drop `and isinstance(value, str)` from the comprehension (orchestrator's R3) | N43 [non-string-values] (`(5).strip()` raises `AttributeError`, so the pass is withheld) |
+
+**Rows deliberately left out:**
+- M25's line is gone. Its replacements are RM8, RM8b and RM9.
+
+### 17.7 Checks for the repair (in place of section 12 for this round)
+
+**Prediction:**
+- The test pairs (RT1, RT2) alone on `3e8248b0`: 86 passed and 7 failed (N38 [2], N39 [2], N40, N41, N42), with no hang. N43 [2] passes there, because `3e8248b0` still reads the file AD-456's way inside `_load_store`.
+- On the base, N38 fails at its first pass, N39 fails on its `("github", "new-github-token-2") in ...` assertion, and N40 fails on `calls == 10000` (the base makes 200,002 calls).
+- After every pair: 93 passed.
+
+**Focused gate** (`-n 0`): section 12's 17 files plus `tests/test_ad1337_executor_seam.py`. S2's priming `get` now takes `_store_lock`, so also rerun S2's focused set on the repaired S1.
+
+**Static checks:**
+- `check_architecture_principles.py --check` exits 0, and `CredentialStore` still has 15 direct methods.
+- `rg -n "_store_lock|_store_load_failed|_read_store_file" src` finds only `credential_store.py`.
+- `rg -n "logger\." src/probos/security/secret_masking.py` finds exactly one call, in `_log_failure`.
+- `rg -n "os\.path" src/probos/security/secret_masking.py` finds nothing.
+- `rg -n "^import |^from " src/probos/security/secret_masking.py` is unchanged from `3e8248b0`.
+- `git diff 3e8248b0 -- src/probos/execution/command_env.py src/probos/security/pii_redaction.py src/probos/provider_setup.py` is empty.
+- Section 17 and the changed files are ASCII.
+
+**Campaign:** rows RM1 to RM20 (with RM8b), plus section 10's rows M1 to M35 rerun on the repaired tree, because the M26 and M27 lines moved. A campaign already run on the RT2 of round 1 needs only RM18 to RM20 and the rows N38 kills (RM2, RM4, RM5, RM6) rerun, because only RT2 changed.
+
+**Broad gate:** unchanged, once for batch 1, after S3.
+
+### 17.8 Properties for the round-2 Diff Reviewer (the delta; restates section 14's properties 2, 3, 5, 7, 8, 9 and 10)
+
+1. `_load_store`'s whole body runs under `_store_lock`, a `threading.Lock` created in `__init__`.
+   - A load that fails sets `_store_load_failed`; otherwise `get` sees exactly what it did before: an empty store, one AD-456 warning, and `_store_loaded` set.
+   - A load that succeeds stores the same `str`-to-`str` entries as before. A JSON value that is not an object is an empty store with no warning, and an entry whose value is not a string is skipped.
+2. `get`'s return values, access rows, events, gates and warnings, and `rotate`'s return values, writes and events, are unchanged. `CredentialStore` still has 15 direct methods, and `credential_store.py` gains only `import threading`, two attributes and the module function `_read_store_file`.
+3. After a failed load, `masked_credential_values` reads the file on every call while it exists and raises when that read fails.
+   - The masker then returns `MASKING_FAILED_TEXT` with `failed=True` and one ERROR line naming the exception type, with no traceback.
+   - Once the file is removed, the pass succeeds with no value from it and logs nothing at ERROR: the store is empty, as it is for `get`. Once it reads again, the pass masks what the file holds.
+   - Nothing `get` reads changes, and no new code path logs.
+4. A first load in another thread cannot leave `_store` holding a value that a `rotate` which has returned `True` replaced.
+5. `_map_strings`:
+   - makes at most `max_nodes` calls per walk and stops iterating once the budget is spent;
+   - returns `value` itself when nothing changed, and copies a container only when one of its nodes changed;
+   - keeps exact `dict`, `list` and `tuple` types and dict key order, walks no other type, and never rewrites keys;
+   - leaves the nodes past the budget as they are.
+6. A form that two values share is labelled with the smaller label. A label that contains any form of any known value appears as `UNNAMED_LABEL` in every placeholder and in `names`, so no value, form or position reaches a log line, an exception message, `names` or a placeholder.
+7. The new cases N38 to N43 delete, loosen or skip nothing. N38 to N42 each fail on `3e8248b0`. N43 passes there, because it pins AD-456's reading of the file, which the repair moved into `_read_store_file`. No test sleeps, patches the global `json` or `subprocess` module, or reads the process environment's values.
+8. Every public name S2 and S3 use keeps its signature: `SecretMasker(...)`, `mask_text`, `mask_result`, `MASKING_FAILED_TEXT`, `SecretRegistry`, `EnvSecretSource`, `secret_forms` and `masked_credential_values(store)`.
+
+### 17.9 The orchestrator's first-hand checks of the repair (2026-11-21)
+
+The 17 operations of this section were applied to a scratch worktree detached at `3e8248b0` (the committed S1 candidate) by `audit\contract_tools.py apply --prefix 17.` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (an empty redirected home; BF-919), and a bare `pytest` was not used: it imports `D:\ProbOS\src` and fails for the wrong reason.
+
+| R | Result |
+|---|---|
+| R1 | All 17 operations (RA1 to RA6, RB1 to RB3, RT1, RT2, RP1, RP2, RD1 to RD4) are found by `contract_tools.py list --prefix 17.`; every SEARCH occurs exactly once on `3e8248b0`. The five files change by +258 -45 lines: `credential_store.py` 485 to 507 lines, `secret_masking.py` 393 to 400, the test file 571 to 755, `PROGRESS.md` one line and `DECISIONS.md` four lines changed in place. Blobs after all 17 operations: `credential_store.py` `d0861828`, `secret_masking.py` `a00840e3`, the test file `735fb4c4`, `PROGRESS.md` `7d022885`, `DECISIONS.md` `5ebee17f`. |
+| R2 | **The tests alone** (RT1 and RT2 applied, the code pairs not): **7 failed, 86 passed** in 7.1 s, no hang, exactly the prediction of 17.7, each for its stated reason. N38 (both): the pass returns `'t tok-Q7f2Lx9Pz4Wm8Rk3'` with `failed=False` where the withheld text is expected. N39 (both): `('github', 'new-github-token-2') in (('github', 'old-github-token-1'),)` is false. N40: `assert 200002 == 10000`. N41: `'x <secret:z-label> y' == 'x <secret:a-label> y'`. N42: the text keeps the raw labels `<secret:tok-ABCD1234efgh>` and `<secret:vault:tok-WXYZ5678ijkl>`. N43 (both) passes there, as predicted: `3e8248b0` already reads the file AD-456's way. |
+| R3 | After all 17 operations the new test file alone: **93 passed** (84 + 9), 2.1 s. |
+| R4 | **The five reproductions of round 1** (`probe_b11s1_review1.py`, before the repair in `evidence-b11s1-review1.txt`, after it in `evidence-b11s1r1-regress.txt`; each has a control that passes on both). F1: a truncated store gave `failed=False` and the raw token, and the same after the file was repaired, and a `PermissionError` store the same; now the pass is withheld (`failed=True`), the pass after the file is repaired masks `<secret:github>`, and the `PermissionError` store is withheld; the token is in no log line (the one traceback in the log is AD-456's own warning from `_load_store`, as before). F2: with the first load paused after it read the old text, the `rotate` returned True and left disk=new, memory=old and the new value unmasked; now disk=new, memory=new and the new value is masked. F3: a label equal to its value showed `<secret:tok-ABCD1234efgh>` and `names` held the value, and masking again changed the text; now `<secret:unnamed>`, `names` is `['unnamed']` and masking again changes nothing. F4: a list of 200,000 short strings made 200,001 `_map_strings` calls (22.6 ms median, 1,670 KiB peak; 1,000,000 items 111 ms); now 10,000 calls, 1.9 ms median at 200,000 and at 1,000,000 items alike, 181 KiB peak; a value in item 20,001 stays unmasked by design (Q4: the render seam, S3, masks what the model is shown). F5: two values sharing a base64 form gave `z-label` (the smaller value's label); now `a-label`, the smaller label (D3). |
+| R5 | **Static checks.** `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`); `CredentialStore` has 15 direct methods (an AST count), as before; `rg -n "_store_lock\|_store_load_failed\|_read_store_file" src` finds only `credential_store.py`; `rg -n "logger\." src/probos/security/secret_masking.py` finds one call, in `_log_failure`; `rg -n "os\.path" src/probos/security/secret_masking.py` finds nothing; the import lines of `secret_masking.py` are unchanged; `git diff 3e8248b0 -- src/probos/execution/command_env.py src/probos/security/pii_redaction.py src/probos/provider_setup.py` is empty; the five changed files add no non-ASCII character. |
+| R6 | **The consolidated focused set** (section 12's 17 files, `-n 4`), run on the first version of this repair (91 cases): **581 passed, 2 skipped** (the two POSIX-only variants) under the default embeddings (263 s) and **581 passed, 2 skipped** under `PROBOS_EMBEDDINGS=local` (268 s): the 574 of the committed candidate and that version's 7 new cases. The amendment adds only N43's two cases and assertions inside N38, and changes no source line, so the committed candidate's own consolidated run (recorded in the round-2 brief) is the one of record. The two empty `AppData` directories the runs leave in the redirected home are the same as in every earlier run of this set. |
+| R7 | **The campaign** (`audit\mutants_gen.py`, `rows_ad1337s1r3.py`: section 10's rows except M25, M26 and M27, whose lines the repair changed, plus RM1 to RM17 of 17.6 with RM8b and the orchestrator's rows R1 to R9; the three rows E1, E2 and E3, which section 10 or 17.6 expect to survive, run with them): the first full run, on the 91-case version, **killed 75, differed 0, survived 5, invalid 0**. The survivors were E2 and E3 (equivalent, as predicted) and my extra rows R1, R2 and R3, which name behaviour the repair added or moved and no case pinned: a store file removed after a failed load, a store whose JSON is an array, and a store entry whose value is not a string. AD-456's own tests do not pin them either (S1's file plus `tests/test_credential_store.py`, `tests/test_ad456_security_infrastructure.py`, `tests/test_ad456c_per_tier_credentials.py` and `tests/test_bf908_crew_scope_token.py`, 196 cases: all three survive there). The amendment of this section (N38 extended, N43 added; RM18 to RM20) kills them: a rerun of R1, R2 and R3 on the 93-case file **killed 3, survived 0**, each by its named case. E1, which section 10 lists as an equivalent mutant, is killed now: N40 counts the walk's calls, and without the early return a pass with no hit makes two walks, not one (`assert 20000 == 10000`). |
+| R8 | **S2 and S3 on the repaired S1** (a scratch tree with these 17 operations, then S2's rev1 contract, then S3's rev1 contract): every SEARCH of both still occurs exactly once (S2's 31 and S3's 15, the tracker anchors included); S2's new file gives 21 passed and S3's 18 passed there. |
+
+**What the orchestrator changed in the Architect's section 17:** nothing in the pairs, the tests or the rows; this table replaces the placeholder of 17.9.
+
+**What these checks do not show.**
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data` (the vessel has no `secrets.json`), and until S2 and S3 land nothing calls the masker.
+- A first load that races a `rotate` on a second operating-system thread other than the test's two named threads, or on another platform's locking.
+- Whether a hand-written damaged `secrets.json` is a case operators meet: with it, the output of every tool is withheld until the file reads again, which is the intended cost (D7).
+
+---
+
+## Verified against `b1337b` (Read/Grep on disk, 2026-11-21)
+
+```
+credential_store.py: import subprocess :16, import time :17 (no threading import); _store/_store_loaded :93-94;
+  _load_store :147-164; rotate :171-217 (load :181, writes :198-201); get cache write :343-345;
+  def masked_credential_values :433; docstring tail :441-444; store._load_store() :456 (only call outside the class)
+secret_masking.py: _present :146; SecretMasker docstring :262-263; _patterns :356-368 (setdefault :365);
+  _map_strings :370-393; callers :321, :328
+tests/test_ad1337_secret_masking.py: docstring :12-13; anchor :571 (once); imports cover every name used
+PROGRESS.md:3 "Measured by ... (84 cases):" once; "...exception type. Not measured:" once
+DECISIONS.md: :1664 Overlapping..., :1666 effective value., :1667 Fail closed, :1668 Measured (each once)
+```
+
+## Verified against `ob11j` for the amendment (the repaired tree; Read/Grep, 2026-11-21)
+
+```
+credential_store.py: _store_load_failed init :99; _load_store :152-172 (catches JSONDecodeError, OSError only :165);
+  _resolve :357-395 (env :365-375, store :378-380 before CLI :383; CLI FileNotFoundError/OSError swallowed :392-393);
+  _log_access :408-411 (returns when event_log is None: no log line); _read_store_file :441-448
+  (isinstance(raw, dict) :446, isinstance(value, str) :448); masked_credential_values :451;
+  _store copy with value.strip() :477; failed-load branch with exists() :478-479
+security/crew_scope.py: CrewScopeKeyring.token :338-342 ("" when unread and config is None)
+security/secret_masking.py: _log_failure :183-185 (logger.error); mask_text :293-303 (except Exception -> withheld)
+tests/test_ad1337_secret_masking.py: _no_builtin_env :58-62; _no_cli :65-75 (gh raises FileNotFoundError);
+  _store :78-83; _masker :86-98; N9 :203-209 (no values: the same text back); N38 :579-604; N42 :711-718 (end)
+```
+
+## Absence verified
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| Only `credential_store.py` touches `_load_store` or `_store_loaded` | Grep `_store_loaded\|_load_store\|store\._store\b\|_store_lock` over `src`, `tests` | `credential_store.py` only | yes |
+| No production caller of `CredentialStore.rotate` | Grep `\.rotate\(` over `src` | `routers/identity.py:229` (`binding.rotate()`, another class) | yes |
+| Nothing bypasses `CredentialStore.__init__`, deep-copies it or pickles it | Grep `CredentialStore\.__new__\|spec=CredentialStore`; Grep `(deepcopy\|pickle\.dumps)\(.*(credential\|runtime)` over `src` | none | yes |
+| No census counts file reads | Glob `tests/fixtures/ad1346_*.py`; Grep the effect census | subprocess and egress only; the file-write census is per file and `rotate`'s write is unchanged | yes |
+| Before this amendment, no case removed the store file, wrote a JSON array or wrote a `count` entry (S1's file and the four AD-456/BF-908 files) | Grep `unlink\(\|json\.dumps\(\[\|write_text\('\[\|"count"` over the five test files on `ob11j` | none | yes; the grep is narrow, so the orchestrator's campaign (R1 to R3 survived 196 cases) is the empirical proof |
+| `pyproject.toml` sets no line length that the new lines could break | Grep `line-length` in `pyproject.toml` on `ob11j` | none | yes; every new line is under 120 characters, like the file's existing lines |
+
+Prior-art review: not applicable. This repairs review findings and adds no new capability.
+
+---
+
+**Evidence I could not gather:** I ran no tests (read-only). That N43 passes on `3e8248b0` and the 86/7 and 93 counts in 17.7 come from reading the code, not from a run:
+- On `3e8248b0`, `_load_store` still holds the inline `isinstance(raw, dict)` and `isinstance(value, str)` checks (they are in RA3's SEARCH), and RA5's SEARCH shows that `masked_credential_values` strips only what is in `_store`.
+
+I wrote no agent memory.
