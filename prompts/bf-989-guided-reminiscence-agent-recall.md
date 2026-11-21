@@ -2570,3 +2570,197 @@ REPLACE: `` - *Residual.* #1820 items bf-989 R1 to R8. *Reversal.* Revert the BF
 | RO7 | The checkpoint blobs | `cognitive_agent.py` `94fa448a8c1bc98f44ec903f373777d19381183e`; `guided_reminiscence.py` `a4e27caff7bbde2d11da65137cd80bbed15496f3`; `qualification_tests.py` `849de5a6664eb06cdaa7cfb7166c0a838b8b5e5d`; `tests/test_bf989_guided_reminiscence_recall.py` `9c6df9250ff69b3b39fc6e23c55f5cc9401ff10c`; `PROGRESS.md` `98d0e35c46508bb0578230c1f2614be791156442`; `DECISIONS.md` `28373e9dd53afe66d5e63a70b3a80b7d45d59768`. |
 | RO8 | What the orchestrator added to the Architect's answer | Y5 (the docstring of `agent_recall_fn` said the marker suppresses episode storage only, which is the claim F1 falsified); the shape of the tests (the Architect named the `_CrewAgent` pattern of the AD-606 tests and a `SimpleNamespace` runtime: the lighter `_crew_class()` already in this file, a `MockEpisodicMemory` and `SystemConfig()` were enough, and the paired unmarked control stores a `reflection`, so the test can tell the two turns apart); the tracker pairs PY1, PY2 and DY1 to DY4 with the Architect's wording for the DM and the residuals; the F3 line `dreaming.py:3253` read first-hand (`DreamReport.episodes_replayed` is an `int` at `types.py:885`; `len()` of it raises inside the `try` that emits `dream_complete`, which logs at DEBUG and loses the event). |
 | RO9 | What the tests do not show | The live store: how many reflections earlier probe runs left, and whether a recency window dominated by them starves the selection (R7). A ChromaDB-backed memory: the new tests run over `MockEpisodicMemory`, while the reviewer's probe (4 episodes to 7 on the candidate) used ChromaDB; the writer is the same `EpisodicMemory.store` call. A real model: only a prose reply is stored as a thought, and the tests use one. The second producer of the marker (`communication_benchmarks.py:206`): it is covered by the same guard and its tests pass, but no test of it asserts that it leaves no conclusion. The Ward Room's delivery: unchanged, and F2 stays open as R8. |
+
+## 19. Repair after review round 3 (2026-11-21)
+
+Review round 3 (Diff Reviewer, `gpt-6.1-sol`, the delta `3aacc4c7..15b4b4b3`, 17.8 minutes, a clean detached worktree) returned REQUEST CHANGES with one finding, P2. The round-three brake applied: the Architect decided **continue, delta only, one round 4** (consult `bd0f2a32`, read-only; recorded on #1838 as issuecomment-7056335139). A new P1 or P2 on this delta is a rescope: land the candidate, file the item under #1820, no fifth round. No Captain condition applies. The branch is `fix/bf989-reminiscence-agent-recall-20261120`; the base of this repair is `15b4b4b319a4681c88ed60b14b738b7fbfbf91fa`. Round 4 reviews this delta only: no public signature, persisted format, event payload or test another component relies on changes, and the marker's effect only widens toward what the contract already states (`qualification_tests.py:114`, "a qualification interaction leaves no trace").
+
+| F | Severity and reach | Finding | Decision |
+|---|---|---|---|
+| F1 | P2, ordinary reach, not a regression (the two writers pre-exist; the marker never covered them) | A session's recall replies stay in the agent's working memory. `_run_cognitive_lifecycle` records the turn's action (AD-573, `cognitive_agent.py:7831-7842`) and, on a sub-task chain, the composition brief as a reasoning entry (AD-645, `:7871-7897`), and neither reads `_qualification_test`; round 2's repair guarded only the AD-669 block (`:7848`). | **Fixed here.** Both writers take the marker (Z1, Z2). |
+
+**First-hand (2026-11-21, the frozen head `15b4b4b3`).** The probe `probe_wm_actions.py` (a real `_BF989Crew` agent through `handle_intent`, intent `direct_message`, which is what `_probe_intent_result` sends; the premises asserted before the answer: the unmarked control records working-memory actions, and the marked turn stores no episode and no conclusion): three marked turns left **3 working-memory actions**, each holding the reply text (`Handled bf989_probe: 'RECALLREPLY1: ...'`), and the second and third model requests **contained the first reply** (the unmarked control the same). The reviewer saw 6 serialized actions over two sessions, attributed as a Captain DM under "Recent actions" and persisted at shutdown (`startup/shutdown.py:1997-2011`), and one reasoning entry from a marked enabled chain. The composition-brief writer I did not reproduce with a real chain; the repair's test reaches it by a `decide` that returns the two keys the block reads.
+
+**Decision (the Architect).** Scope: the two guards, the tests, one tracker sentence and the consumer re-check. The reach is ordinary and lands on the subject being measured (a session's second and third probes see the earlier replies); the marker's stated contract is "leaves no trace"; the repair is the condition already at `:7848` copied to two more places.
+
+**Enumeration (the writers a marked probe turn can reach).** `rg -n "\.(record_action|record_reasoning|record_observation|record_conversation|record_event|record_conclusion|add_engagement|record_)\w*\(" src` over the working-memory names gives 19 hits. In the cognitive lifecycle, after round 2 and this repair, a marked turn reaches: AD-573 (`record_action`, Z1), AD-669 (`record_conclusion`, guarded in round 2) and AD-645 (`record_reasoning`, Z2). The other hits are not on its path: `render_self_check` (`cognitive_agent.py:6824`) and the affect-drift stub (`:6918`) are agent-initiated; BF-239's `add_engagement` (`:8259`) is removed in the `finally` of every exit; `proactive.py`, `dream_wm_bridge.py`, `ward_room_router.py` and the DM reply pipeline's `record_conversation` (`reply_pipeline.py:2583`, a route the probe does not take) are other pathways; `renderer.py` and `runtime.py` write the runtime's own working memory.
+
+### 19.1 `src/probos/cognitive/cognitive_agent.py` (M-R4)
+
+**Z1.** SEARCH:
+```
+        # AD-573: Record action to working memory (all pathways)
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm:
+                action_summary = self._summarize_action(intent, decision, result)
+```
+REPLACE:
+```
+        # AD-573: Record action to working memory (all pathways). BF-989 (#1838): not for a qualification interaction
+        # (the marker that skips its episode and its conclusion, AD-566a): a recall probe's reply is not an action
+        # the agent took, and the next turn would read it back as one.
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm and not intent.params.get("_qualification_test"):
+                action_summary = self._summarize_action(intent, decision, result)
+```
+**Z2.** SEARCH:
+```
+        # AD-645 Phase 3: Store composition brief as metacognitive memory
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if _wm and decision.get("sub_task_chain") and decision.get("_composition_brief"):
+```
+REPLACE:
+```
+        # AD-645 Phase 3: Store composition brief as metacognitive memory. BF-989 (#1838): not for a qualification
+        # interaction (the marker that skips its episode, AD-566a).
+        try:
+            _wm = getattr(self, '_working_memory', None)
+            if (
+                _wm and not intent.params.get("_qualification_test")
+                and decision.get("sub_task_chain") and decision.get("_composition_brief")
+            ):
+```
+
+### 19.2 `src/probos/cognitive/qualification_tests.py` (M-R4)
+
+**Z3.** SEARCH:
+```
+    The intent is marked ``_qualification_test``, which suppresses episode, working-memory conclusion and thought
+    storage (``CognitiveAgent``'s episode hook and its AD-669 conclusion block, BF-989 round 2), so a recall attempt
+    never becomes an episode that a later session could select as ground truth.
+```
+REPLACE:
+```
+    The intent is marked ``_qualification_test``, which suppresses episode, working-memory conclusion, action,
+    reasoning entry and thought storage (``CognitiveAgent``'s episode hook and its AD-573, AD-669 and AD-645 blocks,
+    BF-989 rounds 2 and 3), so a recall attempt never becomes an episode that a later session could select as ground
+    truth, and the agent's next turn never reads its own earlier reply back.
+```
+
+### 19.3 `tests/test_bf989_guided_reminiscence_recall.py` (M-R4)
+
+**TZ1.** SEARCH:
+```
+    assert sorted(ep.id for ep in await memory.recent_for_agent(agent.id, k=10)) == ["ep-0", "ep-1", "ep-2", "ep-3"]
+```
+REPLACE:
+```
+    assert sorted(ep.id for ep in await memory.recent_for_agent(agent.id, k=10)) == ["ep-0", "ep-1", "ep-2", "ep-3"]
+
+
+# -- R8, R9: review round 3 (a marked turn leaves no action or reasoning entry; a session's probes never see each other)
+
+
+def _chain_class() -> type[CognitiveAgent]:
+    async def decide(self: CognitiveAgent, observation: dict[str, Any]) -> dict[str, Any]:
+        decision = await CognitiveAgent.decide(self, observation)
+        # What an enabled sub-task chain returns: AD-645 records the composition brief from these two keys.
+        decision.update(
+            sub_task_chain=True,
+            _composition_brief={"situation": "a recall probe", "response_should_cover": ["the status"]},
+        )
+        return decision
+
+    return type("_BF989Chain", (_crew_class(),), {"decide": decide})
+
+
+@pytest.mark.parametrize("chain", [False, True], ids=["plain", "chain"])
+async def test_a_qualification_turn_leaves_no_action_and_no_reasoning_in_working_memory(chain: bool) -> None:
+    seen = []
+    for marked in (True, False):
+        agent = (_chain_class() if chain else _crew_class())(
+            llm_client=_CountingLLM(),
+            runtime=SimpleNamespace(episodic_memory=MockEpisodicMemory(), config=SystemConfig()),
+        )
+        params = {"text": "What do you recall?", **({"_qualification_test": True} if marked else {})}
+        await agent.handle_intent(IntentMessage(intent="bf989_probe", params=params, target_agent_id=agent.id))
+        state = agent._working_memory.to_dict()
+        seen.append((len(state["recent_actions"]), len(state["recent_reasoning"])))
+    # The unmarked control records the action (and, on a chain, the brief), so the pair can tell the two turns apart.
+    assert seen == [(0, 0), (1, 1 if chain else 0)]
+
+
+class _EchoLLM(MockLLMClient):
+    """The agent's model: every reply carries its own number, and every request is kept."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[str] = []
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:  # type: ignore[override]
+        self.requests.append(f"{getattr(request, 'system_prompt', '')}\n{getattr(request, 'prompt', '')}")
+        return LLMResponse(content=f"RECALL-NUMBER-{len(self.requests)}: the ship status was checked and it was nominal")
+
+
+async def test_a_session_never_shows_the_agent_its_own_earlier_recall_replies() -> None:
+    memory, registry, llm = MockEpisodicMemory(), AgentRegistry(), _EchoLLM()
+    agent = _crew_class()(llm_client=llm, runtime=SimpleNamespace(episodic_memory=memory, config=SystemConfig()))
+    await registry.register(agent)
+    for i in range(4):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[agent.id]))
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3, recall_fn=agent_recall_fn(registry),
+    )
+    await engine.run_session(agent.id)
+    assert len(llm.requests) == 3  # one turn per episode, and nothing else asks the agent's model
+    assert [[f"RECALL-NUMBER-{n}" in request for n in (1, 2, 3)] for request in llm.requests] == [[False] * 3] * 3
+```
+
+### 19.4 `PROGRESS.md` (M-R4)
+
+**PZ1.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` marker suppresses episode, working-memory conclusion and thought storage; ``
+REPLACE: `` marker suppresses episode, working-memory conclusion, action, reasoning entry and thought storage; ``
+
+**PZ2.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` `tests/test_bf989_guided_reminiscence_recall.py` (35 cases). ``
+REPLACE: `` `tests/test_bf989_guided_reminiscence_recall.py` (38 cases). ``
+
+### 19.5 `DECISIONS.md` (M-R4)
+
+**DZ1.** A substring inside the BF-989 entry's Recall source bullet (once).
+
+SEARCH (substring): `` marker suppresses episode, working-memory conclusion and thought storage (review round 2 found that the conclusion block, AD-669, and the thought it persists, AD-606, ignored it, so a session left reflections that the next one selected) ``
+REPLACE: `` marker suppresses episode, working-memory conclusion, action, reasoning entry and thought storage (review round 2 found that the conclusion block, AD-669, and the thought it persists, AD-606, ignored it, so a session left reflections that the next one selected; round 3 found that the action record, AD-573, and the composition-brief record, AD-645, ignored it too, so a session's second and third recall requests showed the agent its earlier replies) ``
+
+### 19.6 Issue texts
+
+**Closure comment on #1838 (amends 8.1, 17.10 and 18.7).** The sentence that says the recall goes through the agent's own turn, marked `_qualification_test`, "which suppresses episode, working-memory conclusion and thought storage" becomes: "...which suppresses episode, working-memory conclusion, action, reasoning entry and thought storage; the selection leaves out reflection episodes". "(31 cases)" or "(35 cases)" becomes "(38 cases)". The open items stay "R1 to R8".
+
+**No new item on #1820.** If round 4 finds a new P1 or P2 on this delta, the Architect's decision is a rescope: land the candidate and file the item as bf-989 R9.
+
+### 19.7 Mutation rows (campaign of record on the repaired tree; restore between rows; each killer at `-n 0`)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RP1 | the AD-573 marker check removed (`if _wm:`) | `test_a_qualification_turn_leaves_no_action_and_no_reasoning_in_working_memory[plain]` and `[chain]`, `test_a_session_never_shows_the_agent_its_own_earlier_recall_replies` |
+| RP2 | the AD-645 marker check removed | `...[chain]` only |
+| RP3 | the AD-573 check reads a misspelt marker | the same three as RP1 |
+| RP4 | the AD-573 check inverted (`if _wm and intent.params.get(...)`) | `...[plain]`, `...[chain]` (the unmarked control stops recording) and the session test |
+
+### 19.8 Properties for the round-4 Diff Reviewer (the delta only)
+
+1. A marked turn leaves no working-memory action and no reasoning entry, for both marker producers (`_send_probe`'s `direct_message`; `_send_chain_probe`'s `ward_room_notification` chain with its thread id); an unmarked turn records exactly as before.
+2. No other working-memory writer is reached by a marked probe turn (the enumeration above: AD-573, AD-669 and AD-645 are the lifecycle's three; BF-239's engagement is removed on every exit); the cost-accounting journal rows are unchanged.
+3. A session's second and third recall requests do not hold an earlier reply; the three marker readers in `src` (`cognitive_agent.py` at the AD-573, AD-669 and AD-645 blocks, and the episode hook) agree.
+4. No signature, persisted format, event payload or test another component relies on changes; the trackers claim no more than the delta does (the marker leaves no episode, conclusion, action, reasoning entry or thought; nothing is claimed about other traces such as journals or cost rows).
+
+### 19.9 The orchestrator's first-hand checks of the repair (2026-11-21, an oracle tree detached at `15b4b4b3` whose touched files hold the candidate's text; the pairs of 19.1 to 19.5 applied by tool; blobs equal the hand-applied ones)
+
+| # | Check | Result |
+|---|---|---|
+| RQ1 | The 7 operations (Z1, Z2, Z3, TZ1, PZ1, PZ2, DZ1) | Found by `contract_tools.py list --prefix 19.`; each SEARCH occurs exactly once on the candidate, in files that are CRLF throughout (`git ls-files --eol`: `i/lf w/crlf`). |
+| RQ2 | E1: the pair TZ1 alone on the candidate | **3 failed, 35 passed** (38 cases in the file). `[plain]`: a marked turn left `(1, 0)` (one action, no reasoning entry) where `(0, 0)` is wanted. `[chain]`: `(1, 1)`. The session test: the second model request held the first reply (`[True, False, False]` at index 1). The unmarked controls give `(1, 0)` and `(1, 1)`, so each pair can tell its two turns apart. |
+| RQ3 | All the pairs: the new tests, the five files that name the marker and the 14 files that read working memory (19 files) | **819 passed, 2 skipped** (58 s, default embeddings). The two skips are `test_ad1030_salience.py:200` and `:266` (real-embedding relevance cases); they skip on the candidate too (25 passed, 2 skipped when that file runs alone there). |
+| RQ4 | The probe `probe_wm_actions.py` (a real `_BF989Crew` agent through `handle_intent`, intent `direct_message`; premises asserted before the answer: the unmarked control records, and the marked turn stores no episode and no conclusion) | On the candidate: three marked turns left 3 working-memory actions, and requests 2 and 3 held reply 1. On the repaired tree: marked turns leave **0 actions and 0 reasoning entries**, and no request holds an earlier reply. The unmarked control is unchanged: 3 actions, 3 reflections, 3 conclusions, and request 2 still holds reply 1 (an ordinary turn does not change). |
+| RQ5 | The consumer set: 70 files (the 57 of round 3 and the 19 files of RQ3, 6 in both) | **2103 passed, 4 skipped** under the default embeddings (554 s) and the same under `PROBOS_EMBEDDINGS=local` (307 s). The 4 skips: the two `test_ad1030_salience.py` cases of RQ3 and the two `test_bf139_140_probe_hardening.py` cases that need the offline sentence-transformers model; both pairs skip on the candidate too. |
+| RQ6 | The campaign of 19.7 (`audit/rows_bf989r4.py`; the new test file, `test_ad541d_guided_reminiscence.py`, `test_ad566a_qualification_harness.py` and `test_ad645_phase3_metacognitive.py` as the campaign's tests) | **All 4 rows are killed; none survived, none differs and none is invalid**, over an unmutated baseline of 102 passing cases. RP1 is killed by 3 cases (`[plain]`, `[chain]` and the session case), RP2 by 1 (`[chain]`), RP3 by 3 and RP4 by 3; every named killer failed in every row and no case outside them failed (extras 0). The oracle was restored: the five blobs equal RQ8's. |
+| RQ7 | The enumeration of working-memory writers (the paragraph before 19.1) | The `rg` over `src` gives 19 hits; in the lifecycle a marked probe turn reaches `record_action` (Z1), `record_conclusion` (guarded in round 2) and `record_reasoning` (Z2); the other hits are agent-initiated (`render_self_check`, the affect-drift stub), removed on every exit (BF-239's engagement), other pathways, or the runtime's own working memory. |
+| RQ8 | The checkpoint blobs | `cognitive_agent.py` `0656f1a69218df72c90163dabd7dda448109839b` (13187 lines); `qualification_tests.py` `5e2e232e06eb8ba737c6e632b356f3ad5546a589` (913); `tests/test_bf989_guided_reminiscence_recall.py` `10214f531e43b94565b599111b27ec25907d03aa` (602); `PROGRESS.md` `13e75b2f4f422a9481d00b67dd2fac353c1f4b0b` (1788); `DECISIONS.md` `f9ebf12f62c14f1d969d888a6ee7fde25207e119` (13499). |
+| RQ9 | What the orchestrator added to the Architect's answer | The shape of the tests: a chain case reaches the AD-645 block through a `decide` override that returns the two keys the block reads (no enabled sub-task handlers are needed), and the session test counts three model requests and looks for each reply's number in the others; Z3 (the `agent_recall_fn` docstring said the marker suppresses conclusion and thought storage only); PZ2 (the test count in the status entry); the writer enumeration (the Architect named the two writers the reviewer found; the enumeration shows that no third lifecycle writer is reachable by a marked probe turn). |
+| RQ10 | What the tests do not show | The AD-645 writer with a real enabled chain (the reviewer reproduced it; the test reaches it by a decision). A live vessel: what the agent's real turns read back from working memory after a session. The probes that already used the marker (AD-566 drift runs and `/qualify`, the AD-642 benchmarks) now leave no action in the agent's working memory either; that is the marker's stated purpose, and no test of theirs reads it. |
