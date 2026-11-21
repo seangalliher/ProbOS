@@ -1957,7 +1957,7 @@ Round 1 (`gpt-6.1-sol`, 30 minutes, the committed candidate `24c30a7c..bd902142`
 
 **F1. A result built by hand carries no cycle id.** `_run_cognitive_lifecycle` returns early when a compound procedure is dispatched: the `IntentResult(` after the `TASK_EXECUTION_COMPLETE` event is built without `_build_result_metadata`, so its `metadata` is `{}` while the event beside it names the cycle's id. A caller that stores an episode after the cycle (S2a) would record `correlation_verdict` `empty` for it, and an armed recall would drop that episode with `direct_source_missing_correlation_id`. The two results `_run_recreation_turn` builds by hand on a failure have the same gap. Repair: `_run_cycle_bound_lifecycle` puts the id it bound on any result it returns that has none (`_carry_cycle_id`), before AD-1357's manifest, which stays last. A result that has an id keeps it, so the normal return (`_build_result_metadata` already wrote it) is unchanged.
 
-**F2. Two writers can record out of time order.** `CycleIdRegistry._record` read the clock before it took its lock. A writer that read first and recorded second left an older timestamp behind a newer one, and `_evict` stops at the first fresh entry from the front, so an expired id behind it kept resolving and `store()` recorded `resolved` for it. Repair: `_record` reads the clock under the lock, so recording order is time order for a monotonic clock. `_live_entry` does too, so that every read of the clock in the class is under the lock (a stale read there only delays an eviction, so no case can tell the two apart).
+**F2. Two writers can record out of time order.** `CycleIdRegistry._record` read the clock before it took its lock. A writer that read first and recorded second left an older timestamp behind a newer one, and `_evict` stops at the first fresh entry from the front, so an expired id behind it kept resolving and `store()` recorded `resolved` for it. Repair: `_record` reads the clock under the lock, so recording order is time order for a monotonic clock. `_live_entry` does too, so that every read of the clock in the class is under the lock: a reader that read the clock before it got the lock judges an id by a time that has passed (round 2 showed an id past its TTL still resolving; N38 of section 19 pins it).
 
 No design decision is open: both repairs are the reviewer's smallest fix. The registry's TTL and size stay unmeasured defaults, and nothing in sections 1 to 17 changes.
 
@@ -2225,7 +2225,7 @@ def test_two_writers_cannot_record_out_of_time_order_so_an_expired_id_never_reso
 | RM5 | `_carry_cycle_id` does not cut the id to 64 characters | N35 |
 | RM6 | `_carry_cycle_id` does nothing when the metadata is empty | N35, N36 |
 
-`_live_entry` reading the clock before its lock again has no row: a stale read there only delays an eviction, so no case can tell it apart.
+`_live_entry` reading the clock before its lock again is row RM7 of section 19.4: round 2 showed that a stale read there can report an expired id live, and N38 pins it.
 
 ### 18.5 Properties for the round-2 Diff Reviewer (the delta only)
 
@@ -2247,3 +2247,141 @@ The nine operations of this section were applied to a scratch worktree detached 
 | R5 | **The consolidated focused set** (50 files: the 28 of section 12, plus 22 that run `handle_intent` or the compound replay or read `IntentResult.metadata`, among them `test_multi_agent_replay_dispatch.py` and `test_graduated_compilation.py`): **2259 passed, 0 failed** under the default embeddings (725.95 s) and **2259 passed, 0 failed** under `PROBOS_EMBEDDINGS=local` (658.63 s), four workers. |
 | R6 | **The campaign** (`audit\mutants_gen.py`, rows RM1 to RM6 of 18.4, each over the unmutated baseline of 70 passing cases): **killed 6, survived 0, differs 0, invalid 0**; every named killer failed and no other case did; the tree was restored after the run (the three files' sha256 equal the ones printed before it). RM6 is killed by two cases (N35 and N36), every other row by one. |
 | R7 | `rg -n "_clock\(\)" src/probos/cycle_trace.py` shows two reads, in `_record` and `_live_entry`, each inside its `with self._lock:` block; `_carry_cycle_id` is defined once (`cognitive_agent.py`) and called once (`_run_cycle_bound_lifecycle`). |
+
+## 19. Repair after review round 2 (2026-11-21)
+
+Round 2 (`gpt-6.1-sol`, 19 minutes, the delta `bd902142..e30601b7`) found F1 and F2 resolved, each verified end to end by execution, and requested changes on two new findings, both P3, both of ordinary reach, both new in the round-1 repair, size findings 0. The orchestrator reproduced each before repairing it (section 19.6). The production code does not change.
+
+**F3. N37 passes the previous code when its gate times out.** The gate holds the first writer at the door until the second has been through, and waited for that with `Event.wait(timeout=10.0)`, ignoring the result. When the second writer is too slow to be through in time (a loaded runner), the first goes on alone, the two record in time order, and N37 passes on the previous `_record`: a green case that tested nothing. Repair: the gate records whether the second writer got through while the first waited, and N37 asserts it, so a missed interleaving fails the case instead of passing it.
+
+**F4. Section 18 said no case can tell the reader-side clock read apart. One can.** `_live_entry` read the clock before it took the lock, so a reader that waits behind another judges an id by a time that has passed: with an id recorded at 100 and a TTL of 60, a reader that sampled 100 and got the lock at 161 reported the id live. N35 to N37 all pass on the previous `_live_entry`. Repair: the two sentences of section 18 that said otherwise (the F2 paragraph and the note under 18.4) are corrected, and N38 pins the property without a thread or a timing: a lock whose acquisition moves the clock on, as a wait does.
+
+The status and decisions entries still said 67 cases for the S1 test file after round 1 made it 70; with N38 it is 71. TR5 and TR6 correct both. No design decision is open.
+
+### 19.1 `tests/test_ad1360_s1_cycle_trace.py` (M-R2)
+
+**RV1.** SEARCH:
+```
+        self.first_at_the_door = threading.Event()
+        self.second_has_been_through = threading.Event()
+
+    def __enter__(self) -> None:
+        if threading.current_thread().name == "first":
+            self.first_at_the_door.set()
+            self.second_has_been_through.wait(timeout=10.0)
+        self._inner.acquire()
+```
+REPLACE:
+```
+        self.first_at_the_door = threading.Event()
+        self.second_has_been_through = threading.Event()
+        self.second_passed_while_first_waited = False
+
+    def __enter__(self) -> None:
+        if threading.current_thread().name == "first":
+            self.first_at_the_door.set()
+            self.second_passed_while_first_waited = self.second_has_been_through.wait(timeout=10.0)
+        self._inner.acquire()
+```
+**RV2.** SEARCH:
+```
+    assert not first.is_alive() and not second.is_alive() and sorted(ids) == ["first", "second"]
+```
+REPLACE:
+```
+    assert not first.is_alive() and not second.is_alive() and sorted(ids) == ["first", "second"]
+    # A second writer too slow to get through while the first waits would leave the writers in time order, and this
+    # case would pass the previous code: the premise is asserted, so a missed interleaving fails.
+    assert gate.second_passed_while_first_waited
+```
+**RV3.** SEARCH:
+```
+    assert registry.resolves(ids[earlier]) is False
+    assert registry.resolves(ids[later]) is True
+```
+REPLACE:
+```
+    assert registry.resolves(ids[earlier]) is False
+    assert registry.resolves(ids[later]) is True
+
+
+# -- N38: review round 2 (a reader that waits for the lock judges an id by the time it gets the lock) ----------------
+
+
+class _SlowLock:
+    """A lock that takes time to get: entering it moves the clock on, as a caller waiting behind another does."""
+
+    def __init__(self, now: list[float], arrives_at: float) -> None:
+        self._now = now
+        self._arrives_at = arrives_at
+
+    def __enter__(self) -> None:
+        self._now[0] = self._arrives_at
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+def test_a_reader_waiting_for_the_lock_judges_an_id_by_the_time_it_gets_the_lock() -> None:
+    now = [100.0]
+    registry = CycleIdRegistry(ttl_seconds=60.0, clock=lambda: now[0])
+    chain_id = registry.issue(kind="cognitive_cycle")  # recorded at 100
+    assert registry.resolves(chain_id) is True  # the premise: at 100 the id is live
+    registry._lock = _SlowLock(now, 161.0)  # type: ignore[assignment]
+    assert registry.resolves(chain_id) is False  # waiting for the lock took the id past its TTL of 60
+```
+
+### 19.2 `PROGRESS.md` (M-R2)
+
+**TR5.** SEARCH:
+```
+`tests/test_ad1360_s1_cycle_trace.py` (67 cases): a real agent cycle
+```
+REPLACE:
+```
+`tests/test_ad1360_s1_cycle_trace.py` (71 cases): a real agent cycle
+```
+
+### 19.3 `DECISIONS.md` (M-R2)
+
+**TR6.** SEARCH:
+```
+`tests/test_ad1360_s1_cycle_trace.py` (67 cases), on a real ChromaDB-backed memory
+```
+REPLACE:
+```
+`tests/test_ad1360_s1_cycle_trace.py` (71 cases), on a real ChromaDB-backed memory
+```
+
+### 19.4 Mutation rows (campaign on the repaired tree; restore between rows)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RM1 | `_record` reads the clock before the lock again | N37 |
+| RM7 | `_live_entry` reads the clock before the lock again | N38 |
+
+F3 has no row: its defect is in the test, not in the source. Section 19.6 shows N37 passing the previous `_record` when the second writer is late, and failing after the repair.
+
+### 19.5 Properties for the round-3 Diff Reviewer (the delta only)
+
+1. The production code does not change: `src` has no difference between `e30601b7` and the head.
+2. N37 behaves as before when the second writer gets through while the first waits at the door (it fails on the previous `_record`, it passes on the repaired one), and fails with the gate's flag unset when it does not.
+3. N38 uses no thread and no timing; it fails on the previous `_live_entry` and passes on the repaired one, and it asserts its own premise (the id is live before the lock is replaced).
+4. The two statements of section 18 that no case can tell the reader-side read apart are corrected; nothing else in section 18 changes.
+5. The status and decisions entries say 71 cases, the count of the test file; the ledger check passes.
+6. No other case of the file changes, and the new text deletes, loosens or skips no case.
+
+### 19.6 The orchestrator's first-hand checks of the second repair (2026-11-21, an oracle tree at the round-1 repair)
+
+The five operations of this section were applied to a scratch worktree by `audit\contract_tools.py` (ASCII only) on the round-1 repair state (the oracle tree detached at `bd902142` with section 18 applied, whose three source and test files have the committed round-1 repair's blobs), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (a redirected, empty home: entries left in it 0).
+
+| R | Result |
+|---|---|
+| R1 | All five operations (RV1 to RV3, TR5, TR6) are found by `contract_tools.py list --prefix 19.`, and every SEARCH occurs exactly once. The test file changes by +150 -2 lines; `PROGRESS.md` and `DECISIONS.md` by +1 -1 each. |
+| R2 | The S1 test file after the pairs: **71 passed** (70 + N38), 14.62 s. |
+| R3 | **F3 reproduced and repaired**, by a probe outside the repository (its file was deleted after the run): the gate's wait is shortened to 0.3 s and the second writer starts 1.0 s late, so the gate times out (a check asserts that both patches fired). Controls, with the interleaving: the round-1 N37 and the repaired N37 both fail on the previous `_record`, and the repaired N37 passes on the repaired one. With the second writer late: **the round-1 N37 passes the previous `_record`** (the finding), the repaired N37 fails on the gate's flag `second_passed_while_first_waited`, and it fails on the repaired `_record` as well (the case reports a missed interleaving whichever code it runs on). 8 probe cases, all as stated. |
+| R4 | **F4 reproduced and repaired**: N38 fails on the previous `_live_entry` and passes on the repaired one (the same probe, 2 cases). Row RM7 of 19.4 shows that none of the 70 earlier cases fails on the previous `_live_entry`. |
+| R5 | **The campaign** (`audit\mutants_gen.py`, rows RM1 and RM7 of 19.4, over the unmutated baseline of 71 passing cases): **killed 2, survived 0, differs 0, invalid 0**. RM1 is killed by N37 alone and RM7 by N38 alone, with no other case failing. The tree was restored after the run (the sha256 of `cycle_trace.py` equals the one printed before it). |
+| R6 | **Stability**: N37 and N38 repeated 100 times each, 200 passed serially (2.13 s) and 200 passed under four workers (4.70 s). |
+| R7 | **Trackers**: after TR5 and TR6, `scripts/gen_ad_ledger.py --check` reports the ledger current and the generator changes no file (the count sits in an entry's body, not in a heading). |
+| R8 | The repair changes no production code, so the focused check of the committed repair is the S1 test file alone, under the default embeddings and under `PROBOS_EMBEDDINGS=local`; its result goes to the round-3 brief. |
