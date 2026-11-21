@@ -111,9 +111,10 @@ def agent_recall_fn(
 ) -> Callable[[str, str], Awaitable[str]]:
     """The agent's own recall for guided reminiscence (BF-989, #1838), on ``_send_probe``'s path and marker.
 
-    The intent is marked ``_qualification_test``, which suppresses episode, working-memory conclusion and thought
-    storage (``CognitiveAgent``'s episode hook and its AD-669 conclusion block, BF-989 round 2), so a recall attempt
-    never becomes an episode that a later session could select as ground truth.
+    The intent is marked ``_qualification_test``, which suppresses episode, working-memory conclusion, action,
+    reasoning entry and thought storage (``CognitiveAgent``'s episode hook and its AD-573, AD-669 and AD-645 blocks,
+    BF-989 rounds 2 and 3), so a recall attempt never becomes an episode that a later session could select as ground
+    truth, and the agent's next turn never reads its own earlier reply back.
     BF-989 round 1: ``resolve_slot`` maps the memory key the engine holds (the sovereign UUID episodes carry) to the
     slot id the registry keys by (BF-907); a key it does not resolve is looked up as given. A key with no live agent,
     and a reply that is not a recall (``_checked_recall``), raise ``RecallUnavailable``; the engine records the reason.

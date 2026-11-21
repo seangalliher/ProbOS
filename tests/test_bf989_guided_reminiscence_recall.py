@@ -542,3 +542,61 @@ async def test_a_session_over_a_real_agent_stores_nothing_and_never_selects_its_
     sessions = [await engine.run_session(agent.id) for _ in range(2)]
     assert [[r.episode_id for r in s.recall_results] for s in sessions] == [["ep-0", "ep-1", "ep-2"]] * 2
     assert sorted(ep.id for ep in await memory.recent_for_agent(agent.id, k=10)) == ["ep-0", "ep-1", "ep-2", "ep-3"]
+
+
+# -- R8, R9: review round 3 (a marked turn leaves no action or reasoning entry; a session's probes never see each other)
+
+
+def _chain_class() -> type[CognitiveAgent]:
+    async def decide(self: CognitiveAgent, observation: dict[str, Any]) -> dict[str, Any]:
+        decision = await CognitiveAgent.decide(self, observation)
+        # What an enabled sub-task chain returns: AD-645 records the composition brief from these two keys.
+        decision.update(
+            sub_task_chain=True,
+            _composition_brief={"situation": "a recall probe", "response_should_cover": ["the status"]},
+        )
+        return decision
+
+    return type("_BF989Chain", (_crew_class(),), {"decide": decide})
+
+
+@pytest.mark.parametrize("chain", [False, True], ids=["plain", "chain"])
+async def test_a_qualification_turn_leaves_no_action_and_no_reasoning_in_working_memory(chain: bool) -> None:
+    seen = []
+    for marked in (True, False):
+        agent = (_chain_class() if chain else _crew_class())(
+            llm_client=_CountingLLM(),
+            runtime=SimpleNamespace(episodic_memory=MockEpisodicMemory(), config=SystemConfig()),
+        )
+        params = {"text": "What do you recall?", **({"_qualification_test": True} if marked else {})}
+        await agent.handle_intent(IntentMessage(intent="bf989_probe", params=params, target_agent_id=agent.id))
+        state = agent._working_memory.to_dict()
+        seen.append((len(state["recent_actions"]), len(state["recent_reasoning"])))
+    # The unmarked control records the action (and, on a chain, the brief), so the pair can tell the two turns apart.
+    assert seen == [(0, 0), (1, 1 if chain else 0)]
+
+
+class _EchoLLM(MockLLMClient):
+    """The agent's model: every reply carries its own number, and every request is kept."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[str] = []
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:  # type: ignore[override]
+        self.requests.append(f"{getattr(request, 'system_prompt', '')}\n{getattr(request, 'prompt', '')}")
+        return LLMResponse(content=f"RECALL-NUMBER-{len(self.requests)}: the ship status was checked and it was nominal")
+
+
+async def test_a_session_never_shows_the_agent_its_own_earlier_recall_replies() -> None:
+    memory, registry, llm = MockEpisodicMemory(), AgentRegistry(), _EchoLLM()
+    agent = _crew_class()(llm_client=llm, runtime=SimpleNamespace(episodic_memory=memory, config=SystemConfig()))
+    await registry.register(agent)
+    for i in range(4):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[agent.id]))
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3, recall_fn=agent_recall_fn(registry),
+    )
+    await engine.run_session(agent.id)
+    assert len(llm.requests) == 3  # one turn per episode, and nothing else asks the agent's model
+    assert [[f"RECALL-NUMBER-{n}" in request for n in (1, 2, 3)] for request in llm.requests] == [[False] * 3] * 3
