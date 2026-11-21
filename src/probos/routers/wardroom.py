@@ -13,6 +13,7 @@ from probos.api_models import (
     CreateChannelRequest, CreatePostRequest, CreateThreadRequest,
     EndorseRequest, SubscribeRequest, UpdateThreadRequest,
 )
+from probos.cycle_trace import entry_scope  # AD-1360 S2b (#1828)
 from probos.routers.deps import get_runtime
 
 logger = logging.getLogger(__name__)
@@ -278,13 +279,15 @@ async def wardroom_create_thread(channel_id: str, req: CreateThreadRequest, runt
     if not runtime.ward_room:
         raise HTTPException(503, "Ward Room not available")
     try:
-        thread = await runtime.ward_room.create_thread(
-            channel_id=channel_id, author_id=req.author_id,
-            title=req.title, body=req.body,
-            author_callsign=req.author_callsign,
-            thread_mode=req.thread_mode,
-            max_responders=req.max_responders,
-        )
+        # AD-1360 S2b (#1828): an HXI post runs in no cognitive cycle; the request's own id is bound for the thread's episode.
+        with entry_scope(getattr(runtime, "cycle_registry", None), kind="hxi_post"):
+            thread = await runtime.ward_room.create_thread(
+                channel_id=channel_id, author_id=req.author_id,
+                title=req.title, body=req.body,
+                author_callsign=req.author_callsign,
+                thread_mode=req.thread_mode,
+                max_responders=req.max_responders,
+            )
         return vars(thread)
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -348,11 +351,13 @@ async def wardroom_create_post(thread_id: str, req: CreatePostRequest, runtime: 
                 exc_info=True,
             )
     try:
-        post = await runtime.ward_room.create_post(
-            thread_id=thread_id, author_id=req.author_id,
-            body=req.body, parent_id=req.parent_id,
-            author_callsign=author_callsign,
-        )
+        # AD-1360 S2b (#1828): an HXI post runs in no cognitive cycle; the request's own id is bound for the post's episode.
+        with entry_scope(getattr(runtime, "cycle_registry", None), kind="hxi_post"):
+            post = await runtime.ward_room.create_post(
+                thread_id=thread_id, author_id=req.author_id,
+                body=req.body, parent_id=req.parent_id,
+                author_callsign=author_callsign,
+            )
         return vars(post)
     except ValueError as e:
         raise HTTPException(400, str(e))

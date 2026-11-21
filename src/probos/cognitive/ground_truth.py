@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
 from probos.events import EventType
 
 if TYPE_CHECKING:
@@ -231,7 +232,8 @@ class VerificationEpisodeWriter:
             },
             source=MemorySource.DIRECT.value,
             importance=7 if not result.verified else 4,
-            correlation_id="",
+            # AD-1360 S2b (#1828): the verification's own id, or the cycle's when one reaches it (was a constant "").
+            correlation_id=issue_entry_id(getattr(rt, "cycle_registry", None), kind="ground_truth_verification"),
         )
         try:
             await em.store(episode)

@@ -493,6 +493,7 @@ async def set_agent_voice_profile(
         try:
             import time as _time
             from probos.cognitive.episodic import resolve_sovereign_id
+            from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
             from probos.types import AnchorFrame, Episode
             sovereign_id = resolve_sovereign_id(agent)
             new_voice_dict = new_profile.to_dict()
@@ -516,6 +517,8 @@ async def set_agent_voice_profile(
                     f"{agent_id}; rationale recorded for learning."
                 ),
                 source="direct",
+                # AD-1360 S2b (#1828): the Captain's approval is an HXI request outside any cycle; its own id.
+                correlation_id=issue_entry_id(getattr(runtime, "cycle_registry", None), kind="hxi_request"),
                 anchors=AnchorFrame(
                     channel="hxi_profile",
                     trigger_type="voice_profile_change",
@@ -3773,6 +3776,7 @@ async def _agent_chat_impl(
     # see the same instance via ``self.ctx.sanity_gate``.
     sanity_gate = getattr(runtime, "dm_sanity_gate", None)
     from probos.cognitive.dm import DmReplyContext, DmReplyPipeline
+    from probos.cycle_trace import issue_entry_id, result_cycle_id  # AD-1360 (#1828)
     from probos.dm_reply import DmReply, ToolInvocations, require_rendered  # AD-1248
     _owned_steps_view = None
     _owned_steps_views: dict[
@@ -3845,6 +3849,9 @@ async def _agent_chat_impl(
         owned_steps_views=_owned_steps_views,
         owned_steps_feedback=_owned_steps_capture_feedback,
         plan_mode_gate=_plan_mode_gate,  # AD-1156
+        # AD-1360 (#1828): the agent cycle this reply came from; S2b: the route's own id when no cycle's id came back
+        # (a held turn, no reply, or a non-cognitive result).
+        cycle_id=result_cycle_id(result) or issue_entry_id(getattr(runtime, "cycle_registry", None), kind="hxi_dm"),
     ))
     await pipeline.run()
     response = pipeline.build_response()

@@ -47,13 +47,13 @@ handoff_to_e2:
 pydantic_version: 2.12.5
 surface_counts:
   aliased_fields: 1
-  canonical_dump_leaves: 1895
-  field_definitions: 1885
+  canonical_dump_leaves: 1896
+  field_definitions: 1886
   incidental: 13
   own_models: 229
   owned: 297
   public_names: 310
-canonical_dump_sha256: db581b6542a1d80d4559994e7f2f3bca7177ce5e88ac617f835625b3f3eb68b2
+canonical_dump_sha256: 54b84ea6c30b1cfeb1264f03bc9040586d1477b86d8a271f994c3bfe74eb0753
 non_instantiable:
 - A2APeerConfig
 - BaseModel
@@ -2448,13 +2448,14 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: b1a049076915eca40b6a21b2e29db5c710ad921cf1911e2ff2856601c2e704f2
+    schema_sha256: 1b476f7be575004007890fb10eb38c4db4156bafbc3867aefb135a7320adca5f
     fields:
     - {default: 'False', name: enforce_recall}
     - {default: 'False', name: enforce_provenance}
     - {default: 'False', name: enforce_store}
     - {default: '0.7', name: anchor_mismatch_threshold}
     - {default: '3', name: dp_min_cohort_size}
+    - {default: '0.0', name: correlation_cutoff}
   MeshConfig:
     qualname: MeshConfig
     bases:
@@ -3167,7 +3168,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 18e16a784ae309fb2e60b55c75e4b50ba7eb380820e14211e45653847f235438
+    schema_sha256: 4eb3286f547df4abd49b1b8d380246ee166e7a090b45a0401c151a5a14b6391f
     fields:
     - {default: 'True', name: enabled}
     - {default: '65536', name: max_payload_bytes}
@@ -3426,7 +3427,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 1a10853aff8ead896e744d81094f3a48e211ee9a69eff6345d5d94a8912230b5
+    schema_sha256: 11122e41ac178ecae553516ec2f186ec7567b2da0f1248c50270cc9b1d48be5d
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}

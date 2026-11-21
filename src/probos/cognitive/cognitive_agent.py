@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos import work_item_steps as owned_steps
 from probos.admission.seam import hold_at, shadow_at  # AD-1346 M3c; hold_at: AD-1346 M3d2
+from probos.cycle_trace import (  # AD-1360
+    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, is_cycle_registry, new_cycle_id, unbind_cycle,
+)
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -272,6 +275,8 @@ def _build_result_metadata(
     Empty on every non-agentic path except a ``direct_message`` turn whose
     prompt ``_build_user_message`` assembled, which carries its AD-1357 context
     manifest; any other such turn carries an unchanged (empty) metadata dict.
+    AD-1360 (#1828): plus ``correlation_id`` whenever the observation carries
+    the cycle's AD-492 id.
     """
     sources = [s for s in (report, decision, observation) if isinstance(s, dict)]
 
@@ -317,6 +322,11 @@ def _build_result_metadata(
         decided = intended_tags(intended)
         if decided:
             metadata["intended_actions"] = decided
+    # AD-1360 (#1828): the cycle's AD-492 id, for a caller that stores an episode after the cycle has ended. A fact
+    # about the result, bounded to 64 characters (AD-1248 DD-5); absent when the observation carries none.
+    cycle_id = observation.get("correlation_id") if isinstance(observation, dict) else None
+    if type(cycle_id) is str and cycle_id:
+        metadata["correlation_id"] = cycle_id[:64]
     # AD-1357 (#1749): the reply's context manifest, LAST, so that BF-805's greedy
     # fit check (``IntentBus._prune_metadata``, in iteration order) considers it
     # after every key above and it never takes the room of one of them. It is not
@@ -328,6 +338,24 @@ def _build_result_metadata(
             metadata[context_manifest.CONTEXT_MANIFEST_METADATA_KEY] = manifest
             break
     return metadata
+
+
+def _carry_cycle_id(result: IntentResult, cycle_id: str) -> None:
+    """AD-1360 (#1828): put the cycle's AD-492 id on a result that has none.
+
+    ``_build_result_metadata`` writes the id on the lifecycle's normal return. A result built by hand (the compound
+    replay's early return, a recreation turn that fails) never reaches it, and a caller that stores an episode after
+    the cycle reads the id from the result. The id goes before AD-1357's manifest, which stays last.
+    """
+    metadata = getattr(result, "metadata", None)
+    if type(metadata) is not dict or "correlation_id" in metadata:
+        return
+    manifest_key = context_manifest.CONTEXT_MANIFEST_METADATA_KEY
+    carried = {key: value for key, value in metadata.items() if key != manifest_key}
+    carried["correlation_id"] = cycle_id[:64]
+    if manifest_key in metadata:
+        carried[manifest_key] = metadata[manifest_key]
+    result.metadata = carried
 
 
 def _collect_owned_steps_tool_views(
@@ -1786,6 +1814,21 @@ class CognitiveAgent(BaseAgent):
         return None
 
     @property
+    def _cycle_registry(self) -> CycleIdRegistry | None:
+        """AD-1360 (#1828): the runtime's cycle-id registry (Ship's Computer service), reached as the journal is.
+
+        Only a real ``CycleIdRegistry`` counts (``is_cycle_registry``): a test runtime's MagicMock attribute, spec'd or
+        not, would otherwise issue a MagicMock id.
+        """
+        registry = getattr(getattr(self, "_runtime", None), "cycle_registry", None)
+        return registry if is_cycle_registry(registry) else None
+
+    def _issue_cycle_id(self) -> str:
+        """AD-1360 (#1828): a new AD-492 id, recorded in the runtime's registry when there is one."""
+        registry = self._cycle_registry
+        return registry.issue(kind="cognitive_cycle") if registry is not None else new_cycle_id()
+
+    @property
     def _procedure_store(self):
         """AD-534: Access procedure store via runtime (Ship's Computer service)."""
         if self._runtime and hasattr(self._runtime, 'procedure_store'):
@@ -2305,12 +2348,19 @@ class CognitiveAgent(BaseAgent):
         # AD-1328 S2c (#1530): when this run began. A command escalation settled since then
         # still parks the item below (BF-878 resolves it); one settled before never does.
         _dispatch_started = time.time()
-        reply_text = await self._run_agentic_dispatch(
-            work_item_id=work_item_id,
-            task_text=task_text,
-            runtime=runtime,
-            failures_sink=_dispatch_failures,
-        )
+        # AD-1360 S2b (#1828): the agentic run is no cognitive cycle; the work item's id is its chain, adopted into the
+        # registry (as a promoted run's is, S2a D8) and bound while the run stores episodes (an MCP invoke's).
+        _work_registry = self._cycle_registry
+        _work_chain = work_item_id if type(work_item_id) is str and work_item_id.strip() else ""
+        if _work_registry is not None and _work_chain:
+            _work_registry.register(_work_chain, kind="work_item")
+        with cycle_scope(_work_chain if _work_registry is not None else ""):
+            reply_text = await self._run_agentic_dispatch(
+                work_item_id=work_item_id,
+                task_text=task_text,
+                runtime=runtime,
+                failures_sink=_dispatch_failures,
+            )
         _reply = None
         if reply_text is None:
             result = await self.handle_intent(dm)
@@ -3018,8 +3068,9 @@ class CognitiveAgent(BaseAgent):
         AD-492: Generates a correlation_id at perception time to thread
         through the entire cognitive cycle (decide → act → episode → post).
         """
-        # AD-492: Generate correlation ID for this cognitive cycle
-        correlation_id = uuid.uuid4().hex[:12]
+        # AD-492: the correlation ID for this cognitive cycle. AD-1360 (#1828): the id the cycle bound
+        # (``_run_cycle_bound_lifecycle``); a perceive outside a bound cycle issues one of its own and binds nothing.
+        correlation_id = current_cycle_id() or self._issue_cycle_id()
         self._current_correlation_id = correlation_id
 
         if isinstance(intent, IntentMessage):
@@ -7581,6 +7632,28 @@ class CognitiveAgent(BaseAgent):
                 exc_info=True,
             )
 
+    async def _run_cycle_bound_lifecycle(
+        self,
+        intent: IntentMessage,
+        cognitive_skill_instructions: str | None = None,
+        skill_entries: list | None = None,
+    ) -> IntentResult:
+        """AD-1360 (#1828): ``_run_cognitive_lifecycle`` with a newly issued AD-492 cycle id bound (``cycle_trace``).
+
+        ``perceive`` takes the bound id, so the journal, the events, the episode and ``IntentResult.metadata`` carry one
+        id the runtime's registry issued; a result the lifecycle built by hand (the compound replay's early return) gets
+        it from ``_carry_cycle_id``. Every cycle binds its own: an inline cycle of another agent binds its own and the
+        reset gives this one's back. The reset is in the ``finally``, so it runs on return, raise and cancellation.
+        """
+        cycle_id = self._issue_cycle_id()
+        token = bind_cycle(cycle_id)
+        try:
+            result = await self._run_cognitive_lifecycle(intent, cognitive_skill_instructions, skill_entries)
+            _carry_cycle_id(result, cycle_id)
+            return result
+        finally:
+            unbind_cycle(token)
+
     async def _run_cognitive_lifecycle(
         self,
         intent: IntentMessage,
@@ -8075,8 +8148,9 @@ class CognitiveAgent(BaseAgent):
             error=report.get("error"),
             confidence=self.confidence,
             # AD-1203: so the caller recording this turn can bind the claim to
-            # the calls behind it. Empty on every non-agentic path but a
-            # direct_message, which carries its AD-1357 context manifest.
+            # the calls behind it. On a non-agentic path it holds the cycle's
+            # AD-492 id when the observation carries one (AD-1360), plus, on a
+            # direct_message, its AD-1357 context manifest.
             # AD-1248: plus the DM reply's attachments, bounded and versioned.
             # The BODY stays in ``result`` un-rendered -- duplicating it here
             # doubles a large reply and can fail the whole NATS request.
@@ -8274,7 +8348,7 @@ class CognitiveAgent(BaseAgent):
             priority = _classify_concurrency_priority(intent)
             try:
                 async with concurrency_manager.slot(intent.intent, priority):
-                    return await self._run_cognitive_lifecycle(
+                    return await self._run_cycle_bound_lifecycle(  # AD-1360: binds the cycle's id
                         intent, _cognitive_skill_instructions, _skill_entries,
                     )
             except ValueError:
@@ -8298,7 +8372,7 @@ class CognitiveAgent(BaseAgent):
                         _wm.remove_engagement(f"ward_room:{_bf239_thread_id}")
 
         try:
-            return await self._run_cognitive_lifecycle(
+            return await self._run_cycle_bound_lifecycle(  # AD-1360: binds the cycle's id
                 intent, _cognitive_skill_instructions, _skill_entries,
             )
         finally:

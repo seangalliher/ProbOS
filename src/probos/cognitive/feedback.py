@@ -8,6 +8,8 @@ import logging
 import time
 from typing import Any, TYPE_CHECKING
 
+from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
+
 if TYPE_CHECKING:
     from probos.cognitive.episodic import EpisodicMemory
     from probos.consensus.trust import TrustNetwork  # AD-399: allowed edge — feedback records trust outcomes
@@ -50,6 +52,7 @@ class FeedbackEngine:
         feedback_trust_weight: float = 1.5,
         identity_registry: Any = None,
         agent_registry: AgentRegistry | None = None,
+        cycle_registry: Any = None,
     ) -> None:
         self._trust = trust_network
         self._hebbian = hebbian_router
@@ -59,6 +62,8 @@ class FeedbackEngine:
         self._feedback_trust_weight = feedback_trust_weight
         self._identity_registry = identity_registry
         self._agent_registry = agent_registry  # BF-907: agent_type -> slot for correction trust
+        # AD-1360 S2b (#1828): the runtime's cycle-id registry; the Captain's feedback is an entry point of its own.
+        self._cycle_registry = cycle_registry
 
     async def _safe_log_event(self, event_log, *args, **kwargs) -> None:
         """Best-effort event logging — never blocks feedback processing."""
@@ -262,6 +267,7 @@ class FeedbackEngine:
                 agent_ids=agents_updated,
                 reflection=f"Correction {feedback_label}: {changes_description}",
                 source="direct",
+                correlation_id=issue_entry_id(self._cycle_registry, kind="captain_feedback"),  # AD-1360 S2b (#1828)
                 anchors=AnchorFrame(
                     channel="feedback",
                     trigger_type="human_correction",
@@ -423,6 +429,7 @@ class FeedbackEngine:
             agent_ids=agent_ids,
             reflection=f"Human feedback: {feedback_type}",
             source="direct",
+            correlation_id=issue_entry_id(self._cycle_registry, kind="captain_feedback"),  # AD-1360 S2b (#1828)
             anchors=AnchorFrame(
                 channel="feedback",
                 trigger_type="human_feedback",

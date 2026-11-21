@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from probos.cycle_trace import entry_scope  # AD-1360 S2b (#1828)
 from probos.routers.deps import get_runtime
 from probos.visiting_officers import VisitorScopeRefused
 
@@ -198,13 +199,15 @@ async def teach_procedure(
             "captain", body.target_callsign,
             callsign_a="captain", callsign_b=body.target_callsign,
         )
-        await runtime.ward_room.create_thread(
-            channel_id=dm_channel.id,
-            author_id="captain",
-            title=f"[TEACHING] {procedure.name}",
-            body=dm_body,
-            author_callsign="captain",
-        )
+        # AD-1360 S2b (#1828): the Captain's teaching request; its own id is bound for the thread's episode.
+        with entry_scope(getattr(runtime, "cycle_registry", None), kind="hxi_post"):
+            await runtime.ward_room.create_thread(
+                channel_id=dm_channel.id,
+                author_id="captain",
+                title=f"[TEACHING] {procedure.name}",
+                body=dm_body,
+                author_callsign="captain",
+            )
     except VisitorScopeRefused:  # BF-903 (A4): a scope refusal reaches the API's 403 handler, not this route's error string
         raise
     except Exception as e:

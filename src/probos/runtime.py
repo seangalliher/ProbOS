@@ -147,6 +147,7 @@ from probos.types import (
 
 from probos.agent_onboarding import AgentOnboardingService
 from probos.crew_utils import is_crew_agent
+from probos.cycle_trace import CycleIdRegistry, current_cycle_id, entry_scope, issue_entry_id  # AD-1360 (#1828)
 from probos.dream_adapter import DreamAdapter
 from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
@@ -534,6 +535,7 @@ class ProbOSRuntime:
     crew_session_delivery_service: "CrewSessionDeliveryService | None"
     crew_session_delivery_listener: Callable[..., Any] | None
     cognitive_journal: CognitiveJournal | None
+    cycle_registry: CycleIdRegistry  # AD-1360 (#1828): the AD-492 ids this process issued
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
     cognitive_skill_catalog: CognitiveSkillCatalog | None
@@ -1174,6 +1176,11 @@ class ProbOSRuntime:
 
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None
+
+        # --- Cycle-id registry (AD-1360, #1828) ---
+        # The AD-492 ids this process issued, which EpisodicMemory.store() checks an episode's correlation id
+        # against. In memory and bounded; its TTL and size are CycleIdRegistry's unmeasured defaults.
+        self.cycle_registry: CycleIdRegistry = CycleIdRegistry()
 
         # --- Knowledge Edge Store (AD-687) ---
         self.knowledge_edges: Any = None  # SQLiteKnowledgeEdgeStore | None — Any to avoid circular import
@@ -3056,6 +3063,7 @@ class ProbOSRuntime:
             create_pool_fn=self.create_pool,
             emit_event_fn=self._emit_event,
             ontology=self.ontology,  # BF-118
+            cycle_registry=self.cycle_registry,  # AD-1360 (#1828)
         )
         self.self_mod_pipeline = cog.self_mod_pipeline
         self.behavioral_monitor = cog.behavioral_monitor
@@ -5229,6 +5237,8 @@ class ProbOSRuntime:
                 ],
                 dag_summary={},
                 anchors=AnchorFrame(channel="mcp", trigger_type="mcp_invoke"),
+                # AD-1360 (#1828): the agent's cycle when the agentic loop invokes the tool inside one; "" outside one.
+                correlation_id=current_cycle_id(),
             )
             await self.episodic_memory.store(episode)
         except Exception:
@@ -5567,6 +5577,7 @@ class ProbOSRuntime:
                 ],
                 dag_summary={},
                 anchors=AnchorFrame(channel="device", trigger_type=intent_name),
+                correlation_id=current_cycle_id(),  # AD-1360 S2b (#1828): the actuating cycle's; "" outside one
             )
             await self.episodic_memory.store(episode)
         except Exception:
@@ -6145,20 +6156,24 @@ class ProbOSRuntime:
         if self.episodic_memory and dag.nodes:
             try:
                 t_end = time.monotonic()
-                if self.dream_adapter:
-                    self.dream_adapter._last_shapley_values = self._last_shapley_values
-                    episode = self.dream_adapter.build_episode(text, execution_result, t_start, t_end)
-                else:
-                    episode = Episode(
-                        timestamp=time.time(),
-                        user_input=text,
-                        dag_summary={},
-                        outcomes=[],
-                        agent_ids=[],
-                        duration_ms=(t_end - t_start) * 1000,
-                        source="direct",
-                        anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
-                    )
+                # AD-1360 S2b (#1828): the request's own id (the cycle's when one reached this pipeline), bound while
+                # the episode is built; the dream adapter's builder and the inline episode read it.
+                with entry_scope(getattr(self, "cycle_registry", None), kind="nl_request"):
+                    if self.dream_adapter:
+                        self.dream_adapter._last_shapley_values = self._last_shapley_values
+                        episode = self.dream_adapter.build_episode(text, execution_result, t_start, t_end)
+                    else:
+                        episode = Episode(
+                            timestamp=time.time(),
+                            user_input=text,
+                            dag_summary={},
+                            outcomes=[],
+                            agent_ids=[],
+                            duration_ms=(t_end - t_start) * 1000,
+                            source="direct",
+                            correlation_id=current_cycle_id(),
+                            anchors=AnchorFrame(channel="dag", trigger_type="dag_execution"),
+                        )
                 await self.episodic_memory.store(episode)
 
                 # Persist to knowledge store (AD-159)
@@ -7023,6 +7038,8 @@ class ProbOSRuntime:
                     duration_ms=report.duration_ms,
                     embedding=[],
                     source="direct",
+                    # AD-1360 S2b (#1828): the QA run's own id; no cognitive cycle runs it.
+                    correlation_id=issue_entry_id(getattr(self, "cycle_registry", None), kind="system_qa"),
                     anchors=AnchorFrame(channel="smoke_test", trigger_type="smoke_test"),
                 )
                 if EpisodicMemory.should_store(episode):

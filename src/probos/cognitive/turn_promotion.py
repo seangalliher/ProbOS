@@ -79,6 +79,7 @@ from probos.cognitive.promoted_report_delivery import (
     bound_promoted_report_body,
     promoted_report_metadata,
 )
+from probos.cycle_trace import is_cycle_registry  # AD-1360 (#1828)
 from probos.tools.executor import recording_identity, sample_recording_identity
 
 logger = logging.getLogger(__name__)
@@ -992,6 +993,18 @@ async def _store_outcome_artifact(
     }
 
 
+def _register_promoted_work_item(runtime: Any, work_item_id: object) -> None:
+    """AD-1360 (#1828): adopt a promoted run's work-item id into the runtime's cycle-id registry.
+
+    BF-740 pairs the run's outcome episode by ``correlation_id`` = the work item, not a cycle id; registered here, when
+    the item is made and again on each resume (a restart forgets every id), it resolves when that episode is stored.
+    Nothing is registered without a real ``CycleIdRegistry`` on the runtime (not a spec'd mock) or for a blank id.
+    """
+    registry = getattr(runtime, "cycle_registry", None)
+    if is_cycle_registry(registry) and type(work_item_id) is str and work_item_id.strip():
+        registry.register(work_item_id, kind="work_item")
+
+
 async def _create_promoted_work_item(
     *,
     runtime: Any,
@@ -1033,6 +1046,7 @@ async def _create_promoted_work_item(
         return None
     if item is None:
         return None
+    _register_promoted_work_item(runtime, getattr(item, "id", ""))  # AD-1360 (#1828)
     # ``task`` starts ``open``; the run is already executing, so the board must
     # say so. ``open -> in_progress`` requires an assignee, which is set above.
     try:
@@ -2939,6 +2953,7 @@ async def resume_promoted_turn(runtime: Any, item: Any, request_id: str) -> str:
     item = await _resumed_item_now(runtime, item, work_item_id, request_id)
     if item is None:
         return RESUME_MOVED_ON
+    _register_promoted_work_item(runtime, work_item_id)  # AD-1360 (#1828): again on resume; a restart forgot it
     agent_id = str(getattr(item, "assigned_to", "") or "")
     metadata = getattr(item, "metadata", None)
     if type(metadata) is not dict:

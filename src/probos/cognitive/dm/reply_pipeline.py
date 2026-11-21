@@ -37,6 +37,7 @@ from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     assess_write_claim,
     disclosure_for,
 )
+from probos.cycle_trace import cycle_scope, result_cycle_id  # AD-1360 (#1828)
 from probos.dm_reply import DmReply, ToolInvocations  # AD-1248 / AD-1295
 from probos.hooks.bus import HookEvent
 
@@ -207,6 +208,9 @@ class DmReplyContext:
     # ``step_4p_plan_mode_notice`` shows what they held back and adds the notice.
     # Step 5 stores it, with the notice; ``None`` until step 4p has one to add.
     plan_mode_reply_text: str | None = None
+    # AD-1360 (#1828): the AD-492 id of the agent cycle this reply came from (its ``IntentResult.metadata``), set by
+    # the one-to-one route; "" when no cycle ran or it carried none. ``_run_steps`` binds it and step 5 stores it.
+    cycle_id: str = ""
     # NOTE: ``sanity_result`` is intentionally NOT a ctx field — it is
     # produced and consumed entirely within step_1_sanity_gate_retry.
 
@@ -565,16 +569,20 @@ class DmReplyPipeline:
         :meth:`_plan_mode_holds_back` holds back does not run; without a gate it
         is never asked (A-3), so a reply outside plan mode runs as before."""
         gate = self.ctx.plan_mode_gate
+        # AD-1360 (#1828): the steps run after the agent's cycle has ended and store episodes and post to the Ward Room
+        # for it, so its AD-492 id is bound while each runs; the id bound before is back afterwards. Bound per step:
+        # step 1 can adopt a retry's reply, and with it the id of the cycle that answered.
         for step in steps:
-            try:
-                if gate is not None and self._plan_mode_holds_back(step, gate):
-                    continue
-                await step()
-            except Exception:
-                logger.warning(
-                    "AD-726: pipeline step %s raised for agent=%s; continuing",
-                    step.__name__, self.ctx.agent_id, exc_info=True,
-                )
+            with cycle_scope(self.ctx.cycle_id):
+                try:
+                    if gate is not None and self._plan_mode_holds_back(step, gate):
+                        continue
+                    await step()
+                except Exception:
+                    logger.warning(
+                        "AD-726: pipeline step %s raised for agent=%s; continuing",
+                        step.__name__, self.ctx.agent_id, exc_info=True,
+                    )
 
     def _plan_mode_holds_back(self, step: Callable, gate: PlanModeReplyGate) -> bool:
         """AD-1156: True when plan mode holds this reply and ``step`` is not one
@@ -697,6 +705,9 @@ class DmReplyPipeline:
                                 retry_result.cleaned_text
                             )
                         )
+                        # AD-1360 (#1828): the reply now comes from the retry's own cycle, so the steps after this one
+                        # (the DM episode, the Ward Room posts) belong to it; a retry result with no id keeps this one.
+                        self.ctx.cycle_id = result_cycle_id(retry_resp) or self.ctx.cycle_id
                         logger.info(
                             "AD-724-1: DM retry for agent %s — "
                             "original_warnings=%s retry_warnings=%s",
@@ -2560,6 +2571,7 @@ class DmReplyPipeline:
                     outcomes=[outcome],
                     reflection=f"Captain had a 1:1 conversation with {self.ctx.callsign or self.ctx.agent_id} via HXI.",
                     source="direct",
+                    correlation_id=self.ctx.cycle_id,  # AD-1360 (#1828): the cycle that answered
                     anchors=AnchorFrame(
                         channel="dm",
                         trigger_type="direct_message",

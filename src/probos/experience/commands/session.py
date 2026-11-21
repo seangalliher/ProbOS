@@ -106,6 +106,7 @@ class SessionManager:
             return
 
         from probos.types import IntentMessage, Episode, AnchorFrame, EPISODE_PLAN_MODE_KEY
+        from probos.cycle_trace import result_cycle_id  # AD-1360 (#1828)
 
         intent = IntentMessage(
             intent="direct_message",
@@ -185,6 +186,7 @@ class SessionManager:
                     }],
                     reflection=f"Captain had a 1:1 conversation with {self.callsign}.",
                     source="direct",
+                    correlation_id=result_cycle_id(result),  # AD-1360 (#1828): the agent cycle that answered
                     anchors=AnchorFrame(
                         channel="dm",
                         department=self.department or "",

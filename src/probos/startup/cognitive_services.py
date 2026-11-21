@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from probos.cognitive.working_memory import WorkingMemoryManager
     from probos.config import SystemConfig
     from probos.consensus.trust import TrustNetwork
+    from probos.cycle_trace import CycleIdResolver
     from probos.mesh.intent import IntentBus
     from probos.mesh.routing import HebbianRouter
     from probos.substrate.event_log import EventLog
@@ -55,6 +56,8 @@ def bind_episodic_memory_gates(
     episodic_memory: Any,
     config: "SystemConfig",
     emit_event_fn: Callable[..., Any] | None,
+    *,
+    cycle_registry: "CycleIdResolver | None" = None,
 ) -> None:
     """BF-984 (#1830): bind the store-time gates and AD-607's recall config to an EpisodicMemory.
 
@@ -87,6 +90,11 @@ def bind_episodic_memory_gates(
     episodic_memory.set_security_gate(MemorySecurityGate(config.security.memory))
     episodic_memory.set_security_event_emitter(emit_event_fn)
     logger.info("AD-607: memory security config, store gate and event emitter bound to EpisodicMemory (BF-938)")
+    # AD-1360 (#1828): the cycle-id registry store() checks a correlation id against, bound only when given. The
+    # rebuild command passes none, so its episodes record "unchecked"; it writes wardroom_import, which AD-607b never
+    # judges.
+    if cycle_registry is not None:
+        episodic_memory.set_cycle_registry(cycle_registry)
 
 
 async def _run_one_migration(
@@ -226,6 +234,7 @@ async def init_cognitive_services(
     create_pool_fn: Callable[..., Any],
     emit_event_fn: Callable[..., Any] | None = None,
     ontology: Any = None,  # BF-118: for OrientationService
+    cycle_registry: "CycleIdResolver | None" = None,  # AD-1360 (#1828): the runtime's registry
 ) -> CognitiveServicesResult:
     """Initialize self-mod pipeline, feedback, memory, knowledge, and strategy."""
     logger.info("Startup [cognitive_services]: starting")
@@ -350,7 +359,7 @@ async def init_cognitive_services(
 
     # AD-610's storage gate and AD-607 (BF-938, #1680), bound through the helper the rebuild command shares (BF-984).
     if episodic_memory:
-        bind_episodic_memory_gates(episodic_memory, config, emit_event_fn)
+        bind_episodic_memory_gates(episodic_memory, config, emit_event_fn, cycle_registry=cycle_registry)
 
     # AD-608: Retroactive evolver for episodic memory
     if episodic_memory and config.retroactive.enabled:
@@ -545,6 +554,7 @@ async def init_cognitive_services(
         event_log=event_log,
         identity_registry=identity_registry,
         agent_registry=registry,
+        cycle_registry=cycle_registry,  # AD-1360 S2b (#1828)
     )
 
     # Create CorrectionDetector + AgentPatcher (AD-229, AD-230)

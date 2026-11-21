@@ -9,6 +9,7 @@ import time
 import uuid
 from typing import Any, Callable
 
+from probos.cycle_trace import current_cycle_id  # AD-1360 (#1828)
 from probos.ward_room.models import (
     WardRoomCredibility,
     WardRoomPost,
@@ -355,6 +356,7 @@ class MessageStore:
                     }],
                     reflection=f"{author_callsign or author_id} replied in thread '{thread_title[:60]}': {body[:300]}",
                     source="direct",
+                    correlation_id=current_cycle_id(),  # AD-1360 (#1828): the cycle the post is made in; "" outside one
                     anchors=AnchorFrame(
                         channel="ward_room",
                         channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, as a thread episode stores it
@@ -407,6 +409,7 @@ class MessageStore:
                         f"Similarity: {top_match['similarity']:.0%}."
                     ),
                     source="direct",
+                    correlation_id=current_cycle_id(),  # AD-1360 (#1828): the cycle the post is made in; "" outside one
                     anchors=AnchorFrame(
                         channel="ward_room",
                         channel_id=thread_channel_id,  # BF-963 (#1793): the channel's id, not its name

@@ -33,6 +33,7 @@ from probos.admission.seam import shadow_at  # AD-1346 M3c
 from probos.agent_stop import SEAM_PROACTIVE, active_stop
 from probos.crew_profile import Rank
 from probos.crew_utils import is_crew_agent
+from probos.cycle_trace import cycle_scope, result_cycle_id  # AD-1360 (#1828)
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.duty_schedule import DutySchedule
 from probos.event_persistence import ROUTED_CATEGORY
@@ -1441,6 +1442,9 @@ class ProactiveCognitiveLoop:
             # AD-1228 (A-6): a think that raised, or whose settle did not finish, returns its notices.
             if not standing_settled:
                 self._standing_interests.restore_notices(agent.id, standing_taken)
+        # AD-1360 (#1828): the think's cycle has ended; what this method posts for it below runs with the cycle's id
+        # bound again (cycle_scope), so the Ward Room records each post's episode against that cycle.
+        _cycle_id = result_cycle_id(result)
         if not result or not result.success or not result.result:
             # BF-228: Only count actual LLM errors toward LLM failure status,
             # not empty responses or chain-level issues.
@@ -1535,6 +1539,7 @@ class ProactiveCognitiveLoop:
                         }],
                         reflection=f"{callsign or agent.agent_type} reviewed context but had nothing to report.",
                         source=MemorySource.DIRECT,
+                        correlation_id=_cycle_id,  # AD-1360 S2b (#1828): the think's cycle (should_store rejects this shape)
                         anchors=AnchorFrame(
                             channel="duty_report",
                             duty_cycle_id=duty.duty_id if duty else "",
@@ -1574,9 +1579,10 @@ class ProactiveCognitiveLoop:
         # AD-437: Extract and process structured actions from proactive response. BF-934: before the similarity (BF-032) and novelty
         # (AD-493) gates, which judge the observation that is left, as the Ward Room pipeline's order already does: a block attached
         # to a repeated observation is carried out, and the repeat is still not posted.
-        cleaned_text, actions_taken = await self._extract_and_execute_actions(
-            agent, response_text
-        )
+        with cycle_scope(_cycle_id):  # AD-1360: a reply, thread or DM a block posts is the cycle's
+            cleaned_text, actions_taken = await self._extract_and_execute_actions(
+                agent, response_text
+            )
         if cleaned_text != response_text:
             response_text = cleaned_text
         if _withdrawn:
@@ -1634,7 +1640,9 @@ class ProactiveCognitiveLoop:
             logger.debug("AD-573: Working memory observation record failed", exc_info=True)
 
         # Post to Ward Room — find agent's department channel
-        if await self._post_to_ward_room(agent, response_text):  # BF-934: True once a thread was created
+        with cycle_scope(_cycle_id):  # AD-1360: the observation's thread is the cycle's
+            _posted = await self._post_to_ward_room(agent, response_text)
+        if _posted:  # BF-934: True once a thread was created
             actions_taken.append({"type": "ward_room_post"})
         await settle_intended_actions(self._runtime, agent, intent.id, getattr(result, "metadata", None), actions_taken, "not_posted")
         self._last_proactive[agent.id] = time.monotonic()
@@ -1812,6 +1820,7 @@ class ProactiveCognitiveLoop:
                     }],
                     reflection=f"{callsign or agent.agent_type} observed: {thought_summary}",
                     source=MemorySource.DIRECT,
+                    correlation_id=_cycle_id,  # AD-1360 S2b (#1828): the think's cycle (branch unreachable, DECISIONS S2b)
                     anchors=AnchorFrame(
                         channel="duty_report",
                         duty_cycle_id=duty.duty_id if duty else "",

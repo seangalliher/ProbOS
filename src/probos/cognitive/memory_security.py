@@ -14,12 +14,14 @@ enforce flag (BF-926, #1656): it only emits MEMORY_LEAK_SUSPECTED.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from probos.cycle_trace import VERDICT_EMPTY, VERDICT_RESOLVED, VERDICT_UNRESOLVED
 from probos.types import Episode, MemorySource
 
 logger = logging.getLogger(__name__)
@@ -92,24 +94,54 @@ _DEFAULT_ANCHOR_WEIGHTS: dict[str, float] = {
 }
 
 
-def validate_provenance(episode: Episode) -> tuple[bool, str]:
+# AD-1360 (#1828): the reason AD-607b returns for a judged episode's recorded verdict. A verdict this map does not name
+# ("unchecked", or "" on an episode that has a store time) returns direct_source_unchecked_correlation_id.
+_CORRELATION_REASONS: dict[str, str] = {
+    VERDICT_EMPTY: "direct_source_missing_correlation_id",
+    VERDICT_UNRESOLVED: "direct_source_unresolved_correlation_id",
+}
+_UNCHECKED_CORRELATION_REASON = "direct_source_unchecked_correlation_id"
+
+
+def configured_correlation_cutoff(config: Any) -> float:
+    """AD-1360 (#1828): the ``correlation_cutoff`` a recall config sets, or 0.0, which judges nothing.
+
+    0.0 for no config, a config without the field (a test's namespace), a bool, or a value that is not a finite
+    positive number, so a mocked config never arms the rule.
+    """
+    value = getattr(config, "correlation_cutoff", 0.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    cutoff = float(value)
+    return cutoff if math.isfinite(cutoff) and cutoff > 0.0 else 0.0
+
+
+def validate_provenance(episode: Episode, *, correlation_cutoff: float = 0.0) -> tuple[bool, str]:
     """AD-607b: provenance integrity check. Returns (ok, reason).
 
-    Reason is empty when provenance is intact; otherwise ``missing_agent_ids`` or ``unknown_source:<source>``.
-    BF-938 (#1680) retired a third reason, ``direct_source_missing_correlation_id``, on the Captain's decision of
-    2026-11-18. AD-1360 (#1828) restores it as a check that the id resolves to an AD-492 chain, for episodes written
-    after a cutoff.
+    Reason is empty when provenance is intact; otherwise ``missing_agent_ids``, ``unknown_source:<source>``, or, for a
+    ``direct`` episode stored strictly after ``correlation_cutoff`` (epoch seconds; the default 0.0 judges none),
+    ``direct_source_missing_correlation_id``, ``direct_source_unresolved_correlation_id`` or
+    ``direct_source_unchecked_correlation_id`` (AD-1360, #1828).
     """
     if not getattr(episode, "agent_ids", None):
         return False, "missing_agent_ids"
     source = getattr(episode, "source", "") or ""
     if source not in KNOWN_MEMORY_SOURCES:
         return False, f"unknown_source:{source}"
-    # BF-938 (#1680), the Captain's decision of 2026-11-18 (option A): a direct episode with no AD-492 correlation id
-    # is no longer a provenance gap. The rule checked only that the id was non-empty, most direct producers set none
-    # (704 of 1,227 live episodes, 2026-10-27), and armed it would have dropped 71% of crew recall. The retirement is
-    # temporary: AD-1360 (#1828) restores it as a check that the id resolves, for episodes written after a cutoff.
-    return True, ""  # BF-938: no correlation-id rule until AD-1360 (#1828)
+    # BF-938 (#1680) retired the rule that a direct episode carries a correlation id (the Captain's decision of
+    # 2026-11-18): it checked only that the id was non-empty, and most direct producers set none. AD-1360 (#1828)
+    # restores it on the record EpisodicMemory.store() writes: the store time and whether the id resolved in the
+    # cycle-id registry then. Only a direct episode stored strictly after the cutoff is judged, so an episode with no
+    # record (stored before AD-1360, seeded or restored; stored_at 0.0) is never flagged, and with the cutoff at 0.0
+    # no episode is.
+    if correlation_cutoff > 0.0 and source == MemorySource.DIRECT.value:
+        stored_at = getattr(episode, "stored_at", 0.0)
+        if isinstance(stored_at, (int, float)) and stored_at > correlation_cutoff:
+            verdict = getattr(episode, "correlation_verdict", "")
+            if verdict != VERDICT_RESOLVED:
+                return False, _CORRELATION_REASONS.get(verdict, _UNCHECKED_CORRELATION_REASON)
+    return True, ""
 
 
 def score_anchor_mismatch(episode: Episode, anchor_query: Any) -> float:
@@ -202,7 +234,7 @@ def validate_recall_result(
     anomalies: list[str] = []
     score = 0.0
 
-    ok, reason = validate_provenance(episode)
+    ok, reason = validate_provenance(episode, correlation_cutoff=configured_correlation_cutoff(config))
     if not ok:
         anomalies.append("missing_agent_ids" if reason == "missing_agent_ids" else "provenance_gap")
         score += 0.4
