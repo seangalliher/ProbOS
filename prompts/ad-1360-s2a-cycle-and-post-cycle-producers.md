@@ -1114,3 +1114,209 @@ Every pair of section 7 was applied to a scratch worktree by `audit\contract_too
 - The vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`. The cutoff ships at 0.0, so no recall result changes until S3 arms it.
 - The producers outside any cycle (section 6) still store an id the registry never issued, or none: S2b.
 - That a proactive think's posts, a DM reply's episode or a promoted run's outcome are reached inside a cycle on a live vessel is read from the code and exercised by real producers over a real memory, not measured.
+
+## 16. Repair after review round 1 (2026-11-21)
+
+Round 1 (`gpt-6.1-sol`, 17 minutes, the committed candidate `a4012763..8c8ce27a`) requested changes: one finding, P2, ordinary reach, new in this slice, size findings 0. The orchestrator reproduced it before repairing it (section 16.7).
+
+**R1. A DM whose reply the sanity gate retried stores the first cycle's id.** `DmReplyPipeline.step_1_sanity_gate_retry` asks the agent again when the gate rejects the reply (AD-724-1, on by default) and replaces the reply with the retry's answer (`replaced_by`). The retry is a second cycle with its own id, and `DmReplyContext.cycle_id` still holds the first cycle's. `_run_steps` bound that id once around the whole tuple, so the DM episode (step 5) and every Ward Room post a later step makes from the replacement name the cycle whose reply was thrown away, and record `resolved` against it. Repair: step 1 takes the retry's id with its reply (`result_cycle_id(retry_resp)`; a retry result that carries none keeps the first cycle's), and `_run_steps` binds the context's current id for each step instead of once, so the steps after the retry see the new one. A reply that was not replaced (the retry returned nothing, or failed) keeps the first id, as before.
+
+No design decision is open: the repair is the reviewer's smallest fix. Nothing in sections 1 to 15 changes except the number of cases of the new test file, which is 14 instead of 11 (section 16.2; the trackers of sections 16.3 and 16.4 say 14).
+
+### 16.1 `src/probos/cognitive/dm/reply_pipeline.py` (M-R1)
+
+**RA1.** SEARCH:
+```
+from probos.cycle_trace import cycle_scope  # AD-1360 (#1828)
+```
+REPLACE:
+```
+from probos.cycle_trace import cycle_scope, result_cycle_id  # AD-1360 (#1828)
+```
+**RA2.** SEARCH:
+```
+        # AD-1360 (#1828): the steps run after the agent's cycle has ended and store episodes and post to the Ward Room
+        # for it, so its AD-492 id is bound while they run; the id bound before is back afterwards.
+        with cycle_scope(self.ctx.cycle_id):
+            for step in steps:
+                try:
+                    if gate is not None and self._plan_mode_holds_back(step, gate):
+                        continue
+                    await step()
+                except Exception:
+                    logger.warning(
+                        "AD-726: pipeline step %s raised for agent=%s; continuing",
+                        step.__name__, self.ctx.agent_id, exc_info=True,
+                    )
+```
+REPLACE:
+```
+        # AD-1360 (#1828): the steps run after the agent's cycle has ended and store episodes and post to the Ward Room
+        # for it, so its AD-492 id is bound while each runs; the id bound before is back afterwards. Bound per step:
+        # step 1 can adopt a retry's reply, and with it the id of the cycle that answered.
+        for step in steps:
+            with cycle_scope(self.ctx.cycle_id):
+                try:
+                    if gate is not None and self._plan_mode_holds_back(step, gate):
+                        continue
+                    await step()
+                except Exception:
+                    logger.warning(
+                        "AD-726: pipeline step %s raised for agent=%s; continuing",
+                        step.__name__, self.ctx.agent_id, exc_info=True,
+                    )
+```
+**RA3.** SEARCH:
+```
+                        self.ctx.reply = self.ctx.reply.replaced_by(
+                            DmReply.from_intent_result(retry_resp).with_body(
+                                retry_result.cleaned_text
+                            )
+                        )
+```
+REPLACE:
+```
+                        self.ctx.reply = self.ctx.reply.replaced_by(
+                            DmReply.from_intent_result(retry_resp).with_body(
+                                retry_result.cleaned_text
+                            )
+                        )
+                        # AD-1360 (#1828): the reply now comes from the retry's own cycle, so the steps after this one
+                        # (the DM episode, the Ward Room posts) belong to it; a retry result with no id keeps this one.
+                        self.ctx.cycle_id = result_cycle_id(retry_resp) or self.ctx.cycle_id
+```
+
+### 16.2 `tests/test_ad1360_s2a_producers.py` (M-R1)
+
+Three cases are added: N14 (a step that changes the context's id: the steps after it run under the new one), N13 (the Captain's DM route when the real sanity gate asks again: the DM episode carries the retry's id, which the registry issued, not the first cycle's) and N15 (the retry's result carries no id: the first cycle's stays in place). The file has 14 cases.
+
+**RT1.** SEARCH:
+```
+    assert seen == ["feedfacecafe", "feedfacecafe", "feedfacecafe", "0123456789ab"]
+```
+REPLACE:
+```
+    assert seen == ["feedfacecafe", "feedfacecafe", "feedfacecafe", "0123456789ab"]
+
+
+async def test_a_step_that_changes_the_cycle_id_binds_the_new_one_for_the_steps_after_it() -> None:
+    seen: list[str] = []
+    pipeline = DmReplyPipeline(_ctx(cycle_id="feedfacecafe"))
+
+    async def adopts() -> None:
+        seen.append(current_cycle_id())
+        pipeline.ctx.cycle_id = "0123456789ab"
+
+    async def probe() -> None:
+        seen.append(current_cycle_id())
+
+    await pipeline._run_steps((adopts, probe))
+    assert seen == ["feedfacecafe", "0123456789ab"] and current_cycle_id() == ""
+```
+**RT2.** SEARCH:
+```
+    assert _only(_records(memory), "[1:1 with") == (chain_id, VERDICT_RESOLVED)
+```
+REPLACE:
+```
+    assert _only(_records(memory), "[1:1 with") == (chain_id, VERDICT_RESOLVED)
+
+
+async def test_a_dm_whose_reply_the_gate_retried_stores_the_id_of_the_cycle_that_answered(
+    memory: EpisodicMemory, registry: CycleIdRegistry, tmp_path: Path,
+) -> None:
+    from probos.routers.agents import agent_chat
+
+    agent = _Agent()
+    agent._runtime = _cycle_runtime(memory, registry)
+    results: list[IntentResult] = []
+    cycle = _recording(agent, results)
+    answers = iter((_REPLY + " []", _OBSERVATION))  # the real gate rejects an empty tag pair and asks again
+
+    async def _send(intent: IntentMessage, **kwargs: Any) -> IntentResult:
+        agent.answer = next(answers)
+        return await cycle(intent, **kwargs)
+
+    rt = _route_runtime(tmp_path, modes=False)
+    rt.registry.get.return_value.sovereign_id = "ad1360-dm-agent"
+    rt.episodic_memory = memory
+    rt.intent_bus.send = AsyncMock(side_effect=_send)
+    with patch("probos.routers.agents.is_crew_agent", return_value=True):
+        await agent_chat("test-agent", _chat_request(_QUESTION), rt)
+    assert len(results) == 2
+    first, retry = (result_cycle_id(result) for result in results)
+    assert first != retry and registry.kind_of(first) == registry.kind_of(retry) == "cognitive_cycle"
+    assert _only(_records(memory), "[1:1 with") == (retry, VERDICT_RESOLVED) and current_cycle_id() == ""
+
+
+async def test_a_retry_result_that_carries_no_cycle_id_leaves_the_first_cycles_id_in_place(
+    memory: EpisodicMemory, registry: CycleIdRegistry, tmp_path: Path,
+) -> None:
+    from probos.routers.agents import agent_chat
+
+    agent = _Agent()
+    agent._runtime = _cycle_runtime(memory, registry)
+    results: list[IntentResult] = []
+    cycle = _recording(agent, results)
+
+    async def _send(intent: IntentMessage, **kwargs: Any) -> IntentResult:
+        if results:  # the retry: a result no cycle built, so it carries no id
+            return IntentResult(intent_id=intent.id, agent_id=agent.id, success=True, result=_OBSERVATION)
+        agent.answer = _REPLY + " []"  # the real gate rejects an empty tag pair and asks again
+        return await cycle(intent, **kwargs)
+
+    rt = _route_runtime(tmp_path, modes=False)
+    rt.registry.get.return_value.sovereign_id = "ad1360-dm-agent"
+    rt.episodic_memory = memory
+    rt.intent_bus.send = AsyncMock(side_effect=_send)
+    with patch("probos.routers.agents.is_crew_agent", return_value=True):
+        await agent_chat("test-agent", _chat_request(_QUESTION), rt)
+    assert len(results) == 1 and rt.intent_bus.send.await_count == 2
+    assert _only(_records(memory), "[1:1 with") == (result_cycle_id(results[0]), VERDICT_RESOLVED)
+```
+
+### 16.3 `PROGRESS.md` (M-R1)
+
+**TR1.** SEARCH (substring of S2a's entry, once): `(11 cases), from real producers`. REPLACE: `(14 cases), from real producers`.
+
+### 16.4 `DECISIONS.md` (M-R1)
+
+**TR2.** SEARCH (whole line, once):
+```
+- *S2a measured.* `tests/test_ad1360_s2a_producers.py` (11 cases) on a real ChromaDB-backed memory. That the agentic tool loop runs inside the cycle is read, not tested (`finalize.py:5131`, `agentic_dispatch.py:1937`).
+```
+REPLACE:
+```
+- *S2a measured.* `tests/test_ad1360_s2a_producers.py` (14 cases) on a real ChromaDB-backed memory. That the agentic tool loop runs inside the cycle is read, not tested (`finalize.py:5131`, `agentic_dispatch.py:1937`).
+- *S2a repair after review round 1.* A DM whose sanity gate asks again takes the id of the retry's cycle together with the retry's reply (`step_1_sanity_gate_retry`), and `_run_steps` binds the context's current id for each step, so the DM episode and the Ward Room work made from the replacement name the cycle that answered. A retry result that carries no id keeps the first cycle's id. Pinned by three cases of `tests/test_ad1360_s2a_producers.py`.
+```
+
+### 16.5 Mutation rows (campaign on the repaired tree; restore between rows)
+
+`mutants_gen.py` over `audit\rows_ad1360s2ar1.py`: each row changes one line of the repaired tree in place and runs the new test file (14 cases, all green before the row).
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RM1 | step 1 keeps the first cycle's id: `self.ctx.cycle_id = self.ctx.cycle_id` | N13 |
+| RM2 | step 1 takes the retry's id with no fallback: `self.ctx.cycle_id = result_cycle_id(retry_resp)` | N15 |
+| RM3 | no scope around a step: `with cycle_scope(""):` (the same line as M8 of section 9, which is now the per-step one) | N3, N14 |
+| RM4 | the scope is bound to the id the pipeline started with, for every step (kept in an instance attribute at the first step): the repaired defect as a one-line mutant | N14 |
+
+### 16.6 Properties for the round-2 Diff Reviewer (the delta only)
+
+Verify at least one end-to-end path by execution: the Captain's DM route (`agent_chat`) with the real `DmSanityGate`, a real cognitive agent as the answering cycle and a real ChromaDB-backed `EpisodicMemory` with a registry bound, where the first reply holds an empty tag pair and so is retried.
+1. When step 1 adopts the retry's reply, the DM episode (step 5) and every Ward Room post a later step makes carry the retry's cycle id, and the first cycle's id is nowhere on them.
+2. A retry whose result carries no id, a retry that returns nothing and a retry that fails each leave the id the context had: the first cycle's, or the route's `hxi_dm` entry id when the first result carried none (S2b's fallback in `routers/agents.py`).
+3. `_run_steps` binds the context's current id around each step and puts the outer id back on return, on a step's raise (the guard swallows it and the next step runs) and on cancellation; a step plan mode holds back (`continue`) leaves the scope too.
+4. No step other than step 1 changes `cycle_id`; no signature changed; `run_escalation_only`, `run_plan_mode_text` and the steps of `_full_steps` behave as before for a reply that was not retried.
+5. The three new cases discriminate: on the S2a head N13 and N14 fail and N15 passes (it pins the fallback), and each row of section 16.5 fails its named killers.
+
+### 16.7 The orchestrator's first-hand checks of the repair (2026-11-21, an oracle tree detached at `9facefd9`)
+
+| O | Result |
+|---|---|
+| R1 | The finding was reproduced before the repair with a probe that asserts its own premises (two cycles ran, both ids are registered and differ, the Captain's reply is the retry's answer): on the unrepaired source the stored DM episode names the first cycle (`first 5dcf1185fd1c`, `retry faf791765ab4`, stored `('5dcf1185fd1c', 'resolved')`); after pairs RA1 to RA3 the same probe fails, the episode naming the retry's (`first 5be6f641ddc1`, `retry b05d9fa0ed04`, stored `('b05d9fa0ed04', 'resolved')`). The three new cases on the unrepaired source (pairs RT1 and RT2 only): **2 failed, 12 passed**: N13 and N14 fail (N14: the step after the one that changes the id sees `feedfacecafe`, not `0123456789ab`), and N15 passes, as it pins the fallback. |
+| R2 | After the pairs of 16.1 to 16.4: **14 passed** (the new test file). Every SEARCH occurs exactly once, in files that are CRLF throughout. |
+| R3 | The campaign of 16.5: baseline of 14 cases green; **killed 4, differs 0, survived 0, invalid 0**; every named killer failed. |
+| R4 | The focused check on the repaired oracle (80 files: the slice's 39 and the 41 more that name the DM reply pipeline, `G:\tmp\b10\r1s2a-focused-tests.txt`), four workers each, the two runs side by side with a review's own test runs beside them. Under `PROBOS_EMBEDDINGS=local`: **2488 passed, 1 skipped** (the skip is `test_bf758_file_read_confinement.py:151`: symlink creation needs a privilege this host lacks). Under the default embeddings: **2487 passed, 1 skipped, 1 failed**: `tests/test_ad1019c_consensus.py::test_approved_commits_single_invoke` (`ConsensusOutcome.INSUFFICIENT` where `APPROVED` was expected), a case that waits on consensus timeouts, run while the host held two four-worker runs and a review. The file alone then passed three times in a row on the repaired oracle (14 passed each, 142 to 147 s); it is in the focused sets of S2a and S2b, where it passed in both modes (1341 and 1848 passed) on the code before the repair, and it exercises MCP consensus, not the DM reply pipeline. It is recorded as a failure under load, not as a result of the repair. |
+| R5 | `gen_ad_ledger.py --check` on the repaired oracle: "AD/BF ledger is current" (the tracker edits change a count, not an entry). |
