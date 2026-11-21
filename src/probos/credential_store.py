@@ -83,6 +83,9 @@ class CredentialStore:
         self._event_log = event_log
         self._specs: dict[str, CredentialSpec] = {}
         self._cache: dict[str, tuple[str, float]] = {}  # name -> (value, expiry_time)
+        # AD-1337: the last value get() resolved for each name, kept past the cache's TTL so a value only the CLI
+        # gives stays maskable (masked_credential_values below). rotate() drops the name's entry.
+        self._last_resolved: dict[str, str] = {}
         self._cache_ttl = cache_ttl
         # AD-456: optional persistent JSON store (atomic write + rotation events)
         self._store_path = store_path
@@ -195,6 +198,7 @@ class CredentialStore:
         self._store[name] = value
         # Invalidate cache so next get(...) resolves fresh.
         self._cache.pop(name, None)
+        self._last_resolved.pop(name, None)  # AD-1337: the old value is no longer masked
 
         try:
             tmp = self._store_path.with_suffix(".json.tmp")
@@ -338,6 +342,7 @@ class CredentialStore:
         # Cache if found
         if value:
             self._cache[name] = (value, time.monotonic() + self._cache_ttl)
+            self._last_resolved[name] = value  # AD-1337: kept past the TTL for the secret masker
 
         return value
 
@@ -423,6 +428,38 @@ class CredentialStore:
                 "description": spec.description,
             })
         return results
+
+
+def masked_credential_values(store: CredentialStore) -> tuple[tuple[str, str], ...]:
+    """AD-1337 (#1560): every credential value ``store`` can name, as ``(name, value)`` pairs, for the secret masker.
+
+    Each spec's configured value, its environment variable and aliases, every JSON-store entry, the last value
+    ``get`` resolved for each name, and the crew-scope token. No CLI command runs, no access row is written and no
+    department or tier gate applies, because nothing here is handed to a requester:
+    ``probos.security.secret_masking.SecretMasker`` turns the values into patterns and never returns them. It is
+    this function's only caller in ``src`` (pinned by ``tests/test_ad1337_secret_masking.py``). A module function,
+    not a method: ``CredentialStore`` is at the 15-method SRP review trigger. Safe from a worker thread: each dict
+    is copied before it is read, and ``_load_store`` is idempotent, so a concurrent first call at worst repeats the
+    same writes.
+    """
+    pairs: list[tuple[str, str]] = []
+    for spec in list(store._specs.values()):
+        if spec.config_key and store._config:
+            configured = store._resolve_config_key(spec.config_key)
+            if configured:
+                pairs.append((spec.name, configured))
+        for env_name in (spec.env_var, *spec.env_var_aliases):
+            if env_name:
+                env_value = os.environ.get(env_name, "").strip()
+                if env_value:
+                    pairs.append((spec.name, env_value))
+    store._load_store()
+    pairs.extend((name, value) for name, value in dict(store._store).items() if value.strip())
+    pairs.extend(dict(store._last_resolved).items())
+    crew_scope = store.crew_scope.token(store._config)
+    if isinstance(crew_scope, str) and crew_scope.strip():
+        pairs.append(("crew_scope", crew_scope.strip()))
+    return tuple(pairs)
 
 
 def crew_scope_token(runtime: Any) -> str:
