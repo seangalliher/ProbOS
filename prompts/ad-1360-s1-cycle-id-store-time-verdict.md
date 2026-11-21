@@ -1950,3 +1950,300 @@ Sources:
 - [SMSR, write-time provenance for agent memory (arXiv 2606.12703)](https://arxiv.org/html/2606.12703)
 - [A-MemGuard (arXiv 2510.02373)](https://arxiv.org/abs/2510.02373)
 - [Memory Poisoning Attack and Defense on Memory Based LLM-Agents (arXiv 2601.05504)](https://arxiv.org/html/2601.05504)
+
+## 18. Repair after review round 1 (2026-11-21)
+
+Round 1 (`gpt-6.1-sol`, 30 minutes, the committed candidate `24c30a7c..bd902142`) requested changes: two findings, both P2, both of ordinary reach, both new in this change, size findings 0. The orchestrator reproduced each before repairing it (section 18.6).
+
+**F1. A result built by hand carries no cycle id.** `_run_cognitive_lifecycle` returns early when a compound procedure is dispatched: the `IntentResult(` after the `TASK_EXECUTION_COMPLETE` event is built without `_build_result_metadata`, so its `metadata` is `{}` while the event beside it names the cycle's id. A caller that stores an episode after the cycle (S2a) would record `correlation_verdict` `empty` for it, and an armed recall would drop that episode with `direct_source_missing_correlation_id`. The two results `_run_recreation_turn` builds by hand on a failure have the same gap. Repair: `_run_cycle_bound_lifecycle` puts the id it bound on any result it returns that has none (`_carry_cycle_id`), before AD-1357's manifest, which stays last. A result that has an id keeps it, so the normal return (`_build_result_metadata` already wrote it) is unchanged.
+
+**F2. Two writers can record out of time order.** `CycleIdRegistry._record` read the clock before it took its lock. A writer that read first and recorded second left an older timestamp behind a newer one, and `_evict` stops at the first fresh entry from the front, so an expired id behind it kept resolving and `store()` recorded `resolved` for it. Repair: `_record` reads the clock under the lock, so recording order is time order for a monotonic clock. `_live_entry` does too, so that every read of the clock in the class is under the lock (a stale read there only delays an eviction, so no case can tell the two apart).
+
+No design decision is open: both repairs are the reviewer's smallest fix. The registry's TTL and size stay unmeasured defaults, and nothing in sections 1 to 17 changes.
+
+### 18.1 `src/probos/cycle_trace.py` (M-R1)
+
+**RA1.** SEARCH:
+```
+    def _record(self, chain_id: str, kind: str) -> None:
+        now = self._clock()
+        with self._lock:
+            self._entries[chain_id] = (now, kind)
+```
+REPLACE:
+```
+    def _record(self, chain_id: str, kind: str) -> None:
+        with self._lock:
+            # Read under the lock: two writers cannot record out of time order, which _evict relies on.
+            now = self._clock()
+            self._entries[chain_id] = (now, kind)
+```
+**RA2.** SEARCH:
+```
+        now = self._clock()
+        with self._lock:
+            self._evict(now)
+            return self._entries.get(chain_id)
+```
+REPLACE:
+```
+        with self._lock:
+            self._evict(self._clock())
+            return self._entries.get(chain_id)
+```
+
+### 18.2 `src/probos/cognitive/cognitive_agent.py` (M-R1)
+
+**RB1.** SEARCH:
+```
+def _collect_owned_steps_tool_views(
+```
+REPLACE:
+```
+def _carry_cycle_id(result: IntentResult, cycle_id: str) -> None:
+    """AD-1360 (#1828): put the cycle's AD-492 id on a result that has none.
+
+    ``_build_result_metadata`` writes the id on the lifecycle's normal return. A result built by hand (the compound
+    replay's early return, a recreation turn that fails) never reaches it, and a caller that stores an episode after
+    the cycle reads the id from the result. The id goes before AD-1357's manifest, which stays last.
+    """
+    metadata = getattr(result, "metadata", None)
+    if type(metadata) is not dict or "correlation_id" in metadata:
+        return
+    manifest_key = context_manifest.CONTEXT_MANIFEST_METADATA_KEY
+    carried = {key: value for key, value in metadata.items() if key != manifest_key}
+    carried["correlation_id"] = cycle_id[:64]
+    if manifest_key in metadata:
+        carried[manifest_key] = metadata[manifest_key]
+    result.metadata = carried
+
+
+def _collect_owned_steps_tool_views(
+```
+**RB2.** SEARCH:
+```
+        ``perceive`` takes the bound id, so the journal, the events, the episode and ``IntentResult.metadata`` carry one
+        id the runtime's registry issued. Every cycle binds its own: an inline cycle of another agent binds its own and
+        the reset gives this one's back. The reset is in the ``finally``, so it runs on return, raise and cancellation.
+        """
+        token = bind_cycle(self._issue_cycle_id())
+        try:
+            return await self._run_cognitive_lifecycle(intent, cognitive_skill_instructions, skill_entries)
+        finally:
+            unbind_cycle(token)
+```
+REPLACE:
+```
+        ``perceive`` takes the bound id, so the journal, the events, the episode and ``IntentResult.metadata`` carry one
+        id the runtime's registry issued; a result the lifecycle built by hand (the compound replay's early return) gets
+        it from ``_carry_cycle_id``. Every cycle binds its own: an inline cycle of another agent binds its own and the
+        reset gives this one's back. The reset is in the ``finally``, so it runs on return, raise and cancellation.
+        """
+        cycle_id = self._issue_cycle_id()
+        token = bind_cycle(cycle_id)
+        try:
+            result = await self._run_cognitive_lifecycle(intent, cognitive_skill_instructions, skill_entries)
+            _carry_cycle_id(result, cycle_id)
+            return result
+        finally:
+            unbind_cycle(token)
+```
+
+### 18.3 `tests/test_ad1360_s1_cycle_trace.py` (M-R1)
+
+**RT1.** SEARCH:
+```
+import functools
+import math
+import time
+```
+REPLACE:
+```
+import functools
+import itertools
+import math
+import threading
+import time
+```
+**RT2.** SEARCH:
+```
+from unittest.mock import MagicMock, patch
+```
+REPLACE:
+```
+from unittest.mock import AsyncMock, MagicMock, patch
+```
+**RT3.** SEARCH:
+```
+from probos.cognitive.cognitive_agent import CognitiveAgent, _build_result_metadata
+```
+REPLACE:
+```
+from probos.cognitive import context_manifest
+from probos.cognitive.cognitive_agent import CognitiveAgent, _build_result_metadata, _carry_cycle_id
+```
+**RT4.** SEARCH:
+```
+from tests.test_bf239_ward_room_engagement_tracking import _make_agent, _make_ward_room_intent
+```
+REPLACE:
+```
+from tests.test_bf239_ward_room_engagement_tracking import _make_agent, _make_ward_room_intent
+from tests.test_multi_agent_replay_dispatch import (
+    _make_cognitive_agent,
+    _make_compound_procedure,
+    _make_intent,
+    _make_mock_agent_entry,
+    _make_mock_runtime,
+    _make_store_mock,
+)
+```
+**RT5.** SEARCH:
+```
+    assert recorder.gaps() == {"ad1360-forged": "direct_source_unresolved_correlation_id"}
+```
+REPLACE:
+```
+    assert recorder.gaps() == {"ad1360-forged": "direct_source_unresolved_correlation_id"}
+
+
+# -- N35 to N37: review round 1 (a result built by hand carries the id; two writers cannot record out of time order) ----
+
+
+def test_a_result_built_by_hand_gets_the_cycle_id_and_keeps_the_manifest_last() -> None:
+    manifest_key = context_manifest.CONTEXT_MANIFEST_METADATA_KEY
+    bare = IntentResult(intent_id="ad1360-i", agent_id="ad1360-a", success=True)
+    _carry_cycle_id(bare, "abcdefabcdef")
+    assert bare.metadata == {"correlation_id": "abcdefabcdef"}
+    with_manifest = IntentResult(
+        intent_id="ad1360-i", agent_id="ad1360-a", success=True,
+        metadata={"tool_trace_ref": "trace", manifest_key: {"version": 1}},
+    )
+    _carry_cycle_id(with_manifest, "x" * 100)
+    assert list(with_manifest.metadata) == ["tool_trace_ref", "correlation_id", manifest_key]
+    assert with_manifest.metadata["correlation_id"] == "x" * 64
+    carried = IntentResult(
+        intent_id="ad1360-i", agent_id="ad1360-a", success=True, metadata={"correlation_id": "0123456789ab"},
+    )
+    _carry_cycle_id(carried, "feedfacecafe")  # a result that has an id keeps it
+    assert carried.metadata == {"correlation_id": "0123456789ab"}
+
+
+async def test_a_compound_replay_result_carries_the_cycles_id() -> None:
+    """The compound replay returns early with a result built by hand and calls no model: its id is the task event's."""
+    proc = _make_compound_procedure()
+    store = _make_store_mock()
+    store.find_matching = AsyncMock(return_value=[{"id": proc.id, "score": 0.9}])
+    store.get = AsyncMock(return_value=proc)
+    sec_agent = _make_mock_agent_entry("sec-001")
+    eng_agent = _make_mock_agent_entry("eng-001")
+    agents = MagicMock()
+    agents.get_by_pool = MagicMock(side_effect=lambda pool: [sec_agent] if "security" in pool else [eng_agent])
+    bus = AsyncMock()
+    bus.send = AsyncMock(
+        side_effect=[
+            IntentResult(intent_id="i1", agent_id="sec-001", success=True, result="ok"),
+            IntentResult(intent_id="i2", agent_id="eng-001", success=True, result="ok"),
+        ]
+    )
+    cycles = CycleIdRegistry()
+    runtime = _make_mock_runtime(intent_bus=bus, registry=agents)
+    runtime.cycle_registry = cycles
+    agent = _make_cognitive_agent(runtime=runtime, procedure_store=store)
+    result = await agent.handle_intent(_make_intent(intent_type="security_review"))
+    event = runtime.emit_event.call_args[0][1]
+    assert event["compound_dispatched"] is True and result.success is True  # the early return ran
+    chain_id = result.metadata["correlation_id"]
+    assert _is_cycle_id(chain_id) and chain_id == event["correlation_id"]
+    assert cycles.kind_of(chain_id) == "cognitive_cycle" and current_cycle_id() == ""
+
+
+class _GatedLock:
+    """The registry's lock with the thread named ``first`` held at the door until the one named ``second`` has been
+    through it: the interleaving two writers can have, made certain."""
+
+    def __init__(self) -> None:
+        self._inner = threading.Lock()
+        self.first_at_the_door = threading.Event()
+        self.second_has_been_through = threading.Event()
+
+    def __enter__(self) -> None:
+        if threading.current_thread().name == "first":
+            self.first_at_the_door.set()
+            self.second_has_been_through.wait(timeout=10.0)
+        self._inner.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._inner.release()
+        if threading.current_thread().name == "second":
+            self.second_has_been_through.set()
+
+
+def test_two_writers_cannot_record_out_of_time_order_so_an_expired_id_never_resolves() -> None:
+    ticks = itertools.count(100)
+    sampled: dict[str, float] = {}
+    now_override: list[float] = []
+
+    def clock() -> float:
+        if now_override:
+            return now_override[0]
+        value = float(next(ticks))
+        sampled[threading.current_thread().name] = value
+        return value
+
+    registry = CycleIdRegistry(ttl_seconds=60.0, clock=clock)
+    gate = _GatedLock()
+    registry._lock = gate  # type: ignore[assignment]
+    ids: dict[str, str] = {}
+
+    def write() -> None:
+        ids[threading.current_thread().name] = registry.issue(kind="cognitive_cycle")
+
+    first = threading.Thread(target=write, name="first")
+    second = threading.Thread(target=write, name="second")
+    first.start()
+    assert gate.first_at_the_door.wait(timeout=10.0)
+    second.start()
+    first.join(timeout=10.0)
+    second.join(timeout=10.0)
+    assert not first.is_alive() and not second.is_alive() and sorted(ids) == ["first", "second"]
+
+    earlier, later = sorted(ids, key=sampled.__getitem__)  # the writer that read the clock first, and the other
+    now_override.append(sampled[earlier] + 60.5)  # the earlier id is now past its TTL; the later one, a tick newer, is not
+    assert registry.resolves(ids[earlier]) is False
+    assert registry.resolves(ids[later]) is True
+```
+
+### 18.4 Mutation rows (campaign on the repaired tree; restore between rows)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| RM1 | `_record` reads the clock before the lock again | N37 |
+| RM2 | `_run_cycle_bound_lifecycle` does not call `_carry_cycle_id` | N36 |
+| RM3 | `_carry_cycle_id` writes the id after the manifest | N35 |
+| RM4 | `_carry_cycle_id` overwrites an id the result has | N35 |
+| RM5 | `_carry_cycle_id` does not cut the id to 64 characters | N35 |
+| RM6 | `_carry_cycle_id` does nothing when the metadata is empty | N35, N36 |
+
+`_live_entry` reading the clock before its lock again has no row: a stale read there only delays an eviction, so no case can tell it apart.
+
+### 18.5 Properties for the round-2 Diff Reviewer (the delta only)
+
+1. Every result `_run_cycle_bound_lifecycle` returns carries `correlation_id` (a `str` of at most 64 characters) unless it already had one, and AD-1357's manifest is the last key when there is one.
+2. `_carry_cycle_id` never raises for a result without a `dict` `metadata` and never changes a result that has an id; the `finally` that resets the binding still runs on return, raise and cancellation.
+3. In `CycleIdRegistry`, every read of the clock is under the lock, so the entries are in time order for a monotonic clock; nothing else in the class changes.
+4. The new cases N35 to N37 delete, loosen or skip nothing, and N37 fails on the previous `_record`.
+
+### 18.6 The orchestrator's first-hand checks of the repair (2026-11-21, an oracle tree detached at `bd902142`)
+
+The nine operations of this section were applied to a scratch worktree detached at `bd902142` by `audit\contract_tools.py` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (a redirected, empty home: entries left in it 0). The consolidated set ran with the default embeddings and then under `PROBOS_EMBEDDINGS=local`, as CI sets it.
+
+| R | Result |
+|---|---|
+| R1 | All 9 operations (RA1, RA2, RB1, RB2, RT1 to RT5) are found by `contract_tools.py list --prefix 18.`; every SEARCH occurs exactly once on the committed S1 candidate. The three files change by +149 -9 lines in all (`cognitive_agent.py` +26 -4, `cycle_trace.py` +3 -3, the test file +120 -2). |
+| R2 | The tests alone (RT1 to RT5 applied, the code pairs not): **a collection error**, `cannot import name '_carry_cycle_id' from 'probos.cognitive.cognitive_agent'`. |
+| R3 | **The two reproductions of round 1's findings.** With the new cases applied, `_carry_cycle_id` taken out of the import line and the code pairs left out, the two cases that need no helper fail on the committed candidate for the stated reasons: N36 with `KeyError: 'correlation_id'` at the read of `result.metadata`, after its assertion that the compound early return ran (`compound_dispatched` true, `success` true); N37 with `assert True is False` at `registry.resolves(<the earlier writer's id>)`, the expired id resolving. N35 calls the helper and cannot run without it. |
+| R4 | After the four code pairs, the new test file alone: **70 passed** (67 + 3), 24.55 s. |
+| R5 | **The consolidated focused set** (50 files: the 28 of section 12, plus 22 that run `handle_intent` or the compound replay or read `IntentResult.metadata`, among them `test_multi_agent_replay_dispatch.py` and `test_graduated_compilation.py`): **2259 passed, 0 failed** under the default embeddings (725.95 s) and **2259 passed, 0 failed** under `PROBOS_EMBEDDINGS=local` (658.63 s), four workers. |
+| R6 | **The campaign** (`audit\mutants_gen.py`, rows RM1 to RM6 of 18.4, each over the unmutated baseline of 70 passing cases): **killed 6, survived 0, differs 0, invalid 0**; every named killer failed and no other case did; the tree was restored after the run (the three files' sha256 equal the ones printed before it). RM6 is killed by two cases (N35 and N36), every other row by one. |
+| R7 | `rg -n "_clock\(\)" src/probos/cycle_trace.py` shows two reads, in `_record` and `_live_entry`, each inside its `with self._lock:` block; `_carry_cycle_id` is defined once (`cognitive_agent.py`) and called once (`_run_cycle_bound_lifecycle`). |
