@@ -2,6 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21, rev1
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21, rev2: section 17, the repair after review round 1 (the priming gate, the rotation fence, the store file's first load)
 
 **Status:** rev1. Rev0 was proven on an oracle tree (section 16); rev1 adds two test cases (N20, N21) and changes no source pair. Batch 1 is S1 + S2 + S3: one PR (`Refs #1560`), one broad gate. S2 must not merge alone. Decision: consult `4bb6d748` (on #1560, comment 7064966284), corrected here in C1 to C5. No Captain condition.
 
@@ -90,7 +91,7 @@ S1's masker has no caller. A tool's output, such as `gh auth token` run by `run_
 
 - **D2 (inline, (b)).** The pass runs on the loop:
   - a pass with no hit costs 0.026 ms on a short text, 3.3 ms on 1 MiB with 10 values, and 22 ms on 1 MiB with 50 values (S1 O6);
-  - the first store read moves off the loop with the priming;
+  - the first store read moves off the loop with the priming: since section 17 (RC11) its worker also runs one empty masking pass, so the store file loads and the table is built there whichever step resolves `github` (rev1 claimed this, but with `GH_TOKEN` set the priming read no file and the first pass loaded it on the loop); after a load that failed, S1 reads the file on every pass, by design;
   - what would change this: a live p99 above 10 ms, in which case a size-gated `to_thread` follows.
 - **D3 (failure, (c)).** S1's withheld result (`MASKING_FAILED_TEXT`, metadata kept) replaces the result, and `ctx.secret_masking_failed = True`.
   - Every post-hook and the broker see it: outcome `failed`, terminal, a retry duplicate-suppressed (P4).
@@ -1165,6 +1166,8 @@ async def _prime_secret_masking(store: Any) -> None:
 async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> None:
 ```
 
+*Corrected by section 17 (2026-11-21):* the docstring above says a CLI-only token is masked "from the first tool call". With X15 alone that held only for a call made after the priming finished: review round 1 (F1) found the priming still pending when `start()` returned. RC11 marks the masker priming before the task starts and makes the worker end it, and RC9 holds every registry call until then, for at most 6 s.
+
 **X16.** SEARCH (`:5828-5837`):
 ```
     # AD-423c: Wire tool registry into onboarding service
@@ -1354,6 +1357,8 @@ REPLACE:
 - *Related.* BF-890 (child environments), `PIIRedactor.redact_tokens` (patterns; stays as a second layer), `provider_setup.redact` (one provider key in the operator's own setup and doctor text).
 ```
 
+*Corrected by section 17 (2026-11-21):* TR2's *Priming (S2)* bullet ("masked from the first call") was false as built (review round 1, F1). RC18 replaces it with the gate, the warm-up and the bound, and adds the *Rotation fence (S2)* bullet.
+
 ### 7.13 Ledger (M2)
 
 Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the same command with `--check`, then `tests/test_ad1184_ad_ledger.py`. Commit any regenerated `docs/development/open-ads-report.md` and `ad-ledger-snapshot.json` in M2. No `roadmap.md` row (this is an AD).
@@ -1364,7 +1369,7 @@ None for S2. S1's section 8 covers the batch.
 
 ## 9. What this does NOT change
 
-- S1's files (`security/secret_masking.py`, `credential_store.py`), `command_env.py`, `runtime.py`, `startup/shutdown.py`.
+- S1's files (`security/secret_masking.py`, `credential_store.py`), `command_env.py`, `runtime.py`, `startup/shutdown.py`. Section 17 (the round-1 repair) changes both S1 files: RC5 to RC7 and RC12 to RC15.
 - `AgenticLoop`, `reply_pipeline.py`, the offload path, the census of routes (all S3).
 - The registry, the broker, the authority, the AD-1224 record schemas and `StrictEffectPrivacyProjector`, `ToolResult.metadata`, config and profiles, HXI, `architecture-baseline.yaml`.
 
@@ -1458,7 +1463,7 @@ grep "requires-python" pyproject.toml   >=3.12 (frozenset subclass __iter__ is h
   - `tests/test_layer_boundaries.py`, `tests/test_ad1270b_architecture_fitness.py`, `tests/test_ad1324_srp_layout.py`, `tests/test_ad1184_ad_ledger.py`
 - `d:/ProbOS/.venv/Scripts/python.exe -P scripts/check_architecture_principles.py --check` exits 0.
 - `rg -l masked_credential_values src` finds only `credential_store.py` and `security/secret_masking.py`.
-- `git diff 53696f68 -- src/probos/security/ src/probos/credential_store.py src/probos/runtime.py src/probos/startup/shutdown.py src/probos/cognitive/swe_harness/ docs/development/architecture-baseline.yaml` is empty.
+- `git diff 53696f68 -- src/probos/security/ src/probos/credential_store.py src/probos/runtime.py src/probos/startup/shutdown.py src/probos/cognitive/swe_harness/ docs/development/architecture-baseline.yaml` is empty (rev1, at `089895c1`; section 17 changes `security/secret_masking.py` and `credential_store.py`, see 17.13).
 - The new test file is ASCII only.
 - Broad gate, once for batch 1 after S3: `scripts/run_test_gate.py --label ad-1337-1560 --receipt logs/gates/ad-1337-1560.receipt.json`.
 
@@ -1487,7 +1492,7 @@ grep "requires-python" pyproject.toml   >=3.12 (frozenset subclass __iter__ is h
 2. No value, form or position reaches a log line, an event payload, `InvocationContext` or an exception message. The payload has exactly the eight keys in D6, with labels only, in sorted order.
 3. A failed pass, or a non-`ToolResult`, withholds the output; post-hooks and the broker see the withheld result; nothing raises out of the seam.
 4. Every production executor construction passes the runtime's masker; the masker's type is enforced; a test double gets None, never a crash.
-5. Priming runs off the loop, reads `github` as the system requester `secret_masking` with no department or tier, keeps `get`'s gates, never raises into or blocks startup, and is stored on the runtime.
+5. Priming runs off the loop, reads `github` as the system requester `secret_masking` with no department or tier, keeps `get`'s gates, never raises into or blocks startup, and is stored on the runtime. Since section 17: every registry call waits for it (at most 6 s), its worker loads the store file, and a `rotate` during its `get` is not undone.
 6. The only event-type changes are `SECRET_MASKED` (DURABLE, routed) and the matching AD-1195 counts. AD-1224 schemas, the strict projector and `architecture-baseline.yaml` are unchanged. `ToolExecutor` stays at or under 500 lines and 15 methods.
 7. The paths that never reach the registry are unchanged.
 
@@ -1521,3 +1526,746 @@ Every pair of section 7 was applied to scratch worktrees by `audit\contract_tool
 - A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`, and S3 (the render seam) is not in this slice.
 - A `gh` that is installed and slow, or absent: the boot probe replaces `gh` with a recorder; the priming test N18 covers a missing `gh`, and the real `gh auth token` took 0.1 to 1.0 s here.
 - The full suite: it runs once for the batch after S3.
+
+---
+
+## 17. Repair after review round 1 (2026-11-21)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21, rev2
+
+**Base.** The Builder starts from the batch head `25944b39`. Every SEARCH below occurs exactly once both there and on `089895c1`. S3 (`089895c1..25944b39`) does not touch `executor.py`, `finalize.py`, `credential_store.py` or `tests/test_ad1337_executor_seam.py`. In `secret_masking.py`, S3 only inserted `secret_masker_of` and `mask_route_result` at `:198-223`, and no anchor here is inside that region. `secret_masking.py` and `credential_store.py` are S1's files, byte-identical at `410bcc9a` and `089895c1`. Every edited file is `i/lf w/crlf`: match and write each with its own endings. ASCII only.
+
+**Milestones** (one Builder delegation each; the Builder runs no test):
+
+| M | Content | Commit subject |
+|---|---|---|
+| M3 | 17.3 (RC1 to RC4, tests first), then RC5 to RC15 | `Hold tool calls until the masking priming ends, and fence a rotation against a read in flight` |
+| M4 | RC16 to RC18, then `gen_ad_ledger.py` and `--check` as in 7.13 | `Record the priming gate and the rotation fence` |
+
+### 17.1 Findings and decisions
+
+| Finding | Severity / reach | Decision | Pairs |
+|---|---|---|---|
+| F1: the priming is still pending when `start()` returns, so a call in the window is unmasked (`probe_b11s2_window.py`) | P1, ordinary | Gate every registry call on the masker's priming, bounded and failing open | RC1, RC2, RC4 to RC11 |
+| F2: a `get` in flight republishes a value a `rotate` replaced (`credential_store.py:352-353`) | P2, API or probe only; a regression of S2's worker | A per-name generation fence under `_publish_lock` | RC4, RC12 to RC15 |
+| F3: with `GH_TOKEN` set, the priming reads no file and the first pass loads it on the loop | P3, ordinary; a false claim | The worker runs one empty masking pass | RC4, RC11 |
+| (seam) S3's routes past the executor are not gated | P3, narrow | A follow-up for S3's review; not changed here | none |
+
+**Behaviour of the gate:**
+- **Loop blocked.** The worker ends the priming by writing an attribute, without the loop, and waiting calls resume when the loop runs. If the loop was blocked past the bound and the priming had not ended, the next poll ends it with one WARNING.
+- **Several waiting calls.** Each polls on its own, and all resume within 10 ms of the end.
+- **Shutdown.** Unchanged: the prime task is held and not cancelled, and `gh` is bounded at 5 s. A waiting call is cancelled with its own task.
+- **Strict broker.** The wait happens inside a reserved attempt, well under the 120 s lease (`config.py:3871`).
+- **Timing.** The wait counts in `duration_ms`.
+- **No masker.** A bare executor, or a masker nobody primes, never waits.
+
+### 17.2 Rejected designs
+
+- **Join the priming at the end of `start()`.** Costs 0.02 to 0.9 s of boot (measured), up to 5 s with a hung `gh`, and silently reopens if a later AD calls tools earlier in boot.
+- **Withhold every result while the priming is pending.** Turns the first second into withheld results.
+- **Wait in `asyncio.to_thread(event.wait)`.** Holds one pool thread per waiting call.
+- **An `asyncio.Event` on the masker.** Ties S1's thread-agnostic class to one loop.
+- **Re-resolve after a fenced read.** Runs the CLI again (up to 5 s) for a value that was current when the call began.
+- **Reuse `_store_lock` for the fence.** Invites nesting with `_load_store`, and S1's test replaces that lock.
+- **Change `del self._cache[name]` to `pop`.** Not needed: the only worker-thread `get` is the priming, which runs at boot with no expired entry.
+
+### 17.3 `tests/test_ad1337_executor_seam.py`
+
+**RC1.** SEARCH:
+```
+def _raise_values(_store: CredentialStore) -> tuple[tuple[str, str], ...]:
+    raise RuntimeError(TOKEN)
+```
+REPLACE:
+```
+def _raise_values(_store: CredentialStore) -> tuple[tuple[str, str], ...]:
+    raise RuntimeError(TOKEN)
+
+
+class _PrimingPolls:
+    """Stands in for a masker's ``priming_pending``: records each answer and sets ``held`` once ``count`` answers
+    have held a call, so a test knows the calls are waiting without sleeping."""
+
+    def __init__(self, masker: SecretMasker, monkeypatch: pytest.MonkeyPatch, *, count: int) -> None:
+        self.original = masker.priming_pending
+        self.count = count
+        self.answers: list[bool] = []
+        self.held = asyncio.Event()
+        monkeypatch.setattr(masker, "priming_pending", self)
+
+    def __call__(self) -> bool:
+        answer = self.original()
+        self.answers.append(answer)
+        if sum(self.answers) >= self.count:
+            self.held.set()
+        return answer
+
+
+async def _held(polls: _PrimingPolls, calls: list[asyncio.Task[Any]]) -> bool:
+    """Whether ``polls`` saw its count of held answers while every call in ``calls`` was still waiting. A gate that
+    lets a call through makes that call finish first, so this returns False instead of hanging."""
+    held = asyncio.ensure_future(polls.held.wait())
+    done, _ = await asyncio.wait({held, *calls}, return_when=asyncio.FIRST_COMPLETED)
+    if held not in done:
+        held.cancel()
+    return held in done and not any(call.done() for call in calls)
+```
+
+**RC2.** (N16, replaced: it no longer awaits the priming before calling the executors.) SEARCH:
+```
+async def test_finalize_builds_one_masker_on_the_runtime_and_primes_github_off_the_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], int]] = []
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((list(argv), threading.get_ident()))
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    runtime = SimpleNamespace(credential_store=_store(tmp_path))
+
+    masker = finalize._wire_secret_masker(runtime=runtime)
+
+    assert isinstance(masker, SecretMasker) and runtime.secret_masker is masker
+    assert isinstance(runtime.secret_registry, SecretRegistry)
+    task = runtime.secret_masking_prime_task
+    assert isinstance(task, asyncio.Task) and task.get_name() == "secret_masking_prime"
+    await task
+    assert [argv for argv, _ in calls] == [["gh", "auth", "token"]]
+    assert calls[0][1] != threading.get_ident()
+    assert masker.mask_text(f"out {CLI_TOKEN}").text == f"out {PLACEHOLDER}"
+    with runtime.secret_registry.register("vault:site", "vault-value-123"):
+        assert masker.mask_text("vault-value-123").text == "<secret:vault:site>"
+```
+REPLACE:
+```
+async def test_finalize_primes_github_off_the_loop_and_every_executor_waits_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release = threading.Event(), threading.Event()
+    calls: list[tuple[list[str], int]] = []
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        calls.append((list(argv), threading.get_ident()))
+        entered.set()
+        assert release.wait(10.0)  # gh answers only after the tool calls below are waiting
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    runtime = SimpleNamespace(credential_store=_store(tmp_path))
+    tools = (_EchoTool("echo", f"cli={CLI_TOKEN}"), _EchoTool("echo", f"cli={CLI_TOKEN}"))
+    try:
+        masker = finalize._wire_secret_masker(runtime=runtime)
+
+        assert isinstance(masker, SecretMasker) and runtime.secret_masker is masker
+        assert isinstance(runtime.secret_registry, SecretRegistry)
+        task = runtime.secret_masking_prime_task
+        assert isinstance(task, asyncio.Task) and task.get_name() == "secret_masking_prime"
+        assert masker.priming_pending() is True  # marked before the task can run
+        assert await asyncio.to_thread(entered.wait, 10.0)  # the priming is inside gh, as on a real boot
+        polls = _PrimingPolls(masker, monkeypatch, count=2)
+        # Built as finalize builds the runtime's executor and as dispatch builds its own (N19 pins both sources).
+        executors = (
+            ToolExecutor(registry=_registry(tools[0]), secret_masker=runtime.secret_masker),
+            DispatchToolExecutor(
+                registry=_registry(tools[1]), secret_masker=agentic_dispatch._runtime_secret_masker(runtime),
+            ),
+        )
+        window = [asyncio.create_task(executor.invoke("agent-1", "echo", {})) for executor in executors]
+        assert await _held(polls, window) is True
+        assert [tool.calls for tool in tools] == [0, 0]  # held before the registry, so a raising tool is held too
+    finally:
+        release.set()
+    await task
+    assert polls.original() is False  # the worker ended the priming
+    results = await asyncio.gather(*window)
+    assert [result.output for result in results] == [f"cli={PLACEHOLDER}"] * 2
+    assert [tool.calls for tool in tools] == [1, 1]
+    assert [argv for argv, _ in calls] == [["gh", "auth", "token"]]
+    assert calls[0][1] != threading.get_ident()
+    assert masker.mask_text(f"out {CLI_TOKEN}").text == f"out {PLACEHOLDER}"
+    with runtime.secret_registry.register("vault:site", "vault-value-123"):
+        assert masker.mask_text("vault-value-123").text == "<secret:vault:site>"
+```
+
+**RC3.** (N18: the new signature, and a failed priming releases the gate.) SEARCH:
+```
+    caplog.set_level(logging.INFO, logger="probos.startup.finalize")
+    store = _store(tmp_path)
+    await finalize._prime_secret_masking(store)
+    assert "github credential primed for masking (found=False)" in caplog.text
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError(TOKEN)
+
+    monkeypatch.setattr(store, "get", _boom)
+    await finalize._prime_secret_masking(store)
+    assert "priming the github credential for masking failed (RuntimeError)" in caplog.text
+    assert TOKEN not in caplog.text
+```
+REPLACE:
+```
+    caplog.set_level(logging.INFO, logger="probos.startup.finalize")
+    store = _store(tmp_path)
+    masker = SecretMasker(credential_store=store, registry=SecretRegistry(), env_source=EnvSecretSource({}))
+    masker.begin_priming()
+    await finalize._prime_secret_masking(store, masker)
+    assert "github credential primed for masking (found=False)" in caplog.text
+    assert masker.priming_pending() is False
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError(TOKEN)
+
+    monkeypatch.setattr(store, "get", _boom)
+    masker.begin_priming()
+    await finalize._prime_secret_masking(store, masker)
+    assert "priming the github credential for masking failed (RuntimeError)" in caplog.text
+    assert masker.priming_pending() is False  # a failed priming releases the waiting calls too
+    assert TOKEN not in caplog.text
+```
+
+**RC4.** (N22 to N24, appended after N21.) SEARCH:
+```
+    # The requester is how the store attributes a read (_log_access writes agent_type=requester): a system read
+    # must never look like a crew member's, and it carries no department or tier.
+    assert reads == [(("github",), {"requester": "secret_masking"})]
+```
+REPLACE:
+```
+    # The requester is how the store attributes a read (_log_access writes agent_type=requester): a system read
+    # must never look like a crew member's, and it carries no department or tier.
+    assert reads == [(("github",), {"requester": "secret_masking"})]
+
+
+# -- N22 to N24: the priming's bound, a read across a rotation, and where the store file first loads -------------
+
+
+async def test_a_priming_that_never_ends_holds_a_call_only_until_its_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    masker = _masker(tmp_path)
+    assert masker.priming_pending() is False  # nothing primes it, so no call waits (every bare executor, N10)
+    for bad in (0, -1.0):
+        with pytest.raises(ValueError):
+            masker.begin_priming(bad)
+    clock = SimpleNamespace(now=1000.0)
+    monkeypatch.setattr(secret_masking, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    masker.begin_priming(secret_masking.DEFAULT_PRIMING_TIMEOUT_S)
+    assert masker.priming_pending() is True
+    masker.end_priming()
+    masker.end_priming()  # a second end is harmless
+    assert masker.priming_pending() is False
+
+    masker.begin_priming(secret_masking.DEFAULT_PRIMING_TIMEOUT_S)  # and nothing ever ends it
+    polls = _PrimingPolls(masker, monkeypatch, count=2)
+    tool = _EchoTool("echo", f"token={TOKEN}")
+    executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+    call = asyncio.create_task(executor.invoke("agent-1", "echo", {}))
+    try:
+        assert await _held(polls, [call]) is True  # two answers from one call: the gate keeps checking
+        assert tool.calls == 0
+    finally:
+        clock.now += secret_masking.DEFAULT_PRIMING_TIMEOUT_S
+    result = await asyncio.wait_for(call, timeout=10.0)
+    assert result.output == f"token={PLACEHOLDER}" and tool.calls == 1  # it runs, masked with what is known
+    assert polls.original() is False
+    assert caplog.text.count("secret priming did not finish") == 1
+
+
+def test_a_get_in_flight_cannot_undo_a_rotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    entered, release = threading.Event(), threading.Event()
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        entered.set()
+        assert release.wait(10.0)
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    store = _store(tmp_path)
+    got: list[str | None] = []
+    reader = threading.Thread(target=lambda: got.append(store.get("github", requester="secret_masking")))
+    reader.start()
+    try:
+        assert entered.wait(10.0)  # the get is in the CLI step: it found no stored value
+        assert store.rotate("github", TOKEN) is True
+    finally:
+        release.set()
+        reader.join(10.0)
+    assert not reader.is_alive() and got == [CLI_TOKEN]  # the value that was current when the get began
+    assert store.get("github", requester="test") == TOKEN  # the rotation stands
+    masker = SecretMasker(credential_store=store, registry=SecretRegistry(), env_source=EnvSecretSource({}))
+    assert masker.mask_text(f"{CLI_TOKEN} {TOKEN}").text == f"{CLI_TOKEN} {PLACEHOLDER}"
+
+
+async def test_priming_loads_the_store_file_off_the_loop_whichever_step_resolves_github(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_TOKEN", CLI_TOKEN)  # get answers at the environment step, before the store file
+    reads: list[int] = []
+    original = probos.credential_store._read_store_file
+
+    def _recording_read(path: Path) -> dict[str, str]:
+        reads.append(threading.get_ident())
+        return original(path)
+
+    monkeypatch.setattr("probos.credential_store._read_store_file", _recording_read)
+    runtime = SimpleNamespace(credential_store=_store(tmp_path, {"vault": VAULT_A}))
+
+    masker = finalize._wire_secret_masker(runtime=runtime)
+    await runtime.secret_masking_prime_task
+
+    assert len(reads) == 1 and reads[0] != threading.get_ident()  # loaded once, in the priming's worker thread
+    assert masker.mask_text(f"{VAULT_A} {CLI_TOKEN}").text == f"<secret:vault> {PLACEHOLDER}"
+    assert len(reads) == 1  # the first pass on the loop read no file
+```
+
+### 17.4 `src/probos/security/secret_masking.py`
+
+**RC5.** SEARCH:
+```
+import re
+import threading
+from collections.abc import Callable, Mapping
+```
+REPLACE:
+```
+import re
+import threading
+import time
+from collections.abc import Callable, Mapping
+```
+
+**RC6.** SEARCH:
+```
+#: What the caller gets instead of the text or the output when a pass fails.
+MASKING_FAILED_TEXT: str = "tool output withheld: secret masking failed"
+```
+REPLACE:
+```
+#: Not measured: how long a tool call waits for the startup priming (AD-1337 S2) before it runs without it. The
+#: priming's CLI step has a 5 s timeout (``CredentialStore._resolve``); the extra second covers the store file's load.
+DEFAULT_PRIMING_TIMEOUT_S: float = 6.0
+
+#: What the caller gets instead of the text or the output when a pass fails.
+MASKING_FAILED_TEXT: str = "tool output withheld: secret masking failed"
+```
+
+**RC7.** SEARCH:
+```
+        self._table: tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]] | None = None
+
+    def mask_text(self, text: str) -> MaskOutcome:
+```
+REPLACE:
+```
+        self._table: tuple[tuple[tuple[str, str], ...], tuple[tuple[str, str], ...]] | None = None
+        # AD-1337 S2: while the startup priming runs, the monotonic time it stops being waited for; None otherwise.
+        # One attribute, read and replaced whole, so the worker thread and the loop need no lock.
+        self._priming_deadline: float | None = None
+
+    def begin_priming(self, timeout_s: float = DEFAULT_PRIMING_TIMEOUT_S) -> None:
+        """AD-1337 S2: a value is being primed. ``priming_pending`` is True until ``end_priming``, or for at most
+        ``timeout_s`` seconds. ``ValueError`` unless ``timeout_s`` is positive."""
+        if not timeout_s > 0:
+            raise ValueError("timeout_s must be positive")
+        self._priming_deadline = time.monotonic() + timeout_s
+
+    def end_priming(self) -> None:
+        """AD-1337 S2: the priming has finished, or failed. Safe from any thread and more than once."""
+        self._priming_deadline = None
+
+    def priming_pending(self) -> bool:
+        """AD-1337 S2: whether a tool call should wait for the priming. Past its bound this ends the priming, with
+        one WARNING: the call then runs, masked with every value the masker knows without it."""
+        deadline = self._priming_deadline
+        if deadline is None:
+            return False
+        if time.monotonic() < deadline:
+            return True
+        self._priming_deadline = None
+        logger.warning("AD-1337: secret priming did not finish in time; tool calls no longer wait for it")
+        return False
+
+    def mask_text(self, text: str) -> MaskOutcome:
+```
+
+### 17.5 `src/probos/tools/executor.py`
+
+**RC8.** SEARCH:
+```
+from __future__ import annotations
+
+import hashlib
+```
+REPLACE:
+```
+from __future__ import annotations
+
+import asyncio
+import hashlib
+```
+
+**RC9.** SEARCH:
+```
+                return aborted
+
+        try:
+            if effect_permit is None:
+```
+REPLACE:
+```
+                return aborted
+
+        await _await_secret_priming(self._secret_masker)  # AD-1337 S2: the registry runs after the startup priming
+        try:
+            if effect_permit is None:
+```
+
+**RC10.** SEARCH:
+```
+    masked = masker.mask_result(result)
+    ctx.secrets_masked = tuple(sorted(masked.names))
+    ctx.secret_masking_failed = masked.failed
+    return masked.result
+```
+REPLACE:
+```
+    masked = masker.mask_result(result)
+    ctx.secrets_masked = tuple(sorted(masked.names))
+    ctx.secret_masking_failed = masked.failed
+    return masked.result
+
+
+#: AD-1337 S2: how often a registry call waiting for the masker's startup priming checks it again.
+_SECRET_PRIMING_POLL_S = 0.01
+
+
+async def _await_secret_priming(masker: "SecretMasker | None") -> None:
+    """AD-1337 S2: hold a registry call while the masker's startup priming runs.
+
+    A token only ``gh auth token`` knows reaches the masker only when the priming's ``get`` returns, so a call made
+    in that window is held before the registry runs, which covers a result and a raised exception's text alike. It
+    polls, so it holds no worker thread and works on any loop. The masker bounds the wait
+    (``DEFAULT_PRIMING_TIMEOUT_S``) and then lets every call through; without a masker, or with one nobody primes,
+    nothing waits.
+    """
+    while masker is not None and masker.priming_pending():
+        await asyncio.sleep(_SECRET_PRIMING_POLL_S)
+```
+
+### 17.6 `src/probos/startup/finalize.py`
+
+**RC11.** No line here may name S1's store-values function (S1's N31 is a text scan). SEARCH:
+```
+    runtime.secret_masker = SecretMasker(
+        credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
+    )
+    runtime.secret_masking_prime_task = asyncio.create_task(
+        _prime_secret_masking(store), name="secret_masking_prime",
+    )
+    return runtime.secret_masker
+
+
+async def _prime_secret_masking(store: Any) -> None:
+    """AD-1337 S2: resolve the GitHub credential once, in a worker thread, so a token only ``gh auth token`` knows is
+    masked from the first tool call; ``get`` keeps it for the masker, which reads it on every pass.
+
+    The read keeps ``get``'s department and tier gates. It writes no access row (``_log_access`` needs a running loop
+    in its own thread), and the value goes to the masker only, as the masker's own store read does. A failure, or no
+    ``gh``, only means a CLI-only token is masked after its first ``get``; startup never waits on this task.
+    """
+    try:
+        value = await asyncio.to_thread(store.get, "github", requester="secret_masking")
+    except Exception as exc:
+        logger.warning("AD-1337: priming the github credential for masking failed (%s)", type(exc).__name__)
+        return
+    logger.info("AD-1337: github credential primed for masking (found=%s)", value is not None)
+```
+REPLACE:
+```
+    runtime.secret_masker = SecretMasker(
+        credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
+    )
+    # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
+    # with what the priming adds. Marked before the task exists, so no call can run between the two.
+    runtime.secret_masker.begin_priming()
+    runtime.secret_masking_prime_task = asyncio.create_task(
+        _prime_secret_masking(store, runtime.secret_masker), name="secret_masking_prime",
+    )
+    return runtime.secret_masker
+
+
+def _prime_secret_masking_worker(store: Any, masker: Any) -> str | None:
+    """AD-1337 S2: the priming's worker-thread body.
+
+    ``get`` keeps the GitHub value for the masker, whichever step resolves it. The empty ``mask_text`` pass then
+    loads the store file and builds the masker's pattern table here, so neither happens on the loop at the first
+    tool call, even when the environment answered ``get`` before the store file was read. ``end_priming`` runs last
+    whatever happened, so a failure releases the tool calls waiting on the priming.
+    """
+    try:
+        return store.get("github", requester="secret_masking")
+    finally:
+        masker.mask_text("")  # never raises for a str: a failed pass logs its type only (AD-1337 D7)
+        masker.end_priming()
+
+
+async def _prime_secret_masking(store: Any, masker: Any) -> None:
+    """AD-1337 S2: resolve the GitHub credential once, in a worker thread, so a token only ``gh auth token`` knows is
+    masked from the first tool call: ``_wire_secret_masker`` marks the masker priming, and every registry call waits
+    until the worker ends it (``ToolExecutor._invoke_once``), for at most the masker's ``DEFAULT_PRIMING_TIMEOUT_S``.
+
+    The read keeps ``get``'s department and tier gates. It writes no access row (``_log_access`` needs a running loop
+    in its own thread), and the value goes to the masker only, as the masker's own store read does. A failure, or no
+    ``gh``, only means a CLI-only token is masked after its first ``get``; startup never waits on this task.
+    """
+    try:
+        value = await asyncio.to_thread(_prime_secret_masking_worker, store, masker)
+    except Exception as exc:
+        logger.warning("AD-1337: priming the github credential for masking failed (%s)", type(exc).__name__)
+        return
+    logger.info("AD-1337: github credential primed for masking (found=%s)", value is not None)
+```
+
+### 17.7 `src/probos/credential_store.py`
+
+No new method: the class stays at 15.
+
+**RC12.** SEARCH:
+```
+        # AD-1337: the first load can run in a worker thread (S2's priming get) while rotate() runs on the loop.
+        self._store_lock = threading.Lock()
+```
+REPLACE:
+```
+        # AD-1337: the first load can run in a worker thread (S2's priming get) while rotate() runs on the loop.
+        self._store_lock = threading.Lock()
+        # AD-1337: rotate() bumps a name's generation, and a get() that began before it (S2's priming get runs in a
+        # worker thread) publishes to _cache and _last_resolved only if the generation is unchanged. A lock of its
+        # own: nothing holds it while taking _store_lock, so the two never nest.
+        self._generations: dict[str, int] = {}
+        self._publish_lock = threading.Lock()
+```
+
+**RC13.** SEARCH:
+```
+        self._store[name] = value
+        # Invalidate cache so next get(...) resolves fresh.
+        self._cache.pop(name, None)
+        self._last_resolved.pop(name, None)  # AD-1337: the old value is no longer masked
+```
+REPLACE:
+```
+        with self._publish_lock:  # AD-1337: one step, so a get() in flight cannot republish the old value after it
+            self._store[name] = value
+            self._generations[name] = self._generations.get(name, 0) + 1
+            # Invalidate cache so next get(...) resolves fresh.
+            self._cache.pop(name, None)
+            self._last_resolved.pop(name, None)  # AD-1337: the old value is no longer masked
+```
+
+**RC14.** SEARCH:
+```
+        # Resolution chain
+        value = self._resolve(spec)
+```
+REPLACE:
+```
+        # Resolution chain. AD-1337: the name's generation is read first, so a rotate() during _resolve is seen
+        # below and the value it replaced is not published.
+        with self._publish_lock:
+            generation = self._generations.get(name, 0)
+        value = self._resolve(spec)
+```
+
+**RC15.** SEARCH:
+```
+        if value:
+            self._cache[name] = (value, time.monotonic() + self._cache_ttl)
+            self._last_resolved[name] = value  # AD-1337: kept past the TTL for the secret masker
+```
+REPLACE:
+```
+        if value:
+            with self._publish_lock:
+                # AD-1337: a rotate() since the generation was read replaced this value. It is still returned (it
+                # was current when this call began) but neither cached nor kept for the secret masker.
+                if self._generations.get(name, 0) == generation:
+                    self._cache[name] = (value, time.monotonic() + self._cache_ttl)
+                    self._last_resolved[name] = value  # AD-1337: kept past the TTL for the secret masker
+```
+
+### 17.8 `PROGRESS.md`
+
+**RC16.** SEARCH:
+```
+resolves the GitHub credential once in a worker thread.
+```
+REPLACE:
+```
+resolves the GitHub credential once in a worker thread, which also loads the store file; until that priming ends (at most 6 s) every registry call waits for it, so a token only `gh auth token` knows is masked from the first call, and a `rotate` while a `get` is in flight is not undone when that `get` returns.
+```
+
+**RC17.** SEARCH:
+```
+`tests/test_ad1337_executor_seam.py` (21 cases): a real dispatch run
+```
+REPLACE:
+```
+`tests/test_ad1337_executor_seam.py` (24 cases): a call made while the priming is inside `gh` waits and is masked, through the runtime's executor and a dispatch executor; a priming that never ends holds a call only until its bound; a `get` in flight across a `rotate` returns its value and leaves the new one current; the store file loads in the priming's thread even when the environment answers `get`; a real dispatch run
+```
+
+### 17.9 `DECISIONS.md`
+
+**RC18.** SEARCH (the whole line; it occurs once on `089895c1` and on `25944b39`):
+```
+- *Priming (S2).* `get("github", requester="secret_masking")` runs once in a worker thread at startup, so a token only `gh auth token` knows is masked from the first call. It keeps `get`'s gates and writes no access row (`_log_access` needs a loop in its thread; the value goes to the masker only). A failure, or no `gh`, only delays masking of a CLI-only token to its first `get`.
+```
+REPLACE:
+```
+- *Priming (S2).* `get("github", requester="secret_masking")` runs once in a worker thread at startup, and the same thread then runs one empty masking pass, so the store file loads and the masker's table is built there whichever step resolves the value. Until that thread ends, the masker reports the priming pending and every registry call waits before the registry runs (`ToolExecutor._invoke_once`, a 10 ms poll that holds no thread), for at most `DEFAULT_PRIMING_TIMEOUT_S` (6 s: the CLI's 5 s timeout plus one; not measured); then it runs and one WARNING says so. So a token only `gh auth token` knows is masked from the first call, and startup does not wait: joining the priming at the end of `start()` was rejected, because it costs boot up to the CLI's timeout and relies on nothing calling a tool earlier (review round 1 found the window open at `start()`'s return). It keeps `get`'s gates and writes no access row (`_log_access` needs a loop in its thread; the value goes to the masker only). A failure, or no `gh`, ends the wait at once and only delays masking of a CLI-only token to its first `get`.
+- *Rotation fence (S2).* `rotate` replaces the stored value, bumps a per-name generation and drops the cached and last-resolved values in one locked step; a `get` that began before it (the priming runs in a worker thread) returns the value it resolved, but caches it and keeps it for the masker only if the generation is unchanged. Without it, a rotation acknowledged while the priming was in `gh` was undone by the next `get`.
+```
+
+### 17.10 Tests and predicted counts
+
+| N | Change | Property |
+|---|---|---|
+| N16 | Replaced (RC2) | Wiring, then priming held inside `gh`, then a runtime executor and a dispatch executor both wait before the registry, then the priming ends, then both results are masked. The CLI runs on a worker thread. It does not await the priming before the calls. |
+| N18 | Extended (RC3) | New signature. A successful priming and a failed one both end the priming. |
+| N22 | New | A masker nobody primes never holds a call. `begin_priming` rejects 0 and -1. A priming that never ends holds a call through at least two polls, then lets it through at the bound, masked, with exactly one WARNING. |
+| N23 | New | A `get` in flight across a `rotate` returns its own value. The next `get` returns the rotated one, and the masker holds only the current value. |
+| N24 | New | With `GH_TOKEN` set, the store file loads once, on the priming's worker. The first pass on the loop reads no file. |
+
+- **Test pairs only (RC1 to RC4) on `089895c1`: 19 passed, 5 failed.**
+  - N16: `AttributeError` (`priming_pending`).
+  - N18: `AttributeError` (`begin_priming`: the test starts the priming first).
+  - N22: `AttributeError`.
+  - N23: `CLI_TOKEN != TOKEN` on the second `get`.
+  - N24: `reads == []`.
+- **All pairs: 24 passed** (24 items, no parametrize).
+- S1's file and S3's file (16 cases, 18 items): unchanged counts, all pass.
+
+### 17.11 Mutation rows
+
+Run on the M3 candidate, restoring between rows. Rerun section 10's rows whose file blob changed: S1m to S10m, S13m, S16m to S19m, S21m and S22m (`executor.py`, `finalize.py`). The dispatch and event rows (S11m, S12m, S14m, S15m, S20m) stand.
+
+| Row | Mutant (one line) | Killed by |
+|---|---|---|
+| R1m | Delete the gate line in `_invoke_once` (RC9) | N16 (`_held` is False), N22 |
+| R2m | Move the gate line to just before the seam (after the registry `try`) | N16 (`tool.calls == [0, 0]` fails) |
+| R3m | `_await_secret_priming`: `while` to `if` | N22 (only one poll, so the call finishes first) |
+| R4m | `priming_pending`: delete `self._priming_deadline = None` in the expiry branch | N22 (WARNING count 2) |
+| R5m | `priming_pending`: `if time.monotonic() < deadline:` to `if True:` | N22 (`wait_for` times out) |
+| R6m | Worker: delete `masker.end_priming()` | N16 (`polls.original()` is True), N18 |
+| R7m | `_wire_secret_masker`: delete `runtime.secret_masker.begin_priming()` | N16 (`priming_pending()` is False at once) |
+| R8m | Worker: delete `masker.mask_text("")` (the warm-up) | N24 |
+| R9m | Publication: `== generation` to `True` (the fence) | N23 |
+| R10m | `rotate`: delete the generation bump | N23 |
+| R11m | Publication: `==` to `!=` | N16 (CLI token unmasked); S1's CLI case (`tests/test_ad1337_secret_masking.py:459-465`); `tests/test_credential_store.py::test_cache_ttl` |
+| R12m | `begin_priming`: `if not timeout_s > 0:` to `if timeout_s < 0:` | N22 |
+| S17m (rerun) | The worker body called on the loop instead of in `to_thread` | N16 (the loop blocks in `gh` for 10 s, then the calls run unmasked) |
+
+The lock's atomicity (`with self._publish_lock:` on both sides) is checked by reading, not by a mutant: the interleaving between the check and the writes cannot be reached without instrumenting the lock.
+
+### 17.12 What this does NOT change
+
+- S3's files: `render_masking.py`, `agentic_loop.py`, `reply_pipeline.py` (its tier-1 browser route is not gated; that is the follow-up for S3's review), `native_builder.py`, `agentic_dispatch.py`.
+- `events.py`, `event_persistence.py`, the `SECRET_MASKED` payload, AD-1224 schemas, config, `architecture-baseline.yaml`, `runtime.py`, `startup/shutdown.py`.
+- What `CredentialStore.get` and `rotate` return; `_load_store`, `_store_lock`, `_resolve`, and S1's store-values function.
+- `_calls_building_a_tool_executor`, `SECRET_MASKED_MAX_NAMES`, `tool_record_identity` (S3 imports all three).
+
+### 17.13 Deterministic checks
+
+- **Focused gate, `-n 0`:**
+  - The S2, S1 and S3 test files: `test_ad1337_executor_seam.py`, `test_ad1337_secret_masking.py`, `test_ad1337_render_seam.py`.
+  - The credential tests: `test_credential_store.py`, `test_ad456_security_infrastructure.py`, `test_ad456c_per_tier_credentials.py`.
+  - The executor and broker tests: `test_ad448_wrapped_tool_executor.py`, `test_ad1224_durable_tool_start.py`, `test_ad1316_governed_effect_broker.py`, `test_ad856_agentic_dispatch.py`.
+  - Boot and finalize: `test_finalize.py`, `test_runtime.py`.
+  - The censuses: `test_bf892_spawn_env_guard.py`, `test_ad1346_admission_effect_census.py`, `test_ad1346_admission_file_write_census.py`.
+  - Architecture: `test_ad1324_srp_layout.py`, `test_ad1270b_architecture_fitness.py`, `test_layer_boundaries.py`, `test_ad1184_ad_ledger.py`.
+- `check_architecture_principles.py --check` exits 0. Counts: `ToolExecutor` 489 lines and 13 methods; `CredentialStore` 15 methods; `SecretMasker` 9 methods.
+- `rg -l masked_credential_values src` finds exactly `credential_store.py` and `security/secret_masking.py`.
+- `git diff 25944b39 --stat` lists only the seven files of 17.3 to 17.9, plus the ledger pair if it is regenerated.
+
+### 17.14 Verified Against Codebase (2026-11-21, `25944b39`)
+
+```
+git diff --stat 089895c1 25944b39   no executor.py, finalize.py, credential_store.py, test_ad1337_executor_seam.py
+git diff 089895c1 25944b39 -- src/probos/security/secret_masking.py   +28 at :198-223 only (secret_masker_of, mask_route_result)
+git diff --stat 410bcc9a 089895c1   DECISIONS, PROGRESS, ledger pair only
+grep "^import" executor.py   :14-22 hashlib..uuid (no asyncio); "if effect_permit is None:" :726 only; "return aborted" :723 only
+read executor.py:615-806 (registry try :725-768, seam :770-771), :965-1019 (_checked_secret_masker :986, _mask_registry_result :997)
+read finalize.py:715-755 (_wire_secret_masker, _prime_secret_masking; to_thread :751)
+read credential_store.py:74-108 (_store_lock :97), :152-177, :179-225 (rotate), :281-355 (get; publish :351-353), :357-395 (timeout=5 :388), :441-484
+grep "def " credential_store.py   15 methods in CredentialStore (:74 to :429)
+read secret_masking.py:26-50, :297-446 (no time import; SecretMasker 6 methods)
+read tests/test_ad1337_executor_seam.py:1-628 (N16 :453-478, N18 :491-505, N21 :609-627, _no_cli :71-80)
+read tests/test_ad1337_secret_masking.py:615-677 (_ReportingLock replaces _store_lock), :517-522 (N31 text scan)
+grep tests/test_ad1337_render_seam.py   :39 imports ToolExecutor, tool_record_identity; :58 imports _calls_building_a_tool_executor
+grep config.py   :3871 effect_lease_seconds default 120
+git ls-files --eol   all seven files i/lf w/crlf
+```
+
+**Absence verified (2026-11-21):**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| No production `CredentialStore.rotate` caller | `rg "\.rotate\(" src` | `routers/identity.py:229` (`binding.rotate()`, an identity binding) | yes |
+| Nothing outside S2's file calls the priming or the wiring | `rg "_prime_secret_masking\|_wire_secret_masker\|secret_masking_prime_task" tests` (and `tests/fixtures`) | `test_ad1337_executor_seam.py` only; fixtures none | yes |
+| No test pins `_cache` or `_last_resolved` beyond `clear()` | `rg "_last_resolved\|\._cache" tests` | `test_credential_store.py:45, 85, 131` (`clear()`) | yes |
+| No census in fixtures counts `sleep` or `to_thread` in executor or finalize | `rg "sleep\|to_thread" tests/fixtures`; `rg "_prime_secret_masking\|secret_masking" tests/fixtures` | test-local bridges only; none | yes |
+| No architecture check on polling | `rg "sleep\|polling\|to_thread" scripts/check_architecture_principles.py` | none | yes |
+| No `check_and_invoke` outside `_invoke_once` | `rg check_and_invoke executor.py` | `:727`, `:731` (and docstrings) | yes |
+
+### 17.15 Properties for the round-2 delta reviewer
+
+Review only the repair: `git diff 25944b39..HEAD`, or `089895c1..HEAD` limited to the seven files. Execute, do not only read.
+
+1. **The gate.** With a masker whose priming is pending, `check_and_invoke` is not called on any path until `end_priming` or the bound: direct, broker, and dispatch in both modes. A bare executor, or a masker nobody primes, never waits. A waiting call holds no pool thread, and cancelling it propagates.
+2. **The bound.** Expiry lets calls through with exactly one WARNING that holds no value, and the expiry is latched.
+3. **The priming.** `begin_priming` runs before `create_task`. The worker's `finally` runs the warm-up, then `end_priming`. A failed `get` releases the gate. Startup does not wait. The requester is still `secret_masking`. finalize.py does not name S1's store-values function.
+4. **The warm-up.** The store file loads on the worker whether `get` resolved from the environment or the CLI. The first loop pass reads no file, except on S1's failed-load path, by design.
+5. **The fence.** The store write, the bump and both invalidations happen in one `_publish_lock` step. `get` reads the generation under the lock before `_resolve` and publishes only if it is unchanged. `_publish_lock` and `_store_lock` never nest. What `get` and `rotate` return is unchanged. The S1, AD-456 and AD-456c tests pass.
+6. **Sizes and contracts.** The section 17.13 counts hold. The only public additions are S1's three masker methods and one constant.
+7. **First-hand probes on the candidate:**
+   - `probe_b11s2_window.py`: call A returns `<secret:github>`.
+   - `probe_b11s2_rotation.py`: the next `get` returns NEW.
+   - `probe_b11s2_f3.py` CASE: the priming reads the file on a worker, and the first pass reads nothing.
+
+### 17.16 Acceptance
+
+- [ ] 17.10's predictions hold: 19 passed and 5 failed with the test pairs only, then 24 passed with all pairs. The focused gate in 17.13 is green.
+- [ ] R1m to R12m and the reruns listed in 17.11 are killed by the named cases.
+- [ ] RC16 to RC18 are applied, and the ledger is regenerated and checked.
+- [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+### 17.17 The orchestrator's first-hand checks
+
+The 18 operations of this section (RC1 to RC18) were applied to a scratch worktree detached at `25944b39` (the committed S2 head) by `audit\contract_tools.py apply --prefix 17.` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (an empty redirected home; BF-919) and each probe through `run_probe_homeguard.ps1`; a bare `pytest` was not used: it imports `D:\ProbOS\src` and fails for the wrong reason.
+
+| R | Result |
+|---|---|
+| R1 | All 18 operations are found by `contract_tools.py list --prefix 17.`; every SEARCH occurs exactly once on `25944b39` (the code, the test and the tracker pairs alike). The seven files change by +248 -23 lines: `secret_masking.py` 31 and 0, `executor.py` 19 and 0, `finalize.py` 23 and 4, `credential_store.py` 21 and 7, the test file 151 and 10, `PROGRESS.md` one line and `DECISIONS.md` two lines added with one each replaced in place. Blobs after all 18 operations: `executor.py` `68096b19`, `finalize.py` `a8723305`, `credential_store.py` `e6665a0d`, `secret_masking.py` `1e411bb9`, the test file `152843e6`, `PROGRESS.md` `f3bf2427`, `DECISIONS.md` `be163d29`. No added line is non-ASCII. |
+| R2 | **The tests alone** (RC1 to RC4 applied, the code pairs not): **5 failed, 19 passed** in 17.5 s, exactly the prediction of 17.10, each for its stated reason: N16 and N22 fail on `AttributeError: 'SecretMasker' object has no attribute 'priming_pending'`; N18 fails on `AttributeError ... 'begin_priming'` (the test starts the priming first; 17.10 said `TypeError` and is corrected above); N23 fails on its second `get`: the superseded value comes back where the rotated one is expected; N24 fails on `assert 0 == 1`, the priming's worker read no file. |
+| R3 | After all 18 operations the test file alone: **24 passed** (21 + 3 new, N16 and N18 replaced) in 9.9 s. S1's file (97 cases) and S3's file are not changed by this section; S1's file passes in R6 and R8. |
+| R4 | **The three reproductions of review round 1, before and after.** F1 (`probe_b11s2_window.py`, a real `ProbOSRuntime.start()`; the control is call B after the priming ends): before the repair call A, issued while the priming task was pending, returned the CLI-only token unmasked (`token leaked: True`); after it call A returns `<secret:github>` (`token leaked: False`), the CLI ran once, and the token is in no captured log line. F2 (`probe_b11s2_rotation.py`; the control is a `rotate` with no `get` in flight, which returns the new value on both trees): before the repair, with a `get` in flight, `rotate` returned True and the file held the new value, but the next `get` returned the superseded one; after it the next `get` returns the new value. F3 (`probe_b11s2_f3b.py` through the real `_wire_secret_masker`; the control has no `GH_TOKEN` and the CLI answers, its priming reads the file on a worker on both trees): before the repair, with `GH_TOKEN` set, the priming read no file and the first masking pass read it on the loop thread; after it the priming's worker reads the file and the first pass reads none. |
+| R5 | **The cost of the window**, measured on real `ProbOSRuntime.start()` boots (`probe_b11s2_remainder.py`; the CLI delayed by 0.0, 0.1, 0.3 and 1.0 s): the priming starts 0.08 to 0.10 s before `start()` returns (boots took 17.8 to 21.6 s), so a join at the end of `start()` would have blocked it 0.00, 0.02, 0.21 and 0.90 s, and the window is open for the first calls (R4's F1). The real `gh auth token` answered in 68 to 217 ms (one outlier of 1202 ms). The gate waits only for a pending priming and only in `_invoke_once`; startup waits for nothing. |
+| R6 | **The campaigns** (`audit\mutants_gen.py`; `rows_ad1337s2r1a.py` and `rows_ad1337s2r1b.py`). Part A reruns the 38 rows of the section 16 campaign on the candidate with the S2 test file alone (24 cases): 37 rows, `S20m` dropped because S3 changed what its line holds (S3's campaign covers `secret_masker_of`); S17m, X12 and X16 are re-anchored to their new lines and the killers of N16 are renamed: **killed 37, differed 0, survived 0, invalid 0**. Part B is the section 17.11 rows R1m to R12m plus my extra rows Y1 to Y5, with S1's file and `tests/test_credential_store.py` beside the S2 file (134 baseline cases): **killed 17, differed 0, survived 0, invalid 0**; every named killer failed, R11m by N16, S1's CLI case and `test_cache_ttl`. Y1 (`end_priming` without its reset) is killed by N18 and N22; Y2 (the deadline in the past) by N16 and N22; Y3 (`DEFAULT_PRIMING_TIMEOUT_S` 0.0) by N16, N18 and N24; Y4 (the worker called with no masker) by N16, N18 and N24; Y5 (the generation read as -1) by N16, S1's CLI case and `test_cache_ttl`. The home was empty after each run. |
+| R7 | **Static checks.** `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`). `ToolExecutor` 489 lines and 13 methods, `CredentialStore` 386 lines and 15 methods, `SecretMasker` 175 lines and 9 methods (an AST count). `rg -l masked_credential_values src` finds exactly `credential_store.py` and `security/secret_masking.py`. `git diff 25944b39 --stat` lists only the seven files of 17.3 to 17.9. `finalize.py` does not name `masked_credential_values`. |
+| R8 | **The consolidated focused set on the candidate** (the 29 files of the focused gate of 17.13 and the twelve more that read the credential store, the executor or the render seam: 41 files, `-n 0`, default embedding mode, a tree with all 18 operations applied): **2356 passed, 5 skipped** in 797 s (the skips are the POSIX-only cases and BF-657's MagicMock test). The process did not exit after its summary: four `aiosqlite` worker threads left by `tests/test_new_crew_auto_welcome.py` keep it alive, and a probe over that file alone on the main baseline `5d8a5eb4` leaves the same four, so the leak is not this change's; the process was ended after the summary. The run repeats on the committed head, in both embedding modes. |
+| R9 | **S3 on the repaired S2** (a scratch tree detached at `25944b39`, this section's 18 operations applied, then S3's section 17 repair): every SEARCH of S3's 20 repair pairs (its four tracker pairs included) occurs exactly once in that order, and S2's file, S3's file and `tests/test_ad1320_agentic_budget_awareness.py` together: **121 passed**. |
+
+**What the orchestrator changed in the Architect's section 17:** the failure reason of N18 in 17.10 (`AttributeError`, not `TypeError`: R2); nothing in the pairs, the tests or the rows; this table replaces the placeholder of 17.17.
+
+**What these checks do not show.**
+- The route seam the Architect recorded as the follow-up (the Captain's direct-message tier-1 browser route in `reply_pipeline.py` does not pass through the executor, so the priming gate does not hold it: a window of about one to six seconds at boot, on a page that shows the CLI-only token); no test runs it.
+- The 6 s bound is the CLI's 5 s timeout plus one; R5 measured the CLI's answer at 68 to 217 ms (one outlier of 1202 ms), never near the bound.
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
