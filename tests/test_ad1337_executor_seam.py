@@ -12,6 +12,7 @@ import json
 import logging
 import subprocess
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -198,7 +199,7 @@ class _PrimingPolls:
 async def _held(polls: _PrimingPolls, calls: list[asyncio.Task[Any]]) -> bool:
     """Whether ``polls`` saw its count of held answers while every call in ``calls`` was still waiting. A gate that
     lets a call through makes that call finish first, so this returns False instead of hanging."""
-    held = asyncio.ensure_future(polls.held.wait())
+    held = asyncio.create_task(polls.held.wait())
     done, _ = await asyncio.wait({held, *calls}, return_when=asyncio.FIRST_COMPLETED)
     if held not in done:
         held.cancel()
@@ -766,3 +767,52 @@ async def test_priming_loads_the_store_file_off_the_loop_whichever_step_resolves
     assert len(reads) == 1 and reads[0] != threading.get_ident()  # loaded once, in the priming's worker thread
     assert masker.mask_text(f"{VAULT_A} {CLI_TOKEN}").text == f"<secret:vault> {PLACEHOLDER}"
     assert len(reads) == 1  # the first pass on the loop read no file
+
+
+# -- N25: the wait on a real, busy loop ------------------------------------------------------------------------------
+
+
+async def test_on_a_busy_real_loop_waiting_calls_poll_sparingly_and_a_cancelled_one_never_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # asyncio runs a timer due within one clock resolution on its next pass, so a poll at or below it (15.625 ms on
+    # Windows, about 1 ns on Linux) is one check per pass whenever the loop has other ready work. The first assertion
+    # holds that on every host; the poll count below shows it on a coarse clock, and catches a zero sleep anywhere.
+    poll_s = probos.tools.executor._SECRET_PRIMING_POLL_S
+    assert poll_s > max(time.get_clock_info("monotonic").resolution, 0.015625)
+    masker = _masker(tmp_path)
+    masker.begin_priming(secret_masking.DEFAULT_PRIMING_TIMEOUT_S)
+    polls = _PrimingPolls(masker, monkeypatch, count=5)
+    tool = _EchoTool("echo", f"token={TOKEN}")
+    executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+    stop, spins = asyncio.Event(), [0]
+
+    async def _spin() -> None:
+        """Other ready work, as at startup: while this runs the loop never blocks in its selector."""
+        while not stop.is_set():
+            spins[0] += 1
+            await asyncio.sleep(0)
+
+    loop = asyncio.get_running_loop()
+    spinner = asyncio.create_task(_spin())
+    started = loop.time()
+    calls = [asyncio.create_task(executor.invoke("agent-1", "echo", {})) for _ in range(5)]
+    try:
+        assert await _held(polls, calls) is True
+        calls[4].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await calls[4]
+        await asyncio.sleep(0.15)  # the window: four calls wait on the real clock while the loop stays busy
+        masker.end_priming()
+        results = await asyncio.wait_for(asyncio.gather(*calls[:4]), timeout=10.0)
+        elapsed = loop.time() - started
+    finally:
+        masker.end_priming()
+        stop.set()
+        await asyncio.gather(spinner, *calls, return_exceptions=True)
+    assert [result.output for result in results] == [f"token={PLACEHOLDER}"] * 4
+    assert tool.calls == 4  # the cancelled call never reached the registry
+    assert spins[0] >= 100  # premise: the loop had other ready work throughout the window
+    # At most one check per call per 10 ms of the window, plus its first and last: a 25 ms poll makes about one per
+    # 15.6 ms tick on Windows and one per 25 ms on Linux; the unrepaired 10 ms poll made tens of thousands on Windows.
+    assert len(polls.answers) <= len(calls) * (elapsed / 0.010 + 2), (len(polls.answers), elapsed)

@@ -1021,8 +1021,10 @@ def _mask_registry_result(masker: "SecretMasker", ctx: InvocationContext, result
     return masked.result
 
 
-#: AD-1337 S2: how often a registry call waiting for the masker's startup priming checks it again.
-_SECRET_PRIMING_POLL_S = 0.01
+#: AD-1337 S2: how often a registry call waiting for the masker's startup priming checks it again. It must exceed
+#: the loop's clock resolution (15.625 ms on Windows): asyncio runs a timer due within one resolution on its next
+#: pass, so a shorter sleep becomes one check per pass whenever the loop has other ready work (review round 2).
+_SECRET_PRIMING_POLL_S = 0.025
 
 
 async def _await_secret_priming(masker: "SecretMasker | None") -> None:
@@ -1030,8 +1032,8 @@ async def _await_secret_priming(masker: "SecretMasker | None") -> None:
 
     A token only ``gh auth token`` knows reaches the masker only when the priming's ``get`` returns, so a call made
     in that window is held before the registry runs, which covers a result and a raised exception's text alike. It
-    polls, so it holds no worker thread and works on any loop. The masker bounds the wait
-    (``DEFAULT_PRIMING_TIMEOUT_S``) and then lets every call through; without a masker, or with one nobody primes,
+    polls every ``_SECRET_PRIMING_POLL_S``, so it holds no worker thread and works on any loop. The masker bounds the
+    wait (``DEFAULT_PRIMING_TIMEOUT_S``) and then lets every call through; without a masker, or with one nobody primes,
     nothing waits.
     """
     while masker is not None and masker.priming_pending():
