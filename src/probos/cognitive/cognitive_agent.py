@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 from probos import work_item_steps as owned_steps
 from probos.admission.seam import hold_at, shadow_at  # AD-1346 M3c; hold_at: AD-1346 M3d2
 from probos.cycle_trace import (  # AD-1360
-    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, new_cycle_id, unbind_cycle,
+    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, is_cycle_registry, new_cycle_id, unbind_cycle,
 )
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
@@ -1817,10 +1817,11 @@ class CognitiveAgent(BaseAgent):
     def _cycle_registry(self) -> CycleIdRegistry | None:
         """AD-1360 (#1828): the runtime's cycle-id registry (Ship's Computer service), reached as the journal is.
 
-        Only a ``CycleIdRegistry`` counts: a test runtime's MagicMock attribute would otherwise issue a MagicMock id.
+        Only a real ``CycleIdRegistry`` counts (``is_cycle_registry``): a test runtime's MagicMock attribute, spec'd or
+        not, would otherwise issue a MagicMock id.
         """
         registry = getattr(getattr(self, "_runtime", None), "cycle_registry", None)
-        return registry if isinstance(registry, CycleIdRegistry) else None
+        return registry if is_cycle_registry(registry) else None
 
     def _issue_cycle_id(self) -> str:
         """AD-1360 (#1828): a new AD-492 id, recorded in the runtime's registry when there is one."""

@@ -14,12 +14,13 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, create_autospec, patch
 
 import pytest
 
 from probos.agents.quartermaster import QuartermasterAgent
 from probos.api_models import CreatePostRequest, CreateThreadRequest, SetVoiceProfileRequest
+from probos.cognitive import turn_promotion
 from probos.cognitive.cognitive_agent import CognitiveAgent
 from probos.cognitive.episodic import EpisodicMemory
 from probos.cognitive.feedback import FeedbackEngine
@@ -31,6 +32,7 @@ from probos.cycle_trace import (
     bind_cycle,
     current_cycle_id,
     entry_scope,
+    is_cycle_registry,
     issue_entry_id,
     unbind_cycle,
 )
@@ -110,6 +112,19 @@ def _nl_host(memory: EpisodicMemory, registry: CycleIdRegistry, adapter: Any) ->
     )
 
 
+class _Subclass(CycleIdRegistry):
+    """A registry of a subclass is a registry."""
+
+
+def _fakes() -> list[Any]:
+    """What is not a registry: nothing, a namespace, a plain mock, and the mocks that name the registry class as their
+    spec (they pass ``isinstance``, and their ``issue()`` returns another mock)."""
+    return [
+        None, SimpleNamespace(), MagicMock(), MagicMock(spec=CycleIdRegistry), Mock(spec=CycleIdRegistry),
+        create_autospec(CycleIdRegistry, instance=True),
+    ]
+
+
 # -- E1: the helpers ----------------------------------------------------------------------------------------------------
 
 
@@ -117,7 +132,7 @@ def test_an_entry_point_issues_its_own_id_unless_a_cycle_is_bound() -> None:
     registry = CycleIdRegistry()
     issued = issue_entry_id(registry, kind="hxi_post")
     assert registry.kind_of(issued) == "hxi_post" and current_cycle_id() == ""
-    for stray in (None, MagicMock(), SimpleNamespace()):
+    for stray in _fakes():
         assert issue_entry_id(stray, kind="hxi_post") == ""
     for blank in ("", "   ", None):
         with pytest.raises(ValueError):
@@ -126,6 +141,7 @@ def test_an_entry_point_issues_its_own_id_unless_a_cycle_is_bound() -> None:
     try:
         held = len(registry)
         assert issue_entry_id(registry, kind="hxi_post") == "0123456789ab" and len(registry) == held
+        assert {issue_entry_id(fake, kind="hxi_post") for fake in _fakes()} == {"0123456789ab"}  # a bound id needs none
         with entry_scope(registry, kind="nl_request") as bound:
             assert bound == current_cycle_id() == "0123456789ab"
         assert current_cycle_id() == "0123456789ab"
@@ -136,8 +152,9 @@ def test_an_entry_point_issues_its_own_id_unless_a_cycle_is_bound() -> None:
     with pytest.raises(RuntimeError, match="ad1360"):
         with entry_scope(registry, kind="nl_request"):
             raise RuntimeError("ad1360: the block failed")
-    with entry_scope(MagicMock(), kind="nl_request") as bound:
-        assert bound == current_cycle_id() == ""
+    for fake in _fakes():
+        with entry_scope(fake, kind="nl_request") as bound:
+            assert bound == current_cycle_id() == ""
     assert current_cycle_id() == ""
 
 
@@ -351,3 +368,78 @@ def test_startup_hands_the_feedback_engine_the_runtimes_registry() -> None:
     ]
     assert len(calls) == 1
     assert {kw.arg: ast.unparse(kw.value) for kw in calls[0].keywords}.get("cycle_registry") == "cycle_registry"
+
+
+# -- E14 to E16: a mock that names the registry class as its spec is not a registry --------------------------------------
+
+
+def test_only_a_real_registry_is_a_cycle_registry() -> None:
+    assert is_cycle_registry(CycleIdRegistry()) and is_cycle_registry(_Subclass())
+    assert not is_cycle_registry(CycleIdRegistry)  # the class is not an instance of itself
+    for fake in _fakes():
+        assert not is_cycle_registry(fake)
+    assert {issue_entry_id(fake, kind="hxi_post") for fake in _fakes()} == {""}
+    registry = _Subclass()
+    assert registry.kind_of(issue_entry_id(registry, kind="hxi_post")) == "hxi_post"
+
+
+def test_a_mock_runtime_registry_is_no_registry_for_the_agent_or_a_promoted_work_item() -> None:
+    for fake in _fakes():
+        agent = _Agent()
+        agent._runtime = SimpleNamespace(cycle_registry=fake)
+        assert agent._cycle_registry is None and len(agent._issue_cycle_id()) == 12
+        turn_promotion._register_promoted_work_item(SimpleNamespace(cycle_registry=fake), "ad1360workitem")
+    spec = create_autospec(CycleIdRegistry, instance=True)
+    turn_promotion._register_promoted_work_item(SimpleNamespace(cycle_registry=spec), "ad1360workitem")
+    spec.register.assert_not_called()
+    for real in (CycleIdRegistry(), _Subclass()):
+        agent = _Agent()
+        agent._runtime = SimpleNamespace(cycle_registry=real)
+        assert agent._cycle_registry is real
+        turn_promotion._register_promoted_work_item(SimpleNamespace(cycle_registry=real), "ad1360workitem")
+        assert real.kind_of("ad1360workitem") == "work_item"
+
+
+async def test_a_mock_registry_on_the_runtime_costs_no_episode_and_certifies_no_id(
+    memory: EpisodicMemory, registry: CycleIdRegistry, tmp_path: Path,
+) -> None:
+    from probos.routers.agents import agent_chat
+    from probos.runtime import ProbOSRuntime
+
+    fake = create_autospec(CycleIdRegistry, instance=True)  # ``registry`` stays the one the memory judges ids by
+    engine = FeedbackEngine(
+        trust_network=MagicMock(), hebbian_router=MagicMock(), episodic_memory=memory, cycle_registry=fake,
+    )
+    assert (await engine.apply_execution_feedback(TaskDAG(nodes=[]), True, "Survey the coolant loop")).episode_stored
+    writer = VerificationEpisodeWriter(runtime=SimpleNamespace(episodic_memory=memory, cycle_registry=fake))
+    assert await writer.write(GroundTruthResult(
+        verified=False, score=0.0, agent_id="ad1360-agent", claimed_summary="Surveyed the coolant loop on deck four.",
+    ))
+    rt = _route_runtime(tmp_path, modes=False)
+    rt.registry.get.return_value.sovereign_id = "ad1360-dm-agent"
+    rt.episodic_memory = memory
+    rt.cycle_registry = fake
+    rt.intent_bus.send = AsyncMock(return_value=IntentResult(
+        intent_id="ad1360-intent", agent_id="ad1360-dm-agent", success=True, result=_REPLY,
+    ))
+    with patch("probos.routers.agents.is_crew_agent", return_value=True):
+        await agent_chat("test-agent", _chat_request(_QUESTION), rt)
+    host = SimpleNamespace(episodic_memory=memory, identity_registry=None)
+
+    async def _run(**_kwargs: Any) -> str:
+        await ProbOSRuntime._store_mcp_invoke_episode(
+            host, server_url="mcp.ad1360", tool="survey", tier="open", success=True, agent_id="ad1360-survey",
+        )
+        return "Acknowledged; surveying the coolant loop."
+
+    agent = _Agent()
+    agent._runtime = SimpleNamespace(cycle_registry=fake, chat_thread_store=None, work_item_store=None)
+    agent._run_agentic_dispatch = _run  # type: ignore[method-assign]
+    result = await agent._handle_work_item_dispatch(IntentMessage(
+        intent="work_item_dispatched", params={"work_item_id": "ad1360fakeitem", "title": "Survey"},
+        target_agent_id=agent.id,
+    ))
+    assert result.success and current_cycle_id() == ""
+    needles = ("Survey the coolant loop", "Surveyed the coolant loop", "[1:1 with", "[mcp_invoke] survey on mcp.ad1360")
+    assert [_one(memory, needle) for needle in needles] == [("", VERDICT_EMPTY)] * 4
+    assert fake.method_calls == [] and not registry.resolves("ad1360fakeitem")

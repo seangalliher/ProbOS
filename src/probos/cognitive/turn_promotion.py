@@ -79,7 +79,7 @@ from probos.cognitive.promoted_report_delivery import (
     bound_promoted_report_body,
     promoted_report_metadata,
 )
-from probos.cycle_trace import CycleIdRegistry  # AD-1360 (#1828)
+from probos.cycle_trace import is_cycle_registry  # AD-1360 (#1828)
 from probos.tools.executor import recording_identity, sample_recording_identity
 
 logger = logging.getLogger(__name__)
@@ -998,10 +998,10 @@ def _register_promoted_work_item(runtime: Any, work_item_id: object) -> None:
 
     BF-740 pairs the run's outcome episode by ``correlation_id`` = the work item, not a cycle id; registered here, when
     the item is made and again on each resume (a restart forgets every id), it resolves when that episode is stored.
-    Nothing is registered without a ``CycleIdRegistry`` on the runtime or for a blank id.
+    Nothing is registered without a real ``CycleIdRegistry`` on the runtime (not a spec'd mock) or for a blank id.
     """
     registry = getattr(runtime, "cycle_registry", None)
-    if isinstance(registry, CycleIdRegistry) and type(work_item_id) is str and work_item_id.strip():
+    if is_cycle_registry(registry) and type(work_item_id) is str and work_item_id.strip():
         registry.register(work_item_id, kind="work_item")
 
 

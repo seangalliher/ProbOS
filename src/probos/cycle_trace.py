@@ -14,7 +14,8 @@ episode; nothing checked that an episode's id came from a cycle. This module hol
   AD-1360 S2a: ``cycle_scope`` binds a cycle's id again for work done for it after it has ended (the DM reply's steps,
   a proactive think's posts), and ``result_cycle_id`` reads that id off the cycle's ``IntentResult``.
   AD-1360 S2b: ``issue_entry_id`` and ``entry_scope`` give an entry point outside any cycle (an HXI request, a sweep,
-  a verification) an id the registry issued, so the episodes it stores record their own chain.
+  a verification) an id the registry issued, so the episodes it stores record their own chain. ``is_cycle_registry``
+  says whether an object is a real registry (a mock is not, spec'd or not).
 """
 
 from __future__ import annotations
@@ -100,19 +101,29 @@ def result_cycle_id(result: object) -> str:
     return chain_id if type(chain_id) is str and chain_id.strip() else ""
 
 
+def is_cycle_registry(obj: object) -> bool:
+    """AD-1360 S2b: True for a ``CycleIdRegistry`` or an instance of a subclass, False for anything else.
+
+    Not ``isinstance``: a mock made with ``spec=CycleIdRegistry`` or ``create_autospec`` passes it, because its
+    ``__class__`` reads as the spec, and its ``issue()`` returns another mock. The type is what a real registry has.
+    """
+    return issubclass(type(obj), CycleIdRegistry)
+
+
 def issue_entry_id(registry: object, *, kind: str) -> str:
     """AD-1360 S2b: the AD-492 id an entry point's work records, for an entry point no cognitive cycle runs.
 
     The bound id when one is bound (inside a cycle, or a ``cycle_scope``): the work joins the chain that reached it.
     Otherwise a new id ``registry`` issues and records under ``kind``, the entry point's name ("hxi_post"). Without a
-    ``CycleIdRegistry`` (none, or a test runtime's MagicMock attribute), "": an id nothing issued would only turn the
-    episode's verdict from empty into unresolved or unchecked. Raises ValueError for a blank or non-str ``kind``.
+    real ``CycleIdRegistry`` (``is_cycle_registry``: not None, and not a test runtime's MagicMock attribute, spec'd or
+    not), "": an id nothing issued would only turn the episode's verdict from empty into unresolved or unchecked.
+    Raises ValueError for a blank or non-str ``kind``.
     """
     _require_kind(kind)
     bound = CURRENT_CYCLE_ID.get()
     if bound:
         return bound
-    return registry.issue(kind=kind) if isinstance(registry, CycleIdRegistry) else ""
+    return registry.issue(kind=kind) if is_cycle_registry(registry) else ""
 
 
 @contextmanager
