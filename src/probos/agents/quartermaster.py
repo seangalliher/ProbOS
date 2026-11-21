@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Any
 
+from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
 from probos.events import EventType
 from probos.substrate.agent import BaseAgent
 from probos.types import (
@@ -208,6 +209,10 @@ class QuartermasterAgent(BaseAgent):
                             f"Reconciled board: scanned={counts['scanned']} "
                             f"redispatched={counts['redispatched']} "
                             f"cleared={counts['cleared']} skipped={counts['skipped']}"
+                        ),
+                        # AD-1360 S2b (#1828): the sweep's own id; no cognitive cycle runs it.
+                        correlation_id=issue_entry_id(
+                            getattr(self._runtime, "cycle_registry", None), kind="quartermaster_sweep",
                         ),
                     )
                 )
@@ -477,6 +482,10 @@ class QuartermasterAgent(BaseAgent):
                             f"Reactive reclaim for {agent_id}: scanned={counts['scanned']} "
                             f"redispatched={counts['redispatched']} "
                             f"cleared={counts['cleared']} skipped={counts['skipped']}"
+                        ),
+                        # AD-1360 S2b (#1828): the reclaim's own id; no cognitive cycle runs it.
+                        correlation_id=issue_entry_id(
+                            getattr(self._runtime, "cycle_registry", None), kind="quartermaster_reclaim",
                         ),
                     )
                 )

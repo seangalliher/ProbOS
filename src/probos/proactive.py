@@ -1539,6 +1539,7 @@ class ProactiveCognitiveLoop:
                         }],
                         reflection=f"{callsign or agent.agent_type} reviewed context but had nothing to report.",
                         source=MemorySource.DIRECT,
+                        correlation_id=_cycle_id,  # AD-1360 S2b (#1828): the think's cycle (should_store rejects this shape)
                         anchors=AnchorFrame(
                             channel="duty_report",
                             duty_cycle_id=duty.duty_id if duty else "",
@@ -1819,6 +1820,7 @@ class ProactiveCognitiveLoop:
                     }],
                     reflection=f"{callsign or agent.agent_type} observed: {thought_summary}",
                     source=MemorySource.DIRECT,
+                    correlation_id=_cycle_id,  # AD-1360 S2b (#1828): the think's cycle (branch unreachable, DECISIONS S2b)
                     anchors=AnchorFrame(
                         channel="duty_report",
                         duty_cycle_id=duty.duty_id if duty else "",

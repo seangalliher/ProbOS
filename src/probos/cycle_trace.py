@@ -13,6 +13,8 @@ episode; nothing checked that an episode's id came from a cycle. This module hol
   returns the token ``unbind_cycle`` resets in a ``finally``, as ``admission/carrier.py`` does for the work ticket.
   AD-1360 S2a: ``cycle_scope`` binds a cycle's id again for work done for it after it has ended (the DM reply's steps,
   a proactive think's posts), and ``result_cycle_id`` reads that id off the cycle's ``IntentResult``.
+  AD-1360 S2b: ``issue_entry_id`` and ``entry_scope`` give an entry point outside any cycle (an HXI request, a sweep,
+  a verification) an id the registry issued, so the episodes it stores record their own chain.
 """
 
 from __future__ import annotations
@@ -96,6 +98,29 @@ def result_cycle_id(result: object) -> str:
     metadata = getattr(result, "metadata", None)
     chain_id = metadata.get("correlation_id") if type(metadata) is dict else None
     return chain_id if type(chain_id) is str and chain_id.strip() else ""
+
+
+def issue_entry_id(registry: object, *, kind: str) -> str:
+    """AD-1360 S2b: the AD-492 id an entry point's work records, for an entry point no cognitive cycle runs.
+
+    The bound id when one is bound (inside a cycle, or a ``cycle_scope``): the work joins the chain that reached it.
+    Otherwise a new id ``registry`` issues and records under ``kind``, the entry point's name ("hxi_post"). Without a
+    ``CycleIdRegistry`` (none, or a test runtime's MagicMock attribute), "": an id nothing issued would only turn the
+    episode's verdict from empty into unresolved or unchecked. Raises ValueError for a blank or non-str ``kind``.
+    """
+    _require_kind(kind)
+    bound = CURRENT_CYCLE_ID.get()
+    if bound:
+        return bound
+    return registry.issue(kind=kind) if isinstance(registry, CycleIdRegistry) else ""
+
+
+@contextmanager
+def entry_scope(registry: object, *, kind: str) -> Iterator[str]:
+    """Bind ``issue_entry_id(registry, kind=kind)`` for the block, for an entry point whose producers read
+    ``current_cycle_id()`` (the Ward Room's); yields the id ("" when none is bound). The outer id is back on exit."""
+    with cycle_scope(issue_entry_id(registry, kind=kind)) as bound:
+        yield bound
 
 
 class CycleIdResolver(Protocol):
