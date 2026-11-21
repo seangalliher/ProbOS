@@ -147,6 +147,7 @@ from probos.types import (
 
 from probos.agent_onboarding import AgentOnboardingService
 from probos.crew_utils import is_crew_agent
+from probos.cycle_trace import CycleIdRegistry  # AD-1360 (#1828)
 from probos.dream_adapter import DreamAdapter
 from probos.self_mod_manager import SelfModManager
 from probos.ward_room_router import WardRoomRouter
@@ -534,6 +535,7 @@ class ProbOSRuntime:
     crew_session_delivery_service: "CrewSessionDeliveryService | None"
     crew_session_delivery_listener: Callable[..., Any] | None
     cognitive_journal: CognitiveJournal | None
+    cycle_registry: CycleIdRegistry  # AD-1360 (#1828): the AD-492 ids this process issued
     skill_registry: SkillRegistry | None
     skill_service: AgentSkillService | None
     cognitive_skill_catalog: CognitiveSkillCatalog | None
@@ -1174,6 +1176,11 @@ class ProbOSRuntime:
 
         # --- Cognitive Journal (AD-431) ---
         self.cognitive_journal: CognitiveJournal | None = None
+
+        # --- Cycle-id registry (AD-1360, #1828) ---
+        # The AD-492 ids this process issued, which EpisodicMemory.store() checks an episode's correlation id
+        # against. In memory and bounded; its TTL and size are CycleIdRegistry's unmeasured defaults.
+        self.cycle_registry: CycleIdRegistry = CycleIdRegistry()
 
         # --- Knowledge Edge Store (AD-687) ---
         self.knowledge_edges: Any = None  # SQLiteKnowledgeEdgeStore | None — Any to avoid circular import
@@ -3056,6 +3063,7 @@ class ProbOSRuntime:
             create_pool_fn=self.create_pool,
             emit_event_fn=self._emit_event,
             ontology=self.ontology,  # BF-118
+            cycle_registry=self.cycle_registry,  # AD-1360 (#1828)
         )
         self.self_mod_pipeline = cog.self_mod_pipeline
         self.behavioral_monitor = cog.behavioral_monitor
