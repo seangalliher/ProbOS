@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from probos import work_item_steps as owned_steps
 from probos.admission.seam import hold_at, shadow_at  # AD-1346 M3c; hold_at: AD-1346 M3d2
-from probos.cycle_trace import CycleIdRegistry, bind_cycle, current_cycle_id, new_cycle_id, unbind_cycle  # AD-1360
+from probos.cycle_trace import (  # AD-1360
+    CycleIdRegistry, bind_cycle, current_cycle_id, cycle_scope, new_cycle_id, unbind_cycle,
+)
 from probos.events import EventType, SensoriumBudgetExceededEvent
 from probos.cognitive.agentic_disposition import AGENTIC_DISPOSITION  # AD-1180
 from probos.cognitive.concurrency_manager import ConcurrencyManager
@@ -2345,12 +2347,19 @@ class CognitiveAgent(BaseAgent):
         # AD-1328 S2c (#1530): when this run began. A command escalation settled since then
         # still parks the item below (BF-878 resolves it); one settled before never does.
         _dispatch_started = time.time()
-        reply_text = await self._run_agentic_dispatch(
-            work_item_id=work_item_id,
-            task_text=task_text,
-            runtime=runtime,
-            failures_sink=_dispatch_failures,
-        )
+        # AD-1360 S2b (#1828): the agentic run is no cognitive cycle; the work item's id is its chain, adopted into the
+        # registry (as a promoted run's is, S2a D8) and bound while the run stores episodes (an MCP invoke's).
+        _work_registry = self._cycle_registry
+        _work_chain = work_item_id if type(work_item_id) is str and work_item_id.strip() else ""
+        if _work_registry is not None and _work_chain:
+            _work_registry.register(_work_chain, kind="work_item")
+        with cycle_scope(_work_chain if _work_registry is not None else ""):
+            reply_text = await self._run_agentic_dispatch(
+                work_item_id=work_item_id,
+                task_text=task_text,
+                runtime=runtime,
+                failures_sink=_dispatch_failures,
+            )
         _reply = None
         if reply_text is None:
             result = await self.handle_intent(dm)

@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from probos.config import format_trust
+from probos.cycle_trace import current_cycle_id  # AD-1360 S2b (#1828)
 from probos.events import EventType
 from probos.types import AnchorFrame, Episode, MemorySource
 
@@ -415,6 +416,7 @@ class DreamAdapter:
             shapley_values=shapley_values,
             trust_deltas=trust_deltas,
             source=MemorySource.DIRECT,
+            correlation_id=current_cycle_id(),  # AD-1360 S2b (#1828): the request's id its caller bound (entry_scope)
             anchors=AnchorFrame(
                 channel="dag",
                 trigger_type="dag_execution",

@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 from threading import Lock
 from typing import Any, AsyncIterator
 
+from probos.cycle_trace import issue_entry_id  # AD-1360 S2b (#1828)
 from probos.perception.working_memory import VisionObservation
 from probos.types import (
     AnchorFrame,
@@ -1184,6 +1185,8 @@ class VisionConsumer:
                 outcomes=[outcome],
                 reflection=f"Vision observation: {description}",
                 source="direct",
+                # AD-1360 S2b (#1828): the described frame's own id; no cognitive cycle runs the consumer.
+                correlation_id=issue_entry_id(getattr(self._runtime, "cycle_registry", None), kind="vision_observation"),
                 # BF-311: tag with observer agent_ids so per-agent recall can
                 # surface these episodes. Falls back to empty list (legacy
                 # behavior) if caller doesn't supply one.

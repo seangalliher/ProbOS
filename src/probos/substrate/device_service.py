@@ -18,7 +18,8 @@ governance bypass: a one-shot non-consensus path cannot reach the sensitive
 intents, which still require the deferred consensus gate.
 
 Layer discipline: substrate. Imports ONLY ``probos.substrate.device_node`` +
-``probos.types`` + stdlib. NO consensus/cognitive/mesh/federation/runtime
+``probos.types`` + ``probos.cycle_trace`` (AD-1360, standard library only) +
+stdlib. NO consensus/cognitive/mesh/federation/runtime
 imports (trust is ``Any``; episodic flows through a ``Callable`` provider).
 """
 
@@ -28,6 +29,7 @@ import logging
 import time
 from typing import Any, Callable
 
+from probos.cycle_trace import current_cycle_id  # AD-1360 S2b (#1828)
 from probos.substrate.device_node import DeviceNodeAdapter, DeviceNodeRegistry
 from probos.types import AnchorFrame, Episode, IntentMessage, IntentResult
 
@@ -151,6 +153,7 @@ class DeviceNodeService:
                 ],
                 dag_summary={},
                 anchors=AnchorFrame(channel="device", trigger_type=intent.intent),
+                correlation_id=current_cycle_id(),  # AD-1360 S2b (#1828): the actuating cycle's; "" outside one
             )
             await episodic.store(episode)
         except Exception:
