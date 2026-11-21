@@ -147,6 +147,16 @@ def _present(patterns: tuple[tuple[str, str], ...], text: str) -> tuple[tuple[st
     return tuple(item for item in patterns if item[0] in text)
 
 
+def _placeholder(label: str) -> str:
+    """The text that replaces an occurrence: ``_substitute`` writes it and D9 checks it, so the two cannot differ."""
+    return f"<secret:{label}>"
+
+
+class UnsafePlaceholderError(ValueError):
+    """AD-1337 D9: ``<secret:unnamed>`` holds a form of a known value, so no placeholder is safe and every pass
+    fails closed (D7). Raised without arguments: its message holds no value and no form."""
+
+
 def _substitute(text: str, patterns: tuple[tuple[str, str], ...], names: set[str]) -> str:
     """``text`` with every occurrence of every pattern replaced; ``text`` itself when none occurs."""
     present = _present(patterns, text)
@@ -174,7 +184,7 @@ def _substitute(text: str, patterns: tuple[tuple[str, str], ...], names: set[str
             end = max(end, other_end)
             index += 1
         pieces.append(text[cursor:start])
-        pieces.append(f"<secret:{label}>")
+        pieces.append(_placeholder(label))
         cursor = end
     pieces.append(text[cursor:])
     return "".join(pieces)
@@ -355,7 +365,12 @@ class SecretMasker:
         return tuple(sorted(chosen.items()))
 
     def _patterns(self) -> tuple[tuple[str, str], ...]:
-        """``(form, label)``, longest first; rebuilt only when the values differ from the last pass's."""
+        """``(form, label)``, longest first; rebuilt only when the values differ from the last pass's.
+
+        D9: a label whose placeholder holds a form is shown as ``UNNAMED_LABEL``; if ``<secret:unnamed>`` holds one
+        too, no placeholder is safe: ``UnsafePlaceholderError`` is raised and nothing is cached, so every pass
+        fails closed until the values change.
+        """
         values = self._values()
         cached = self._table
         if cached is not None and cached[0] == values:
@@ -365,9 +380,11 @@ class SecretMasker:
             for form in secret_forms(value, self._floor):
                 forms[form] = min(label, forms.get(form, label))  # D3: the smaller label wins a shared form
         ordered = tuple(sorted(forms.items(), key=lambda item: (-len(item[0]), item[0])))
-        # D9: a label that holds a form would put a value in the placeholder and in ``names``.
-        unsafe = {label for label in set(forms.values()) if _present(ordered, label)}
+        # D9: a placeholder that holds a form would put a value in the output, and its label one in ``names``.
+        unsafe = {label for label in set(forms.values()) if _present(ordered, _placeholder(label))}
         patterns = tuple((form, UNNAMED_LABEL if label in unsafe else label) for form, label in ordered)
+        if unsafe and _present(ordered, _placeholder(UNNAMED_LABEL)):
+            raise UnsafePlaceholderError  # D9: no placeholder is safe; the pass's handler withholds (D7)
         self._table = (values, patterns)
         return patterns
 

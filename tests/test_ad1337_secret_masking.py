@@ -13,7 +13,8 @@ builds, and real ToolResult values:
   found only across the join of a result's strings;
 - N38-N43 (review round 1): an unreadable store withholds the output until its file is removed or repaired; a
   first load in another thread cannot undo a rotation; the walk's node budget; a shared form's label; a label
-  that holds a value; a store file that is not an object of strings loads as AD-456 loaded it.
+  that holds a value; a store file that is not an object of strings loads as AD-456 loaded it;
+- N44 (review round 2): while the fallback placeholder would hold a known value, every pass is withheld.
 Does not prove: any seam (AD-1337 S2, S3), the masking event (S2), or the cost of a pass (the orchestrator's probe).
 No test reads the process environment's values: every environment is a dict the test builds.
 """
@@ -719,10 +720,14 @@ def test_a_label_that_holds_a_value_is_shown_as_unnamed(tmp_path: Path) -> None:
     registry = SecretRegistry()
     registry.register("tok-ABCD1234efgh", "tok-ABCD1234efgh")
     registry.register("vault:tok-WXYZ5678ijkl", "tok-WXYZ5678ijkl")
+    registry.register("site", "secret:site")  # round 2: the placeholder holds the value, the label does not
     masker = _masker(_store(tmp_path, {"github": TOKEN}), registry=registry)
     out = masker.mask_text(f"x tok-ABCD1234efgh y tok-WXYZ5678ijkl z {TOKEN}")
     assert out.text == "x <secret:unnamed> y <secret:unnamed> z <secret:github>"
     assert out.names == frozenset({"unnamed", "github"}) and masker.mask_text(out.text).text is out.text
+    site = masker.mask_text("v secret:site w")
+    assert site == MaskOutcome("v <secret:unnamed> w", frozenset({"unnamed"}), False)
+    assert masker.mask_text(site.text).text is site.text
 
 
 @pytest.mark.parametrize(
@@ -753,3 +758,46 @@ def test_a_store_file_that_is_not_an_object_of_strings_loads_as_ad456_loaded_it(
     assert _masker(store).mask_text(f"t {TOKEN}") == MaskOutcome(text, names, False)  # a string entry only
     assert store.get("github", requester="test") == got  # AD-456: an array is an empty store; the rest is skipped
     assert not caplog.records  # no AD-456 warning, and no masking failure
+
+
+# -- N44: review round 2 (a fallback placeholder that holds a value) ------------------------------------------------
+
+
+@pytest.mark.parametrize("unnamed_by", ["label-holds-a-value", "not-a-plain-label"])
+@pytest.mark.parametrize(
+    ("floor", "second"),
+    [(DEFAULT_FLOOR, "secret:unnamed"), (5, "unnamed")],
+    ids=["floor-8", "floor-5"],
+)
+def test_a_fallback_placeholder_that_holds_a_value_withholds_every_pass_until_the_values_change(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, floor: int, second: str, unnamed_by: str,
+) -> None:
+    first = "tok-ABCD1234efgh"
+    assert second in "<secret:unnamed>" and len(second) >= floor  # premise: the fallback placeholder holds a form
+    control = SecretRegistry()
+    control.register("vault", second)
+    plain = _masker(_store(tmp_path / "control"), registry=control, floor=floor)
+    shown = plain.mask_text(f"x {second} y")  # no label falls back to unnamed, so nothing is withheld
+    assert shown == MaskOutcome("x <secret:vault> y", frozenset({"vault"}), False)
+    assert plain.mask_text(shown.text).text is shown.text
+    registry = SecretRegistry()
+    registry.register(first if unnamed_by == "label-holds-a-value" else "bad name!", first)
+    handle = registry.register("vault", second)
+    masker = _masker(_store(tmp_path / "fallback"), registry=registry, floor=floor)
+    caplog.set_level(logging.DEBUG)
+    withheld = MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    assert masker.mask_text(f"x {first} y") == withheld
+    assert masker.mask_text("no known value here") == withheld  # the table fails, so every pass does
+    result = ToolResult(output={"k": f"x {first} y"}, error=f"e {second}", duration_ms=3.0, metadata={"op": 1})
+    masked = masker.mask_result(result)
+    assert type(masked.result) is ToolResult and masked.result.output is None and masked.failed is True
+    assert masked.result.error == MASKING_FAILED_TEXT and masked.names == frozenset()
+    assert masked.result.duration_ms == 3.0 and masked.result.metadata == {"op": 1}
+    errors = [record for record in caplog.records if record.name == secret_masking.logger.name]
+    assert len(errors) == 3 and all(r.levelno == logging.ERROR and r.exc_info is None for r in errors)
+    assert all("UnsafePlaceholderError" in r.getMessage() for r in errors)
+    assert not any(first in r.getMessage() or second in r.getMessage() for r in errors)
+    handle.release()  # the values change, so the table is rebuilt and the fallback is safe again
+    logged = len(caplog.records)
+    assert masker.mask_text(f"x {first} y") == MaskOutcome("x <secret:unnamed> y", frozenset({"unnamed"}), False)
+    assert all(record.levelno < logging.ERROR for record in caplog.records[logged:])
