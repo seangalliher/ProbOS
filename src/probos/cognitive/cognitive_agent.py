@@ -338,6 +338,24 @@ def _build_result_metadata(
     return metadata
 
 
+def _carry_cycle_id(result: IntentResult, cycle_id: str) -> None:
+    """AD-1360 (#1828): put the cycle's AD-492 id on a result that has none.
+
+    ``_build_result_metadata`` writes the id on the lifecycle's normal return. A result built by hand (the compound
+    replay's early return, a recreation turn that fails) never reaches it, and a caller that stores an episode after
+    the cycle reads the id from the result. The id goes before AD-1357's manifest, which stays last.
+    """
+    metadata = getattr(result, "metadata", None)
+    if type(metadata) is not dict or "correlation_id" in metadata:
+        return
+    manifest_key = context_manifest.CONTEXT_MANIFEST_METADATA_KEY
+    carried = {key: value for key, value in metadata.items() if key != manifest_key}
+    carried["correlation_id"] = cycle_id[:64]
+    if manifest_key in metadata:
+        carried[manifest_key] = metadata[manifest_key]
+    result.metadata = carried
+
+
 def _collect_owned_steps_tool_views(
     observation: dict[str, Any],
     outcome: Any,
@@ -7613,12 +7631,16 @@ class CognitiveAgent(BaseAgent):
         """AD-1360 (#1828): ``_run_cognitive_lifecycle`` with a newly issued AD-492 cycle id bound (``cycle_trace``).
 
         ``perceive`` takes the bound id, so the journal, the events, the episode and ``IntentResult.metadata`` carry one
-        id the runtime's registry issued. Every cycle binds its own: an inline cycle of another agent binds its own and
-        the reset gives this one's back. The reset is in the ``finally``, so it runs on return, raise and cancellation.
+        id the runtime's registry issued; a result the lifecycle built by hand (the compound replay's early return) gets
+        it from ``_carry_cycle_id``. Every cycle binds its own: an inline cycle of another agent binds its own and the
+        reset gives this one's back. The reset is in the ``finally``, so it runs on return, raise and cancellation.
         """
-        token = bind_cycle(self._issue_cycle_id())
+        cycle_id = self._issue_cycle_id()
+        token = bind_cycle(cycle_id)
         try:
-            return await self._run_cognitive_lifecycle(intent, cognitive_skill_instructions, skill_entries)
+            result = await self._run_cognitive_lifecycle(intent, cognitive_skill_instructions, skill_entries)
+            _carry_cycle_id(result, cycle_id)
+            return result
         finally:
             unbind_cycle(token)
 

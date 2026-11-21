@@ -13,18 +13,21 @@ import contextlib
 import contextvars
 import dataclasses
 import functools
+import itertools
 import math
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from probos.cognitive.cognitive_agent import CognitiveAgent, _build_result_metadata
+from probos.cognitive import context_manifest
+from probos.cognitive.cognitive_agent import CognitiveAgent, _build_result_metadata, _carry_cycle_id
 from probos.cognitive.episodic import EpisodicMemory, compute_episode_hash
 from probos.cognitive.episodic_mock import MockEpisodicMemory
 from probos.cognitive.memory_security import (
@@ -52,6 +55,14 @@ from probos.startup.cognitive_services import bind_episodic_memory_gates, init_c
 from probos.types import Episode, EpisodeStoreOutcome, IntentMessage, IntentResult
 from tests import test_bf938_ad607_binding as binding
 from tests.test_bf239_ward_room_engagement_tracking import _make_agent, _make_ward_room_intent
+from tests.test_multi_agent_replay_dispatch import (
+    _make_cognitive_agent,
+    _make_compound_procedure,
+    _make_intent,
+    _make_mock_agent_entry,
+    _make_mock_runtime,
+    _make_store_mock,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _T0 = 1_700_000_000.0  # long ago, so BF-039's last-hour rate limit and similarity window never see these episodes
@@ -592,3 +603,110 @@ async def test_with_the_rule_armed_recall_keeps_the_cycles_episode_and_drops_a_f
     assert "ad1360-forged" in off and len(off) == 2
     assert [episode.correlation_id for episode in armed] == [result.metadata["correlation_id"]]
     assert recorder.gaps() == {"ad1360-forged": "direct_source_unresolved_correlation_id"}
+
+
+# -- N35 to N37: review round 1 (a result built by hand carries the id; two writers cannot record out of time order) ----
+
+
+def test_a_result_built_by_hand_gets_the_cycle_id_and_keeps_the_manifest_last() -> None:
+    manifest_key = context_manifest.CONTEXT_MANIFEST_METADATA_KEY
+    bare = IntentResult(intent_id="ad1360-i", agent_id="ad1360-a", success=True)
+    _carry_cycle_id(bare, "abcdefabcdef")
+    assert bare.metadata == {"correlation_id": "abcdefabcdef"}
+    with_manifest = IntentResult(
+        intent_id="ad1360-i", agent_id="ad1360-a", success=True,
+        metadata={"tool_trace_ref": "trace", manifest_key: {"version": 1}},
+    )
+    _carry_cycle_id(with_manifest, "x" * 100)
+    assert list(with_manifest.metadata) == ["tool_trace_ref", "correlation_id", manifest_key]
+    assert with_manifest.metadata["correlation_id"] == "x" * 64
+    carried = IntentResult(
+        intent_id="ad1360-i", agent_id="ad1360-a", success=True, metadata={"correlation_id": "0123456789ab"},
+    )
+    _carry_cycle_id(carried, "feedfacecafe")  # a result that has an id keeps it
+    assert carried.metadata == {"correlation_id": "0123456789ab"}
+
+
+async def test_a_compound_replay_result_carries_the_cycles_id() -> None:
+    """The compound replay returns early with a result built by hand and calls no model: its id is the task event's."""
+    proc = _make_compound_procedure()
+    store = _make_store_mock()
+    store.find_matching = AsyncMock(return_value=[{"id": proc.id, "score": 0.9}])
+    store.get = AsyncMock(return_value=proc)
+    sec_agent = _make_mock_agent_entry("sec-001")
+    eng_agent = _make_mock_agent_entry("eng-001")
+    agents = MagicMock()
+    agents.get_by_pool = MagicMock(side_effect=lambda pool: [sec_agent] if "security" in pool else [eng_agent])
+    bus = AsyncMock()
+    bus.send = AsyncMock(
+        side_effect=[
+            IntentResult(intent_id="i1", agent_id="sec-001", success=True, result="ok"),
+            IntentResult(intent_id="i2", agent_id="eng-001", success=True, result="ok"),
+        ]
+    )
+    cycles = CycleIdRegistry()
+    runtime = _make_mock_runtime(intent_bus=bus, registry=agents)
+    runtime.cycle_registry = cycles
+    agent = _make_cognitive_agent(runtime=runtime, procedure_store=store)
+    result = await agent.handle_intent(_make_intent(intent_type="security_review"))
+    event = runtime.emit_event.call_args[0][1]
+    assert event["compound_dispatched"] is True and result.success is True  # the early return ran
+    chain_id = result.metadata["correlation_id"]
+    assert _is_cycle_id(chain_id) and chain_id == event["correlation_id"]
+    assert cycles.kind_of(chain_id) == "cognitive_cycle" and current_cycle_id() == ""
+
+
+class _GatedLock:
+    """The registry's lock with the thread named ``first`` held at the door until the one named ``second`` has been
+    through it: the interleaving two writers can have, made certain."""
+
+    def __init__(self) -> None:
+        self._inner = threading.Lock()
+        self.first_at_the_door = threading.Event()
+        self.second_has_been_through = threading.Event()
+
+    def __enter__(self) -> None:
+        if threading.current_thread().name == "first":
+            self.first_at_the_door.set()
+            self.second_has_been_through.wait(timeout=10.0)
+        self._inner.acquire()
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._inner.release()
+        if threading.current_thread().name == "second":
+            self.second_has_been_through.set()
+
+
+def test_two_writers_cannot_record_out_of_time_order_so_an_expired_id_never_resolves() -> None:
+    ticks = itertools.count(100)
+    sampled: dict[str, float] = {}
+    now_override: list[float] = []
+
+    def clock() -> float:
+        if now_override:
+            return now_override[0]
+        value = float(next(ticks))
+        sampled[threading.current_thread().name] = value
+        return value
+
+    registry = CycleIdRegistry(ttl_seconds=60.0, clock=clock)
+    gate = _GatedLock()
+    registry._lock = gate  # type: ignore[assignment]
+    ids: dict[str, str] = {}
+
+    def write() -> None:
+        ids[threading.current_thread().name] = registry.issue(kind="cognitive_cycle")
+
+    first = threading.Thread(target=write, name="first")
+    second = threading.Thread(target=write, name="second")
+    first.start()
+    assert gate.first_at_the_door.wait(timeout=10.0)
+    second.start()
+    first.join(timeout=10.0)
+    second.join(timeout=10.0)
+    assert not first.is_alive() and not second.is_alive() and sorted(ids) == ["first", "second"]
+
+    earlier, later = sorted(ids, key=sampled.__getitem__)  # the writer that read the clock first, and the other
+    now_override.append(sampled[earlier] + 60.5)  # the earlier id is now past its TTL; the later one, a tick newer, is not
+    assert registry.resolves(ids[earlier]) is False
+    assert registry.resolves(ids[later]) is True

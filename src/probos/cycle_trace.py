@@ -137,8 +137,9 @@ class CycleIdRegistry:
             return len(self._entries)
 
     def _record(self, chain_id: str, kind: str) -> None:
-        now = self._clock()
         with self._lock:
+            # Read under the lock: two writers cannot record out of time order, which _evict relies on.
+            now = self._clock()
             self._entries[chain_id] = (now, kind)
             self._entries.move_to_end(chain_id)
             self._evict(now)
@@ -146,9 +147,8 @@ class CycleIdRegistry:
     def _live_entry(self, chain_id: str) -> tuple[float, str] | None:
         if type(chain_id) is not str or not chain_id:
             return None
-        now = self._clock()
         with self._lock:
-            self._evict(now)
+            self._evict(self._clock())
             return self._entries.get(chain_id)
 
     def _evict(self, now: float) -> None:
