@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -588,6 +589,9 @@ class CounselorAgent(CognitiveAgent):
         self._intervention_history: list[InterventionRecord] = []
         # AD-541d: Guided Reminiscence
         self._reminiscence_engine: Any = None  # Set via set_reminiscence_engine()
+        # BF-989 round 1: a memory key (the sovereign UUID episodes carry) -> the slot id the registry, profiles and
+        # DMs key by; None for a key that is already a slot or is unknown (BF-907). Set with the engine.
+        self._reminiscence_resolve_slot: Callable[[str], str | None] | None = None
         self._reminiscence_cooldowns: dict[str, float] = {}
         self._REMINISCENCE_COOLDOWN_SECONDS: int = 7200  # 2 hours default
         self._reminiscence_concern_threshold: int = 3
@@ -2469,9 +2473,16 @@ class CounselorAgent(CognitiveAgent):
 
     # -- AD-541d: Guided Reminiscence integration --
 
-    def set_reminiscence_engine(self, engine: Any) -> None:
-        """Wire the guided reminiscence engine (AD-541d)."""
+    def set_reminiscence_engine(
+        self, engine: Any, *, resolve_slot: Callable[[str], str | None] | None = None,
+    ) -> None:
+        """Wire the guided reminiscence engine (AD-541d).
+
+        BF-989 round 1: ``resolve_slot`` maps the key a trigger holds (the sovereign UUID episodes carry) to the live
+        agent's slot id; startup binds ``AgentIdentityRegistry.resolve_slot_id`` (BF-907).
+        """
         self._reminiscence_engine = engine
+        self._reminiscence_resolve_slot = resolve_slot
 
     def configure_reminiscence(
         self,
@@ -2490,8 +2501,21 @@ class CounselorAgent(CognitiveAgent):
         return self.get_or_create_profile(agent_id)
 
     async def _initiate_reminiscence_session(self, agent_id: str, trigger: str = "concern") -> None:
-        """Initiate a guided reminiscence session for an agent with memory concerns."""
+        """Initiate a guided reminiscence session for an agent with memory concerns.
+
+        BF-989 round 1 (#1838): ``agent_id`` is the key the trigger holds, the sovereign UUID a crew agent's episodes
+        carry. The engine reads episodes by that key; the live agent, its callsign, the cooldown, the profile, the DM
+        and the event use the slot id it resolves to (BF-907: the registry and the Counselor key by slot). A key with
+        no live agent runs no session and takes no cooldown: nothing is spent.
+        """
         if not self._reminiscence_engine:
+            return
+
+        memory_key = agent_id
+        resolve_slot = self._reminiscence_resolve_slot
+        agent_id = (resolve_slot(memory_key) if resolve_slot is not None else None) or memory_key
+        if self._registry is not None and self._registry.get(agent_id) is None:
+            logger.info("AD-541d: no reminiscence session for %s: no live agent", memory_key[:8])
             return
 
         callsign = self._resolve_agent_callsign(agent_id)
@@ -2508,10 +2532,10 @@ class CounselorAgent(CognitiveAgent):
         self._reminiscence_cooldowns[agent_id] = time.monotonic()
 
         try:
-            result = await self._reminiscence_engine.run_session(agent_id)
+            result = await self._reminiscence_engine.run_session(memory_key)  # BF-989 round 1: episodes carry this key
         except Exception:
             # BF-989: WARNING, not DEBUG (log-and-degrade); the cooldown bounds it to once per agent per cooldown
-            logger.warning("AD-541d: Reminiscence session failed for %s", agent_id[:8], exc_info=True)
+            logger.warning("AD-541d: Reminiscence session failed for %s", callsign, exc_info=True)
             return
 
         if result.episodes_tested == 0:

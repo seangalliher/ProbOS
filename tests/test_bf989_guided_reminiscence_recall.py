@@ -10,16 +10,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from probos.agent_stop import STOP_METADATA_KEY, AgentStopService
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.concurrency_manager import ConcurrencyManager
 from probos.cognitive.counselor import CognitiveProfile
 from probos.cognitive.episodic_mock import MockEpisodicMemory
-from probos.cognitive.guided_reminiscence import GuidedReminiscenceEngine, RecallClassification, RecallResult
-from probos.types import LLMResponse
+from probos.cognitive.guided_reminiscence import (
+    GuidedReminiscenceEngine,
+    RecallClassification,
+    RecallResult,
+    RecallUnavailable,
+)
+from probos.cognitive.llm_client import MockLLMClient
+from probos.cognitive.qualification_tests import agent_recall_fn
+from probos.identity import AgentIdentityRegistry
+from probos.substrate.registry import AgentRegistry
+from probos.types import IntentDescriptor, IntentResult, LLMResponse
 from tests.test_ad541d_guided_reminiscence import _make_counselor, _make_episode
 
 _MESSAGE = "Thank you for reviewing these with me. Let's look at your Ship Memory records together."
@@ -165,27 +178,33 @@ async def test_a_recall_that_never_returns_times_out() -> None:
 
 
 async def test_agent_recall_fn_asks_the_agent_on_the_probe_path() -> None:
-    from probos.cognitive.qualification_tests import agent_recall_fn  # imported here: only this case needs the new name
-
     class _Agent:
-        id = "a1"
+        """As the runtime holds a crew agent: registered by its slot id; its episodes carry its sovereign id."""
+
+        id = "slot-a1"
+        sovereign_id = "a1"
         agent_type = "crew"
 
         def __init__(self) -> None:
             self.intents: list[Any] = []
 
-        async def handle_intent(self, intent: Any) -> Any:
+        async def handle_intent(self, intent: Any) -> IntentResult:
             self.intents.append(intent)
-            return SimpleNamespace(result="I checked the warp core.")
+            return IntentResult(intent_id=intent.id, agent_id=self.id, success=True, result="I checked the warp core.")
 
     agent = _Agent()
-    recall = agent_recall_fn(SimpleNamespace(get=lambda agent_id: agent if agent_id == "a1" else None))
+    registry = SimpleNamespace(get=lambda key: agent if key == agent.id else None)
+    recall = agent_recall_fn(registry, resolve_slot={"a1": "slot-a1"}.get)
     assert await recall("a1", "What happened?") == "I checked the warp core."
     (intent,) = agent.intents
-    assert (intent.intent, intent.target_agent_id, intent.params["text"]) == ("direct_message", "a1", "What happened?")
+    assert (intent.intent, intent.target_agent_id, intent.params["text"]) == ("direct_message", "slot-a1", "What happened?")
     assert intent.params["_qualification_test"] is True  # suppresses episode storage (CognitiveAgent.handle_intent)
-    assert await recall("zz", "What happened?") == ""
-    assert len(agent.intents) == 1
+    assert await agent_recall_fn(registry)("slot-a1", "Again?") == "I checked the warp core."  # a slot key as given
+    with pytest.raises(RecallUnavailable, match="^no live agent$"):
+        await recall("zz", "What happened?")
+    with pytest.raises(RecallUnavailable, match="^no live agent$"):
+        await agent_recall_fn(registry)("a1", "What happened?")  # no resolver: the sovereign key reaches no agent
+    assert len(agent.intents) == 2
 
 
 # -- N8 to N10: an abstention is an omission, not a commission ----------------------------------------
@@ -302,3 +321,166 @@ async def test_a_session_that_measured_nothing_writes_sends_and_emits_nothing(ca
     assert events == []
     (line,) = [r.getMessage() for r in caplog.records if "measured no episode" in r.getMessage()]
     assert "ep-0: empty recall" in line
+
+
+# -- R1 to R4: review round 1 (a crew agent's slot and sovereign ids; a reply that is not a recall) ----------------
+
+_SLOT = "surgeon_medical_surgeon_0_b2321292"
+_INSTANCE = "bf989-ship"
+
+
+class _CrewAgent:
+    """A crew agent as the runtime holds one: registered by its slot id; its episodes carry its sovereign id."""
+
+    agent_type = "surgeon"
+    pool = "surgeon"
+    callsign = "Meridian"
+
+    def __init__(self, sovereign_id: str) -> None:
+        self.id = _SLOT
+        self.sovereign_id = sovereign_id
+        self.intents: list[Any] = []
+
+    async def handle_intent(self, intent: Any) -> IntentResult:
+        self.intents.append(intent)
+        return IntentResult(intent_id=intent.id, agent_id=self.id, success=True, result=_RECALL)
+
+
+async def test_a_session_on_the_sovereign_id_measures_and_writes_through_the_slot(tmp_path: Path) -> None:
+    identities = AgentIdentityRegistry(data_dir=tmp_path / "identity")
+    try:
+        await identities.start()
+        await identities.start(instance_id=_INSTANCE, vessel_name="Bf989", version="1")
+        cert = await identities.resolve_or_issue(
+            slot_id=_SLOT, agent_type="surgeon", callsign="Meridian", instance_id=_INSTANCE,
+            vessel_name="Bf989", department="medical", post_id="surgeon", baseline_version="v1",
+        )
+        sovereign = cert.agent_uuid
+        assert sovereign != _SLOT and identities.resolve_slot_id(sovereign) == _SLOT  # premise: BF-907's split
+        agent, registry, memory = _CrewAgent(sovereign), AgentRegistry(), MockEpisodicMemory()
+        await registry.register(agent)
+        for i in range(4):
+            await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[sovereign]))
+        engine = GuidedReminiscenceEngine(
+            episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3,
+            recall_fn=agent_recall_fn(registry, resolve_slot=identities.resolve_slot_id),
+        )
+        ward_room, events = _ward_room(), []
+        counselor = _make_counselor(
+            _registry=registry, _ward_room=ward_room, callsign="Counselor", _record_intervention=MagicMock(),
+            _emit_event_fn=lambda name, payload: events.append((name, payload)),
+        )
+        counselor.set_reminiscence_engine(engine, resolve_slot=identities.resolve_slot_id)
+        await counselor._initiate_reminiscence_session(sovereign, trigger="retrieval_concern")
+    finally:
+        await identities.stop()
+    assert [intent.target_agent_id for intent in agent.intents] == [_SLOT] * 3
+    profile = counselor._cognitive_profiles[_SLOT]
+    assert profile.memory_integrity_score == pytest.approx(0.9)
+    assert profile.reminiscence_sessions == 1
+    assert sovereign not in counselor._cognitive_profiles
+    assert list(counselor._reminiscence_cooldowns) == [_SLOT]
+    dm = ward_room.get_or_create_dm_channel.await_args.kwargs
+    assert (dm["agent_b_id"], dm["callsign_b"]) == (_SLOT, "Meridian")
+    assert list(counselor._dm_cooldowns) == [_SLOT]
+    ((name, payload),) = events
+    assert (name, payload["agent_id"], payload["episodes_tested"], payload["unmeasured"]) == (
+        "reminiscence_session_complete", _SLOT, 3, 0,
+    )
+
+
+async def test_a_key_with_no_live_agent_runs_no_session_and_takes_no_cooldown(caplog: pytest.LogCaptureFixture) -> None:
+    engine = SimpleNamespace(run_session=AsyncMock())
+    counselor = _make_counselor(_reminiscence_engine=engine, _registry=AgentRegistry())
+    caplog.set_level(logging.INFO, logger="probos.cognitive.counselor")
+    await counselor._initiate_reminiscence_session("a1", trigger="bf989")
+    engine.run_session.assert_not_awaited()
+    assert counselor._reminiscence_cooldowns == {}
+    assert [r.levelno for r in caplog.records if "no live agent" in r.getMessage()] == [logging.INFO]
+
+
+def _crew_class() -> type[CognitiveAgent]:
+    return type("_BF989Crew", (CognitiveAgent,), {
+        "agent_type": "surgeon",
+        "_handled_intents": {"bf989_probe"},
+        "instructions": "You are a crew member. Respond concisely.",
+        "intent_descriptors": [IntentDescriptor(name="bf989_probe", params={}, description="probe", tier="domain")],
+    })
+
+
+class _CountingLLM(MockLLMClient):
+    """The agent's model: counts calls; a stopped or saturated agent makes none."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:  # type: ignore[override]
+        self.calls += 1
+        return LLMResponse(content=_RECALL)
+
+
+async def _session_of(agent: CognitiveAgent, client: _Client) -> Any:
+    registry, memory = AgentRegistry(), MockEpisodicMemory()
+    await registry.register(agent)
+    for i in range(4):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[agent.id]))
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=client, max_episodes_per_session=3, recall_fn=agent_recall_fn(registry),
+    )
+    return await engine.run_session(agent.id)
+
+
+async def test_a_stopped_or_saturated_agent_gives_no_recall(tmp_path: Path) -> None:
+    stopped_llm, saturated_llm, client = _CountingLLM(), _CountingLLM(), _Client()
+    stopped = _crew_class()(llm_client=stopped_llm)
+    stops = AgentStopService(data_dir=tmp_path / "stops")
+    await stops.start()
+    try:
+        await stops.issue_stop(stopped.id, reason="BF-989 test: this agent is stopped")
+        stopped._runtime = SimpleNamespace(agent_stops=stops)
+        result = await _session_of(stopped, client)
+    finally:
+        await stops.stop()
+    assert (result.episodes_tested, result.unmeasured) == (0, [f"ep-{i}: agent stopped" for i in range(3)])
+
+    saturated = _crew_class()(llm_client=saturated_llm)
+    manager = ConcurrencyManager(saturated.id, max_concurrent=1, queue_max_size=0)
+    saturated.set_concurrency_manager(manager)
+    held = await manager.acquire("held")
+    try:
+        result = await _session_of(saturated, client)
+    finally:
+        await manager.release(held)
+    assert (result.episodes_tested, result.unmeasured) == (0, [f"ep-{i}: no response" for i in range(3)])
+    assert (stopped_llm.calls, saturated_llm.calls, client.prompts) == (0, 0, [])  # no turn, no judge, no message
+
+
+@pytest.mark.parametrize(
+    ("reply", "reason"),
+    [
+        pytest.param(None, "no reply", id="none"),
+        pytest.param(
+            IntentResult(intent_id="i", agent_id=_SLOT, success=False, result="Not delivered", error="Not delivered",
+                         metadata={STOP_METADATA_KEY: {}}),
+            "agent stopped", id="stop",
+        ),
+        pytest.param(IntentResult(intent_id="i", agent_id=_SLOT, success=False, result="partial"),
+                     "agent reply failed", id="failed"),
+        pytest.param(IntentResult(intent_id="i", agent_id=_SLOT, success=True, result="text", error="cognitive_failed"),
+                     "agent reply failed", id="error"),
+        pytest.param(IntentResult(intent_id="i", agent_id=_SLOT, success=True, result="Noted. [NO_RESPONSE]"),
+                     "no response", id="silence"),
+    ],
+)
+async def test_a_reply_that_is_not_a_recall_names_its_reason(reply: Any, reason: str) -> None:
+    class _Agent:
+        id = _SLOT
+        agent_type = "surgeon"
+
+        async def handle_intent(self, intent: Any) -> Any:
+            return reply
+
+    recall = agent_recall_fn(SimpleNamespace(get=lambda key: _Agent() if key == _SLOT else None))
+    with pytest.raises(RecallUnavailable, match=f"^{reason}$"):
+        await recall(_SLOT, "What happened?")

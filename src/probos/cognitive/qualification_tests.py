@@ -41,12 +41,11 @@ def _safe_llm_response_text(response: Any) -> str:
     return str(response).strip()
 
 
-async def _send_probe(agent: Any, message: str) -> str:
-    """Send a probe message to an agent via handle_intent() with episode suppression.
+async def _probe_intent_result(agent: Any, message: str) -> Any:
+    """Send a probe message to an agent via handle_intent() with episode suppression; return its reply as is.
 
-    BF-140: Added exception handling. Captures and logs exceptions instead of
-    propagating them to the probe's outer handler (which returns score=0.0
-    with no diagnostic info).
+    BF-989 round 1 (#1838): split out of ``_send_probe`` so guided reminiscence reads the whole ``IntentResult``
+    (success, error, the stop metadata) on the same path and marker. Exceptions propagate.
     """
     from probos.types import IntentMessage
 
@@ -55,8 +54,18 @@ async def _send_probe(agent: Any, message: str) -> str:
         params={"text": message, "_qualification_test": True},  # BF-109: was "message", but perceive() reads "text"
         target_agent_id=agent.id,
     )
+    return await agent.handle_intent(intent)
+
+
+async def _send_probe(agent: Any, message: str) -> str:
+    """Send a probe message to an agent via handle_intent() with episode suppression.
+
+    BF-140: Added exception handling. Captures and logs exceptions instead of
+    propagating them to the probe's outer handler (which returns score=0.0
+    with no diagnostic info).
+    """
     try:
-        result = await agent.handle_intent(intent)
+        result = await _probe_intent_result(agent, message)
         if result and result.result:
             return str(result.result)
         return ""
@@ -71,19 +80,52 @@ async def _send_probe(agent: Any, message: str) -> str:
         return ""
 
 
-def agent_recall_fn(registry: Any) -> Callable[[str, str], Awaitable[str]]:
-    """The agent's own recall for guided reminiscence (BF-989, #1838), through ``_send_probe``.
+def _checked_recall(result: Any) -> str:
+    """BF-989 round 1 (#1838): an agent's reply as recall text, or ``RecallUnavailable`` naming why it is not one.
 
-    ``_send_probe`` marks the intent ``_qualification_test``, which suppresses episode storage
-    (``CognitiveAgent.handle_intent``), so a recall attempt never becomes an episode that a later
-    session could select as ground truth. An agent the registry does not hold recalls "".
+    ``_send_probe`` keeps any truthy ``result``; a recall cannot. Not a recall: no ``IntentResult`` (the agent did
+    not handle the intent); the Captain's stop (``AgentStopService.refuse_intent``: ``success`` False, the refusal
+    text in ``result``, ``STOP_METADATA_KEY`` in ``metadata``); any other failed reply (``success`` False or an
+    ``error``); a reply holding ``[NO_RESPONSE]``, the agent's silence (AD-672's queue-full shed, BF-239's
+    engagement gate, or the model choosing silence). A successful reply with no text is returned as "", which the
+    engine records as an empty recall.
+    """
+    from probos.agent_stop import STOP_METADATA_KEY
+    from probos.cognitive.guided_reminiscence import RecallUnavailable
+    from probos.types import IntentResult
+
+    if not isinstance(result, IntentResult):
+        raise RecallUnavailable("no reply")
+    if STOP_METADATA_KEY in result.metadata:
+        raise RecallUnavailable("agent stopped")
+    if not result.success or result.error:
+        raise RecallUnavailable("agent reply failed")
+    text = "" if result.result is None else str(result.result)
+    if "[NO_RESPONSE]" in text:
+        raise RecallUnavailable("no response")
+    return text
+
+
+def agent_recall_fn(
+    registry: Any, *, resolve_slot: Callable[[str], str | None] | None = None,
+) -> Callable[[str, str], Awaitable[str]]:
+    """The agent's own recall for guided reminiscence (BF-989, #1838), on ``_send_probe``'s path and marker.
+
+    The intent is marked ``_qualification_test``, which suppresses episode storage (``CognitiveAgent.handle_intent``),
+    so a recall attempt never becomes an episode that a later session could select as ground truth.
+    BF-989 round 1: ``resolve_slot`` maps the memory key the engine holds (the sovereign UUID episodes carry) to the
+    slot id the registry keys by (BF-907); a key it does not resolve is looked up as given. A key with no live agent,
+    and a reply that is not a recall (``_checked_recall``), raise ``RecallUnavailable``; the engine records the reason.
     """
 
     async def _recall(agent_id: str, prompt: str) -> str:
-        agent = registry.get(agent_id)
+        slot_id = (resolve_slot(agent_id) if resolve_slot is not None else None) or agent_id
+        agent = registry.get(slot_id)
         if agent is None:
-            return ""
-        return await _send_probe(agent, prompt)
+            from probos.cognitive.guided_reminiscence import RecallUnavailable
+
+            raise RecallUnavailable("no live agent")
+        return _checked_recall(await _probe_intent_result(agent, prompt))
 
     return _recall
 

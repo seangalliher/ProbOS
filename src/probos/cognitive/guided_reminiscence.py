@@ -43,6 +43,14 @@ def _is_abstention(recalled_text: str) -> bool:
     return bool(clauses) and all(_ABSTENTION_RE.search(clause) for clause in clauses)
 
 
+class RecallUnavailable(Exception):
+    """BF-989 round 1 (#1838): a recall source found no recall to score; ``str(exc)`` is why the episode is unmeasured.
+
+    Raised by ``recall_fn`` (``qualification_tests.agent_recall_fn``) for a key with no live agent and for a reply
+    that is not a recall: the Captain's stop, a failed reply, or the agent's silence.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -476,6 +484,10 @@ class GuidedReminiscenceEngine:
                 )
             except TimeoutError:
                 result.unmeasured.append(f"{ep_id}: recall timed out")
+                continue
+            except RecallUnavailable as exc:
+                # BF-989 round 1: no live agent, or a reply that is not a recall (stop, failure, silence)
+                result.unmeasured.append(f"{ep_id}: {exc}")
                 continue
             except Exception as exc:
                 logger.warning("BF-989: recall failed for %s, episode %s", agent_id[:8], ep_id[:8], exc_info=True)

@@ -93,6 +93,7 @@ def _make_counselor(**overrides: Any) -> CounselorAgent:
     agent._dm_cooldowns = {}
     agent._dm_cooldown_seconds = 300
     agent._reminiscence_engine = None
+    agent._reminiscence_resolve_slot = None  # BF-989 round 1: set with the engine at startup
     agent._reminiscence_cooldowns = {}
     agent._REMINISCENCE_COOLDOWN_SECONDS = 7200
     agent._reminiscence_concern_threshold = 3
@@ -251,9 +252,14 @@ class TestD1Sessions:
     @pytest.mark.asyncio
     async def test_run_session_no_episodes(self):
         """Test 12: Agent with no episodes returns episodes_tested=0."""
-        engine = _make_engine(episodes=[])
+        # BF-989 round 1: with a recall source the empty selection is what ends the session (with none, the
+        # no-source guard did, before the selection ran)
+        recall = AsyncMock(return_value="unused")
+        engine = _make_engine(episodes=[], recall_fn=recall)
         result = await engine.run_session("a1")
         assert result.episodes_tested == 0
+        assert result.unmeasured == []  # nothing was selected, so nothing is held out
+        recall.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_run_session_computes_confabulation_rate(self):
@@ -556,8 +562,11 @@ class TestD4D5D6:
         assert "set_reminiscence_engine" in source
         assert "configure_reminiscence" in source
         assert "reminiscence_enabled" in source
-        # BF-989 (#1838): the engine is wired with the agent's own recall (behaviour: test_bf989 N2 and N7)
-        assert "recall_fn=agent_recall_fn(runtime.registry)" in source
+        # BF-989 (#1838): the engine is wired with the agent's own recall (behaviour: test_bf989 N2 and N7); round 1:
+        # the recall and the Counselor share BF-907's resolver (behaviour: test_bf989 R1)
+        assert "reminiscence_identities.resolve_slot_id" in source
+        assert "recall_fn=agent_recall_fn(runtime.registry, resolve_slot=reminiscence_resolve_slot)" in source
+        assert "set_reminiscence_engine(reminiscence_engine, resolve_slot=reminiscence_resolve_slot)" in source
 
     def test_event_type_exists(self):
         """Bonus: Verify EventType.REMINISCENCE_SESSION_COMPLETE exists."""
