@@ -1490,3 +1490,835 @@ After M3: `PROGRESS.md` `9d1f6ce3c172eac27eabcc75443831f69f6689a5` (1788 lines) 
 What the tests do not show, stated plainly: the recall source of N2 is a test double, so the real `CognitiveAgent` turn behind `_send_probe` is covered only by N7 (a fake agent that records the intent and its `_qualification_test` marker) and by reading P5; no vessel ran a session, so the live behaviour of the agent's answer, of the judge and of the message is not measured; and the abstention rule is a heuristic over the seven phrases the probe covered (R2 of #1820).
 
 **What the orchestrator changed in the Architect's draft** (the rest is the draft's): the Status line says `Refs #1838` where the draft said `Closes #1838`; the Base line names `86b9c156`; the pair labels are written as `**G1.**` so that the pair tool finds them; the tracker pairs of 7.8 and 7.9 are rewritten in the layout of the BF-984 contract (labels TR1-TR5), and the new DECISIONS entry is anchored on the `### BF-984` heading that exists on the merged tree; the M3 row names 7.8-7.10 (7.6 is M1's B1 and B2); the six em dashes and the one arrow that the draft's pair blocks hold are kept, because the target files hold them, and every other non-ASCII character of the draft is mapped to ASCII.
+
+## 17. Repair after review round 1 (2026-11-21)
+
+Round 1 of the Diff Reviewer (GPT-6.1 Sol; REQUEST CHANGES, 0 size findings) found two defects in the candidate `0ebf18e0`. The orchestrator reproduced both first-hand with probes that assert their own premises (`probe_identity_ns.py`: the control, one key for the registry and the episodes, reaches the agent 3 times; the case, a registry keyed by the slot id and episodes keyed by the sovereign id, reaches it 0 times and excludes 3 episodes as "empty recall"; `probe_checked_answer.py`: a stopped agent's refusal text and a silent agent's `[NO_RESPONSE]` each give 3 measured episodes at accuracy 0.00). The Architect designed the repair (consult `8cdddf05`, option A'); no Captain condition applies. Section 7 and the sections after it stand as committed; this section changes the code they produce, and its pairs apply after section 7's.
+
+- **F1 (P1, ordinary reach; not a regression: the session was already inoperative): a crew agent's session never reaches the agent.** Crew episodes carry the sovereign UUID (`cognitive_agent.py` `agent_ids=[sovereign_id or id]`); the dream cycle emits it, so both triggers hand it to the Counselor; `AgentRegistry` is keyed by the slot id, and so are the callsign lookup, the profiles the sweep and telemetry read, and the DM channel (`WardRoomRouter.find_targets_for_agent` finds a DM's other participant by `agent.id[:8] in channel.name`). BF-907 is the convention (`startup/trust_identity.py`: "trust is keyed by slot id").
+- **F2 (P2, a regression the repair under review introduced; ordinary reach once F1 is repaired): a refusal or a silence is scored as a recall.** `_send_probe` returns any truthy `result` and drops `success`, `error` and `metadata`; the Captain's stop (`AgentStopService.refuse_intent`: `success` False, the text in `result` and `error`, `STOP_METADATA_KEY` in `metadata`) and the agent's `[NO_RESPONSE]` (AD-672's queue-full shed, BF-239's engagement gate, the model choosing silence) therefore reached the judge.
+- **Test 12** (the reviewer's note, not a finding): with no recall source `test_run_session_no_episodes` ended at the no-source guard and no longer tested the empty selection. Pair AX3 (the orchestrator's) gives it a recall source.
+
+**Decision (A').** Startup binds BF-907's `AgentIdentityRegistry.resolve_slot_id` once (`finalize.py`, from `runtime.identity_registry`, set at Phase 2 entry) and passes it to `agent_recall_fn(registry, resolve_slot=...)` and to `set_reminiscence_engine(engine, resolve_slot=...)`. Both default to None, so a test with no resolver behaves as on the candidate. The Counselor resolves once at the top of `_initiate_reminiscence_session`. Rejected: the Counselor reading `self._runtime.identity_service` (`__new__`-built test Counselors have no runtime; the injected bound method is the trust precedent, and `IdentityService.resolve` calls the same method for a non-slot key); resolving only in the closure (the DM stays unroutable and the profile is written under a key that telemetry never reads); canonicalising at the two triggers (it moves where `retrieval_concerns` lives, BF-907's class, item R5 of #1820); an engine that takes both ids.
+
+| Use | Key | Why |
+|---|---|---|
+| `run_session`, `_session_history`, `RecallResult.agent_id` | the memory key (the trigger's sovereign UUID) | episodes carry it |
+| the recall dispatch (inside `agent_recall_fn`) | the slot, resolved | `AgentRegistry` is keyed by `agent.id` |
+| the liveness gate, the callsign | the slot | `_resolve_agent_callsign` reads the registry |
+| `_reminiscence_cooldowns` | the slot | both triggers then share one cooldown |
+| the profile writes | the slot | telemetry and the sweep read the slot-keyed profile |
+| `_send_therapeutic_dm`, `_dm_cooldowns`, `_record_intervention` | the slot | the channel is named from the recipient's id; BF-921's limit is "from all causes" |
+| the event payload's `agent_id` | the slot | the profile's key; no session has ever emitted it |
+| `retrieval_concerns` | unchanged (the event's key) | out of scope: item R5 |
+
+A key that resolves to no live agent (the Counselor has a registry and `registry.get` is None) runs no session, takes no cooldown and logs one INFO line: nothing is spent. The closure keeps its own guard for an agent that disappears between the gate and the recall.
+
+**The checked answer.** `_checked_recall(result)`, beside `agent_recall_fn`, raises `RecallUnavailable(reason)` (a new exception of `guided_reminiscence.py`, which owns the `recall_fn` protocol) and the engine records `"<ep id>: <reason>"` without a traceback:
+
+| Shape | Reason |
+|---|---|
+| not an `IntentResult` (None: the agent did not handle the intent) | `no reply` |
+| `STOP_METADATA_KEY` in `metadata` | `agent stopped` |
+| `success` false, or a non-empty `error` | `agent reply failed` |
+| the text holds `[NO_RESPONSE]` | `no response` |
+| a successful reply with no text | returns "", recorded as `empty recall` |
+| a key with no live agent | `no live agent` |
+| `handle_intent` raises | propagates; recorded as `recall failed: <Type>` with the existing WARNING |
+
+`_send_probe`'s `handle_intent` call moves into `_probe_intent_result`, which `_send_probe` and `_checked_recall`'s caller both use, so the `_qualification_test` marker has one home and AD-1343's census still finds exactly one `handle_intent` call in `qualification_tests.py` (pair SX1 renames its registry row; SX1 and QX1 land together). `_send_probe` returns the same text to its 18 other callers; one edge changes: the intent is now built inside its `try`, so an agent with no `.id` returns "" with the BF-140 warning instead of raising `AttributeError`.
+
+**Amended.** Section 3, the `agent_recall_fn` row: the `handle_intent` call is in `_probe_intent_result`. Section 5: 31 cases (23 plus R1 to R3 and the five R4 cases). Section 8.1: the closure text gains the resolver, the checked answer, the slot keys, and "31 cases"; "Open: R1 to R5". Section 8.2: items R4 and R5 (17.10). Section 9: `_send_probe`'s result for its callers is unchanged. Section 10: rows RM1 to RM16 (17.11).
+
+**Review.** Round 2 is a whole-candidate review: the repair changes the `recall_fn` protocol (a new exception the engine recognises), `_send_probe`'s internals (18 callers in three files), AD-1343's census fixture, the public `set_reminiscence_engine` signature and the meaning of the event payload's `agent_id`. Properties to verify: (1) each consumer reads the key of the table above; (2) no path takes the cooldown for an agent the Counselor cannot reach; (3) no refusal or silence is scored; (4) `_send_probe` returns the same text for every input that has an `.id`; (5) the census finds exactly one `handle_intent` call in `qualification_tests.py`.
+
+### 17.1 `src/probos/cognitive/guided_reminiscence.py` (M-R1)
+
+**GX1.**
+SEARCH:
+```python
+    return bool(clauses) and all(_ABSTENTION_RE.search(clause) for clause in clauses)
+
+
+# ---------------------------------------------------------------------------
+# Data types
+```
+REPLACE:
+```python
+    return bool(clauses) and all(_ABSTENTION_RE.search(clause) for clause in clauses)
+
+
+class RecallUnavailable(Exception):
+    """BF-989 round 1 (#1838): a recall source found no recall to score; ``str(exc)`` is why the episode is unmeasured.
+
+    Raised by ``recall_fn`` (``qualification_tests.agent_recall_fn``) for a key with no live agent and for a reply
+    that is not a recall: the Captain's stop, a failed reply, or the agent's silence.
+    """
+
+
+# ---------------------------------------------------------------------------
+# Data types
+```
+
+**GX2.**
+SEARCH:
+```python
+            except TimeoutError:
+                result.unmeasured.append(f"{ep_id}: recall timed out")
+                continue
+            except Exception as exc:
+```
+REPLACE:
+```python
+            except TimeoutError:
+                result.unmeasured.append(f"{ep_id}: recall timed out")
+                continue
+            except RecallUnavailable as exc:
+                # BF-989 round 1: no live agent, or a reply that is not a recall (stop, failure, silence)
+                result.unmeasured.append(f"{ep_id}: {exc}")
+                continue
+            except Exception as exc:
+```
+
+### 17.2 `src/probos/cognitive/qualification_tests.py` (M-R1)
+
+**QX1.**
+SEARCH:
+```python
+async def _send_probe(agent: Any, message: str) -> str:
+    """Send a probe message to an agent via handle_intent() with episode suppression.
+
+    BF-140: Added exception handling. Captures and logs exceptions instead of
+    propagating them to the probe's outer handler (which returns score=0.0
+    with no diagnostic info).
+    """
+    from probos.types import IntentMessage
+
+    intent = IntentMessage(
+        intent="direct_message",
+        params={"text": message, "_qualification_test": True},  # BF-109: was "message", but perceive() reads "text"
+        target_agent_id=agent.id,
+    )
+    try:
+        result = await agent.handle_intent(intent)
+        if result and result.result:
+            return str(result.result)
+        return ""
+    except Exception as exc:
+        logger.warning(
+            "BF-140: _send_probe failed for agent %s (type=%s): %s",
+            getattr(agent, "id", "?"),
+            getattr(agent, "agent_type", "?"),
+            exc,
+            exc_info=True,
+        )
+        return ""
+
+
+def agent_recall_fn(registry: Any) -> Callable[[str, str], Awaitable[str]]:
+    """The agent's own recall for guided reminiscence (BF-989, #1838), through ``_send_probe``.
+
+    ``_send_probe`` marks the intent ``_qualification_test``, which suppresses episode storage
+    (``CognitiveAgent.handle_intent``), so a recall attempt never becomes an episode that a later
+    session could select as ground truth. An agent the registry does not hold recalls "".
+    """
+
+    async def _recall(agent_id: str, prompt: str) -> str:
+        agent = registry.get(agent_id)
+        if agent is None:
+            return ""
+        return await _send_probe(agent, prompt)
+
+    return _recall
+```
+REPLACE:
+```python
+async def _probe_intent_result(agent: Any, message: str) -> Any:
+    """Send a probe message to an agent via handle_intent() with episode suppression; return its reply as is.
+
+    BF-989 round 1 (#1838): split out of ``_send_probe`` so guided reminiscence reads the whole ``IntentResult``
+    (success, error, the stop metadata) on the same path and marker. Exceptions propagate.
+    """
+    from probos.types import IntentMessage
+
+    intent = IntentMessage(
+        intent="direct_message",
+        params={"text": message, "_qualification_test": True},  # BF-109: was "message", but perceive() reads "text"
+        target_agent_id=agent.id,
+    )
+    return await agent.handle_intent(intent)
+
+
+async def _send_probe(agent: Any, message: str) -> str:
+    """Send a probe message to an agent via handle_intent() with episode suppression.
+
+    BF-140: Added exception handling. Captures and logs exceptions instead of
+    propagating them to the probe's outer handler (which returns score=0.0
+    with no diagnostic info).
+    """
+    try:
+        result = await _probe_intent_result(agent, message)
+        if result and result.result:
+            return str(result.result)
+        return ""
+    except Exception as exc:
+        logger.warning(
+            "BF-140: _send_probe failed for agent %s (type=%s): %s",
+            getattr(agent, "id", "?"),
+            getattr(agent, "agent_type", "?"),
+            exc,
+            exc_info=True,
+        )
+        return ""
+
+
+def _checked_recall(result: Any) -> str:
+    """BF-989 round 1 (#1838): an agent's reply as recall text, or ``RecallUnavailable`` naming why it is not one.
+
+    ``_send_probe`` keeps any truthy ``result``; a recall cannot. Not a recall: no ``IntentResult`` (the agent did
+    not handle the intent); the Captain's stop (``AgentStopService.refuse_intent``: ``success`` False, the refusal
+    text in ``result``, ``STOP_METADATA_KEY`` in ``metadata``); any other failed reply (``success`` False or an
+    ``error``); a reply holding ``[NO_RESPONSE]``, the agent's silence (AD-672's queue-full shed, BF-239's
+    engagement gate, or the model choosing silence). A successful reply with no text is returned as "", which the
+    engine records as an empty recall.
+    """
+    from probos.agent_stop import STOP_METADATA_KEY
+    from probos.cognitive.guided_reminiscence import RecallUnavailable
+    from probos.types import IntentResult
+
+    if not isinstance(result, IntentResult):
+        raise RecallUnavailable("no reply")
+    if STOP_METADATA_KEY in result.metadata:
+        raise RecallUnavailable("agent stopped")
+    if not result.success or result.error:
+        raise RecallUnavailable("agent reply failed")
+    text = "" if result.result is None else str(result.result)
+    if "[NO_RESPONSE]" in text:
+        raise RecallUnavailable("no response")
+    return text
+
+
+def agent_recall_fn(
+    registry: Any, *, resolve_slot: Callable[[str], str | None] | None = None,
+) -> Callable[[str, str], Awaitable[str]]:
+    """The agent's own recall for guided reminiscence (BF-989, #1838), on ``_send_probe``'s path and marker.
+
+    The intent is marked ``_qualification_test``, which suppresses episode storage (``CognitiveAgent.handle_intent``),
+    so a recall attempt never becomes an episode that a later session could select as ground truth.
+    BF-989 round 1: ``resolve_slot`` maps the memory key the engine holds (the sovereign UUID episodes carry) to the
+    slot id the registry keys by (BF-907); a key it does not resolve is looked up as given. A key with no live agent,
+    and a reply that is not a recall (``_checked_recall``), raise ``RecallUnavailable``; the engine records the reason.
+    """
+
+    async def _recall(agent_id: str, prompt: str) -> str:
+        slot_id = (resolve_slot(agent_id) if resolve_slot is not None else None) or agent_id
+        agent = registry.get(slot_id)
+        if agent is None:
+            from probos.cognitive.guided_reminiscence import RecallUnavailable
+
+            raise RecallUnavailable("no live agent")
+        return _checked_recall(await _probe_intent_result(agent, prompt))
+
+    return _recall
+```
+
+### 17.3 `tests/fixtures/ad1343_seam_registry.py` (M-R1)
+
+**SX1.**
+SEARCH:
+```python
+    ("src/probos/cognitive/qualification_tests.py", "_send_probe", "handle_intent"): ("sink", _INTENT_SINK),
+```
+REPLACE:
+```python
+    ("src/probos/cognitive/qualification_tests.py", "_probe_intent_result", "handle_intent"): ("sink", _INTENT_SINK),
+```
+
+### 17.4 `src/probos/cognitive/counselor.py` (M-R1)
+
+**CX1.**
+SEARCH:
+```python
+import json
+import logging
+import time
+from dataclasses import dataclass, field
+```
+REPLACE:
+```python
+import json
+import logging
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+```
+
+**CX2.**
+SEARCH:
+```python
+        self._reminiscence_engine: Any = None  # Set via set_reminiscence_engine()
+        self._reminiscence_cooldowns: dict[str, float] = {}
+```
+REPLACE:
+```python
+        self._reminiscence_engine: Any = None  # Set via set_reminiscence_engine()
+        # BF-989 round 1: a memory key (the sovereign UUID episodes carry) -> the slot id the registry, profiles and
+        # DMs key by; None for a key that is already a slot or is unknown (BF-907). Set with the engine.
+        self._reminiscence_resolve_slot: Callable[[str], str | None] | None = None
+        self._reminiscence_cooldowns: dict[str, float] = {}
+```
+
+**CX3.**
+SEARCH:
+```python
+    def set_reminiscence_engine(self, engine: Any) -> None:
+        """Wire the guided reminiscence engine (AD-541d)."""
+        self._reminiscence_engine = engine
+```
+REPLACE:
+```python
+    def set_reminiscence_engine(
+        self, engine: Any, *, resolve_slot: Callable[[str], str | None] | None = None,
+    ) -> None:
+        """Wire the guided reminiscence engine (AD-541d).
+
+        BF-989 round 1: ``resolve_slot`` maps the key a trigger holds (the sovereign UUID episodes carry) to the live
+        agent's slot id; startup binds ``AgentIdentityRegistry.resolve_slot_id`` (BF-907).
+        """
+        self._reminiscence_engine = engine
+        self._reminiscence_resolve_slot = resolve_slot
+```
+
+**CX4.**
+SEARCH:
+```python
+    async def _initiate_reminiscence_session(self, agent_id: str, trigger: str = "concern") -> None:
+        """Initiate a guided reminiscence session for an agent with memory concerns."""
+        if not self._reminiscence_engine:
+            return
+
+        callsign = self._resolve_agent_callsign(agent_id)
+```
+REPLACE:
+```python
+    async def _initiate_reminiscence_session(self, agent_id: str, trigger: str = "concern") -> None:
+        """Initiate a guided reminiscence session for an agent with memory concerns.
+
+        BF-989 round 1 (#1838): ``agent_id`` is the key the trigger holds, the sovereign UUID a crew agent's episodes
+        carry. The engine reads episodes by that key; the live agent, its callsign, the cooldown, the profile, the DM
+        and the event use the slot id it resolves to (BF-907: the registry and the Counselor key by slot). A key with
+        no live agent runs no session and takes no cooldown: nothing is spent.
+        """
+        if not self._reminiscence_engine:
+            return
+
+        memory_key = agent_id
+        resolve_slot = self._reminiscence_resolve_slot
+        agent_id = (resolve_slot(memory_key) if resolve_slot is not None else None) or memory_key
+        if self._registry is not None and self._registry.get(agent_id) is None:
+            logger.info("AD-541d: no reminiscence session for %s: no live agent", memory_key[:8])
+            return
+
+        callsign = self._resolve_agent_callsign(agent_id)
+```
+
+**CX5.**
+SEARCH:
+```python
+        try:
+            result = await self._reminiscence_engine.run_session(agent_id)
+        except Exception:
+            # BF-989: WARNING, not DEBUG (log-and-degrade); the cooldown bounds it to once per agent per cooldown
+            logger.warning("AD-541d: Reminiscence session failed for %s", agent_id[:8], exc_info=True)
+```
+REPLACE:
+```python
+        try:
+            result = await self._reminiscence_engine.run_session(memory_key)  # BF-989 round 1: episodes carry this key
+        except Exception:
+            # BF-989: WARNING, not DEBUG (log-and-degrade); the cooldown bounds it to once per agent per cooldown
+            logger.warning("AD-541d: Reminiscence session failed for %s", callsign, exc_info=True)
+```
+
+### 17.5 `src/probos/startup/finalize.py` (M-R1)
+
+**FX1.**
+SEARCH:
+```python
+                    from probos.cognitive.qualification_tests import agent_recall_fn  # BF-989
+
+                    reminiscence_engine = GuidedReminiscenceEngine(
+```
+REPLACE:
+```python
+                    from probos.cognitive.qualification_tests import agent_recall_fn  # BF-989
+
+                    # BF-989 round 1: episodes carry the sovereign UUID; the registry, callsigns, profiles and DMs key by
+                    # slot id (BF-907). The identity registry is set at Phase 2 entry, before finalize.
+                    reminiscence_identities = getattr(runtime, "identity_registry", None)
+                    reminiscence_resolve_slot = (
+                        reminiscence_identities.resolve_slot_id if reminiscence_identities is not None else None
+                    )
+                    reminiscence_engine = GuidedReminiscenceEngine(
+```
+
+**FX2.**
+SEARCH:
+```python
+                        recall_fn=agent_recall_fn(runtime.registry),
+                    )
+                    counselor_agent.set_reminiscence_engine(reminiscence_engine)
+```
+REPLACE:
+```python
+                        recall_fn=agent_recall_fn(runtime.registry, resolve_slot=reminiscence_resolve_slot),
+                    )
+                    counselor_agent.set_reminiscence_engine(reminiscence_engine, resolve_slot=reminiscence_resolve_slot)
+```
+
+### 17.6 `tests/test_ad541d_guided_reminiscence.py` (M-R1)
+
+**AX1.**
+SEARCH:
+```python
+    agent._reminiscence_engine = None
+    agent._reminiscence_cooldowns = {}
+```
+REPLACE:
+```python
+    agent._reminiscence_engine = None
+    agent._reminiscence_resolve_slot = None  # BF-989 round 1: set with the engine at startup
+    agent._reminiscence_cooldowns = {}
+```
+
+**AX2.** (test 28):
+SEARCH:
+```python
+        # BF-989 (#1838): the engine is wired with the agent's own recall (behaviour: test_bf989 N2 and N7)
+        assert "recall_fn=agent_recall_fn(runtime.registry)" in source
+```
+REPLACE:
+```python
+        # BF-989 (#1838): the engine is wired with the agent's own recall (behaviour: test_bf989 N2 and N7); round 1:
+        # the recall and the Counselor share BF-907's resolver (behaviour: test_bf989 R1)
+        assert "reminiscence_identities.resolve_slot_id" in source
+        assert "recall_fn=agent_recall_fn(runtime.registry, resolve_slot=reminiscence_resolve_slot)" in source
+        assert "set_reminiscence_engine(reminiscence_engine, resolve_slot=reminiscence_resolve_slot)" in source
+```
+
+**AX3.** (test 12; the reviewer's note: with no recall source the test ended at the no-source guard and no longer tested the empty selection)
+SEARCH:
+```python
+        engine = _make_engine(episodes=[])
+        result = await engine.run_session("a1")
+        assert result.episodes_tested == 0
+
+```
+REPLACE:
+```python
+        # BF-989 round 1: with a recall source the empty selection is what ends the session (with none, the
+        # no-source guard did, before the selection ran)
+        recall = AsyncMock(return_value="unused")
+        engine = _make_engine(episodes=[], recall_fn=recall)
+        result = await engine.run_session("a1")
+        assert result.episodes_tested == 0
+        assert result.unmeasured == []  # nothing was selected, so nothing is held out
+        recall.assert_not_awaited()
+
+```
+
+### 17.7 `tests/test_bf989_guided_reminiscence_recall.py` (M-R1)
+
+**TX1.**
+SEARCH:
+```python
+from __future__ import annotations
+
+import asyncio
+import logging
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from probos.cognitive.counselor import CognitiveProfile
+from probos.cognitive.episodic_mock import MockEpisodicMemory
+from probos.cognitive.guided_reminiscence import GuidedReminiscenceEngine, RecallClassification, RecallResult
+from probos.types import LLMResponse
+from tests.test_ad541d_guided_reminiscence import _make_counselor, _make_episode
+```
+REPLACE:
+```python
+from __future__ import annotations
+
+import asyncio
+import logging
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from probos.agent_stop import STOP_METADATA_KEY, AgentStopService
+from probos.cognitive.cognitive_agent import CognitiveAgent
+from probos.cognitive.concurrency_manager import ConcurrencyManager
+from probos.cognitive.counselor import CognitiveProfile
+from probos.cognitive.episodic_mock import MockEpisodicMemory
+from probos.cognitive.guided_reminiscence import (
+    GuidedReminiscenceEngine,
+    RecallClassification,
+    RecallResult,
+    RecallUnavailable,
+)
+from probos.cognitive.llm_client import MockLLMClient
+from probos.cognitive.qualification_tests import agent_recall_fn
+from probos.identity import AgentIdentityRegistry
+from probos.substrate.registry import AgentRegistry
+from probos.types import IntentDescriptor, IntentResult, LLMResponse
+from tests.test_ad541d_guided_reminiscence import _make_counselor, _make_episode
+```
+
+**TX2.** (N7).
+SEARCH:
+```python
+async def test_agent_recall_fn_asks_the_agent_on_the_probe_path() -> None:
+    from probos.cognitive.qualification_tests import agent_recall_fn  # imported here: only this case needs the new name
+
+    class _Agent:
+        id = "a1"
+        agent_type = "crew"
+
+        def __init__(self) -> None:
+            self.intents: list[Any] = []
+
+        async def handle_intent(self, intent: Any) -> Any:
+            self.intents.append(intent)
+            return SimpleNamespace(result="I checked the warp core.")
+
+    agent = _Agent()
+    recall = agent_recall_fn(SimpleNamespace(get=lambda agent_id: agent if agent_id == "a1" else None))
+    assert await recall("a1", "What happened?") == "I checked the warp core."
+    (intent,) = agent.intents
+    assert (intent.intent, intent.target_agent_id, intent.params["text"]) == ("direct_message", "a1", "What happened?")
+    assert intent.params["_qualification_test"] is True  # suppresses episode storage (CognitiveAgent.handle_intent)
+    assert await recall("zz", "What happened?") == ""
+    assert len(agent.intents) == 1
+```
+REPLACE:
+```python
+async def test_agent_recall_fn_asks_the_agent_on_the_probe_path() -> None:
+    class _Agent:
+        """As the runtime holds a crew agent: registered by its slot id; its episodes carry its sovereign id."""
+
+        id = "slot-a1"
+        sovereign_id = "a1"
+        agent_type = "crew"
+
+        def __init__(self) -> None:
+            self.intents: list[Any] = []
+
+        async def handle_intent(self, intent: Any) -> IntentResult:
+            self.intents.append(intent)
+            return IntentResult(intent_id=intent.id, agent_id=self.id, success=True, result="I checked the warp core.")
+
+    agent = _Agent()
+    registry = SimpleNamespace(get=lambda key: agent if key == agent.id else None)
+    recall = agent_recall_fn(registry, resolve_slot={"a1": "slot-a1"}.get)
+    assert await recall("a1", "What happened?") == "I checked the warp core."
+    (intent,) = agent.intents
+    assert (intent.intent, intent.target_agent_id, intent.params["text"]) == ("direct_message", "slot-a1", "What happened?")
+    assert intent.params["_qualification_test"] is True  # suppresses episode storage (CognitiveAgent.handle_intent)
+    assert await agent_recall_fn(registry)("slot-a1", "Again?") == "I checked the warp core."  # a slot key as given
+    with pytest.raises(RecallUnavailable, match="^no live agent$"):
+        await recall("zz", "What happened?")
+    with pytest.raises(RecallUnavailable, match="^no live agent$"):
+        await agent_recall_fn(registry)("a1", "What happened?")  # no resolver: the sovereign key reaches no agent
+    assert len(agent.intents) == 2
+```
+
+**TX3.** (appended):
+SEARCH:
+```python
+    (line,) = [r.getMessage() for r in caplog.records if "measured no episode" in r.getMessage()]
+    assert "ep-0: empty recall" in line
+```
+REPLACE:
+```python
+    (line,) = [r.getMessage() for r in caplog.records if "measured no episode" in r.getMessage()]
+    assert "ep-0: empty recall" in line
+
+
+# -- R1 to R4: review round 1 (a crew agent's slot and sovereign ids; a reply that is not a recall) ----------------
+
+_SLOT = "surgeon_medical_surgeon_0_b2321292"
+_INSTANCE = "bf989-ship"
+
+
+class _CrewAgent:
+    """A crew agent as the runtime holds one: registered by its slot id; its episodes carry its sovereign id."""
+
+    agent_type = "surgeon"
+    pool = "surgeon"
+    callsign = "Meridian"
+
+    def __init__(self, sovereign_id: str) -> None:
+        self.id = _SLOT
+        self.sovereign_id = sovereign_id
+        self.intents: list[Any] = []
+
+    async def handle_intent(self, intent: Any) -> IntentResult:
+        self.intents.append(intent)
+        return IntentResult(intent_id=intent.id, agent_id=self.id, success=True, result=_RECALL)
+
+
+async def test_a_session_on_the_sovereign_id_measures_and_writes_through_the_slot(tmp_path: Path) -> None:
+    identities = AgentIdentityRegistry(data_dir=tmp_path / "identity")
+    try:
+        await identities.start()
+        await identities.start(instance_id=_INSTANCE, vessel_name="Bf989", version="1")
+        cert = await identities.resolve_or_issue(
+            slot_id=_SLOT, agent_type="surgeon", callsign="Meridian", instance_id=_INSTANCE,
+            vessel_name="Bf989", department="medical", post_id="surgeon", baseline_version="v1",
+        )
+        sovereign = cert.agent_uuid
+        assert sovereign != _SLOT and identities.resolve_slot_id(sovereign) == _SLOT  # premise: BF-907's split
+        agent, registry, memory = _CrewAgent(sovereign), AgentRegistry(), MockEpisodicMemory()
+        await registry.register(agent)
+        for i in range(4):
+            await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[sovereign]))
+        engine = GuidedReminiscenceEngine(
+            episodic_memory=memory, llm_client=_Client(), max_episodes_per_session=3,
+            recall_fn=agent_recall_fn(registry, resolve_slot=identities.resolve_slot_id),
+        )
+        ward_room, events = _ward_room(), []
+        counselor = _make_counselor(
+            _registry=registry, _ward_room=ward_room, callsign="Counselor", _record_intervention=MagicMock(),
+            _emit_event_fn=lambda name, payload: events.append((name, payload)),
+        )
+        counselor.set_reminiscence_engine(engine, resolve_slot=identities.resolve_slot_id)
+        await counselor._initiate_reminiscence_session(sovereign, trigger="retrieval_concern")
+    finally:
+        await identities.stop()
+    assert [intent.target_agent_id for intent in agent.intents] == [_SLOT] * 3
+    profile = counselor._cognitive_profiles[_SLOT]
+    assert profile.memory_integrity_score == pytest.approx(0.9)
+    assert profile.reminiscence_sessions == 1
+    assert sovereign not in counselor._cognitive_profiles
+    assert list(counselor._reminiscence_cooldowns) == [_SLOT]
+    dm = ward_room.get_or_create_dm_channel.await_args.kwargs
+    assert (dm["agent_b_id"], dm["callsign_b"]) == (_SLOT, "Meridian")
+    assert list(counselor._dm_cooldowns) == [_SLOT]
+    ((name, payload),) = events
+    assert (name, payload["agent_id"], payload["episodes_tested"], payload["unmeasured"]) == (
+        "reminiscence_session_complete", _SLOT, 3, 0,
+    )
+
+
+async def test_a_key_with_no_live_agent_runs_no_session_and_takes_no_cooldown(caplog: pytest.LogCaptureFixture) -> None:
+    engine = SimpleNamespace(run_session=AsyncMock())
+    counselor = _make_counselor(_reminiscence_engine=engine, _registry=AgentRegistry())
+    caplog.set_level(logging.INFO, logger="probos.cognitive.counselor")
+    await counselor._initiate_reminiscence_session("a1", trigger="bf989")
+    engine.run_session.assert_not_awaited()
+    assert counselor._reminiscence_cooldowns == {}
+    assert [r.levelno for r in caplog.records if "no live agent" in r.getMessage()] == [logging.INFO]
+
+
+def _crew_class() -> type[CognitiveAgent]:
+    return type("_BF989Crew", (CognitiveAgent,), {
+        "agent_type": "surgeon",
+        "_handled_intents": {"bf989_probe"},
+        "instructions": "You are a crew member. Respond concisely.",
+        "intent_descriptors": [IntentDescriptor(name="bf989_probe", params={}, description="probe", tier="domain")],
+    })
+
+
+class _CountingLLM(MockLLMClient):
+    """The agent's model: counts calls; a stopped or saturated agent makes none."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:  # type: ignore[override]
+        self.calls += 1
+        return LLMResponse(content=_RECALL)
+
+
+async def _session_of(agent: CognitiveAgent, client: _Client) -> Any:
+    registry, memory = AgentRegistry(), MockEpisodicMemory()
+    await registry.register(agent)
+    for i in range(4):
+        await memory.store(_make_episode(ep_id=f"ep-{i}", timestamp=1000.0 + i * 100, agent_ids=[agent.id]))
+    engine = GuidedReminiscenceEngine(
+        episodic_memory=memory, llm_client=client, max_episodes_per_session=3, recall_fn=agent_recall_fn(registry),
+    )
+    return await engine.run_session(agent.id)
+
+
+async def test_a_stopped_or_saturated_agent_gives_no_recall(tmp_path: Path) -> None:
+    stopped_llm, saturated_llm, client = _CountingLLM(), _CountingLLM(), _Client()
+    stopped = _crew_class()(llm_client=stopped_llm)
+    stops = AgentStopService(data_dir=tmp_path / "stops")
+    await stops.start()
+    try:
+        await stops.issue_stop(stopped.id, reason="BF-989 test: this agent is stopped")
+        stopped._runtime = SimpleNamespace(agent_stops=stops)
+        result = await _session_of(stopped, client)
+    finally:
+        await stops.stop()
+    assert (result.episodes_tested, result.unmeasured) == (0, [f"ep-{i}: agent stopped" for i in range(3)])
+
+    saturated = _crew_class()(llm_client=saturated_llm)
+    manager = ConcurrencyManager(saturated.id, max_concurrent=1, queue_max_size=0)
+    saturated.set_concurrency_manager(manager)
+    held = await manager.acquire("held")
+    try:
+        result = await _session_of(saturated, client)
+    finally:
+        await manager.release(held)
+    assert (result.episodes_tested, result.unmeasured) == (0, [f"ep-{i}: no response" for i in range(3)])
+    assert (stopped_llm.calls, saturated_llm.calls, client.prompts) == (0, 0, [])  # no turn, no judge, no message
+
+
+@pytest.mark.parametrize(
+    ("reply", "reason"),
+    [
+        pytest.param(None, "no reply", id="none"),
+        pytest.param(
+            IntentResult(intent_id="i", agent_id=_SLOT, success=False, result="Not delivered", error="Not delivered",
+                         metadata={STOP_METADATA_KEY: {}}),
+            "agent stopped", id="stop",
+        ),
+        pytest.param(IntentResult(intent_id="i", agent_id=_SLOT, success=False, result="partial"),
+                     "agent reply failed", id="failed"),
+        pytest.param(IntentResult(intent_id="i", agent_id=_SLOT, success=True, result="text", error="cognitive_failed"),
+                     "agent reply failed", id="error"),
+        pytest.param(IntentResult(intent_id="i", agent_id=_SLOT, success=True, result="Noted. [NO_RESPONSE]"),
+                     "no response", id="silence"),
+    ],
+)
+async def test_a_reply_that_is_not_a_recall_names_its_reason(reply: Any, reason: str) -> None:
+    class _Agent:
+        id = _SLOT
+        agent_type = "surgeon"
+
+        async def handle_intent(self, intent: Any) -> Any:
+            return reply
+
+    recall = agent_recall_fn(SimpleNamespace(get=lambda key: _Agent() if key == _SLOT else None))
+    with pytest.raises(RecallUnavailable, match=f"^{reason}$"):
+        await recall(_SLOT, "What happened?")
+```
+
+### 17.8 `PROGRESS.md` (M-R2)
+
+**PX1.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` which startup wires to the new `qualification_tests.agent_recall_fn(registry)` (AD-566's `_send_probe`, whose `_qualification_test` marker suppresses episode storage) ``
+REPLACE: `` which startup wires to the new `qualification_tests.agent_recall_fn(registry, resolve_slot=...)` (BF-907's resolver maps the sovereign UUID that episodes carry to the live agent's slot; AD-566's path, whose `_qualification_test` marker suppresses episode storage) ``
+
+**PX2.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` An empty, failed or timed-out recall and an inconclusive judge (BF-711) leave the episode unmeasured ``
+REPLACE: `` An empty, failed or timed-out recall, a reply that is not a recall (the Captain's stop, a failed reply, `[NO_RESPONSE]`), a key with no live agent and an inconclusive judge (BF-711) leave the episode unmeasured ``
+
+**PX3.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` The Counselor takes the cooldown before the session, logs a failed session at WARNING, ``
+REPLACE: `` The Counselor resolves the trigger's key to the slot (profile, cooldown, DM and event; no live agent: no session, no cooldown), takes the cooldown before the session, logs a failed session at WARNING, ``
+
+**PX4.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` (23 cases). Not measured: how often a live session runs and the live effect of its DM. Open items bf-989 R1 to R3 of #1820. ``
+REPLACE: `` (31 cases). Not measured: how often a live session runs and the live effect of its DM. Open items bf-989 R1 to R5 of #1820. ``
+
+### 17.9 `DECISIONS.md` (M-R2)
+
+**DX1.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` Startup passes `qualification_tests.agent_recall_fn(runtime.registry)`, which asks the agent through `_send_probe`; ``
+REPLACE: `` Startup passes `qualification_tests.agent_recall_fn(runtime.registry, resolve_slot=...)`, bound to BF-907's `AgentIdentityRegistry.resolve_slot_id`: episodes carry the sovereign UUID and the registry keys by slot, so the key is resolved before the agent is asked, on `_send_probe`'s path (`_probe_intent_result`); ``
+
+**DX2.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` *Unmeasured.* An empty, failed or timed-out recall and an inconclusive judge (`score_recall_outcome`, BF-711) ``
+REPLACE: `` *Unmeasured.* An empty, failed or timed-out recall, a reply that is not a recall (no reply, the Captain's stop, a failed reply, `[NO_RESPONSE]`), a key with no live agent and an inconclusive judge (`score_recall_outcome`, BF-711) ``
+
+**DX3.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` - *Writes.* The cooldown is taken before the session (no await between check and set); ``
+REPLACE: `` - *Writes.* The Counselor resolves the trigger's key once: the profile, cooldown, DM and event use the slot id (the DM channel is otherwise unroutable); a key with no live agent runs no session and takes no cooldown. The cooldown is taken before the session (no await between check and set); ``
+
+**DX4.** A substring inside the BF-989 entry (once).
+
+SEARCH (substring): `` - *Residual.* #1820 items bf-989 R1 to R3. ``
+REPLACE: `` - *Residual.* #1820 items bf-989 R1 to R5. ``
+
+### 17.10 Issue texts
+
+**Closure comment on #1838 (8.1), amended:** the Recall bullet adds "with BF-907's resolver (the sovereign UUID that episodes carry is mapped to the live agent's slot)"; the Measured-only bullet adds "a reply that is not a recall (the Captain's stop, a failed reply, `[NO_RESPONSE]`) and a key with no live agent"; the Writes bullet adds "on the agent's slot id (profile, cooldown, DM, event); no live agent: no session, no cooldown"; "(23 cases)" becomes "(31 cases)"; acceptance item 2 adds `test_a_session_on_the_sovereign_id_measures_and_writes_through_the_slot` (a real `AgentIdentityRegistry`) and `test_a_stopped_or_saturated_agent_gives_no_recall` (a real `CognitiveAgent`, `AgentStopService` and `ConcurrencyManager`); "Open: R1 to R3" becomes "R1 to R5".
+
+**New items on #1820 (8.2), in addition to R1 to R3:**
+
+- `- [ ] **bf-989 R4 (P3, Medium; pre-existing; measured by a probe on the mock): AD-566 D2 cannot fail for a crew agent whose sovereign id differs from its slot id.** \`EpisodicRecallProbe\` counts and reads episodes by the id the harness is given (\`qualification_tests.py\` \`count_for_agent\` and \`recent_for_agent\` in \`EpisodicRecallProbe.run\`), which is the slot id (\`drift_detector._get_crew_agent_ids\` returns \`agent.id\`, "NOT sovereign IDs"; \`commands_qualification.py:121\` passes \`agent.id\`). Crew episodes carry the sovereign UUID (\`cognitive_agent.py\` \`agent_ids=[sovereign_id or id]\`), and \`count_for_agent\` matches the key exactly (\`agent_id in agent_ids\`, in the store and in \`MockEpisodicMemory\`). Probe of 2026-11-21 (premises asserted; \`probe_r4.py\`): with the episodes keyed by the slot id the probe asks the agent 3 times and scores 0.9; with them keyed by the sovereign id it returns \`skipped: insufficient_episodes\`, score 1.0, passed, and never asks the agent. Reach: every drift run and \`/qualify\`, every such agent. Repair: memory reads by \`resolve_sovereign_id(agent)\` (as \`memory_probes._resolve_probe_agent_id\` does), the registry by slot.`
+- `- [ ] **bf-989 R5 (P3, Low; pre-existing, BF-907's class; read, not run): AD-541c concerns are stored on a profile keyed by the sovereign UUID.** \`_on_retrieval_practice_concern\` writes \`retrieval_concerns\` under the event's key (the dream cycle emits the episodes' ids: \`dreaming.py\` \`_step_11_retrieval_practice\`), a second profile beside the slot-keyed one that the sweep (\`counselor.py\` \`for meta in all_agents\`), telemetry (\`cognitive_agent.py\`) and BF-989's session use. So the sweep's concern check never sees a concern, \`/counselor\` lists the sovereign profile as a separate agent, and a departed agent's concerns log one INFO "no live agent" line per trigger. Repair: resolve at the handler, with a migration of stored sovereign-keyed profiles (stored data: check the Captain conditions then).`
+
+### 17.11 Mutation rows (the campaign of record on the repaired tree; restore between rows; each killer at `-n 0`)
+
+| M | Mutation | Killers |
+|---|---|---|
+| RM1 | QX1: `slot_id = agent_id` (ignore the resolver) | N7, R1 |
+| RM2 | CX5: `run_session(agent_id)` | R1 |
+| RM3 | CX4: delete the resolve line (`agent_id` stays the memory key) | R1 |
+| RM4 | CX4: delete the liveness gate | R2 |
+| RM5 | CX4: move the gate after the cooldown set | R2 |
+| RM6 | CX4/CX5: `_get_or_create_profile(memory_key)` | R1 |
+| RM7 | CX4/CX5: `_send_therapeutic_dm(memory_key, ...)` | R1 |
+| RM8 | QX1: delete the stop check | R4[stop], R3 |
+| RM9 | QX1: `if result.error:` (drop `not result.success`) | R4[failed] |
+| RM10 | QX1: `if not result.success:` (drop `or result.error`) | R4[error] |
+| RM11 | QX1: delete the `[NO_RESPONSE]` check | R4[silence], R3 |
+| RM12 | QX1: delete the `isinstance` check | R4[none] |
+| RM13 | GX2: delete `except RecallUnavailable` | R3 |
+| RM14 | QX1: `if agent is None: return ""` | N7 |
+| RM15 | FX1/FX2: drop either `resolve_slot=` | AD-541d test 28 |
+| RM16 | QX1: the closure calls `_send_probe` instead of `_checked_recall(await _probe_intent_result(...))` | R3, R4 |
+
+RM15 is run as two rows, RM15a (FX1: drop `resolve_slot=` from `agent_recall_fn(...)`) and RM15b (FX2: drop it from `set_reminiscence_engine(...)`); each is killed by AD-541d test 28. That makes 17 rows.
+
+### 17.12 The orchestrator's first-hand checks of the repair (2026-11-21, an oracle tree at `86b9c156` whose touched files hold the candidate's blobs plus the pairs of 17.1 to 17.9)
+
+Every pair of 17.1 to 17.9 was applied to a scratch worktree by `audit\contract_tools.py`, and every check below was run, before the Builder starts. The focused gate and the consumer set ran under the default embeddings and under `PROBOS_EMBEDDINGS=local`, as CI runs them. In this section R1 to R4 name the four new tests of TX3 (`test_a_session_on_the_sovereign_id_measures_and_writes_through_the_slot`, `test_a_key_with_no_live_agent_runs_no_session_and_takes_no_cooldown`, `test_a_stopped_or_saturated_agent_gives_no_recall` and `test_a_reply_that_is_not_a_recall_names_its_reason`, which has five cases: none, stop, failed, error, silence); the items of #1820 are always written "bf-989 R4" and "bf-989 R5".
+
+| RO | Result |
+|---|---|
+| RO1 | The 25 operations (GX1-GX2, QX1, SX1, CX1-CX5, FX1-FX2, AX1-AX3, TX1-TX3, PX1-PX4, DX1-DX4) are found by `contract_tools.py list --prefix 17.`, and each SEARCH occurs exactly once on the candidate, in files that are CRLF throughout. |
+| RO2 | Tests first (the candidate, GX1 so that the module imports, and the test pairs AX1-AX3 and TX1-TX3): 10 failed, 236 passed, 2 skipped. The reds: N7 and R1 by `TypeError: agent_recall_fn() got an unexpected keyword argument 'resolve_slot'`; R2 by `Expected mock to not have been awaited. Awaited 1 times.` (the session ran for a key with no live agent); R3 by `assert (3, []) == (0, ['ep-0: a...ent stopped'])` (three measured episodes where none is wanted); the five cases of R4 by `DID NOT RAISE RecallUnavailable`; AD-541d test 28 (`TestD4D5D6::test_startup_wiring_reminiscence_engine`) by the assertion that `finalize.py` holds `reminiscence_identities.resolve_slot_id`. |
+| RO3 | All the code and test pairs applied (GX1-GX2, QX1, SX1, CX1-CX5, FX1-FX2, AX1-AX3, TX1-TX3): the nine-file focused gate gives 246 passed, 2 skipped under the default embeddings and under `PROBOS_EMBEDDINGS=local` (24.7 s each). The two skips are `test_bf139_140_probe_hardening.py:229` and `:262` (the sentence-transformers model is offline); they skip on the base too. |
+| RO4 | A consumer set of 52 files (the 37 of O4 plus 15 neighbours: the tests of the identity resolvers that the repair binds, `test_bf907_trust_identity`, `test_bf138_sovereign_id_completion`, `test_ad1346_identity_service` and its `_boot`, `test_ad1343_agent_stop`, `test_ad1347_s4_ward_room_lookup`, and of the sibling probe modules, `test_ad566d_domain_tests`, `test_ad582_memory_probes`, `test_bf147` to `test_bf152`, `test_ad1340_s1_erasure`): 1352 passed, 2 skipped under each setting (204 s and 194 s). |
+| RO5 | The probe of the repaired path (`probe_repaired.py`, premises P0-P4 asserted, a real `AgentIdentityRegistry`, episodes keyed by the sovereign UUID, the registry by slot): with no resolver bound (the wiring of the candidate) the handler is called 0 times and the 3 episodes are excluded as `no live agent`; with `resolve_slot_id` bound it is called 3 times and nothing is unmeasured; a reply with `success` False is excluded as `agent reply failed` and a `[NO_RESPONSE]` reply as `no response`, 3 episodes each. The reason `agent stopped` (`STOP_METADATA_KEY`) is not in this probe; R4[stop] shows it on a constructed reply, and R3 with a real `CognitiveAgent`, `AgentStopService` and `ConcurrencyManager`. |
+| RO6 | The probe of item bf-989 R4 (`probe_r4.py`, premises P0-P2 asserted): AD-566's `EpisodicRecallProbe`, run for the slot id, with the episodes keyed by the slot id asks the agent 3 times and scores 0.9; with them keyed by the sovereign id it returns `skipped: insufficient_episodes`, score 1.0, passed, and never asks the agent. |
+| RO7 | The campaign of 17.11 (`audit\mutants_gen.py` with `audit\rows_bf989r.py`) on the repaired tree, whose four test files (the new one, `test_ad541d_guided_reminiscence.py`, `test_bf988_llm_response_text.py` and `test_ad566b_baseline_tests.py`) give 132 cases, all green unmutated: **all 17 rows are killed, none survived, none differs, and none is invalid: every named killer failed in every row, and no case outside the named killers failed (extras 0).** Cases per row: RM1 2 (N7, R1), RM2-RM7 1 each, RM8 2 (R4[stop], R3), RM9 and RM10 1 each, RM11 2 (R4[silence], R3), RM12-RM14 1 each, RM15a and RM15b 1 each (test 28), RM16 6 (R3 and the five cases of R4). Every row restored its file: the base table below was recomputed after the campaign and equals the one printed before it. |
+| RO8 | The trackers PX1-PX4 and DX1-DX4 applied on the oracle (each SEARCH once; `PROGRESS.md` 1788 lines and `DECISIONS.md` 13499 lines, unchanged, because every pair edits inside a line), and `gen_ad_ledger.py --check` reports "AD/BF ledger is current". The candidate's ledger pair (captured at `8e1689fa`) stands: the ledger reads the AD and BF headings and status lines, which the pairs do not touch, and the two files differ from a regeneration on the base only in the captured head, time and subject count. |
+
+The base of the campaign of record (the files after 17.1 to 17.9; blob id, sha256 of the LF text, lines):
+
+| File | Blob | sha256 (LF text) | Lines |
+|---|---|---|---|
+| `src/probos/cognitive/guided_reminiscence.py` | `3c05a533f0de75061c53cabaaf1f3590842478da` | `17d9718eaf1f7e0051664984bb5f1ea88eaefd528099ad6569c495f1737f4e28` | 578 |
+| `src/probos/cognitive/qualification_tests.py` | `e43529461f52c21f00d11497554e4a42fb68513e` | `6840877fc8a0a45d880a2ed953a1c9b43a593d1e156b1ed876423c83ea969236` | 911 |
+| `src/probos/startup/finalize.py` | `44731aefe63d115c969c20dbe0438f6977bbab3c` | `f650a6cd9af2a4df3feb1f21e15e126aea954e741f343c54b64981c909b65cbb` | 6890 |
+| `src/probos/cognitive/counselor.py` | `c910b4821a27d3395d05e5b1859fa1094a330f57` | `c1875b4275312d9fd4fd0615a6c72a4d9f77aecd6139203ff4fddf5e07d8e55b` | 2963 |
+| `tests/fixtures/ad1343_seam_registry.py` | `aee6211c05c5d6f2e3fc1ce8b49ca96a67d2c7aa` | `fa0bec869b60bc5eb10d7a1c48d33e00523c1d3a6120f1f55fde2aba20259a75` | 280 |
+| `tests/test_bf989_guided_reminiscence_recall.py` | `369ee3e05e5b8a3036fb6802d34063d3a8878543` | `245df34ce98c952f4ad8c2993a74134fd17b64f1eb622c9381ab3ff2db80591b` | 486 |
+| `tests/test_ad541d_guided_reminiscence.py` | `267092e9256c416a40379ede91a818e0289ad4a9` | `45ea814048352f459a3a0b87ae9337f6702d1a155b57f80e756f1c64b5710920` | 574 |
+| `tests/test_bf988_llm_response_text.py` (not edited by the repair) | `eae60c541a2851d90a8e2e2f35741304c96f61c1` | `7b9af12869d026eba3787c5d98e60ee7bc4d0e64afb697e06fba02cee721635f` | 474 |
+
+After the trackers: `PROGRESS.md` `bc81b247a62bb199c40a9e41b868828d4ca0d4c6` and `DECISIONS.md` `91ec5c09c3a383dc4c3af0f5bad56147d792f58a` (1788 and 13499 lines).
+
+**What the orchestrator changed in the Architect's draft of the repair** (the rest is the draft's): the pair labels are `GX1` and so on where the draft wrote `G-R1`; the test pairs import `RecallUnavailable` at the top of the file (TX1 holds the parenthesised import, and TX2 and TX3 drop the draft's function-level imports, which were there for a red column and would leave a stale comment); pair AX3 (AD-541d test 12 keeps testing the empty selection, the reviewer's note) and the tracker pairs PX1-PX4 and DX1-DX4 are the orchestrator's own; the evidence of item bf-989 R4 in 17.10 is the probe of RO6, narrowed to the callers that were read (`drift_detector._get_crew_agent_ids`, which returns `agent.id`, and `commands_qualification.py`), where the draft read it without running anything.
+
+What the tests and the probes do not show, stated plainly: no vessel has run a session, so the live registry's contents, the live agents' replies and the cost of a live session are not measured; the sovereign-to-slot mapping is exercised with a real `AgentIdentityRegistry`, and the stop reason with a real `CognitiveAgent`, `AgentStopService` and `ConcurrencyManager`, but every other agent in the tests is a double; `_checked_recall` recognises four shapes (no reply, the stop metadata, a failed reply, `[NO_RESPONSE]`), so a successful reply whose text is itself a refusal ("I can't say") reaches the judge as before, and its precision stays item bf-989 R2; the self-session and the handler's latency stay item bf-989 R3; a key with no live agent takes no cooldown, so a departed agent's triggers each log one INFO line (item bf-989 R5).
