@@ -664,11 +664,12 @@ class _GatedLock:
         self._inner = threading.Lock()
         self.first_at_the_door = threading.Event()
         self.second_has_been_through = threading.Event()
+        self.second_passed_while_first_waited = False
 
     def __enter__(self) -> None:
         if threading.current_thread().name == "first":
             self.first_at_the_door.set()
-            self.second_has_been_through.wait(timeout=10.0)
+            self.second_passed_while_first_waited = self.second_has_been_through.wait(timeout=10.0)
         self._inner.acquire()
 
     def __exit__(self, *exc_info: object) -> None:
@@ -705,8 +706,37 @@ def test_two_writers_cannot_record_out_of_time_order_so_an_expired_id_never_reso
     first.join(timeout=10.0)
     second.join(timeout=10.0)
     assert not first.is_alive() and not second.is_alive() and sorted(ids) == ["first", "second"]
+    # A second writer too slow to get through while the first waits would leave the writers in time order, and this
+    # case would pass the previous code: the premise is asserted, so a missed interleaving fails.
+    assert gate.second_passed_while_first_waited
 
     earlier, later = sorted(ids, key=sampled.__getitem__)  # the writer that read the clock first, and the other
     now_override.append(sampled[earlier] + 60.5)  # the earlier id is now past its TTL; the later one, a tick newer, is not
     assert registry.resolves(ids[earlier]) is False
     assert registry.resolves(ids[later]) is True
+
+
+# -- N38: review round 2 (a reader that waits for the lock judges an id by the time it gets the lock) ----------------
+
+
+class _SlowLock:
+    """A lock that takes time to get: entering it moves the clock on, as a caller waiting behind another does."""
+
+    def __init__(self, now: list[float], arrives_at: float) -> None:
+        self._now = now
+        self._arrives_at = arrives_at
+
+    def __enter__(self) -> None:
+        self._now[0] = self._arrives_at
+
+    def __exit__(self, *exc_info: object) -> None:
+        return None
+
+
+def test_a_reader_waiting_for_the_lock_judges_an_id_by_the_time_it_gets_the_lock() -> None:
+    now = [100.0]
+    registry = CycleIdRegistry(ttl_seconds=60.0, clock=lambda: now[0])
+    chain_id = registry.issue(kind="cognitive_cycle")  # recorded at 100
+    assert registry.resolves(chain_id) is True  # the premise: at 100 the id is live
+    registry._lock = _SlowLock(now, 161.0)  # type: ignore[assignment]
+    assert registry.resolves(chain_id) is False  # waiting for the lock took the id past its TTL of 60
