@@ -2904,3 +2904,278 @@ The 10 operations of this section (RG1 and RG3 to RG10: there is no RG2) were ap
 **What these checks do not show.**
 - A host where `gh` is slow, other than through the plugin: the new broad gate, which runs with the real home, is the first test of that.
 - A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
+
+---
+
+## 20. Repair after review round 4 (2026-11-21)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21, rev5
+
+**Base.** The Builder starts from the batch head `e12d0a4d`. Every edited file is `i/lf w/crlf`: match and write each with its own line endings. ASCII only. Brake decision (round five, a P1 that regresses section 19's repair): **continue**, scope R4 only; one delta review, then the batch's second broad gate.
+
+**Milestones** (one Builder delegation each; the Builder runs no test):
+
+| M | Content | Commit subject |
+|---|---|---|
+| M9 | 20.4 (RH2, test first), then 20.3 (RH1) | `Keep the masking window open when a stop cancels the priming` |
+| M10 | RH3, RH4, then `gen_ad_ledger.py` and `--check` as in 7.13 | `Record that a cancel does not end the masking window` |
+
+### 20.1 Findings and decisions
+
+| Finding | Severity / reach | Decision | Pairs |
+|---|---|---|---|
+| R4: section 19's done callback (`finalize.py:746`) ends the priming window when the task ends. A stop's sweep cancels the task while the worker thread is still in `gh` (`asyncio.to_thread` cannot stop it), so a waiting registry call (`executor.py:1039`) is released before the value is primed and returns the raw CLI token. Measured: base `<secret:github>`, `e12d0a4d` the raw value. | P1, ordinary (a tool call waiting during a stop); a regression of section 19 | Delete the callback. The window ends in exactly two ways: the worker's `finally` (`finalize.py:761-763`) or the masker's bound (`secret_masking.py:356-360`). Ownership stays. | RH1 to RH4 |
+
+**Cases after the repair:** (b), a cancel while the worker is in `gh`: calls are held until the worker returns (at most the CLI's 5 s timeout) or the bound. (c), a cancel before a pool thread starts the worker, reachable only on a saturated default executor: calls are released at the bound, unprimed. That is the accepted fail-open of section 17, the same as a hung `gh`. (a) and (d) cannot be reached while tool calls run (consult answer 2026-11-21). On normal completion nothing changes.
+
+### 20.2 Rejected designs
+
+- **O1: keep the callback but skip it on a cancel.** Identical to RH1 on every reachable case. Its only difference is (d), which is unreachable, so it adds a branch with nothing to pin it.
+- **O3: fail closed after a cancel** (the reviewer's sketch). A new masker state and new executor behaviour, and it undoes section 17's fail-open bound.
+- **O4: a "worker started" flag.** Racy in case (c).
+- **`asyncio.shield` around `to_thread`,** so that (c) still primes. It leaves a future nobody owns, for a case that only arises during a stop on a saturated executor and is already bounded.
+- **Reverting the ownership.** Brings G1 back.
+
+### 20.3 `src/probos/startup/finalize.py`
+
+**RH1.** SEARCH:
+```
+    # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
+    # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
+    # window closes when the task ends, however it ends: a task cancelled before its first step never reaches the
+    # worker, whose ``finally`` is the only other ``end_priming``. The worker thread itself ends within the CLI's
+    # timeout and holds nothing a teardown closes.
+    task = runtime._spawn_background(_prime_secret_masking(store, masker), "secret_masking_prime")
+    task.add_done_callback(lambda _task: masker.end_priming())
+    runtime.secret_masking_prime_task = task
+    return masker
+```
+REPLACE:
+```
+    # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
+    # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
+    # window is not ended by that cancel: the worker thread cannot be cancelled, and the value is primed only when
+    # it returns. Only the worker's ``finally`` or the masker's bound ends it. The thread ends within the CLI's
+    # timeout and holds nothing a teardown closes.
+    runtime.secret_masking_prime_task = runtime._spawn_background(
+        _prime_secret_masking(store, masker), "secret_masking_prime",
+    )
+    return masker
+```
+
+### 20.4 `tests/test_ad1337_executor_seam.py`
+
+**RH2.** SEARCH (N26, from its banner to the end of the file):
+```
+# -- N26: the runtime owns the priming --------------------------------------------------------------------------------
+
+
+async def test_the_runtime_owns_the_priming_so_a_stop_cancels_it_in_gh_and_its_window_closes_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release, worker_done = threading.Event(), threading.Event(), threading.Event()
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        entered.set()
+        assert release.wait(10.0)  # gh answers only after the task was cancelled, as when a start fails late
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+```
+REPLACE:
+```
+# -- N26: the runtime owns the priming, and a stop's cancel does not end its window ----------------------------------
+
+
+async def test_the_runtime_owns_the_priming_and_a_call_after_a_stop_cancels_it_in_gh_waits_for_the_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release, worker_done = threading.Event(), threading.Event(), threading.Event()
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        entered.set()
+        assert release.wait(10.0)  # gh answers only after the cancel and a held call, as when a stop lands in gh
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+```
+
+**RH2b.** SEARCH:
+```
+    monkeypatch.setattr(finalize, "_prime_secret_masking_worker", _worker)
+    runtime = _owning_runtime(_store(tmp_path))
+    try:
+        masker = finalize._wire_secret_masker(runtime=runtime)
+        task = runtime.secret_masking_prime_task
+        assert runtime._background_tasks == {task} and task.get_name() == "secret_masking_prime"
+```
+REPLACE:
+```
+    monkeypatch.setattr(finalize, "_prime_secret_masking_worker", _worker)
+    # The masker's clock stands still (N22's seam), so its bound cannot pass however slow the host is: here only the
+    # worker can end the window. N22 pins the bound itself.
+    monkeypatch.setattr(secret_masking, "time", SimpleNamespace(monotonic=lambda: 1000.0))
+    runtime = _owning_runtime(_store(tmp_path))
+    tool = _EchoTool("echo", f"cli={CLI_TOKEN}")
+    try:
+        masker = finalize._wire_secret_masker(runtime=runtime)
+        task = runtime.secret_masking_prime_task
+        assert runtime._background_tasks == {task} and task.get_name() == "secret_masking_prime"
+```
+
+**RH2c.** SEARCH:
+```
+        assert runtime._background_tasks == set()  # it left the owner's registry
+        assert masker.priming_pending() is False  # the window closed with the task, while the worker is still in gh
+    finally:
+        release.set()
+    assert await asyncio.to_thread(worker_done.wait, 10.0)  # the worker ends alone; nothing waits for it
+    assert masker.priming_pending() is False
+```
+REPLACE:
+```
+        assert runtime._background_tasks == set()  # it left the owner's registry
+        assert masker.priming_pending() is True  # the cancel did not end the window: the value is not primed yet
+        polls = _PrimingPolls(masker, monkeypatch, count=2)
+        executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+        call = asyncio.create_task(executor.invoke("agent-1", "echo", {}))
+        assert await _held(polls, [call]) is True  # a call made after the cancel waits while the worker is in gh
+        assert tool.calls == 0
+    finally:
+        release.set()
+    assert await asyncio.to_thread(worker_done.wait, 10.0)  # the worker ends alone; nothing waits for it
+    result = await asyncio.wait_for(call, timeout=10.0)
+    assert result.output == f"cli={PLACEHOLDER}" and tool.calls == 1  # released by the worker, masked with its value
+    assert polls.original() is False
+```
+
+No new import: `secret_masking`, `SimpleNamespace`, `ToolExecutor`, `_registry`, `_EchoTool`, `_PrimingPolls`, `_held` and `PLACEHOLDER` are already in the module (`:18`, `:31`, `:42-45`, `:61`, `:110`, `:132`, `:189`, `:208`). The test sleeps on no wall clock. Its only waits are on events and on the 25 ms poll, so it finishes in well under a second, and the frozen clock takes the 6 s bound out of play.
+
+**Case (a) stays unpinned.** It cannot be reached through a stop or a rollback (20.1), and its outcome is the bound, which N22 pins. If it is ever wanted, the seam is the frozen module clock above. Monkeypatching `DEFAULT_PRIMING_TIMEOUT_S` has no effect: `begin_priming`'s default argument was bound when the module was imported (`secret_masking.py:339`).
+
+### 20.5 `PROGRESS.md`
+
+**RH3.** SEARCH:
+```
+cancels a priming still in `gh` and its window closes at once; waiting calls on a busy real loop
+```
+REPLACE:
+```
+cancels a priming still in `gh`, and a call made after that cancel is still held until the worker returns or the bound passes; waiting calls on a busy real loop
+```
+
+### 20.6 `DECISIONS.md`
+
+**RH4.** SEARCH (in S2's *Priming (S2)* bullet, `:1673`; it occurs once at `e12d0a4d`):
+```
+cancels a priming still in `gh`, and a done callback ends the window however the task ends; the worker thread cannot be cancelled
+```
+REPLACE:
+```
+cancels a priming still in `gh`, but that cancel does not end the window: only the worker's `finally` or the bound does, since a task's end is not the value's priming (review round 4 found a done callback that released waiting calls unmasked); the worker thread cannot be cancelled
+```
+
+### 20.7 Tests and predicted counts
+
+| N | Change | Property |
+|---|---|---|
+| N26 | Rewritten (RH2 to RH2c) | Registered under its name; a sweep-shaped cancel while in `gh` ends the task without waiting for the thread; the task leaves the registry; `priming_pending()` is still True after the cancel; a registry call made after the cancel is held while the worker is in `gh`; once released it returns `cli=<secret:github>`, and the tool runs once |
+
+- **Test pairs only, on `e12d0a4d`: 25 passed, 1 failed.** N26 fails at `assert masker.priming_pending() is True` (the callback closed the window).
+- **All pairs: 26 passed.**
+- `tests/test_issue1419_failed_start_rollback.py`: all pass, as on `e12d0a4d`; it checks tasks, not the window. The slow-gh trio: 10 passed.
+- S1's file and S3's file: counts unchanged, all pass.
+
+### 20.8 Mutation rows (one campaign on the M9 candidate, the S2 test file alone, restoring between rows)
+
+| Row | Mutant (one line) | Killed by |
+|---|---|---|
+| H1m | Re-add `runtime.secret_masking_prime_task.add_done_callback(lambda _task: masker.end_priming())` after the spawn (section 19's RG1) | N26 (`priming_pending() is True` after the cancel) |
+| G1m (rerun) | The spawn becomes `asyncio.create_task(_prime_secret_masking(store, masker), name="secret_masking_prime")` | N26 (registry) |
+| G3m (rerun) | Add `drain_on_shutdown=True` to the spawn | N26 (`_background_tasks` empty) |
+| R6m (rerun) | Worker: delete `masker.end_priming()` | N16, N18 and N26 (N26 at its 10 s `wait_for`). N16 kills it again now the callback is gone |
+| R7m (rerun) | Delete `masker.begin_priming()` | N16, N26 |
+| Y4 (rerun) | The worker is handed `None` for the masker | N16, N18, N24 (section 19.14 R5 corrected this to N18 and N24; N16 kills it again) |
+| S17m (rerun) | The worker body runs on the loop instead of in `to_thread` | N16 |
+
+- **G2m is retired.** Deleting the callback is now the candidate itself, and H1m is its inverse.
+- **Relocate first:** every earlier `finalize.py` row whose locator falls in the old lines 740-748 (X12, X14 at least). Rerun the rest of 19.14 R5's `finalize.py` rows unchanged.
+- **Not a row:** the O1 callback (`None if done.cancelled() else masker.end_priming()`). It is equivalent to the candidate on every reachable case, so it is expected to survive.
+
+### 20.9 What this does NOT change
+
+- `secret_masking.py`, `executor.py`, `credential_store.py`, `shutdown.py`, `rollback.py` and `runtime.py`.
+- The worker, `_prime_secret_masking`, and both their docstrings, which already say the worker or the bound ends the wait.
+- `_wire_secret_masker`'s signature and its call (N19, `:607`).
+- The ownership (G1 stays repaired).
+- The 6 s bound and its single WARNING.
+- S3's files and `_calls_building_a_tool_executor`, the one helper S3 imports (`test_ad1337_render_seam.py:71`).
+- Events, config and schema.
+
+### 20.10 Deterministic checks
+
+- **Focused gate at `-n 0`:** the list in 19.10 unchanged; it already includes `tests/test_issue1419_failed_start_rollback.py`. Add the slow-gh trio of 19.14 R4, which must give 10 passed.
+- `rg -n "add_done_callback" src/probos/startup/finalize.py` finds nothing.
+- `rg -n "end_priming\(" src` finds only `secret_masking.py:346` (the definition) and the worker's `finally` in `finalize.py`.
+- `rg -n '"secret_masking_prime"' src` finds one line, the `_spawn_background` call.
+- Run N26 with `-W error`: no pending-task or never-awaited warning.
+- `check_architecture_principles.py --check` exits 0 with the counts of 19.14 R6.
+- `git diff e12d0a4d --stat` lists only the four files plus the ledger pair. The ledger diff may be empty: neither replaced clause appears in it. Run `--check` either way.
+
+### 20.11 Verified Against Codebase (2026-11-21, `e12d0a4d`)
+
+```
+read finalize.py:715-780        wire; begin :739; spawn :745; callback :746; worker finally :761-763; to_thread :776; except Exception :777
+read secret_masking.py:330-361  import time :33; begin :339 (default bound at def); end :346; pending :350-360; time. only :344, :356
+read executor.py:726, :1024-1040  wait before the registry; loop exits only on pending False or the caller's cancel
+read shutdown.py:1367-1399      sweep cancels _background_tasks/_drain_tasks, wait 5 s
+read rollback.py:40-99          rollback awaits create_task(shutdown(..., rollback=True))
+read credential_store.py:350-369  _resolve (gh) runs outside _publish_lock
+read tests/test_ad1337_executor_seam.py:189-215, :700-729, :830-872   _PrimingPolls; _held; N22 clock seam :709; N26 (last line :872)
+grep add_done_callback|end_priming\( finalize.py   :746, :763
+grep "and its window closes at once" PROGRESS.md   1 (:5)
+grep "a done callback ends the window however the task ends" DECISIONS.md   1
+grep its_window_closes_at_once (outside prompts/)   N26's definition only
+grep shutdown_default_executor|set_default_executor src   comment only (audio/tts/resident.py:20)
+git diff 5d8a5eb4 e12d0a4d -U0 -- src | grep <lifecycle/wait patterns>   finalize.py (callback, worker finally, to_thread), secret_masking.py (window, threading locks), executor.py (:1126 the wait), credential_store.py (two threading locks)
+```
+
+Not verified by the Architect: the test counts, the campaign, and the slow-gh trio on the repaired tree (the orchestrator runs them), the ledger commands, and the `i/lf w/crlf` attribute of each file (taken from 19.11).
+
+### 20.12 Properties for the round-5 delta reviewer
+
+Review only the repair: `git diff e12d0a4d..HEAD -- src/probos/startup/finalize.py tests/test_ad1337_executor_seam.py`, plus S2's lines in `PROGRESS.md` and `DECISIONS.md`. Execute the checks; do not only read.
+
+1. **Release.** A call waiting on the priming window is released only when the worker has returned or the bound has passed. This also holds after a stop's cancel and after a failed start's rollback. Rerun round 4's real-runtime `stop()` measurement: the model-facing tool message is `<secret:github>`, and the call is released after the worker returns.
+2. **Ownership unchanged.** The task is in `_background_tasks` while it runs. `stop()` and rollback cancel it without waiting for the thread. The AD-1419 file reports no leftover task, and the slow-gh trio gives 10 passed.
+3. **One way to end the window.** No production code ends the window except the worker's `finally` and the masker's own bound.
+4. **N26** fails on `e12d0a4d`'s `finalize.py` and passes on the candidate. It does not depend on the host's speed, and under `-W error` it leaves no pending task or thread.
+5. **No shared contract changed.** Signatures, the call N19 pins, events, config and S3's helper are unchanged.
+
+### 20.13 Acceptance
+
+- [ ] 20.7's predictions hold (25 passed and 1 failed with the test pairs only, then 26 passed), and the focused gate of 20.10 is green.
+- [ ] H1m, G1m and G3m are killed as listed. R6m, R7m, Y4 and S17m are rerun with the killers of 20.8, and the relocated rows are rerun.
+- [ ] RH3 and RH4 are applied, and the ledger is regenerated and checked.
+- [ ] One delta review, then the batch's second broad gate, with a receipt.
+- [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+**Prior art.** None reviewed: this is a ProbOS plumbing repair. It is the general rule that a task's cancellation does not stop work inside `to_thread`.
+
+### 20.14 The orchestrator's first-hand checks
+
+The 6 operations of this section (RH1, RH2, RH2b, RH2c, RH3, RH4) were applied to a scratch worktree detached at `e12d0a4d` (the head the Builder starts from) by `audit\contract_tools.py apply --prefix 20.` (ASCII only), the test pairs first and the others second for R2. A second copy of that tree ran the campaign, so no run touched another's files. Results:
+
+| R | Result |
+|---|---|
+| R1 | All 6 operations are found by `contract_tools.py list --prefix 20.`, and every SEARCH occurs exactly once on `e12d0a4d` at its turn. Four files change by +23 -12 lines: `finalize.py` 5 and 5 (6,963 lines before and after; blob `e87db7d2b7b1`), the test file 16 and 5 (872 to 883 lines; blob `af1b24d0e1fb`), `PROGRESS.md` and `DECISIONS.md` one line each replaced in place (blobs `2f9896310e53` and `db4d6ba5c477`). The blob after each operation is in the `contract_tools.py checkpoints --prefix 20.` table that the Builder briefs carry. |
+| R2 | **The tests alone** (RH2, RH2b and RH2c applied, the code pair not): **1 failed, 25 passed** in 16.2 s, exactly the prediction of 20.7: N26 fails at `assert masker.priming_pending() is True` with `False` on the left, because `e12d0a4d`'s done callback ends the window when the sweep cancels the task. |
+| R3 | **All pairs: 26 passed** in 16.5 s. **N26 alone under `-W error`:** 1 passed in 4.6 s, with no pending-task and no never-awaited warning. |
+| R4 | **The finding's reproduction, before and after.** The probe is a scratch file (not committed; N26 is its committed form): a real owning runtime double with `_spawn_background`, a `gh` double that blocks on an event, `finalize._wire_secret_masker`, a cancel of the priming task once the worker is inside `gh`, a real `ToolExecutor(secret_masker=masker)` whose registry returns `cli=<the CLI-only token>`, one call made right after the cancel, then the event is released. Base `33826d30` (nothing registers the task, so the same cancel is applied to it directly): window open after the cancel, the call released only after the worker returned, `cli=<secret:github>`. `e12d0a4d`: window closed, the call released **before** the worker returned, and the raw value `gho-cli-only-K8d3Pz5Tq1` reached the caller. The repaired tree: window open, the call released after the worker returned, `cli=<secret:github>`, one registry call. |
+| R5 | **The campaign** (`audit\mutants_gen.py`, `rows_ad1337s2r4.py`; the S2 test file alone, 26 baseline cases, all passing): the rows H1m, G1m, G3m, R6m, R7m, X12, X14 and G4m of 20.8, and the eleven earlier rows on `finalize.py` rerun as they were (S13m, S16m, S17m, S18m, X10, X11, X13, X15, X16, R8m, Y4): **19 killed, 0 differ, 0 survived, 0 invalid**, and every named killer failed in every row (R6m by N16, N18 and N26; Y4 by N16, N18 and N24, as 20.8 predicts). The mutation tool replaces one line, so the rows on the three-line spawn are written as one-line edits: G1m turns the first line into a lambda that calls `asyncio.create_task(coro, name=name)`, G3m and X12 edit the second line, G4m sets the attribute to `None` before the spawn, and H1m puts the callback before `return masker` with a semicolon. The row that 20.8 says is not a row, O1m (the callback skipped on a cancel), was run alone: **SURVIVED** (no case failed), as predicted, because it is equivalent to the candidate on every reachable case. The tree was restored after both runs (its four blobs equal R1's). |
+| R6 | **Static checks.** `rg -n "add_done_callback" src/probos/startup/finalize.py` finds nothing; `rg -n "end_priming\(" src` finds `finalize.py:763` (the worker's `finally`) and `secret_masking.py:346` (the definition); `rg -n '"secret_masking_prime"' src` finds one line (`finalize.py:746`, the `_spawn_background` call); no `create_task` call in `src` carries `_prime_secret_masking`; `rg -n 'getattr\(runtime, "_spawn_background"' src` finds nothing; `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`, the same as before the repair). `git diff e12d0a4d --stat` lists the four files above, and after `gen_ad_ledger.py` the ledger pair too (6 lines in the snapshot and 2 in the report: `captured_at`, `head`, `subject_count`), so the ledger diff is not empty; `gen_ad_ledger.py --check` reports the ledger current. |
+| R7 | **The slow-gh proof.** The three functions of `tests/test_issue1419_failed_start_rollback.py` that the broad gate failed in (10 items), run with the `slowgh` pytest plugin (`gh auth token` sleeps 10 s, where the home-guard wrapper's empty home makes `gh` fail at once and hides the race), 3 workers: **10 passed** in 168 s on the repaired tree (176 s on the one-file prototype that preceded it). On `33826d30`, where nothing owns the task, the same run gave 6 failed and 4 passed; `e12d0a4d` gave 10 passed. |
+| R8 | **The consumers and the reachability claims.** `_wire_secret_masker` has one production caller (`finalize.py:5898`, in `finalize_startup`) and five test calls, all in the S2 test file (N16, N17, N21, N24, N26; N19 only pins the call's text); the repair changes none of them and no signature. `masker.end_priming()` is called in `src` only by the worker's `finally`, and the masker's bound still ends the window with one WARNING. The claims of 20.1 were read, not assumed: `startup/rollback.py:97-99` creates the rollback's shutdown as a NEW task (`asyncio.create_task(shutdown(..., rollback=True))`), so the priming task, whose first step was scheduled when it was created, runs that step first; `startup/shutdown.py:1385-1391` cancels the registered tasks only after the drain's awaits; and `rg -n "shutdown_default_executor|set_default_executor" src` finds only a comment (`audio/tts/resident.py:20`), so nothing in `src` shuts the default executor down while the loop runs. |
+| R9 | **The focused gate of 20.10** (the 13 files of 19.10, `-n 0`) on the oracle tree with the repair and the regenerated ledger pair, in both embedding modes, runs beside this commit; its result is in the pull request text. The slow-gh proof is R7. |
+
+**What the orchestrator changed in the Architect's section 20:** nothing in the pairs, the test or the rows of 20.8 (the section is ASCII). Three remarks on its text, which stands as written. (1) RH2's lead line says its SEARCH runs "from its banner to the end of the file"; the block covers the banner through the `_gh` double (the checkpoint table gives contract lines 61 to 72), which is all the pair needs. (2) 20.10 says the ledger diff may be empty; it is not (R6), and M10 regenerates it as in 7.13. (3) Case (c) of 20.1, a cancel before a pool thread starts the worker on a saturated default executor, is neither pinned by a test nor repaired: the call is released at the bound, as with a hung `gh`, which is the accepted fail-open of section 17.
+
+**What these checks do not show.**
+- A saturated default executor (case (c)), a slow host other than through the plugin, and any live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
+- The second broad gate, which runs with the real home, is the first full-suite test of this repair.
