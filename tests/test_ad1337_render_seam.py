@@ -21,11 +21,12 @@ import pytest
 import probos
 from probos.cognitive.agentic_dispatch import WorkItemAgenticExecutor
 from probos.cognitive.crew_verifier import _session_correction_runtime
-from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, build_tool_trace_payload
 from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
 from probos.cognitive.swe_harness.tool_call import (
     DelegatedToolCallResult,
     InstructionToolCallResult,
+    ToolCallRequest,
     ToolCallResult,
     capture_tool_result,
     result_delivery,
@@ -33,6 +34,7 @@ from probos.cognitive.swe_harness.tool_call import (
     with_result_delivery,
 )
 from probos.events import EventType
+from probos.execution.effect_types import EffectCorrelation
 from probos.execution.workspace_results import ResultDelivery
 from probos.repository_instructions import InstructionObservation
 from probos.security import secret_masking
@@ -127,6 +129,27 @@ class _RaisingTool(_RawTool):
     async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
         self.calls += 1
         raise RuntimeError(f"bad credential {TOKEN}")
+
+
+class _CorrelatedRaising(_RawTool):
+    """An ordinary tool whose exception carries an effect correlation, as the broker's do (effect_broker.py:727), with
+    ids that hold the value. Without the strict profile no broker issued it, so the render event leaves it out."""
+
+    async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+        self.calls += 1
+        correlation = EffectCorrelation(f"op-{TOKEN}", f"at-{TOKEN}", "failed", "tool_failed")
+        exc = RuntimeError(f"bad credential {TOKEN}")
+        exc.effect_correlation = correlation  # type: ignore[attr-defined]
+        raise exc
+
+
+def _traced(result: ToolCallResult) -> tuple[Any, Any]:
+    """The durable trace's view of one result (BF-760): the length it received and the tool's own length, if any."""
+    [entry], _blob = build_tool_trace_payload(
+        [ToolCallRequest(name="t", arguments={}, id=result.id)], [result],
+        output_max_chars=8192, blob_max_bytes=1_000_000,
+    )
+    return entry["output_chars"], entry.get("source_chars")
 
 
 class _Secretive:
@@ -305,30 +328,33 @@ async def test_a_failed_pass_withholds_and_a_strict_event_names_no_tool_or_call(
     assert "SECRET_MASKED could not be emitted at the render seam" in caplog.text and TOKEN not in caplog.text
 
     # A withheld delivered result keeps no frame the model would read instead, but keeps an instruction or delegation
-    # extension; a failed delivery keeps its own fixed frame, so the run still stops on it (BF-946).
+    # extension; a failed delivery keeps its own fixed frame, so the run still stops on it (BF-946). Each keeps the
+    # tool's own length (BF-760), which the durable trace reports beside the withheld text (section 18).
     observation, evidence = InstructionObservation(), DelegationEvidence(status="completed")
     for plain, kind in (
-        (ToolCallResult(id="d", output="z"), ToolCallResult),
+        (ToolCallResult(id="d", output="z", source_chars=20005), ToolCallResult),
         (
-            InstructionToolCallResult(id="d", output="z", repository_instructions=observation),
+            InstructionToolCallResult(id="d", output="z", source_chars=20005, repository_instructions=observation),
             InstructionToolCallResult,
         ),
-        (DelegatedToolCallResult(id="d", output="z", evidence=evidence), DelegatedToolCallResult),
+        (DelegatedToolCallResult(id="d", output="z", source_chars=20005, evidence=evidence), DelegatedToolCallResult),
     ):
         held = await RenderMask(masker).final(
             with_result_delivery(plain, ResultDelivery("workspace", "Outline: a frame")),
             emit_fn=None, tool_name="t", strict=False, correlation=None,
         )
         assert type(held) is kind and result_delivery(held) is None
-        assert (held.id, held.output, held.is_error) == ("d", MASKING_FAILED_TEXT, True)
+        assert (held.id, held.output, held.is_error, held.source_chars) == ("d", MASKING_FAILED_TEXT, True, 20005)
+        assert _traced(held) == (len(MASKING_FAILED_TEXT), 20005)
         assert getattr(held, "repository_instructions", observation) is observation
         assert getattr(held, "evidence", evidence) is evidence
     stopped = with_result_delivery(
-        ToolCallResult(id="d", output="z"), ResultDelivery("failed", "!", code="capture_limit"),
+        ToolCallResult(id="d", output="z", source_chars=20005), ResultDelivery("failed", "!", code="capture_limit"),
     )
     kept = await RenderMask(masker).final(stopped, emit_fn=None, tool_name="t", strict=False, correlation=None)
     assert result_delivery(kept) is result_delivery(stopped)
-    assert (kept.output, kept.is_error) == (MASKING_FAILED_TEXT, True)
+    assert (kept.output, kept.is_error, kept.source_chars) == (MASKING_FAILED_TEXT, True, 20005)
+    assert _traced(kept) == (len(MASKING_FAILED_TEXT), 20005)
 
 
 # -- N5 to N8: what the loop hands the model ------------------------------------------------------------------------
@@ -804,3 +830,43 @@ async def test_a_delivered_frame_that_cannot_be_masked_is_withheld_not_rewritten
     assert (payload["names"], payload["failed"], payload["invocation_id"]) == (
         ["github"] if case == "known_root" else [], True, None if case == "output_fails" else "fixture-call",
     )
+
+
+# -- N19: the repair after review round 2 (section 18) --------------------------------------------------------------
+
+
+async def test_a_correlation_without_the_strict_profile_never_reaches_the_render_event(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    masker = _real_masker(tmp_path)
+    loose, issued = _RecordingEmit(), _RecordingEmit()
+    await RenderMask(masker).final(
+        ToolCallResult(id="c", output=f"x {TOKEN}"), emit_fn=loose, tool_name="t", strict=False,
+        correlation=EffectCorrelation(f"op-{TOKEN}", f"at-{TOKEN}", "failed", "tool_failed"),
+    )
+    await RenderMask(masker).final(
+        ToolCallResult(id="c", output=f"x {TOKEN}"), emit_fn=issued, tool_name="t", strict=True,
+        correlation=EffectCorrelation("op-1", "at-1", "result", "tool_completed"),
+    )
+    assert [(p["operation_id"], p["attempt_id"]) for p in _masked(loose) + _masked(issued)] == [
+        (None, None), ("op-1", "at-1"),
+    ]
+
+    # Through the loop: an ordinary tool's exception carries the correlation, and the loop's exception branch hands
+    # it to the render seam. Only the render event is this test's contract: the loop's live completed event still
+    # carries the tool's ids (#1820 ad-1337 R12).
+    registry, definition = _registered(_CorrelatedRaising(ToolResult()))
+    emit = _RecordingEmit()
+    llm = _FakeLLM([_turn(), _done()])
+
+    await _run(_loop(llm, ToolExecutor(registry=registry), masker, emit), [definition])
+
+    assert _last_result(llm.requests[1]) == f"Tool fixture_result failed: bad credential {PLACEHOLDER}"
+    assert _masked(emit) == [{
+        "seam": "render", "tool_id": tool_record_identity("fixture_result"), "invocation_id": "fixture-call",
+        "operation_id": None, "attempt_id": None, "names": ["github"], "names_omitted": 0, "failed": False,
+    }]
+    render_lines = "\n".join(r.getMessage() for r in caplog.records if r.name == RenderMask.__module__)
+    assert "render seam masked" in render_lines
+    shown = json.dumps(_masked(loose) + _masked(emit)) + _requests_text(llm) + render_lines
+    assert [form for form in secret_forms(TOKEN) if form in shown] == []

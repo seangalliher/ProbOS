@@ -147,7 +147,8 @@ class RenderMask:
         """``result`` as an error whose output is ``MASKING_FAILED_TEXT``, with no frame the model would read instead.
 
         A failed delivery keeps its extension: its frame is a fixed code, and the run still stops on it (BF-946). Any
-        other delivery is dropped; an instruction or delegation extension is kept as it was.
+        other delivery is dropped; an instruction or delegation extension is kept as it was. Every withheld result
+        keeps the tool's own length (``source_chars``, BF-760), which the durable trace reports.
         """
         from probos.security.secret_masking import MASKING_FAILED_TEXT
 
@@ -155,7 +156,10 @@ class RenderMask:
         delivery = result_delivery(result)
         if delivery is None or delivery.status == "failed":
             return replace(result, output=MASKING_FAILED_TEXT, is_error=True)
-        kept = {"id": result.id, "output": MASKING_FAILED_TEXT, "is_error": True, "duration_ms": result.duration_ms}
+        kept = {
+            "id": result.id, "output": MASKING_FAILED_TEXT, "is_error": True, "duration_ms": result.duration_ms,
+            "source_chars": result.source_chars,
+        }
         if isinstance(result, DelegatedToolCallResult):
             return DelegatedToolCallResult(**kept, evidence=result.evidence)
         if isinstance(result, InstructionToolCallResult):
@@ -184,12 +188,15 @@ class RenderMask:
         from probos.events import EventType
 
         names = sorted(self._names)
+        # Only the broker issues a correlation, and only under the strict profile. Without it the loop's correlation
+        # can come from a tool's own exception (``effect_correlation``), whose ids are the tool's and unchecked.
+        trusted = correlation if strict else None
         payload = {
             "seam": "render",
             "tool_id": None if strict else tool_record_identity(tool_name),
             "invocation_id": None if strict else self._carried_call_id(masker, result.id),
-            "operation_id": correlation.operation_id if correlation is not None else None,
-            "attempt_id": correlation.attempt_id if correlation is not None else None,
+            "operation_id": trusted.operation_id if trusted is not None else None,
+            "attempt_id": trusted.attempt_id if trusted is not None else None,
             "names": names[:SECRET_MASKED_MAX_NAMES],
             "names_omitted": max(0, len(names) - SECRET_MASKED_MAX_NAMES),
             "failed": self._failed,
