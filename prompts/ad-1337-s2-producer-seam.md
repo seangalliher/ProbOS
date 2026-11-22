@@ -2562,3 +2562,345 @@ The 7 operations of this section (RE1 to RE7) were applied to a scratch worktree
 **What these checks do not show.**
 - A Linux host: on `ubuntu-latest` a 10 ms poll does not spin, so the count assertion of N25 cannot tell 10 ms from 25 ms there, and the first assertion carries the property (the Architect's 18.7 says so).
 - A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
+
+---
+
+## 19. Repair after the broad gate (2026-11-21)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21, rev4
+
+**Base.** The Builder starts from the batch head `33826d30`. Every edited file is `i/lf w/crlf`: match and write each with its own line endings. ASCII only. Brake decision (round four, a repair after a failed gate): **continue**, scope G1 only; one delta review, then one new broad gate of the whole batch.
+
+**Milestones** (one Builder delegation each; the Builder runs no test):
+
+| M | Content | Commit subject |
+|---|---|---|
+| M7 | 19.4 (RG3 to RG8, tests first), then 19.3 (RG1) | `Let the runtime own the masking priming task` |
+| M8 | RG9, RG10, then `gen_ad_ledger.py` and `--check` as in 7.13 | `Record who owns the masking priming` |
+
+### 19.1 Findings and decisions
+
+| Finding | Severity / reach | Decision | Pairs |
+|---|---|---|---|
+| G1: `_wire_secret_masker` starts the priming with a bare `asyncio.create_task` (`finalize.py:739-741`), so nothing owns it. A stop's AD-824 sweep (`shutdown.py:1373-1399`), which a failed start's rollback (BF-882) runs too, cancels only `runtime._background_tasks` and `_drain_tasks`. A start that fails while the priming is in `gh` leaves `secret_masking_prime <_prime_secret_masking>` pending, and five cases of `tests/test_issue1419_failed_start_rollback.py` fail on `leftovers() == NOTHING_LEFT`. | P2, ordinary (a start that fails, or a stop, while the priming runs); a regression of S2 | The runtime owns the task: `runtime._spawn_background(..., "secret_masking_prime")` (AD-824). A done callback ends the priming window however the task ends. Test doubles get the real owner; production code gets no fallback. | RG1 to RG10 |
+
+**Behaviour after the repair:**
+- **Stop and rollback.** Both cancel a running priming in the AD-824 sweep, and the task ends without waiting for its worker thread. The window closes at once (the done callback), so nothing waits up to 6 s on a priming that has gone.
+- **The worker thread** cannot be cancelled. It ends by itself within the CLI's 5 s timeout (`credential_store.py:402`). It holds no loop resource: `_log_access` finds no loop in its thread (`:428-437`), and no shutdown step closes the store. The lifecycle fixture excludes executor threads (`runtime_lifecycle.py:71`, `:155`), and `asyncio.run` joins them when the loop closes.
+- **Unchanged:** the order (`begin_priming` before the task exists), the bound, the fence, the warm-up, and startup never waiting on the priming.
+
+### 19.2 Rejected designs
+
+- **A `getattr(runtime, "_spawn_background", None)` fallback to `create_task`** (the orchestrator's scratch repair). It is a production branch that exists only for unit tests (an Architect anti-pattern), and it would silently restore G1 for any runtime without the owner. Only three test doubles need the owner (RG5 to RG7).
+- **A `start_task_attr` entry in `shutdown.py`'s BF-881 loop.** `_stop_held_start_service` keys on a service attribute (`shutdown.py:453-458`), and the priming has no service. It would also put S2 into `shutdown.py`.
+- **Injecting a `background_register` callable** (the `infrastructure.py:59` pattern). It changes `_wire_secret_masker`'s call, which N19 pins by AST (`test_ad1337_executor_seam.py:607`). It buys nothing over the method `finalize` can already reach (`finalize.py:4410`, `:6909`).
+- **Amending `_spawn_background`'s "ONLY for loops" docstring.** That would add `runtime.py` to the diff, and the size ratchet measures `ProbOSRuntime`. The rule exists to keep per-event fan-out out. A single bounded startup task that removes itself when it ends (`runtime.py:4073`) is within its purpose, and the comment in RG1 says so.
+
+### 19.3 `src/probos/startup/finalize.py`
+
+**RG1.** SEARCH:
+```
+    # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
+    # with what the priming adds. Marked before the task exists, so no call can run between the two.
+    runtime.secret_masker.begin_priming()
+    runtime.secret_masking_prime_task = asyncio.create_task(
+        _prime_secret_masking(store, runtime.secret_masker), name="secret_masking_prime",
+    )
+    return runtime.secret_masker
+```
+REPLACE:
+```
+    masker = runtime.secret_masker
+    # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
+    # with what the priming adds. Marked before the task exists, so no call can run between the two.
+    masker.begin_priming()
+    # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
+    # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
+    # window closes when the task ends, however it ends: a task cancelled before its first step never reaches the
+    # worker, whose ``finally`` is the only other ``end_priming``. The worker thread itself ends within the CLI's
+    # timeout and holds nothing a teardown closes.
+    task = runtime._spawn_background(_prime_secret_masking(store, masker), "secret_masking_prime")
+    task.add_done_callback(lambda _task: masker.end_priming())
+    runtime.secret_masking_prime_task = task
+    return masker
+```
+
+The `asyncio` import in `finalize.py` stays: other code in the module uses it (`:770`, `asyncio.to_thread`).
+
+### 19.4 `tests/test_ad1337_executor_seam.py`
+
+**RG3.** SEARCH:
+```
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
+```
+REPLACE:
+```
+from types import MethodType, SimpleNamespace
+from typing import Any
+from unittest.mock import MagicMock
+```
+
+**RG4.** SEARCH:
+```
+from probos.events import EventType
+from probos.security import secret_masking
+```
+REPLACE:
+```
+from probos.events import EventType
+from probos.runtime import ProbOSRuntime
+from probos.security import secret_masking
+```
+
+**RG5.** SEARCH:
+```
+    return CredentialStore(store_path=path)
+
+
+def _masker(directory: Path) -> SecretMasker:
+```
+REPLACE:
+```
+    return CredentialStore(store_path=path)
+
+
+def _owning_runtime(store: Any) -> SimpleNamespace:
+    """A runtime double with the runtime's own AD-824 owner, as finalize needs: ``_spawn_background`` registers the
+    priming in ``_background_tasks``, which a stop's sweep and a failed start's rollback cancel."""
+    runtime = SimpleNamespace(credential_store=store, _background_tasks=set(), _drain_tasks=set())
+    runtime._spawn_background = MethodType(ProbOSRuntime._spawn_background, runtime)
+    return runtime
+
+
+def _masker(directory: Path) -> SecretMasker:
+```
+
+**RG6.** (N16) SEARCH:
+```
+    runtime = SimpleNamespace(credential_store=_store(tmp_path))
+    tools = (_EchoTool("echo", f"cli={CLI_TOKEN}"), _EchoTool("echo", f"cli={CLI_TOKEN}"))
+```
+REPLACE:
+```
+    runtime = _owning_runtime(_store(tmp_path))
+    tools = (_EchoTool("echo", f"cli={CLI_TOKEN}"), _EchoTool("echo", f"cli={CLI_TOKEN}"))
+```
+
+**RG7.** (N21) SEARCH:
+```
+    monkeypatch.setattr(store, "get", _recording_get)
+    runtime = SimpleNamespace(credential_store=store)
+```
+REPLACE:
+```
+    monkeypatch.setattr(store, "get", _recording_get)
+    runtime = _owning_runtime(store)
+```
+
+**RG8a.** (N24) SEARCH:
+```
+    runtime = SimpleNamespace(credential_store=_store(tmp_path, {"vault": VAULT_A}))
+```
+REPLACE:
+```
+    runtime = _owning_runtime(_store(tmp_path, {"vault": VAULT_A}))
+```
+
+N19 (`:537`, a `MagicMock` store) is unchanged: it returns before the task exists.
+
+**RG8b.** (N26, new; appended after N25) SEARCH:
+```
+    assert len(polls.answers) <= len(calls) * (elapsed / 0.010 + 2), (len(polls.answers), elapsed)
+```
+REPLACE:
+```
+    assert len(polls.answers) <= len(calls) * (elapsed / 0.010 + 2), (len(polls.answers), elapsed)
+
+
+# -- N26: the runtime owns the priming --------------------------------------------------------------------------------
+
+
+async def test_the_runtime_owns_the_priming_so_a_stop_cancels_it_in_gh_and_its_window_closes_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release, worker_done = threading.Event(), threading.Event(), threading.Event()
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        entered.set()
+        assert release.wait(10.0)  # gh answers only after the task was cancelled, as when a start fails late
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+
+    original_worker = finalize._prime_secret_masking_worker
+
+    def _worker(store: Any, masker: Any) -> str | None:
+        try:
+            return original_worker(store, masker)
+        finally:
+            worker_done.set()
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    monkeypatch.setattr(finalize, "_prime_secret_masking_worker", _worker)
+    runtime = _owning_runtime(_store(tmp_path))
+    try:
+        masker = finalize._wire_secret_masker(runtime=runtime)
+        task = runtime.secret_masking_prime_task
+        assert runtime._background_tasks == {task} and task.get_name() == "secret_masking_prime"
+        assert await asyncio.to_thread(entered.wait, 10.0)  # the priming is inside gh
+        # What a stop's AD-824 sweep does, and a failed start's rollback with it (startup/shutdown.py): cancel every
+        # registered task, then wait at most 5 s.
+        for registered in list(runtime._background_tasks):
+            registered.cancel()
+        done, still_pending = await asyncio.wait({task}, timeout=5.0)
+        assert done == {task} and not still_pending and task.cancelled()  # it did not wait for the worker thread
+        assert runtime._background_tasks == set()  # it left the owner's registry
+        assert masker.priming_pending() is False  # the window closed with the task, while the worker is still in gh
+    finally:
+        release.set()
+    assert await asyncio.to_thread(worker_done.wait, 10.0)  # the worker ends alone; nothing waits for it
+    assert masker.priming_pending() is False
+```
+
+N26 holds every task it waits on and sleeps on no real clock. The worker thread is joined through `worker_done` before the test ends. It patches one module attribute, `finalize._prime_secret_masking_worker`, which `_prime_secret_masking` looks up when it is called (`finalize.py:770`), and the existing `credential_store.subprocess`.
+
+### 19.5 `PROGRESS.md`
+
+**RG9.** SEARCH:
+```
+(25 cases): waiting calls on a busy real loop
+```
+REPLACE:
+```
+(26 cases): the runtime owns the priming task, so a stop or a failed start's rollback cancels a priming still in `gh` and its window closes at once; waiting calls on a busy real loop
+```
+
+### 19.6 `DECISIONS.md`
+
+**RG10.** SEARCH (in S2's *Priming (S2)* bullet; it occurs once at `33826d30`):
+```
+only delays masking of a CLI-only token to its first `get`.
+```
+REPLACE:
+```
+only delays masking of a CLI-only token to its first `get`. The runtime owns the priming task (`ProbOSRuntime._spawn_background`, AD-824): a stop's background sweep, which a failed start's rollback runs too (BF-882), cancels a priming still in `gh`, and a done callback ends the window however the task ends; the worker thread cannot be cancelled, ends within the CLI's 5 s timeout and holds nothing a teardown closes (the broad gate found an unowned priming task left behind by a failed start).
+```
+
+### 19.7 Tests and predicted counts
+
+| N | Change | Property |
+|---|---|---|
+| N16, N21, N24 | Double built by `_owning_runtime` (RG6 to RG8a) | Same assertions; the task is now registered |
+| N26 | New (RG3 to RG5, RG8b) | Registered under its name; a sweep-shaped cancel while in `gh` ends it without waiting for the thread; it leaves the registry; `priming_pending()` is False before `gh` answers; the worker then ends alone |
+
+- **Test pairs only (RG3 to RG8b) on `33826d30`: 25 passed, 1 failed.** N26 fails at `runtime._background_tasks == {task}` (`set()`).
+- **All pairs: 26 passed.**
+- **`tests/test_issue1419_failed_start_rollback.py`:** the five G1 cases fail on the base and pass on the candidate; every other case passes on both.
+- S1's file and S3's file: counts unchanged, all pass.
+
+### 19.8 Mutation rows (on the M7 candidate, restoring between rows)
+
+| Row | Mutant (one line) | Killed by |
+|---|---|---|
+| G1m | `task = runtime._spawn_background(...)` to `task = asyncio.create_task(_prime_secret_masking(store, masker), name="secret_masking_prime")` | N26 (registry), and the five G1 cases of the AD-1419 file |
+| G2m | Delete `task.add_done_callback(lambda _task: masker.end_priming())` | N26 (`priming_pending()` True before `gh` answers). The AD-1419 file survives it, as expected: it checks tasks, not the window |
+| G3m | Add `drain_on_shutdown=True` to the `_spawn_background` call | N26 (`_background_tasks` is empty) |
+| R6m (rerun) | Worker: delete `masker.end_priming()` | N18 only. N16 no longer kills it, because the callback ends the window when the task ends |
+| R7m (rerun) | Delete `masker.begin_priming()` | N16 |
+| S17m (rerun) | The worker body called on the loop instead of in `to_thread` | N16 |
+
+The other rows stand: RG1 changes only `_wire_secret_masker`, and the test changes only add kills. That the cancel lands in the `to_thread` await, without waiting for the thread, is checked by N26's `asyncio.wait` timeout and by reading, not by a mutant.
+
+### 19.9 What this does NOT change
+
+- `shutdown.py`, `rollback.py` and `runtime.py`, including `_spawn_background`'s docstring.
+- `secret_masking.py`, `executor.py`, `credential_store.py`, and the priming worker and coroutine in `finalize.py`.
+- `_wire_secret_masker`'s signature and its call in `finalize_startup` (pinned by N19, `:607`).
+- S3's files, and the helpers S3 imports from S2's test file.
+- Events, config and schema.
+- The pre-existing unowned `loop.create_task` in `CredentialStore._log_access` (`credential_store.py:429`): not in this batch's diff, and not on this path (the worker thread has no loop).
+
+### 19.10 Deterministic checks
+
+- **Focused gate at `-n 0`:**
+  - The three AD-1337 test files.
+  - `test_issue1419_failed_start_rollback.py`, `test_issue1452_stop_leftovers.py` (BF-881), `test_ad824_shutdown_hygiene.py`, `test_ad825_drain_shutdown.py`, `test_ad1270a_startup_receipts.py`.
+  - The `finalize_startup` double users `test_ad641d_deliberation.py` and `test_bf235_stale_identity_cache.py`. Omit `test_new_crew_auto_welcome.py`: its known aiosqlite thread leak keeps the process alive after its summary (18.14 R8).
+  - `test_ad1324_srp_layout.py`, `test_ad1270b_architecture_fitness.py`, `test_ad1184_ad_ledger.py`.
+- `rg -n "secret_masking_prime" src` finds the name only in `_wire_secret_masker`'s `_spawn_background` call, and no `create_task` with it.
+- `rg -n "getattr\(runtime, \"_spawn_background\"" src` finds nothing.
+- `check_architecture_principles.py --check` exits 0.
+- `git diff 33826d30 --stat` lists only `finalize.py`, the S2 test file, `PROGRESS.md` and `DECISIONS.md`, plus the ledger pair.
+- Run N26 with `-W error` and confirm there is no "Task was destroyed but it is pending" and no "coroutine ... was never awaited".
+
+### 19.11 Verified Against Codebase (2026-11-21, `33826d30`)
+
+```
+read finalize.py:715-774         _wire_secret_masker; begin :738; create_task :739-741; return :742; worker :745-757 (end_priming :757); to_thread :770; except Exception :771
+grep _wire_secret_masker( src    finalize.py:5892 only; finalize_startup called at runtime.py:3722
+grep runtime\._[a-z]\w*\( finalize.py   :4410 _populate_watch_roster, :6909 _setup_nats_event_subscriptions
+read runtime.py:4016-4074        _spawn_background(coro, name, *, drain_on_shutdown=False); "Use ONLY for loops" :4031; add/discard :4072-4073
+grep _background_tasks/_drain_tasks runtime.py   :1548, :1556 (in __init__)
+read shutdown.py:1005-1011, :1367-1399   rollback passes :1010; sweep top-level with its own try; guard :914 "and not rollback"
+grep ^\s+return\b shutdown.py    no return between :1011 and the end of shutdown()
+read shutdown.py:429-459         _stop_held_start_service keys on service_attr
+grep credential_store|secret_mask shutdown.py   none
+read secret_masking.py:339-360   begin/end (single assignment)/priming_pending
+read credential_store.py:402, :422-437   timeout=5; _log_access swallows RuntimeError without a loop
+read tests/fixtures/runtime_lifecycle.py:71, :105-156, :245-281   asyncio_ prefix excluded; leftovers; NOTHING_LEFT
+read tests/test_ad1337_executor_seam.py:1-62, :84-97, :483-541, :664-818   imports :18 (types), :29-30; _store :84; _masker :92; doubles :498, :537, :678, :762; N19 pin :607; last line :818
+grep ^(async )?def test_         25 cases; parametrize: 0
+grep tests/test_ad824_shutdown_hygiene.py   ProbOSRuntime._spawn_background(stub, ...) :72, :106, :137, :176
+glob tests/*bf881*|*bf882*       none; tests/test_issue1452_stop_leftovers.py, tests/test_issue1419_failed_start_rollback.py exist
+grep finalize_startup( tests      ad1270a :531, ad641d :320, bf235 :122, new_crew_auto_welcome; none sets a credential_store
+grep -c "only delays masking of a CLI-only token to its first `get`." DECISIONS.md   1 (:1673)
+grep "(25 cases): waiting calls on a busy real loop" PROGRESS.md   :5 only
+git ls-files --eol                the four files and this prompt: i/lf w/crlf
+git diff 5d8a5eb4 33826d30 -U0 -- src | grep -nE "<scheduling and thread patterns>"   2 hits, both the priming
+```
+
+Not verified by the Architect: the AD-1419 file's case count and its result on the repaired tree (the orchestrator's run), and the exact ledger commands (as in 7.13).
+
+### 19.12 Properties for the round-4 delta reviewer
+
+Review only the repair: `git diff 33826d30..HEAD -- src/probos/startup/finalize.py tests/test_ad1337_executor_seam.py`, plus S2's lines in `PROGRESS.md` and `DECISIONS.md`. Execute the checks; do not only read.
+
+1. **Ownership.** On a real `ProbOSRuntime`, the priming task is in `_background_tasks` while it runs. Both a normal `stop()` and a failed start's rollback cancel it, and the AD-1419 file reports no leftover task.
+2. **The window.** After a cancel, before the first step or while the worker is in `gh`, `priming_pending()` is False at once. On normal completion the order is unchanged: the warm-up, then `end_priming`.
+3. **No fallback.** No production path starts the priming without the owner.
+4. **The thread.** A cancelled priming's worker ends alone, writes no access row and touches no closed resource. The lifecycle fixture's thread check is unaffected.
+5. **N26** fails on `33826d30`'s `finalize.py` and passes on the candidate. It leaves no pending task or thread under `-W error`.
+6. **No shared contract changed.** `_wire_secret_masker`'s signature and call, events, config, and the helpers S3 imports are unchanged.
+
+### 19.13 Acceptance
+
+- [ ] 19.7's predictions hold: 25 passed and 1 failed with the test pairs only, then 26 passed. The focused gate in 19.10 is green, including all of `tests/test_issue1419_failed_start_rollback.py`.
+- [ ] G1m to G3m are killed as listed, and R6m, R7m and S17m are rerun.
+- [ ] RG9 and RG10 are applied, and the ledger is regenerated and checked.
+- [ ] One new broad gate of the whole batch, with a receipt, after the delta review.
+- [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+**Prior art.** This is a repair of ProbOS plumbing (task ownership under AD-824), so no reference-project review was done.
+
+### 19.14 The orchestrator's first-hand checks
+
+The 10 operations of this section (RG1 and RG3 to RG10: there is no RG2) were applied to a scratch worktree detached at `33826d30` (the batch head, which the Builder starts from) by `audit\contract_tools.py apply --prefix 19.` (ASCII only), the test pairs first and the code and tracker pairs after them, as 19.7 predicts; every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (an empty redirected home; BF-919) and the campaigns through `mutants_gen.py` (the same redirection); a bare `pytest` was not used: it imports `D:\ProbOS\src` and fails for the wrong reason. The brake decision of this section (continue, G1 only) is the Architect's, from consult `3d592f9e`.
+
+| R | Result |
+|---|---|
+| R1 | All 10 operations are found by `contract_tools.py list --prefix 19.`, and every SEARCH occurs exactly once on `33826d30` at its turn. Four files change by +71 -11 lines: `finalize.py` 11 and 5 (6,957 to 6,963 lines), the test file 58 and 4 (818 to 872 lines), `PROGRESS.md` and `DECISIONS.md` one line each replaced in place; `gen_ad_ledger.py` then rewrites 4 lines of the ledger pair (`--check`: `AD/BF ledger is current`). Blobs after all of it: `finalize.py` `af5df5be`, the test file `ebade1ca`, `PROGRESS.md` `5b7c6095`, `DECISIONS.md` `430278fc`, `open-ads-report.md` `6c85561c`, `ad-ledger-snapshot.json` `f6383cd6`. No added line is non-ASCII. |
+| R2 | **The tests alone** (RG3 to RG8b applied, the code pair not): **1 failed, 25 passed** in 15.9 s, exactly the prediction of 19.7: N26 fails at `assert runtime._background_tasks == {task} and ...` with `set()` on the left (the base never registers the task). After RG1, RG9 and RG10: **26 passed** in 9.8 s. |
+| R3 | **N26 alone under `-W error`:** 1 passed in 4.4 s, with no pending-task and no never-awaited warning. |
+| R4 | **The finding's reproduction, before and after.** The gate's five failures need a slow `gh`. The redirected home makes `gh` fail at once, and under it the base passes the three functions below (10 items: the race is hidden, not absent). `slowgh` is a pytest plugin outside the repository (`G:\tmp\slowgh\slowgh.py`) that makes only the exact argv `gh auth token` sleep 10 s and fail. With it, on `33826d30`, `tests/test_issue1419_failed_start_rollback.py::test_a_real_boot_that_fails_late_is_fully_rolled_back_even_when_one_stop_raises_after_cleaning_up`, `::test_a_real_boot_whose_stop_raises_before_it_cleans_up_still_has_its_connection_closed` and `::test_a_rollback_persists_nothing_a_clean_stop_persists_and_drains_the_audit_log_once` give **6 failed, 4 passed** (182 s), each failure `{'tasks': ['secret_masking_prime <_prime_secret_masking>']} != {'tasks': []}` (the gate's five failures are among the six); on the candidate they give **10 passed** (184 s). Evidence: `evidence-b11fix-1419-slowgh-red.txt` and `evidence-b11g1-1419-slowgh-green.txt`. |
+| R5 | **The campaign** (`audit\mutants_gen.py`, `rows_ad1337s2r3.py`; the S2 test file alone, 26 baseline cases, all passing): the rows G1m to G3m, R6m, R7m and S17m of 19.8; my extra row G4m (`runtime.secret_masking_prime_task = None`); the earlier rows on `finalize.py` rerun as they were (S13m, S16m, S18m, X10, X11, X13, X15, X16, R8m, Y4); and X12 and X14 with new locators, because they followed lines RG1 rewrote: 19 rows, **killed 18, differs 1, survived 0, invalid 0**. Every named killer failed: G1m, G2m and G3m by N26 alone; R6m by N18 alone and R7m by N16 alone, as 19.8 says. The one DIFFERS is Y4 (the worker is handed `None` for the masker): it is killed by two cases, but N16, one of its three named killers, no longer fails, because the done callback now closes the window when the task ends even though the worker raised before its own `end_priming` (the same side effect as R6m's). With its named killers corrected to N18 and N24 the row is killed (`evidence-b11g1-campaign-y4.txt`). The home was empty after each run. |
+| R6 | **Static checks.** `rg -n '"secret_masking_prime"' src` finds one line (`finalize.py:745`, the `_spawn_background` call); no `create_task` call in `src` carries `_prime_secret_masking`; `rg -n 'getattr\(runtime, "_spawn_background"' src` finds nothing; `check_architecture_principles.py --check` passes (`srp-size=92, layer-import=0, db-connect=30, unowned-task=13`, the same as before the repair); `git diff 33826d30 --stat` lists only the six files of R1. |
+| R7 | **The consumers.** `_wire_secret_masker` has one production caller (`finalize.py:5898`, in `finalize_startup`) and five test calls, all in the S2 test file (N16, N17, N21, N24, N26); N16, N21, N24 and N26 give it a real store, and each builds its runtime double with `_owning_runtime`; N17's double holds a `MagicMock` store and returns before the task exists; N19 pins the production call's text by an AST scan. Of the five test files that call `finalize_startup`, four build no `CredentialStore` (`test_ad1270a_startup_receipts.py`, `test_ad641d_deliberation.py`, `test_bf235_stale_identity_cache.py`, `test_new_crew_auto_welcome.py`) and `test_bf908_crew_scope_token.py` only names it in a docstring and in a source-order assertion, so none reaches the spawn. `tests/test_ad824_shutdown_hygiene.py` binds `ProbOSRuntime._spawn_background` to a stub the same way (lines 72 to 176), the precedent for RG5. |
+| R8 | **The focused gate of 19.10** (13 files, `-n 0`) on the oracle tree with the repair and the regenerated ledger pair, in both embedding modes, runs after this section is committed; its result is in the pull request text. It is repeated on the Builder's head only if the Builder's blobs differ from R1's. |
+
+**What the orchestrator changed in the Architect's section 19:** nothing in the pairs, the tests or the rows of 19.8 (the section is ASCII). Two remarks on its text, which stands as written: 19.4's note on the unchanged `MagicMock`-store case calls it N19, but it is N17 (N19 is the AST pin of the call, which 19.9 names correctly); and 19.8's "the other rows stand" needed two corrections, both in my campaign file: X12 and X14 follow lines RG1 rewrote and have new locators, and Y4 lost N16 as a killer (R5). The labels RG8a and RG8b needed my pair tool to accept a one-letter suffix; the contract text is unchanged.
+
+**What these checks do not show.**
+- A host where `gh` is slow, other than through the plugin: the new broad gate, which runs with the real home, is the first test of that.
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
