@@ -739,12 +739,12 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     masker.begin_priming()
     # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
     # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
-    # window closes when the task ends, however it ends: a task cancelled before its first step never reaches the
-    # worker, whose ``finally`` is the only other ``end_priming``. The worker thread itself ends within the CLI's
+    # window is not ended by that cancel: the worker thread cannot be cancelled, and the value is primed only when
+    # it returns. Only the worker's ``finally`` or the masker's bound ends it. The thread ends within the CLI's
     # timeout and holds nothing a teardown closes.
-    task = runtime._spawn_background(_prime_secret_masking(store, masker), "secret_masking_prime")
-    task.add_done_callback(lambda _task: masker.end_priming())
-    runtime.secret_masking_prime_task = task
+    runtime.secret_masking_prime_task = runtime._spawn_background(
+        _prime_secret_masking(store, masker), "secret_masking_prime",
+    )
     return masker
 
 

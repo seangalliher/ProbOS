@@ -827,17 +827,17 @@ async def test_on_a_busy_real_loop_waiting_calls_poll_sparingly_and_a_cancelled_
     assert len(polls.answers) <= len(calls) * (elapsed / 0.010 + 2), (len(polls.answers), elapsed)
 
 
-# -- N26: the runtime owns the priming --------------------------------------------------------------------------------
+# -- N26: the runtime owns the priming, and a stop's cancel does not end its window ----------------------------------
 
 
-async def test_the_runtime_owns_the_priming_so_a_stop_cancels_it_in_gh_and_its_window_closes_at_once(
+async def test_the_runtime_owns_the_priming_and_a_call_after_a_stop_cancels_it_in_gh_waits_for_the_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     entered, release, worker_done = threading.Event(), threading.Event(), threading.Event()
 
     def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
         entered.set()
-        assert release.wait(10.0)  # gh answers only after the task was cancelled, as when a start fails late
+        assert release.wait(10.0)  # gh answers only after the cancel and a held call, as when a stop lands in gh
         return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
 
     original_worker = finalize._prime_secret_masking_worker
@@ -852,7 +852,11 @@ async def test_the_runtime_owns_the_priming_so_a_stop_cancels_it_in_gh_and_its_w
         "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
     )
     monkeypatch.setattr(finalize, "_prime_secret_masking_worker", _worker)
+    # The masker's clock stands still (N22's seam), so its bound cannot pass however slow the host is: here only the
+    # worker can end the window. N22 pins the bound itself.
+    monkeypatch.setattr(secret_masking, "time", SimpleNamespace(monotonic=lambda: 1000.0))
     runtime = _owning_runtime(_store(tmp_path))
+    tool = _EchoTool("echo", f"cli={CLI_TOKEN}")
     try:
         masker = finalize._wire_secret_masker(runtime=runtime)
         task = runtime.secret_masking_prime_task
@@ -865,8 +869,15 @@ async def test_the_runtime_owns_the_priming_so_a_stop_cancels_it_in_gh_and_its_w
         done, still_pending = await asyncio.wait({task}, timeout=5.0)
         assert done == {task} and not still_pending and task.cancelled()  # it did not wait for the worker thread
         assert runtime._background_tasks == set()  # it left the owner's registry
-        assert masker.priming_pending() is False  # the window closed with the task, while the worker is still in gh
+        assert masker.priming_pending() is True  # the cancel did not end the window: the value is not primed yet
+        polls = _PrimingPolls(masker, monkeypatch, count=2)
+        executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+        call = asyncio.create_task(executor.invoke("agent-1", "echo", {}))
+        assert await _held(polls, [call]) is True  # a call made after the cancel waits while the worker is in gh
+        assert tool.calls == 0
     finally:
         release.set()
     assert await asyncio.to_thread(worker_done.wait, 10.0)  # the worker ends alone; nothing waits for it
-    assert masker.priming_pending() is False
+    result = await asyncio.wait_for(call, timeout=10.0)
+    assert result.output == f"cli={PLACEHOLDER}" and tool.calls == 1  # released by the worker, masked with its value
+    assert polls.original() is False
