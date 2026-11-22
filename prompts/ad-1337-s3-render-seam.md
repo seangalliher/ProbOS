@@ -3,8 +3,9 @@
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-21
 **Revised by:** claude-architect (Claude Code, Opus 5.5), 2026-11-21, rev1
 **Revised by:** claude-architect (Claude Code, Opus 5.5), 2026-11-21, section 17 (repair after review round 1)
+**Revised by:** claude-architect (Claude Code, Opus 5.5), 2026-11-22, section 18 (repair after review round 2)
 
-**Status:** rev1, repaired after review round 1 by section 17, which amends 7.1, 7.2, 10 and the trackers and edits `crew_verifier.py` and the AD-1320 blob pin. Proven as a draft on an oracle where S3 sat on S1 before its section 17 repair and on S2 rev0: the tests alone gave a collection error, and with all pairs 18 passed. Rev1 was proven on the rev1 oracle and again on the final base (section 16). Batch 1 is S1 + S2 + S3: one PR (`Refs #1560`), one broad gate. S3 must not merge alone. Decision: consult `4bb6d748` (on #1560, comment 7064966284), corrected here in D2 and D8. No Captain condition.
+**Status:** rev1, repaired after review round 1 by section 17, which amends 7.1, 7.2, 10 and the trackers and edits `crew_verifier.py` and the AD-1320 blob pin, and after review round 2 by section 18, which amends 7.1, 7.2, 10 and the trackers. Proven as a draft on an oracle where S3 sat on S1 before its section 17 repair and on S2 rev0: the tests alone gave a collection error, and with all pairs 18 passed. Rev1 was proven on the rev1 oracle and again on the final base (section 16). Batch 1 is S1 + S2 + S3: one PR (`Refs #1560`), one broad gate. S3 must not merge alone. Decision: consult `4bb6d748` (on #1560, comment 7064966284), corrected here in D2 and D8. No Captain condition.
 
 **Rev1 changes (2026-11-21):**
 - X10 now anchors on `class SecretHandle:` and its docstring line. The old anchor, the end of `_map_strings`, was rewritten by S1's section 17 repair (RB3). Both helpers keep their text.
@@ -81,7 +82,7 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 - A constructor keyword: it would change the AD-1152 golden (P6).
 - An `AgenticLoop` method: the class is at its cap (P5).
 - Masking in `format_tool_result_content`: it runs after the bound truncates (a cut value no longer matches), and it misses the trace, the AgenticResult and the payload.
-- A thread for the pass: S2 D2 still holds. The worst case is two passes of 22 ms (1 MiB, 50 values).
+- A thread for the pass: S2 D2 still holds. Only the captured and the final text can be long, and each costs at most S1's measured 22 ms (1 MiB, 50 values); the frame and the call id are short (D6).
 - Sealing the slot when the run starts: only the two constructions assign it, and N13 pins that.
 
 ## 3. Consumers checked
@@ -144,7 +145,7 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
   - One WARNING with labels only.
   - The event is emitted through the loop's `self._emit`, and awaited if the emitter returns an awaitable.
   - AD-1195: F1 only. No new member and no count changes.
-- **D6 (cost).** The passes run inline: S2 D2 still holds, and an armed call makes at most two passes.
+- **D6 (cost).** The passes run inline: S2 D2 still holds. `capture` and `final` are the two API stages, not the number of masking calls (measured in review round 2). `capture` masks the captured text; `final` masks the returned text, then a delivered result's frame, then, for a non-strict event, the call id. An unarmed call makes at most two `mask_text` calls; an armed delivered call makes three with no hit and four when it emits a non-strict event (three at most under the strict profile). Only the captured and the final text can be long (S1: 22 ms for 1 MiB with 50 values); a frame is bounded by the delivery frame size and a call id by 128 characters. Each call takes one credential snapshot, so with the producer pass a delivered call takes four or five. No redesign (section 18).
 - **D7 (routes and census, (e), (g)).** `reply_pipeline` masks with `mask_route_result` before `mark_executed`. N15 pins each route past the executor:
 
   | Route | Reason |
@@ -170,7 +171,7 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 
 - **D8 (S5, scope).** `Decomposer.reflect` writes DAG node results (mesh `stdout`, `decomposer.py:710-714`) into a model prompt and logs it at DEBUG (`:491`). No seam covers it. That is a separate route class, so it is AD-1337 S5, in batch 2 with S4, and #1560 closes after both.
 
-## 5. Tests: new file `tests/test_ad1337_render_seam.py` (16 cases, 18 items; 18 cases, 23 items after section 17)
+## 5. Tests: new file `tests/test_ad1337_render_seam.py` (16 cases, 18 items; 18 cases, 23 items after section 17; 19 cases, 24 items after section 18)
 
 | N | Case |
 |---|---|
@@ -192,6 +193,7 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 | N16 | `secret_masker_of` and `mask_route_result` |
 | N17 | A session correction's projected dispatch masks; every dispatch run is handed its caller's runtime or that projection (section 17) |
 | N18 | A delivered frame that holds a known value, or whose pass fails, or whose output pass fails, is withheld and never rewritten; a clean frame is delivered (x4, section 17) |
+| N19 | Without the strict profile the render event carries no operation or attempt id, directly and through the loop with a tool whose exception carries a correlation; a strict call keeps them (section 18). N4 also pins `source_chars` through the trace |
 
 - **Base (`089895c1`):** collection error `ModuleNotFoundError: No module named 'probos.cognitive.swe_harness.render_masking'`.
 - **After M1:** 18 passed.
@@ -199,7 +201,7 @@ S2 masks every `ToolResult` a registry returns. The model still receives text th
 ## 6. What S4 and S5 need from S3
 
 - **S4:** nothing new. It registers in `runtime.secret_registry`.
-- **S5:** `secret_masker_of(self.runtime)` and `mask_text` on the reflect prompt before it is truncated or logged. S5 adds the DAG route to N15's table.
+- **S5:** `secret_masker_of(self.runtime)` and `mask_text` on the reflect prompt before it is truncated or logged. S5 adds the DAG route to N15's table. A `SECRET_MASKED` it emits takes an id only from a source the runtime issued (section 18, F1).
 
 ## 7. The contract
 
@@ -2294,3 +2296,429 @@ The 20 operations of this section (RT1 to RT9, RM1, RM2, RV1 to RV4, RP1, TP1, T
 - A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
 - A session correction's masking event: the projection stays event-neutral, so no `SECRET_MASKED` event is emitted for a masked correction (R8 of the follow-up list); N17 pins that the text is masked.
 - The route seam of the priming window (R9 of the follow-up list).
+
+---
+
+## 18. Repair after review round 2 (2026-11-22)
+
+**Base:** `693c685c`, the batch 1 head. S3's code, tests and contract there are as review round 2 read them at `1a1a4782`; the three commits after it touch S2's files and S2's tracker lines only.
+
+**Milestones:**
+
+| M | Content | Tier | Review |
+|---|---|---|---|
+| M5 | 18.2 (tests first), then 18.3 | HIGH, security control | Delta re-review (round 3) over `693c685c..`. No shared contract changes (18.1). |
+| M6 | 18.4, 18.5, then `gen_ad_ledger.py` and its `--check` | LOW | Delta |
+
+**Commit subjects:**
+- M5: `Keep the tool's length on a withheld result and leave an unissued correlation out of the render event`
+- M6: `Record the render seam's second repair in the status and decisions entries`
+
+About 15 Builder tool calls for M5 and 8 for M6. Line endings are as section 0 says: the SEARCH blocks are LF; match and write each file with its own endings.
+
+### 18.1 Classification and decisions
+
+| F | Fix | Where |
+|---|---|---|
+| F1 | The render event takes `operation_id` and `attempt_id` only from a strict call's correlation. Without the strict profile, the loop's correlation can only come from a tool's own exception (`agentic_loop.py:2906-2929`). | RQ7; N19 (RQ2, RQ3, RQ5) |
+| F2 | `_withheld` keeps `source_chars` (BF-760), so the durable trace still reports the tool's own length. | RQ6; N4 (RQ1, RQ3, RQ4) |
+| F3 | Recorded as #1820 ad-1337 R11: under the strict profile, a render withhold reaches the model as the broker's reason code. | RQ11 names it |
+| F4 | The contract's cost sentences (lines 84 and 147) count `mask_text` calls, not the two API stages. | Corrections applied by the orchestrator, outside this section |
+
+**Heavier designs rejected:**
+- Checking each id like the call id (option B): two more `mask_text` calls per event, to check ids the broker already issued or checked.
+- Fixing F3 now: it changes the strict privacy surface, needs a new fixed code (`MASKING_FAILED_TEXT` fails `StrictEffectPrivacyProjector._reason`) and edits `agentic_loop.py`, which this repair does not touch.
+
+**Not changed:** `agentic_loop.py`, `tool_call.py`, `result_offload.py`, `execution/`, `tools/` and `startup/`.
+
+### 18.2 `tests/test_ad1337_render_seam.py` (M5, written first)
+
+**RQ1.** SEARCH:
+```
+from probos.cognitive.swe_harness.agentic_loop import AgenticLoop
+from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
+from probos.cognitive.swe_harness.tool_call import (
+    DelegatedToolCallResult,
+    InstructionToolCallResult,
+    ToolCallResult,
+```
+REPLACE:
+```
+from probos.cognitive.swe_harness.agentic_loop import AgenticLoop, build_tool_trace_payload
+from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
+from probos.cognitive.swe_harness.tool_call import (
+    DelegatedToolCallResult,
+    InstructionToolCallResult,
+    ToolCallRequest,
+    ToolCallResult,
+```
+
+**RQ2.** SEARCH:
+```
+from probos.events import EventType
+from probos.execution.workspace_results import ResultDelivery
+```
+REPLACE:
+```
+from probos.events import EventType
+from probos.execution.effect_types import EffectCorrelation
+from probos.execution.workspace_results import ResultDelivery
+```
+
+**RQ3.** Adds the correlated raising tool and the trace helper. SEARCH:
+```
+class _RaisingTool(_RawTool):
+    async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+        self.calls += 1
+        raise RuntimeError(f"bad credential {TOKEN}")
+```
+REPLACE:
+```
+class _RaisingTool(_RawTool):
+    async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+        self.calls += 1
+        raise RuntimeError(f"bad credential {TOKEN}")
+
+
+class _CorrelatedRaising(_RawTool):
+    """An ordinary tool whose exception carries an effect correlation, as the broker's do (effect_broker.py:727), with
+    ids that hold the value. Without the strict profile no broker issued it, so the render event leaves it out."""
+
+    async def invoke(self, params: dict[str, Any], context: dict[str, Any] | None = None) -> ToolResult:
+        self.calls += 1
+        correlation = EffectCorrelation(f"op-{TOKEN}", f"at-{TOKEN}", "failed", "tool_failed")
+        exc = RuntimeError(f"bad credential {TOKEN}")
+        exc.effect_correlation = correlation  # type: ignore[attr-defined]
+        raise exc
+
+
+def _traced(result: ToolCallResult) -> tuple[Any, Any]:
+    """The durable trace's view of one result (BF-760): the length it received and the tool's own length, if any."""
+    [entry], _blob = build_tool_trace_payload(
+        [ToolCallRequest(name="t", arguments={}, id=result.id)], [result],
+        output_max_chars=8192, blob_max_bytes=1_000_000,
+    )
+    return entry["output_chars"], entry.get("source_chars")
+```
+
+**RQ4.** Extends N4 so each withheld result keeps the tool's length through the trace consumer. SEARCH:
+```
+    # A withheld delivered result keeps no frame the model would read instead, but keeps an instruction or delegation
+    # extension; a failed delivery keeps its own fixed frame, so the run still stops on it (BF-946).
+    observation, evidence = InstructionObservation(), DelegationEvidence(status="completed")
+    for plain, kind in (
+        (ToolCallResult(id="d", output="z"), ToolCallResult),
+        (
+            InstructionToolCallResult(id="d", output="z", repository_instructions=observation),
+            InstructionToolCallResult,
+        ),
+        (DelegatedToolCallResult(id="d", output="z", evidence=evidence), DelegatedToolCallResult),
+    ):
+        held = await RenderMask(masker).final(
+            with_result_delivery(plain, ResultDelivery("workspace", "Outline: a frame")),
+            emit_fn=None, tool_name="t", strict=False, correlation=None,
+        )
+        assert type(held) is kind and result_delivery(held) is None
+        assert (held.id, held.output, held.is_error) == ("d", MASKING_FAILED_TEXT, True)
+        assert getattr(held, "repository_instructions", observation) is observation
+        assert getattr(held, "evidence", evidence) is evidence
+    stopped = with_result_delivery(
+        ToolCallResult(id="d", output="z"), ResultDelivery("failed", "!", code="capture_limit"),
+    )
+    kept = await RenderMask(masker).final(stopped, emit_fn=None, tool_name="t", strict=False, correlation=None)
+    assert result_delivery(kept) is result_delivery(stopped)
+    assert (kept.output, kept.is_error) == (MASKING_FAILED_TEXT, True)
+```
+REPLACE:
+```
+    # A withheld delivered result keeps no frame the model would read instead, but keeps an instruction or delegation
+    # extension; a failed delivery keeps its own fixed frame, so the run still stops on it (BF-946). Each keeps the
+    # tool's own length (BF-760), which the durable trace reports beside the withheld text (section 18).
+    observation, evidence = InstructionObservation(), DelegationEvidence(status="completed")
+    for plain, kind in (
+        (ToolCallResult(id="d", output="z", source_chars=20005), ToolCallResult),
+        (
+            InstructionToolCallResult(id="d", output="z", source_chars=20005, repository_instructions=observation),
+            InstructionToolCallResult,
+        ),
+        (DelegatedToolCallResult(id="d", output="z", source_chars=20005, evidence=evidence), DelegatedToolCallResult),
+    ):
+        held = await RenderMask(masker).final(
+            with_result_delivery(plain, ResultDelivery("workspace", "Outline: a frame")),
+            emit_fn=None, tool_name="t", strict=False, correlation=None,
+        )
+        assert type(held) is kind and result_delivery(held) is None
+        assert (held.id, held.output, held.is_error, held.source_chars) == ("d", MASKING_FAILED_TEXT, True, 20005)
+        assert _traced(held) == (len(MASKING_FAILED_TEXT), 20005)
+        assert getattr(held, "repository_instructions", observation) is observation
+        assert getattr(held, "evidence", evidence) is evidence
+    stopped = with_result_delivery(
+        ToolCallResult(id="d", output="z", source_chars=20005), ResultDelivery("failed", "!", code="capture_limit"),
+    )
+    kept = await RenderMask(masker).final(stopped, emit_fn=None, tool_name="t", strict=False, correlation=None)
+    assert result_delivery(kept) is result_delivery(stopped)
+    assert (kept.output, kept.is_error, kept.source_chars) == (MASKING_FAILED_TEXT, True, 20005)
+    assert _traced(kept) == (len(MASKING_FAILED_TEXT), 20005)
+```
+
+**RQ5.** Adds N19 at the end of the file. SEARCH:
+```
+    [payload] = _masked(emit)
+    assert (payload["names"], payload["failed"], payload["invocation_id"]) == (
+        ["github"] if case == "known_root" else [], True, None if case == "output_fails" else "fixture-call",
+    )
+```
+REPLACE:
+```
+    [payload] = _masked(emit)
+    assert (payload["names"], payload["failed"], payload["invocation_id"]) == (
+        ["github"] if case == "known_root" else [], True, None if case == "output_fails" else "fixture-call",
+    )
+
+
+# -- N19: the repair after review round 2 (section 18) --------------------------------------------------------------
+
+
+async def test_a_correlation_without_the_strict_profile_never_reaches_the_render_event(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    masker = _real_masker(tmp_path)
+    loose, issued = _RecordingEmit(), _RecordingEmit()
+    await RenderMask(masker).final(
+        ToolCallResult(id="c", output=f"x {TOKEN}"), emit_fn=loose, tool_name="t", strict=False,
+        correlation=EffectCorrelation(f"op-{TOKEN}", f"at-{TOKEN}", "failed", "tool_failed"),
+    )
+    await RenderMask(masker).final(
+        ToolCallResult(id="c", output=f"x {TOKEN}"), emit_fn=issued, tool_name="t", strict=True,
+        correlation=EffectCorrelation("op-1", "at-1", "result", "tool_completed"),
+    )
+    assert [(p["operation_id"], p["attempt_id"]) for p in _masked(loose) + _masked(issued)] == [
+        (None, None), ("op-1", "at-1"),
+    ]
+
+    # Through the loop: an ordinary tool's exception carries the correlation, and the loop's exception branch hands
+    # it to the render seam. Only the render event is this test's contract: the loop's live completed event still
+    # carries the tool's ids (#1820 ad-1337 R12).
+    registry, definition = _registered(_CorrelatedRaising(ToolResult()))
+    emit = _RecordingEmit()
+    llm = _FakeLLM([_turn(), _done()])
+
+    await _run(_loop(llm, ToolExecutor(registry=registry), masker, emit), [definition])
+
+    assert _last_result(llm.requests[1]) == f"Tool fixture_result failed: bad credential {PLACEHOLDER}"
+    assert _masked(emit) == [{
+        "seam": "render", "tool_id": tool_record_identity("fixture_result"), "invocation_id": "fixture-call",
+        "operation_id": None, "attempt_id": None, "names": ["github"], "names_omitted": 0, "failed": False,
+    }]
+    render_lines = "\n".join(r.getMessage() for r in caplog.records if r.name == RenderMask.__module__)
+    assert "render seam masked" in render_lines
+    shown = json.dumps(_masked(loose) + _masked(emit)) + _requests_text(llm) + render_lines
+    assert [form for form in secret_forms(TOKEN) if form in shown] == []
+```
+
+### 18.3 `src/probos/cognitive/swe_harness/render_masking.py` (M5)
+
+**RQ6.** SEARCH:
+```
+        A failed delivery keeps its extension: its frame is a fixed code, and the run still stops on it (BF-946). Any
+        other delivery is dropped; an instruction or delegation extension is kept as it was.
+        """
+        from probos.security.secret_masking import MASKING_FAILED_TEXT
+
+        self._failed = True
+        delivery = result_delivery(result)
+        if delivery is None or delivery.status == "failed":
+            return replace(result, output=MASKING_FAILED_TEXT, is_error=True)
+        kept = {"id": result.id, "output": MASKING_FAILED_TEXT, "is_error": True, "duration_ms": result.duration_ms}
+```
+REPLACE:
+```
+        A failed delivery keeps its extension: its frame is a fixed code, and the run still stops on it (BF-946). Any
+        other delivery is dropped; an instruction or delegation extension is kept as it was. Every withheld result
+        keeps the tool's own length (``source_chars``, BF-760), which the durable trace reports.
+        """
+        from probos.security.secret_masking import MASKING_FAILED_TEXT
+
+        self._failed = True
+        delivery = result_delivery(result)
+        if delivery is None or delivery.status == "failed":
+            return replace(result, output=MASKING_FAILED_TEXT, is_error=True)
+        kept = {
+            "id": result.id, "output": MASKING_FAILED_TEXT, "is_error": True, "duration_ms": result.duration_ms,
+            "source_chars": result.source_chars,
+        }
+```
+
+**RQ7.** SEARCH:
+```
+        names = sorted(self._names)
+        payload = {
+            "seam": "render",
+            "tool_id": None if strict else tool_record_identity(tool_name),
+            "invocation_id": None if strict else self._carried_call_id(masker, result.id),
+            "operation_id": correlation.operation_id if correlation is not None else None,
+            "attempt_id": correlation.attempt_id if correlation is not None else None,
+```
+REPLACE:
+```
+        names = sorted(self._names)
+        # Only the broker issues a correlation, and only under the strict profile. Without it the loop's correlation
+        # can come from a tool's own exception (``effect_correlation``), whose ids are the tool's and unchecked.
+        trusted = correlation if strict else None
+        payload = {
+            "seam": "render",
+            "tool_id": None if strict else tool_record_identity(tool_name),
+            "invocation_id": None if strict else self._carried_call_id(masker, result.id),
+            "operation_id": trusted.operation_id if trusted is not None else None,
+            "attempt_id": trusted.attempt_id if trusted is not None else None,
+```
+
+### 18.4 `PROGRESS.md` (M6)
+
+**RQ8.** SEARCH:
+```
+Measured by `tests/test_ad1337_render_seam.py` (18 cases, 23 items)
+```
+REPLACE:
+```
+Measured by `tests/test_ad1337_render_seam.py` (19 cases, 24 items)
+```
+
+**RQ9.** SEARCH:
+```
+a call id that holds a known value is left out of the event. Not measured: a live run.
+```
+REPLACE:
+```
+a call id that holds a known value is left out of the event. Review round 2's repair: without the strict profile the event carries no operation or attempt id (a correlation then comes from a tool's own exception, not the broker); a withheld result keeps the tool's own length for the durable trace. Not measured: a live run.
+```
+
+### 18.5 `DECISIONS.md` (M6)
+
+**RQ10.** SEARCH:
+```
+an id that holds a known value is left out, not masked (review round 1). A failed pass withholds.
+```
+REPLACE:
+```
+an id that holds a known value is left out, not masked (review round 1). `operation_id` and `attempt_id` come only from a strict call's correlation, which the broker issues: without the strict profile a correlation can only come from a tool's own exception, so the event leaves both out (review round 2). A failed pass withholds.
+```
+
+**RQ11.** SEARCH:
+```
+A withheld result keeps no delivered frame, except a failed delivery's fixed code, on which the run still stops (BF-946).
+```
+REPLACE:
+```
+A withheld result keeps no delivered frame, except a failed delivery's fixed code, on which the run still stops (BF-946). It keeps the tool's own length (`source_chars`, BF-760), so the durable trace still reports what the tool returned. Under the strict profile the model is told the broker's reason code for a withheld result, not that it was withheld (#1820 ad-1337 R11).
+```
+
+The `*Residual.*` line does not change: the residual numbering is the orchestrator's.
+
+### 18.6 Counts and the focused gate
+
+| Run on `693c685c` | Prediction |
+|---|---|
+| RQ1 to RQ5 applied, code pairs not (19 cases, 24 items) | **2 failed, 22 passed** |
+| After every pair | **24 passed** |
+
+The 2 that fail on the tests alone:
+- N4, on `held.source_chars`: it is `None` where 20005 is expected.
+- N19, on its first assertion: `("op-tok-...", "at-tok-...")` where `(None, None)` is expected.
+
+The failed-delivery `kept` case passes on both trees, because `replace` keeps `source_chars`.
+
+**Focused gate, `-n 0`:**
+- `tests/test_ad1337_render_seam.py`, `tests/test_ad1337_executor_seam.py`;
+- `tests/test_bf760_trace_records_the_tools_length.py`, `tests/test_ad1240_tool_result_delivery.py`;
+- `tests/test_ad1152_agentic_correlation.py`, `tests/test_ad1195_durable_producers.py`;
+- `tests/test_bf965_unoffered_tool_refusal.py`, `tests/test_ad1224_durable_tool_start.py`, `tests/test_ad1324_srp_layout.py`.
+
+Then `check_architecture_principles.py --check`, and in M6 `gen_ad_ledger.py --check`. Commit a regenerated ledger if `--check` asks for one. `render_masking.py` grows from 211 to 218 lines; `AgenticLoop` is untouched.
+
+### 18.7 Mutation rows (one change each; restore between rows)
+
+| Row | Mutant | Killed by |
+|---|---|---|
+| W1 | `_emit`: `trusted = correlation if strict else None` becomes `trusted = correlation` | N19 (both halves) |
+| W2 | `_emit`: the same line becomes `trusted = None` | N4, N7, N19 |
+| W3 | `_withheld`: delete `"source_chars": result.source_chars,` | N4 |
+| W4 | `_emit`: the `operation_id` line becomes `"operation_id": correlation.operation_id if correlation is not None else None,` | N19 |
+| W5 | `_emit`: the `attempt_id` line becomes `"attempt_id": correlation.attempt_id if correlation is not None else None,` | N19 |
+
+**Campaign of record:** `render_masking.py` and S3's test file both change, so section 10's sha256 rule makes this a whole rerun on the M5 candidate: M9, M10, M17, M19, T1 to T18 (as amended), U1 to U12, W1 to W5 and E1. Record each edited file's sha256. E1 stays equivalent.
+
+### 18.8 Round-3 review: properties to verify (delta review from 693c685c)
+
+1. **No unissued correlation reaches the render event.**
+   - Run N19, then apply W1 alone and confirm N19 fails.
+   - Confirm N4 and N7 still carry the strict ids.
+   - Enumerate the loop's `final` calls (`agentic_loop.py:2581-2588`: `strict=False, correlation=None`; `:2982-2984`: `strict=strict, correlation=trace_correlation`). Confirm the only place a non-strict call gets a correlation is the exception branch (`:2906-2929`).
+2. **A withheld result keeps `source_chars`.**
+   - Run N4, then apply W3 and confirm N4 fails.
+   - `kept` now matches `with_result_delivery`'s fields minus the delivery (`tool_call.py:902-906`).
+   - `build_tool_trace_payload` reports `source_chars` for all four variants.
+3. **No shared contract changes.**
+   - The payload keeps its eight keys and every strict value.
+   - `rg SECRET_MASKED src` finds producers and declarations only.
+   - No test reads a non-strict render `operation_id` other than the null-valued cases.
+4. **Contract corrections RC3 and RC4 match the measured counts.** Instrument `mask_text` and check: at most 2 calls for an unarmed call; for an armed delivered call, 3 with no hit and 4 when a non-strict event is emitted; 3 at most under strict.
+5. **R11 and R12 reach statements are true.**
+   - The strict projection is at `agentic_loop.py:2985-2990`.
+   - `AGENTIC_TOOL_CALL_COMPLETED` is OPERATIONAL (`event_persistence.py:94`, `:28-29`).
+   - The ordinary trace ignores `effect_correlations`: only the strict branch reads them (`agentic_loop.py:526-543`).
+6. **Scope.** The delta touches only `render_masking.py`, S3's test file, S3's `PROGRESS.md` line, `DECISIONS.md:1676`, the ledger pair and the contract. `agentic_loop.py` is unchanged; it keeps 13 methods and the same constructor keywords.
+7. **Execute** 18.6's focused set: S3's file gives 24 passed.
+
+### 18.9 Verified Against Codebase (2026-11-22, `ob11s3q` at `693c685c`)
+
+```
+git diff --stat 1a1a4782 693c685c            S2's files only (executor.py, S2 test, S2 contract, trackers, ledger pair)
+read render_masking.py:1-211                 RQ6 SEARCH 149-158, RQ7 SEARCH 186-192, each once
+read test_ad1337_render_seam.py:20-399, 715-806   RQ1 24-29, RQ2 35-36, RQ3 126-129, RQ4 307-331, RQ5 803-806
+read agentic_loop.py:2673, 2782-2816, 2900-3018   strict flag; strict-only correlation; exception branch; projection
+read agentic_loop.py:408-419, 580-627        build_tool_trace_payload signature; output_chars/source_chars (BF-760)
+read tool_call.py:680-693, 738-748, 876-911  source_chars field; kw_only extensions; with_result_delivery copies it
+read effect_adapters.py:372-441, 710-711     _reason [a-z0-9_]{1,64}; project_refusal returns reason_code
+read effect_broker.py:596-634, 696-737       strict exception correlations are broker-set or identity-checked
+read effect_types.py:17, 66-71               EffectOutcome Literal; EffectCorrelation(op, at, outcome, reason)
+read secret_masking.py:55                    MASKING_FAILED_TEXT = "tool output withheld: secret masking failed"
+read test_ad1240_tool_result_delivery.py:162-181, 1876  _RawTool tool_id fixture_result; _turn call id; _last_result
+read test_bf760_trace_records_the_tools_length.py:33-60  ToolCallRequest(name=, arguments=, id=) call shape
+read PROGRESS.md:3; DECISIONS.md:1674-1681   RQ8-RQ11 SEARCH text, each once (rg -o)
+git show 5d8a5eb4:...agentic_loop.py | grep effect_operation_id   2785, 2905, 2914, **effect_correlation 2994 (R12 on main)
+```
+
+**Absence Verified (2026-11-22):**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| Nothing in `src` reads `SECRET_MASKED` | `rg SECRET_MASKED src/probos` | `events.py:329`, `event_persistence.py:72`, producers `executor.py:1616` and `render_masking.py:204`, comments | yes |
+| No test reads a non-strict render id | `rg operation_id tests/test_ad1337*.py tests/test_ad1195*.py` | render: N3 and N5 (None), N4 and N7 (strict); the rest are S2 producer or AD-1195 permit cases | yes |
+| The ordinary trace ignores `effect_correlations` | `rg "effect_correlations\|effect_operation_id" agentic_loop.py` | 416 (parameter), 532 (strict branch), 2796, 2916, 2925 | yes |
+| No other S3 text states a call count | `rg "two passes\|at most two\|22 ms\|both passes"` over the contract, `swe_harness/*.py`, `PROGRESS.md` and `DECISIONS.md` | contract 84, 143, 147, 869, 924; `render_masking.py:12`, `:74`; tracker hits are S1/S2 or other ADs | yes; 143, 869, 924, 12 and 74 describe stages |
+| The `RQ` and `W` labels are free | `rg "\b(RQ\|RS\|RW\|C)\d+\b"`, `rg "\b[VW]\d+\b"` in the contract | `C10`-`C12` mentioned in 17.9 only | yes |
+
+**Prior art:** skipped. This repairs S3's own defects and has no outside analogue.
+
+### 18.10 The orchestrator's first-hand checks
+
+The 11 operations of this section (RQ1 to RQ11) were applied to a scratch worktree detached at `693c685c` (the branch head, which the Builder starts from; S3's files there equal `1a1a4782`) by `audit\contract_tools.py apply --prefix 18.` (ASCII only), and every check below was run before the Builder started. Each test run went through `run_pytest_homeguard.ps1` (HOME and USERPROFILE redirected to an empty directory; the listing after the run was empty every time), serial unless a worker count is named.
+
+| R | Result |
+|---|---|
+| R1 | All 11 operations are found by `contract_tools.py list --prefix 18.`; every SEARCH occurs exactly once on `693c685c` (the code, the test and the tracker pairs alike; dry run). Four files change by +87 -14 lines: `render_masking.py` 11 and 4, the test file 74 and 8, `PROGRESS.md` and `DECISIONS.md` 1 and 1 each. Blobs after the operations: `render_masking.py` `1dcc62cd29964d3b4aded3fd1b8a28922fc07cad` (218 lines, as 18.6 predicts), `tests/test_ad1337_render_seam.py` `1c4302db2113072572a2e4b7bbe46537227b1a7f`, `PROGRESS.md` `9ab714f579218026c8a2857e1f014093cb734587`, `DECISIONS.md` `f2ba37d2e7a045d077018bda031e27757fdcf991`. |
+| R2 | **The tests alone** (RQ1 to RQ5 applied, the code pairs not): **2 failed, 22 passed** in 51 s, exactly the prediction of 18.6: N4 fails at `held.source_chars` (`None != 20005`, index 3), and N19 at its first assertion (`('op-tok-S3r8Wm2Qz6Lp4Nx9', 'at-tok-S3r8Wm2Qz6Lp4Nx9') != (None, None)`). |
+| R3 | **All pairs:** `tests/test_ad1337_render_seam.py` **24 passed** in 46 s; the same file under `-W error`: **24 passed** in 54 s (N19 and N4 leave no pending task and raise no warning). |
+| R4 | **The findings' reproduction, before and after** (`probe_b11s3r2.py`, which imports the test file's own harness; evidence `evidence-b11s3r2-findings.txt` on `1a1a4782` and `evidence-b11s3r2-findings-after.txt` on the scratch tree). F1: before, the render event of a non-strict call carried `operation_id` `op-<token>` and `attempt_id` `at-<token>` from a tool's exception (the model saw only the masked text); after, both are `null` and the token is in neither the payload nor the model's requests. F2: before, a withheld delivered result had `source_chars` 20005 -> `None` and the trace payload read `{'output_chars': 43, 'output_truncated': False}`; after, 20005 survives and the payload carries `'source_chars': 20005`. F3 is unchanged on purpose (the model reads `tool_completed`; recorded as R11). F4: three `mask_text` calls for a clean frame and four for a frame that holds a value, before and after (documentation only). |
+| R5 | **RC4's counts** (`probe_b11s3r2_counts.py`, a counting wrapper on `SecretMasker.mask_text`; evidence `evidence-b11s3r2-counts.txt`): an unarmed call 1 (no hit) or 2 (a hit that emits a non-strict event); an armed delivered call 3 with a clean frame and no hit, 4 when the frame holds a value or the text hit emits a non-strict event; 3 under the strict profile in both hit cases. RC4's sentence holds. |
+| R6 | **The focused gate of 18.6** (the three AD-1337 test files, `test_bf760_trace_records_the_tools_length`, `test_ad1240_tool_result_delivery`, `test_ad1152_agentic_correlation`, `test_ad1195_durable_producers`, `test_bf965_unoffered_tool_refusal`, `test_ad1224_durable_tool_start` and `test_ad1324_srp_layout`: 10 files) with 3 workers: **1033 passed, 2 skipped** (the two skips are AD-1240's POSIX-only symlink cases) in 153 s. |
+| R7 | **Static checks.** `check_architecture_principles.py --check` passes (srp-size 92, layer-import 0, db-connect 30, unowned-task 13); `render_masking.py` is 218 lines; `agentic_loop.py` is unchanged (13 methods, the same constructor keywords); `rg -n "ensure_future"` over the three AD-1337 test files and `render_masking.py` finds nothing; the added lines hold no non-ASCII character. |
+| R8 | **The campaign of record** (`audit\mutants_gen.py`, `rows_ad1337s3r2.py`: the 55 rows of section 17's campaign with X6 and X7 restated on the `trusted` lines, plus W1 to W5: 60 rows; 49 baseline cases, S3's 24 and S2's 25, all passing) runs on three scratch trees that hold this section's operations, 20 rows each, while this section is committed; the `lf-sha256` of `render_masking.py` is `bea1bd57590f15f4e0d4ddbd791e1e1e8f0a46407f955e47f686a274e74c0385` and of the test file `f42831404beb20d2777191da03414dcda00c0acdfc37caad26ab76aea1cc872f`. Its result (killed, differed, survived, invalid; E1 is expected to survive) is recorded in the PR description and in `evidence-b11s3r2-camp1.txt` to `-camp3.txt`; any other survivor reopens 18.7. |
+
+**What the orchestrator changed in the Architect's section 18:** nothing in the pairs, the test, the rows or the corrections.
+
+**What these checks do not show.**
+- A live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
+- The wider consumer set (the full gate) and `PROBOS_EMBEDDINGS=local`: the committed head gets the 46-file consolidated set in both embedding modes after M6.
+- F3: the strict projection is unchanged, so the strict-profile result of a failed render pass is still the broker's reason code (R11).
