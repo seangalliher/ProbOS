@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,6 +27,7 @@ from probos.cognitive.agentic_dispatch import DispatchToolExecutor, WorkItemAgen
 from probos.credential_store import CredentialStore
 from probos.event_persistence import OWNER_RECORDS, Persistence, is_routed, persistence_of
 from probos.events import EventType
+from probos.runtime import ProbOSRuntime
 from probos.security import secret_masking
 from probos.security.secret_masking import (
     MASKING_FAILED_TEXT,
@@ -87,6 +88,14 @@ def _store(directory: Path, entries: dict[str, str] | None = None) -> Credential
     if entries is not None:
         path.write_text(json.dumps(entries), encoding="utf-8")
     return CredentialStore(store_path=path)
+
+
+def _owning_runtime(store: Any) -> SimpleNamespace:
+    """A runtime double with the runtime's own AD-824 owner, as finalize needs: ``_spawn_background`` registers the
+    priming in ``_background_tasks``, which a stop's sweep and a failed start's rollback cancel."""
+    runtime = SimpleNamespace(credential_store=store, _background_tasks=set(), _drain_tasks=set())
+    runtime._spawn_background = MethodType(ProbOSRuntime._spawn_background, runtime)
+    return runtime
 
 
 def _masker(directory: Path) -> SecretMasker:
@@ -495,7 +504,7 @@ async def test_finalize_primes_github_off_the_loop_and_every_executor_waits_for_
     monkeypatch.setattr(
         "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
     )
-    runtime = SimpleNamespace(credential_store=_store(tmp_path))
+    runtime = _owning_runtime(_store(tmp_path))
     tools = (_EchoTool("echo", f"cli={CLI_TOKEN}"), _EchoTool("echo", f"cli={CLI_TOKEN}"))
     try:
         masker = finalize._wire_secret_masker(runtime=runtime)
@@ -675,7 +684,7 @@ async def test_priming_reads_github_as_the_secret_masking_system_requester(
         return None
 
     monkeypatch.setattr(store, "get", _recording_get)
-    runtime = SimpleNamespace(credential_store=store)
+    runtime = _owning_runtime(store)
 
     assert isinstance(finalize._wire_secret_masker(runtime=runtime), SecretMasker)
     await runtime.secret_masking_prime_task
@@ -759,7 +768,7 @@ async def test_priming_loads_the_store_file_off_the_loop_whichever_step_resolves
         return original(path)
 
     monkeypatch.setattr("probos.credential_store._read_store_file", _recording_read)
-    runtime = SimpleNamespace(credential_store=_store(tmp_path, {"vault": VAULT_A}))
+    runtime = _owning_runtime(_store(tmp_path, {"vault": VAULT_A}))
 
     masker = finalize._wire_secret_masker(runtime=runtime)
     await runtime.secret_masking_prime_task
@@ -816,3 +825,48 @@ async def test_on_a_busy_real_loop_waiting_calls_poll_sparingly_and_a_cancelled_
     # At most one check per call per 10 ms of the window, plus its first and last: a 25 ms poll makes about one per
     # 15.6 ms tick on Windows and one per 25 ms on Linux; the unrepaired 10 ms poll made tens of thousands on Windows.
     assert len(polls.answers) <= len(calls) * (elapsed / 0.010 + 2), (len(polls.answers), elapsed)
+
+
+# -- N26: the runtime owns the priming --------------------------------------------------------------------------------
+
+
+async def test_the_runtime_owns_the_priming_so_a_stop_cancels_it_in_gh_and_its_window_closes_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered, release, worker_done = threading.Event(), threading.Event(), threading.Event()
+
+    def _gh(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        entered.set()
+        assert release.wait(10.0)  # gh answers only after the task was cancelled, as when a start fails late
+        return SimpleNamespace(returncode=0, stdout=CLI_TOKEN + "\n")
+
+    original_worker = finalize._prime_secret_masking_worker
+
+    def _worker(store: Any, masker: Any) -> str | None:
+        try:
+            return original_worker(store, masker)
+        finally:
+            worker_done.set()
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_gh, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    monkeypatch.setattr(finalize, "_prime_secret_masking_worker", _worker)
+    runtime = _owning_runtime(_store(tmp_path))
+    try:
+        masker = finalize._wire_secret_masker(runtime=runtime)
+        task = runtime.secret_masking_prime_task
+        assert runtime._background_tasks == {task} and task.get_name() == "secret_masking_prime"
+        assert await asyncio.to_thread(entered.wait, 10.0)  # the priming is inside gh
+        # What a stop's AD-824 sweep does, and a failed start's rollback with it (startup/shutdown.py): cancel every
+        # registered task, then wait at most 5 s.
+        for registered in list(runtime._background_tasks):
+            registered.cancel()
+        done, still_pending = await asyncio.wait({task}, timeout=5.0)
+        assert done == {task} and not still_pending and task.cancelled()  # it did not wait for the worker thread
+        assert runtime._background_tasks == set()  # it left the owner's registry
+        assert masker.priming_pending() is False  # the window closed with the task, while the worker is still in gh
+    finally:
+        release.set()
+    assert await asyncio.to_thread(worker_done.wait, 10.0)  # the worker ends alone; nothing waits for it
+    assert masker.priming_pending() is False

@@ -733,13 +733,19 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     runtime.secret_masker = SecretMasker(
         credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
     )
+    masker = runtime.secret_masker
     # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
     # with what the priming adds. Marked before the task exists, so no call can run between the two.
-    runtime.secret_masker.begin_priming()
-    runtime.secret_masking_prime_task = asyncio.create_task(
-        _prime_secret_masking(store, runtime.secret_masker), name="secret_masking_prime",
-    )
-    return runtime.secret_masker
+    masker.begin_priming()
+    # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
+    # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
+    # window closes when the task ends, however it ends: a task cancelled before its first step never reaches the
+    # worker, whose ``finally`` is the only other ``end_priming``. The worker thread itself ends within the CLI's
+    # timeout and holds nothing a teardown closes.
+    task = runtime._spawn_background(_prime_secret_masking(store, masker), "secret_masking_prime")
+    task.add_done_callback(lambda _task: masker.end_priming())
+    runtime.secret_masking_prime_task = task
+    return masker
 
 
 def _prime_secret_masking_worker(store: Any, masker: Any) -> str | None:
