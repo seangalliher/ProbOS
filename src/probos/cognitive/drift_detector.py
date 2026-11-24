@@ -148,6 +148,14 @@ class DriftDetector:
         # hardest to check. Filtered here rather than at the store so the rows
         # stay available for forensics.
         history = [r for r in history if not getattr(r, "inconclusive", False)]
+        # BF-992 (992-R1): a skipped result measured nothing either. The skip helpers of memory_probes,
+        # domain_tests, collective_tests and the recall probe pass at a fixed score without setting
+        # inconclusive, so a window of them made any first real score read as drift (|z| = sqrt(k)).
+        # Read from details so rows already stored are covered without a migration.
+        history = [
+            r for r in history
+            if not (isinstance(getattr(r, "details", None), dict) and r.details.get("skipped") is True)
+        ]
 
         # Get baseline
         baseline = await self._store.get_baseline(agent_id, test_name)
