@@ -36,6 +36,7 @@ def test_the_file_log_helper_leaves_the_pinned_loggers_as_it_found_them() -> Non
 
 def test_a_level_set_inside_is_put_back_and_a_logger_made_inside_is_left_notset() -> None:
     existing = logging.getLogger("probos.test.bf993.existing")
+    incoming = existing.level
     existing.setLevel(logging.INFO)
     try:
         with restored_logger_levels():
@@ -44,7 +45,7 @@ def test_a_level_set_inside_is_put_back_and_a_logger_made_inside_is_left_notset(
             made.setLevel(logging.WARNING)
         assert (existing.level, made.level) == (logging.INFO, logging.NOTSET)
     finally:
-        existing.setLevel(logging.NOTSET)
+        existing.setLevel(incoming)
 
 
 def test_the_levels_are_put_back_when_the_block_raises() -> None:
@@ -54,3 +55,23 @@ def test_the_levels_are_put_back_when_the_block_raises() -> None:
         decomposer.setLevel(logging.CRITICAL)
         raise RuntimeError("bf993")
     assert decomposer.level == before
+
+
+def test_the_boot_verbosity_fixture_leaves_the_pinned_loggers_as_it_found_them() -> None:
+    from probos.__main__ import _setup_logging
+    from tests.test_ad1026_boot_verbosity import _logger_state
+
+    with restored_logger_levels():
+        for name in PINNED:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        fixture = _logger_state.__wrapped__()  # the fixture's own generator, driven through its teardown
+        next(fixture)
+        try:
+            _setup_logging("INFO", verbose=False)
+            assert logging.getLogger("probos.cognitive.decomposer").level == logging.WARNING  # premise: it pins
+        finally:
+            with pytest.raises(StopIteration):
+                next(fixture)
+        assert {name: logging.getLogger(name).level for name in PINNED} == dict.fromkeys(
+            PINNED, logging.NOTSET,
+        )
