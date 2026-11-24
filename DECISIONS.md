@@ -17,8 +17,9 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 - *D2.* One shared reader for callers that hold a slot id and the agent registry: `resolve_sovereign_id_from_registry`, beside the BF-103 helpers. The recall probe and the ACM profile use it; BF-138's `_resolve_probe_agent_id` delegates to it, which also returns the id when `runtime.registry` is None (it raised before).
 - *D3.* The coordinator stays keyed by slot id: posts, DMs and trust are recorded by slot (BF-907), and the graduation event keeps its keys; `episodes` is the count under the memory id.
 - *D4.* `holodeck/gates.py:79` is left to #1700 S1, which deletes it.
-- *D5.* The probe's skipped results still pass at 1.0; with crew episodes now counted, a measured score after a run of skipped rows can read as a decline (#1324 register row 992-R1).
-- *Reversal.* Revert the commits. Qualification results the probe records meanwhile stay in the store.
+- *D5.* The probe's skipped results still pass at 1.0 and still set the first baseline; with crew episodes now counted, a run of them in the drift window made the first measured score read as drift (#1324 register row 992-R1, measured in review round 1).
+- *D6.* Amendment A1: the drift window also leaves out rows whose `details["skipped"]` is True, beside BF-711's `inconclusive` filter (`drift_detector.py`, after `:150`). A skip measured nothing, whichever probe wrote it (`memory_probes`, `domain_tests`, `collective_tests`, the recall probe; `behavioral_probes` already marks its skips inconclusive, BF-923). The flag is read from the stored row, so rows already in the store are covered without a migration. Tests `tests/test_bf992_drift_skipped_rows.py`. Rejected: marking the skips inconclusive at their producers (new rows only; the stored windows would still raise the first-run alarm), and holding this item for the AD-1186 item. The skipped baseline and the signal's `direction` stay with the AD-1186 item in #1324.
+- *Reversal.* Revert the commits; reverting A1's commit alone restores counting of skipped rows in the drift window. Qualification results the probe records meanwhile stay in the store.
 
 ### AD-1328 S1 -- Command execution policy core: prefix rules, a three-dialect tokenizer, strictest wins, self-testing examples (2026-10-16, #1530)
 
