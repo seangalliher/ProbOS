@@ -2,7 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-22
 
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5, consult `4dd6603c` and its follow-up) and the orchestrator, 2026-11-24, after review round 1: section 22 (the repair, M3), decisions D11 to D15, and the corrections of sections 2, 3, 4 (D2, D9), 5, 8, 10, 12 to 15.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5, consult `4dd6603c` and its follow-up) and the orchestrator, 2026-11-24, after review round 1: section 22 (the repair, M3), decisions D11 to D15, and the corrections of sections 2, 3, 4 (D2, D9), 5, 8, 10, 12 to 15; and after review round 2 (consult `74ab0e9a`): section 23 (M4: the three findings are recorded, documents only), decision D16, property 5 of section 14 and the items R25 to R27 of section 8.3.
 
 **Status:** draft. Batch 2 is S4 + S5: one PR (`Refs #1560`), one broad gate. S4 is built, tested and useful alone, but S5 (the decomposed DAG's reflect route) is the last slice, and #1560 closes with it. Decision: consult `4bb6d748` (Q1, Q2 source 3, Q7 row "per-run", Q8 M21; on #1560, comment 7064966284), corrected here in D1, D3 and D5. No Captain condition.
 
@@ -142,6 +142,7 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
 - **D13 (events for the client's own raises).** S4's two raises in `_call` (the `client_closed` drop and the `bad_result` withhold) recorded no `MCP_BRIDGE_FAILED`, against `_call`'s rule of one emission site for request-time failures (`client.py:275-277`); the event is durable (`event_persistence.py:76`). Each now emits with its reason and no detail before it raises (`client_closed` and `bad_result` are in `_STRICT_FAILURE_REASONS`, so the strict payload carries the reason too).
 - **D14 (evidence that this registration published; finding 4, P2, a regression of this slice).** `_settle_secret` handed the handle to any real `MCPClient` that was new under the key, so a registration that lost to a concurrent one (cancelled, or answering False) gave its handle to the winner's client, which held it until it closed. `register_server` is synchronous, so before-and-after identity is sound for HTTP; `register_stdio_server` awaits (consent, `existing.close()`, `transport.start()`), publishes with `return True` at once (`bridge.py:186-190`), closes its unpublished candidate and re-raises on cancellation (`:191-198`), and a loser answers False (`:213-215`). So `_settle_secret` now also requires the bridge's own answer `is True` to this registration's call (strict `registered`, legacy `published`; both stay None on a raise or a cancel, so the handle is released). A strict reuse of a concurrent winner's identical configuration answers True (`:159`, `:165`, `:215`) and hands over a duplicate handle for the same value, which the winner's `close` releases with its own: harmless. The other publishers of a key (`adoption.py:245`, `finalize.py:5097`, `:5103`) hold no handle. A bridge double whose `register_server` answers anything but `True` now releases the handle (section 3).
 - **D15 (not repaired here; finding 3).** A child's stderr, logged at DEBUG (`transport.py:293-314`), a library's own DEBUG record and the strict check's narrowness are recorded as #1820 ad-1337 R24 (Architect `4dd6603c`): they need DEBUG logging and a server that prints its own credential; section 9 promises the transports are unchanged; a hook on the transport would leave the window between `start()` and `hold_secret()` and could not close the class, which belongs to R4's repair, a log-masking seam. The smallest repair of R24's third part is to refuse, at registration, a credential that is not a valid header value under h11's grammar.
+- **D16 (not repaired here; review round 2, findings 1 to 3; the Architect, consult `74ab0e9a`).** S4's masks cover values that a page or a server returns. An identifier the operator chooses (a stdio server's name, an HTTP server's URL) is configuration, the class of R18: it is the bridge key, spread through events, logs, tool names and error texts in at least six modules, so no client-side mask can cover it, and only the operator can put a value there. Recorded as R25, with a refusal at registration as its smallest repair. The browser session's audit row and fill-failure WARNING (R26, R27) need a held value, which only the closed `fill_credential` creates (R22); the change that opens the verb repairs them. F1 is classified P3 Low (the reviewer rated it P1), F2 and F3 P2 Medium with no reach today; none is a regression.
 
 ## 5. Tests: new file `tests/test_ad1337_per_run.py` (22 cases, 38 items; 17 and 24 until M3)
 
@@ -1509,12 +1510,27 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 - **ad-1337 R22** (Low).
   - *Reach:* none today. `action_fill_credential` has one call, in `BrowserTool._invoke_session`, behind `invoke`'s gate, which refuses every verb outside `_AGENT_ACTIONS`. BF-701 keeps `fill_credential` off that tuple, and AD-1154 refuses it again in dispatch (`_NEVER_PARK_ACTIONS`).
   - *Evidence:* S4 P16. S4's tests assert the refusal and run the handler on the tool's own session.
-  - *Gap:* S4's browser half (the `vault:<ref>` registration before `page.fill`, `BrowserSession.hold_secret` and the `browser_session` mask in `BrowserTool.invoke`) is armed but has never run from an agent's call. A change that opens the verb must keep the registration and the session hold, and must replace the S4 helper's direct handler call with the agent path. It must also keep S4 D10's refusal of a bridge session, whose page outlives the session.
+  - *Gap:* S4's browser half (the `vault:<ref>` registration before `page.fill`, `BrowserSession.hold_secret` and the `browser_session` mask in `BrowserTool.invoke`) is armed but has never run from an agent's call. A change that opens the verb must keep the registration and the session hold, and must replace the S4 helper's direct handler call with the agent path. It must also keep S4 D10's refusal of a bridge session, whose page outlives the session. The same change must repair R26 and R27 first.
   - *Also:* a handler that returns a structure the page controls must check the residue (`residue_after_masking`) before the session releases the value; none does today (`state` returns at most 100 records with ProbOS's keys, `eval_js` a JSON string). When `json.dumps` fails, `eval_js` falls back to `repr` (`actions.py:1110`), which escapes control characters differently from the forms the masker knows (D12's class): a change that opens `eval_js` must withhold that fallback.
 - **ad-1337 R24** (Low).
   - *Reach:* a stdio MCP server that prints its own credential to stderr, with DEBUG logging on (`StdioTransport._drain_stderr`, `transport.py:293-314`, logs each line); an HTTP library's own DEBUG record (`httpcore.http11`, `send_request_headers.failed`) that quotes a header it rejected; a credential that the strict check lets through (`registration.py:232-236` refuses CR, LF and NUL, h11 also rejects VT, FF and whitespace at either end).
   - *Evidence:* found by S4's review round 1 (finding 3, and a probe of finding 2); the reviewer's and the orchestrator's probes.
   - *Gap:* logs are not masked (the class of R4, R14 and R21), and S4 leaves the transports unchanged (section 9). A hook on the transport would leave the window between `start()` and `hold_secret()`. The smallest repair of the third part: refuse, at registration, a credential that is not a valid header value under h11's grammar, so the library never sees it.
+- **ad-1337 R25** (Low).
+  - *Reach:* an operator who names a stdio MCP server with its credential's own value (or a form of it), or puts it in an HTTP server's URL. No page, server or agent chooses these identifiers; an agent that proposed one would already hold the value.
+  - *Evidence:* S4 review round 2, finding 1, reproduced first-hand: a stdio name holding the value is stored in `MCP_BRIDGE_INVOKE.server_url` and returned to the model by `EventLogQueryTool` after `unregister_server` released it; the control name `local` is clean. The identifier is the bridge key: `bridge.py:117` (`stdio:{name}`), `:269`, `:299`, `:307`; `client.py:350`, `:383`, `:410`, `:453`; `adapter.py:39` (tool names); `runtime.py:5123` (`server=` in the event-log detail). The reviewer reports that durable persistence redacts HTTP URLs (not verified first-hand).
+  - *Gap:* event payloads and logs are not masked (R4, R14), and identifiers are configuration (the class of R18). The registry's own label is safe: D9 shows a label whose placeholder holds a form as `unnamed`.
+  - *Smallest repair:* in `register_record`, on both paths, refuse a record whose `name` or `url` contains a form of its credential (`secret_forms`), with a fixed message that quotes neither; decide first whether a URL that carries the same key as its header must stay registrable, and how the boot loop treats the refusal.
+- **ad-1337 R26** (Medium; no reach today).
+  - *Reach:* none today (R22). Once `fill_credential` is opened: a page whose error text quotes the filled value.
+  - *Evidence:* S4 review round 2, finding 2, reproduced first-hand (`tool_error_masked=True; audit_value_present=True`). `BrowserTool._invoke_session`'s `except` (`tool.py:983-993`) writes `error=str(exc)` to `_audit` before `invoke`'s `browser_session` mask runs on the result.
+  - *Gap:* audit rows are not masked; the masked tool result does not repair the row.
+  - *Smallest repair:* while the session holds a value, mask the audit `error` with the runtime's masker before the row is appended (or write a fixed error).
+- **ad-1337 R27** (Medium; no reach today).
+  - *Reach:* none today (R22). Once the verb is opened: a page whose `page.fill` failure quotes the value.
+  - *Evidence:* S4 review round 2, finding 3, reproduced first-hand (`probos_value_records=[('probos.tools.browser.credentials','WARNING')]`). `credentials.py:390` logs with `exc_info=True` after the value is registered (`:383-385`); the returned result is fixed (`fill_error`).
+  - *Gap:* this is ProbOS's own WARNING, not R24's child or library channel.
+  - *Smallest repair:* when a handle was registered, log a fixed line with the exception's type name and no traceback.
 
 ## 9. What this does NOT change
 
@@ -1630,6 +1646,7 @@ read security/secret_masking.py:39, 47, 55, 89-95   ToolResult import, DEFAULT_M
 - `git diff 02ce03ec794d -- src/probos/tools/executor.py src/probos/cognitive/ src/probos/events.py src/probos/event_persistence.py src/probos/integrations/mcp_bridge/bridge.py src/probos/routers/ docs/development/architecture-baseline.yaml tests/fixtures/` is empty.
 - `git diff 02ce03ec794d -- src/probos/security/secret_masking.py` shows insertions only, all above `class SecretHandle:`.
 - After M3: `rg -n "residue_after_masking" src` finds its def and one use (`client.py`); `rg -n "_holder_failure" src` finds its def and its one call in `_call`; `git diff 416b1a48 --stat` lists exactly `secret_masking.py`, `client.py`, `registration.py`, the test file, `PROGRESS.md`, `DECISIONS.md` and the ledger pair (not `tool.py`).
+- After M4: `git diff e53f70f6 --stat` lists exactly this contract, `PROGRESS.md`, `DECISIONS.md` and the ledger pair, and no source or test line moves (section 23).
 - The new file is ASCII only.
 - Broad gate, once for batch 2 (after S5): `scripts/run_test_gate.py --label ad-1337-1560-b2 --receipt logs/gates/ad-1337-1560-b2.receipt.json`.
 
@@ -1637,7 +1654,7 @@ read security/secret_masking.py:39, 47, 55, 89-95   ToolResult import, DEFAULT_M
 
 - **Internal:** consult `4bb6d748` Q2 (source 3), Q7 and Q8; S1's `SecretRegistry`; S3's `mask_route_result` and route census (the shape of P15); AD-1343's census visitor (reused, not copied); AD-1014's `__new__` convention (the class defaults for `_held_secrets`, `_masker_of` and `_closing`); batch 1's S2 repair (consult `2188318e`: a guard ended by a lifecycle event rather than by what it protects), whose class the Architect then looked for in S4 (D9, D10).
 - **External (one search):** GitHub's workflow-command docs say to register a value with `add-mask` before it is printed or used, and masking applies only to output after registration. Adopted: register before `page.fill` and before the bridge call. Adapted: Actions never unregisters within a job; S4 releases at session end, per #1560's acceptance. OpenHands' per-conversation secret registry (consult Q2) is the same shape. Reference projects checked on 2026-11-22: OpenHands was last reviewed 2026-10-15 and is not overdue; no overdue project in the table is relevant to this design.
-- **Blind spots named:** the end-overtakes-read race (D5, fixed); the boot order (P8, fixed); event payloads (R14); a close that overtakes an MCP reply (D9, fixed; R15 is not filed); a bridge page that outlives its session (D10, fixed); pixels (R16); the dead upload hook (R17); the unreachable fill (P16, R22); config-declared MCP secrets (R18); HXI shows placeholders for a filled value while it is registered; what the bounded pass leaves (D11: fixed in the client; no browser handler returns such a shape, R22); a transport failure's text (D12: fixed for a holder; a library's DEBUG records and a child's stderr, R24); the strict check's narrowness (R24); `eval_js`'s `repr` fallback (R22); a non-ASCII credential's `UnicodeEncodeError` (R14).
+- **Blind spots named:** the end-overtakes-read race (D5, fixed); the boot order (P8, fixed); event payloads (R14); a close that overtakes an MCP reply (D9, fixed; R15 is not filed); a bridge page that outlives its session (D10, fixed); pixels (R16); the dead upload hook (R17); the unreachable fill (P16, R22); config-declared MCP secrets (R18); HXI shows placeholders for a filled value while it is registered; what the bounded pass leaves (D11: fixed in the client; no browser handler returns such a shape, R22); a transport failure's text (D12: fixed for a holder; a library's DEBUG records and a child's stderr, R24); the strict check's narrowness (R24); `eval_js`'s `repr` fallback (R22); a non-ASCII credential's `UnicodeEncodeError` (R14); an operator-chosen server name or URL that holds the credential (R25); a browser session's audit row and its fill-failure WARNING (R26, R27).
 
 ## 14. Diff Reviewer: properties to verify
 
@@ -1645,7 +1662,7 @@ read security/secret_masking.py:39, 47, 55, 89-95   ToolResult import, DEFAULT_M
 2. Every handle has exactly one owner on every exit path. The browser handle is handed to the session with no await in between, and the session releases it in `close_resources` on every ending path. The MCP handle is held by the client this registration newly published (a real `MCPClient`, not the one there before) **only when the bridge answered `True` to this registration's own call**; otherwise (answered False, raised, was cancelled, a duplicate or reused key) it is released in a `finally`. A registration that lost to a concurrent one hands its value to no client. `MCPClient.close` releases in a `finally`.
 3. A browser result is never masked after its session's release: the tool masks inside the operation whenever a masker exists and the session holds a value. A session that holds nothing leaves its results to the producer seam.
 4. With no real registry (`None`, absent, a `MagicMock`), nothing is registered, `get_client` and `holds_secrets` are not read, and behaviour, vault reads and the headers and environment handed over are unchanged.
-5. No value, form or position reaches an event payload, an exception message or an audit row that ProbOS builds for a session or a client that holds it, or a log record ProbOS writes. Names are `kind:key` only when that is a plain label. Not covered, and recorded: a child's stderr logged at DEBUG, a third-party library's own DEBUG records (`httpcore.http11`), the loop's traceback of an exception that is not a holder's, a non-ASCII credential's `UnicodeEncodeError` (R4, R14, R24).
+5. No value or form that a page or a server returns reaches a tool result, an event payload or an exception message that ProbOS builds for an MCP client that holds the value, or a ProbOS log record written for that client; a browser session that holds a value masks its own tool results. Names are `kind:key` only when that is a plain label, and a label whose placeholder holds a form is shown as `unnamed` (D9). Not covered, and recorded: identifiers an operator chooses (a server's name or URL, which become the bridge key, `server_url`, tool names and error texts) (R25); a child's stderr logged at DEBUG, a third-party library's own DEBUG records (`httpcore.http11`), the loop's traceback of an exception that is not a holder's, a non-ASCII credential's `UnicodeEncodeError` (R4, R14, R24); a browser session's audit row and its fill-failure WARNING, which no agent path reaches (R22, R26, R27).
 6. `ProbOSRuntime` builds the registry, and `_wire_secret_masker` keeps a real one, so a boot registration is masked.
 7. A refresh releases the old access token and registers the new one. The refresh token and the client secret are never registered.
 8. `secret_masking.py` changes by insertion only, above `class SecretHandle`.
@@ -1660,7 +1677,8 @@ read security/secret_masking.py:39, 47, 55, 89-95   ToolResult import, DEFAULT_M
 - [ ] Section 5's prediction holds: a collection error on `02ce03ec794d`, then 24 passed after M1; after M3, 38 passed (12 failed and 26 passed on `416b1a48` with M3's tests alone). The focused gate is green.
 - [ ] Mutation rows M21, U1 to U25 and U26 to U46 are killed by the named cases.
 - [ ] Section 12's `rg` and diff checks hold, and `check_architecture_principles.py --check` passes.
-- [ ] TR1 to TR3 and, after M3, sections 22.5 and 22.6 are applied, and the ledger is regenerated and checked.
+- [ ] TR1 to TR3 and, after M3, sections 22.5 and 22.6, and, after review round 2, sections 23.1 and 23.2 are applied, and the ledger is regenerated and checked.
+- [ ] After M4, `git diff e53f70f6 --stat` lists exactly this contract, `PROGRESS.md`, `DECISIONS.md` and the ledger pair: no source or test line moves.
 - [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. The orchestrator's first-hand checks (2026-11-24, scratch worktrees detached at `a86a2895`, the tip of batch 1, whose tree is main's after the merge, with this contract's operations applied)
@@ -2404,3 +2422,73 @@ python: a raise inside an except without `from` sets __context__ and leaves __su
 
 - A real Chromium page, a real MCP server (the HTTP probes use a scratch-local listener and the real httpx and h11; the stdio probe a real child), the vessel and Linux (the pull request's CI is the only Linux run).
 - A reply of megabytes: the added cost is one JSON text and one `mask_text` pass per reply of a holding client (measured on 100 small replies: 300 `mask_result` calls and 400 registry reads, 4 ms).
+
+## 23. After review round 2 (M4): three findings recorded, documents only
+
+Review round 2 of S4 (`gpt-6.1-sol`, 2026-11-24, 24.4 minutes, a full review of `e53f70f6`: REQUEST CHANGES, one finding rated P1 and two rated P2, size findings 0) confirmed that every repair of round 1 holds and that the new tests discriminate (reverting the whole slice gives 28 failed and 10 passed, the ten being controls; reverting M3 alone gives 12 failed and 26 passed). Its three findings were reproduced first-hand by the orchestrator with the reviewer's own probes, then classified and decided by the Architect (consult `74ab0e9a`, 2026-11-24; recorded on #1560, comment 7123026375). The decision: **record all three, change no source or test line, and hold no round 3** (S4's round count stays 2). This section is that decision: the two tracker texts it changes (23.1 and 23.2, applied by M4) and the checks. Decision D16 is in section 4, property 5 in section 14 and the items R25 to R27 in section 8.3.
+
+| # | Finding of round 2 | Reviewer | Decided by the Architect | Where |
+|---|---|---|---|---|
+| F1 | An MCP server whose name (or URL) holds the credential's own value puts it in `MCP_BRIDGE_INVOKE.server_url`; the event is durable and, once `unregister_server` has released the value, `EventLogQueryTool` returns it to the model | P1, ordinary reach, not a regression | **P3 Low**, not a regression. Reach: only an operator who writes the credential into a server's name or URL; no page, server or agent chooses these identifiers, and an agent that proposed one would already hold the value. Recorded: R25 (D16) | 8.3, 14 (property 5) |
+| F2 | The browser's audit row keeps a value that the page's own error text quotes (`_audit` runs before the session operation's mask) | P2, injected-only | **P2 Medium**, no reach today (the verb is unreachable, R22), existed before S4. Recorded: R26 | 8.3 |
+| F3 | The fill failure's WARNING (`exc_info=True`) keeps such a value | P2, injected-only | **P2 Medium**, no reach today, existed before S4. Recorded: R27 | 8.3 |
+
+Why F1 is not repaired here (D16): the identifier is the bridge key, and it runs through at least six modules (`bridge.py:117, 269, 299, 307`; `client.py:350, 383, 410, 453`; `adapter.py:39` and `agentic_dispatch.py:1749`, the tool's name and id, which the model sees every turn; `runtime.py:5123`; `mcp_workbench.py:766`; `external_discovery.py:40`), so masking the client's own emissions would cover four of those sinks and withhold nothing after `close`. A refusal at registration (R25's smallest repair) adds a behaviour for a configuration-only reach: how the boot path treats the exception, and whether a URL that carries the same key as its header must stay registrable, are undecided, and it would make round 3 a whole-slice review. The Architect's ranking: record, then refuse only the stdio name, then refuse name and URL, then mask the client's emissions. F2 and F3 are preconditions of opening the verb (R22), so the change that opens it repairs them; M3 deliberately left `tools/browser/tool.py` unchanged (property 13).
+
+### 23.1 `PROGRESS.md` (M4)
+
+**TR6.** SEARCH:
+```
+no form of a value reaches an event, an error message or an audit row that ProbOS builds for a session or a client that holds it, or a log record ProbOS writes (a child's stderr and a library's own DEBUG records are not masked: #1820 ad-1337 R24);
+```
+REPLACE:
+```
+no form of a value that a page or a server returns reaches a tool result, an event or an error message that ProbOS builds for a client or session that holds it (not covered: identifiers an operator chooses, such as a server's name or URL; a child's stderr and a library's own DEBUG records; a browser session's audit row and fill-failure WARNING, which no agent reaches: #1820 ad-1337 R24 to R27);
+```
+
+### 23.2 `DECISIONS.md` (M4)
+
+**TR7.** SEARCH:
+```
+#1820 items ad-1337 R13, R14, R16 to R18, R22 and R24 (R15 is fixed in S4 by the client masking its own replies; R24 records a child's stderr, a library's own DEBUG records and the strict credential check, which is narrower than the HTTP library's grammar).
+```
+REPLACE:
+```
+#1820 items ad-1337 R13, R14, R16 to R18, R22 and R24 to R27 (R15 is fixed in S4 by the client masking its own replies; R24 records a child's stderr, a library's own DEBUG records and the strict credential check, which is narrower than the HTTP library's grammar; R25 an operator-chosen server name or URL that holds the credential; R26 and R27 a browser session's audit row and fill-failure WARNING, unreachable while the verb is closed).
+```
+
+### 23.3 Ledger (M4)
+
+Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the same command with `--check`. Commit any regenerated `docs/development/open-ads-report.md` and `ad-ledger-snapshot.json` in M4 (the orchestrator regenerates them; the Builder does not). No mutation row is added: nothing executable moves, and the 38 cases and 47 rows of sections 5 and 22.8 stand.
+
+### 23.4 The orchestrator's first-hand checks (2026-11-24, scratch worktrees detached at `e53f70f6`, the head of M3, with sections 23.1 and 23.2 applied by `audit\contract_tools.py apply --prefix 23.`)
+
+| V | Result |
+|---|---|
+| V1 | **The findings, re-run** (the reviewer's own probes, unchanged, on its clean copy `rv1337s4r2` at `e53f70f6`; saved as `files\audit\rv_probe_durable_source_label.txt` and `rv_probe_browser_diagnostics.txt`, runnable copies in `G:\tmp\ob-s4r2-probes\`). **F1:** with a server named `local` (the control) `stored_value_present=False live_query_value_present=False registry_after_close=0 model_value_after_close=False`; with the server named by the credential's own value `strict_registration_ready=True body_masked=True stored_value_present=True live_query_value_present=False registry_after_close=0 model_value_after_close=True`, and the persisted payload is `{"method": "tools/call", "server_url": "stdio:<the value>", "session_id": ""}`: the reply is masked, the label is not, and the probe is the only place that puts the value in it. **F2 and F3:** the probe's fake page raises `RuntimeError('page navigation diagnostic ' + <value>)` from `goto` and one from `fill`; the tool's result is masked (`tool_error_masked=True`), the audit row's `error` holds the value (`audit_value_present=True`), and the fill's failure leaves `fixed_tool_result=True; probos_value_records=[('probos.tools.browser.credentials', 'WARNING')]`. The probes build the exceptions themselves; no real Playwright error was tried (a question for the change that opens the verb, R22). |
+| V2 | **The anchors of R25 to R27** were each read on `e53f70f6` (section 23.5): the identifier's sinks in `bridge.py`, `client.py`, `adapter.py`, `agentic_dispatch.py`, `mcp_workbench.py`, `external_discovery.py` and `runtime.py`, the browser's audit call (`tool.py:983-993`) and its WARNING (`credentials.py:390`), and the registry's label rule (`secret_masking.py:248-249`). Not traced: the reviewer's claim that durable persistence redacts an HTTP server's URL (R25 says so). |
+| V3 | **The pairs.** `contract_tools.py list --prefix 23.` finds the 2 operations, and a dry run on the real tree at `e53f70f6` finds each SEARCH exactly once: TR6 247 to 397 characters, TR7 257 to 439. `audit\ws_ambiguity.py` finds no pair that matches twice at its turn (0 hazards in 2). Each tracker entry is one line, so `PROGRESS.md` changes by +1 -1 and `DECISIONS.md` by +1 -1. The blob after each operation is in the `contract_tools.py checkpoints --prefix 23.` table that the Builder brief carries; the oracle's two files equal its final blobs (2 of 2): `PROGRESS.md` `5581ea82` and `DECISIONS.md` `13b7945b`. |
+| V4 | **The ledger.** `gen_ad_ledger.py` wrote the ledger pair and `--check` reports "AD/BF ledger is current". Relative to the ledger at `e53f70f6` the snapshot differs by three replaced lines (`captured_at`, `head`, `subject_count`) and the report by one (the git-log row): no `PROGRESS.md` line number moved, because TR6 edits inside the one line of the entry. |
+| V5 | **The tests that read the trackers, the ledger or the research doc** (the eight files of section 16's R7 with `test_ad758_program_gate.py` and `test_ad1337_per_run.py`, default embeddings, on the oracle with TR6, TR7 and the regenerated ledger): **270 passed** in 98 s, the same as before M4, because no test moves. |
+| V6 | **M4's delta.** On the oracle `git diff e53f70f6 --stat` lists exactly `DECISIONS.md`, `PROGRESS.md`, `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` (6 insertions, 6 deletions): no source or test line moves, which is the Architect's condition for holding no round 3. After M4 is committed, the same check with this contract in the tree lists five paths (section 12); if any source or test line has moved, M4 becomes round 3 as a delta review. |
+
+### 23.5 Verified Against Codebase (2026-11-24, `e53f70f6`)
+
+```
+read integrations/mcp_bridge/bridge.py   117 source = f"stdio:{name}"; 269 `unknown server: {server_url}`; 299 "server_url": source (the bridge's own MCP_BRIDGE_FAILED); 306-308 the emit-failure WARNING that names the source
+read integrations/mcp_bridge/client.py:286-471   350 `bad envelope from {url}`; 383 `bad result from {url}`; 410 and 453 "server_url": url in the INVOKE and FAILED payloads
+read integrations/mcp_bridge/adapter.py   39 self.name = f"{prefix}.{self._safe_host(server_url)}.{tool_name}"
+read cognitive/agentic_dispatch.py   1749 tool_id = f"mcp:{self._server_name}:{self._tool_name}"
+read cognitive/mcp_workbench.py   766 server_url=self._bridge_key(record)
+read mcp_apps/external_discovery.py   40 a log record that names server_url
+read runtime.py:5121-5125   5123 else f"server={server_url} tool={tool}" (the event-log detail)
+read tools/browser/tool.py:812-840, 975-1005   820-828 the operation's own mask of the result; 983-993 the except block: self._audit(... error=str(exc) ...) before that mask
+read tools/browser/credentials.py:360-406   383-385 the registration and the hold; 387-390 page.fill and logger.warning(..., exc_info=True)
+read security/secret_masking.py   57 UNNAMED_LABEL; 248-249 the label rule of register_run_secret (`kind:key` only when it is a plain label); 465 the rule that a label whose placeholder holds a form is shown as unnamed (D9)
+rg "redact_url|_redact|sanitize_url|redacted_url" over event_log.py, events.py, event_persistence.py, durable_events.py, runtime.py and startup/ -> none; security/pii_redaction.py:41 defines redact_url, and its use on the event path was NOT traced (the reviewer says durable persistence redacts HTTP URLs; R25 says so as unverified)
+```
+
+### 23.6 What these checks do not show
+
+- Whether durable persistence redacts an HTTP server's URL (the reviewer's claim, not traced here).
+- A real Chromium page, a real MCP server, the vessel and Linux: nothing executable changes in M4, so the checks of sections 16 and 22.9 to 22.11 stand as they were.
