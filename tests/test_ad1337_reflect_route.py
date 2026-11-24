@@ -115,6 +115,8 @@ async def test_every_form_in_a_node_result_is_masked_before_the_model_and_the_lo
     tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG)
+    # BF-993: the decomposer's own level, so a logger pinned earlier in the process cannot drop the record.
+    caplog.set_level(logging.DEBUG, logger="probos.cognitive.decomposer")
     decomposer, llm = _decomposer(_real_masker(tmp_path, github=VALUE))
     execution = _execution(
         _shell(f"API_TOKEN={VALUE}\n", stderr=f"warning: {VALUE} is set"),
@@ -173,6 +175,8 @@ async def test_a_failed_pass_makes_no_reflect_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.DEBUG)
+    # BF-993: without it a pinned decomposer logger makes the absence checks below vacuous.
+    caplog.set_level(logging.DEBUG, logger="probos.cognitive.decomposer")
     decomposer, llm = _decomposer(_real_masker(tmp_path, github=VALUE))
     monkeypatch.setattr(secret_masking, "masked_credential_values", _raise_values)
 

@@ -9,8 +9,8 @@ degraded-pool surfacing), the WARNING+ boot counter, and the ``serve
 Logging assertions inspect REAL handler objects (BF-287 — no MagicMock at the
 logging boundary). ``_setup_logging`` mutates the global root logger, so every
 test that calls it runs under the ``_logger_state`` fixture which snapshots and
-restores the root logger's handlers + level and closes any file handler the
-call opened (FD hygiene).
+restores the root logger's handlers + level, every named logger's level (BF-993),
+and closes any file handler the call opened (FD hygiene).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import sys
 import pytest
 
 import probos.__main__ as m
+from tests.fixtures.logger_levels import restored_logger_levels
 
 
 # ---------------------------------------------------------------------------
@@ -29,18 +30,20 @@ import probos.__main__ as m
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def _logger_state():
-    """Snapshot/restore the root logger's handlers + level around a test.
+    """Snapshot/restore the root logger's handlers + level and every logger's level.
 
     ``_setup_logging`` adds console/file/counter handlers to the global root
     logger and pins per-logger levels. Without restoration these leak across
     tests and the file handler accumulates open descriptors. We restore the
-    handler list + level and close any file handler the test opened.
+    handler list + level, every named logger's level (BF-993), and close any
+    file handler the test opened.
     """
     root = logging.getLogger()
     saved_handlers = list(root.handlers)
     saved_level = root.level
     try:
-        yield
+        with restored_logger_levels():
+            yield
     finally:
         for h in list(root.handlers):
             if h not in saved_handlers and isinstance(h, logging.FileHandler):
