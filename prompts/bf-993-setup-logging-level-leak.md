@@ -1,11 +1,12 @@
 # BF-993: tests that run the boot logging setup put back the logger levels it pins; the AD-1337 reflect tests name the decomposer logger they read
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24 (consult 91af63b3, read-only): the design, pairs P1-1 to P1-9, the stressor and mutation rows, the tracker texts, the reviewer properties and the #1523 text.
-**Assembled by:** the orchestrator, 2026-11-24: the section 6 headings and the pair layout follow what `contract_tools.py` reads; sections 1, 7, 8.1, 8.2, 10, 11, 13, 14 and 15, the measured results, the pin plugin file of 8.3 and rows M4b and M6 are the orchestrator's; section 13 lists every place where the pairs or the Architect's texts differ from the consult.
-**Status:** ready to build. **Owning issue:** #1815 (a further slice of its batch; this slice has a review of its own). It also records the flake on #1523. Commits say `Refs #1815, #1523.`
+**Assembled by:** the orchestrator, 2026-11-24: the section 6 headings and the pair layout follow what `contract_tools.py` reads; sections 1, 7, 8.1, 8.2, 10, 11, 13, 14 and 15, the measured results, the pin plugin file of 8.3 and rows M4b and M6 are the orchestrator's; section 13 lists every place where the pairs or the Architect's texts differ from the consult. The layout of section 16 and the text of 15.4 are the orchestrator's too.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24: for review round 1 of this slice (consult f6269f56), pairs A1-1 to A1-6 (section 16) and the sentence changes of its list in the header and in sections 2, 7, 8, 9, 11, 13 and 14. Sections 6.5, 6.6, 6.7 and 15.1 to 15.3 stay as built and as measured (built pairs and measured results are never edited).
+**Status:** ready to build; the build is committed (`e14e98d9` the tests, `62b62def` the trackers) and Amendment A1 (section 16) is the repair of review round 1. **Owning issue:** #1815 (a further slice of its batch; this slice has a review of its own). It also records the flake on #1523. Commits say `Refs #1815, #1523.`
 **Base:** `b428497b` (the head of the BF-981 part 2 slices). `origin/main` is `542a2a68` and is already merged: `git log HEAD..origin/main` is empty. **Number:** BF-993 (allocated 2026-11-24 from the enumeration in section 10; BF-992 stays with #1324).
 **Line endings:** the working copies are CRLF and the blocks below are LF; the orchestrator matches them after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
-**Estimated tests:** 3 new (`tests/test_bf993_logger_level_leak.py`), 0 removed, 0 changed.
+**Estimated tests:** 4 new (3 at the build, 1 by amendment A1, section 16; `tests/test_bf993_logger_level_leak.py`), 0 removed, 0 changed.
 **Scope:** test files and trackers. No file under `src/` or `scripts/`, and no pytest or CI configuration, changes.
 
 ## 1. Problem (premise table)
@@ -23,7 +24,7 @@ Measured on the base `b428497b` (section 8.3): one process with either polluter 
 
 - **Close the leak at its two sources.** One helper, `tests/fixtures/logger_levels.py::restored_logger_levels()`, snapshots the level of every named logger and puts back each that changed. `_logger_state` (ad1026) wraps its `yield` in it and `_handlers` (bf748) wraps its `_setup_logging` call in it.
 - **Make the observed victim independent.** The two reflect tests name `probos.cognitive.decomposer` in `caplog.set_level`, so they do not depend on the process's logger state. That also makes the second test's absence check real under a pin.
-- **Prove the repair.** `tests/test_bf993_logger_level_leak.py` (3 tests): the file-log helper leaves the pinned loggers as it found them; the helper puts back a changed level and leaves a logger created inside at NOTSET; the helper puts levels back when the block raises.
+- **Prove the repair.** `tests/test_bf993_logger_level_leak.py` (4 tests): the file-log helper leaves the pinned loggers as it found them; the helper puts back a changed level and leaves a logger created inside at NOTSET; the helper puts levels back when the block raises; the `_logger_state` fixture, driven through its teardown, leaves the pinned loggers as it found them (amendment A1).
 - **Trackers.** `PROGRESS.md` and `DECISIONS.md`, then `gen_ad_ledger.py`.
 
 Rejected, one line each (the Architect's):
@@ -373,7 +374,7 @@ REPLACE:
 
 | Consumer | What it reads | Status |
 |---|---|---|
-| the tests of `tests/test_ad1026_boot_verbosity.py` that use `_logger_state` | the fixture's name, scope and teardown order (the helper restores levels first, then the `finally` restores handlers and the root level) | name and scope unchanged |
+| the tests of `tests/test_ad1026_boot_verbosity.py` that use `_logger_state` | the fixture's name, scope and teardown order (the helper restores levels first, then the `finally` restores handlers and the root level); since amendment A1 also `tests/test_bf993_logger_level_leak.py`'s fourth test, which imports `_logger_state` and drives `_logger_state.__wrapped__()` | name and scope unchanged |
 | `tests/test_bf748_file_log_carries_the_date.py` `rendered` and its five tests | `_handlers()`'s return value, the tuple of the handlers `_setup_logging` attached | unchanged (the `return` runs inside the `with`; the levels are put back, then the `finally` removes the handlers) |
 | `tests/test_ad1337_reflect_route.py` | `caplog.records` of the two edited tests; the other eight tests | `caplog.set_level` with a logger name is restored by pytest at the end of the test |
 | `tests/test_bf875_mcp_inbound_auth.py:403`, `tests/test_bf876_a2a_inbound_auth.py:447` | `BF-875` and `BF-876` records under `probos.federation.*` through `caplog.at_level` | not edited; row S4 |
@@ -391,14 +392,14 @@ REPLACE:
 | O1 | Every SEARCH in section 6, LF-normalised, counted in its file at its turn; the two new files do not exist | 1 each |
 | O2 | `rg -n "restored_logger_levels\|logger_levels\|test_bf993" tests src scripts` on the base | no match |
 | O3 | Rows S1 to S4 (8.3) on the base | each fails as the table says, S3's premise holds |
-| O4 | Counts of the focused command (8.2) on the base, minus the new file | record them; the candidate adds 3 |
+| O4 | Counts of the focused command (8.2) on the base, minus the new file | record them; the candidate adds 4 (3 at the build, 1 by amendment A1) |
 
 ### 8.2 Focused checks on the candidate
 
 ```
 d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf993_logger_level_leak.py tests/test_ad1026_boot_verbosity.py tests/test_bf748_file_log_carries_the_date.py tests/test_ad1337_reflect_route.py tests/test_bf875_mcp_inbound_auth.py tests/test_bf876_a2a_inbound_auth.py -n 0 -p no:randomly -q
 ```
-Expected: the O4 counts plus 3, all passed. Run it also with the files in reverse order, and with the two polluter files first and the new file last: the same counts, all passed.
+Expected: the O4 counts plus 4, all passed. Run it also with the files in reverse order, and with the two polluter files first and the new file last: the same counts, all passed.
 
 Consumers (section 7):
 ```
@@ -450,9 +451,9 @@ Run on the candidate, one at a time. A mutant replaces ONE line of ONE file (the
 
 | ID | File | Mutant | Selectors | Expected |
 |---|---|---|---|---|
-| M1 | `tests/fixtures/logger_levels.py` | the `finally` loop header `for name, logger in list(manager.loggerDict.items()):` becomes `for name, logger in []:` (the whole `finally` body does nothing) | new file, S4 | killed by all three new tests and by S4 |
+| M1 | `tests/fixtures/logger_levels.py` | the `finally` loop header `for name, logger in list(manager.loggerDict.items()):` becomes `for name, logger in []:` (the whole `finally` body does nothing) | new file, S4 | killed by all four new tests and by S4 |
 | M2 | `tests/test_bf748_file_log_carries_the_date.py` | `with restored_logger_levels():` becomes `if True:` (no restore in `_handlers`) | new file, S1, S4 | killed by `test_the_file_log_helper_leaves_the_pinned_loggers_as_it_found_them` |
-| M3 | `tests/test_ad1026_boot_verbosity.py` | `with restored_logger_levels():` becomes `if True:` (no restore in `_logger_state`) | new file, S2, S4 | killed by S4 only: no committed case observes fixture teardown, and S2's victim names its own logger |
+| M3 | `tests/test_ad1026_boot_verbosity.py` | `with restored_logger_levels():` becomes `if True:` (no restore in `_logger_state`) | new file, S2, S4 | killed by `test_the_boot_verbosity_fixture_leaves_the_pinned_loggers_as_it_found_them` (amendment A1) and by S4; S2's victim names its own logger |
 | M4 | `tests/test_ad1337_reflect_route.py` | the first `caplog.set_level(logging.DEBUG, logger="probos.cognitive.decomposer")` (P1-7) becomes `pass` | S3, S1, S2 | killed by S3 only: S1 and S2 are closed at the source |
 | M4b | `tests/test_ad1337_reflect_route.py` | the second (P1-8) becomes `pass` | S3, S1, S2 | SURVIVES by design: the edit makes an absence check real under a pin and changes no outcome |
 | M5 | `tests/fixtures/logger_levels.py` | `level = saved.get(name, logging.NOTSET)` becomes `level = saved.get(name, logger.level)` (a logger made inside keeps its level) | new file | killed by `test_a_level_set_inside_is_put_back_and_a_logger_made_inside_is_left_notset` |
@@ -460,19 +461,19 @@ Run on the candidate, one at a time. A mutant replaces ONE line of ONE file (the
 
 ### 8.5 The batch gate
 
-BF-993 needs no broad gate of its own. The batch (BF-981 part 2 and this slice) is gated once, on the final head, with `scripts/run_test_gate.py --workers 3` and a receipt: the BF-981 part 2 rule of its section 8.5 stands (two red gates at 16 workers and two at 3 workers are on record, #1815 comments 7136253260 and 7139799870, #1523 comments 7136234751 and 7138100798). Expected: 54,759 passed, 184 skipped, 54,943 nodes (the base gate's 54,756 passed and 184 skipped, plus the 3 new tests). A red test outside this family and outside the files of this contract: the F-240 convention (record it on #1523, re-gate the unchanged commit once). A red test in a file this contract or BF-981 part 2 changes, or the reflect test again: stop for Architect triage.
+BF-993 needs no broad gate of its own. The batch (BF-981 part 2 and this slice) is gated once, on the final head, with `scripts/run_test_gate.py --workers 3` and a receipt: the BF-981 part 2 rule of its section 8.5 stands (two red gates at 16 workers and two at 3 workers are on record, #1815 comments 7136253260 and 7139799870, #1523 comments 7136234751 and 7138100798). Expected: 54,760 passed, 184 skipped, 54,944 nodes (the base gate's 54,756 passed and 184 skipped, plus the 4 new tests). A red test outside this family and outside the files of this contract: the F-240 convention (record it on #1523, re-gate the unchanged commit once). A red test in a file this contract or BF-981 part 2 changes, or the reflect test again: stop for Architect triage.
 
 ## 9. Diff Reviewer: properties to verify
 
-The change claims to end the logger-level leak that made the AD-1337 S5 reflect test fail in two canonical gates. The consumer that must accept it is the canonical gate, which runs all 54,943 tests at 3 workers. Report each finding with its severity, its reach (ordinary or injected-only) and whether the repair introduced it.
+The change claims to end the logger-level leak that made the AD-1337 S5 reflect test fail in two canonical gates. The consumer that must accept it is the canonical gate, which runs all 54,944 tests at 3 workers. Report each finding with its severity, its reach (ordinary or injected-only) and whether the repair introduced it.
 
-1. With the candidate in place, no test that calls `_setup_logging` leaves a named logger's level changed (the callers in `tests/` are `tests/test_ad1026_boot_verbosity.py` and `tests/test_bf748_file_log_carries_the_date.py`, section 10).
+1. With the candidate in place, no test that calls `_setup_logging` leaves a named logger's level changed (the callers in `tests/` are `tests/test_ad1026_boot_verbosity.py`, `tests/test_bf748_file_log_carries_the_date.py` (section 10) and, since amendment A1, the fourth test of `tests/test_bf993_logger_level_leak.py`, under `_logger_state`).
 2. The helper puts levels back when the block raises, and leaves a logger created inside it at NOTSET.
 3. No fixture name, test name or imported helper changes (`_logger_state`, `_handlers`, `rendered`, and the reflect file's imports).
 4. P1-7 and P1-8 keep the root `caplog.set_level` call, so the escalation and masking records are still captured.
 5. ASCII and LF throughout; no production file, no pytest or CI configuration changes.
 6. No census or scanner under `tests/` rejects the new fixture module or the new test (section 7).
-7. The new test leaves no state behind: it puts back the root level, the pinned levels and closes the file handler `_setup_logging` opened.
+7. The new tests leave no state behind: the first puts back the root level and the pinned levels and closes the file handler `_setup_logging` opened; the second puts back the incoming level of `probos.test.bf993.existing`; the fourth leaves the root handlers, root level and file handler to `_logger_state`'s teardown and the pinned levels to its outer `restored_logger_levels()`.
 8. Rows S1 to S4 discriminate: they fail on the base for the reason the table gives, and pass on the candidate with the polluter's cases present (the per-file counts show them).
 
 ## 10. Verified Against Codebase (2026-11-24, tree `b428497b`)
@@ -501,7 +502,7 @@ Run on tree `b428497b`:
 - AD-754 redaction: `_setup_logging` adds redaction filters to the handlers on the root logger (`:199-206`). Not in scope.
 - About 50 test files use `caplog.set_level` or `caplog.at_level` at DEBUG or INFO without naming a logger (the Architect's count, not enumerated). With the two sources closed they are no longer exposed to these pins. A third source (a test that pins a logger and does not put it back) is not found by the enumeration of section 10.
 - Which worker ran which polluter in the two failed gates is not recorded; the cause rests on the reproduction in one process (rows S1, S2) and on the same test failing at the same point twice.
-- M4b survives by design and M3 is killed by row S4 only, as the table of 8.4 says.
+- M4b survives by design. At the build M3 was killed by row S4 only (15.3), whose two federation tests depend on the worker's order; amendment A1's fourth test kills it in one process, independent of order (15.4).
 
 ## 12. Issue texts
 
@@ -527,8 +528,8 @@ Run on tree `b428497b`:
 2. Rows M1 to M6 give the verdicts of 8.4 (M4b survives by design).
 3. The focused checks of 8.2 pass in the three orders, and the consumers pass.
 4. `git diff --check` is clean, every new line is ASCII, no file outside the list of section 4 changes, and the Builder's blobs equal the oracle's.
-5. The Diff Reviewer approves the slice (the properties of section 9).
-6. The batch's canonical gate at 3 workers on the final head is green with a receipt: 54,759 passed, 184 skipped, 54,943 nodes.
+5. The Diff Reviewer approves the slice (the properties of section 9), and the round-2 delta review approves amendment A1 (section 16).
+6. The batch's canonical gate at 3 workers on the final head is green with a receipt: 54,760 passed, 184 skipped, 54,944 nodes.
 
 ## 15. Results on the oracle trees (the orchestrator, 2026-11-24)
 
@@ -560,3 +561,126 @@ The base oracle is a clean detached tree at `b428497b`; the candidate is that tr
 | M4b | SURVIVED | every selector passes: by design |
 | M5 | KILLED | new file: 1 failed (`assert (20, 30) == (20, 0)`, the logger made inside kept WARNING) |
 | M6 | KILLED | new file: 3 failed (`AttributeError: 'PlaceHolder' object has no attribute 'level'`) |
+
+### 15.4 Amendment A1 (review round 1): results on the oracle tree
+
+The oracle is a clean detached tree at `62b62def` (the committed candidate) with the six pairs of section 16 applied by `contract_tools.py` (every SEARCH occurred once at its turn; `ws_ambiguity.py`: 0 hazards; `git diff --check` clean) and the ledger regenerated. The test file's blob, `59cb39d71e9543cd9e9985afac856f0dd6ed9530`, equals that of the hand-edited file on which the repair was first proved (before the Architect's consult).
+
+- **Focused command** (the six files, `-n 0 -p no:randomly`): 325 passed in the three orders of 8.2 (forward 20.23 s; reverse 20.94 s; the two polluter files first and the new file last 20.51 s). **Consumers:** 553 passed, 1 warning, 80.13 s. `gen_ad_ledger.py --check`: the ledger is current.
+- **Stressor rows:** S1 15 passed (bf748 5, reflect 10); S2 27 passed (ad1026 17, reflect 10); S3 10 passed, its pin premise holds; S4 306 passed (ad1026 17, bf875 179, bf876 110); the new file 4 passed.
+- **Mutation rows**, one at a time, each file restored byte for byte:
+
+| ID | Verdict | Killed by (selector: result) |
+|---|---|---|
+| M1 | KILLED | new file: 4 failed; S4: 2 failed |
+| M2 | KILLED | new file: 1 failed (`test_the_file_log_helper_leaves_the_pinned_loggers_as_it_found_them`); S1 and S4 pass |
+| M3 | KILLED | new file: 1 failed (`test_the_boot_verbosity_fixture_leaves_the_pinned_loggers_as_it_found_them`, the eleven pins stay at 30); S4: 2 failed; S2 passes. At the build it was killed by S4 only |
+| M4 | KILLED | S3: 1 failed (`ValueError` at the reflect test's unpack); S1 and S2 pass |
+| M4b | SURVIVED | every selector passes: by design |
+| M5 | KILLED | new file: 1 failed (`assert (20, 30) == (20, 0)`) |
+| M6 | KILLED | new file: 4 failed (`AttributeError: 'PlaceHolder' object has no attribute 'level'`) |
+
+- **Finding F2 probe:** an incoming ERROR (40) on `probos.test.bf993.existing` is 0 after the second test at the committed candidate and 40 after it with A1-1 and A1-2.
+
+## 16. Amendment A1 (review round 1)
+
+### 16.1 The findings and the decisions
+
+Review round 1 of this slice (`gpt-6.1-sol`, about 17 minutes, the frozen candidate `62b62def`; the report is kept as `review-b993-r1.report.md`) returned REQUEST CHANGES with two findings, each reproduced by the orchestrator before anything was designed on it. **F1** (P2, injected-only, a regression of test sensitivity): the committed tests observe `_handlers`, not `_logger_state`. Row M3 (no restore in `_logger_state`) was killed only by row S4, whose two federation tests depend on the worker's order, and the reflect tests' own logger names took S2's sensitivity away. This contract's M3 premise, that no committed case can observe a fixture's teardown, was false: the repository drives fixture generators through `fixture.__wrapped__()` in 24 places across 10 test files. **F2** (P3, injected-only, a regression): the second new test ends by setting NOTSET on `probos.test.bf993.existing`, so an incoming ERROR (40) is 0 after the test. **Size findings: 0.**
+
+Decisions (the Architect, consult f6269f56): fix both. F1 by a fourth test that drives `_logger_state.__wrapped__()` through its teardown: the imports sit inside the test (a module-level import would make the fixture visible in the new module), a premise assertion on the decomposer pin only (so the case cannot pass vacuously, and does not tie the test to the CLI's choice of loggers), `next()` followed by `pytest.raises(StopIteration)` as pytest tears a fixture down, and an outer `restored_logger_levels()` that puts the pins back if an assertion fails. F2 by saving the incoming level and putting it back in the `finally`. A third site that calls `_setup_logging` is acceptable: it runs under `_logger_state`, which restores the root handlers and level and closes the file handler, and its log goes to the directory `PROBOS_DATA_DIR` names. The other tests need no change. A delta re-review suffices. The exploratory failure of `tests/test_bf666_force_describe_cache_expiry.py:409` that the reviewer reported is unrelated (a WARNING pin cannot hide an ERROR) and is recorded on #1523 only if it appears in a canonical gate. Built pairs and measured results are never edited (sections 6.5 to 6.7 and 15.1 to 15.3 stay as they are); the sentences of the header and of sections 2, 7, 8, 9, 11 and 14 changed in place.
+
+The pairs below apply to the files as built at `62b62def`, in order. The orchestrator regenerates the ledger pair afterwards.
+
+### 16.2 `tests/test_bf993_logger_level_leak.py` (A1)
+
+**A1-1** (test 2: the incoming level)
+SEARCH:
+```python
+    existing = logging.getLogger("probos.test.bf993.existing")
+    existing.setLevel(logging.INFO)
+```
+REPLACE:
+```python
+    existing = logging.getLogger("probos.test.bf993.existing")
+    incoming = existing.level
+    existing.setLevel(logging.INFO)
+```
+
+**A1-2** (test 2: put it back)
+SEARCH:
+```python
+    finally:
+        existing.setLevel(logging.NOTSET)
+```
+REPLACE:
+```python
+    finally:
+        existing.setLevel(incoming)
+```
+
+**A1-3** (test 4, after test 3)
+SEARCH:
+```python
+        raise RuntimeError("bf993")
+    assert decomposer.level == before
+```
+REPLACE:
+```python
+        raise RuntimeError("bf993")
+    assert decomposer.level == before
+
+
+def test_the_boot_verbosity_fixture_leaves_the_pinned_loggers_as_it_found_them() -> None:
+    from probos.__main__ import _setup_logging
+    from tests.test_ad1026_boot_verbosity import _logger_state
+
+    with restored_logger_levels():
+        for name in PINNED:
+            logging.getLogger(name).setLevel(logging.NOTSET)
+        fixture = _logger_state.__wrapped__()  # the fixture's own generator, driven through its teardown
+        next(fixture)
+        try:
+            _setup_logging("INFO", verbose=False)
+            assert logging.getLogger("probos.cognitive.decomposer").level == logging.WARNING  # premise: it pins
+        finally:
+            with pytest.raises(StopIteration):
+                next(fixture)
+        assert {name: logging.getLogger(name).level for name in PINNED} == dict.fromkeys(
+            PINNED, logging.NOTSET,
+        )
+```
+
+### 16.3 `PROGRESS.md` (A1)
+
+**A1-4** (the BF-993 entry: two substitutions in its one line, "(3 tests)" and the sentence on M3)
+SEARCH:
+```markdown
+**BF-993 (2026-11-24), #1523, #1815 -- a test that runs `_setup_logging` no longer leaves eleven loggers pinned at WARNING for the rest of its worker.** Test only. `tests/fixtures/logger_levels.py::restored_logger_levels` puts back every named logger's level; `_logger_state` (`tests/test_ad1026_boot_verbosity.py`) and `_handlers` (`tests/test_bf748_file_log_carries_the_date.py`) use it. `tests/test_ad1337_reflect_route.py` sets the decomposer logger's level itself in its two reflect tests. New `tests/test_bf993_logger_level_leak.py` (3 tests). Cause: the reflect test failed in both 3-worker gates of `b428497b` (`bf-981-1815-w3` and `-w3b`, the same test at the same point) because an earlier test of its worker had run `_setup_logging`; reproduced in one process with either polluter file first. The same leak exposes `tests/test_bf875_mcp_inbound_auth.py` and `tests/test_bf876_a2a_inbound_auth.py` (their DEBUG capture through the root logger loses the `probos.federation` records): one case in each fails on the base in one process. Measured with rows kept outside the repository (the contract's section 8): S1 to S4 fail on the base and pass on the candidate. Six of seven mutants are killed by the cases the contract names (M3 by row S4 only, since no committed case observes a fixture's teardown); M4b survives by design, as it makes an absence check real under a pin and changes no outcome. Contract `prompts/bf-993-setup-logging-level-leak.md`.
+```
+REPLACE:
+```markdown
+**BF-993 (2026-11-24), #1523, #1815 -- a test that runs `_setup_logging` no longer leaves eleven loggers pinned at WARNING for the rest of its worker.** Test only. `tests/fixtures/logger_levels.py::restored_logger_levels` puts back every named logger's level; `_logger_state` (`tests/test_ad1026_boot_verbosity.py`) and `_handlers` (`tests/test_bf748_file_log_carries_the_date.py`) use it. `tests/test_ad1337_reflect_route.py` sets the decomposer logger's level itself in its two reflect tests. New `tests/test_bf993_logger_level_leak.py` (4 tests; the fourth drives `_logger_state` through its teardown, added in review round 1). Cause: the reflect test failed in both 3-worker gates of `b428497b` (`bf-981-1815-w3` and `-w3b`, the same test at the same point) because an earlier test of its worker had run `_setup_logging`; reproduced in one process with either polluter file first. The same leak exposes `tests/test_bf875_mcp_inbound_auth.py` and `tests/test_bf876_a2a_inbound_auth.py` (their DEBUG capture through the root logger loses the `probos.federation` records): one case in each fails on the base in one process. Measured with rows kept outside the repository (the contract's section 8): S1 to S4 fail on the base and pass on the candidate. Six of seven mutants are killed by the cases the contract names (M3, no restore in `_logger_state`, by the new file and by row S4); M4b survives by design, as it makes an absence check real under a pin and changes no outcome. Contract `prompts/bf-993-setup-logging-level-leak.md`.
+```
+
+### 16.4 `DECISIONS.md` (A1)
+
+**A1-5** (D1: each source has a proof that runs in one process)
+SEARCH:
+```markdown
+- *D1.* Close the leak at the source: one helper puts back every named logger's level (not a list of eleven, so a future pin is covered); both polluters use it.
+```
+REPLACE:
+```markdown
+- *D1.* Close the leak at the source: one helper puts back every named logger's level (not a list of eleven, so a future pin is covered); both polluters use it. Each source has a proof that runs in one process and does not depend on order: the first test of `tests/test_bf993_logger_level_leak.py` covers the file-log helper, and its fourth drives the `_logger_state` fixture through its teardown with `_logger_state.__wrapped__()` (added in review round 1; before that only row S4, which depends on the worker's order, observed it).
+```
+
+**A1-6** (the known limits)
+SEARCH:
+```markdown
+- *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new test puts back for itself, and it adds AD-754 redaction filters to the handlers on the root logger. Neither is in scope.
+```
+REPLACE:
+```markdown
+- *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new tests put back (the first for itself, the fourth through `_logger_state`), and it adds AD-754 redaction filters to the handlers on the root logger. Neither is in scope.
+```
