@@ -6,8 +6,8 @@
 **Base:** `ad28bc34756df2d21ad33af711a20eebfd3a93f1` (origin/main after B12 (BF-981 part 2, #1815) merged; the draft's base was `542a2a68`). B12 shared only `PROGRESS.md`, `DECISIONS.md` and the ledger pair with this item, and P3-1 and P3-2 anchor on text that exists on both trees.
 **Number:** BF-992. The orchestrator allocated it on 2026-11-24, when `docs/development/open-ads-report.md:32` named it as the next free BF. BF-993 was allocated afterwards, to a test repair inside B12 (#1815), so on this base the report shows BF-993 as the ceiling and BF-992 among the numbers below it that no authority mentions, until this item's tracker entries land. No AD.
 **Line endings:** the working copies are CRLF and the blocks below are LF. Every SEARCH starts at a line start and occurs once in its file at its turn. All new text is ASCII.
-**Estimated tests:** 12 new cases in two new files; 0 changed; 0 removed.
-**Scope:** `src/probos/boot_camp.py`, `startup/finalize.py`, `cognitive/episodic.py`, `cognitive/qualification_tests.py`, `acm.py`, `cognitive/memory_probes.py`, two new test files and the trackers.
+**Estimated tests:** 22 new cases in three new files (12 in sections 6.3 and 6.9; 10 in 16.2, amendment A1); 0 changed; 0 removed.
+**Scope:** `src/probos/boot_camp.py`, `startup/finalize.py`, `cognitive/episodic.py`, `cognitive/qualification_tests.py`, `acm.py`, `cognitive/memory_probes.py`, `cognitive/drift_detector.py` (amendment A1, section 16), three new test files and the trackers.
 
 ## 1. Problem
 
@@ -55,7 +55,8 @@ The trust criterion is correct. `TrustNetwork` is keyed by slot and maps a sover
 | D3 | One shared slot-to-memory reader for callers that hold a registry, in `cognitive/episodic.py`. Callers import it lazily, as `acm.py:489` and `qualification_tests.py:489` already do for their imports. |
 | D4 | `_resolve_probe_agent_id` keeps its name and signature, so the BF-138 tests and six callers are untouched. One case widens: `runtime.registry is None` used to raise `AttributeError` and now returns the id. |
 | D5 | Risk tier **STANDARD**, crew-facing, see below. Graduation only takes an agent out of enrolment. Enrolment gates `relaxes_quality_gates` (off by default; when on, graduating earlier ends the relaxation earlier, which tightens the chain), the AD-683 snapshot in DMs (`boot_camp.py:123-136`) and post and DM counting. No permission, trust value, rank or record changes. No security, governance or audit control changes. |
-| D6 | The probe now measures a crew agent with at least 3 episodes, so its score can fall below 0.5 and `passed` can be False. This is the intended behaviour. Its consequence for drift is register row 992-R1 (section 12), not repaired here. |
+| D6 | The probe now measures a crew agent with at least 3 episodes, so its score can fall below 0.5 and `passed` can be False. This is the intended behaviour. Its consequence for drift is register row 992-R1 (section 12), measured in review round 1 and repaired by amendment A1 (D7). |
+| D7 | Amendment A1 (section 16): the drift window leaves out rows whose `details["skipped"]` is True, beside BF-711's `inconclusive` filter. The flag is read from the stored row, so no migration is needed. The skipped baseline and the signal's `direction` stay with the AD-1186 item in #1324. |
 
 ## 4. Milestones, commits, review
 
@@ -67,8 +68,12 @@ The Builder applies the pairs and runs no test. The orchestrator commits by plum
   Subject: `Recall probe and consolidated profile count episodes under the agent's sovereign id through one shared reader`
 - **M3** (trackers): P3-1 and P3-2, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`). Stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md`.
   Subject: `Trackers for the episode owner id in the boot camp, the recall probe and the profile`
+- **M4** (amendment A1, drift detector): A1-1 and the new file in 16.2.
+  Subject: `Drift window leaves out results a probe skipped, as it does inconclusive ones`
+- **M5** (amendment A1, trackers): A1-3 and A1-4, then `gen_ad_ledger.py` as in M3; stage the two ledger files if they change.
+  Subject: `Trackers for the drift window and skipped probe results`
 
-One Builder delegation covers M1 to M3, under about 60 tool calls.
+One Builder delegation covers M1 to M3, under about 60 tool calls. A second delegation (amendment A1) covers M4 and M5, under about 20 tool calls.
 
 **Shared contracts touched:**
 - The enrolment dict: one producer, `finalize.py:1003-1011`; one consumer, `activate` (A3). The new key is additive and optional.
@@ -77,8 +82,9 @@ One Builder delegation covers M1 to M3, under about 60 tool calls.
 - A new public helper in `episodic.py`.
 - The probe's `TestResult`: same shape, values now measured.
 - `_resolve_probe_agent_id`: D4.
+- The stored qualification row (amendment A1): `details["skipped"] is True` now means "not a data point" for drift, across five producers (D7).
 
-**Review:** one `gpt-6.1-sol` reviewer over the whole candidate, using the section 8 properties. Repair rounds review the delta unless a repair changes a shared contract above.
+**Review:** one `gpt-6.1-sol` reviewer over the whole candidate, using the section 8 properties. Repair rounds review the delta unless a repair changes a shared contract above. Round 2 reviews the A1 delta plus the stored-row convention (section 9, property 10).
 
 **Pins:**
 - **Not changed.** The boot-camp fakes in `test_ad638_boot_camp.py:30-33`, `test_ad1270_boot_camp_lifecycle.py:47-52`, `_orientation.py:48-50`, `_repair_a1.py:48-52`, `_trust.py:37-44` and `test_ad1270a_startup_receipts.py:56-58` return a constant for any id. They pin nothing about the id; the new files carry the keyed proof.
@@ -575,10 +581,11 @@ REPLACE:
 4. Copy the two new test files onto the base tree, without the source pairs, and run them at `-n 0`. Expected:
    - File 1: all four cases fail. Cases 1, 3 and 4 fail with `AttributeError: ... no attribute 'memory_id'`; case 2 fails at its `is_enrolled` assertion, because the base counts the five slot-id episodes and graduates the agent.
    - File 2: collection fails with `ImportError` (`resolve_sovereign_id_from_registry`).
+5. (A1) Copy `tests/test_bf992_drift_skipped_rows.py` onto the candidate `74d6477e`, without A1-1, and run it at `-n 0`. Expected: 8 of 10 cases fail. Two pass on that tree: `test_rows_marked_not_skipped_still_count`, a guard, and `test_each_skip_helper_is_left_out[behavioral_probes]`, which BF-923 already marks inconclusive.
 
 **Focused gate on the frozen candidate:**
 ```
-d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf992_boot_camp_episode_owner.py tests/test_bf992_slot_id_readers.py tests/test_ad638_boot_camp.py tests/test_ad1270_boot_camp_lifecycle.py tests/test_ad1270_boot_camp_orientation.py tests/test_ad1270_boot_camp_repair_a1.py tests/test_ad1270_boot_camp_trust.py tests/test_ad1270a_startup_receipts.py tests/test_ad640_tiered_trust.py tests/test_ad683_ship_state_snapshot.py tests/test_acm.py tests/test_ad885_acm_unified_lens.py tests/test_ad891_duty_lens.py tests/test_ad892_crew_record_api.py tests/test_bf906_acm_commissioning.py tests/test_ad566b_baseline_tests.py tests/test_bf988_llm_response_text.py tests/test_bf138_sovereign_id_completion.py tests/test_ad582_memory_probes.py tests/test_bf923_episodic_recall_callers.py -q -n 0
+d:/ProbOS/.venv/Scripts/python.exe -m pytest tests/test_bf992_boot_camp_episode_owner.py tests/test_bf992_slot_id_readers.py tests/test_ad638_boot_camp.py tests/test_ad1270_boot_camp_lifecycle.py tests/test_ad1270_boot_camp_orientation.py tests/test_ad1270_boot_camp_repair_a1.py tests/test_ad1270_boot_camp_trust.py tests/test_ad1270a_startup_receipts.py tests/test_ad640_tiered_trust.py tests/test_ad683_ship_state_snapshot.py tests/test_acm.py tests/test_ad885_acm_unified_lens.py tests/test_ad891_duty_lens.py tests/test_ad892_crew_record_api.py tests/test_bf906_acm_commissioning.py tests/test_ad566b_baseline_tests.py tests/test_bf988_llm_response_text.py tests/test_bf138_sovereign_id_completion.py tests/test_ad582_memory_probes.py tests/test_bf923_episodic_recall_callers.py tests/test_bf992_drift_skipped_rows.py tests/test_bf711_inconclusive_not_incompetent.py tests/test_ad566c_drift_detection.py tests/test_ad567c_anchor_quality.py tests/test_bf990_qualification_drift_alert_edge.py tests/test_ad1287_s2b_drift_recorder.py tests/test_ad1186_contract_inconclusive.py -q -n 0
 ```
 Then the broad gate once: `scripts/run_test_gate.py --label bf-992 --receipt logs/gates/bf-992.receipt.json`.
 
@@ -597,6 +604,10 @@ Then the broad gate once: `scripts/run_test_gate.py --label bf-992 --receipt log
 | M9 | Helper always returns `agent_id` | File 2, `sovereign` case and probe case 1 |
 | M10 | Helper drops the `registry is not None` guard | File 2, `no-registry` case |
 | M11 | Delegate returns `agent_id` | `test_bf138_sovereign_id_completion.py::...::test_resolve_probe_agent_id_resolves_sovereign` |
+| A1-M1 | Delete the A1 filter | File 3: `test_a_full_window_of_skips_does_not_make_the_first_score_critical`, `test_eight_skips_do_not_make_the_first_score_a_warning`, `test_a_genuine_decline_among_skips_is_still_reported`, `test_a_window_of_only_skips_reports_no_samples`, `test_each_skip_helper_is_left_out` (three of four cases), `test_a_recall_probe_skip_keeps_its_flag_through_the_store_and_stays_out` |
+| A1-M2 | Filter on key presence (`"skipped" in r.details`) | File 3: `test_rows_marked_not_skipped_still_count`, `test_a_recall_probe_skip_keeps_its_flag_through_the_store_and_stays_out` |
+| A1-M3 | Truthiness without `is True` (`r.details.get("skipped")`) | Equivalent: every producer writes the bool True or False (section 16). Recorded; not counted as killed |
+| A1-M4 | Bare `r.details` instead of `getattr(r, "details", None)` | `test_ad567c_anchor_quality.py::TestDriftClassification::test_specialization_high_conf_out_of_domain`, `::test_concerning_low_conf_decline`, `::test_no_decline_unclassified` (their `_MockResult` has only `score`) |
 
 ## 9. Diff Reviewer: properties to verify
 
@@ -609,6 +620,13 @@ Then the broad gate once: `scripts/run_test_gate.py --label bf-992 --receipt log
 7. No new test mocks `count_for_agent`, and the new tests fail on the base tree (check 4).
 8. Each tracker head holds no ledger status word in its first 120 characters, and every behaviour sentence in the trackers maps to a named test.
 9. `holodeck/gates.py` is unchanged.
+10. (A1) The stored-row convention `details["skipped"] is True` now means "not a data point" for drift, across five producers. Verify:
+    - (a) Every producer that sets it returns without measuring anything: `memory_probes.py:189-202`, `domain_tests.py:50-61`, `collective_tests.py:48-59`, `behavioral_probes.py:29-43`, and `qualification_tests.py:433-442`, `:450-460`, `:479-489`.
+    - (b) No measuring path sets it.
+    - (c) Rows with `"skipped": False` still count.
+    - (d) History rows without `details` still work (the doubles in `test_ad567c_anchor_quality.py:366-367`, `:427-428`, `:475-476`).
+    - (e) The `drift_detector.py:150` reference in `behavioral_probes.py:24` stays valid.
+    - (f) The BF-711 and BF-923 tests are unchanged and green.
 
 ## 10. Verified Against Codebase (2026-11-24, tree `542a2a68`)
 
@@ -667,8 +685,10 @@ count_for_agent( callers in src: boot_camp:211 acm:505 qualification_tests:445 h
   - `holodeck/gates.py:79` (#1700 S1 deletes it; #1700's Problem item 3 and S1 row already record it).
   - The other `count_for_agent` callers, which already resolve the id (section 10).
   - `routers/agents.py` (`/api/agent/{id}/profile`, which already resolves at `:495-498`).
-  - Trust keys, the probe's skip semantics, the drift detector, the Counselor, the HXI types.
+  - Trust keys, the probe's skip semantics, the skip helpers of the other probes, the harness auto-baseline (`qualification.py:443-447`), the Counselor, the HXI types.
+  - The drift detector beyond amendment A1's one filter (directly after `drift_detector.py:150`). Its statistics, severities, direction, events and the BF-711 line are unchanged.
 - **Recorded limit, D4:** a `runtime.registry` that is `None` now yields the id instead of raising.
+- **Recorded limit, D7:** skipped results still pass and still set the first baseline, so a signal's `direction` can read "declined" against a 1.0 baseline while its severity is normal. No event fires (`drift_detector.py:468`). Owner: the AD-1186 item in #1324.
 - **Not measured:**
   - Live graduation timing.
   - Additional model calls per drift cycle. Each crew agent with at least 3 episodes now gets up to 3 probe sends and 3 judge calls per tier-1 run.
@@ -680,7 +700,7 @@ count_for_agent( callers in src: boot_camp:211 acm:505 qualification_tests:445 h
 > **Register addition (2026-10-29, `claude-architect`) "the AD-638 boot camp's episode criterion counts under the slot id": built as BF-992** (PR #<n>, merge `<sha>`), <date>. Enrolment carries the agent's memory id and `check_graduation` counts under it; the episodic-recall probe and the consolidated profile count through `resolve_sovereign_id_from_registry`. Evidence: `tests/test_bf992_boot_camp_episode_owner.py` (5 episodes under the sovereign id, none under the slot id: graduates at 61 of 120 min, no timeout event) and `tests/test_bf992_slot_id_readers.py`; census <killed/total>; gate receipt `logs/gates/bf-992.receipt.json` <counts>.
 >
 > **Register (BF-992):**
-> - **992-R1 (Medium, ordinary reach; not measured):** the probe's skipped results pass at score 1.0 with no error, so the harness auto-baselines them (`qualification.py:443-447`), and the drift window filters only inconclusive rows (`drift_detector.py:150`). Now that crew episodes are counted, a measured score after a run of skipped 1.0 rows can read as "declined". Owner: this issue's AD-1186 item ("skipped, absent-data, and judge-unavailable outcomes remain non-passing"). No new issue.
+> - **992-R1 (P2, ordinary reach; measured, repaired here, part residual):** measured with the real `DriftDetector` and the default config. With k skipped 1.0 rows in the window, the first measured score gives |z| = sqrt(k): a Counselor warning at k >= 4 and a Bridge/Captain critical at a full window, lasting about three weekly runs. Every crew agent was exposed once BF-992 counted their episodes. Repaired in B13 (amendment A1): `DriftDetector._analyze_single` drops rows whose `details["skipped"] is True`, next to the BF-711 `inconclusive` filter. This covers stored and new rows from memory_probes, domain_tests, collective_tests and the recall probe, with no migration (`tests/test_bf992_drift_skipped_rows.py`). **Residual, owned by the AD-1186 item:** skipped results still pass and still set the first baseline (`qualification.py:444`), so `direction` can read "declined" against a 1.0 baseline while severity is normal and no event fires (`drift_detector.py:196-197`, `:468`).
 > - **992-R2:** `holodeck/gates.py:79` still counts under the slot id; #1700 S1 deletes it.
 > - **992-R3 (not measured):** a live new-crew start's graduations by criteria; the HXI Episodes value; the extra model calls per drift cycle.
 
@@ -708,11 +728,11 @@ count_for_agent( callers in src: boot_camp:211 acm:505 qualification_tests:445 h
 
 ## 14. Acceptance criteria
 
-1. The 12 new cases pass, and the focused gate in section 8 passes at `-n 0`.
-2. Check 4 shows the new tests fail on the base tree. Census rows M1 to M11 are killed by their killers.
-3. The section 9 properties hold, and the Diff Reviewer verdict is READY.
+1. The 22 new cases pass (12 in the two files of section 6, 10 in the file of 16.2), and the focused gate in section 8 passes at `-n 0`.
+2. Check 4 shows the new tests fail on the base tree, and check 5 shows 8 of the 10 A1 cases fail without A1-1. Census rows M1 to M11, A1-M1, A1-M2 and A1-M4 are killed by their killers; A1-M3 is recorded as equivalent.
+3. The section 9 properties hold, and the Diff Reviewer verdict is READY on round 1 and on the A1 delta (round 2, with property 10).
 4. The receipted broad gate is green on the merged tree.
-5. The trackers hold P3-1 and P3-2 with the placeholders filled, and the ledger is regenerated.
+5. The trackers hold P3-1, P3-2, A1-3 and A1-4 with the placeholders filled, and the ledger is regenerated.
 6. The #1324 landing comment is posted with 992-R1 to 992-R3.
 7. Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
@@ -777,3 +797,320 @@ Pinned files, as they stand in the oracle's working copy (sha256, and the git bl
 ### 15.5 Tracker milestone (M3) on the oracle
 
 P3-1 and P3-2 applied by the tool to the candidate (each SEARCH occurred once at its turn, `ws_ambiguity.py` 0 hazards on all 12 pairs, `git diff --check` clean), then `scripts/gen_ad_ledger.py -P` (no `--online`) rewrote `docs/development/ad-ledger-snapshot.json` (`captured_at`, `head` `ad28bc34`, `subject_count` 4543 to 4548) and `docs/development/open-ads-report.md` (BF shipped 632 to 633; the BF numbers below the ceiling that no authority mentions 352 to 351, BF-992 leaving that list; BF ceiling still BF-993). `gen_ad_ledger.py --check`: the ledger is current.
+
+### 15.6 Amendment A1 (review round 1): results on the oracle trees
+
+The oracle for the A1 rows is a clean detached tree at `74d6477e` (the frozen candidate that round 1 reviewed) with the four operations of section 16 applied by `contract_tools.py` (each SEARCH occurred once at its turn; `ws_ambiguity.py`: 0 hazards; `git diff --check` clean). A second clean tree at `74d6477e` is the base of check 5. The rows ran with `bf992_a1_rows.py` and the focused runs with `run_focused.py` (both outside the repository) under the conditions of section 15: one pytest process per selector, `-n 0 -p no:randomly` (the random order only where named), `HOME` and `USERPROFILE` redirected to an empty directory (empty afterwards), the cases read from the JUnit file. The measurement of the row itself, with the real `DriftDetector`, `QualificationStore` and `QualificationConfig` defaults, is the table in the first paragraph of section 16 (`drift_probe_b13.py`, outside the repository).
+
+- **Check 5** (the new file on the clean candidate, without A1-1): 8 failed, 2 passed. The two that pass are `test_rows_marked_not_skipped_still_count` (a guard) and `test_each_skip_helper_is_left_out[behavioral_probes]` (BF-923 already marks those skips inconclusive).
+- **Candidate** (A1-1 and the new file applied): the new file 10 passed; `test_ad567c_anchor_quality.py` 23 passed.
+- **The focused command of section 8** (27 files, `-n 0`): 567 passed in the reversed order (76.25 s) and in the default random order (76.25 s). With four more consumer files (`test_ad566d_domain_tests`, `test_ad566e_collective_tests`, `test_ad729c_peer_observation_monitor`, `test_behavioral_metrics`) in the given order: 31 files, 707 passed (84.41 s).
+- **Census rows**, one mutant at a time on the candidate overlay (`74d6477e` plus A1-1 and the new file), each file restored byte for byte:
+
+| ID | Verdict | Killed by |
+|---|---|---|
+| A1-M1 | KILLED | the new file: 8 failed (the four skip-window cases, three of the four helper cases and the recall-probe store case) |
+| A1-M2 | KILLED | the new file: 2 failed (`test_rows_marked_not_skipped_still_count` and the recall-probe store case) |
+| A1-M3 | SURVIVED | equivalent: every producer writes the bool True or False; recorded, not counted as killed |
+| A1-M4 | KILLED | `test_ad567c_anchor_quality.py`: 3 failed (`AttributeError: '_MockResult' object has no attribute 'details'`) |
+
+Pinned files, as they stand in the A1 oracle's working copy (sha256):
+
+| File | sha256 |
+|---|---|
+| `src/probos/cognitive/drift_detector.py` | `23723971bdefb8e60f729e53ff0e9b546d8a6c03e9e63d84cdc1efa305838c09` |
+| `tests/test_bf992_drift_skipped_rows.py` | `2a09bd4e1bb212e3ce74f004dabbde361a4826d4b7cd0938c2ce8845dff1de35` |
+
+## 16. Amendment A1 (review round 1: row 992-R1)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24 (Architect decision B on the round-1 register row).
+
+**What changed and why.** Review round 1 (`gpt-6.1-sol`, APPROVED, 0 blocking) and the orchestrator's probe (`drift_probe_b13.py`, outside the repository) measured row 992-R1 with the real `DriftDetector`, `QualificationStore` and `QualificationConfig` defaults (window 20, minimum 3 samples, warning 2.0 sigma, critical 3.0 sigma, `config.py:3642-3646`). The setup was k skipped 1.0 rows followed by a healthy agent's 0.9, 0.9, 0.85, 0.9. The first run was normal at k 2 and 3, a warning at k 4 (z -2.0) and at k 8, and critical at a full window of 19 (z -4.36). The noise lasted about three weekly runs. The control, with the probe measuring throughout, stayed normal. For one measured score among k equal rows, |z| = sqrt(k) whatever the size of the deviation. Every crew agent has been skipped on this probe since the defect began. Without A1, the first drift run after this item lands would therefore raise a Counselor warning or a Bridge/Captain critical for each crew agent with at least 3 episodes. No trust, rank or lifecycle penalty follows; the reviewer ran the Counselor handler and got a healthy assessment and no intervention. It is still the false alarm BF-711 exists to prevent, and it has ordinary reach, so this item repairs it.
+
+**D7.**
+- **The filter.** `DriftDetector._analyze_single` drops rows whose `details["skipped"] is True`. The new line sits directly after BF-711's `inconclusive` filter, so the `drift_detector.py:150` reference in `behavioral_probes.py:24` stays valid.
+- **Why that flag.** It is the one marker every skip helper writes: `memory_probes.py:189-202`, `domain_tests.py:50-61`, `collective_tests.py:48-59`, `behavioral_probes.py:29-43` and the recall probe at `qualification_tests.py:433-442`, `:450-460` and `:479-489`. Each of these returns without measuring anything. Measuring paths write `"skipped": False`.
+- **Why read it from the row.** The store already persists `details` (`qualification.py:363`), so the rows already stored on the vessel are covered. No migration and no producer change is needed.
+- **Why `getattr`.** The drift tests' doubles carry only `score` (`test_ad567c_anchor_quality.py:366-367`, `:427-428`, `:475-476`).
+- **Rejected:**
+  - Marking the skips `inconclusive` at their producers. That covers new rows only, so the stored windows would still raise the first-run alarm.
+  - Holding this item for the AD-1186 item.
+- **What stays the same:**
+  - Skipped results still pass and still set the first baseline (`qualification.py:444`). A signal's `direction` can therefore read "declined" against a 1.0 baseline while its severity is normal (`drift_detector.py:196-197`). No event fires, because the scheduler emits only warning and critical (`drift_detector.py:468`).
+  - That residual stays with the AD-1186 item in #1324.
+  - `DriftSignal` and the detector's signature are unchanged. The detector is built in one place (`runtime.py:3236`).
+
+**Milestones** (the orchestrator commits by plumbing; every body says `Refs #1324.`):
+- **M4** (drift detector and its tests): A1-1 and the new file in 16.2.
+  Subject: `Drift window leaves out results a probe skipped, as it does inconclusive ones`
+- **M5** (trackers and ledger): A1-3 and A1-4, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`). Stage `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` if they change.
+  Subject: `Trackers for the drift window and skipped probe results`
+
+One Builder delegation covers M4 and M5, in under about 20 tool calls.
+
+**Builder: may and may not.** Section 5 applies unchanged.
+
+**Review.** Round 2 reviews the A1 delta plus the stored-row convention check (section 9, property 10). `DriftDetector`'s interface is not a shared contract here. The convention `details["skipped"] is True` becomes one, across five producers.
+
+**Verified for A1 (2026-11-24, HEAD `74d6477e`):**
+```
+drift_detector.py:144-150   BF-711 comment / history = [r for r in history if not getattr(r, "inconclusive", False)]
+drift_detector.py:158-170   sample_count == 0 -> direction "stable", severity "normal"
+drift_detector.py:196-203   severity: < drift_min_samples -> normal; >= critical sigma; >= warning sigma
+drift_detector.py:468       events only for severity warning or critical
+qualification.py:82,92      details: dict = field(default_factory=dict) / inconclusive: bool = False
+qualification.py:363        details=json.loads(row[9]) if row[9] else {}
+qualification.py:255-264    get_history(..., *, limit=20) ORDER BY timestamp DESC
+qualification.py:443-447    auto-baseline when result.error is None
+memory_probes.py:189-202    _make_skip_result: score 1.0, passed True, details {"skipped": True, ...}
+domain_tests.py:50-61       _skip_result: score 1.0, passed True, details {"skipped": True, ...}
+collective_tests.py:48-59   _skip_result: score 0.0, passed True, details {"skipped": True, ...}
+behavioral_probes.py:29-43  _skip_result: inconclusive=True, details {"skipped": True, ...}
+qualification_tests.py:433-442, 450-460, 479-489  recall probe skip returns: score 1.0, passed True, no inconclusive
+test_ad567c_anchor_quality.py:366-367, 427-428, 475-476  _MockResult has only `score`
+test_bf923_episodic_recall_callers.py:582-601  real QualificationStore + DriftDetector(store, QualificationConfig()) pattern
+runtime.py:3234-3236        the one DriftDetector construction
+pyproject.toml:181          asyncio_mode = "auto"
+```
+**Absence verified (A1):**
+- Claim: no other producer sets `details["skipped"] = True`. Run: `rg "[\"']skipped[\"']\s*:" src/probos`. Found: the seven skip sites above; `"skipped": False` on measuring paths; and quartermaster, workforce and emergent_leadership dicts, which are not `TestResult` details. Holds.
+- Claim: no drift test file pins skipped rows. Run: `rg skipped tests/*drift*.py`. Found: nothing. Holds.
+
+### 16.1 `src/probos/cognitive/drift_detector.py` (M4)
+
+**A1-1**
+SEARCH:
+```python
+        # stay available for forensics.
+        history = [r for r in history if not getattr(r, "inconclusive", False)]
+
+        # Get baseline
+```
+REPLACE:
+```python
+        # stay available for forensics.
+        history = [r for r in history if not getattr(r, "inconclusive", False)]
+        # BF-992 (992-R1): a skipped result measured nothing either. The skip helpers of memory_probes,
+        # domain_tests, collective_tests and the recall probe pass at a fixed score without setting
+        # inconclusive, so a window of them made any first real score read as drift (|z| = sqrt(k)).
+        # Read from details so rows already stored are covered without a migration.
+        history = [
+            r for r in history
+            if not (isinstance(getattr(r, "details", None), dict) and r.details.get("skipped") is True)
+        ]
+
+        # Get baseline
+```
+
+### 16.2 `tests/test_bf992_drift_skipped_rows.py` (M4, new file, A1-2)
+
+```python
+"""BF-992 amendment A1 (#1324, register row 992-R1): the drift window leaves out results a probe skipped.
+
+The skip helpers return a passing result at a fixed score with no error and, apart from
+``behavioral_probes``, without BF-711's ``inconclusive`` flag. Once BF-992 counted crew episodes, a crew
+agent's window held only skipped 1.0 rows, and for one measured score among k equal rows |z| = sqrt(k)
+whatever its size: a warning at k 8, critical at a full window. A skip measured nothing, so
+``DriftDetector._analyze_single`` drops it beside the ``inconclusive`` filter, reading ``details["skipped"]``
+from the row so rows already stored are covered without a migration.
+
+Real ``QualificationConfig`` and ``DriftDetector`` throughout; the last case uses a real
+``QualificationStore`` and the real recall probe. Nothing stands in for the detector.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, Callable
+
+import pytest
+
+from probos.cognitive import behavioral_probes, collective_tests, domain_tests, memory_probes
+from probos.cognitive.drift_detector import DriftDetector
+from probos.cognitive.episodic_mock import MockEpisodicMemory
+from probos.cognitive.qualification import QualificationStore
+from probos.cognitive.qualification import TestResult as QualTestResult  # aliased: pytest collects Test* names
+from probos.cognitive.qualification_tests import EpisodicRecallProbe
+from probos.config import QualificationConfig
+from probos.types import Episode, LLMResponse
+from tests.test_ad566b_baseline_tests import MockAgent, MockRegistry
+
+_SLOT = "security_officer-0"
+_SOVEREIGN = "3f9c2a1e-sovereign"
+_SKIPPED = {"skipped": True, "reason": "insufficient_episodes", "episode_count": 0}
+
+
+def _result(score: float, details: dict[str, Any] | None = None) -> QualTestResult:
+    return QualTestResult(
+        agent_id="a", test_name="t", tier=1, score=score, passed=True,
+        timestamp=time.time(), duration_ms=1.0, details=dict(details or {}),
+    )
+
+
+def _skipped() -> QualTestResult:
+    """What the recall probe stored for every crew agent before BF-992: a pass at 1.0, no error."""
+    return _result(1.0, _SKIPPED)
+
+
+def _unmarked(rows: list[QualTestResult]) -> list[QualTestResult]:
+    """The same rows without the skip flag: the window as the detector read it before A1."""
+    return [dataclasses.replace(r, details={}) for r in rows]
+
+
+class _Store:
+    def __init__(self, history: list[QualTestResult]) -> None:
+        self._history = history
+
+    async def get_history(self, agent_id: str, test_name: str, limit: int = 0):
+        return self._history
+
+    async def get_baseline(self, agent_id: str, test_name: str):
+        # The harness auto-baselines the first result with no error, which was a skip (qualification.py:444).
+        return dataclasses.replace(_skipped(), is_baseline=True)
+
+
+async def _signal(history: list[QualTestResult]) -> Any:
+    return await DriftDetector(store=_Store(history), config=QualificationConfig())._analyze_single("a", "t")
+
+
+async def test_a_full_window_of_skips_does_not_make_the_first_score_critical() -> None:
+    history = [_result(0.9)] + [_skipped() for _ in range(19)]  # newest first
+
+    assert (await _signal(_unmarked(history))).severity == "critical"  # the premise: z = -4.36
+    signal = await _signal(history)
+
+    assert signal.sample_count == 1
+    assert signal.severity == "normal"
+
+
+async def test_eight_skips_do_not_make_the_first_score_a_warning() -> None:
+    history = [_result(0.9)] + [_skipped() for _ in range(8)]
+
+    assert (await _signal(_unmarked(history))).severity == "warning"  # the premise: z = -sqrt(8)
+    signal = await _signal(history)
+
+    assert signal.sample_count == 1
+    assert signal.severity == "normal"
+
+
+async def test_a_genuine_decline_among_skips_is_still_reported() -> None:
+    history = [_result(0.1)]
+    for _ in range(9):
+        history += [_skipped(), _result(0.9)]
+    history.append(_skipped())
+
+    signal = await _signal(history)
+
+    assert signal.sample_count == 10
+    assert signal.current_score == pytest.approx(0.1)
+    assert signal.direction == "declined"
+    assert signal.severity in ("warning", "critical")  # z = -3.0 over the ten measured scores
+
+
+async def test_rows_marked_not_skipped_still_count() -> None:
+    signal = await _signal([_result(0.1, {"skipped": False}) for _ in range(4)])
+
+    assert signal.sample_count == 4
+    assert signal.direction == "declined"
+
+
+async def test_a_window_of_only_skips_reports_no_samples() -> None:
+    signal = await _signal([_skipped() for _ in range(5)])
+
+    assert signal.sample_count == 0
+    assert signal.direction == "stable"
+    assert signal.severity == "normal"
+
+
+_SKIP_HELPERS: dict[str, Callable[[], QualTestResult]] = {
+    "memory_probes": lambda: memory_probes._make_skip_result("a", "t", 1, time.time(), "no_episodic_memory"),
+    "domain_tests": lambda: domain_tests._skip_result("a", "t", 2, "not_in_department"),
+    "collective_tests": lambda: collective_tests._skip_result("t", "no_engine"),
+    "behavioral_probes": lambda: behavioral_probes._skip_result("t", "no_engine"),
+}
+
+
+@pytest.mark.parametrize("producer", sorted(_SKIP_HELPERS))
+async def test_each_skip_helper_is_left_out(producer: str) -> None:
+    skip = _SKIP_HELPERS[producer]()
+    assert skip.details["skipped"] is True and skip.error is None  # a pass that measured nothing
+
+    signal = await _signal([_result(0.9)] + [dataclasses.replace(skip) for _ in range(8)])
+
+    assert signal.sample_count == 1
+    assert signal.severity == "normal"
+
+
+class _Judge:
+    """Answers every judge prompt with a score, as ``BaseLLMClient.complete`` does."""
+
+    async def complete(self, request: Any, **_kwargs: Any) -> LLMResponse:
+        return LLMResponse(content="0.9")
+
+
+async def _recall_runtime(episodes: int) -> SimpleNamespace:
+    agent = MockAgent(agent_id=_SLOT, response="I filed the watch report.")
+    agent.sovereign_id = _SOVEREIGN
+    memory = MockEpisodicMemory()
+    await memory.seed([
+        Episode(user_input=f"watch report {i}", timestamp=float(i + 1), agent_ids=[_SOVEREIGN])
+        for i in range(episodes)
+    ])
+    return SimpleNamespace(registry=MockRegistry(agent), episodic_memory=memory, llm_client=_Judge())
+
+
+async def test_a_recall_probe_skip_keeps_its_flag_through_the_store_and_stays_out(tmp_path: Path) -> None:
+    probe = EpisodicRecallProbe()
+    skipped = await probe.run(_SLOT, await _recall_runtime(2))
+    measured = await probe.run(_SLOT, await _recall_runtime(3))
+    assert skipped.details["skipped"] is True and skipped.error is None and skipped.score == 1.0
+    assert measured.details["skipped"] is False
+
+    store = QualificationStore(data_dir=tmp_path)
+    await store.start()
+    try:
+        now = time.time()
+        for i in range(19):
+            await store.save_result(dataclasses.replace(skipped, timestamp=now - 3600.0 * (i + 3)))
+        for i in range(2):
+            await store.save_result(dataclasses.replace(measured, timestamp=now - 3600.0 * (i + 1)))
+        history = await store.get_history(_SLOT, probe.name)
+        signal = await DriftDetector(store, QualificationConfig())._analyze_single(_SLOT, probe.name)
+    finally:
+        await store.stop()
+
+    assert len(history) == 20
+    assert sum(1 for r in history if r.details.get("skipped") is True) == 18  # the flag survives SQLite
+    assert signal.sample_count == 2
+    assert signal.severity == "normal"
+```
+
+### 16.3 `PROGRESS.md` (M5)
+
+**A1-3**
+SEARCH:
+```markdown
+run once on the candidate overlay of `ad28bc34`. Not measured: a live new-crew start, the HXI's Episodes value, a drift cycle with the probe measuring.
+```
+REPLACE:
+```markdown
+run once on the candidate overlay of `ad28bc34`. Amendment A1 (review round 1, #1324 row 992-R1): `DriftDetector._analyze_single` also leaves out rows whose `details["skipped"]` is True, beside the BF-711 `inconclusive` filter, so a window of skipped results no longer makes a crew agent's first measured recall score read as drift. Measured by `tests/test_bf992_drift_skipped_rows.py` (10 cases): after 19 skipped 1.0 rows a measured 0.9 counts as 1 sample at severity normal, where the same rows without the flag read critical; after 8 they read warning and the flagged window stays normal; a 0.1 after nine 0.9 scores, with ten skipped rows among them, still reads at least warning over 10 samples; rows marked `"skipped": False` still count; a window of skips alone gives 0 samples; the skip helpers of `memory_probes`, `domain_tests`, `collective_tests` and `behavioral_probes` are each left out; a real recall-probe skip keeps its flag through a real `QualificationStore`, and 2 measured rows of 20 are counted. A1 census: A1-M1, A1-M2 and A1-M4 killed and A1-M3 recorded as equivalent, run once on the overlay of `74d6477e` plus the A1 pairs. Skipped results still pass and still set the first baseline (`qualification.py:444`), so a signal's direction can read "declined" at severity normal with no event; that part stays with the AD-1186 item in #1324. Not measured: a live new-crew start, the HXI's Episodes value, a live drift cycle with the probe measuring.
+```
+
+### 16.4 `DECISIONS.md` (M5)
+
+**A1-4**
+SEARCH:
+```markdown
+- *D5.* The probe's skipped results still pass at 1.0; with crew episodes now counted, a measured score after a run of skipped rows can read as a decline (#1324 register row 992-R1).
+- *Reversal.* Revert the commits. Qualification results the probe records meanwhile stay in the store.
+```
+REPLACE:
+```markdown
+- *D5.* The probe's skipped results still pass at 1.0 and still set the first baseline; with crew episodes now counted, a run of them in the drift window made the first measured score read as drift (#1324 register row 992-R1, measured in review round 1).
+- *D6.* Amendment A1: the drift window also leaves out rows whose `details["skipped"]` is True, beside BF-711's `inconclusive` filter (`drift_detector.py`, after `:150`). A skip measured nothing, whichever probe wrote it (`memory_probes`, `domain_tests`, `collective_tests`, the recall probe; `behavioral_probes` already marks its skips inconclusive, BF-923). The flag is read from the stored row, so rows already in the store are covered without a migration. Tests `tests/test_bf992_drift_skipped_rows.py`. Rejected: marking the skips inconclusive at their producers (new rows only; the stored windows would still raise the first-run alarm), and holding this item for the AD-1186 item. The skipped baseline and the signal's `direction` stay with the AD-1186 item in #1324.
+- *Reversal.* Revert the commits; reverting A1's commit alone restores counting of skipped rows in the drift window. Qualification results the probe records meanwhile stay in the store.
+```
