@@ -3179,3 +3179,217 @@ The 6 operations of this section (RH1, RH2, RH2b, RH2c, RH3, RH4) were applied t
 **What these checks do not show.**
 - A saturated default executor (case (c)), a slow host other than through the plugin, and any live vessel: nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
 - The second broad gate, which runs with the real home, is the first full-suite test of this repair.
+
+---
+
+## 21. Repair after CI (2026-11-23)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-23, rev6 (consult `0315be7c`); assembled by the orchestrator, who adapted pair CI2's SEARCH to the head's text (the Architect's answer assumed the orchestrator's earlier four-line draft was in the tree)
+
+**Base.** The SEARCH texts are the test file as at `108a7fff`, the head of PR #1846; the Builder starts from the commit that adds this section on top of it (no other file differs). The one edited file is `i/lf w/crlf`: match and write it with its own line endings. ASCII only. Brake decision (a regression found by CI after five review rounds and two brakes; a regression that breaks the next run cannot be rescoped): **continue**, scope C1 only; one delta review, then a new canonical gate (this test change invalidates the receipt of the last one), a fast-forward push to the PR's branch, CI and the merge. No `PROGRESS.md` or `DECISIONS.md` entry: the repair is test-only, takes no AD or BF number and makes no architectural decision.
+
+**Milestone** (one Builder delegation; the Builder runs no test):
+
+| M | Content | Commit subject |
+|---|---|---|
+| M11 | 21.3 (CI1, CI2, CI3) | `Make the archive isolation boot test hermetic against the credential CLI` |
+
+### 21.1 Finding and decision
+
+| Finding | Severity / reach | Decision | Pairs |
+|---|---|---|---|
+| C1: PR #1846's CI (run 45286572765, Linux, Python 3.12.16) failed `tests/test_bf919_archive_isolation.py::test_a1_a_default_config_boot_opens_this_tests_archive_and_leaves_an_empty_home_empty` at line 103, `assert sorted(home.rglob("*")) == []`, which found `home/.local`, `home/.local/state`, `home/.local/state/gh` and `home/.local/state/gh/device-id`. S2's startup priming (`finalize._wire_secret_masker`; its worker calls `store.get("github", requester="secret_masking")`) reaches the CLI step of `CredentialStore._resolve` (`credential_store.py:396-407`) when neither `GH_TOKEN`, `GITHUB_TOKEN` nor the store holds the token, and runs `["gh", "auth", "token"]` with `trusted_command_env()`, which allows `HOME` (`execution/command_env.py:46`) and not `XDG_STATE_HOME`. A1 points HOME at an empty directory and boots a real runtime, so the real Linux `gh` kept its state there. A Windows gate cannot see it: `gh` writes no such file under `USERPROFILE`. | Blocker (the pull request's CI is red), ordinary reach (every Linux run), a regression of S2's priming | **O1b:** A1 answers the priming at the environment step (`GH_TOKEN`), stands in for the credential store's `subprocess` with a recorder that fails every command, waits for the priming before the stop, and asserts that no command ran. A1 then proves on any platform that a default boot runs no credential CLI, and with the `GH_TOKEN` line removed it fails on Windows too. | CI1 to CI3 |
+
+**Reproduction (orchestrator).** A pytest plugin (`-p ghwrite`, outside the repo) makes only the exact argv `["gh", "auth", "token"]` write `$HOME/.local/state/gh/device-id` and fail, and logs each call; every other `subprocess.run` is untouched. One test each:
+
+| Tree | Plugin | Result |
+|---|---|---|
+| head `108a7fff` | on | A1 FAILS with the CI's assertion; the plugin log shows the call wrote under the test's home |
+| base `5d8a5eb4` | on | passes (the base never runs the CLI at boot) |
+| head | off | passes (what every canonical gate saw) |
+| head + a one-line `GH_TOKEN` | on | passes; no plugin log (the CLI was never asked) |
+
+This is the follow-up item R23 (tests that boot a real runtime run the developer's real `gh auth token`), raised from Low to Medium with ordinary reach (batch 2's #1820 splice carries its updated text, in 21.9). S2's reviewer briefs called it "recorded for a follow-up" and said the token is never written: true of the token, false of `gh`'s own state under HOME.
+
+### 21.2 Rejected designs
+
+- **O1a: `GH_TOKEN` alone.** It fixes CI, but nothing in the repo detects the line being lost; its proof rests on a plugin outside the repo.
+- **O2: a shared autouse fixture** that makes the CLI step inert for every test. This is R23's own repair. It touches the whole suite (54,892 nodes, both embedding modes), so it gets its own review and gate, after this merge.
+- **O3: skip the CLI at boot.** No honest criterion exists: the CLI step is the point of the priming (a token only `gh` knows is masked from the first call).
+- **O4: run the CLI with an isolated state directory** (`XDG_STATE_HOME` or `GH_CONFIG_DIR`). `gh auth token` needs the operator's configuration directory to find a stored token, so it would break the priming for real operators.
+- **O5: exempt `.local/state/gh` in A1's assertion.** It weakens BF-919's guard, whose point is that a boot writes nothing there.
+
+### 21.3 `tests/test_bf919_archive_isolation.py`
+
+**CI1.** SEARCH:
+```
+import contextlib
+import os
+import sqlite3
+from pathlib import Path
+from typing import Any
+```
+REPLACE:
+```
+import asyncio
+import contextlib
+import os
+import sqlite3
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+```
+
+**CI2.** SEARCH (in A1; it occurs once):
+```
+    monkeypatch.setenv("PROBOS_EMBEDDINGS", "local")  # BF-657's backend: this boot needs no model (M2 owns that path)
+    monkeypatch.setattr(embeddings_module, "_embedding_available", None)
+```
+REPLACE:
+```
+    monkeypatch.setenv("PROBOS_EMBEDDINGS", "local")  # BF-657's backend: this boot needs no model (M2 owns that path)
+    # AD-1337 S2: a boot primes the GitHub credential for the secret masker. Answered at the environment step, the
+    # priming never reaches the CLI step, whose real `gh` writes its own state under HOME (Linux:
+    # ~/.local/state/gh/device-id; PR #1846's CI), a file this test would count as the boot's. The recorder stands in
+    # for every command the credential store runs and fails each one, so the test proves on any platform that none ran.
+    monkeypatch.setenv("GH_TOKEN", "bf919-a1-not-a-real-token")
+    cli_calls: list[list[str]] = []
+
+    def _cli(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        cli_calls.append(list(argv))
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_cli, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    monkeypatch.setattr(embeddings_module, "_embedding_available", None)
+```
+
+**CI3.** SEARCH (in A1; it occurs once):
+```
+    await rt.start()
+    try:
+        assert isolated_archive_path.is_file(), "the boot opened this test's own archive"
+    finally:
+        await rt.stop()
+    assert _user_version(isolated_archive_path) == ARCHIVE_SCHEMA_VERSION, "and migrated it there"
+```
+REPLACE:
+```
+    await rt.start()
+    try:
+        assert isolated_archive_path.is_file(), "the boot opened this test's own archive"
+        priming = rt.secret_masking_prime_task
+        assert isinstance(priming, asyncio.Task), "premise: the boot started the secret masker's priming"
+        # Waited for before the stop: the stop's sweep cancels the task, not its worker thread, which could still run.
+        done, _ = await asyncio.wait({priming}, timeout=10.0)
+        assert priming in done, "the priming finished, so its worker thread has run"
+    finally:
+        await rt.stop()
+    assert cli_calls == [], "the boot ran no credential CLI: the priming answered from GH_TOKEN"
+    assert _user_version(isolated_archive_path) == ARCHIVE_SCHEMA_VERSION, "and migrated it there"
+```
+
+**Why waiting on the task is safe.**
+- `_wire_secret_masker` sets `runtime.secret_masking_prime_task` during `finalize_startup` (`finalize.py:728, 745-747, 5898`; `runtime.py:3722`), so the attribute exists once `start()` returns; A1 reads it only after `start()`.
+- `_prime_secret_masking` catches `Exception` (`finalize.py:776-780`), so a failing priming still ends the task.
+- `asyncio.to_thread` returns only after its worker thread has finished, so "task done" means "worker has run".
+- `asyncio.wait` does not cancel on timeout: a hang fails A1 inside 10 s (the suite's timeout is 180 s, `pyproject.toml:190`) and leaves the task to the stop's sweep (`shutdown.py:1387-1396`).
+- After the stop the task has been cancelled, so waiting on it there would raise: the wait sits inside the `try`.
+- The CLI step uses only `subprocess.run` and `subprocess.TimeoutExpired` (`credential_store.py:399, 406`); the stand-in provides both, and `TimeoutExpired` stays the real class.
+
+### 21.4 Tests and predicted counts
+
+- The file has 7 tests and no parametrization: **7 passed** after the pairs. A1's time is unchanged within noise (its worker now returns from the environment step instead of running the CLI step).
+- The suite's node count is unchanged: 54,892 collected, 54,708 passed and 184 skipped on a green gate.
+- **Without the pairs, A1 passes on Windows** (as it did in five gates) and fails on Linux CI. That is the defect: the proof on Windows is the mutation row M1, not a red run.
+
+### 21.5 Mutation rows (one campaign on the M11 candidate, the one test file, restoring between rows)
+
+| Row | Mutant | Expected | Killer |
+|---|---|---|---|
+| M1 | Delete the `setenv("GH_TOKEN", ...)` line | A1 fails on Windows and Linux: `cli_calls == [["gh", "auth", "token"]]` | A1, `assert cli_calls == []` |
+| M2 | Delete the `monkeypatch.setattr("probos.credential_store.subprocess", ...)` recorder, keep `GH_TOKEN` | A1 passes: an **equivalent mutant** (with `GH_TOKEN` set the CLI step cannot be reached; the recorder is a tripwire) | none |
+| M3 | Apply M1, and weaken the assertion to the wrong argv (`["gh", "api"] not in cli_calls`) | A1 passes: the mutant survives, which shows that only `== []` (any call) kills M1 | reviewer property 3 |
+| M4 | Apply M1, and delete the `asyncio.wait` and `assert priming in done` lines | Timing-dependent: the stop can cancel the task before the worker calls the recorder; the wait is what makes M1's kill deterministic | A1 with the wait present |
+
+### 21.6 What this does NOT change
+
+- Everything under `src/`, `PROGRESS.md`, `DECISIONS.md`, the ledger pair and every other test file.
+- BF-919's home-emptiness assertion (A1's last line): no exemption for `.local/state/gh`.
+- The counts of the AD-1337 files and the node count of the suite.
+
+### 21.7 Deterministic checks
+
+- After the pairs, `git diff --stat` against the commit the Builder started from lists only `tests/test_bf919_archive_isolation.py`, with 23 lines added and 0 removed.
+- `tests/test_bf919_archive_isolation.py` alone: 7 passed; also under `-W error`.
+- The plugin run of 21.1 on the candidate: A1 passes and no plugin log is created.
+- `tests/test_ad1337_secret_masking.py`, `tests/test_ad1337_executor_seam.py`, `tests/test_ad1337_render_seam.py`, `tests/test_credential_store.py` and `tests/test_issue1419_failed_start_rollback.py`: all pass, as on `108a7fff`.
+- The edited file stays ASCII; `check_architecture_principles.py --check` and `gen_ad_ledger.py --check` still pass (nothing they read changed).
+- A new canonical gate on the committed head, with a receipt, then the push and CI.
+
+### 21.8 Verified Against Codebase (2026-11-23, `108a7fff`)
+
+```
+read credential_store.py:117-123, 371-409   github spec (env GH_TOKEN, alias GITHUB_TOKEN, CLI gh auth token); _resolve: config, env, aliases, store, CLI
+read execution/command_env.py:46-47          POSIX allowlist holds HOME and XDG_CONFIG_HOME, XDG_CACHE_HOME, XDG_DATA_HOME, not XDG_STATE_HOME
+read finalize.py:715-781, 5896-5898          _wire_secret_masker sets runtime.secret_masking_prime_task (:745-747); worker; _prime_secret_masking catches Exception (:776-780)
+read runtime.py:3722                         finalize_startup is awaited inside start()
+read shutdown.py:1373-1399                   the stop's sweep cancels the registered tasks, not their threads
+read tests/test_bf919_archive_isolation.py:69-104   A1: HOME and USERPROFILE redirected, a real default boot, the final home assertion at :103
+read tests/test_ad1337_executor_seam.py:66-82, 504-515, 740-742, 762, 774   the SimpleNamespace(run=..., TimeoutExpired=...) scoping and the GH_TOKEN convention
+read pyproject.toml:181, 190                 asyncio_mode auto; timeout 180
+read ci.yml:36-40, 150-152                   the workflow sets no GH_TOKEN or GITHUB_TOKEN
+git diff -U0 5d8a5eb4 108a7fff -- src | grep (subprocess|os.environ|Path.home|expanduser|getcwd|XDG_|sys.platform|to_thread|Popen|...)   only the priming (to_thread) and the masker's environment reads
+```
+
+Not verified by the Architect: the CI log itself (read by the orchestrator), the runner's `gh` version and how it writes state, and every count and timing above (predictions; 21.12 measures them).
+
+**Same class (Windows gate versus Linux CI), the Architect's finding:** apart from the priming, S1 to S3 add no external process, file write or HOME, cwd, XDG or platform read to `src`; `ProbOSRuntime` is booted with HOME redirected by no other test (13 files redirect HOME; none boots a runtime or calls `finalize_startup`). Residuals, all folded into R23: a boot that does not wait for the priming can still be inside `gh` after its stop (the stop cancels the task, not the thread), and on Linux `gh` writes state under whatever HOME is set at that moment.
+
+### 21.9 Updated item R23 (for the batch-2 #1820 splice)
+
+R23, **Medium** (was Low): tests that boot a real runtime run the developer's real `gh auth token`. **Reach:** ordinary (every real boot in every test run, on every platform). **Cause:** since AD-1337 S2, `finalize._wire_secret_masker` starts `_prime_secret_masking`, whose worker calls `store.get("github", requester="secret_masking")`; with neither `GH_TOKEN` nor `GITHUB_TOKEN` set and no value in the store file, `CredentialStore._resolve` (`credential_store.py:396-407`) runs the real `["gh", "auth", "token"]` with `trusted_command_env()` (`HOME` allowed, `XDG_STATE_HOME` not). **Evidence:** PR #1846's CI, shard 1, failed A1 of BF-919's `test_bf919_archive_isolation.py` at line 103: Linux `gh` wrote `home/.local/state/gh/device-id` under the test's redirected HOME; reproduced on Windows with a plugin that imitates it (head fails, base passes, head with `GH_TOKEN` passes and never calls the CLI); five Windows canonical gates missed it. A1 is now hermetic (section 21). **What remains:** every other real-boot test still reads the developer's real token into the test process (masked, never written); on Linux `gh` writes state under whatever HOME is set; a boot can wait up to 5 s on a slow `gh`; the stop cancels the task but not its worker thread. **Smallest repair:** an autouse fixture in `tests/conftest.py` that replaces `probos.credential_store.subprocess` with a recorder raising `FileNotFoundError` (the pattern of `test_ad1337_executor_seam.py:73-82`); tests that patch it themselves keep working because their function-scoped patch is applied after the autouse one (including `test_credential_store.py:57, 100` and `test_quality_hardening.py:32`). It needs its own review and a full gate.
+
+### 21.10 Properties for the round-6 delta reviewer
+
+Review only the repair: `git diff 108a7fff..HEAD -- tests/test_bf919_archive_isolation.py` and the contract's section 21. Execute the checks; do not only read.
+
+1. With the `GH_TOKEN` line removed, A1 fails on Windows: the recorder captures the CLI call, so no Linux `gh` is needed to see it.
+2. While A1 runs, no real process can start through `probos.credential_store`; the stand-in keeps `TimeoutExpired` as the real exception class, so the CLI step's `except` tuple still works.
+3. The CLI assertion rejects every call (`== []`), not one particular argv.
+4. A1 waits for the priming before `rt.stop()`, with a bound under the suite's timeout; a timeout fails A1 and does not hang the run or cancel the task out of order.
+5. BF-919's home-emptiness assertion is unchanged, with no exemption for `.local/state/gh`.
+6. The only code change is in this one test file; nothing under `src/` changes, and the counts of the suite are unchanged.
+
+### 21.11 Acceptance
+
+- [ ] 21.4's predictions hold (7 passed), the plugin run passes with no plugin log, and the checks of 21.7 are green.
+- [ ] M1 is killed by A1; M2 is the equivalent mutant (passes); M3 survives as predicted; M4's behaviour is recorded.
+- [ ] One delta review, then a new canonical gate with a receipt, a fast-forward push, CI green, and the merge.
+- [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
+
+**Prior art.** None reviewed: a test-isolation repair. The general rule is that a test which asserts that a boot leaves its home empty must also stop the boot from running a real external command.
+
+### 21.12 The orchestrator's first-hand checks
+
+The 3 pairs of this section (CI1, CI2, CI3) were applied to a scratch worktree detached at `108a7fff` by `audit\contract_tools.py apply --prefix 21.` (ASCII only). Further copies of the head ran the comparisons, so no run touched another's files. Results:
+
+| R | Result |
+|---|---|
+| R1 | **The pairs.** `contract_tools.py list --prefix 21.` finds CI1, CI2 and CI3, and every SEARCH occurs exactly once on `108a7fff` (CI1 90 to 157 characters, CI2 191 to 1,060, CI3 255 to 771). One file changes by +23 -0 lines (194 to 217 lines): blob `3e60141dde8d` to `2a6c196864d5`. The blob after each pair is in the `contract_tools.py checkpoints --prefix 21.` table that the Builder brief carries (`78e57256b9dd`, `8e302391e5ca`, `2a6c196864d5`). The result parses (`ast.parse`), is ASCII, has no line over 120 characters and keeps the file's line endings (its LF and CRLF counts are equal, 217 each). |
+| R2 | **The file runs.** `tests/test_bf919_archive_isolation.py` alone, through the home-guard wrapper (an empty redirected home, asserted empty first): **7 passed** in 17.2 s (cold) and 12.3 s (repeat); the head takes 12.1 s, so A1's time is unchanged within noise. Under `-W error`: 7 passed in 12.2 s. |
+| R3 | **The finding's reproduction, before and after, under one invocation** (`-p ghwrite`, a pytest plugin outside the repo that makes the exact argv `["gh", "auth", "token"]` write `$HOME/.local/state/gh/device-id` and fail, and logs each such call; the file and its path are the ones the CI log names). The pure head: **1 failed, 6 passed**; A1 fails at the home assertion (`Left contains 4 more items, first extra item: ...\home\.local`) and the plugin log has one line, `gh auth token wrote ...\test_a1_a_default_config_boot_0\home\.local\state\gh\device-id`. The candidate: **7 passed**, and no plugin log exists, so the CLI was never asked. The pure head without the plugin: 7 passed, which is what five canonical gates saw. The probe proves its own premise: the same invocation fails on the head and passes on the candidate, and `-p ghwrite` stops the run if the plugin cannot be imported. |
+| R4 | **The campaign** (`audit\mut_b11ci.py`; the one test file; each row applied to a copy of the candidate's file, asserting that its SEARCH occurs once, and restored byte for byte before the next). **M1** (delete the `GH_TOKEN` line): **killed** by A1 alone, `assert [['gh', 'auth', 'token']] == []`, 1 failed and 6 passed, on Windows, where `gh` writes no state under the home: the recorder is what sees the call. **M2** (delete the recorder, keep `GH_TOKEN`): 7 passed, the equivalent mutant of 21.5. **M3** (M1 and the wrong argv): 7 passed, **survived** as 21.5 predicts, which is why the assertion is `== []`. **M4** (M1 without the wait): **killed in 5 of 5 runs** with M1's message; the timing dependence 21.5 allows was not observed here, because the worker reaches the recorder within milliseconds of the boot and the stop's first phase takes about 2 s. The wait stays as the guard for a slower executor. The file's blob after the campaign equals R1's (`2a6c196864d5`). |
+| R5 | **The neighbours.** The three AD-1337 files, `test_credential_store.py` and `test_issue1419_failed_start_rollback.py`: **428 passed** on the candidate (244 s) and 428 passed on the head (226 s), with the same single third-party `DeprecationWarning` (`importlib_metadata`) in both. The files that read `prompts/` or the ledger (`test_ad758_program_gate.py`, `test_ad1184_ad_ledger.py`, `test_ad685d_phantom_field_name.py`, `test_captain_invariant_exposure.py`, `test_delegation_policy.py`, `test_for_free_documentation.py`) with the BF-919 file, on the candidate with this contract in place: **55 passed, 1 skipped**, as on the head (the skip is `test_ad685d_phantom_field_name.py:190`, "prompt file not on disk yet"). |
+| R6 | **The same-class claim of 21.8, enumerated.** 34 test files mention `HOME`, `USERPROFILE`, `Path.home` or `expanduser`; 302 construct or import the runtime or `finalize`; **2 are in both**: this file and `test_bf911_protected_config_write_refusal.py`, whose `.start()` calls (`:701`, `:902`) are an agent and a writer, not a runtime. The Architect counted 13 HOME-redirecting files by a narrower pattern; the conclusion is the same. `secret_masking_prime_task` has two references in all of `src` (the assignments at `finalize.py:728` and `:745`), none in `scripts`, and five lines in the tests read it (`test_ad1337_executor_seam.py:514, 548, 690, 774, 862`; `:514-515` is the same `isinstance(..., asyncio.Task)` premise that A1 now asserts); `finalize_startup` has one production caller (`runtime.py:3722`, inside `start()`, which `runtime.py:2798` defines). |
+| R7 | **Static checks** on the candidate, with this section's contract and the pairs in place: `gen_ad_ledger.py --check` reports "AD/BF ledger is current" (so the ledger pair does not change), and `check_architecture_principles.py --check` passes with `srp-size=92, layer-import=0, db-connect=30, unowned-task=13`, the same as the head. |
+| R8 | **The anchors of 21.8 were read, not carried over.** `credential_store.py:396-407` is the CLI step (`:399` the `subprocess.run`, `:406` the `except (FileNotFoundError, subprocess.TimeoutExpired, OSError)`); `execution/command_env.py:46-47` allow `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and `XDG_DATA_HOME`, not `XDG_STATE_HOME`; `finalize.py:776-780` is `_prime_secret_masking`'s `await asyncio.to_thread(...)` and its `except Exception`; `shutdown.py:1387-1396` cancels the registered tasks and waits 5 s; `test_ad1337_executor_seam.py:73-82` is the `SimpleNamespace(run=..., TimeoutExpired=...)` autouse stand-in and `:762` the `GH_TOKEN` convention; `pyproject.toml:181` and `:190` are `asyncio_mode = "auto"` and `timeout = 180`; `ci.yml:36-40` and `:150-152` are the two `env:` blocks, and `rg -n "GH_TOKEN|GITHUB_TOKEN" .github/workflows/ci.yml` finds nothing; `test_credential_store.py:57, 100` and `test_quality_hardening.py:32` patch `probos.credential_store.subprocess.run` themselves, the consumers that 21.9's autouse fixture must keep working. |
+
+**What the orchestrator changed in the Architect's section 21:** nothing in the three pairs' REPLACE text, the rows of 21.5 or the properties of 21.10. Four remarks on its text. (1) CI2's SEARCH is the two lines of the head; the Architect's answer read a scratch tree that already carried the orchestrator's earlier four-line edit, which the head does not have. (2) 21.4's remark about A1's time, 21.7's count of added lines and the Base sentence say what R1 and R2 measured. (3) M4's "timing-dependent" is a prediction that R4 did not observe; it stays in 21.5 as written. (4) Item R23 of 21.9 is the text for batch 2's #1820 splice; nothing in this section edits that issue.
+
+**What these checks do not show.**
+- **Linux.** This host has no WSL, Docker or bash, and the plugin of R3 models the file the CI log names, not `gh`'s source or the runner's version. That the repair cures the CI failure is shown by reading (with `GH_TOKEN` set, `CredentialStore._resolve` returns at the environment step and the CLI step is unreachable) and by R3 and R4 on Windows; the proof on the runner is the pull request's next CI run.
+- The full suite on the committed head: the new canonical gate is the first full-suite run of this repair, and it also runs on Windows only.
+- Nothing here ran against `%LOCALAPPDATA%\ProbOS\data`.
