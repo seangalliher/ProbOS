@@ -228,6 +228,27 @@ def mask_route_result(masker: SecretMasker | None, result: Any, *, route: str) -
     return masked.result
 
 
+def secret_registry_of(holder: object) -> SecretRegistry | None:
+    """AD-1337 S4: ``holder.secret_registry`` when it is a real ``SecretRegistry``, else None."""
+    registry = getattr(holder, "secret_registry", None)
+    return registry if isinstance(registry, SecretRegistry) else None
+
+
+def register_run_secret(holder: object, kind: str, key: str, value: str | None) -> SecretHandle | None:
+    """AD-1337 S4: register ``value``, which ProbOS is about to hand a tool for one session, in ``holder``'s registry.
+
+    The caller hands the handle to the session's owner, which releases it when the session ends. Returns None, having
+    registered nothing, when ``value`` is None or ``holder`` has no real registry (a bare runtime, a test double). The
+    name is ``kind:key`` when that is a plain label, else ``kind``, so no placeholder or event carries other text.
+    ``TypeError`` (from ``register``) for a ``value`` that is not a ``str``.
+    """
+    registry = secret_registry_of(holder)
+    if value is None or registry is None:
+        return None
+    name = f"{kind}:{key}"
+    return registry.register(name if secret_label(name) == name else kind, value)
+
+
 class SecretHandle:
     """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
 

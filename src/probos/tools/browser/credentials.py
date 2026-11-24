@@ -353,6 +353,12 @@ async def action_fill_credential(
                     logger.debug("AD-706f: emit_event(CREDENTIAL_READ_DENIED) failed", exc_info=True)
             return {"ok": False, "skipped_reason": "domain_mismatch"}
 
+    # AD-1337 S4 (D10): a bridge session's page is the user's own tab. Closing the session leaves it open and a later
+    # bridge session reuses it, so no release point outlives what the page can show: ProbOS fills no vault value
+    # there and reads none for it. Read with getattr, as ``page`` is below.
+    if getattr(session, "is_connected", False) is True:
+        return {"ok": False, "skipped_reason": "bridge_session"}
+
     value = await vault.read(ref=ref, requesting_agent_id=agent_id)
     if value is None:
         if emit_event is not None:
@@ -368,6 +374,15 @@ async def action_fill_credential(
     page = getattr(session, "page", None)
     if page is None:
         return {"ok": False, "skipped_reason": "session_not_started"}
+
+    # AD-1337 S4 (#1560): the value is masked from now until the session closes, so a page that shows it (``state``
+    # reads a text field's value) is masked wherever a tool result reaches a model. Registered before the fill and
+    # handed to the session with no await between, so no exit path leaves it without an owner.
+    from probos.security.secret_masking import register_run_secret
+
+    handle = register_run_secret(runtime, "vault", ref, value)
+    if handle is not None:
+        session.hold_secret(handle)
 
     try:
         await page.fill(selector, value)

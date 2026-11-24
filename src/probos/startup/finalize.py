@@ -721,9 +721,12 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     a masker; a runtime without a real store (a test double) gets None and masks nothing.
     """
     from probos.credential_store import CredentialStore
-    from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry
+    from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry, secret_registry_of
 
-    runtime.secret_registry = SecretRegistry()
+    # AD-1337 S4: ProbOSRuntime builds the registry, because the boot loop registers stored MCP servers before this
+    # runs; a runtime double without one gets one here.
+    registry = secret_registry_of(runtime)
+    runtime.secret_registry = registry if registry is not None else SecretRegistry()
     runtime.secret_masker = None
     runtime.secret_masking_prime_task = None
     store = getattr(runtime, "credential_store", None)

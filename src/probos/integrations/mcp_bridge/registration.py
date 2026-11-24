@@ -96,6 +96,43 @@ async def resolve_secret_value(
     return raw
 
 
+def _registered_secret(
+    runtime: Any, bridge: Any, record: McpServerRecord, key: str, value: str | None
+) -> tuple[Any, Any]:
+    """AD-1337 S4: register the credential this registration hands the server, as ``mcp:<name>``, and note the
+    client already under ``key``. ``(None, None)`` when nothing is registered (no value, or no real registry)."""
+    from probos.security.secret_masking import register_run_secret
+
+    handle = register_run_secret(runtime, "mcp", record.name, value)
+    if handle is None:
+        return None, None
+    try:
+        return handle, bridge.get_client(key)
+    except BaseException:
+        handle.release()
+        raise
+
+
+def _settle_secret(runtime: Any, bridge: Any, key: str, before: Any, handle: Any) -> None:
+    """AD-1337 S4: the client this registration published keeps ``handle`` until it is closed; otherwise it is released.
+
+    Only a real ``MCPClient`` that is new under ``key`` can own it. A duplicate or reused key keeps its old client
+    (which holds its own registration), and a failed or cancelled registration published nothing. The owner masks its
+    own replies with the runtime's masker, read at each reply because the boot loop registers before finalize builds
+    it (D9).
+    """
+    if handle is None:
+        return
+    from probos.integrations.mcp_bridge.client import MCPClient
+    from probos.security.secret_masking import secret_masker_of
+
+    client = bridge.get_client(key)
+    if isinstance(client, MCPClient) and client is not before:
+        client.hold_secret(handle, lambda: secret_masker_of(runtime))
+    else:
+        handle.release()
+
+
 async def resolve_auth_headers(
     record: "McpServerRecord", runtime: Any
 ) -> dict[str, str]:
@@ -214,21 +251,25 @@ async def register_record(
             auth_headers = _auth_headers(record, secret)
             auth_env = _auth_env(record, secret)
             key = record.url if record.type == "http" else record.name
-            if record.type == "http":
-                registered = bridge.register_server(
-                    record.url, headers={**record.headers, **auth_headers},
-                    reuse_if_matching=True,
-                )
-            else:
-                registered = await bridge.register_stdio_server(
-                    name=record.name,
-                    command=record.command,
-                    args=list(record.args),
-                    env={**record.env, **auth_env},
-                    cwd=record.cwd,
-                    timeout=record.timeout_seconds,
-                    reuse_if_matching=True,
-                )
+            handle, before = _registered_secret(runtime, bridge, record, key, secret)
+            try:
+                if record.type == "http":
+                    registered = bridge.register_server(
+                        record.url, headers={**record.headers, **auth_headers},
+                        reuse_if_matching=True,
+                    )
+                else:
+                    registered = await bridge.register_stdio_server(
+                        name=record.name,
+                        command=record.command,
+                        args=list(record.args),
+                        env={**record.env, **auth_env},
+                        cwd=record.cwd,
+                        timeout=record.timeout_seconds,
+                        reuse_if_matching=True,
+                    )
+            finally:
+                _settle_secret(runtime, bridge, key, before, handle)
             if registered is True:
                 client = bridge.get_client(key)
                 if client is not None and (record.type == "http" or client.is_alive is True):
@@ -245,18 +286,26 @@ async def register_record(
             "leaving the install request retryable"
         )
         return False
-    if record.type == "http":
-        auth_headers = await resolve_auth_headers(record, runtime)
-        bridge.register_server(
-            record.url, headers={**record.headers, **auth_headers}
+    # AD-1337 S4: the value is read here, not through resolve_auth_headers or resolve_auth_env, so it can be
+    # registered; the same records read the vault exactly as before (none, or stdio without auth_env_var: no read).
+    value = None
+    if record.auth_kind != "none" and (record.type == "http" or record.auth_env_var):
+        value = await resolve_secret_value(record, runtime)
+    key = record.url if record.type == "http" else record.name
+    handle, before = _registered_secret(runtime, bridge, record, key, value)
+    try:
+        if record.type == "http":
+            bridge.register_server(
+                record.url, headers={**record.headers, **_auth_headers(record, value)}
+            )
+            return
+        await bridge.register_stdio_server(
+            name=record.name,
+            command=record.command,
+            args=list(record.args),
+            env={**record.env, **_auth_env(record, value)},
+            cwd=record.cwd,
+            timeout=record.timeout_seconds,
         )
-        return
-    auth_env = await resolve_auth_env(record, runtime)
-    await bridge.register_stdio_server(
-        name=record.name,
-        command=record.command,
-        args=list(record.args),
-        env={**record.env, **auth_env},
-        cwd=record.cwd,
-        timeout=record.timeout_seconds,
-    )
+    finally:
+        _settle_secret(runtime, bridge, key, before, handle)

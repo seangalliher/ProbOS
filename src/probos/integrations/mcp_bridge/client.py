@@ -19,10 +19,37 @@ from probos.events import EventType
 from probos.integrations.mcp_bridge.session import MCPSession
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from probos.execution.effect_types import ExternalEffectContext
     from probos.integrations.mcp_bridge.transport import Transport
+    from probos.security.secret_masking import SecretHandle, SecretMasker
 
 logger = logging.getLogger(__name__)
+
+
+def _masked_reply(masker: SecretMasker | None, envelope: Any, request_id: str) -> Any:
+    """AD-1337 S4 (D9): ``envelope`` with each top-level value masked as the producer seam masks a tool's output, so
+    a reply's ``result`` has the same depth and node bounds here and there; ``envelope`` itself without a masker or
+    when it is not a dict. A failed pass withholds the reply: ``MCPProtocolError`` with fixed text, no value."""
+    if masker is None or not isinstance(envelope, dict):
+        return envelope
+    from probos.security.secret_masking import MASKING_FAILED_TEXT
+    from probos.tools.protocol import ToolResult
+
+    names: set[str] = set()
+    masked: dict[Any, Any] = {}
+    for key, value in envelope.items():
+        outcome = masker.mask_result(ToolResult(output=value))
+        if outcome.failed:
+            raise MCPProtocolError(
+                MASKING_FAILED_TEXT, reason="bad_result", delivery_state="sent_unconfirmed", request_id=request_id,
+            )
+        names |= outcome.names
+        masked[key] = outcome.result.output
+    if names:
+        logger.warning("AD-1337: route=mcp_client masked names=%s", sorted(names))
+    return masked
 
 
 # JSON-RPC 2.0 protocol version we negotiate. MCP also has a protocol-version
@@ -193,13 +220,41 @@ class MCPClient:
         )
         return result if isinstance(result, dict) else {}
 
+    #: AD-1337 S4: the registrations of the credential this client sends (``registration.register_record``), released
+    #: by ``close``. A class default, so a client built without ``__init__`` (convention #11) holds none.
+    _held_secrets: tuple[SecretHandle, ...] = ()
+
+    #: AD-1337 S4 (D9): where a client handed a value finds the runtime's masker, read at each reply (the boot loop
+    #: registers before finalize builds it). None for a client that holds nothing, which keeps the old path.
+    _masker_of: Callable[[], SecretMasker | None] | None = None
+    #: AD-1337 S4 (D9): set by ``close`` before it awaits or releases anything.
+    _closing: bool = False
+
+    def hold_secret(
+        self, handle: SecretHandle, masker_of: Callable[[], SecretMasker | None] | None = None,
+    ) -> None:
+        """AD-1337 S4: keep ``handle`` registered until this client is closed. With ``masker_of`` the client masks
+        each reply itself (D9)."""
+        self._held_secrets = (*self._held_secrets, handle)
+        if masker_of is not None:
+            self._masker_of = masker_of
+
     async def close(self) -> None:
         # AD-1014: delegate teardown to the transport (HTTP closes the httpx
         # client; stdio closes stdin, terminates the subprocess, cancels the
         # stderr drain). Defensive getattr for __new__-bypass tests (convention #11).
         transport = getattr(self, "_transport", None)
-        if transport is not None:
-            await transport.close()
+        # AD-1337 S4 (D9): before any await, so a reply that returns from here on is dropped, not passed on unmasked.
+        self._closing = True
+        try:
+            if transport is not None:
+                await transport.close()
+        finally:
+            # AD-1337 S4: once the transport is closed, or fails or is cancelled while closing, the credential it
+            # sent is no longer masked; a second close finds nothing to release.
+            held, self._held_secrets = self._held_secrets, ()
+            for handle in held:
+                handle.release()
 
     async def _call(
         self,
@@ -233,6 +288,19 @@ class MCPClient:
             if effect_context is not None and not exc.request_id:
                 exc.request_id = request_id
             raise
+
+        # AD-1337 S4 (D9): a client handed a value masks its reply here, with no await since the transport returned:
+        # every MCP route suspends between a reply and the producer seam (an episode write), and ``close`` releases
+        # the value. ``close`` sets ``_closing`` before it awaits anything, so a reply that returns after it began is
+        # dropped instead.
+        masker_of = self._masker_of
+        if masker_of is not None:
+            if self._closing:
+                raise MCPProtocolError(
+                    "client closed", reason="client_closed",
+                    delivery_state="sent_unconfirmed", request_id=request_id,
+                )
+            envelope = _masked_reply(masker_of(), envelope, request_id)
 
         if not isinstance(envelope, dict):
             self._emit_failed(
