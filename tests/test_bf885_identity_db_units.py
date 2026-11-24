@@ -991,7 +991,8 @@ async def test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_
                     break
                 await asyncio.sleep(0.005)
             gate.set()
-            await asyncio.wait({_ending(registry)}, timeout=5)  # the late unit's COMMIT failed; it was rolled back
+            _, unended = await asyncio.wait({_ending(registry)}, timeout=5)  # the late unit's COMMIT failed; it was rolled back
+            assert not unended, "premise: the late unit ended within 5 s, before the production bound is restored"
             monkeypatch.setattr(identity_writer, "IDENTITY_UNIT_SETTLE_S", production_bound)  # the late unit has ended
             signing.set()
             await asyncio.wait({following}, timeout=5)
