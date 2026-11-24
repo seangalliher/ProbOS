@@ -2,6 +2,8 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-22
 
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5, consult `4dd6603c` and its follow-up) and the orchestrator, 2026-11-24, after review round 1: section 22 (the repair, M3), decisions D11 to D15, and the corrections of sections 2, 3, 4 (D2, D9), 5, 8, 10, 12 to 15.
+
 **Status:** draft. Batch 2 is S4 + S5: one PR (`Refs #1560`), one broad gate. S4 is built, tested and useful alone, but S5 (the decomposed DAG's reflect route) is the last slice, and #1560 closes with it. Decision: consult `4bb6d748` (Q1, Q2 source 3, Q7 row "per-run", Q8 M21; on #1560, comment 7064966284), corrected here in D1, D3 and D5. No Captain condition.
 
 **Base:** `02ce03ec794d` (the merge commit of batch 1, PR #1846: its tree equals the tree of `a86a2895`, the tip of batch 1, that the canonical gate ran on; `src` there is the same as at `108a7fff`, whose line numbers this contract cites. Since `33826d30`, where the premises of section 0 were first measured, only `finalize.py` differs in `src`, and every `finalize.py` line cited below was read again on that tree). Line numbers are those of `108a7fff`, before S4's pairs, except where a line is marked as one of M1's result. The draft cited `693c685c`: between it and `108a7fff` (`git diff --name-only 693c685c 108a7fff -- src tests`) only `finalize.py` (six lines added at 735-748), `tests/test_ad1337_executor_seam.py` (nine lines added before line 498), `render_masking.py` and `tests/test_ad1337_render_seam.py` differ, so a line cited below is the same at both except in the first two files. From batch 1, S4 uses only:
@@ -18,11 +20,13 @@
 |---|---|---|---|
 | M1 | 7.1 (new tests) first, then A1, B1, C1, D1, E1 to E3, G1, H1 to H3, J1 to J3 (7.2 to 7.9) | HIGH, security control (vault values) | One full review by the GPT Diff Reviewer with section 14's properties. The mutation campaign of record (section 10) stands in for a second reviewer. If round 1 finds a Critical or High defect, the repair gets a full re-review. |
 | M2 | TR1 to TR3, then the ledger (7.10 to 7.13) | LOW | Delta |
+| M3 | The repair after review round 1: 22.1 to 22.4 (the source pairs, then the tests), 22.5 and 22.6 (the tracker entries), then the ledger (22.7) | HIGH, security control (the P1 repair) | A **full** re-review (Architect `4dd6603c`): round 1 found a P1, and the repair adds behaviour the findings did not ask for (the failure events) |
 
 - Commit subjects:
   - M1: `Mask the vault values handed to a browser session or an MCP server while they are in use`
   - M2: `Record the per-run values in the status, decisions and research entries`
-- About 30 Builder tool calls for M1 and 10 for M2.
+  - M3: `Withhold what a credential-holding MCP client cannot mask, and hand a value over only on the bridge's answer`
+- About 30 Builder tool calls for M1 and 10 for M2; about 40 for M3 (17 source and test pairs, 7 tracker pairs).
 
 ## 0. Premises (on `33826d30`, re-read on `a86a2895`)
 
@@ -52,14 +56,14 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
 
 | Part | Change |
 |---|---|
-| `security/secret_masking.py` | `secret_registry_of(holder)` and `register_run_secret(holder, kind, key, value)` (name `kind:key` when that is a plain label, else `kind`) |
+| `security/secret_masking.py` | `secret_registry_of(holder)` and `register_run_secret(holder, kind, key, value)` (name `kind:key` when that is a plain label, else `kind`); from M3 also `residue_after_masking(masker, value)` (D11) |
 | `runtime.py` | `ProbOSRuntime.__init__` builds `self.secret_registry` |
 | `startup/finalize.py` | `_wire_secret_masker` keeps a real registry it finds |
 | `tools/browser/credentials.py` | `fill_credential` refuses a bridge (CDP) session before reading the vault (D10); otherwise it registers `vault:<ref>` before `page.fill` and hands the handle to the session |
 | `tools/browser/session.py` | `hold_secret`, `holds_secrets`, `release_secrets`; `close_resources` releases |
 | `tools/browser/tool.py` | While its session holds a value, the tool masks its own result inside the operation |
-| `integrations/mcp_bridge/client.py` | `MCPClient.hold_secret` (with the runtime's masker getter); a client holding a value masks each reply in `_call` (`_masked_reply`) and drops one that returns after `close` began (D9); `close` releases in a `finally` |
-| `integrations/mcp_bridge/registration.py` | `register_record` registers `mcp:<server>` and settles the handle, with a getter for the runtime's masker, on the client it published, or releases it |
+| `integrations/mcp_bridge/client.py` | `MCPClient.hold_secret` (with the runtime's masker getter); a client holding a value masks each reply in `_call` (`_masked_reply`), drops one that returns after `close` began (D9), withholds one whose complete JSON text still holds a known value (D11), passes on no library text of a transport failure (D12) and records `MCP_BRIDGE_FAILED` for its own withholds and drops (D13); `close` releases in a `finally` |
+| `integrations/mcp_bridge/registration.py` | `register_record` registers `mcp:<server>` and settles the handle, with a getter for the runtime's masker, on the client it published, only when the bridge answered True to its own call (D14), or releases it |
 
 **Heavier designs rejected:**
 - A `secret=` keyword on `MCPBridge.register_server` and `register_stdio_server`: it changes the bridge's signature, and every bridge double in the tests (`_RecordingBridge`, `_FakeBridge`) would reject it.
@@ -69,6 +73,9 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
 - Masking in `call_tool` and its siblings instead of `_call`: it misses the rpc message (D9) and needs one guard per method.
 - A per-session registry or a deduplicating registry: S1's API is final, and each fill is a Captain-approved tier-3 action, so there are few handles.
 - Masking every browser result inside the tool: S2's producer seam would then record no `SECRET_MASKED` for any browser hit (D5 limits that loss to sessions that hold a value).
+- Mask-and-reparse of a reply (D11): S1 never rewrites keys, so two keys that hold values would collapse into one, and a raw form can match across JSON punctuation.
+- Masking a holding client's failure text by value forms (D12): the library quotes a rejected header as a Python `repr`, and for NUL, VT and FF its escape is not a form the masker knows (measured).
+- Evidence of publication from the bridge's own state (D14): `register_stdio_server` answers True for an exact reuse too, and a flag or a handle passed through the call would change the bridge's signature or return value.
 
 ## 3. Consumers checked
 
@@ -79,6 +86,8 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
 | `_settle_secret` holds only a real `MCPClient` | Bridge doubles whose `get_client` returns `object()` (`test_bf745:84`, `test_ad1215:104`) | The handle is released and nothing raises |
 | `MCPClient.close` gains a `finally` and sets `_closing`; `_call` masks a holding client's reply (D9) | AD-449 and AD-1014 close tests; AD-1241's and BF-875's `_call` use; AD-1236's strict registrations; clients built with `__new__` (P9) | Same behaviour for a client holding nothing: class defaults (`_held_secrets = ()`, `_masker_of = None`, `_closing = False`) keep the old path for a client built without `__init__` and for every client no registration handed a value |
 | `_settle_secret(runtime, ...)` | Its two calls in `register_record` (`registration.py:272`, `:311` after M1) | Both pass `runtime` (J2, J3) |
+| `_settle_secret(..., published)` hands over only on the bridge's `True` (M3, D14) | The same two calls; the S4 doubles (`_StdioBridge.register_stdio_server` answers True when it publishes and False for a name that is taken); every runtime without a registry (no handle: `_settle_secret` returns first) | A double whose `register_server` or `register_stdio_server` answers anything but `True` now releases the handle. `_settle_secret` and `_registered_secret` have no other consumer in `src` or `tests` |
+| `_call`'s failure path for a holding client, and its two new events (M3, D12, D13) | The consumers of `MCP_BRIDGE_FAILED`: `event_persistence.py:76` (durable), `federation/mcp_server.py:635` (its own emission), `bridge.py:290-310` (registration time); the tests that read the payload (`test_ad449_mcp_bridge.py`, `test_ad1014_stdio_mcp_transport.py`, `test_ad1195_durable_producers.py`, `test_bf875_mcp_inbound_auth.py`, `test_bf903_channel_and_mcp.py`) | The payload shape is unchanged (`server_url`, `method`, `reason`, `detail`; the strict shape has operation and attempt ids and a reason from `_STRICT_FAILURE_REASONS`, which holds `client_closed` and `bad_result`). A client that holds nothing: `failure is exc` and the bare `raise`, as before. Only a holder's `detail` text changes |
 | `fill_credential` refuses a connected session (D10) | AD-706f's sessions (a real `BrowserSession`, never connected, `test_ad706f_credential_vault.py:52-57`); no test fills a bridge session | Unchanged; only a bridge session is refused |
 | The nested `operation` in `BrowserTool.invoke` | The AD-1343 census (`RECORDED` includes `invoke`), S3's N15 (every `invoke` call) | No new `invoke` call: the nested function calls `_invoke_session`, `secret_masker_of` and `mask_route_result` |
 | `holds_secrets` is read only when a masker exists | Every `BrowserTool` test without a runtime (`test_ad706_browser_tool.py:142`) and MagicMock sessions | No attribute is read: `secret_masker_of(None)` is None |
@@ -109,7 +118,7 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
   **Names:** the label is `kind:key` when it matches `[A-Za-z0-9_.:-]{1,64}` and the bare `kind` otherwise, so a long ref, or one holding spaces or user text, becomes `vault`. S1's D9 still turns a label whose placeholder holds a form of a known value into `unnamed`. The ref and the server name already appear in `CREDENTIAL_READ` and in the MCP events. No name holds a value.
 - **D2 (owners and release points, (b)).**
   - *Browser.* The `BrowserSession` owns the handle. `fill_credential` registers, then calls `session.hold_secret(handle)` with no await in between, so no cancellation point leaves the handle unowned. `close_resources` releases it as its first step after `_terminated = True`, on every ending path: operator end, expiry, shutdown, a failed start, and a cleanup failure (the session is fenced and can no longer be read, P3). A fill that fails or is cancelled keeps the value registered until close, because the page may hold part of it. `hold_secret` on a closed session releases at once. `release_secrets` can be called again safely.
-  - *MCP.* The `MCPClient` that the registration published owns the handle: the client under the key afterwards, identity-checked against the one there before, and only a real `MCPClient`. `close` releases after the transport closes, in a `finally`. While it holds the value the client masks its own replies, and it drops a reply that returns after `close` began (D9). A duplicate or reused key keeps its old client, which holds its own handle, and the new handle is released. A failed or cancelled registration publishes nothing, and `_settle_secret` (in a `finally`) releases. Unregister, update, refresh and a dead stdio client's replacement all close the old client.
+  - *MCP.* The `MCPClient` that the registration published owns the handle: only when the bridge answered `True` to this registration's own call (D14), and the client under the key afterwards is a real `MCPClient` that is not the one there before. `close` releases after the transport closes, in a `finally`. While it holds the value the client masks its own replies, drops a reply that returns after `close` began (D9), withholds one that still holds a known value after the bounded pass (D11) and passes on no library text of a transport failure (D12). A duplicate or reused key keeps its old client, which holds its own handle only if a registration with a registry handed it one (a config-declared client, `finalize.py:5097`, `:5103`, or an adopted one, `adoption.py:245`, holds none: R18), and the new handle is released. A failed, cancelled or overtaken registration publishes nothing, and `_settle_secret` (in a `finally`) releases. Unregister, update, refresh and a dead stdio client's replacement all close the old client.
 - **D3 (reaching the registry, (c)).** Each site reads the registry from the runtime it already holds: `fill_credential`'s `runtime` keyword and `register_record`'s `runtime` argument. There is no new constructor argument or setter. `secret_registry_of` returns None for a runtime without a real registry (a bare test runtime, a `MagicMock`), and then nothing is registered and behaviour is unchanged. **Premise correction (P8):** `ProbOSRuntime.__init__` builds the registry and `_wire_secret_masker` keeps it, because the boot loop registers before finalize builds the masker.
 - **D4 (refresh and the refresh token, (d)).** A refresh is "store the bundle, then `_reregister`" (P7): the old client closes, releasing the old access token, and the new client holds the new token. The refresh token and the client secret are never handed to a tool or a server (only ProbOS sends them to the token endpoint), so they are not registered. P9 pins this. The legacy path keeps its vault reads: none for `auth_kind == "none"` or a stdio server without `auth_env_var`, otherwise one.
 - **D5 (the browser race, in addition to Q7's design).** Releasing at close alone leaks a read that the end overtakes (P4). So `BrowserTool.invoke` masks its own result inside the session's operation, but only when a masker exists and the session holds a value. The mask runs before `idle` is set, so it runs before the release. Such a hit logs a WARNING with labels (`route=browser_session`). The producer seam then finds nothing, so those hits record no `SECRET_MASKED` (R13). A session that holds nothing leaves its results to the producer seam (P6), so the event loss is limited to sessions that filled a value. D9 is its MCP twin.
@@ -121,15 +130,20 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
   No value, form or position goes into any message.
 - **D7 (bounds, fact 7).** Browser handles are bounded by Captain-approved fills on live sessions; MCP handles by live clients (one each, more only under concurrent registration of one key). Nothing registers per call without an owner. The release tests are P2 (normal end), P3 (end during a read), P4 (exception and cancellation), P7 (closed session), P8 (unregister), P9 (refresh), P10 (duplicate), P11 (stdio failure and cancellation), P14 (close failure) and P17 (a close that overtakes a reply).
 - **D8 (census, (f)).** P15 is a new census of every vault read and every caller of the MCP credential resolvers, each with a reason (D1). It is AST-only, imports nothing, and cannot flake. S3's N15 and S2's construction census gain no row: S4 adds no route past the executor and no executor construction.
-- **D9 (a close that overtakes an MCP reply; the Architect's class check on S4).** Every MCP route suspends between `bridge.invoke` and the producer seam: OPEN and CONFIRM await `_record_episode` (`agentic_dispatch.py:1851`, `:1877`); CONSENSUS awaits `event_log.log` and `_store_mcp_invoke_episode` (`runtime.py:5125`, `:5133`). A `close` during that await (an operator disable, update or refresh, a dead stdio client's replacement, shutdown) released the value before the seam masked the reply. A close whose `finally` runs before the calling task resumes with a line it has already read is the same defect. This is batch 1's class: the guard ended at a lifecycle event (`close`), not at the end of what it protects (the client's last reply reaching a model). Repair, by construction:
+- **D9 (a close that overtakes an MCP reply; the Architect's class check on S4).** Every MCP route suspends between `bridge.invoke` and the producer seam: OPEN and CONFIRM await `_record_episode` (`agentic_dispatch.py:1851`, `:1877`); CONSENSUS awaits `event_log.log` and `_store_mcp_invoke_episode` (`runtime.py:5125`, `:5133`). A `close` during that await (an operator disable, update or refresh, a dead stdio client's replacement) released the value before the seam masked the reply. A close whose `finally` runs before the calling task resumes with a line it has already read is the same defect. This is batch 1's class: the guard ended at a lifecycle event (`close`), not at the end of what it protects (the client's last reply reaching a model). Repair, by construction:
   - `_settle_secret` hands the client a getter for the runtime's masker, read at each reply, because the boot loop registers before finalize builds it (P8).
-  - `_call` masks the reply itself, with no await since the transport returned. `_masked_reply` masks each top-level value of the envelope as the producer seam masks a tool's output, so `result` keeps the same depth and node bounds. It logs route `mcp_client` at WARNING with labels; a failed pass raises `MCPProtocolError(MASKING_FAILED_TEXT, reason="bad_result")`.
+  - `_call` masks the reply itself, with no await since the transport returned. `_masked_reply` masks each top-level value of the envelope as the producer seam masks a tool's output (the bounded pass: depth 32, 10,000 nodes, keys untouched), then checks the complete JSON text for what that pass left (D11). It logs route `mcp_client` at WARNING with labels; a failed pass, or a known value still in the text, raises `MCPProtocolError(MASKING_FAILED_TEXT, reason="bad_result")`.
   - `close` sets `_closing` before its first await. A holding client's reply that returns after that raises `MCPProtocolError("client closed", reason="client_closed", delivery_state="sent_unconfirmed")`, so the broker keeps the outcome uncertain.
   - The rpc message is masked before `_emit_failed` puts it in `detail` (R14 narrows). The producer seam then records no `SECRET_MASKED` for these hits (R13). A client handed no value, or seeing no masker, takes the old path.
-  - `MCPClient` keeps 14 methods. P17 pins both halves and the failed pass. R15 is not filed.
+  - `MCPClient` keeps 14 methods (D12's `_holder_failure` is a module function). P17 pins both halves, the failed pass and their events (D13); P19 pins the residue (D11). R15 is not filed.
 - **D10 (a bridge session's page outlives its release).** `_close_playwright` never closes a bridge session's page (the user's own tab, AD-1052b), and `_connect_impl` reuses the first page of the first context, so a later bridge session could read a filled field after the release. No release point inside ProbOS outlives that tab. `fill_credential` therefore refuses a connected session (`skipped_reason` `bridge_session`) before it reads the vault. `is_connected` is read with `getattr(..., False) is True`, as `page` is read there. No agent can call the verb today (P16), so no live path changes; this keeps the armed half true (R22). P18 pins it.
+- **D11 (what the bounded pass leaves; review round 1, finding 1, P1).** `mask_result` never rewrites a key and stops at depth 32 and at 10,000 nodes (`secret_masking.py:47-48`, `_map_strings`), leaving the rest to the render seam, which masks the text the model is shown and needs the value still registered. A holding client closes and releases at any time after its reply (D9's suspension), so a reply with the value in a key, deeper than 32 levels or after 10,000 nodes reached a model unmasked (reproduced on `416b1a48`: the key and deep shapes, 107 and 402 characters). Repair: after its per-value pass `_masked_reply` serialises the masked envelope (`residue_after_masking`: `json.dumps(ensure_ascii=False, default=str)`, then `mask_text`) and **withholds** the reply (`MCPProtocolError(MASKING_FAILED_TEXT, reason="bad_result")`) when a known form is left or the pass fails; a value that cannot be written out (a circular reply, the recursion limit) is withheld too. Not mask-and-reparse: S1 never rewrites keys, so two keys holding values would collapse into one, and a raw form can match across JSON punctuation. A server that echoes its credential in such a position now fails its calls, `initialize` and `list_tools` included (they go through `_call`); the check also withholds a reply that holds any other known value in such a position, which the render seam used to mask. The browser gets no such check (Architect, follow-up): every browser handler returns a fixed-schema flat dict whose keys are ProbOS's (`state` at most 100 element records; `eval_js` a JSON string), so the walk's bounds cannot miss a page value there today; R22 records the condition.
+- **D12 (what a holding client passes on of a transport failure; finding 2, P2).** `_call` emitted `MCP_BRIDGE_FAILED` with `detail=str(exc)` and re-raised before `_masked_reply`. The HTTP transport builds `f"transport error: {exc}"` from the library's text (`transport.py:176-180`), and h11 names a rejected header as a Python bytes `repr` (`Illegal header value b'...\x0b...'`). The escape for LF and CR matches the JSON escape that S1's forms include; for NUL, VT and FF it does not (`\x00` against `\u0000`), so masking by forms leaves the value (measured on a prototype: LF and CR masked; VT, FF and NUL in the event, in the `agentic_dispatch` WARNING and in the error text the model gets; on `416b1a48` all five leak). Repair: for a holding client `_holder_failure` keeps the transport's exception only when ProbOS built its text (no `__cause__`, no `__context__`: `egress denied for <url>`, `HTTP 401 from <url>`, `stdio pipe closed`; a failure raised from a library's exception, such as a stdio timeout, is withheld whatever its text says), a masker exists and `mask_text` finds no known form. Otherwise `_call` emits and raises `MCPProtocolError(f"{reason}: detail withheld while the client holds a credential")` with the same reason, delivery state and request id, `from None`, so the formatted traceback of a caller's log line carries no library text (the original stays in memory as `__context__`, hidden by `__suppress_context__`). With no masker a holding client withholds too (being handed a value is the trigger; Architect, follow-up). A client that holds nothing takes the old path (`failure is exc`, the bare `raise`). **Reach:** an interior CR, LF, NUL, VT or FF in a stored credential on the legacy boot path; an interior VT or FF on the strict path (`registration.py:232-236` refuses CR, LF and NUL only); surrounding whitespace in an OAuth access token (`:155` is not stripped; a static header is, `:158`, so a pasted trailing newline never reaches the library). The library's own DEBUG record (`httpcore.http11`, `send_request_headers.failed`) is third-party: R24. A non-ASCII credential raises `UnicodeEncodeError` inside httpx, which is not an `httpx.HTTPError`, so it bypasses `_call`'s `except`, emits no event and names one character and its position: R14.
+- **D13 (events for the client's own raises).** S4's two raises in `_call` (the `client_closed` drop and the `bad_result` withhold) recorded no `MCP_BRIDGE_FAILED`, against `_call`'s rule of one emission site for request-time failures (`client.py:275-277`); the event is durable (`event_persistence.py:76`). Each now emits with its reason and no detail before it raises (`client_closed` and `bad_result` are in `_STRICT_FAILURE_REASONS`, so the strict payload carries the reason too).
+- **D14 (evidence that this registration published; finding 4, P2, a regression of this slice).** `_settle_secret` handed the handle to any real `MCPClient` that was new under the key, so a registration that lost to a concurrent one (cancelled, or answering False) gave its handle to the winner's client, which held it until it closed. `register_server` is synchronous, so before-and-after identity is sound for HTTP; `register_stdio_server` awaits (consent, `existing.close()`, `transport.start()`), publishes with `return True` at once (`bridge.py:186-190`), closes its unpublished candidate and re-raises on cancellation (`:191-198`), and a loser answers False (`:213-215`). So `_settle_secret` now also requires the bridge's own answer `is True` to this registration's call (strict `registered`, legacy `published`; both stay None on a raise or a cancel, so the handle is released). A strict reuse of a concurrent winner's identical configuration answers True (`:159`, `:165`, `:215`) and hands over a duplicate handle for the same value, which the winner's `close` releases with its own: harmless. The other publishers of a key (`adoption.py:245`, `finalize.py:5097`, `:5103`) hold no handle. A bridge double whose `register_server` answers anything but `True` now releases the handle (section 3).
+- **D15 (not repaired here; finding 3).** A child's stderr, logged at DEBUG (`transport.py:293-314`), a library's own DEBUG record and the strict check's narrowness are recorded as #1820 ad-1337 R24 (Architect `4dd6603c`): they need DEBUG logging and a server that prints its own credential; section 9 promises the transports are unchanged; a hook on the transport would leave the window between `start()` and `hold_secret()` and could not close the class, which belongs to R4's repair, a log-masking seam. The smallest repair of R24's third part is to refuse, at registration, a credential that is not a valid header value under h11's grammar.
 
-## 5. Tests: new file `tests/test_ad1337_per_run.py` (17 cases, 24 items)
+## 5. Tests: new file `tests/test_ad1337_per_run.py` (22 cases, 38 items; 17 and 24 until M3)
 
 | P | Case |
 |---|---|
@@ -150,8 +164,13 @@ S1 to S3 mask what the credential store and the environment know. A vault value 
 | P15 | Census: every vault read registers its value or has a recorded reason |
 | P17 | MCP (D9): a reply read before its client closes stays masked when the route suspends past the close (route `mcp_client`); a reply still on the wire when close begins is dropped (`client_closed`); a failed pass withholds (`bad_result`) |
 | P18 | A bridge (CDP) session is refused before the vault is read: nothing filled, nothing registered (D10) |
+| P19 | MCP (D11): a reply that holds the value in a key, beyond depth 32 or after 10,000 nodes is withheld (`bad_result`, a failure event) before the tool can suspend with it; the text shape is the control (x4) |
+| P20 | MCP (D12): a holding client's transport failure, built from the library's text for a LF and for a VT value, passes on fixed text in the error, the event and the caller's traceback, and a client that holds nothing passes the library's text on (x2); ProbOS's own text is kept unless it holds the value or no masker exists (x3) |
+| P21 | A registration overtaken while it waits (cancelled, or answering False; legacy and strict) hands its value to no client (x4) |
+| P22 | A strict exact reuse keeps the old client and releases the new value (D14's identity check) |
 
 - **On `02ce03ec794d`:** collection error `ImportError: cannot import name 'register_run_secret' from 'probos.security.secret_masking'`.
+- **After M3 (the repair, section 22):** 38 passed. On `416b1a48` the new and extended cases give 12 failed and 26 passed: P17 (no `client_closed` event), P19 key, deep and wide, P20 (x4: LF, VT, built with the value, no masker) and P21 (x4); P19 text, P20 built by ProbOS and P22 pass there as controls.
 - **After M1:** 24 passed. P16 is section 0's premise, so the new cases are P17 and P18, one item each; on the S4 tree without D9 and D10, P17 fails at its first `result.output` assertion and P18 at `outcome`. The draft's helper sent `fill_credential` through the executor, which refuses it (P16): 4 failed and 18 passed on the orchestrator's oracle tree. The helper now asserts that refusal and runs the handler on the tool's own session; the four tests keep their names.
 
 ## 6. What S4 leaves for S5
@@ -1465,7 +1484,7 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 > - `fill_credential`'s value is `vault:<ref>`, owned by the browser session and released when it closes. This half is armed, not live: no agent can call the verb today (BF-701, AD-1154), so it closes no leak and guards the day the verb is opened (#1820 ad-1337 R22);
 > - an MCP server's header or environment credential is `mcp:<server>`, owned by the client the registration published and released when it is closed (unregister, update, refresh).
 >
-> A page or a server that echoes the value is masked by the producer and render seams. A browser session that holds a value also masks its own result, because ending a session waits for its operations and then releases. An MCP client that holds a value masks its own replies, because every MCP route suspends between a reply and the producer seam, and drops a reply that returns after it began closing. `fill_credential` never fills a bridge (CDP) session, whose page outlives the session. The registry is built with the runtime, because the boot loop registers stored MCP servers before finalize builds the masker. The refresh token and the OAuth client secret only go to a token endpoint and are not registered. A census pins every vault read with its reason.
+> A page or a server that echoes the value is masked by the producer and render seams. A browser session that holds a value also masks its own result, because ending a session waits for its operations and then releases. An MCP client that holds a value masks its own replies, because every MCP route suspends between a reply and the producer seam, and drops a reply that returns after it began closing; it also withholds a reply that still holds the value in a key or beyond the walk's bounds, and passes on no library text of a transport failure. `fill_credential` never fills a bridge (CDP) session, whose page outlives the session. The registry is built with the runtime, because the boot loop registers stored MCP servers before finalize builds the masker. The refresh token and the OAuth client secret only go to a token endpoint and are not registered. A census pins every vault read with its reason.
 
 **8.2 #1557 (AD-1335):** nothing from S4.
 
@@ -1477,7 +1496,7 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 - **ad-1337 R14** (Low; Medium before S4 D9).
   - *Reach:* an MCP server whose rpc error quotes its own `Authorization` header. A non-strict `MCP_BRIDGE_FAILED` carries the message in `detail` (`client.py:251-261`, `:347-352`; the spawn detail at `bridge.py:207`), and the event is durable (AD-1195).
   - *Evidence:* S4 P10 premise.
-  - *Gap:* event payloads are not masked (the same class as R4's logs). A later event-log read by a model is masked only while the client lives. S4 D9 masks a value-holding client's reply before `_emit_failed` puts its rpc message in `detail`, so this remains for a client handed no per-run value (config-declared headers, R18).
+  - *Gap:* event payloads are not masked (the same class as R4's logs). A later event-log read by a model is masked only while the client lives. S4 D9 masks a value-holding client's reply before `_emit_failed` puts its rpc message in `detail`, so this remains for a client handed no per-run value (config-declared headers, R18). S4 D12 does the same for a holding client's transport failures. One case stays: a non-ASCII credential raises `UnicodeEncodeError` inside httpx, which is not an `httpx.HTTPError`, so it bypasses `_call`'s `except`: no event is emitted, and the message names one character and its position.
 - **ad-1337 R16** (Low).
   - *Reach:* a screenshot, or `verify`'s vision call, of a page showing a filled non-password field.
   - *Gap:* text masking cannot reach pixels.
@@ -1491,6 +1510,11 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
   - *Reach:* none today. `action_fill_credential` has one call, in `BrowserTool._invoke_session`, behind `invoke`'s gate, which refuses every verb outside `_AGENT_ACTIONS`. BF-701 keeps `fill_credential` off that tuple, and AD-1154 refuses it again in dispatch (`_NEVER_PARK_ACTIONS`).
   - *Evidence:* S4 P16. S4's tests assert the refusal and run the handler on the tool's own session.
   - *Gap:* S4's browser half (the `vault:<ref>` registration before `page.fill`, `BrowserSession.hold_secret` and the `browser_session` mask in `BrowserTool.invoke`) is armed but has never run from an agent's call. A change that opens the verb must keep the registration and the session hold, and must replace the S4 helper's direct handler call with the agent path. It must also keep S4 D10's refusal of a bridge session, whose page outlives the session.
+  - *Also:* a handler that returns a structure the page controls must check the residue (`residue_after_masking`) before the session releases the value; none does today (`state` returns at most 100 records with ProbOS's keys, `eval_js` a JSON string). When `json.dumps` fails, `eval_js` falls back to `repr` (`actions.py:1110`), which escapes control characters differently from the forms the masker knows (D12's class): a change that opens `eval_js` must withhold that fallback.
+- **ad-1337 R24** (Low).
+  - *Reach:* a stdio MCP server that prints its own credential to stderr, with DEBUG logging on (`StdioTransport._drain_stderr`, `transport.py:293-314`, logs each line); an HTTP library's own DEBUG record (`httpcore.http11`, `send_request_headers.failed`) that quotes a header it rejected; a credential that the strict check lets through (`registration.py:232-236` refuses CR, LF and NUL, h11 also rejects VT, FF and whitespace at either end).
+  - *Evidence:* found by S4's review round 1 (finding 3, and a probe of finding 2); the reviewer's and the orchestrator's probes.
+  - *Gap:* logs are not masked (the class of R4, R14 and R21), and S4 leaves the transports unchanged (section 9). A hook on the transport would leave the window between `start()` and `hold_secret()`. The smallest repair of the third part: refuse, at registration, a credential that is not a valid header value under h11's grammar, so the library never sees it.
 
 ## 9. What this does NOT change
 
@@ -1518,9 +1542,9 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 | U11 | tool: `if masker is None or not session.holds_secrets:` becomes `if True:` (1) | P2 (the direct read), P3 |
 | U12 | tool: the same line becomes `if masker is None:` (1) | P6 |
 | U13 | `_settle_secret`: `client.hold_secret(handle, lambda: secret_masker_of(runtime))` becomes `handle.release()` (1) | P8, P9, P11 (published), P17 |
-| U14 | `_settle_secret`: delete `and client is not before` (1) | P10 |
+| U14 | `_settle_secret`: delete `and client is not before` (1) | P10 on `416b1a48`; after M3 P22 (section 22.8) |
 | U15 | `_settle_secret`: the else branch's `handle.release()` becomes `pass` (1) | P10, P11 (raises, cancelled) |
-| U16 | `_registered_secret`: `return handle, bridge.get_client(key)` becomes `return handle, None` (1) | P10 |
+| U16 | `_registered_secret`: `return handle, bridge.get_client(key)` becomes `return handle, None` (1) | P10 on `416b1a48`; after M3 P22 (section 22.8) |
 | U17 | `MCPClient.close`: `handle.release()` becomes `pass` (1) | P8, P9, P11, P14 |
 | U18 | `MCPClient.close`: the release moved out of the `finally`, after `await transport.close()` (4 lines re-indented) | P14 |
 | U19 | legacy: `(record.type == "http" or record.auth_env_var)` becomes `True` (1) | P12 |
@@ -1531,6 +1555,7 @@ Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the s
 | U24 | `_masked_reply`: `if outcome.failed:` becomes `if False:` (1) | P17 (withheld) |
 | U25 | credentials: `if getattr(session, "is_connected", False) is True:` becomes `if False:` (1) | P18 |
 
+- **After M3:** rows U26 to U46 are in section 22.8, and U14's line is the one M3 rewrote.
 - **Predicted equivalent:** none.
 - **U11 and the order claim of P4:** if U11 survives P3, the claim that the end runs before the caller resumes is wrong; report it rather than drop the row (P2's direct read still kills U11).
 - **sha256 rule:** record each edited file's sha256 on the candidate. If any file the Builder produces differs, rerun every row that mutates that file and every row killed by a case in `tests/test_ad1337_per_run.py`.
@@ -1604,6 +1629,7 @@ read security/secret_masking.py:39, 47, 55, 89-95   ToolResult import, DEFAULT_M
 - `rg -n "_masked_reply\(|self\._closing" src/probos/integrations/mcp_bridge/client.py` finds the def, its one call in `_call`, `_closing` set in `close` and read in `_call`; `rg -n "\"bridge_session\"" src` finds only `tools/browser/credentials.py`.
 - `git diff 02ce03ec794d -- src/probos/tools/executor.py src/probos/cognitive/ src/probos/events.py src/probos/event_persistence.py src/probos/integrations/mcp_bridge/bridge.py src/probos/routers/ docs/development/architecture-baseline.yaml tests/fixtures/` is empty.
 - `git diff 02ce03ec794d -- src/probos/security/secret_masking.py` shows insertions only, all above `class SecretHandle:`.
+- After M3: `rg -n "residue_after_masking" src` finds its def and one use (`client.py`); `rg -n "_holder_failure" src` finds its def and its one call in `_call`; `git diff 416b1a48 --stat` lists exactly `secret_masking.py`, `client.py`, `registration.py`, the test file, `PROGRESS.md`, `DECISIONS.md` and the ledger pair (not `tool.py`).
 - The new file is ASCII only.
 - Broad gate, once for batch 2 (after S5): `scripts/run_test_gate.py --label ad-1337-1560-b2 --receipt logs/gates/ad-1337-1560-b2.receipt.json`.
 
@@ -1611,31 +1637,35 @@ read security/secret_masking.py:39, 47, 55, 89-95   ToolResult import, DEFAULT_M
 
 - **Internal:** consult `4bb6d748` Q2 (source 3), Q7 and Q8; S1's `SecretRegistry`; S3's `mask_route_result` and route census (the shape of P15); AD-1343's census visitor (reused, not copied); AD-1014's `__new__` convention (the class defaults for `_held_secrets`, `_masker_of` and `_closing`); batch 1's S2 repair (consult `2188318e`: a guard ended by a lifecycle event rather than by what it protects), whose class the Architect then looked for in S4 (D9, D10).
 - **External (one search):** GitHub's workflow-command docs say to register a value with `add-mask` before it is printed or used, and masking applies only to output after registration. Adopted: register before `page.fill` and before the bridge call. Adapted: Actions never unregisters within a job; S4 releases at session end, per #1560's acceptance. OpenHands' per-conversation secret registry (consult Q2) is the same shape. Reference projects checked on 2026-11-22: OpenHands was last reviewed 2026-10-15 and is not overdue; no overdue project in the table is relevant to this design.
-- **Blind spots named:** the end-overtakes-read race (D5, fixed); the boot order (P8, fixed); event payloads (R14); a close that overtakes an MCP reply (D9, fixed; R15 is not filed); a bridge page that outlives its session (D10, fixed); pixels (R16); the dead upload hook (R17); the unreachable fill (P16, R22); config-declared MCP secrets (R18); HXI shows placeholders for a filled value while it is registered.
+- **Blind spots named:** the end-overtakes-read race (D5, fixed); the boot order (P8, fixed); event payloads (R14); a close that overtakes an MCP reply (D9, fixed; R15 is not filed); a bridge page that outlives its session (D10, fixed); pixels (R16); the dead upload hook (R17); the unreachable fill (P16, R22); config-declared MCP secrets (R18); HXI shows placeholders for a filled value while it is registered; what the bounded pass leaves (D11: fixed in the client; no browser handler returns such a shape, R22); a transport failure's text (D12: fixed for a holder; a library's DEBUG records and a child's stderr, R24); the strict check's narrowness (R24); `eval_js`'s `repr` fallback (R22); a non-ASCII credential's `UnicodeEncodeError` (R14).
 
 ## 14. Diff Reviewer: properties to verify
 
 1. Exactly two sites register: `fill_credential` (before `page.fill`) and `register_record` (before the bridge call, on both paths). Every other vault read has a true reason in P15. No S4 change opens `fill_credential` to an agent: `_AGENT_ACTIONS` and `_NEVER_PARK_ACTIONS` are unchanged, and the test helper asserts the executor's refusal (P16).
-2. Every handle has exactly one owner on every exit path. The browser handle is handed to the session with no await in between, and the session releases it in `close_resources` on every ending path. The MCP handle is either held by the client this registration newly published (a real `MCPClient`, not the one there before) or released in a `finally`. `MCPClient.close` releases in a `finally`.
+2. Every handle has exactly one owner on every exit path. The browser handle is handed to the session with no await in between, and the session releases it in `close_resources` on every ending path. The MCP handle is held by the client this registration newly published (a real `MCPClient`, not the one there before) **only when the bridge answered `True` to this registration's own call**; otherwise (answered False, raised, was cancelled, a duplicate or reused key) it is released in a `finally`. A registration that lost to a concurrent one hands its value to no client. `MCPClient.close` releases in a `finally`.
 3. A browser result is never masked after its session's release: the tool masks inside the operation whenever a masker exists and the session holds a value. A session that holds nothing leaves its results to the producer seam.
 4. With no real registry (`None`, absent, a `MagicMock`), nothing is registered, `get_client` and `holds_secrets` are not read, and behaviour, vault reads and the headers and environment handed over are unchanged.
-5. No value, form or position reaches a log, an event payload, an exception message or an audit row. Names are `kind:key` only when that is a plain label.
+5. No value, form or position reaches an event payload, an exception message or an audit row that ProbOS builds for a session or a client that holds it, or a log record ProbOS writes. Names are `kind:key` only when that is a plain label. Not covered, and recorded: a child's stderr logged at DEBUG, a third-party library's own DEBUG records (`httpcore.http11`), the loop's traceback of an exception that is not a holder's, a non-ASCII credential's `UnicodeEncodeError` (R4, R14, R24).
 6. `ProbOSRuntime` builds the registry, and `_wire_secret_masker` keeps a real one, so a boot registration is masked.
 7. A refresh releases the old access token and registers the new one. The refresh token and the client secret are never registered.
 8. `secret_masking.py` changes by insertion only, above `class SecretHandle`.
-9. An MCP client handed a value masks each reply in `_call`, with no await between the transport's return and `_masked_reply`, while that value is registered. `close` sets `_closing` before its first await, and a reply that returns after that is dropped with fixed text (`client_closed`), never returned. A failed pass withholds the reply (`bad_result`). A client handed no value, or seeing no masker, takes the old path byte for byte.
+9. An MCP client handed a value masks each reply in `_call`, with no await between the transport's return and `_masked_reply`, while that value is registered. `close` sets `_closing` before its first await, and a reply that returns after that is dropped with fixed text (`client_closed`), never returned. A failed pass withholds the reply (`bad_result`), and so does a reply whose complete JSON text still holds a form of a known value after the bounded pass, or cannot be written out as text (D11). Each of these records `MCP_BRIDGE_FAILED` with its reason and no detail (D13). A holding client's transport failure carries fixed text (`<reason>: detail withheld while the client holds a credential`) in its error and its event, with the same reason, delivery state and request id, and its cause chain is cut; ProbOS's own text (no cause, no context, no known form) is kept (D12). A client handed no value takes the old path byte for byte; a holding client that sees no masker leaves only its reply path unchanged, and still withholds a failure's library text.
 10. `fill_credential` refuses a connected (bridge) session before it reads the vault, and nothing else in the fill changes.
-11. A handle's release never comes before the end of the operation it protects: not on a cancel or an exception (the registration's `finally`; the session's hold before `page.fill`), not when a close overtakes a reply (the reply is masked before it leaves the client, or dropped), and not when what shows the value outlives its owner (a bridge page is never filled).
+11. A handle's release never comes before the end of the operation it protects: not on a cancel or an exception (the registration's `finally`; the session's hold before `page.fill`), not when a close overtakes a reply (the reply is masked before it leaves the client, or dropped, or withheld when the bounded pass could not mask all of it), and not when what shows the value outlives its owner (a bridge page is never filled).
+12. `residue_after_masking` is an insertion above `class SecretHandle`; it serialises with `json.dumps(ensure_ascii=False, default=str)` and returns the masker's outcome over that text, and a value that cannot be serialised is a failed outcome.
+13. M3 does not change `tools/browser/tool.py`: no browser handler returns a key, a depth or a width that the page controls (R22).
 
 ## 15. Acceptance
 
-- [ ] Section 5's prediction holds: a collection error on `02ce03ec794d`, then 24 passed after M1. The focused gate is green.
-- [ ] Mutation rows M21 and U1 to U25 are killed by the named cases.
+- [ ] Section 5's prediction holds: a collection error on `02ce03ec794d`, then 24 passed after M1; after M3, 38 passed (12 failed and 26 passed on `416b1a48` with M3's tests alone). The focused gate is green.
+- [ ] Mutation rows M21, U1 to U25 and U26 to U46 are killed by the named cases.
 - [ ] Section 12's `rg` and diff checks hold, and `check_architecture_principles.py --check` passes.
-- [ ] TR1 to TR3 are applied, and the ledger is regenerated and checked.
+- [ ] TR1 to TR3 and, after M3, sections 22.5 and 22.6 are applied, and the ledger is regenerated and checked.
 - [ ] Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
 
 ## 16. The orchestrator's first-hand checks (2026-11-24, scratch worktrees detached at `a86a2895`, the tip of batch 1, whose tree is main's after the merge, with this contract's operations applied)
+
+(Round 1's candidate, `416b1a48`: S4 as first built. The repair's checks are section 22.9.)
 
 The 18 operations of section 7 (the new test file, the 14 source pairs and TR1 to TR3) were applied by `audit\contract_tools.py apply` (ASCII only) to scratch copies of that tree, so no run touched another's files: `ob11s4a` (the tests alone, then the source pairs; the focused runs), `ob11s4b` (the campaign, then the tracker pairs, the ledger and the tracker consumers) and `ob11s4base` (the pure tree, for red runs and the base comparisons). Results:
 
@@ -1657,3 +1687,718 @@ The 18 operations of section 7 (the new test file, the 14 source pairs and TR1 t
 **What these checks do not show.**
 - A real Chromium page, a real MCP server and any live run: the file uses doubles for the page, the transport and the vault.
 - Linux (R10), the broad gate of batch 2 (S5 is not built yet) and the HXI.
+
+## 22. The repair after review round 1 (M3)
+
+Review round 1 of S4 (`gpt-6.1-sol`, 2026-11-24, 24.6 minutes, REQUEST CHANGES, one P1 and three P2) is answered by the Architect's consult `4dd6603c` and its follow-up (2026-11-24). This section is that decision as an operation list: the pairs M3 applies on `416b1a48` (22.1 to 22.6), the rows that kill them (22.8), the orchestrator's first-hand checks (22.9) and what they were checked against (22.10). The decisions are D11 to D15 in section 4; the corrections of earlier statements are in sections 2 to 5, 8, 10, 12 to 15. Line numbers in D11 to D15 and in the new text of section 8.3 are those of `416b1a48`, before M3's pairs (M3 moves `registration.py` down by two lines: its strict check is then at 234-238 and `_auth_headers`'s OAuth and static lines at 157 and 160); the checks of 22.9 cite the tree after them.
+
+| # | Finding of round 1 | Severity, reach | Decision | Where |
+|---|---|---|---|---|
+| F1 | A credential in a dict key, deeper than 32 levels or after 10,000 nodes of an MCP reply is masked by the render seam only while the client lives; a close during the adapter's episode write left it in the model's text | P1, ordinary, not a regression | Repair: D11 | 22.1, 22.2 (F1a, F1b, F1c) |
+| F2 | A holding client's transport failure puts the library's text (the header it rejected, as a Python `repr`) in the `MCP_BRIDGE_FAILED` event, in the caller's log and in the error the model gets | P2, a stored credential holding an interior control character | Repair: D12 | 22.2 (F2a, F2b) |
+| F3 | A child's stderr is logged at DEBUG with the credential it prints (and, found on the way, a library's own DEBUG record, and the strict check's narrowness) | P2, needs DEBUG and a server that prints its credential | Recorded: R24 (D15) | 22.5, 22.6, section 8.3 |
+| F4 | A registration that lost to a concurrent one (cancelled, or answering False) hands its handle to the winner's client | P2, ordinary, a regression of this slice | Repair: D14 | 22.3 (F4a to F4e) |
+| F5 | S4's two own raises in `_call` (`client_closed`, the withhold) record no `MCP_BRIDGE_FAILED` (found by the Architect's reading) | a regression of this slice | Repair: D13 | 22.2 (F5a) |
+| - | The browser's own pass is the same bounded `mask_result` | by construction only: no browser handler returns a key or a depth the page controls | Recorded under R22 | section 8.3 |
+
+The tests that pin the repair are P19 to P22 and an extended P17 (22.4); P22 is the strict exact reuse, which pins the identity check that `published` leaves in place.
+
+### 22.1 `src/probos/security/secret_masking.py` (M3)
+
+**F1c.** SEARCH:
+```
+class SecretHandle:
+    """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
+```
+REPLACE:
+```
+def residue_after_masking(masker: SecretMasker, value: object) -> MaskOutcome:
+    """AD-1337 S4: ``masker``'s pass over the complete JSON text of ``value``, which ``mask_result`` already masked.
+
+    ``mask_result`` never rewrites a key and stops at its depth and node bounds, leaving the rest to the render seam
+    (S3), and that seam cannot mask a value a session or client has already released. A caller that returns a result
+    while its per-run value is registered checks it here: ``names`` holds the labels of what is left, and ``failed`` is
+    true when the text cannot be built or the pass fails, so the caller withholds either way.
+    """
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError, RecursionError):
+        return MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    return masker.mask_text(text)
+
+
+class SecretHandle:
+    """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
+```
+
+### 22.2 `src/probos/integrations/mcp_bridge/client.py` (M3)
+
+**F1a.** SEARCH:
+```
+    """AD-1337 S4 (D9): ``envelope`` with each top-level value masked as the producer seam masks a tool's output, so
+    a reply's ``result`` has the same depth and node bounds here and there; ``envelope`` itself without a masker or
+    when it is not a dict. A failed pass withholds the reply: ``MCPProtocolError`` with fixed text, no value."""
+    if masker is None or not isinstance(envelope, dict):
+        return envelope
+    from probos.security.secret_masking import MASKING_FAILED_TEXT
+    from probos.tools.protocol import ToolResult
+```
+REPLACE:
+```
+    """AD-1337 S4 (D9): ``envelope`` with each top-level value masked as the producer seam masks a tool's output;
+    ``envelope`` itself without a masker or when it is not a dict. A failed pass withholds the reply:
+    ``MCPProtocolError`` with fixed text, no value. So does a reply whose complete JSON text still holds a known value
+    after that pass: ``mask_result`` never rewrites a key and stops at its depth and node bounds, and the render seam
+    that masks the rest cannot serve a value this client has already released."""
+    if masker is None or not isinstance(envelope, dict):
+        return envelope
+    from probos.security.secret_masking import MASKING_FAILED_TEXT, residue_after_masking
+    from probos.tools.protocol import ToolResult
+```
+
+**F1b.** SEARCH:
+```
+        names |= outcome.names
+        masked[key] = outcome.result.output
+    if names:
+        logger.warning("AD-1337: route=mcp_client masked names=%s", sorted(names))
+    return masked
+```
+REPLACE:
+```
+        names |= outcome.names
+        masked[key] = outcome.result.output
+    left = residue_after_masking(masker, masked)
+    if left.failed or left.names:
+        if left.names:
+            logger.warning("AD-1337: route=mcp_client withheld a reply that still held names=%s", sorted(left.names))
+        raise MCPProtocolError(
+            MASKING_FAILED_TEXT, reason="bad_result", delivery_state="sent_unconfirmed", request_id=request_id,
+        )
+    if names:
+        logger.warning("AD-1337: route=mcp_client masked names=%s", sorted(names))
+    return masked
+```
+
+**F2a.** SEARCH:
+```
+# JSON-RPC 2.0 protocol version we negotiate. MCP also has a protocol-version
+```
+REPLACE:
+```
+def _holder_failure(masker: SecretMasker | None, exc: MCPProtocolError) -> MCPProtocolError:
+    """AD-1337 S4: what a client that holds a value passes on of ``exc``, a failure its transport raised.
+
+    ``exc`` itself when ProbOS built its text and the failure has no cause and no context (``egress denied for <url>``,
+    ``HTTP 401 from <url>``, ``stdio pipe closed``) and no known value is in it. Otherwise a new error with the same
+    reason, delivery state and request id and fixed text: an HTTP library quotes what it was asked to send as a Python
+    ``repr`` (``Illegal header value b'...\\x0b...'``), whose escapes are not the forms the masker knows, so no library
+    text is passed on. A failure raised from a library's exception (the transport error, a stdio timeout) is withheld
+    whatever its text says."""
+    if masker is not None and exc.__cause__ is None and exc.__context__ is None:
+        outcome = masker.mask_text(str(exc))
+        if not outcome.failed and not outcome.names:
+            return exc
+    return MCPProtocolError(
+        f"{exc.reason or 'transport_error'}: detail withheld while the client holds a credential",
+        reason=exc.reason, delivery_state=exc.delivery_state, request_id=exc.request_id,
+    )
+
+
+# JSON-RPC 2.0 protocol version we negotiate. MCP also has a protocol-version
+```
+
+**F2b.** SEARCH:
+```
+        except MCPProtocolError as exc:
+            self._emit_failed(
+                method,
+                reason=exc.reason or "transport_error",
+                url=url,
+                detail=str(exc),
+                effect_context=effect_context,
+            )
+            if effect_context is not None and not exc.request_id:
+                exc.request_id = request_id
+            raise
+```
+REPLACE:
+```
+        except MCPProtocolError as exc:
+            held = self._masker_of
+            failure = exc if held is None else _holder_failure(held(), exc)
+            self._emit_failed(
+                method,
+                reason=failure.reason or "transport_error",
+                url=url,
+                detail=str(failure),
+                effect_context=effect_context,
+            )
+            if effect_context is not None and not failure.request_id:
+                failure.request_id = request_id
+            if failure is not exc:
+                raise failure from None
+            raise
+```
+
+**F5a.** SEARCH:
+```
+            if self._closing:
+                raise MCPProtocolError(
+                    "client closed", reason="client_closed",
+                    delivery_state="sent_unconfirmed", request_id=request_id,
+                )
+            envelope = _masked_reply(masker_of(), envelope, request_id)
+```
+REPLACE:
+```
+            if self._closing:
+                self._emit_failed(method, reason="client_closed", url=url, effect_context=effect_context)
+                raise MCPProtocolError(
+                    "client closed", reason="client_closed",
+                    delivery_state="sent_unconfirmed", request_id=request_id,
+                )
+            try:
+                envelope = _masked_reply(masker_of(), envelope, request_id)
+            except MCPProtocolError as exc:
+                self._emit_failed(method, reason=exc.reason, url=url, effect_context=effect_context)
+                raise
+```
+
+### 22.3 `src/probos/integrations/mcp_bridge/registration.py` (M3)
+
+**F4a.** SEARCH:
+```
+def _settle_secret(runtime: Any, bridge: Any, key: str, before: Any, handle: Any) -> None:
+    """AD-1337 S4: the client this registration published keeps ``handle`` until it is closed; otherwise it is released.
+
+    Only a real ``MCPClient`` that is new under ``key`` can own it. A duplicate or reused key keeps its old client
+    (which holds its own registration), and a failed or cancelled registration published nothing. The owner masks its
+    own replies with the runtime's masker, read at each reply because the boot loop registers before finalize builds
+    it (D9).
+    """
+    if handle is None:
+        return
+    from probos.integrations.mcp_bridge.client import MCPClient
+    from probos.security.secret_masking import secret_masker_of
+
+    client = bridge.get_client(key)
+    if isinstance(client, MCPClient) and client is not before:
+```
+REPLACE:
+```
+def _settle_secret(runtime: Any, bridge: Any, key: str, before: Any, handle: Any, published: bool) -> None:
+    """AD-1337 S4: the client this registration published keeps ``handle`` until it is closed; otherwise it is released.
+
+    Only a real ``MCPClient`` that is new under ``key`` can own it, and only when the bridge answered ``True`` to this
+    registration's own call: a client that another registration published under ``key`` while this one waited (a stdio
+    spawn awaits, so it can be overtaken) is not this one's, whether this one then answered False, raised or was
+    cancelled. A duplicate or reused key keeps its old client (which holds its own registration, if it holds one), and
+    a failed or cancelled registration published nothing. The owner masks its own replies with the runtime's masker,
+    read at each reply because the boot loop registers before finalize builds it (D9).
+    """
+    if handle is None:
+        return
+    from probos.integrations.mcp_bridge.client import MCPClient
+    from probos.security.secret_masking import secret_masker_of
+
+    client = bridge.get_client(key)
+    if published and isinstance(client, MCPClient) and client is not before:
+```
+
+**F4b.** SEARCH:
+```
+            handle, before = _registered_secret(runtime, bridge, record, key, secret)
+            try:
+```
+REPLACE:
+```
+            handle, before = _registered_secret(runtime, bridge, record, key, secret)
+            registered: bool | None = None
+            try:
+```
+
+**F4c.** SEARCH:
+```
+            finally:
+                _settle_secret(runtime, bridge, key, before, handle)
+```
+REPLACE:
+```
+            finally:
+                _settle_secret(runtime, bridge, key, before, handle, registered is True)
+```
+
+**F4d.** SEARCH:
+```
+    handle, before = _registered_secret(runtime, bridge, record, key, value)
+    try:
+        if record.type == "http":
+            bridge.register_server(
+                record.url, headers={**record.headers, **_auth_headers(record, value)}
+            )
+            return
+        await bridge.register_stdio_server(
+```
+REPLACE:
+```
+    handle, before = _registered_secret(runtime, bridge, record, key, value)
+    published: bool | None = None
+    try:
+        if record.type == "http":
+            published = bridge.register_server(
+                record.url, headers={**record.headers, **_auth_headers(record, value)}
+            )
+            return
+        published = await bridge.register_stdio_server(
+```
+
+**F4e.** SEARCH:
+```
+    finally:
+        _settle_secret(runtime, bridge, key, before, handle)
+```
+REPLACE:
+```
+    finally:
+        _settle_secret(runtime, bridge, key, before, handle, published is True)
+```
+
+### 22.4 `tests/test_ad1337_per_run.py` (M3)
+
+**T1.** SEARCH:
+```
+import pytest
+
+from probos.config import BrowserToolConfig, SystemConfig
+```
+REPLACE:
+```
+import httpx
+import pytest
+
+from probos.config import BrowserToolConfig, SystemConfig
+from probos.events import EventType
+```
+
+**T2.** SEARCH:
+```
+    MASKING_FAILED_TEXT,
+    MaskedResult,
+    SecretMasker,
+```
+REPLACE:
+```
+    MASKING_FAILED_TEXT,
+    MaskedResult,
+    MaskOutcome,
+    SecretMasker,
+```
+**T3.** SEARCH:
+```
+- P18: a bridge (CDP) session is never filled with a vault value.
+P2, P4, P8 and P17 assert that no form of a value reaches a log record (DEBUG), an event payload or an audit row.
+```
+REPLACE:
+```
+- P18: a bridge (CDP) session is never filled with a vault value;
+- P19: a reply that the bounded mask pass leaves a known value in (a key, a depth or a width beyond its bounds) is
+  withheld by its client, not returned to be rendered after the close;
+- P20: a client that holds a value passes on no library text of a transport failure, and cuts its cause chain;
+- P21: a registration hands its value to a client only when its own bridge call published it.
+P2, P4, P8, P17, P19 and P20 assert that no form of a value reaches a log record (DEBUG), an event payload or an audit
+row.
+```
+
+**T4.** SEARCH:
+```
+    assert dropped.value.reason == "client_closed" and gated.seen == [f"Bearer {MCP_TOKEN}"]
+```
+REPLACE:
+```
+    assert dropped.value.reason == "client_closed" and gated.seen == [f"Bearer {MCP_TOKEN}"]
+    assert [data["reason"] for event_type, data in events if event_type is EventType.MCP_BRIDGE_FAILED] == [
+        "client_closed",
+    ]
+```
+
+**T5.** SEARCH:
+```
+    assert (withheld.value.reason, str(withheld.value)) == ("bad_result", MASKING_FAILED_TEXT)
+    _clean(caplog.text, json.dumps(events, default=str), str(dropped.value))
+```
+REPLACE:
+```
+    assert (withheld.value.reason, str(withheld.value)) == ("bad_result", MASKING_FAILED_TEXT)
+    unreadable = SimpleNamespace(  # the pass over the values is fine; the pass over the complete text fails
+        mask_result=lambda result: MaskedResult(result, frozenset(), False),
+        mask_text=lambda text: MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True),
+    )
+    circular: dict[str, Any] = {}
+    circular["again"] = circular  # a reply that cannot be written out as text is withheld too
+    for probe_masker, reply in ((unreadable, {"result": {"text": "plain"}}), (masker, {"result": circular})):
+        with pytest.raises(MCPProtocolError) as unread:
+            _masked_reply(probe_masker, reply, "r2")  # type: ignore[arg-type]
+        assert (unread.value.reason, str(unread.value)) == ("bad_result", MASKING_FAILED_TEXT)
+    _clean(caplog.text, json.dumps(events, default=str), str(dropped.value))
+```
+**T6.** SEARCH:
+```
+# -- P15: the census ------------------------------------------------------------------------------------------------
+```
+REPLACE:
+```
+# -- P19 to P21: what the first review found ------------------------------------------------------------------------
+
+
+class _ShapedHttp(_EchoHttp):
+    """``_EchoHttp`` answering with a tool result that quotes the Authorization header's value in the ``shape`` asked
+    for: in a text (the control), as a dict key, nested deeper than ``mask_result`` walks (32 levels), or after more
+    nodes than it counts (10,000)."""
+
+    def __init__(self, shape: str) -> None:
+        super().__init__()
+        self.shape = shape
+
+    async def post(self, url: str, *, content: str, headers: dict[str, str]) -> Any:
+        self.seen.append(headers.get("Authorization", ""))
+        secret = headers.get("Authorization", "").removeprefix("Bearer ")
+        result: dict[str, Any] = {"content": [{"type": "text", "text": f"server saw Bearer {secret}"}]}
+        if self.shape == "key":
+            result = {"structuredContent": {secret: "account record"}, "content": [{"type": "text", "text": "ok"}]}
+        elif self.shape == "deep":
+            deep: Any = secret
+            for _ in range(36):
+                deep = {"item": deep}
+            result = {"structuredContent": deep}
+        elif self.shape == "wide":
+            result = {"structuredContent": {"items": ["padding"] * 10_010 + [secret]}}
+        body = {"jsonrpc": "2.0", "id": json.loads(content)["id"], "result": result}
+        return SimpleNamespace(
+            status_code=200, headers={"content-type": "application/json"}, json=lambda: body, text=json.dumps(body),
+        )
+
+
+@pytest.mark.parametrize("shape", ["text", "key", "deep", "wide"])
+async def test_a_reply_the_bounded_pass_leaves_a_known_value_in_is_withheld_not_returned(
+    tmp_path: Path, shape: str,
+) -> None:
+    registry, masker = _real(tmp_path)
+    events: list[tuple[Any, Any]] = []
+    bridge = MCPBridge(emit_event=lambda event_type, data: events.append((event_type, data)))
+    vault = _vault(tmp_path)
+    await vault.store(ref="mcp:srv1", value=MCP_TOKEN, scope=CredentialScope())
+    runtime = _runtime(vault, registry=registry, masker=masker, mcp_bridge=bridge)
+    await register_record(runtime, _http_record())
+    client = bridge.get_client(URL)
+    real, shaped = client._http, _ShapedHttp(shape)  # noqa: SLF001 -- AD-1014's test shim (client.py:131-144)
+    client._http = shaped  # noqa: SLF001
+    await real.aclose()
+    tool = _SuspendingBridgeTool(bridge, URL)
+    executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+    call = asyncio.create_task(executor.invoke("agent-1", "mcp_echo", {}))
+    replied = asyncio.create_task(tool.replied.wait())
+    try:
+        done, _ = await asyncio.wait({call, replied}, timeout=5.0, return_when=asyncio.FIRST_COMPLETED)
+        if shape == "text":  # the control: the masked reply reaches the tool, and the close comes after it
+            assert replied in done
+            assert await bridge.unregister_server(URL) is True and registry.values() == ()
+        else:  # the client withholds the reply before the tool can suspend with it
+            assert call in done and not tool.replied.is_set(), "the reply was returned"
+    finally:
+        tool.gate.set()
+        replied.cancel()
+    if shape == "text":
+        shown = (await call).output
+        assert shown == {"content": [{"type": "text", "text": f"server saw Bearer {MCP_LABEL}"}]}
+        output = json.dumps(shown)
+    else:
+        with pytest.raises(MCPProtocolError) as withheld:
+            await call
+        assert (withheld.value.reason, str(withheld.value)) == ("bad_result", MASKING_FAILED_TEXT)
+        failed = [data for event_type, data in events if event_type is EventType.MCP_BRIDGE_FAILED]
+        assert [data["reason"] for data in failed] == ["bad_result"]
+        assert await bridge.unregister_server(URL) is True  # a close after the call changes nothing
+        output = str(withheld.value)
+    _clean(output, json.dumps(events, default=str))
+
+
+class _FailingTransport:
+    """A transport whose request fails as the real HttpTransport does when its library rejects a header
+    (transport.py:175-182): ``transport error: <the library's text>``, raised ``from`` the library's exception; or
+    raising ``error``, which ProbOS built itself."""
+
+    last_metadata: dict[str, str] = {}
+
+    def __init__(self, *, header: bytes | None = None, error: MCPProtocolError | None = None) -> None:
+        self.header, self.error = header, error
+
+    async def start(self) -> None:
+        return None
+
+    async def request(self, payload: dict[str, Any]) -> dict:
+        if self.error is not None:
+            raise self.error
+        try:
+            raise httpx.LocalProtocolError(f"Illegal header value {self.header!r}")
+        except httpx.HTTPError as exc:
+            raise MCPProtocolError(
+                f"transport error: {exc}", reason="transport_error", delivery_state="sent_unconfirmed",
+                request_id=str(payload.get("id") or ""),
+            ) from exc
+
+    async def close(self) -> None:
+        return None
+
+
+_WITHHELD = "detail withheld while the client holds a credential"
+
+
+@pytest.mark.parametrize("suffix", ["\n", "\x0b"], ids=["line feed", "vertical tab"])
+async def test_a_client_holding_a_value_passes_on_no_library_text_of_a_transport_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, suffix: str,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    registry, masker = _real(tmp_path)
+    value = MCP_TOKEN + suffix + "tail-part"  # a credential the library rejects as a header value
+    events: list[tuple[Any, Any]] = []
+    held = MCPClient(
+        session=MCPSession(server_url=URL), transport=_FailingTransport(header=f"Bearer {value}".encode()),
+        emit_event=lambda event_type, data: events.append((event_type, data)),
+    )
+    held.hold_secret(registry.register("mcp:learn", value), lambda: masker)
+    with pytest.raises(MCPProtocolError) as raised:
+        await held.call_tool("echo", {})
+    error = raised.value
+    assert (str(error), error.reason, error.delivery_state) == (
+        f"transport_error: {_WITHHELD}", "transport_error", "sent_unconfirmed",
+    )
+    assert error.request_id and error.__cause__ is None and error.__suppress_context__
+    [event] = [data for event_type, data in events if event_type is EventType.MCP_BRIDGE_FAILED]
+    assert event == {"server_url": URL, "method": "tools/call", "reason": "transport_error", "detail": str(error)}
+    logging.getLogger("tests.ad1337.s4").warning("the call failed", exc_info=error)  # as a caller logs a tool failure
+    _clean(caplog.text, json.dumps(events, default=str), str(error), repr(error))
+    bare = MCPClient(session=MCPSession(server_url=URL), transport=_FailingTransport(header=f"Bearer {value}".encode()))
+    with pytest.raises(MCPProtocolError) as plain:  # a client that holds nothing passes the library's text on
+        await bare.call_tool("echo", {})
+    assert str(plain.value).startswith("transport error: Illegal header value b'Bearer ")
+    assert plain.value.__cause__ is not None
+
+
+@pytest.mark.parametrize("case", ["built by ProbOS", "built with the value", "no masker"])
+async def test_a_client_holding_a_value_keeps_the_failure_text_probos_built_unless_it_holds_the_value(
+    tmp_path: Path, case: str,
+) -> None:
+    registry, masker = _real(tmp_path)
+    message = f"egress denied for {URL}?k={MCP_TOKEN}" if case == "built with the value" else f"HTTP 401 from {URL}"
+    built = MCPProtocolError(message, reason="http_error", delivery_state="completed", request_id="r1")
+    held = MCPClient(session=MCPSession(server_url=URL), transport=_FailingTransport(error=built))
+    held.hold_secret(registry.register("mcp:learn", MCP_TOKEN), lambda: None if case == "no masker" else masker)
+    with pytest.raises(MCPProtocolError) as raised:
+        await held.call_tool("echo", {})
+    if case == "built by ProbOS":
+        assert raised.value is built and str(raised.value) == f"HTTP 401 from {URL}"
+    else:
+        assert raised.value is not built
+        assert (str(raised.value), raised.value.reason, raised.value.delivery_state, raised.value.request_id) == (
+            f"http_error: {_WITHHELD}", "http_error", "completed", "r1",
+        )
+        _clean(str(raised.value))
+
+
+@pytest.mark.parametrize("mode", ["legacy", "strict"])
+@pytest.mark.parametrize("ending", ["cancelled", "overtaken"])
+async def test_a_registration_overtaken_while_it_waits_hands_its_value_to_no_client(
+    tmp_path: Path, mode: str, ending: str,
+) -> None:
+    registry = SecretRegistry()
+    bridge = _StdioBridge()
+    vault = _vault(tmp_path)
+    await vault.store(ref="mcp:srv2", value=OLD_ACCESS, scope=CredentialScope())
+    runtime = _runtime(vault, registry=registry, masker=None, mcp_bridge=bridge)
+    strict = mode == "strict"
+    bridge.gate = gate = asyncio.Event()
+    loser = asyncio.create_task(register_record(runtime, _stdio_record(), require_ready=strict))
+    await asyncio.wait_for(bridge.entered.wait(), 5.0)
+    assert registry.values() == (("mcp:local", OLD_ACCESS),)
+    bridge.gate = None  # the winner does not wait
+    await vault.store(ref="mcp:srv2", value=NEW_ACCESS, scope=CredentialScope())
+    await register_record(runtime, _stdio_record(), require_ready=strict)  # publishes a client over NEW_ACCESS
+    winner = bridge.get_client("local")
+    assert isinstance(winner, MCPClient) and sorted(value for _, value in registry.values()) == [NEW_ACCESS, OLD_ACCESS]
+    if ending == "cancelled":
+        loser.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loser
+    else:
+        gate.set()  # the loser resumes, finds the name taken and answers False
+        await loser
+    assert registry.values() == (("mcp:local", NEW_ACCESS),) and len(winner._held_secrets) == 1  # noqa: SLF001
+    assert await bridge.unregister_server("local") is True and registry.values() == ()
+
+
+async def test_an_exact_reuse_keeps_the_old_client_and_releases_the_new_value(tmp_path: Path) -> None:
+    registry = SecretRegistry()
+    bridge = MCPBridge()
+    vault = _vault(tmp_path)
+    await vault.store(ref="mcp:srv1", value=MCP_TOKEN, scope=CredentialScope())
+    runtime = _runtime(vault, registry=registry, masker=None, mcp_bridge=bridge)
+    assert await register_record(runtime, _http_record(), require_ready=True) is True
+    first = bridge.get_client(URL)
+    assert isinstance(first, MCPClient) and len(first._held_secrets) == 1  # noqa: SLF001
+    assert await register_record(runtime, _http_record(), require_ready=True) is True  # an exact reuse answers True
+    assert bridge.get_client(URL) is first and len(first._held_secrets) == 1  # noqa: SLF001
+    assert registry.values() == (("mcp:learn", MCP_TOKEN),)
+    assert await bridge.unregister_server(URL) is True and registry.values() == ()
+
+
+# -- P15: the census ------------------------------------------------------------------------------------------------
+```
+
+### 22.5 `PROGRESS.md` (M3)
+
+**TR4a.** SEARCH:
+```
+Such a client masks its own replies (route `mcp_client`), because every MCP route suspends between a reply and the producer seam (an episode write), and it drops a reply that returns after `close` began.
+```
+REPLACE:
+```
+Such a client masks its own replies (route `mcp_client`), because every MCP route suspends between a reply and the producer seam (an episode write), drops a reply that returns after `close` began, and withholds a reply whose complete JSON text still holds a known value after the bounded pass (a key, or a depth or width beyond what `mask_result` walks, which the render seam could no longer mask once the client had closed). It passes on no library text of a transport failure, which an HTTP library quotes as a Python `repr` that no masker form matches: the failure event, the error and the caller's traceback carry fixed text. A registration hands its value to a client only when the bridge answered True to its own call.
+```
+
+**TR4b.** SEARCH:
+```
+(17 cases, 24 items):
+```
+REPLACE:
+```
+(22 cases, 38 items):
+```
+
+**TR4c.** SEARCH:
+```
+no form of a value reaches a log, an event or an audit row;
+```
+REPLACE:
+```
+no form of a value reaches an event, an error message or an audit row that ProbOS builds for a session or a client that holds it, or a log record ProbOS writes (a child's stderr and a library's own DEBUG records are not masked: #1820 ad-1337 R24);
+```
+
+**TR4d.** SEARCH:
+```
+a bridge session is refused before the vault is read; a census pins every vault read with its reason.
+```
+REPLACE:
+```
+a reply with a value in a key, beyond the depth or beyond the width is withheld, not returned; a holding client's transport failure passes on no library text; a registration overtaken while it waits hands its value to no client; a bridge session is refused before the vault is read; a census pins every vault read with its reason.
+```
+
+### 22.6 `DECISIONS.md` (M3)
+
+**TR5a.** SEARCH:
+```
+(identity checked against the client already under the key) and releases it in `close`
+```
+REPLACE:
+```
+(the bridge answered True to the registration's own call, and the client under the key is a real `MCPClient` that is not the one there before) and releases it in `close`
+```
+
+**TR5b.** SEARCH:
+```
+(route `mcp_client`), and drops a reply that returns after `close` began. `fill_credential` refuses a bridge session
+```
+REPLACE:
+```
+(route `mcp_client`), drops a reply that returns after `close` began, and withholds a reply whose complete JSON text still holds a known value after the bounded pass (`mask_result` never rewrites a key and stops at its bounds, and the render seam cannot mask a value the client has released). A transport failure of a holding client carries fixed text and no cause chain: the HTTP library quotes a rejected header as a Python `repr`, whose escapes for NUL, VT and FF are not the forms the masker knows. Its own withholds and drops record `MCP_BRIDGE_FAILED`. `fill_credential` refuses a bridge session
+```
+
+**TR5c.** SEARCH:
+```
+#1820 items ad-1337 R13, R14, R16 to R18 and R22 (R15 is fixed in S4 by the client masking its own replies).
+```
+REPLACE:
+```
+#1820 items ad-1337 R13, R14, R16 to R18, R22 and R24 (R15 is fixed in S4 by the client masking its own replies; R24 records a child's stderr, a library's own DEBUG records and the strict credential check, which is narrower than the HTTP library's grammar).
+```
+
+### 22.7 Ledger (M3)
+
+Run `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py`, then the same command with `--check`. Commit any regenerated `docs/development/open-ads-report.md` and `ad-ledger-snapshot.json` in M3 (the orchestrator regenerates them; the Builder does not).
+
+### 22.8 Mutation rows of the repair (one campaign on the M3 candidate, with M21 and U1 to U25; restore between rows)
+
+| Row | Mutant (lines changed) | Killed by |
+|---|---|---|
+| U26 | `_masked_reply`: `if left.failed or left.names:` becomes `if False:` (1) | P19 key, deep, wide |
+| U27 | the same line becomes `if left.names:` (1) | P17 (the pass over the complete text fails) |
+| U28 | the same line becomes `if left.failed:` (1) | P19 key, deep, wide |
+| U29 | `residue_after_masking`: the JSON text loses every key (`re.sub` over each `"key":`), so keys are not checked (1) | P19 key |
+| U30 | `residue_after_masking`: `except (TypeError, ValueError, RecursionError):` becomes `except TypeError:` (1) | P17 (a circular reply) |
+| U31 | `_holder_failure`: the cause and context test is dropped, so form masking alone decides (1) | P20 vertical tab |
+| U32 | `_holder_failure`: the `masker is not None` test is dropped (1) | P20 no masker |
+| U33 | `_holder_failure`: `if not outcome.failed and not outcome.names:` becomes `if True:` (1) | P20 built with the value |
+| U34 | `_call`: `if failure is not exc:` becomes `if False:`, so the original is re-raised (1) | P20 (all five items that replace) |
+| U35 | `_call`: `raise failure from None` becomes `raise failure` (1) | P20 line feed, vertical tab |
+| U36 | `_call`: `failure = exc if held is None else _holder_failure(held(), exc)` becomes `failure = exc` (1) | P20 (all five items that replace) |
+| U37 | `_holder_failure`: the new error loses `request_id=exc.request_id` (1) | P20 (all five items that replace) |
+| U38 | `_call`: the `client_closed` emission becomes `pass` (1) | P17 |
+| U39 | `_call`: the emission in the `_masked_reply` handler becomes `pass` (1) | P19 key, deep, wide |
+| U40 | `_settle_secret`: `published and` is deleted from the condition (1) | P21 (x4) |
+| U41 | the strict call's last argument `registered is True` becomes `True` (1) | P21 cancelled-strict, overtaken-strict |
+| U42 | the legacy call's last argument `published is True` becomes `True` (1) | P21 cancelled-legacy, overtaken-legacy |
+| U43 | strict: `registered: bool | None = None` becomes `pass` (1) | P11 raises_strict (an unbound name in the `finally`) |
+| U44 | legacy: `published = bridge.register_server(` becomes `bridge.register_server(` (1) | P8, P9, P17 |
+| U45 | legacy: `published = await bridge.register_stdio_server(` becomes `await bridge.register_stdio_server(` (1) | P11 published, P21 cancelled-legacy, overtaken-legacy |
+| U46 | `residue_after_masking`: `return masker.mask_text(text)` becomes `return MaskOutcome(text, frozenset(), False)` (1) | P19 key, deep, wide |
+
+- **Predicted equivalent:** none.
+- **U14 and U16** keep their purpose, and P22 (the strict exact reuse) is now their killer: U14 deletes `and client is not before` from `if published and isinstance(client, MCPClient) and client is not before:`, and U16 makes `_registered_secret` note no earlier client (`return handle, None`); P10's duplicate case answers False and releases through `published` before either matters (U16 was killed by P10 on `416b1a48`).
+- **sha256 rule:** record each edited file's sha256 on the candidate. If any file the Builder produces differs, rerun every row that mutates that file and every row killed by a case in `tests/test_ad1337_per_run.py`.
+
+### 22.9 The orchestrator's first-hand checks of the repair (2026-11-24, scratch worktree `ob11s4r1` detached at `416b1a48`, with sections 22.1 to 22.4 applied by `audit\contract_tools.py apply --prefix 22.`)
+
+The 24 operations of sections 22.1 to 22.6 (the source pairs, the test pairs and the tracker pairs) were applied by `audit\contract_tools.py apply --prefix 22.` (ASCII only) to scratch copies of the tree at `416b1a48`, so no run touched another's files: `ob11s4r1` (the tests alone, then the source pairs; the probes and the campaign) and `ob11s4r2` (all 24 operations, the regenerated ledger and the focused runs). The tree of each probe is the one its report names; the reviewer's own probes were re-run unchanged on a clean copy of `416b1a48` first (`rv1337s4`, evidence `evidence-rv-s4r1-repro.txt`). Results (R1 to R10 are section 16's, on the first candidate):
+
+| R | Result |
+|---|---|
+| R11 | **The pairs.** `contract_tools.py list --prefix 22.` finds the 24 operations (F1c; F1a, F1b, F2a, F2b, F5a; F4a to F4e; T1 to T6; TR4a to TR4d; TR5a to TR5c), and a dry run on the real tree at `416b1a48` finds every SEARCH exactly once: F1c 116 to 999 characters; F1a 542 to 754; F1b 189 to 567; F2a 77 to 1,329; F2b 397 to 599; F5a 298 to 592; F4a 849 to 1,191; F4b 102 to 145; F4c 89 to 109; F4d 319 to 377; F4e 73 to 92; T1 72 to 121; T2 60 to 77; T3 179 to 580; T4 92 to 232; T5 171 to 916; T6 117 to 10,918; TR4a 203 to 724; TR4b 21 to 21; TR4c 59 to 247; TR4d 101 to 330; TR5a 86 to 169; TR5b 116 to 601; TR5c 108 to 257. M3's delta is `secret_masking.py` +15 -0, `client.py` +46 -9, `registration.py` +14 -10, the test file +227 -2, `PROGRESS.md` +1 -1 (the entry is one line), `DECISIONS.md` +2 -2 and the ledger pair +4 -4. The blob after each operation is in the `contract_tools.py checkpoints --prefix 22.` table that the Builder brief carries; the oracle's six files equal its final blobs (6 of 6): `secret_masking.py` `263e1b65`, `client.py` `d95ddb70`, `registration.py` `316b5a7f`, the test file `60d44c2e`, `PROGRESS.md` `a7d94df1` and `DECISIONS.md` `e6feaa8a`. |
+| R12 | **Red, then green.** The six test pairs alone on `416b1a48`: **12 failed, 26 passed** in 14.0 s (38 collected: S4's 24 and the 14 new items). The failures are P17 (`assert [] == ['client_closed']`: no event), P19 key, deep and wide ("the reply was returned"), P20 line feed and vertical tab (the library's text is passed on), P20 built with the value and no masker (the exception is not replaced), and P21 cancelled and overtaken, legacy and strict (the registry holds both values); P19 text, P20 built by ProbOS and P22 pass as controls, and the 23 other S4 cases pass. With the source pairs: **38 passed** in 13.7 s; under `-W error`: 38 passed in 13.9 s. |
+| R13 | **The campaign** (`audit\mutants_gen.py`, `audit\rows_ad1337s4r1.py`; the test file alone; each row changes one line and restores the file before the next): the unmutated candidate ran 38 cases, all passed. **47 rows (M21, U1 to U25, U26 to U46): killed 47, differs 0, survived 0, invalid 0**, and every named killer failed in every row. The first pass over the 47 rows gave 45 killed and two that the repair itself changed, both corrected in the rows file and rerun alone: U16 DIFFERED (its killer P10 no longer reaches it, because the duplicate answers False and releases through `published` before `before` matters; P22 now kills it) and U29 SURVIVED (its first mutant dropped only the top-level dict's keys, while P19's key shape holds the value in a nested key; the mutant now strips every key, and P19 key kills it). After the first pass one docstring of F2a was corrected (it named a timeout among the texts a holding client keeps; a stdio timeout is raised from a library exception and is withheld): `client.py` without docstrings has an identical syntax tree, and the green run and the 18 rows that mutate `client.py` (U17, U18, U20 to U22, U24, U26 to U28, U31 to U39) were repeated on the final file, all killed (`evidence-b11s4r3-campaign-client.txt`). The edited files' LF sha256 on the final candidate: `secret_masking.py` `d18ee0e6`, `client.py` `d252a4e5`, `registration.py` `3a12e7b0` and the test file `28638a12` (the full values are in `evidence-b11s4r3-campaign-client.txt`); the other five files are section 16's R4 values. If a file the Builder produces differs in blob from R11's, rerun every row that mutates that file and every row killed by a case in the test file. |
+| R14 | **The reviewer's findings, re-run** (probes with their own controls; `files\audit\probe_*.py`, `evidence-*-s4r1-*.txt`). **F1:** the reviewer's `route` probe on a clean copy of `416b1a48` gives `close_before_render=True; model_value_present=True` for the key and deep shapes (107 and 402 characters) and masked text for both orders of the control shape; a retargeted copy (`probe_route_after.py`, which also accepts a reply that never reaches the adapter's episode write) fails its own leak assertion on that copy and, on the repaired tree, shows the text shape returned masked in both orders and the key, deep and wide shapes withheld by the client (`tool output withheld: secret masking failed`), with no value in the model's text. **F2:** `probe_ctl_chars.py` (the real httpx and h11 against a scratch-local listener, the real `_McpTool` and `ToolExecutor`, one credential per control character): on `416b1a48` an interior LF, CR, VT, FF and NUL each reach the failure event and the caller's WARNING, and VT, FF and NUL reach the error text the model gets as well (the producer seam cannot match a `repr` escape); on a prototype that masked the text by forms LF and CR were masked and VT, FF and NUL still leaked (the Architect's prediction, confirmed); on the repaired tree none of the five reaches the event, the error or a ProbOS log record, and the only record that still holds the value is third-party, `httpcore.http11` at DEBUG (`probe_ob_f2logger.py`; R24). **F4:** the reviewer's `ownership` probe gives `registry_count_after_cancel=2; live_client_held_count=2` on `416b1a48` and `1; 1` on the repaired tree. **F3:** the `stdio` probe is unchanged (`stderr_log_value_present=True`), as decided (R24). The reviewer's other checks (`close_abort`, `labels`, `boot`, `refresh`, `cost`, `census`, `no_registry_browser`, `browser`) give the same results on the repaired tree; `cost`: for 100 replies a bare client makes no masking pass and a holding client makes 300 `mask_result` calls and 400 registry reads (it was 300 and 300) in 4 ms. |
+| R15 | **The focused gate of section 12** (52 files, `-n 0`, through the home-guard wrapper with an empty redirected home, on `ob11s4r2` with all 24 operations and the regenerated ledger): **2136 passed, 3 skipped** with the default embedding mode (747.6 s), and the same, **2136 passed, 3 skipped** (661.1 s), with `PROBOS_EMBEDDINGS=local`, CI's mode. These two runs, and the first campaign pass, ran on the candidate before that docstring correction (R13). The 3 skips are the same as before M3 (`tests/test_ad706_browser_tool.py:370` and `tests/test_browser_session_lifecycle.py:243` and `:302`, "Requires real Playwright + Chromium"); 2,122 and the 14 new items make the 2,136. The five entries left in the redirected home are the host's Overwolf log file (`OWLog.cfg`), as in the earlier runs. |
+| R16 | **The static checks of section 12.** `rg -n "residue_after_masking" src` finds the def (`secret_masking.py:252`), the import (`client.py:39`) and its one use (`client.py:52`); `rg -n "_holder_failure" src` finds its def (`client.py:64`) and its one call (`:310`); `rg -l "register_run_secret\("` finds the same three files; `git diff 02ce03ec794d -- src/probos/security/secret_masking.py` shows **36 insertions and 0 deletions**, one hunk at line 231, above `class SecretHandle` (now line 267); `git diff 416b1a48 --numstat` lists exactly the eight files of R11 (not `tool.py`); the diff of the files section 12 names as untouched is empty; the test file has no byte above 127 (`client.py` keeps its six, which are not M3's); `check_architecture_principles.py --check` passes with `srp-size=92, layer-import=0, db-connect=30, unowned-task=13`, the same counts as before M3 (`MCPClient` keeps 14 methods); the three modules import. |
+| R17 | **M3's trackers.** TR4a to TR4d and TR5a to TR5c apply (one occurrence each). `gen_ad_ledger.py` wrote the ledger pair, `--check` reports "AD/BF ledger is current", and each file of the pair differs by one or three replaced lines (the snapshot's `captured_at`, `head` and `subject_count`; the report's git-log row): no `PROGRESS.md` line number moved, because TR4 edits inside the one line of the entry. The tests that read the trackers, the ledger or the research doc: the eight files of R7 with `test_ad758_program_gate.py` and the new file, **270 passed** in 93 s (R7's 256 and the 14 new items). |
+| R18 | **Linux.** The new test block (204 lines) was searched for the constructs that differ (a process spawn, `os.environ`, `HOME`, file modes, path separators, `read_text` without an encoding, signals, `sys.platform`, sleeps, sockets, temporary files): it has none. It builds its vault and its masker over `tmp_path` through the file's helpers, uses doubles for the HTTP client, the transport and the bridge's spawn (`_ShapedHttp`, `_FailingTransport`, `_StdioBridge`), builds the library's exception with `httpx.LocalProtocolError`, and waits only on events with the file's 5-second bounds. That is a reading, not a Linux run: the pull request's CI is the only one. |
+| R19 | **The premises and absences, read again on `416b1a48`** (section 22.10): the bounds of `mask_result`, the publish points and answers of both bridge registrations, the library's header grammar, the strict check, the browser handlers' shapes, the single production call of `unregister_server`, the consumers of `MCP_BRIDGE_FAILED` and of `_settle_secret`, and Python's exception-context rules were each read or run first-hand. One claim of the Architect's consult was wrong and is corrected in D11 and D12 (agreed in the follow-up): `eval_js` returns a JSON string, so the browser has no key or depth the page controls; and "a pasted trailing newline" never reaches the library, because a static header is stripped. |
+
+**What the orchestrator changed in the Architect's design:** nothing in the repair's behaviour. One addition: the exact-reuse case P22 and the rows U14 and U16's new killer, because the `published` gate made P10 independent of the identity check, which the repair keeps. One omission: the browser check with its test and row (the consult's own P22 and U31), dropped by the Architect's follow-up.
+
+**What these checks do not show.** Section 22.11.
+
+### 22.10 Verified Against Codebase (2026-11-24, `416b1a48`)
+
+```
+read security/secret_masking.py:40-60, 76-130, 198-260, 380-500   47-48 DEFAULT_MAX_DEPTH 32, DEFAULT_MAX_NODES 10,000; 121-148 secret_forms (JSON, URL and base64 forms; no repr form); 213-228 mask_route_result;
+  231-249 A1's insertions; 252 class SecretHandle (the F1c anchor, once); 383-394 mask_text; 395-431 mask_result; 471-504 _map_strings: keys are never rewritten, the walk stops at the bounds
+read integrations/mcp_bridge/client.py:1-130, 196-440   31-52 _masked_reply; 75-98 MCPProtocolError; 225-257 hold_secret and close; 259-352 _call (278-289 the transport except; 296-303 the holder's pass); 392-422 _emit_failed; 59-70 _STRICT_FAILURE_REASONS
+read integrations/mcp_bridge/transport.py:154-222, 291-346   176-180 `transport error: {exc}` raised from the library's exception; 190, 217 other raises; 293-314 _drain_stderr logs each line at DEBUG; 325-329 `stdio write failed: {exc}`; 336-341 the timeout
+read integrations/mcp_bridge/bridge.py:55-290   62-86 register_server (synchronous; True only when it publishes); 88-215 register_stdio_server (awaits at 139, 163, 182; publishes and returns True at 186-190; CancelledError closes the candidate, 191-198; a loser answers False, 213-215; reuse answers True at 159, 165, 215)
+read integrations/mcp_bridge/registration.py:46-135, 196-316   99-114 _registered_secret; 116-135 _settle_secret; 232-236 the strict check (CR, LF, NUL only); 151-158 _auth_headers (static: strip, 158; oauth: no strip, 155); 254-272 strict call; 295-311 legacy call
+read tools/executor.py:700-790   740-775 a tool's exception propagates (bare raise) after the terminal hooks
+read tools/browser/actions.py:60-80, 540-585, 790-806, 1086-1116   67 _STATE_MAX_ELEMENTS 100; 544-581 _action_state (fixed keys); 792-804 extract_text; 1108-1114 eval_js returns a JSON string (repr on failure)
+read tools/browser/tool.py:94-130, 800-830, 940-1010   123-127 _AGENT_ACTIONS (no eval_js, no fill_credential); 817-827 the operation's own pass; 948-980 the handler's dict is returned unchanged
+read tests/test_ad1337_per_run.py (the whole file)   P17 623-662; the census 665-746; the doubles _EchoHttp 336-361, _NullTransport 378-396, _StdioBridge 399-427
+rg "unregister_server\(|close_all\(" src -> routers/mcp_servers.py:325 (the one production call of unregister_server); close_all only in bridge.py:30 (docstring) and :276 (def)
+rg "MCP_BRIDGE_FAILED" src -> events.py:375; event_persistence.py:76 (durable); federation/mcp_server.py:635 (its own emission); bridge.py:290-310; client.py:422
+rg "_settle_secret|_registered_secret" src tests -> registration.py only (module-private)
+rg "\.register_server\(|\.register_stdio_server\(" src -> adoption.py:245; registration.py:257, 262, 298, 302; finalize.py:5097, 5103
+rg "residue_after_masking|_holder_failure" src -> none before M3
+h11 0.16.0, httpx 0.28.1, httpcore 1.0.9 (the venv): normalize_and_validate rejects an interior CR, LF, NUL, VT or FF, and whitespace at either end; accepts a tab, a space and DEL inside; httpx.Headers accepts a non-ASCII value and the encode fails later with UnicodeEncodeError (not an httpx.HTTPError)
+python: a raise inside an except without `from` sets __context__ and leaves __suppress_context__ False (the original's text is in the formatted traceback); `from None` keeps __context__ in memory, sets __suppress_context__ and leaves the original's text out of the formatted traceback; a raise outside any except has neither
+```
+
+### 22.11 What these checks do not show
+
+- A real Chromium page, a real MCP server (the HTTP probes use a scratch-local listener and the real httpx and h11; the stdio probe a real child), the vessel and Linux (the pull request's CI is the only Linux run).
+- A reply of megabytes: the added cost is one JSON text and one `mask_text` pass per reply of a holding client (measured on 100 small replies: 300 `mask_result` calls and 400 registry reads, 4 ms).
