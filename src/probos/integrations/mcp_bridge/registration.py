@@ -113,13 +113,15 @@ def _registered_secret(
         raise
 
 
-def _settle_secret(runtime: Any, bridge: Any, key: str, before: Any, handle: Any) -> None:
+def _settle_secret(runtime: Any, bridge: Any, key: str, before: Any, handle: Any, published: bool) -> None:
     """AD-1337 S4: the client this registration published keeps ``handle`` until it is closed; otherwise it is released.
 
-    Only a real ``MCPClient`` that is new under ``key`` can own it. A duplicate or reused key keeps its old client
-    (which holds its own registration), and a failed or cancelled registration published nothing. The owner masks its
-    own replies with the runtime's masker, read at each reply because the boot loop registers before finalize builds
-    it (D9).
+    Only a real ``MCPClient`` that is new under ``key`` can own it, and only when the bridge answered ``True`` to this
+    registration's own call: a client that another registration published under ``key`` while this one waited (a stdio
+    spawn awaits, so it can be overtaken) is not this one's, whether this one then answered False, raised or was
+    cancelled. A duplicate or reused key keeps its old client (which holds its own registration, if it holds one), and
+    a failed or cancelled registration published nothing. The owner masks its own replies with the runtime's masker,
+    read at each reply because the boot loop registers before finalize builds it (D9).
     """
     if handle is None:
         return
@@ -127,7 +129,7 @@ def _settle_secret(runtime: Any, bridge: Any, key: str, before: Any, handle: Any
     from probos.security.secret_masking import secret_masker_of
 
     client = bridge.get_client(key)
-    if isinstance(client, MCPClient) and client is not before:
+    if published and isinstance(client, MCPClient) and client is not before:
         client.hold_secret(handle, lambda: secret_masker_of(runtime))
     else:
         handle.release()
@@ -252,6 +254,7 @@ async def register_record(
             auth_env = _auth_env(record, secret)
             key = record.url if record.type == "http" else record.name
             handle, before = _registered_secret(runtime, bridge, record, key, secret)
+            registered: bool | None = None
             try:
                 if record.type == "http":
                     registered = bridge.register_server(
@@ -269,7 +272,7 @@ async def register_record(
                         reuse_if_matching=True,
                     )
             finally:
-                _settle_secret(runtime, bridge, key, before, handle)
+                _settle_secret(runtime, bridge, key, before, handle, registered is True)
             if registered is True:
                 client = bridge.get_client(key)
                 if client is not None and (record.type == "http" or client.is_alive is True):
@@ -293,13 +296,14 @@ async def register_record(
         value = await resolve_secret_value(record, runtime)
     key = record.url if record.type == "http" else record.name
     handle, before = _registered_secret(runtime, bridge, record, key, value)
+    published: bool | None = None
     try:
         if record.type == "http":
-            bridge.register_server(
+            published = bridge.register_server(
                 record.url, headers={**record.headers, **_auth_headers(record, value)}
             )
             return
-        await bridge.register_stdio_server(
+        published = await bridge.register_stdio_server(
             name=record.name,
             command=record.command,
             args=list(record.args),
@@ -308,4 +312,4 @@ async def register_record(
             timeout=record.timeout_seconds,
         )
     finally:
-        _settle_secret(runtime, bridge, key, before, handle)
+        _settle_secret(runtime, bridge, key, before, handle, published is True)

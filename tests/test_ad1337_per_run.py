@@ -18,8 +18,13 @@ replaced, as AD-449's tests replace it), the real ToolExecutor and S1's real mas
 - P15: every vault read registers its value or has a recorded reason;
 - P17: an MCP reply read before its client closes stays masked when the route suspends past the close, and a reply
   still on the wire when close begins is dropped;
-- P18: a bridge (CDP) session is never filled with a vault value.
-P2, P4, P8 and P17 assert that no form of a value reaches a log record (DEBUG), an event payload or an audit row.
+- P18: a bridge (CDP) session is never filled with a vault value;
+- P19: a reply that the bounded mask pass leaves a known value in (a key, a depth or a width beyond its bounds) is
+  withheld by its client, not returned to be rendered after the close;
+- P20: a client that holds a value passes on no library text of a transport failure, and cuts its cause chain;
+- P21: a registration hands its value to a client only when its own bridge call published it.
+P2, P4, P8, P17, P19 and P20 assert that no form of a value reaches a log record (DEBUG), an event payload or an audit
+row.
 Does not prove: a real Chromium page, a real MCP server, a live vessel, or an agent's fill: no agent can call
 fill_credential today (contract premise P16), so the helper asserts the refusal and runs the handler on the tool's
 own session.
@@ -36,9 +41,11 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 from probos.config import BrowserToolConfig, SystemConfig
+from probos.events import EventType
 from probos.integrations.mcp_bridge import MCPBridge
 from probos.integrations.mcp_bridge.client import MCPClient, MCPProtocolError, _masked_reply
 from probos.integrations.mcp_bridge.registration import register_record
@@ -50,6 +57,7 @@ from probos.security.audit import AuditLog
 from probos.security.secret_masking import (
     MASKING_FAILED_TEXT,
     MaskedResult,
+    MaskOutcome,
     SecretMasker,
     SecretRegistry,
     register_run_secret,
@@ -653,13 +661,230 @@ async def test_a_reply_read_before_its_client_closes_stays_masked_and_one_after_
     with pytest.raises(MCPProtocolError) as dropped:
         await pending
     assert dropped.value.reason == "client_closed" and gated.seen == [f"Bearer {MCP_TOKEN}"]
+    assert [data["reason"] for event_type, data in events if event_type is EventType.MCP_BRIDGE_FAILED] == [
+        "client_closed",
+    ]
     failing = SimpleNamespace(
         mask_result=lambda result: MaskedResult(ToolResult(error=MASKING_FAILED_TEXT), frozenset(), True),
     )
     with pytest.raises(MCPProtocolError) as withheld:
         _masked_reply(failing, {"result": {"text": MCP_TOKEN}}, "r1")  # type: ignore[arg-type]
     assert (withheld.value.reason, str(withheld.value)) == ("bad_result", MASKING_FAILED_TEXT)
+    unreadable = SimpleNamespace(  # the pass over the values is fine; the pass over the complete text fails
+        mask_result=lambda result: MaskedResult(result, frozenset(), False),
+        mask_text=lambda text: MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True),
+    )
+    circular: dict[str, Any] = {}
+    circular["again"] = circular  # a reply that cannot be written out as text is withheld too
+    for probe_masker, reply in ((unreadable, {"result": {"text": "plain"}}), (masker, {"result": circular})):
+        with pytest.raises(MCPProtocolError) as unread:
+            _masked_reply(probe_masker, reply, "r2")  # type: ignore[arg-type]
+        assert (unread.value.reason, str(unread.value)) == ("bad_result", MASKING_FAILED_TEXT)
     _clean(caplog.text, json.dumps(events, default=str), str(dropped.value))
+
+
+# -- P19 to P21: what the first review found ------------------------------------------------------------------------
+
+
+class _ShapedHttp(_EchoHttp):
+    """``_EchoHttp`` answering with a tool result that quotes the Authorization header's value in the ``shape`` asked
+    for: in a text (the control), as a dict key, nested deeper than ``mask_result`` walks (32 levels), or after more
+    nodes than it counts (10,000)."""
+
+    def __init__(self, shape: str) -> None:
+        super().__init__()
+        self.shape = shape
+
+    async def post(self, url: str, *, content: str, headers: dict[str, str]) -> Any:
+        self.seen.append(headers.get("Authorization", ""))
+        secret = headers.get("Authorization", "").removeprefix("Bearer ")
+        result: dict[str, Any] = {"content": [{"type": "text", "text": f"server saw Bearer {secret}"}]}
+        if self.shape == "key":
+            result = {"structuredContent": {secret: "account record"}, "content": [{"type": "text", "text": "ok"}]}
+        elif self.shape == "deep":
+            deep: Any = secret
+            for _ in range(36):
+                deep = {"item": deep}
+            result = {"structuredContent": deep}
+        elif self.shape == "wide":
+            result = {"structuredContent": {"items": ["padding"] * 10_010 + [secret]}}
+        body = {"jsonrpc": "2.0", "id": json.loads(content)["id"], "result": result}
+        return SimpleNamespace(
+            status_code=200, headers={"content-type": "application/json"}, json=lambda: body, text=json.dumps(body),
+        )
+
+
+@pytest.mark.parametrize("shape", ["text", "key", "deep", "wide"])
+async def test_a_reply_the_bounded_pass_leaves_a_known_value_in_is_withheld_not_returned(
+    tmp_path: Path, shape: str,
+) -> None:
+    registry, masker = _real(tmp_path)
+    events: list[tuple[Any, Any]] = []
+    bridge = MCPBridge(emit_event=lambda event_type, data: events.append((event_type, data)))
+    vault = _vault(tmp_path)
+    await vault.store(ref="mcp:srv1", value=MCP_TOKEN, scope=CredentialScope())
+    runtime = _runtime(vault, registry=registry, masker=masker, mcp_bridge=bridge)
+    await register_record(runtime, _http_record())
+    client = bridge.get_client(URL)
+    real, shaped = client._http, _ShapedHttp(shape)  # noqa: SLF001 -- AD-1014's test shim (client.py:131-144)
+    client._http = shaped  # noqa: SLF001
+    await real.aclose()
+    tool = _SuspendingBridgeTool(bridge, URL)
+    executor = ToolExecutor(registry=_registry(tool), secret_masker=masker)
+    call = asyncio.create_task(executor.invoke("agent-1", "mcp_echo", {}))
+    replied = asyncio.create_task(tool.replied.wait())
+    try:
+        done, _ = await asyncio.wait({call, replied}, timeout=5.0, return_when=asyncio.FIRST_COMPLETED)
+        if shape == "text":  # the control: the masked reply reaches the tool, and the close comes after it
+            assert replied in done
+            assert await bridge.unregister_server(URL) is True and registry.values() == ()
+        else:  # the client withholds the reply before the tool can suspend with it
+            assert call in done and not tool.replied.is_set(), "the reply was returned"
+    finally:
+        tool.gate.set()
+        replied.cancel()
+    if shape == "text":
+        shown = (await call).output
+        assert shown == {"content": [{"type": "text", "text": f"server saw Bearer {MCP_LABEL}"}]}
+        output = json.dumps(shown)
+    else:
+        with pytest.raises(MCPProtocolError) as withheld:
+            await call
+        assert (withheld.value.reason, str(withheld.value)) == ("bad_result", MASKING_FAILED_TEXT)
+        failed = [data for event_type, data in events if event_type is EventType.MCP_BRIDGE_FAILED]
+        assert [data["reason"] for data in failed] == ["bad_result"]
+        assert await bridge.unregister_server(URL) is True  # a close after the call changes nothing
+        output = str(withheld.value)
+    _clean(output, json.dumps(events, default=str))
+
+
+class _FailingTransport:
+    """A transport whose request fails as the real HttpTransport does when its library rejects a header
+    (transport.py:175-182): ``transport error: <the library's text>``, raised ``from`` the library's exception; or
+    raising ``error``, which ProbOS built itself."""
+
+    last_metadata: dict[str, str] = {}
+
+    def __init__(self, *, header: bytes | None = None, error: MCPProtocolError | None = None) -> None:
+        self.header, self.error = header, error
+
+    async def start(self) -> None:
+        return None
+
+    async def request(self, payload: dict[str, Any]) -> dict:
+        if self.error is not None:
+            raise self.error
+        try:
+            raise httpx.LocalProtocolError(f"Illegal header value {self.header!r}")
+        except httpx.HTTPError as exc:
+            raise MCPProtocolError(
+                f"transport error: {exc}", reason="transport_error", delivery_state="sent_unconfirmed",
+                request_id=str(payload.get("id") or ""),
+            ) from exc
+
+    async def close(self) -> None:
+        return None
+
+
+_WITHHELD = "detail withheld while the client holds a credential"
+
+
+@pytest.mark.parametrize("suffix", ["\n", "\x0b"], ids=["line feed", "vertical tab"])
+async def test_a_client_holding_a_value_passes_on_no_library_text_of_a_transport_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, suffix: str,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    registry, masker = _real(tmp_path)
+    value = MCP_TOKEN + suffix + "tail-part"  # a credential the library rejects as a header value
+    events: list[tuple[Any, Any]] = []
+    held = MCPClient(
+        session=MCPSession(server_url=URL), transport=_FailingTransport(header=f"Bearer {value}".encode()),
+        emit_event=lambda event_type, data: events.append((event_type, data)),
+    )
+    held.hold_secret(registry.register("mcp:learn", value), lambda: masker)
+    with pytest.raises(MCPProtocolError) as raised:
+        await held.call_tool("echo", {})
+    error = raised.value
+    assert (str(error), error.reason, error.delivery_state) == (
+        f"transport_error: {_WITHHELD}", "transport_error", "sent_unconfirmed",
+    )
+    assert error.request_id and error.__cause__ is None and error.__suppress_context__
+    [event] = [data for event_type, data in events if event_type is EventType.MCP_BRIDGE_FAILED]
+    assert event == {"server_url": URL, "method": "tools/call", "reason": "transport_error", "detail": str(error)}
+    logging.getLogger("tests.ad1337.s4").warning("the call failed", exc_info=error)  # as a caller logs a tool failure
+    _clean(caplog.text, json.dumps(events, default=str), str(error), repr(error))
+    bare = MCPClient(session=MCPSession(server_url=URL), transport=_FailingTransport(header=f"Bearer {value}".encode()))
+    with pytest.raises(MCPProtocolError) as plain:  # a client that holds nothing passes the library's text on
+        await bare.call_tool("echo", {})
+    assert str(plain.value).startswith("transport error: Illegal header value b'Bearer ")
+    assert plain.value.__cause__ is not None
+
+
+@pytest.mark.parametrize("case", ["built by ProbOS", "built with the value", "no masker"])
+async def test_a_client_holding_a_value_keeps_the_failure_text_probos_built_unless_it_holds_the_value(
+    tmp_path: Path, case: str,
+) -> None:
+    registry, masker = _real(tmp_path)
+    message = f"egress denied for {URL}?k={MCP_TOKEN}" if case == "built with the value" else f"HTTP 401 from {URL}"
+    built = MCPProtocolError(message, reason="http_error", delivery_state="completed", request_id="r1")
+    held = MCPClient(session=MCPSession(server_url=URL), transport=_FailingTransport(error=built))
+    held.hold_secret(registry.register("mcp:learn", MCP_TOKEN), lambda: None if case == "no masker" else masker)
+    with pytest.raises(MCPProtocolError) as raised:
+        await held.call_tool("echo", {})
+    if case == "built by ProbOS":
+        assert raised.value is built and str(raised.value) == f"HTTP 401 from {URL}"
+    else:
+        assert raised.value is not built
+        assert (str(raised.value), raised.value.reason, raised.value.delivery_state, raised.value.request_id) == (
+            f"http_error: {_WITHHELD}", "http_error", "completed", "r1",
+        )
+        _clean(str(raised.value))
+
+
+@pytest.mark.parametrize("mode", ["legacy", "strict"])
+@pytest.mark.parametrize("ending", ["cancelled", "overtaken"])
+async def test_a_registration_overtaken_while_it_waits_hands_its_value_to_no_client(
+    tmp_path: Path, mode: str, ending: str,
+) -> None:
+    registry = SecretRegistry()
+    bridge = _StdioBridge()
+    vault = _vault(tmp_path)
+    await vault.store(ref="mcp:srv2", value=OLD_ACCESS, scope=CredentialScope())
+    runtime = _runtime(vault, registry=registry, masker=None, mcp_bridge=bridge)
+    strict = mode == "strict"
+    bridge.gate = gate = asyncio.Event()
+    loser = asyncio.create_task(register_record(runtime, _stdio_record(), require_ready=strict))
+    await asyncio.wait_for(bridge.entered.wait(), 5.0)
+    assert registry.values() == (("mcp:local", OLD_ACCESS),)
+    bridge.gate = None  # the winner does not wait
+    await vault.store(ref="mcp:srv2", value=NEW_ACCESS, scope=CredentialScope())
+    await register_record(runtime, _stdio_record(), require_ready=strict)  # publishes a client over NEW_ACCESS
+    winner = bridge.get_client("local")
+    assert isinstance(winner, MCPClient) and sorted(value for _, value in registry.values()) == [NEW_ACCESS, OLD_ACCESS]
+    if ending == "cancelled":
+        loser.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await loser
+    else:
+        gate.set()  # the loser resumes, finds the name taken and answers False
+        await loser
+    assert registry.values() == (("mcp:local", NEW_ACCESS),) and len(winner._held_secrets) == 1  # noqa: SLF001
+    assert await bridge.unregister_server("local") is True and registry.values() == ()
+
+
+async def test_an_exact_reuse_keeps_the_old_client_and_releases_the_new_value(tmp_path: Path) -> None:
+    registry = SecretRegistry()
+    bridge = MCPBridge()
+    vault = _vault(tmp_path)
+    await vault.store(ref="mcp:srv1", value=MCP_TOKEN, scope=CredentialScope())
+    runtime = _runtime(vault, registry=registry, masker=None, mcp_bridge=bridge)
+    assert await register_record(runtime, _http_record(), require_ready=True) is True
+    first = bridge.get_client(URL)
+    assert isinstance(first, MCPClient) and len(first._held_secrets) == 1  # noqa: SLF001
+    assert await register_record(runtime, _http_record(), require_ready=True) is True  # an exact reuse answers True
+    assert bridge.get_client(URL) is first and len(first._held_secrets) == 1  # noqa: SLF001
+    assert registry.values() == (("mcp:learn", MCP_TOKEN),)
+    assert await bridge.unregister_server(URL) is True and registry.values() == ()
 
 
 # -- P15: the census ------------------------------------------------------------------------------------------------

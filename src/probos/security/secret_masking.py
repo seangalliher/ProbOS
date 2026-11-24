@@ -249,6 +249,21 @@ def register_run_secret(holder: object, kind: str, key: str, value: str | None) 
     return registry.register(name if secret_label(name) == name else kind, value)
 
 
+def residue_after_masking(masker: SecretMasker, value: object) -> MaskOutcome:
+    """AD-1337 S4: ``masker``'s pass over the complete JSON text of ``value``, which ``mask_result`` already masked.
+
+    ``mask_result`` never rewrites a key and stops at its depth and node bounds, leaving the rest to the render seam
+    (S3), and that seam cannot mask a value a session or client has already released. A caller that returns a result
+    while its per-run value is registered checks it here: ``names`` holds the labels of what is left, and ``failed`` is
+    true when the text cannot be built or the pass fails, so the caller withholds either way.
+    """
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError, RecursionError):
+        return MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    return masker.mask_text(text)
+
+
 class SecretHandle:
     """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
 

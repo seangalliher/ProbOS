@@ -29,12 +29,14 @@ logger = logging.getLogger(__name__)
 
 
 def _masked_reply(masker: SecretMasker | None, envelope: Any, request_id: str) -> Any:
-    """AD-1337 S4 (D9): ``envelope`` with each top-level value masked as the producer seam masks a tool's output, so
-    a reply's ``result`` has the same depth and node bounds here and there; ``envelope`` itself without a masker or
-    when it is not a dict. A failed pass withholds the reply: ``MCPProtocolError`` with fixed text, no value."""
+    """AD-1337 S4 (D9): ``envelope`` with each top-level value masked as the producer seam masks a tool's output;
+    ``envelope`` itself without a masker or when it is not a dict. A failed pass withholds the reply:
+    ``MCPProtocolError`` with fixed text, no value. So does a reply whose complete JSON text still holds a known value
+    after that pass: ``mask_result`` never rewrites a key and stops at its depth and node bounds, and the render seam
+    that masks the rest cannot serve a value this client has already released."""
     if masker is None or not isinstance(envelope, dict):
         return envelope
-    from probos.security.secret_masking import MASKING_FAILED_TEXT
+    from probos.security.secret_masking import MASKING_FAILED_TEXT, residue_after_masking
     from probos.tools.protocol import ToolResult
 
     names: set[str] = set()
@@ -47,9 +49,35 @@ def _masked_reply(masker: SecretMasker | None, envelope: Any, request_id: str) -
             )
         names |= outcome.names
         masked[key] = outcome.result.output
+    left = residue_after_masking(masker, masked)
+    if left.failed or left.names:
+        if left.names:
+            logger.warning("AD-1337: route=mcp_client withheld a reply that still held names=%s", sorted(left.names))
+        raise MCPProtocolError(
+            MASKING_FAILED_TEXT, reason="bad_result", delivery_state="sent_unconfirmed", request_id=request_id,
+        )
     if names:
         logger.warning("AD-1337: route=mcp_client masked names=%s", sorted(names))
     return masked
+
+
+def _holder_failure(masker: SecretMasker | None, exc: MCPProtocolError) -> MCPProtocolError:
+    """AD-1337 S4: what a client that holds a value passes on of ``exc``, a failure its transport raised.
+
+    ``exc`` itself when ProbOS built its text and the failure has no cause and no context (``egress denied for <url>``,
+    ``HTTP 401 from <url>``, ``stdio pipe closed``) and no known value is in it. Otherwise a new error with the same
+    reason, delivery state and request id and fixed text: an HTTP library quotes what it was asked to send as a Python
+    ``repr`` (``Illegal header value b'...\\x0b...'``), whose escapes are not the forms the masker knows, so no library
+    text is passed on. A failure raised from a library's exception (the transport error, a stdio timeout) is withheld
+    whatever its text says."""
+    if masker is not None and exc.__cause__ is None and exc.__context__ is None:
+        outcome = masker.mask_text(str(exc))
+        if not outcome.failed and not outcome.names:
+            return exc
+    return MCPProtocolError(
+        f"{exc.reason or 'transport_error'}: detail withheld while the client holds a credential",
+        reason=exc.reason, delivery_state=exc.delivery_state, request_id=exc.request_id,
+    )
 
 
 # JSON-RPC 2.0 protocol version we negotiate. MCP also has a protocol-version
@@ -278,15 +306,19 @@ class MCPClient:
         try:
             envelope = await self._transport.request(payload)
         except MCPProtocolError as exc:
+            held = self._masker_of
+            failure = exc if held is None else _holder_failure(held(), exc)
             self._emit_failed(
                 method,
-                reason=exc.reason or "transport_error",
+                reason=failure.reason or "transport_error",
                 url=url,
-                detail=str(exc),
+                detail=str(failure),
                 effect_context=effect_context,
             )
-            if effect_context is not None and not exc.request_id:
-                exc.request_id = request_id
+            if effect_context is not None and not failure.request_id:
+                failure.request_id = request_id
+            if failure is not exc:
+                raise failure from None
             raise
 
         # AD-1337 S4 (D9): a client handed a value masks its reply here, with no await since the transport returned:
@@ -296,11 +328,16 @@ class MCPClient:
         masker_of = self._masker_of
         if masker_of is not None:
             if self._closing:
+                self._emit_failed(method, reason="client_closed", url=url, effect_context=effect_context)
                 raise MCPProtocolError(
                     "client closed", reason="client_closed",
                     delivery_state="sent_unconfirmed", request_id=request_id,
                 )
-            envelope = _masked_reply(masker_of(), envelope, request_id)
+            try:
+                envelope = _masked_reply(masker_of(), envelope, request_id)
+            except MCPProtocolError as exc:
+                self._emit_failed(method, reason=exc.reason, url=url, effect_context=effect_context)
+                raise
 
         if not isinstance(envelope, dict):
             self._emit_failed(
