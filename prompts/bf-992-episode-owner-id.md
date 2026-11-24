@@ -7,7 +7,7 @@
 **Number:** BF-992. The orchestrator allocated it on 2026-11-24, when `docs/development/open-ads-report.md:32` named it as the next free BF. BF-993 was allocated afterwards, to a test repair inside B12 (#1815), so on this base the report shows BF-993 as the ceiling and BF-992 among the numbers below it that no authority mentions, until this item's tracker entries land. No AD.
 **Line endings:** the working copies are CRLF and the blocks below are LF. Every SEARCH starts at a line start and occurs once in its file at its turn. All new text is ASCII.
 **Estimated tests:** 22 new cases in three new files (12 in sections 6.3 and 6.9; 10 in 16.2, amendment A1); 0 changed; 0 removed.
-**Scope:** `src/probos/boot_camp.py`, `startup/finalize.py`, `cognitive/episodic.py`, `cognitive/qualification_tests.py`, `acm.py`, `cognitive/memory_probes.py`, `cognitive/drift_detector.py` (amendment A1, section 16), three new test files and the trackers.
+**Scope:** `src/probos/boot_camp.py`, `startup/finalize.py`, `cognitive/episodic.py`, `cognitive/qualification_tests.py`, `acm.py`, `cognitive/memory_probes.py`, `cognitive/drift_detector.py` (amendment A1, section 16), three new test files, the trackers and `docs/development/deterministic-ship.md` (amendment A2, section 17).
 
 ## 1. Problem
 
@@ -72,8 +72,10 @@ The Builder applies the pairs and runs no test. The orchestrator commits by plum
   Subject: `Drift window leaves out results a probe skipped, as it does inconclusive ones`
 - **M5** (amendment A1, trackers): A1-3 and A1-4, then `gen_ad_ledger.py` as in M3; stage the two ledger files if they change.
   Subject: `Trackers for the drift window and skipped probe results`
+- **M6** (amendment A2, documentation only): A2-1 and A2-2 in 17.1.
+  Subject: `Invariants table states the boot camp count as repaired and keeps the Birth Chamber gate as the gap`
 
-One Builder delegation covers M1 to M3, under about 60 tool calls. A second delegation (amendment A1) covers M4 and M5, under about 20 tool calls.
+One Builder delegation covers M1 to M3, under about 60 tool calls. A second delegation (amendment A1) covers M4 and M5, under about 20 tool calls. A third (amendment A2) covers M6, under about 10 tool calls.
 
 **Shared contracts touched:**
 - The enrolment dict: one producer, `finalize.py:1003-1011`; one consumer, `activate` (A3). The new key is additive and optional.
@@ -821,6 +823,10 @@ Pinned files, as they stand in the A1 oracle's working copy (sha256):
 | `src/probos/cognitive/drift_detector.py` | `23723971bdefb8e60f729e53ff0e9b546d8a6c03e9e63d84cdc1efa305838c09` |
 | `tests/test_bf992_drift_skipped_rows.py` | `2a09bd4e1bb212e3ce74f004dabbde361a4826d4b7cd0938c2ce8845dff1de35` |
 
+### 15.7 Amendment A2 (a documentation correction): results on the oracle tree
+
+The oracle is a clean detached tree at `74d6477e` with the two pairs of section 17 applied by `contract_tools.py` (each SEARCH occurred once at its turn; `ws_ambiguity.py`: 0 hazards; `git diff --check` clean): `docs/development/deterministic-ship.md` goes to blob `bf61cfab5f1b981006b51f96684c9fb750202286` (2 lines changed, rows 2 and 6 of the invariants table). Read first-hand for A2: `holodeck/chamber.py:149-150` builds the Birth Chamber record with `agent_id=agent.id`, the slot id, so `gate_calibration_baseline` (`holodeck/gates.py:79`) counts under the slot id; `rg "deterministic-ship" tests scripts .github` finds no match. No source or test file changes in A2, so no test was run for it.
+
 ## 16. Amendment A1 (review round 1: row 992-R1)
 
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24 (Architect decision B on the round-1 register row).
@@ -1113,4 +1119,34 @@ REPLACE:
 - *D5.* The probe's skipped results still pass at 1.0 and still set the first baseline; with crew episodes now counted, a run of them in the drift window made the first measured score read as drift (#1324 register row 992-R1, measured in review round 1).
 - *D6.* Amendment A1: the drift window also leaves out rows whose `details["skipped"]` is True, beside BF-711's `inconclusive` filter (`drift_detector.py`, after `:150`). A skip measured nothing, whichever probe wrote it (`memory_probes`, `domain_tests`, `collective_tests`, the recall probe; `behavioral_probes` already marks its skips inconclusive, BF-923). The flag is read from the stored row, so rows already in the store are covered without a migration. Tests `tests/test_bf992_drift_skipped_rows.py`. Rejected: marking the skips inconclusive at their producers (new rows only; the stored windows would still raise the first-run alarm), and holding this item for the AD-1186 item. The skipped baseline and the signal's `direction` stay with the AD-1186 item in #1324.
 - *Reversal.* Revert the commits; reverting A1's commit alone restores counting of skipped rows in the drift window. Qualification results the probe records meanwhile stay in the store.
+```
+
+## 17. Amendment A2 (a documentation correction, found after review round 2)
+
+**Revised by:** the orchestrator, 2026-11-24. Documentation only: no source line and no test line changes.
+
+**What changed and why.** `docs/development/deterministic-ship.md` lists the boot camp's slot-id episode count as a known gap in two rows of its invariants table (row 2, "One shared state", and row 6, "Honest self-report"), citing the #1324 register addition and `boot_camp.py:211`. This change repairs that gap, so both rows are false once it lands, and the cited line has moved. A2 states the repair in row 2's "Provided today by" column (the boot camp, the recall probe and the consolidated profile count under the id the episodes carry) and keeps the one gap that stays, as the register row 992-R2 records it: the AD-486 Birth Chamber's calibration gate (`holodeck/gates.py:79`) still counts under the slot id, and #1700 S1 deletes it. The sentence of the document's closing paragraph that names the boot camp's slot-id count among the findings of the AD-1270 work is history and stays. No test or script reads this document (`rg "deterministic-ship" tests scripts .github`: no match).
+
+**Milestone M6** (the orchestrator commits by plumbing; the body says `Refs #1324.`): A2-1 and A2-2. Subject: `Invariants table states the boot camp count as repaired and keeps the Birth Chamber gate as the gap`. A third Builder delegation covers it, under about 10 tool calls; section 5 applies unchanged. There is no Diff Reviewer round (a documentation-only change, as with the earlier amendments of this kind); the pull request says so. The broad gate runs once on the final head.
+
+### 17.1 `docs/development/deterministic-ship.md` (M6)
+
+**A2-1**
+SEARCH:
+```markdown
+#hybrid-coordination-ad-1231)). | About 18 other local identity resolvers remain (AD-1346 epic, #1601). The AD-638 boot camp counts episodes under the slot id while episodes carry the sovereign id, so no enrolled agent graduates on its criteria (#1324 register addition, 2026-10-29; `boot_camp.py:211`). Trust inputs
+```
+REPLACE:
+```markdown
+#hybrid-coordination-ad-1231)). The AD-638 boot camp, the episodic-recall probe and the consolidated profile count episodes under the id the agent's episodes carry (BF-992, `boot_camp.py`, `cognitive/episodic.py`). | About 18 other local identity resolvers remain (AD-1346 epic, #1601). The AD-486 Birth Chamber's calibration gate still counts episodes under the slot id while episodes carry the sovereign id (`holodeck/gates.py:79`; #1700 S1 deletes it). Trust inputs
+```
+
+**A2-2**
+SEARCH:
+```markdown
+(AD-1355, #1700, Problem items 1-10). The boot-camp slot-id count above. A recall gate never bound
+```
+REPLACE:
+```markdown
+(AD-1355, #1700, Problem items 1-10). The Birth Chamber calibration gate's slot-id count above. A recall gate never bound
 ```
