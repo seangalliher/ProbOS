@@ -1,9 +1,9 @@
 # BF-981 part 2: the rest of the gate-load test family holds under a held child start, a failed listing, a held clock and a held unit end; the gate step names its worker count
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24
-**Assembled by:** the orchestrator, 2026-11-24: the section 6 headings and the pair layout follow what `contract_tools.py` reads; the Architect's text is otherwise unchanged.
-**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24, for review round 1 of the candidate (consult 65a617b6): Amendment A1 (section 16) and the sentence changes the Architect listed in sections 6.8, 8.3, 8.5, 9, 11, 12, 13 and 14. The orchestrator measured row L8 and the results of section 15.3.
-**Status:** ready to build; M1 to M4 are built and committed, and Amendment A1 (section 16) is the repair of review round 1. **Owning issue:** #1815 (this ends it). It also ticks #1523 F-1 and #1820 bf-885 F1. Commits say `Refs #1815, #1523, #1820.`
+**Assembled by:** the orchestrator, 2026-11-24: the section 6 headings and the pair layout follow what `contract_tools.py` reads; the rest of section 16 (findings table, prose, gates), sections 15.3 and 15.4, the rest of section 17, the probe's per-case reset and its `late_hold` helper; the orchestrator measured rows L8, C1 to C6 and D1 to D4. The Architect's text is otherwise unchanged.
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24: for review round 1 (consult 65a617b6), pairs A16-1 to A16-3 and the sentence changes the Architect listed in sections 6.8, 8.3, 8.5, 9, 11, 12, 13 and 14; for review round 2 (consult 835422c2), pair A17-1, the section 17 findings row and the sentence replacements listed in that consult.
+**Status:** ready to build; M1 to M4 are built and committed, Amendment A1 (section 16) is the repair of review round 1, and Amendment A2 (section 17) of review round 2. **Owning issue:** #1815 (this ends it). It also ticks #1523 F-1 and #1820 bf-885 F1. Commits say `Refs #1815, #1523, #1820.`
 **Base:** `542a2a68` (origin/main). **Number:** BF-981 is reused (D6); no AD or BF is allocated.
 **Line endings:** the working copies are CRLF and the blocks below are LF; the orchestrator matches them after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
 **Estimated tests:** 0 new, 0 removed, 6 changed (A1 runs two cases).
@@ -599,6 +599,13 @@ def pytest_runtest_setup(item):
         writer = sys.modules["probos.identity_writer"].IdentityWriter
         real_ended = writer._ended
         late = MODE == "identity_late_hold"  # hold the late unit's own end, not the ends after it
+        async def late_hold():  # the late unit's end, held once; logged as let go or cancelled
+            log(event="late_held", t=time.monotonic())
+            try:
+                await asyncio.sleep(HOLD_S)
+            except asyncio.CancelledError:
+                log(event="late_cancelled", t=time.monotonic()); raise
+            log(event="late_released", t=time.monotonic())
         async def ended(self, db, commit, committed):
             if state["armed"] and not late:
                 log(event="end_held", t=time.monotonic()); await asyncio.sleep(HOLD_S)
@@ -608,12 +615,12 @@ def pytest_runtest_setup(item):
                 first = not state["armed"]
                 state["armed"] = True; log(event="armed")
                 if late and first:
-                    log(event="late_held", t=time.monotonic()); await asyncio.sleep(HOLD_S)
+                    await late_hold()
                 raise
             if failure is not None and not state["armed"]:
                 state["armed"] = True; log(event="armed")
                 if late:
-                    log(event="late_held", t=time.monotonic()); await asyncio.sleep(HOLD_S)
+                    await late_hold()
             return failure
         writer._ended = ended; state["patched"] = True
 
@@ -632,7 +639,7 @@ def pytest_sessionfinish(session, exitstatus):
 | L5 | `gitlist_after_kill` | same as L4 | fails with `CalledProcessError` | **fails** at `the last poll could not list the worktrees`; this proves a failed last listing does not pass the final check; the registration comparison itself is item bf-981 L3 |
 | L6 | `identity_hold`, 0.5 | `test_bf885_identity_db_units.py::test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_it_lands_and_verifies_remotely` (both cases) | both cases fail (`IdentityUnitUnsettled`) | both pass; the first `armed` row comes before any `end_held` row |
 | L7 | `clock` | `test_ad1246_long_run_units.py::test_plan_long_run_turn_time_left_lowers_the_request` | fails at `900.0 < plan.timeout_seconds <= 1000.0` | passes |
-| L8 | `identity_late_hold`, 6.0 | `test_bf885_identity_db_units.py::test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_it_lands_and_verifies_remotely` (both cases) | both cases fail later, at the follower's re-issue (`IdentityUnitUnsettled`); the first candidate (`54a7b9bf`) fails the same way | both cases **fail** at `premise: the late unit ended within 5 s, before the production bound is restored`; 1 `late_held` row each; this proves the bound is restored only after the late unit has ended |
+| L8 | `identity_late_hold`, 6.0 | `test_bf885_identity_db_units.py::test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_it_lands_and_verifies_remotely` (both cases) | both cases fail later, at the follower's re-issue (`IdentityUnitUnsettled`), its held end cancelled at teardown (1 `late_cancelled` row each); the first candidate (`54a7b9bf`) fails the same way, its held end released (1 `late_released` row each) | both cases **fail** at `premise: the late unit ended within 5 s, before the production bound is restored`; 1 `late_held` and 1 `late_released` row each, no `late_cancelled` row; this proves the bound is restored only after the late unit has ended, and that a failed premise still lets that unit end before the registry closes |
 
 ### 8.4 Mutation rows (one row at a time, restored before the next)
 
@@ -672,7 +679,7 @@ Run one canonical gate on the frozen batch at the default of 16 workers: `script
 3. No premise becomes vacuous:
    - a `None` listing never passes the final check;
    - `active_at_admit == [0, 1]` and every A1 premise assertion remain;
-   - A1 lowers the bound before the late task starts, and restores it only after asserting that the late unit's end completed;
+   - A1 lowers the bound before the late task starts, restores it only after asserting that the late unit's end completed, and its `finally` joins the writer's newest unit end with the late and following tasks;
    - the F-1 assertion is strictly stronger.
 4. No `skip`, `xfail`, retry or broadened `except` is added. `check=False` appears only in `_worktree_listing`.
 5. `_BOUND_S`, `_rows` and `_SharedFactory` are unchanged, and the W cases still lower the bound to `_BOUND_S`.
@@ -755,7 +762,7 @@ HOLDS: yes
 - **L1.** The stressor holds only direct children. A slow grandchild (the bf893 beater) is covered by the premise polls and is not reproduced.
 - **L2.** The suspension follows `CreateProcess` by a few milliseconds, so a child can run briefly before it is held. Python reaches user code later than that; this was not measured.
 - **L3.** Not measured: the loss rate at 16 workers over later gates, the hosted Linux runner (CI only), and whether part 1's tests still fail at 16.
-- **L4.** A2 (`:1016`) and A3 (`:1071`) still lower the bound for their whole test (filed as item bf-981 L1).
+- **L4.** A2 (`:1023`) and A3 (`:1078`) still lower the bound for their whole test, and their `finally` joins leave out the writer's unit end (filed as item bf-981 L1).
 - **L5.** The Architect ran no test. Every count and row is the orchestrator's to measure.
 - **L6.** The final registration comparison is a string match against git's forward slashes, so on Windows it cannot see a retained registration (review round 1; item bf-981 L3).
 
@@ -781,7 +788,7 @@ Then post a one-line comment on #1523 that links the tick. An aggregator item is
 " **Repaired (BF-981 part 2, PR #<n>, merge `<sha>`), evidence <date>:** A1 keeps the 0.2 s bound for the late unit only. Troi's birth and every unit after the late unit has ended run at the production bound, read before the test lowers it. Correction to the evidence above: the refused unit was the re-issued follower's own. The traceback ends in `_end` (`identity_writer.py:158`), not in the A-1 admission check (`:120`), and the second warning says that unit committed. With every unit end after the late one held 0.5 s, the old A1 fails both cases and the new one passes both (row L6); mutant B1: <result>. The cases that check the bound fires still use `_BOUND_S = 0.2`."
 
 **New items for #1820** (no new issue):
-- **bf-981 L1** (P3, Low; test-only; reach: a loaded runner; no occurrence recorded, banked runs not scanned): A2 (`tests/test_bf885_identity_db_units.py:1016`) and A3 (`:1071`) lower the bound to 0.2 s for the whole test, so their units after the late one have A1's old exposure. Smallest repair: A1's pattern.
+- **bf-981 L1** (P3, Low; test-only; reach: a loaded runner, and injected for the leftover end; no occurrence recorded, banked runs not scanned): A2 (`tests/test_bf885_identity_db_units.py:1023`) and A3 (`:1078`) lower the bound to 0.2 s for the whole test, so their units after the late one have A1's old exposure; and when the late unit's end outlasts their 5 s wait, their `finally` leaves it running, to be cancelled at loop teardown after the registry has closed. Smallest repair: A1's pattern, which includes joining the writer's own unit end in the `finally`.
 - **bf-981 L2** (P3, docs drift): the gate bullet's "roughly 15-19 minutes" (`.github/agents/orchestrator.agent.md:134`) does not match #1815's measurements: 30 and 44 min at 16 workers, and 1 h 13 min at 3.
 - **bf-981 L3** (P2, Low; test-only; reach: injected only, a cleanup that removes the directory and keeps its registration; pre-existing, not a regression; found by review round 1 of #1815 with an in-memory listing probe on the base and the candidate): the hard-death test (`tests/test_run_test_gate.py`, `test_wrapper_hard_death_cleans_command_worktree_registration_and_lock`) checks `str(gate_root) not in listing` in its cleanup poll and in its final assertion. On Windows `git worktree list --porcelain` prints `D:/...` and `str(Path)` gives `D:\...`, so a retained registration is never seen and the test passes. Smallest repair: parse the listing's `worktree ` lines into `Path` values and check that `gate_root` is not among them, in the poll and in the final assertion. Proof row: a probe that, after the wrapper is killed, appends `worktree <gate_root in forward slashes>` to each listing; the old test passes and the new one fails at the registration assertion. Nearest neighbour: `_worktree_is_registered` (`scripts/_gate_process_supervisor.py`), which compares resolved paths and is correct.
 
@@ -802,7 +809,7 @@ This is test triage, so the external search was skipped, per Prior Art and Blind
 
 1. Checks O1 to O6 pass on the oracle before the build; L1 to L8 fail on the base as stated.
 2. Section 8.2's counts match the base, and the six changed tests pass three times serially.
-3. L1 to L4, L6 and L7 pass on the candidate; L5 fails on the candidate at the last-poll assertion; L8 fails on the repaired candidate at the A1 premise that the late unit has ended.
+3. L1 to L4, L6 and L7 pass on the candidate; L5 fails on the candidate at the last-poll assertion; L8 fails on the repaired candidate at the A1 premise that the late unit has ended, with that unit's end released, not cancelled (row L8's events).
 4. The parity rule of 8.4 holds for every row, on one recorded tree.
 5. The diff is exactly the files of section 9 item 1, and the ledger check passes.
 6. One canonical gate with a receipt is run and resolved per 8.5, and the worker text in the candidate matches its outcome.
@@ -865,6 +872,24 @@ The repaired tree is a detached checkout of the first candidate (`54a7b9bf`) wit
 | L8, `identity_late_hold` 6.0 | both cases FAILED at the follower's re-issue (`IdentityUnitUnsettled`); 2 `late_held` rows | the same | both cases FAILED at `AssertionError: premise: the late unit ended within 5 s, before the production bound is restored`; 1 `late_held` row each |
 
 The first run of the L8 probe held only the first case, because the probe's `armed` flag outlived the case and the second case never saw a first failure. The probe now resets the flag before each case (`pytest_runtest_setup`, in the block of 8.3), so each case's late unit is held once; the rows above are from that probe. LF sha256 (first 16 hex digits) of `tests/test_bf885_identity_db_units.py`: the first candidate's `0af0a9e04ebc1d0d`, the repaired tree's `400a0b9257e306ab`.
+
+### 15.4 Amendment A2 (review round 2): results on the oracle tree
+
+The oracle is a detached checkout of the head `9ec36155` with pair A17-1 of section 17 applied by the tool and this revision of the contract in place (uncommitted, so it has no tree id of its own). The probe's `late_hold` helper (section 8.3) emits the events `late_released` and `late_cancelled`; the L8 rows of 15.3 were measured before it existed, so the table below measures the base, the first candidate and the head again with it. Nothing else ran on the host during a row.
+
+- **D1.** The SEARCH of A17-1 occurs once (`contract_tools.py apply --dry --prefix 17.` on the head), and `ws_ambiguity.py` finds 0 hazards. The pair lists of section 6 (18 pairs) and section 16 (3 pairs) still parse.
+- **D3.** Row L6 on the oracle: both cases PASSED, `armed` before every `end_held` (11 `end_held` rows). The six changed tests, three serial runs: 7 passed in 13.35 s, 13.27 s and 13.25 s.
+- **D4.** The command of 8.2 on the oracle: 331 passed, 3 skipped in 338 s, the counts of the base and of the earlier candidates.
+- **B1.** Mutation row B1 on the oracle: KILLED quiet and under L6 (the `[birth]` case only, as before); `src/probos/identity.py` is unchanged (`1a0ad74d19b78a57`). LF sha256 (first 16 hex digits) of `tests/test_bf885_identity_db_units.py`: `83fd1436fdf91da4`.
+
+| Row L8 (`identity_late_hold`, 6.0, both cases) | Fails at | The held end |
+|---|---|---|
+| Base `542a2a68` | the follower's re-issue (`IdentityUnitUnsettled`) | `late_cancelled` 2 |
+| First candidate `54a7b9bf` | the follower's re-issue | `late_released` 2 |
+| Round-1 repair `9ec36155` | the premise (`premise: the late unit ended within 5 s, before the production bound is restored`) | `late_cancelled` 2 |
+| Oracle with A17-1 | the premise | `late_released` 2, no `late_cancelled` |
+
+The base cancels the end too, in the follower's re-issue path that this batch retires; the first candidate released it only because its flow restored the production bound. The finding R2-1 is the head's `late_cancelled`.
 
 ## 16. Amendment A1 (review round 1)
 
@@ -940,3 +965,44 @@ REPLACE:
 | C6 | Mutation row B1 on the repaired tree, quiet and under L6 | KILLED, as on the first candidate |
 
 **Acceptance of the amendment:** C1 to C6 pass; the diff of the repair against `54a7b9bf` is this contract, `tests/test_bf885_identity_db_units.py`, `.github/agents/orchestrator.agent.md` and `DECISIONS.md` (and the two ledger files only if C5 reports drift); the round-2 delta review finds nothing at P1 and nothing ordinary at P2; and one canonical gate is run per 8.5 on the frozen head.
+
+## 17. Amendment A2 (review round 2)
+
+Review round 2 (`gpt-6.1-sol`, 2026-11-24, a delta review of `54a7b9bf..9ec36155`) confirmed F1 to F4 of section 16 and returned one finding, and the Architect decided it (consult 835422c2). The Builder applies A17-1 alone (`--prefix 17.`) to the head `9ec36155`, where the pairs of section 16 are already applied. Section 16 and 15.3 stay as the record of round 1.
+
+| Finding | Severity, reach | Decision |
+|---|---|---|
+| R2-1. When A1's premise that the late unit has ended fails, its `finally` joins the late and following tasks but not the writer's unit end; the bound is still 0.2 s, so `stop()` stops waiting and the end is cancelled at loop teardown after the registry closed | P3, injected only, regression of A16-1's new failure path (the first candidate released the end) | Repaired: A17-1; row L8 proves it. The same shape in A2 and A3 is pre-existing: item bf-981 L1 |
+
+**Repair milestone R3** (tests): A17-1. Subject: `Identity follower test joins the writer's unit end when its premise fails`
+
+**Risk:** Low. One line in a test's `finally`; `_joined` and the names other tests import (`_rows`, `_SharedFactory`) are unchanged. Not a shared contract; the round-3 review is a delta review.
+
+### 17.1 `tests/test_bf885_identity_db_units.py` (R3)
+
+**A17-1** (R2-1: a failed premise leaves no unit end running when the registry closes)
+SEARCH:
+```python
+        finally:
+            gate.set()
+            signing.set()
+            await _joined(late, following)
+        store.hold = None
+```
+REPLACE:
+```python
+        finally:
+            gate.set()
+            signing.set()
+            await _joined(late, following, _ending(registry))  # and the writer's newest unit end, before its connection closes
+        store.hold = None
+```
+
+### 17.2 Gates for the amendment (the orchestrator runs all of them)
+
+| Check | What it runs | Expected |
+|---|---|---|
+| D1 | `contract_tools.py apply --dry --prefix 17.` and `ws_ambiguity.py --prefix 17.` | the SEARCH occurs once, 0 hazards |
+| D2 | Row L8 on `9ec36155` and on the oracle with A17-1 | both fail at the premise; the head has 1 `late_cancelled` row each; the oracle has 1 `late_released` row each and no `late_cancelled` row |
+| D3 | The A1 test (both cases) quiet, then row L6, on the oracle | both pass; 11 `end_held` rows |
+| D4 | The focused command of 8.2 on the oracle | the counts of O4, all passed |
