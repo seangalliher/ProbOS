@@ -486,6 +486,19 @@ def resolve_sovereign_id_from_slot(slot_id: str, identity_registry: Any) -> str:
     return slot_id
 
 
+def resolve_sovereign_id_from_registry(agent_id: str, registry: Any) -> str:
+    """BF-992: the id an agent's episodes carry, for a caller that holds a slot id and the agent registry.
+
+    The registry is keyed by slot id; the agent it returns answers through ``resolve_sovereign_id``
+    (its sovereign id, else its slot id). An id the registry does not hold, such as one that is
+    already a sovereign id, and a missing registry return the id unchanged.
+    """
+    agent = registry.get(agent_id) if registry is not None else None
+    if agent is None:
+        return agent_id
+    return resolve_sovereign_id(agent)
+
+
 async def migrate_episode_agent_ids(
     episodic_memory: "EpisodicMemory",
     identity_registry: Any,

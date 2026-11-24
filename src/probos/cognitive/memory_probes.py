@@ -90,13 +90,10 @@ def _resolve_probe_agent_id(agent_id: str, runtime: Any) -> str:
 
     BF-138: Probes must seed episodes with the same ID type the cognitive
     pipeline uses for recall (sovereign_id), not the slot ID passed from
-    the drift detector.
+    the drift detector. BF-992: the shared reader, also used by the recall probe and the ACM profile.
     """
-    from probos.cognitive.episodic import resolve_sovereign_id
-    agent = runtime.registry.get(agent_id) if hasattr(runtime, 'registry') else None
-    if agent:
-        return resolve_sovereign_id(agent)
-    return agent_id
+    from probos.cognitive.episodic import resolve_sovereign_id_from_registry
+    return resolve_sovereign_id_from_registry(agent_id, getattr(runtime, "registry", None))
 
 
 def _make_test_episode(

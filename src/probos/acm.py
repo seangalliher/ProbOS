@@ -502,7 +502,9 @@ class AgentCapitalService:
         if hasattr(runtime, 'episodic_memory') and runtime.episodic_memory:
             if hasattr(runtime.episodic_memory, 'count_for_agent'):
                 try:
-                    profile["episode_count"] = await runtime.episodic_memory.count_for_agent(agent_id)
+                    from probos.cognitive.episodic import resolve_sovereign_id_from_registry  # BF-992
+                    memory_id = resolve_sovereign_id_from_registry(agent_id, getattr(runtime, "registry", None))
+                    profile["episode_count"] = await runtime.episodic_memory.count_for_agent(memory_id)
                 except Exception:
                     logger.debug("Episode count failed", exc_info=True)
 
