@@ -15,6 +15,7 @@ from probos.cognitive.llm_client import BaseLLMClient
 from probos.cognitive.prompt_builder import PromptBuilder, get_platform_context
 from probos.cognitive.working_memory import WorkingMemoryManager, WorkingMemorySnapshot
 from probos.events import EventType
+from probos.security.secret_masking import RouteTextMask, SecretMasker, secret_masker_of
 from probos.types import ConsensusOutcome, IntentDescriptor, LLMRequest, TaskDAG, TaskNode, Episode, AttentionEntry
 
 if TYPE_CHECKING:
@@ -271,6 +272,9 @@ class IntentDecomposer:
         self.last_raw_response: str = ""  # Last raw LLM response for debugging
         self.last_tier: str = ""  # Tier used for last LLM call
         self.last_model: str = ""  # Model used for last LLM call
+        # AD-1337 S5: the runtime's secret masker for the reflect prompt. Not a constructor argument: the runtime builds
+        # this decomposer before the masker exists, and finalize assigns it. None masks nothing.
+        self.secret_masker: SecretMasker | None = None
         self._pre_warm_intents: list[str] = []
         self._intent_descriptors: list[IntentDescriptor] = []
         self._callsign_map: dict[str, str] = {}  # BF-013
@@ -466,6 +470,10 @@ class IntentDecomposer:
         Returns a plain-text synthesis that directly answers the user's question.
         """
         # Serialize results into a readable format
+        # AD-1337 S5: the node results come from mesh intents, which neither masking seam sees. Each part is masked
+        # before it is cut, so a value a cut would split is replaced whole, then the whole prompt before the cap, the
+        # log and the model.
+        mask = RouteTextMask(secret_masker_of(self), route="dag_reflect")
         result_parts = [f"Original request: {original_request}", "", "Agent results:"]
         dag = execution_result.get("dag")
         results = execution_result.get("results", {})
@@ -473,13 +481,15 @@ class IntentDecomposer:
         if dag and hasattr(dag, "nodes"):
             for node in dag.nodes:
                 node_result = results.get(node.id, {})
-                summary = _summarize_node_result(node_result)
+                summary = _summarize_node_result(node_result, clip=mask.clip)
                 status = getattr(node, "status", "unknown")
                 result_parts.append(
                     f"- [{status}] {node.intent}({node.params}): {summary}"
                 )
 
-        prompt_text = "\n".join(result_parts)
+        prompt_text = mask("\n".join(result_parts))
+        if not mask.settle():
+            return ""  # AD-1337 S5: fail closed, as on a timeout below; the callers show the results alone
 
         # Cap payload to avoid oversized LLM requests
         if len(prompt_text) > self.REFLECT_PAYLOAD_BUDGET:
@@ -688,15 +698,23 @@ def _approval_did_not_commit(esc_result: EscalationResult) -> bool:
     return not (isinstance(approved_result, dict) and approved_result.get("committed") is True)
 
 
-def _summarize_node_result(node_result: Any) -> str:
+def _cut_part(text: Any, limit: int) -> Any:
+    """``text[:limit]``: how ``_summarize_node_result`` cuts a part unless it is given a ``clip``."""
+    return text[:limit]
+
+
+def _summarize_node_result(node_result: Any, *, clip: Callable[[Any, int], Any] = _cut_part) -> str:
     """Extract meaningful output from a node result for reflection.
 
     Pulls actual agent output (stdout, file content, etc.) from the
     nested IntentResult objects rather than dumping raw metadata.
     Deduplicates identical outputs from multiple agents.
+
+    AD-1337 S5: every part is cut by ``clip``. ``IntentDecomposer.reflect`` passes its ``RouteTextMask``'s, which
+    masks a part before cutting it, so a known value the cut would split is still replaced whole.
     """
     if not isinstance(node_result, dict):
-        return str(node_result)[:500]
+        return clip(str(node_result), 500)
 
     # Standard format: {success, results: [IntentResult, ...], ...}
     if "results" in node_result:
@@ -711,9 +729,9 @@ def _summarize_node_result(node_result: Any) -> str:
                     stdout = data["stdout"].strip()
                     stderr = data.get("stderr", "").strip()
                     exit_code = data.get("exit_code")
-                    entry = stdout[:500] if stdout else ""
+                    entry = clip(stdout, 500) if stdout else ""
                     if stderr:
-                        entry += f" (stderr: {stderr[:200]})"
+                        entry += f" (stderr: {clip(stderr, 200)})"
                     if exit_code and exit_code != 0:
                         entry += f" (exit_code: {exit_code})"
                     if entry and entry not in seen_outputs:
@@ -723,13 +741,13 @@ def _summarize_node_result(node_result: Any) -> str:
                     # aren't truncated by semantic layer results.
                     base = {k: v for k, v in data.items()
                             if k not in ("doc_snippets", "grounded_context")}
-                    entry = str(base)[:400]
+                    entry = clip(str(base), 400)
                     if entry not in seen_outputs:
                         seen_outputs.append(entry)
                     for snip in data["doc_snippets"]:
                         doc_entry = (
                             f"[doc: {snip.get('path', '?')}]\n"
-                            f"{snip.get('source', '')[:1500]}"
+                            f"{clip(snip.get('source', ''), 1500)}"
                         )
                         if doc_entry not in seen_outputs:
                             seen_outputs.append(doc_entry)
@@ -744,14 +762,14 @@ def _summarize_node_result(node_result: Any) -> str:
                     gc = data.get("grounded_context")
                     base = {k: v for k, v in data.items()
                             if k != "grounded_context"}
-                    entry = str(base)[:500]
+                    entry = clip(str(base), 500)
                     if entry not in seen_outputs:
                         seen_outputs.append(entry)
                     gc_entry = f"\nGROUNDED SYSTEM FACTS:\n{gc}"
                     if gc_entry not in seen_outputs:
                         seen_outputs.append(gc_entry)
                 else:
-                    entry = str(data)[:500]
+                    entry = clip(str(data), 500)
                     if entry not in seen_outputs:
                         seen_outputs.append(entry)
             elif hasattr(ir, "error") and ir.error:
@@ -768,7 +786,7 @@ def _summarize_node_result(node_result: Any) -> str:
     if "error" in node_result:
         return f"error={node_result['error']}"
 
-    return str(node_result)[:500]
+    return clip(str(node_result), 500)
 
 
 class DAGExecutor:

@@ -740,6 +740,12 @@ class ProbOSRuntime:
         self.credential_store = CredentialStore(
             config=self.config, event_log=self.event_log,
         )
+        # AD-1337 S4: the per-run secret values (a vault credential handed to a browser session or an MCP server).
+        # Built here, not in finalize: the boot loop registers stored MCP servers before finalize builds the masker,
+        # and _wire_secret_masker keeps this registry.
+        from probos.security.secret_masking import SecretRegistry
+
+        self.secret_registry = SecretRegistry()
 
         # --- M365 Token Manager (AD-749) ---
         self._m365_token_manager: M365TokenManager | None = None

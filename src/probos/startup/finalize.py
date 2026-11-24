@@ -721,9 +721,12 @@ def _wire_secret_masker(*, runtime: Any) -> Any:
     a masker; a runtime without a real store (a test double) gets None and masks nothing.
     """
     from probos.credential_store import CredentialStore
-    from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry
+    from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry, secret_registry_of
 
-    runtime.secret_registry = SecretRegistry()
+    # AD-1337 S4: ProbOSRuntime builds the registry, because the boot loop registers stored MCP servers before this
+    # runs; a runtime double without one gets one here.
+    registry = secret_registry_of(runtime)
+    runtime.secret_registry = registry if registry is not None else SecretRegistry()
     runtime.secret_masker = None
     runtime.secret_masking_prime_task = None
     store = getattr(runtime, "credential_store", None)
@@ -5896,6 +5899,8 @@ async def finalize_startup(
     # AD-1337 S2: the secret masker, after the credential store's path is set (AD-456 above), so its first read loads
     # the right store. Every tool executor masks with it: this one below, and each dispatch's from runtime.secret_masker.
     secret_masker = _wire_secret_masker(runtime=runtime)
+    # AD-1337 S5: a decomposed DAG's reflect prompt is masked with it too; the runtime built the decomposer before it.
+    runtime.decomposer.secret_masker = secret_masker
 
     # AD-423c: Wire tool registry into onboarding service
     if runtime.tool_registry:

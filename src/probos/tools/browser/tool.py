@@ -813,11 +813,20 @@ class BrowserTool:
                 newly_created = session_id_param not in self._sessions
                 session = await self._create_session(session_id_param, agent_id)
             self._register_use(session.session_id)
-            return await self._run_operation(
-                session.session_id,
-                lambda: self._invoke_session(params, context, session, t0, action, agent_id),
-                allow_expired=newly_created,
-            )
+
+            async def operation() -> ToolResult:
+                from probos.security.secret_masking import mask_route_result, secret_masker_of
+
+                result = await self._invoke_session(params, context, session, t0, action, agent_id)
+                masker = secret_masker_of(self._runtime)
+                if masker is None or not session.holds_secrets:
+                    return result
+                # AD-1337 S4: a session holding a filled credential masks its own result while this operation still
+                # counts. Ending the session waits only for its operations and then releases the value, so a result
+                # masked later, at the executor, could miss it.
+                return mask_route_result(masker, result, route="browser_session")
+
+            return await self._run_operation(session.session_id, operation, allow_expired=newly_created)
         except BrowserLifecycleConflict as exc:
             return ToolResult(error=str(exc), metadata={"session_id": session_id_param})
 

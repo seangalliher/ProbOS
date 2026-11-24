@@ -228,6 +228,85 @@ def mask_route_result(masker: SecretMasker | None, result: Any, *, route: str) -
     return masked.result
 
 
+def secret_registry_of(holder: object) -> SecretRegistry | None:
+    """AD-1337 S4: ``holder.secret_registry`` when it is a real ``SecretRegistry``, else None."""
+    registry = getattr(holder, "secret_registry", None)
+    return registry if isinstance(registry, SecretRegistry) else None
+
+
+def register_run_secret(holder: object, kind: str, key: str, value: str | None) -> SecretHandle | None:
+    """AD-1337 S4: register ``value``, which ProbOS is about to hand a tool for one session, in ``holder``'s registry.
+
+    The caller hands the handle to the session's owner, which releases it when the session ends. Returns None, having
+    registered nothing, when ``value`` is None or ``holder`` has no real registry (a bare runtime, a test double). The
+    name is ``kind:key`` when that is a plain label, else ``kind``, so no placeholder or event carries other text.
+    ``TypeError`` (from ``register``) for a ``value`` that is not a ``str``.
+    """
+    registry = secret_registry_of(holder)
+    if value is None or registry is None:
+        return None
+    name = f"{kind}:{key}"
+    return registry.register(name if secret_label(name) == name else kind, value)
+
+
+def residue_after_masking(masker: SecretMasker, value: object) -> MaskOutcome:
+    """AD-1337 S4: ``masker``'s pass over the complete JSON text of ``value``, which ``mask_result`` already masked.
+
+    ``mask_result`` never rewrites a key and stops at its depth and node bounds, leaving the rest to the render seam
+    (S3), and that seam cannot mask a value a session or client has already released. A caller that returns a result
+    while its per-run value is registered checks it here: ``names`` holds the labels of what is left, and ``failed`` is
+    true when the text cannot be built or the pass fails, so the caller withholds either way.
+    """
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError, RecursionError):
+        return MaskOutcome(MASKING_FAILED_TEXT, frozenset(), True)
+    return masker.mask_text(text)
+
+
+class RouteTextMask:
+    """AD-1337 S5: the masking passes over one model prompt that a route builds from text no seam masked.
+
+    A decomposed DAG's node results come from mesh intents, not tool calls, so neither the producer nor the render seam
+    sees them. Calling the mask masks a text; ``clip`` masks a part before cutting it, so a value the cut would split
+    is still replaced whole. Without a masker both return their argument as it is, so the prompt is byte-identical.
+    After a failed pass every later pass returns ``MASKING_FAILED_TEXT`` without masking again. ``settle`` logs once,
+    with labels only, and says whether the prompt may be sent.
+    """
+
+    def __init__(self, masker: SecretMasker | None, *, route: str) -> None:
+        self._masker = masker
+        self._route = route
+        self._names: set[str] = set()
+        self._failed = False
+
+    def __call__(self, text: str) -> str:
+        """``text`` masked. With a masker, ``TypeError`` for anything but a ``str``, as ``mask_text``."""
+        if self._masker is None:
+            return text
+        if self._failed:
+            return MASKING_FAILED_TEXT
+        outcome = self._masker.mask_text(text)
+        self._names |= outcome.names
+        self._failed = outcome.failed
+        return outcome.text
+
+    def clip(self, text: Any, limit: int) -> Any:
+        """``text[:limit]``; with a masker, the first ``limit`` characters of ``str(text)`` after masking it whole."""
+        if self._masker is None:
+            return text[:limit]
+        return self(text if isinstance(text, str) else str(text))[:limit]
+
+    def settle(self) -> bool:
+        """True when the prompt may be sent. One WARNING: the labels masked, or that a pass failed."""
+        if self._failed:
+            logger.warning("AD-1337: route=%s secret masking failed; nothing is sent to the model", self._route)
+            return False
+        if self._names:
+            logger.warning("AD-1337: route=%s masked names=%s", self._route, sorted(self._names))
+        return True
+
+
 class SecretHandle:
     """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
 
