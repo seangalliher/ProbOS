@@ -1,9 +1,9 @@
 # BF-993: tests that run the boot logging setup put back the logger levels it pins; the AD-1337 reflect tests name the decomposer logger they read
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24 (consult 91af63b3, read-only): the design, pairs P1-1 to P1-9, the stressor and mutation rows, the tracker texts, the reviewer properties and the #1523 text.
-**Assembled by:** the orchestrator, 2026-11-24: the section 6 headings and the pair layout follow what `contract_tools.py` reads; sections 1, 7, 8.1, 8.2, 10, 11, 13, 14 and 15, the measured results, the pin plugin file of 8.3 and rows M4b and M6 are the orchestrator's; section 13 lists every place where the pairs or the Architect's texts differ from the consult. The layout of section 16 and the text of 15.4 are the orchestrator's too.
+**Assembled by:** the orchestrator, 2026-11-24: the section 6 headings and the pair layout follow what `contract_tools.py` reads; sections 1, 7, 8.1, 8.2, 10, 11, 13, 14 and 15, the measured results, the pin plugin file of 8.3 and rows M4b and M6 are the orchestrator's; section 13 lists every place where the pairs or the Architect's texts differ from the consult. The layout of section 16 and the text of 15.4 are the orchestrator's too, and so are pair A2-1 (16.5, a correction after review round 2, decided by the orchestrator from the round-2 reviewer's observation, which it verified first-hand) and 15.5.
 **Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24: for review round 1 of this slice (consult f6269f56), pairs A1-1 to A1-6 (section 16) and the sentence changes of its list in the header and in sections 2, 7, 8, 9, 11, 13 and 14. Sections 6.5, 6.6, 6.7 and 15.1 to 15.3 stay as built and as measured (built pairs and measured results are never edited).
-**Status:** ready to build; the build is committed (`e14e98d9` the tests, `62b62def` the trackers) and Amendment A1 (section 16) is the repair of review round 1. **Owning issue:** #1815 (a further slice of its batch; this slice has a review of its own). It also records the flake on #1523. Commits say `Refs #1815, #1523.`
+**Status:** ready to build; the build is committed (`e14e98d9` the tests, `62b62def` the trackers), Amendment A1 (section 16) is the repair of review round 1 (built in `83bd876b` and `d9c29c5f`, approved in round 2) and A2 (16.5) is a one-sentence correction after round 2. **Owning issue:** #1815 (a further slice of its batch; this slice has a review of its own). It also records the flake on #1523. Commits say `Refs #1815, #1523.`
 **Base:** `b428497b` (the head of the BF-981 part 2 slices). `origin/main` is `542a2a68` and is already merged: `git log HEAD..origin/main` is empty. **Number:** BF-993 (allocated 2026-11-24 from the enumeration in section 10; BF-992 stays with #1324).
 **Line endings:** the working copies are CRLF and the blocks below are LF; the orchestrator matches them after normalising. Every SEARCH starts at the beginning of a line and occurs once in its file at its turn. All new text is ASCII.
 **Estimated tests:** 4 new (3 at the build, 1 by amendment A1, section 16; `tests/test_bf993_logger_level_leak.py`), 0 removed, 0 changed.
@@ -499,7 +499,7 @@ Run on tree `b428497b`:
 
 - No production code, no `_setup_logging` pin, no pytest or CI configuration, no `conftest.py`.
 - The root level: `_setup_logging` sets it (`:153`), `_handlers` has never put it back (the module-scoped `rendered` fixture leaves it at INFO for the rest of its worker), and the helper restores named loggers only. The new test puts back the root level it changes; `_handlers` stays as it is. No failure is attributed to it.
-- AD-754 redaction: `_setup_logging` adds redaction filters to the handlers on the root logger (`:199-206`). Not in scope.
+- AD-754 redaction: `_setup_logging` replaces the formatter of each handler on the root logger with a redaction formatter (`:199-206`, `apply_redaction_to_handlers`, `src/probos/security/pii_redaction.py:84-104`; the contract's first text said "adds redaction filters", which the round-2 reviewer corrected, see 16.5). Not in scope.
 - About 50 test files use `caplog.set_level` or `caplog.at_level` at DEBUG or INFO without naming a logger (the Architect's count, not enumerated). With the two sources closed they are no longer exposed to these pins. A third source (a test that pins a logger and does not put it back) is not found by the enumeration of section 10.
 - Which worker ran which polluter in the two failed gates is not recorded; the cause rests on the reproduction in one process (rows S1, S2) and on the same test failing at the same point twice.
 - M4b survives by design. At the build M3 was killed by row S4 only (15.3), whose two federation tests depend on the worker's order; amendment A1's fourth test kills it in one process, independent of order (15.4).
@@ -581,6 +581,10 @@ The oracle is a clean detached tree at `62b62def` (the committed candidate) with
 | M6 | KILLED | new file: 4 failed (`AttributeError: 'PlaceHolder' object has no attribute 'level'`) |
 
 - **Finding F2 probe:** an incoming ERROR (40) on `probos.test.bf993.existing` is 0 after the second test at the committed candidate and 40 after it with A1-1 and A1-2.
+
+### 15.5 Amendment A2 (a correction after round 2): results on the oracle tree
+
+The pair A2-1 was applied by the tool to the oracle tree after A1: `DECISIONS.md` goes from blob `7d39808b97c93f199bac0f13f224cb13b5ddb285` to `504fd71d9add07112a90d9a508c97302ec9f9b41` (13,580 lines both), the SEARCH occurred once at its turn, `ws_ambiguity.py` reported 0 hazards, `git diff --check` is clean and the ledger is current. No test or source file changes, so no test was run for A2. Read first-hand: `apply_redaction_to_handlers` replaces each handler's formatter (`src/probos/security/pii_redaction.py:84-104`) and `_setup_logging` resets the boot warning counter at `src/probos/__main__.py:156`.
 
 ## 16. Amendment A1 (review round 1)
 
@@ -683,4 +687,18 @@ SEARCH:
 REPLACE:
 ```markdown
 - *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new tests put back (the first for itself, the fourth through `_logger_state`), and it adds AD-754 redaction filters to the handlers on the root logger. Neither is in scope.
+```
+
+### 16.5 `DECISIONS.md` (A2, a correction after round 2)
+
+Review round 2 (the delta of A1, `d9c29c5f`) approved with no findings. Its property 6 observed that `apply_redaction_to_handlers` (`src/probos/security/pii_redaction.py:84-104`) replaces the formatter of each handler it is given with a `LogRedactionFormatter`; it does not add a filter. The orchestrator read the function and agrees: the known-limits sentence of the decisions entry (the Architect's text, carried by P2-2 and A1-6) said "adds AD-754 redaction filters", which is wrong. It also left out that `_setup_logging` resets the boot warning counter (`_boot_warning_handler.count = 0`, `__main__.py:156`), which the Architect's consult named and which the fourth test also does. This is not a finding of the review and no code or test changes: the one sentence is corrected here, by one pair against the entry as built by A1, and the sentence of section 11 changed in place. Built pairs (6.7, 16.4) and the results of 15.1 to 15.4 stay as they were.
+
+**A2-1** (the known limits, after A1-6)
+SEARCH:
+```markdown
+- *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new tests put back (the first for itself, the fourth through `_logger_state`), and it adds AD-754 redaction filters to the handlers on the root logger. Neither is in scope.
+```
+REPLACE:
+```markdown
+- *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new tests put back (the first for itself, the fourth through `_logger_state`); it replaces the formatter of each handler on the root logger with an AD-754 redaction formatter (`apply_redaction_to_handlers`); and it resets the boot warning counter. None of these is in scope.
 ```
