@@ -8,10 +8,13 @@ directory pointed at an empty directory opens this test's archive and leaves the
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 import sqlite3
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -82,6 +85,20 @@ async def test_a1_a_default_config_boot_opens_this_tests_archive_and_leaves_an_e
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("PROBOS_EMBEDDINGS", "local")  # BF-657's backend: this boot needs no model (M2 owns that path)
+    # AD-1337 S2: a boot primes the GitHub credential for the secret masker. Answered at the environment step, the
+    # priming never reaches the CLI step, whose real `gh` writes its own state under HOME (Linux:
+    # ~/.local/state/gh/device-id; PR #1846's CI), a file this test would count as the boot's. The recorder stands in
+    # for every command the credential store runs and fails each one, so the test proves on any platform that none ran.
+    monkeypatch.setenv("GH_TOKEN", "bf919-a1-not-a-real-token")
+    cli_calls: list[list[str]] = []
+
+    def _cli(argv: list[str], **_kwargs: Any) -> SimpleNamespace:
+        cli_calls.append(list(argv))
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "probos.credential_store.subprocess", SimpleNamespace(run=_cli, TimeoutExpired=subprocess.TimeoutExpired),
+    )
     monkeypatch.setattr(embeddings_module, "_embedding_available", None)
     monkeypatch.setattr(embeddings_module, "_embedding_fn", None)
     config = _boot_config()
@@ -97,8 +114,14 @@ async def test_a1_a_default_config_boot_opens_this_tests_archive_and_leaves_an_e
     await rt.start()
     try:
         assert isolated_archive_path.is_file(), "the boot opened this test's own archive"
+        priming = rt.secret_masking_prime_task
+        assert isinstance(priming, asyncio.Task), "premise: the boot started the secret masker's priming"
+        # Waited for before the stop: the stop's sweep cancels the task, not its worker thread, which could still run.
+        done, _ = await asyncio.wait({priming}, timeout=10.0)
+        assert priming in done, "the priming finished, so its worker thread has run"
     finally:
         await rt.stop()
+    assert cli_calls == [], "the boot ran no credential CLI: the priming answered from GH_TOKEN"
     assert _user_version(isolated_archive_path) == ARCHIVE_SCHEMA_VERSION, "and migrated it there"
     assert sorted(home.rglob("*")) == [], "the boot wrote nothing under the home directory"
 

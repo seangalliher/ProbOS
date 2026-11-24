@@ -1189,6 +1189,13 @@ class DmReplyPipeline:
                     result = await browser_tool.invoke(
                         params, context={"agent_id": self.ctx.agent_id},
                     )
+                    # AD-1337 S3 (#1560): this inline call skips the tool executor, and its output becomes the
+                    # action's record and the episode below, which later prompts recall, so it is masked here.
+                    from probos.security.secret_masking import mask_route_result, secret_masker_of
+
+                    result = mask_route_result(
+                        secret_masker_of(self.ctx.runtime), result, route="dm_tier1_browser",
+                    )
                     dispatcher.mark_executed(
                         action_id, result=getattr(result, "output", None),
                     )

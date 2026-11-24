@@ -712,6 +712,74 @@ def _wire_mesh_intent_tools(*, runtime: Any) -> list[str]:
     return ids
 
 
+def _wire_secret_masker(*, runtime: Any) -> Any:
+    """AD-1337 S2 (#1560): build the runtime's secret masker and start priming the GitHub value.
+
+    Sets ``runtime.secret_registry`` (always: AD-1337 S4 registers per-run values in it) and ``runtime.secret_masker``,
+    and returns the masker for the runtime's ``ToolExecutor``; each dispatch executor reads it from the runtime.
+    ``ProbOSRuntime.__init__`` builds ``runtime.credential_store`` unconditionally, so a production runtime always has
+    a masker; a runtime without a real store (a test double) gets None and masks nothing.
+    """
+    from probos.credential_store import CredentialStore
+    from probos.security.secret_masking import EnvSecretSource, SecretMasker, SecretRegistry
+
+    runtime.secret_registry = SecretRegistry()
+    runtime.secret_masker = None
+    runtime.secret_masking_prime_task = None
+    store = getattr(runtime, "credential_store", None)
+    if not isinstance(store, CredentialStore):
+        logger.warning("AD-1337: no CredentialStore on the runtime; tool output is not masked")
+        return None
+    runtime.secret_masker = SecretMasker(
+        credential_store=store, registry=runtime.secret_registry, env_source=EnvSecretSource(),
+    )
+    masker = runtime.secret_masker
+    # AD-1337 S2: every registry call waits for the priming (the masker bounds the wait), so the first one is masked
+    # with what the priming adds. Marked before the task exists, so no call can run between the two.
+    masker.begin_priming()
+    # AD-824: the runtime owns the task (one bounded task, which leaves the registry when it ends), so a stop's
+    # background sweep, which a failed start's rollback (BF-882) runs too, cancels a priming still in ``gh``. The
+    # window is not ended by that cancel: the worker thread cannot be cancelled, and the value is primed only when
+    # it returns. Only the worker's ``finally`` or the masker's bound ends it. The thread ends within the CLI's
+    # timeout and holds nothing a teardown closes.
+    runtime.secret_masking_prime_task = runtime._spawn_background(
+        _prime_secret_masking(store, masker), "secret_masking_prime",
+    )
+    return masker
+
+
+def _prime_secret_masking_worker(store: Any, masker: Any) -> str | None:
+    """AD-1337 S2: the priming's worker-thread body.
+
+    ``get`` keeps the GitHub value for the masker, whichever step resolves it. The empty ``mask_text`` pass then
+    loads the store file and builds the masker's pattern table here, so neither happens on the loop at the first
+    tool call, even when the environment answered ``get`` before the store file was read. ``end_priming`` runs last
+    whatever happened, so a failure releases the tool calls waiting on the priming.
+    """
+    try:
+        return store.get("github", requester="secret_masking")
+    finally:
+        masker.mask_text("")  # never raises for a str: a failed pass logs its type only (AD-1337 D7)
+        masker.end_priming()
+
+
+async def _prime_secret_masking(store: Any, masker: Any) -> None:
+    """AD-1337 S2: resolve the GitHub credential once, in a worker thread, so a token only ``gh auth token`` knows is
+    masked from the first tool call: ``_wire_secret_masker`` marks the masker priming, and every registry call waits
+    until the worker ends it (``ToolExecutor._invoke_once``), for at most the masker's ``DEFAULT_PRIMING_TIMEOUT_S``.
+
+    The read keeps ``get``'s department and tier gates. It writes no access row (``_log_access`` needs a running loop
+    in its own thread), and the value goes to the masker only, as the masker's own store read does. A failure, or no
+    ``gh``, only means a CLI-only token is masked after its first ``get``; startup never waits on this task.
+    """
+    try:
+        value = await asyncio.to_thread(_prime_secret_masking_worker, store, masker)
+    except Exception as exc:
+        logger.warning("AD-1337: priming the github credential for masking failed (%s)", type(exc).__name__)
+        return
+    logger.info("AD-1337: github credential primed for masking (found=%s)", value is not None)
+
+
 async def _start_recording_reaper(*, runtime: Any, config: "SystemConfig") -> None:
     """AD-706b: start the recording retention reaper if recording is enabled."""
     cfg = getattr(config, "browser_tool", None)
@@ -5825,6 +5893,10 @@ async def finalize_startup(
 
     _sync_ontology_callsigns(runtime)
 
+    # AD-1337 S2: the secret masker, after the credential store's path is set (AD-456 above), so its first read loads
+    # the right store. Every tool executor masks with it: this one below, and each dispatch's from runtime.secret_masker.
+    secret_masker = _wire_secret_masker(runtime=runtime)
+
     # AD-423c: Wire tool registry into onboarding service
     if runtime.tool_registry:
         runtime.onboarding.set_tool_registry(runtime.tool_registry)
@@ -5834,6 +5906,7 @@ async def finalize_startup(
         tool_executor = ToolExecutor(
             registry=runtime.tool_registry,
             effect_broker=getattr(runtime, "effect_broker", None),
+            secret_masker=secret_masker,
         )
         # AD-1224: safe live completion plus the optional durable lifecycle.
         # Terminal completions stay durable-only; AD-1168 remains a post-hook.

@@ -86,7 +86,12 @@ from probos.tools.delegation_evidence import (
     DelegationEvidenceCollector,
     delegation_status,
 )
-from probos.tools.executor import ToolExecutor, classify_tool_error, wire_durable_tool_records
+from probos.tools.executor import (
+    ToolExecutor,
+    classify_tool_error,
+    wire_durable_tool_records,
+    wire_secret_masked_event,
+)
 from probos.tools.protocol import (
     ToolPermission,
     ToolResult,
@@ -967,9 +972,10 @@ class _DispatchConfigurationMixin:
     """
 
     def __init__(
-        self, *, registry: Any, effect_broker: Any = None
+        self, *, registry: Any, effect_broker: Any = None, secret_masker: Any = None
     ) -> None:
-        super().__init__(registry=registry, effect_broker=effect_broker)
+        # AD-1337 S2: forwards the masker, so the dispatch executor masks on both of its paths.
+        super().__init__(registry=registry, effect_broker=effect_broker, secret_masker=secret_masker)
         self.denied_tools: list[str] = []
         # AD-1153: None = unarmed = today's behaviour. Set only by
         # ``restrict_browser_actions``.
@@ -1526,6 +1532,15 @@ class _ApprovalGuardMixin:
                 cap_int,
             )
         return True
+
+
+def _runtime_secret_masker(runtime: Any) -> Any:
+    """AD-1337 S2: ``runtime.secret_masker`` when it is a real ``SecretMasker`` (startup/finalize.py builds it),
+    else None: a runtime finalize never ran on (a test double) masks nothing, and a ``MagicMock`` attribute is not
+    handed to the executor, which would refuse it."""
+    from probos.security.secret_masking import secret_masker_of
+
+    return secret_masker_of(runtime)  # AD-1337 S3: the one filter every seam that takes a masker shares
 
 
 class DispatchToolExecutor(
@@ -3013,6 +3028,7 @@ class WorkItemAgenticExecutor:
         executor = DispatchToolExecutor(
             registry=registry,
             effect_broker=getattr(runtime, "effect_broker", None),
+            secret_masker=_runtime_secret_masker(runtime),
         )
         observed_tool_results: list[tuple[Any, Any]] = []
         owned_view_references: list[owned_steps.OwnedStepsViewReference] = []
@@ -3071,6 +3087,9 @@ class WorkItemAgenticExecutor:
             executor, event_log=getattr(runtime, "event_log", None),
             work_item_id_provider=work_item_id_provider,
         )
+        # AD-1337 S2: SECRET_MASKED for this executor's masked calls. Not lifecycle traffic: at most one event per
+        # call, and only when something was masked or withheld.
+        wire_secret_masked_event(executor, emit_fn=getattr(runtime, "emit_event", None))
 
         mesh_ids: list[str] = []
         if intent_bus is not None and registry is not None:
@@ -4163,6 +4182,11 @@ class WorkItemAgenticExecutor:
             **resolve_event_correlation_settings(_agentic_loop_cfg),
             **_loop_kwargs,
         )
+        # AD-1337 S3 (#1560): the render seam masks with this run's executor's masker, assigned after construction for
+        # the reason AD-1240 gives below (the AD-1152 golden pins the constructor keywords).
+        from probos.security.secret_masking import secret_masker_of
+
+        loop.secret_masker = secret_masker_of(executor)
         # AD-1240: the owner is assigned after construction (never as a constructor
         # keyword), so every loop double that pins the constructor keywords is
         # unaffected. The run context carries the SAME authorized registry view this

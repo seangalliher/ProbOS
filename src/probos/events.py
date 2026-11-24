@@ -326,6 +326,7 @@ class EventType(str, Enum):
     BACKUP_COMPLETE = "backup_complete"  # AD-466
     BACKUP_FAILED = "backup_failed"  # AD-466
     SECRET_ROTATED = "secret_rotated"  # AD-456
+    SECRET_MASKED = "secret_masked"  # AD-1337: tool output had a known credential value masked, or was withheld
     EGRESS_BLOCKED = "egress_blocked"  # AD-456
     CLASSIFICATION_DISCLOSURE_BLOCKED = "classification_disclosure_blocked"  # AD-530
     BOUNDARY_VIOLATION_DETECTED = "boundary_violation_detected"  # AD-511

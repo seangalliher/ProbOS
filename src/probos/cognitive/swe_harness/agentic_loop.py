@@ -44,6 +44,7 @@ from probos.cognitive.swe_harness.result_offload import (
     safe_delivery_error,
     seal_workspace_results,
 )
+from probos.cognitive.swe_harness.render_masking import RenderMask, SecretMaskerSlot
 from probos.crew_execution_usage import (
     TOKEN_SOURCE_ESTIMATED,
     TOKEN_SOURCE_MEASURED,
@@ -1364,6 +1365,10 @@ class AgenticLoop:
     # ceiling stands). It reads ``None`` until one is assigned and refuses every
     # assignment once ``run()`` has begun.
     workspace_results = WorkspaceResultsSlot()
+    # AD-1337 S3 (#1560): the render seam's masker, the one this loop's executor masks with. A data descriptor like
+    # ``workspace_results`` and for the same reason: assigned after construction, so the constructor keywords the
+    # AD-1152 golden pins are unchanged. None (the default) masks nothing.
+    secret_masker = SecretMaskerSlot()
 
     def __init__(
         self,
@@ -2572,10 +2577,14 @@ class AgenticLoop:
                         agent_id[:12],
                         exc_info=outcome,
                     )
-                    by_index[index] = ToolCallResult(
-                        id=call.id,
-                        output=f"Tool {call.name} failed: {outcome}",
-                        is_error=True,
+                    # AD-1337 S3 (#1560): this text never passed a ToolResult, so the render seam masks it here.
+                    by_index[index] = await RenderMask(self.secret_masker).final(
+                        ToolCallResult(
+                            id=call.id,
+                            output=f"Tool {call.name} failed: {outcome}",
+                            is_error=True,
+                        ),
+                        emit_fn=self._emit, tool_name=call.name, strict=False, correlation=None,
                     )
                 else:
                     by_index[index] = outcome
@@ -2663,6 +2672,8 @@ class AgenticLoop:
                     correlation["thread_id"] = thread_id
         strict = getattr(self._executor, "protected_effects_enabled", False)
         privacy = StrictEffectPrivacyProjector()
+        # AD-1337 S3 (#1560): this call's render-seam passes; inert without a masker.
+        render = RenderMask(self.secret_masker)
         read_context = None
         if delivery_run is not None:
             # AD-1240 R2-1: decided BEFORE STARTED and outside the producer window.
@@ -2957,13 +2968,20 @@ class AgenticLoop:
             # failure is never reported as a producer error: ``prepare_result`` turns
             # one into a typed refusal on the result. The run stops on it unless
             # ``_continues_after_failed_delivery`` lets it go on (BF-946).
-            captured = capture_tool_result(
+            # AD-1337 S3 (#1560): masked before prepare_result offloads, frames or returns any of it.
+            captured = render.capture(capture_tool_result(
                 use.tool_call.id, delivery_source, duration_ms,
                 max_chars=delivery_run.settings.max_chars,
-            )
+            ))
             tcr = await prepare_result(
                 captured, DeliveryContext(delivery_run, delivery_remaining, use.tool_call.name),
             )
+        # AD-1337 S3 (#1560): the render seam's final mask on the result this call hands the model, before the effect
+        # correlation is attached below (replace() would drop it) and before the message bound truncates the text, so
+        # whole forms still match. At most one SECRET_MASKED for this call, with the capture pass above.
+        tcr = await render.final(
+            tcr, emit_fn=self._emit, tool_name=use.tool_call.name, strict=strict, correlation=trace_correlation,
+        )
         if trace_correlation is not None:
             if strict and tcr.is_error:
                 tcr = replace(

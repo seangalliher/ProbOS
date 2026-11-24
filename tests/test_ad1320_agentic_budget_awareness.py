@@ -622,7 +622,11 @@ def test_native_builder_and_continue_or_ask_are_untouched_negative_pins() -> Non
     # never-ran refusals (one import, one call argument, a four-line comment); the
     # protected property (no budget_awareness in this file) is unchanged.
     # The blob before #1796 was 24179141cc441e31e176227fc767b39b950ac976.
-    rel, blob = "cognitive/swe_harness/native_builder.py", "6641aa6aa67c91244efc6189d7044397bd46eaf1"
+    # AD-1337 S3 (#1560): native_builder.py now assigns the render seam's masker slot from its executor (a two-line
+    # comment, one import, one blank line, one assignment); the protected property (no budget_awareness in this
+    # file) is unchanged.
+    # The blob before AD-1337 S3 was 6641aa6aa67c91244efc6189d7044397bd46eaf1.
+    rel, blob = "cognitive/swe_harness/native_builder.py", "5f0fac6ffc9ef52e0c4f04068f65df9832f24877"
     data = (_SRC / rel).read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() == blob, rel
     assert b"budget_awareness" not in data

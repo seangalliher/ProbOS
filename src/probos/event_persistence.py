@@ -69,6 +69,7 @@ DECLARATIONS: Mapping[str, Persistence] = MappingProxyType({
     "CREDENTIAL_READ": _DURABLE,
     "CREDENTIAL_READ_DENIED": _DURABLE,
     "SECRET_ROTATED": _DURABLE,
+    "SECRET_MASKED": _DURABLE,  # AD-1337: written by the router; the payload holds labels, never a value
     "CREDENTIAL_TIER_DENIED": _DURABLE,
     # Execution.
     "MCP_BRIDGE_INVOKE": _DURABLE,
