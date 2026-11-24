@@ -669,7 +669,8 @@ ROUTES: dict[tuple[str, str, str, str], str] = {
     ("src/probos/integrations/mcp_bridge/adapter.py", "MCPToolAdapter.invoke", "invoke", "self._bridge"):
         "never constructed in src (asserted below)",
     ("src/probos/runtime.py", "ProbOSRuntime.submit_mcp_invoke_with_consensus", "invoke", "self.mcp_bridge"):
-        "reaches a model through _McpTool.invoke (producer seam) or a decomposed DAG's reflect (AD-1337 S5)",
+        "reaches a model through _McpTool.invoke (producer seam) or a decomposed DAG's reflect or arbitration prompt, "
+        "which RouteTextMask masks (AD-1337 S5, test_ad1337_reflect_route.py)",
     ("src/probos/cognitive/swe_harness/agentic_loop.py", "AgenticLoop._execute_one_tool", "invoke", "self._executor"):
         "the loop's executor: the producer seam, then the render seam (N14)",
     ("src/probos/cognitive/agentic_dispatch.py", "DispatchToolExecutor.invoke", "invoke", "super()"):

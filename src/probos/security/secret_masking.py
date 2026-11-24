@@ -264,6 +264,49 @@ def residue_after_masking(masker: SecretMasker, value: object) -> MaskOutcome:
     return masker.mask_text(text)
 
 
+class RouteTextMask:
+    """AD-1337 S5: the masking passes over one model prompt that a route builds from text no seam masked.
+
+    A decomposed DAG's node results come from mesh intents, not tool calls, so neither the producer nor the render seam
+    sees them. Calling the mask masks a text; ``clip`` masks a part before cutting it, so a value the cut would split
+    is still replaced whole. Without a masker both return their argument as it is, so the prompt is byte-identical.
+    After a failed pass every later pass returns ``MASKING_FAILED_TEXT`` without masking again. ``settle`` logs once,
+    with labels only, and says whether the prompt may be sent.
+    """
+
+    def __init__(self, masker: SecretMasker | None, *, route: str) -> None:
+        self._masker = masker
+        self._route = route
+        self._names: set[str] = set()
+        self._failed = False
+
+    def __call__(self, text: str) -> str:
+        """``text`` masked. With a masker, ``TypeError`` for anything but a ``str``, as ``mask_text``."""
+        if self._masker is None:
+            return text
+        if self._failed:
+            return MASKING_FAILED_TEXT
+        outcome = self._masker.mask_text(text)
+        self._names |= outcome.names
+        self._failed = outcome.failed
+        return outcome.text
+
+    def clip(self, text: Any, limit: int) -> Any:
+        """``text[:limit]``; with a masker, the first ``limit`` characters of ``str(text)`` after masking it whole."""
+        if self._masker is None:
+            return text[:limit]
+        return self(text if isinstance(text, str) else str(text))[:limit]
+
+    def settle(self) -> bool:
+        """True when the prompt may be sent. One WARNING: the labels masked, or that a pass failed."""
+        if self._failed:
+            logger.warning("AD-1337: route=%s secret masking failed; nothing is sent to the model", self._route)
+            return False
+        if self._names:
+            logger.warning("AD-1337: route=%s masked names=%s", self._route, sorted(self._names))
+        return True
+
+
 class SecretHandle:
     """One registration in a ``SecretRegistry``; ``release`` ends it and may be called again."""
 
