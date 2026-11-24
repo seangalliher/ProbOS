@@ -1870,6 +1870,19 @@ def test_supervisor_parent_death_terminates_child(tmp_path: Path) -> None:
             parent.wait()
 
 
+def _worktree_listing(repo: Path) -> str | None:
+    """``git worktree list --porcelain`` in *repo*; None when git could not read it, which a poll treats as not yet.
+
+    BF-981: on Windows a listing that runs while ``git worktree add`` creates a worktree can exit 128 with "failed
+    to read .../locked: Permission denied" (reproduced with git alone, #1815). The wrapper's own listing in
+    ``_remove_materialized_gate_tree`` reads it with ``check=False`` too.
+    """
+    listed = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"], cwd=repo, capture_output=True, text=True, check=False,
+    )
+    return listed.stdout if listed.returncode == 0 else None
+
+
 def test_wrapper_hard_death_cleans_command_worktree_registration_and_lock(
     gate: ModuleType, tmp_path: Path
 ) -> None:
@@ -1919,16 +1932,14 @@ def test_wrapper_hard_death_cleans_command_worktree_registration_and_lock(
     )
     gate_root: Path | None = None
     try:
-        deadline = time.monotonic() + 15
+        # BF-981: 60 s (was 15 s) for the wrapper to start, materialize its tree and start the phase. This is a premise,
+        # and it was among #1815's failures at 16 workers; the cleanup's 20 s below is the behaviour, unchanged.
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
-            listing = subprocess.check_output(
-                ["git", "worktree", "list", "--porcelain"],
-                cwd=repo,
-                text=True,
-            )
+            listing = _worktree_listing(repo)
             worktrees = [
                 Path(line.removeprefix("worktree "))
-                for line in listing.splitlines()
+                for line in (listing or "").splitlines()
                 if line.startswith("worktree ")
                 and ".probos-gate-" in line
             ]
@@ -1943,14 +1954,12 @@ def test_wrapper_hard_death_cleans_command_worktree_registration_and_lock(
         wrapper.wait(timeout=10)
 
         deadline = time.monotonic() + 20
+        listing = None
         while time.monotonic() < deadline:
-            listing = subprocess.check_output(
-                ["git", "worktree", "list", "--porcelain"],
-                cwd=repo,
-                text=True,
-            )
+            listing = _worktree_listing(repo)
             if (
-                not _process_exists(phase_pid)
+                listing is not None
+                and not _process_exists(phase_pid)
                 and not gate_root.exists()
                 and str(gate_root) not in listing
             ):
@@ -1958,6 +1967,7 @@ def test_wrapper_hard_death_cleans_command_worktree_registration_and_lock(
             time.sleep(0.1)
         assert not _process_exists(phase_pid)
         assert not gate_root.exists()
+        assert listing is not None, "the last poll could not list the worktrees, so the registration is unknown"
         assert str(gate_root) not in listing
         with gate.GateLock(gate._gate_lock_path(repo)):
             pass
