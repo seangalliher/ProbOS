@@ -953,7 +953,6 @@ async def test_bf885_w8_a_read_sees_only_what_committed_and_is_admitted_as_a_uni
 async def test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_it_lands_and_verifies_remotely(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, follower: str,
 ) -> None:
-    monkeypatch.setattr(identity_writer, "IDENTITY_UNIT_SETTLE_S", _BOUND_S)
     duck, data_dir, factory = _DuckKeyring(), tmp_path / "ship-a", _SharedFactory()
     db_path = data_dir / "identity.db"
     store = _GatedSignStore(KeyringKeyStore(backend=duck))
@@ -974,6 +973,12 @@ async def test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_
         shared = factory.shared
         gate = shared.hold = asyncio.Event()
         shared.fail_held = True  # the late unit's COMMIT, once released, fails: its unit is rolled back
+        # BF-981 (#1820 bf-885 F1): the 0.2 s bound is for the late unit only, which this case refuses at the bound.
+        # Troi's birth before it and every unit after it has ended (the re-issued follower, the peer's import, the
+        # restart) check where a block lands, so they run at the production bound. At 0.2 s a loaded runner refused
+        # the re-issued follower's own unit, which then committed (the CI run of PR #1826).
+        production_bound = identity_writer.IDENTITY_UNIT_SETTLE_S
+        monkeypatch.setattr(identity_writer, "IDENTITY_UNIT_SETTLE_S", _BOUND_S)
         try:
             late = asyncio.create_task(_birth(registry, "Worf"))
             await asyncio.wait({late}, timeout=5)  # its caller is refused at the bound; its unit is still ending
@@ -986,13 +991,15 @@ async def test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_
                     break
                 await asyncio.sleep(0.005)
             gate.set()
-            await asyncio.wait({_ending(registry)}, timeout=5)  # the late unit's COMMIT failed; it was rolled back
+            _, unended = await asyncio.wait({_ending(registry)}, timeout=5)  # the late unit's COMMIT failed; it was rolled back
+            assert not unended, "premise: the late unit ended within 5 s, before the production bound is restored"
+            monkeypatch.setattr(identity_writer, "IDENTITY_UNIT_SETTLE_S", production_bound)  # the late unit has ended
             signing.set()
             await asyncio.wait({following}, timeout=5)
         finally:
             gate.set()
             signing.set()
-            await _joined(late, following)
+            await _joined(late, following, _ending(registry))  # and the writer's newest unit end, before its connection closes
         store.hold = None
         rolled_back = _rows(db_path, worf)
         refused = following.exception()

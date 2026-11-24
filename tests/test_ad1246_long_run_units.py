@@ -462,15 +462,20 @@ async def test_plan_long_run_without_a_slot_gets_the_inline_clock(state: str) ->
         await _finish_and_close(service, tickets)
 
 
-async def test_plan_long_run_turn_time_left_lowers_the_request() -> None:
+async def test_plan_long_run_turn_time_left_lowers_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    # BF-981 (#1523 F-1): the planner's clock is held. With a live clock `(t + 1000.0) - t` exceeded 1000.0 by one
+    # rounding step when t + 1000.0 fell in a coarser float spacing than t, and `<= 1000.0` failed. Both values here
+    # are exact, so the time left is 1000.0 and is asserted exactly. The module attribute is replaced, never
+    # time.monotonic itself, which the event loop reads.
+    monkeypatch.setattr(long_runs, "time", SimpleNamespace(monotonic=lambda: 5000.0))
     service = LongRunService()
     tickets: list[Any] = []
     try:
-        plan = _plan(service, 1500.0, grant=LongRunGrant(time.monotonic() + 1000.0))
+        plan = _plan(service, 1500.0, grant=LongRunGrant(5000.0 + 1000.0))
         assert plan is not None and plan.ticket is not None
         tickets.append(plan.ticket)
         # The turn's time left binds, below both the request and max_runtime_seconds.
-        assert 900.0 < plan.timeout_seconds <= 1000.0
+        assert plan.timeout_seconds == 1000.0
         assert plan.wall_clock is not None
         assert plan.wall_clock["reason"] == "turn_time_left"
         assert plan.wall_clock["requested_seconds"] == 1500.0

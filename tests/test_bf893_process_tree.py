@@ -945,20 +945,24 @@ async def test_redteam_outer_timeout_ends_rerun(
 
     The runtime wraps the re-run in a shorter timer than the re-run's own budget; the cancellation that timer sends
     used to leave the command running to the worker's deadline while the caller was told "timed out". Here the
-    re-run has 5 s and the outer timer 1 s, started once the heartbeat runs (a slow start cannot fail the premise).
+    re-run has 30 s and the outer timer 1 s, started once the heartbeat runs (a slow start cannot fail the premise).
     """
     agent = RedTeamAgent(pool="red_team")
     control_marker = tmp_path / "control"
     marker = tmp_path / "marker"
     try:
         # Control: never timed out from outside, the same re-run keeps beating.
-        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 10.0)
+        # BF-981: 30 s here and below (were 10 s and 5 s). A gate-loaded start used most of the 5 s, so the re-run's
+        # own budget answered inside the outer second ("DID NOT RAISE", #1815).
+        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 30.0)
         control = asyncio.create_task(
             _rerun(agent, _spawner_command(beater, control_marker, _BEAT_LIMIT_SECONDS, powershell=_ON_WINDOWS)),
         )
         await _beats_until_ended(control_marker, control, lambda verdict: verdict.verified is True)
 
-        monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 5.0)
+        # The budget's deadline is set after `started_at`, so it cannot end the re-run before 30.0 s. The outer timer
+        # ends it at P + 1.0 s, P being the premise's time, and the silence check ends by P + 2.0 s: a re-run left
+        # running (no slot.cancel()) still beats there whenever P < 28 s.
         async with _ContendedCall(hold=False, heartbeats=(marker,)) as pool:
             started_at = time.monotonic()
             rerun = pool.submit(
@@ -967,7 +971,7 @@ async def test_redteam_outer_timeout_ends_rerun(
             await _heartbeat_is_running(marker, rerun)
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(rerun, timeout=1.0)
-            assert time.monotonic() - started_at < 4.5, "the re-run's own 5 s budget ended it, not the outer timer"
+            assert time.monotonic() - started_at < 29.0, "the re-run's own 30 s budget ended it, not the outer timer"
             await _assert_silent_after_the_call(marker)
             assert await pool.is_free(3.0), "the timed-out re-run left its worker thread running the command"
     finally:
@@ -1194,6 +1198,9 @@ async def test_in_time_result_unchanged_with_slot(tmp_path: Path, monkeypatch: p
 
     red_events: list[str] = []
     monkeypatch.setattr("probos.agents.red_team.ProcessTreeSlot", _recording_slot(red_events))
+    # BF-981: the shell's 30 s for the re-run too (was 5 s). Under gate load the third PowerShell-and-Python start
+    # used the 5 s and answered "Verification command timed out" (#1815); this test checks the answer and the slot.
+    monkeypatch.setattr("probos.agents.red_team._RERUN_TIMEOUT_S", 30.0)
     agent = RedTeamAgent(pool="red_team")
     agreed = await _rerun(agent, command, claimed_stdout="bf893-ok")
     assert agreed.verified is True

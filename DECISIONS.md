@@ -506,6 +506,32 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
 - *Rejected.* A bounded retry on an unmet premise (BF-913's reason holds; the next step only if 7.0 s fails under load); a gate-level rerun rule (a Captain decision, asked separately); fewer workers; a shared cross-file helper (the two shapes need different fixes).
 - *Reversal.* Revert the BF-981 commits. Nothing persisted changes.
 
+### BF-981 part 2 -- The rest of the gate-load test family holds under a held start, listing, clock and unit end; the gate runs at 16 workers (2026-11-24, #1815)
+
+- *Scope.* Six tests: `tests/test_bf893_process_tree.py` (red team outer timeout, in-time result), `tests/test_run_test_gate.py` (hard death), `tests/test_ad1246_long_run_promotion.py` (M5), `tests/test_ad1246_long_run_units.py` (turn time left, #1523 F-1) and `tests/test_bf885_identity_db_units.py` (A1, #1820 bf-885 F1). Also `.github/agents/orchestrator.agent.md` and `CLAUDE.md`. Contract: `prompts/bf-981-load-flake-remaining-tests.md`.
+- *Causes (from the recorded failures; none implicates product code).*
+  - A gate-loaded child start used a fixed budget: the red team's 5 s, and M5's 1.5 s margin (4 of 83 banked runs).
+  - The hard-death poll treated a transient `git worktree list` read failure (exit 128, reproduced with git alone) as fatal.
+  - The turn-time test compared a live float difference to 1000.0 at its edge.
+  - A1 ran a follower's own unit at the 0.2 s test bound.
+- *D1.* A budget that is not under test is raised far above the start (red team 30 s). A premise before the timed part is held by construction (M5's release file; the listing poll's "not yet", whose failed last poll fails the test). A bound under test keeps its value (A1's late unit at 0.2 s).
+- *D2.* The outer-timeout bound is 29.0 s against a 30 s budget whose deadline is set after the clock starts.
+- *D3.* The gate step expects the default, 16 workers. A failure seen only at 16 is triaged from evidence to the test, the product or the environment before anything else; a canonical gate at a lower count advances a change only with a measured reason on record (review round 1).
+- *Numbering.* One number for the six: each is a test premise that assumed an unloaded host, and each repair is test-only. The hard-death poll is the case that #1815's note reserved for a new number; it keeps BF-981 because its repair is of the same kind.
+- *Proof method.* A stressor kept outside the repository: a direct child held suspended for 6.0 s after it is created; failed listings; a held clock where `(t + 1000.0) - t > 1000.0`; a 0.5 s hold of each unit end after the late unit. Each production mutant is killed on the candidate wherever it is killed on the base, quiet and under the stressor. Effect: on the base every row fails (L1 at the grandchild-start premise, L2 at `agreed.verified is True`, L3 waiting for the first run's start file, L4 and L5 with `CalledProcessError`, L6 with `IdentityUnitUnsettled` in both cases, L7 at `1000.0000000002328 <= 1000.0`); on the candidate L1 to L4, L6 and L7 pass and L5 fails at the last-poll assertion. The mutants RT1, RT2, H1, M5a, F1a and B1 are killed on the base and on the candidate, quiet and under the stressor; M5c survives the M5 case on both and is killed by the plan-level cases of `tests/test_ad1246_long_run_units.py`.
+- *Rejected.* A delay at `Popen` entry (M5's budget starts after `Popen` returns); a retry on an unmet premise; lowering the default worker count; a product `now` parameter for `plan_long_run`.
+- *Reversal.* Revert the part-2 commits. Nothing persisted changes.
+
+### BF-993 -- Tests that call _setup_logging put back the logger levels it pins (2026-11-24, #1523, #1815)
+
+- *Scope.* Test only: `tests/fixtures/logger_levels.py` (new), `tests/test_bf993_logger_level_leak.py` (new), `tests/test_ad1026_boot_verbosity.py`, `tests/test_bf748_file_log_carries_the_date.py` and `tests/test_ad1337_reflect_route.py`. Contract: `prompts/bf-993-setup-logging-level-leak.md`.
+- *Cause (reproduced).* `_setup_logging` pins eleven named loggers at WARNING (`src/probos/__main__.py:187-197`); the two tests that call it restored only the root logger. A later test of the same process that sets only the root level to DEBUG loses the decomposer's DEBUG record (`decomposer.py:501`): the AD-1337 S5 reflect test failed in both 3-worker gates of `b428497b`, at the same point, and fails in one process with either polluter file run first. Which worker ran the polluter in the two gates is not recorded.
+- *D1.* Close the leak at the source: one helper puts back every named logger's level (not a list of eleven, so a future pin is covered); both polluters use it. Each source has a proof that runs in one process and does not depend on order: the first test of `tests/test_bf993_logger_level_leak.py` covers the file-log helper, and its fourth drives the `_logger_state` fixture through its teardown with `_logger_state.__wrapped__()` (added in review round 1; before that only row S4, which depends on the worker's order, observed it).
+- *D2.* The observed victim names the logger it reads, so it does not depend on the process's logger state. The two federation tests that the leak also exposes (`test_bf875_mcp_inbound_auth.py`, `test_bf876_a2a_inbound_auth.py`) are covered by D1 and are not edited.
+- *Rejected.* A `conftest.py` autouse restore for every test (a registry walk on 54,940 tests, and it would hide future leaks); a change in `_setup_logging` (its pins are right for the CLI).
+- *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new tests put back (the first for itself, the fourth through `_logger_state`); it replaces the formatter of each handler on the root logger with an AD-754 redaction formatter (`apply_redaction_to_handlers`); and it resets the boot warning counter. None of these is in scope.
+- *Reversal.* Revert the BF-993 commits. Nothing persisted changes.
+
 ### BF-900 -- The dispatch claim no longer undoes a park made in the same run (2026-10-21, #1573)
 
 - *Scope.* The AD-839 claim in `CognitiveAgent._handle_work_item_dispatch` (`cognitive/cognitive_agent.py`) and tests. Contract: `prompts/bf-900-dispatch-claim-keeps-the-park.md` (the Architect's consult of 2026-10-21, 13:58Z).

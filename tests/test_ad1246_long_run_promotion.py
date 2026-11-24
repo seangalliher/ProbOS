@@ -888,9 +888,9 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
 
     monkeypatch.setattr(service, "admit", _recording_admit)
     tool_runtime = SimpleNamespace(
-        # H-4: the validator refuses a 4 s reach, so this config is built without it.
+        # H-4: the validator refuses a 30 s reach, so this config is built without it.
         config=SimpleNamespace(execution=ExecutionConfig.model_construct(
-            enabled=True, scratch_dir=str(tmp_path / "scratch"), max_runtime_seconds=4.0,
+            enabled=True, scratch_dir=str(tmp_path / "scratch"), max_runtime_seconds=30.0,
             max_concurrent_long_runs=1,
         )),
         audit_log=AuditLog(),
@@ -898,9 +898,17 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
     )
     tool = code_execution_tool.CodeExecutionTool(runtime=tool_runtime)
     started = tmp_path / "first-started.txt"
+    release = tmp_path / "first-release.txt"
+    # BF-981: the first run holds its slot until the second has run (the release file), not for a fixed 2 s sleep
+    # inside a 3.5 s budget, whose 1.5 s margin a gate-loaded start used (#1815). Its 25 s budget: the release comes
+    # at most 15 s (the start wait below) plus the second run (its 1.0 s clock, then its kill) after the gather
+    # starts. The child's own 20 s limit only ends a run the release never reached.
     first_code = (
         f"import pathlib, time\npathlib.Path({str(started)!r}).write_text('up')\n"
-        "time.sleep(2)\nprint('first done')\n"
+        "end = time.monotonic() + 20\n"
+        f"while not pathlib.Path({str(release)!r}).exists() and time.monotonic() < end:\n"
+        "    time.sleep(0.05)\n"
+        "print('first done')\n"
     )
     second_code = "import time\ntime.sleep(2)\nprint('second done')\n"
     context = {EXECUTION_LONG_RUN_GRANT_KEY: LongRunGrant(None), "agent_id": "a", "thread_id": ""}
@@ -910,16 +918,19 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
     )
 
     async def _second_once_the_first_holds_the_slot() -> ToolResult:
-        await _wait_until(started.exists, timeout=15)
-        return await tool.invoke({"code": second_code, "timeout": 3.5}, context)
+        try:
+            await _wait_until(started.exists, timeout=15)
+            return await tool.invoke({"code": second_code, "timeout": 3.5}, context)
+        finally:
+            release.write_text("go", encoding="utf-8")  # the first run ends once the second has run, however it ended
 
     try:
         first, second = await asyncio.wait_for(
             asyncio.gather(
-                tool.invoke({"code": first_code, "timeout": 3.5}, context),
+                tool.invoke({"code": first_code, "timeout": 25.0}, context),
                 _second_once_the_first_holds_the_slot(),
             ),
-            timeout=30,
+            timeout=60,
         )
         # Premise: the second call planned while the first held the pool's only slot.
         assert active_at_admit == [0, 1]
@@ -939,7 +950,7 @@ async def test_m5_second_long_run_gets_the_inline_clock_when_slots_are_full(
         records = _code_execution_records(tool_runtime.audit_log)
         assert sorted(
             (record["timeout_seconds"], record["success"], record["timed_out"]) for record in records
-        ) == [(1.0, False, True), (3.5, True, False)]
+        ) == [(1.0, False, True), (25.0, True, False)]
         assert service.active_count == 0
     finally:
         await _close_service(service)
