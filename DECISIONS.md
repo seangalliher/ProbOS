@@ -522,6 +522,16 @@ AD-1346 M3 (#1604) proves one admission decision per unit of work in shadow befo
 - *Rejected.* A delay at `Popen` entry (M5's budget starts after `Popen` returns); a retry on an unmet premise; lowering the default worker count; a product `now` parameter for `plan_long_run`.
 - *Reversal.* Revert the part-2 commits. Nothing persisted changes.
 
+### BF-993 -- Tests that call _setup_logging put back the logger levels it pins (2026-11-24, #1523, #1815)
+
+- *Scope.* Test only: `tests/fixtures/logger_levels.py` (new), `tests/test_bf993_logger_level_leak.py` (new), `tests/test_ad1026_boot_verbosity.py`, `tests/test_bf748_file_log_carries_the_date.py` and `tests/test_ad1337_reflect_route.py`. Contract: `prompts/bf-993-setup-logging-level-leak.md`.
+- *Cause (reproduced).* `_setup_logging` pins eleven named loggers at WARNING (`src/probos/__main__.py:187-197`); the two tests that call it restored only the root logger. A later test of the same process that sets only the root level to DEBUG loses the decomposer's DEBUG record (`decomposer.py:501`): the AD-1337 S5 reflect test failed in both 3-worker gates of `b428497b`, at the same point, and fails in one process with either polluter file run first. Which worker ran the polluter in the two gates is not recorded.
+- *D1.* Close the leak at the source: one helper puts back every named logger's level (not a list of eleven, so a future pin is covered); both polluters use it.
+- *D2.* The observed victim names the logger it reads, so it does not depend on the process's logger state. The two federation tests that the leak also exposes (`test_bf875_mcp_inbound_auth.py`, `test_bf876_a2a_inbound_auth.py`) are covered by D1 and are not edited.
+- *Rejected.* A `conftest.py` autouse restore for every test (a registry walk on 54,940 tests, and it would hide future leaks); a change in `_setup_logging` (its pins are right for the CLI).
+- *Known limits.* `_setup_logging` also sets the root level, which `_handlers` does not put back (ad1026 does) and which the new test puts back for itself, and it adds AD-754 redaction filters to the handlers on the root logger. Neither is in scope.
+- *Reversal.* Revert the BF-993 commits. Nothing persisted changes.
+
 ### BF-900 -- The dispatch claim no longer undoes a park made in the same run (2026-10-21, #1573)
 
 - *Scope.* The AD-839 claim in `CognitiveAgent._handle_work_item_dispatch` (`cognitive/cognitive_agent.py`) and tests. Contract: `prompts/bf-900-dispatch-claim-keeps-the-park.md` (the Architect's consult of 2026-10-21, 13:58Z).
