@@ -999,7 +999,7 @@ async def test_bf885_a1_a_follower_of_a_unit_that_failed_late_is_anchored_where_
         finally:
             gate.set()
             signing.set()
-            await _joined(late, following)
+            await _joined(late, following, _ending(registry))  # and the writer's newest unit end, before its connection closes
         store.hold = None
         rolled_back = _rows(db_path, worf)
         refused = following.exception()
