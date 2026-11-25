@@ -28,6 +28,10 @@ from typing import TYPE_CHECKING, Any
 
 from probos import work_item_steps as owned_steps
 from probos.admission.seam import shadow_at  # AD-1346 M3c
+from probos.cognitive.dm.lookup_claim import (  # AD-1358 S2 (#1750)
+    LOOKUP_DISCLOSURE,
+    assess_lookup_claim,
+)
 from probos.cognitive.dm.write_ledger import (  # AD-1285 (#1087)
     WRITE_CHANNEL_ARTIFACT,
     WRITE_CHANNEL_FINDING,
@@ -181,6 +185,10 @@ class DmReplyContext:
     # default is ``None`` because every construction site that does not set it
     # is, by definition, one where the loop's record is unknown.
     tool_invocations: ToolInvocations | None = None
+    # AD-1358 S2 (#1750): True when this reply's reads are not all in ``tool_invocations``: an adopted
+    # retry (step 1 keeps the first attempt's record), an ``[ACTION:]`` marker (step 4e) or a
+    # ``[MESH ...]`` read (step 4h). The lookup-claim check in step 4m abstains when it is set.
+    lookup_record_incomplete: bool = False
     owned_steps_view: owned_steps.OwnedStepsView | None = None
     owned_steps_reference: owned_steps.OwnedStepsViewReference | None = None
     owned_steps_actual_context: owned_steps.OwnedStepsActualContext | None = None
@@ -705,6 +713,9 @@ class DmReplyPipeline:
                                 retry_result.cleaned_text
                             )
                         )
+                        # AD-1358 S2 (#1750): ``ctx.tool_invocations`` is still the first
+                        # attempt's record, so the lookup-claim check abstains for this reply.
+                        self.ctx.lookup_record_incomplete = True
                         # AD-1360 (#1828): the reply now comes from the retry's own cycle, so the steps after this one
                         # (the DM episode, the Ward Room posts) belong to it; a retry result with no id keeps this one.
                         self.ctx.cycle_id = result_cycle_id(retry_resp) or self.ctx.cycle_id
@@ -1057,6 +1068,9 @@ class DmReplyPipeline:
         envelopes = parse_action_envelopes(self.ctx.response_text)
         if not envelopes:
             return
+        # AD-1358 S2 (#1750): a browser action the reply asked for runs (or is refused) outside the
+        # tool record, so the lookup-claim check in step 4m abstains for this reply.
+        self.ctx.lookup_record_incomplete = True
 
         # AD-1343: a stopped agent proposes and runs no browser action, even in a turn admitted
         # before the order (this inline tier-1 call bypasses the tool sink, #1523 F-177): the
@@ -1413,6 +1427,9 @@ class DmReplyPipeline:
         if parsed is None:
             return
         intent_name, params = parsed
+        # AD-1358 S2 (#1750): a read the reply asked for runs here, outside the tool record, so the
+        # lookup-claim check in step 4m abstains for this reply, whether or not the read runs.
+        self.ctx.lookup_record_incomplete = True
 
         pool_name = _MESH_READ_INTENT_POOLS.get(intent_name)
         if pool_name is None:
@@ -2422,14 +2439,18 @@ class DmReplyPipeline:
         channels ran this turn versus which of them produced a write -- and
         appends one honest sentence when a channel ran and wrote nothing
         (``MARKER_WROTE_NOTHING``) or wrote only some of what was asked for
-        (``MARKER_WROTE_PARTIALLY``, BF-866 #1338 item 4). The reply is only
-        the surface the disclosure lands on; no text is read.
+        (``MARKER_WROTE_PARTIALLY``, BF-866 #1338 item 4). The write verdict
+        reads no text.
+        AD-1358 S2 (#1750): under the same switch, one more sentence
+        (``LOOKUP_DISCLOSURE``) when the reply's wording claims a search or
+        lookup and the turn's tool record holds no call; the record decides
+        and the wording only selects (``lookup_claim.py``).
         Never blocks and never rewrites the agent's substance (#13(c): a
         refusal that ends the work is a capability ceiling in a governance
         costume).
 
-        Abstains whenever no channel ran, so a ship with no write channel
-        wired is byte-identical.
+        The write verdict abstains whenever no channel ran; the lookup check
+        abstains unless ``ctx.tool_invocations`` is a record with no call.
 
         Tier-2 honest-degrade: never raises.
         """
@@ -2446,20 +2467,37 @@ class DmReplyPipeline:
                 return  # flag exists so this can be turned off without a revert
 
             verdict = assess_write_claim(self.ctx.write_ledger)
-            if verdict is ClaimVerdict.ABSTAIN:
-                return
-
-            logger.warning(
-                "AD-1285: write-claim guard verdict=%s agent=%s thread=%s "
-                "ran_without_writing=%s wrote_partially=%s wrote=%s",
-                verdict.value,
-                self.ctx.agent_id,
-                self.ctx.chat_thread_id,
-                sorted(self.ctx.write_ledger.wrote_nothing),
-                sorted(self.ctx.write_ledger.wrote_partially),
-                sorted(self.ctx.write_ledger.wrote),
+            suffix = ""
+            if verdict is not ClaimVerdict.ABSTAIN:
+                logger.warning(
+                    "AD-1285: write-claim guard verdict=%s agent=%s thread=%s "
+                    "ran_without_writing=%s wrote_partially=%s wrote=%s",
+                    verdict.value,
+                    self.ctx.agent_id,
+                    self.ctx.chat_thread_id,
+                    sorted(self.ctx.write_ledger.wrote_nothing),
+                    sorted(self.ctx.write_ledger.wrote_partially),
+                    sorted(self.ctx.write_ledger.wrote),
+                )
+                suffix = disclosure_for(verdict)
+            # AD-1358 S2 (#1750): the read side, after the write sentence. The tool record
+            # decides; the wording of the body before any sentence only selects the turn.
+            claim = assess_lookup_claim(
+                self.ctx.pre_write_disclosure_body,
+                self.ctx.tool_invocations,
+                record_incomplete=self.ctx.lookup_record_incomplete,
             )
-            suffix = disclosure_for(verdict)
+            if claim is not None:
+                logger.warning(
+                    "AD-1358: lookup-claim check agent=%s thread=%s claim=%r: the reply "
+                    "claims a search or lookup and the turn's tool record holds no call",
+                    self.ctx.agent_id,
+                    self.ctx.chat_thread_id,
+                    claim,
+                )
+                suffix += LOOKUP_DISCLOSURE
+            if not suffix:
+                return
             self.ctx.response_text = self.ctx.response_text + suffix
             self.ctx.write_disclosure_suffix = suffix
         except Exception:

@@ -2389,6 +2389,12 @@ def _project_tool_invocations(result: Any) -> ToolInvocations | None:
                 "them rather than risk contradicting a successful write",
                 len(dropped), sorted(set(dropped)),
             )
+        if dropped and not attempted:
+            # AD-1358 S2 (#1750): every call was unverifiable, so an empty record would say "this turn
+            # called no tool", which it did. None says the record cannot be read (AD-1269). The write
+            # verdict is the same either way: ``step_4n`` consults no channel for None or for an
+            # empty ``attempted``.
+            return None
         return ToolInvocations.from_names(attempted, succeeded)
     except Exception:
         logger.warning(
