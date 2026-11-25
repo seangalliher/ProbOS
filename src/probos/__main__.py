@@ -1142,21 +1142,23 @@ def _init_api_format(llm_url: str) -> str:
     """#1414 item 2: ``ollama`` only for an Ollama root (port 11434, no path); ``openai`` for every other URL.
 
     The client posts ``api/chat`` under an ``ollama`` base and ``chat/completions`` under an ``openai`` one,
-    so init's own Ollama default, ``http://localhost:11434/v1``, is Ollama's OpenAI-compatible API. A URL
-    whose port does not parse is ``openai``, as it was for any URL without ``:11434``.
+    so init's own Ollama default, ``http://localhost:11434/v1``, is Ollama's OpenAI-compatible API. The path
+    is judged as the client sends it (#1414 review): the base with one trailing slash, parsed by httpx, which
+    removes dot segments, so ``/v1/..`` and ``/./`` are the root. A URL httpx cannot parse is ``openai``, as
+    it was for any URL without ``:11434``.
     """
-    from urllib.parse import urlsplit
+    import httpx
 
     try:
-        parts = urlsplit(llm_url)
-        port = parts.port
-    except ValueError:
+        url = httpx.URL(llm_url.rstrip("/") + "/")  # what OpenAICompatibleClient._build_client builds
+    except (httpx.InvalidURL, ValueError):
         return "openai"
-    return "ollama" if port == 11434 and parts.path.strip("/") == "" else "openai"
+    return "ollama" if url.port == 11434 and url.path.strip("/") == "" else "openai"
 
 
 def _cmd_init(args: argparse.Namespace) -> None:
     """Handle ``probos init`` -- interactive Rich TUI wizard (AD-484)."""
+    from rich.markup import escape
     from rich.prompt import Prompt
 
     console = Console()
@@ -1197,7 +1199,16 @@ def _cmd_init(args: argparse.Namespace) -> None:
         default_url = "http://localhost:11434/v1"
     elif default_url == "http://127.0.0.1:8080":
         default_url = "http://127.0.0.1:8080/v1"
-    llm_url = Prompt.ask("  LLM endpoint URL", default=default_url, console=console)
+    while True:
+        llm_url = Prompt.ask("  LLM endpoint URL", default=default_url, console=console)
+        try:
+            # #1414 review: setup's base-URL rule. A query, for one, would carry the path the client appends
+            # (http://localhost:11434?q=1 posts to /?q=1/api/chat). The URL is written as typed.
+            provider_setup.normalize_base_url(llm_url)
+        except provider_setup.SetupInputError as exc:
+            console.print(f"  [red]Invalid endpoint URL:[/red] {escape(str(exc))}")
+            continue
+        break
 
     # Prompt for model with sensible default per provider
     if "ollama" in detected or ":11434" in llm_url:
@@ -1654,9 +1665,11 @@ def _setup_shared_url_notes(console: Console, shared_url_tiers: dict[str, str], 
 
     for tier, model in shared_url_tiers.items():
         # Read from the existing file, which can hold the chosen key or one it already had (#1414 item 7).
-        shown = provider_setup.redact_keys(model, keys)
+        # The raw model is redacted first (repr doubles a backslash in it), then its repr, whose quotes and
+        # escapes can complete a key the raw model holds only part of (#1414 review).
+        shown = provider_setup.redact_keys(repr(provider_setup.redact_keys(model, keys)), keys)
         console.print(
-            f"  Left the shared llm_base_url unchanged because {escape(tier)} (model {escape(repr(shown))}) uses it; "
+            f"  Left the shared llm_base_url unchanged because {escape(tier)} (model {escape(shown)}) uses it; "
             f"give {escape(tier)} its own llm_base_url_{escape(tier)} to move it"
         )
 

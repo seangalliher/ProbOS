@@ -44,11 +44,15 @@ def _no_detection(console: object) -> dict[str, str]:
     raise AssertionError("setup probed for local providers, which this test does not script")
 
 
-def _init(monkeypatch: pytest.MonkeyPatch, home: Path, detected: dict[str, str], *answers: str) -> dict[str, Any]:
+def _init(
+    monkeypatch: pytest.MonkeyPatch, home: Path, detected: dict[str, str], *answers: str,
+    output: StringIO | None = None,
+) -> dict[str, Any]:
     """Run the real _cmd_init; each prompt takes the next answer, or its own default once none is left."""
     pending = list(answers)
+    sink = StringIO() if output is None else output
     monkeypatch.setattr(main_mod, "_detect_llm_providers", lambda console: dict(detected))
-    monkeypatch.setattr(main_mod, "Console", lambda *args, **kwargs: Console(file=StringIO()))
+    monkeypatch.setattr(main_mod, "Console", lambda *args, **kwargs: Console(file=sink, width=200))
     monkeypatch.setattr(
         "rich.prompt.Prompt.ask", lambda *args, **kwargs: pending.pop(0) if pending else kwargs["default"],
     )
@@ -103,13 +107,22 @@ async def _chat_posts(config_path: Path, monkeypatch: pytest.MonkeyPatch) -> lis
     [
         ("http://localhost:11434/v1", "openai"),
         ("http://localhost:11434/v1/", "openai"),
+        ("http://localhost:11434/v1/.", "openai"),
         ("http://localhost:11434", "ollama"),
         ("http://localhost:11434/", "ollama"),
+        ("http://localhost:11434//", "ollama"),
+        ("http://localhost:11434/./", "ollama"),
+        ("http://localhost:11434/v1/..", "ollama"),
+        ("http://localhost:11434/a/../", "ollama"),
         ("http://127.0.0.1:8080/v1", "openai"),
         ("http://127.0.0.1:8080", "openai"),
-        ("http://localhost:114340/v1", "openai"),
     ],
-    ids=["ollama-v1", "ollama-v1-slash", "ollama-root", "ollama-root-slash", "proxy-v1", "other-root", "port-out-of-range"],
+    # #1414 review: dot segments are judged as httpx sends them (/v1/.. is the root); a port that does not
+    # parse is now refused by init (test_init_asks_again_for_a_url_setup_would_refuse).
+    ids=[
+        "ollama-v1", "ollama-v1-slash", "v1-dot", "ollama-root", "ollama-root-slash", "root-double-slash",
+        "root-dot", "v1-dotdot", "sub-dotdot", "proxy-v1", "other-root",
+    ],
 )
 def test_init_writes_the_format_the_typed_url_serves(
     typed: str, expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -125,8 +138,9 @@ def test_init_writes_the_format_the_typed_url_serves(
     [
         ({"ollama": "http://localhost:11434"}, (), "http://localhost:11434/v1", "/v1/chat/completions"),
         ({}, ("http://localhost:11434", "llama3.1:8b"), "http://localhost:11434", "/api/chat"),
+        ({}, ("http://localhost:11434/v1/..", "llama3.1:8b"), "http://localhost:11434/v1/..", "/api/chat"),
     ],
-    ids=["detected-default", "bare-root"],
+    ids=["detected-default", "bare-root", "root-by-dot-segments"],
 )
 async def test_the_init_config_reaches_the_api_its_url_serves(
     detected: dict[str, str], answers: tuple[str, ...], url: str, path: str,
@@ -140,6 +154,36 @@ async def test_the_init_config_reaches_the_api_its_url_serves(
 
     assert posts, "premise: the client sent its request"
     assert posts[0] == path  # before #1414 the detected default posted /v1/api/chat
+
+
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [
+        ("http://localhost:11434?q=1", "must not have a query or fragment"),
+        ("http://localhost:11434/v1?q=1", "must not have a query or fragment"),
+        ("http://localhost:114340/v1", "is not a valid URL"),
+    ],
+    ids=["root-query", "v1-query", "port-out-of-range"],
+)
+def test_init_asks_again_for_a_url_setup_would_refuse(
+    refused: str, reason: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = "http://localhost:11434/v1"
+    output = StringIO()
+
+    written = _init(monkeypatch, tmp_path / "init", {}, refused, accepted, "llama3.1:8b", output=output)
+
+    # A query would carry the path the client appends (/?q=1/api/chat); setup's rule refuses it.
+    assert written["cognitive"]["llm_base_url_fast"] == accepted
+    assert reason in " ".join(output.getvalue().split())
+
+
+def test_a_url_the_client_cannot_parse_is_openai() -> None:
+    unparsable = "http://localhost:abc/v1"
+    with pytest.raises(httpx.InvalidURL):
+        httpx.URL(unparsable)  # premise: the parse the client and init's rule share fails
+
+    assert main_mod._init_api_format(unparsable) == "openai"
 
 
 def test_the_init_scaffold_gives_every_text_tier_the_shipped_timeout(

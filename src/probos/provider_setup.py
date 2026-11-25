@@ -282,7 +282,12 @@ _REDACTED = "<redacted>"
 
 
 def _key_forms(api_key: str) -> list[str]:
-    raw = api_key.encode("utf-8")
+    try:
+        raw = api_key.encode("utf-8")
+    except UnicodeEncodeError:
+        # #1414 review: a key read from the existing file is not validated (config_text_api_keys). One that
+        # holds a lone surrogate has no encoded form, so only its literal text can appear in what setup prints.
+        return [api_key]
     forms = {
         api_key,
         quote(api_key, safe=""),

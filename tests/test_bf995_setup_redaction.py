@@ -39,12 +39,12 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(_KEY_ENV, _CHOSEN)
 
 
-def _setup(*extra: str) -> int:
+def _setup(*extra: str, yes: bool = True) -> int:
     parser = argparse.ArgumentParser(prog="probos")
     main_mod._add_setup_parser(parser.add_subparsers(dest="command"))
     args = parser.parse_args([
         "setup", "--provider", "custom", "--base-url", _BASE, "--api-key-env", _KEY_ENV,
-        "--model", "model-x", "--skip-validation", "--yes", *extra,
+        "--model", "model-x", "--skip-validation", *(("--yes",) if yes else ()), *extra,
     ])
     return main_mod._cmd_setup(args)
 
@@ -138,3 +138,60 @@ def test_a_write_failure_quoting_the_file_prints_no_key_from_it(
     out = _printed(capsys)
     assert "no space left beside <redacted>" in out  # premise: the failure was printed
     assert _OTHER not in out
+
+
+def test_redact_keys_hides_a_key_with_no_utf8_form() -> None:
+    lone = "\ud800"
+    with pytest.raises(UnicodeEncodeError):
+        lone.encode("utf-8")  # premise: no UTF-8 form, so no percent-encoded or base64 form either
+
+    assert ps.redact_keys(f"model {lone} here", [lone, _OTHER]) == "model <redacted> here"
+
+
+@pytest.mark.parametrize("yes", [True, False], ids=["report", "confirm-and-report"])
+def test_a_key_with_no_utf8_form_is_hidden_and_setup_completes(
+    yes: bool, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A YAML escape gives the vision key and the retained model a lone surrogate; config_text_api_keys keeps it.
+    config = _existing(tmp_path, '  llm_api_key_vision: "\\uD800"', '  llm_model_vision: "\\uD800"')
+    asked: list[str] = []
+
+    def confirm(prompt: str, *args: object, **kwargs: object) -> bool:
+        asked.append(prompt)
+        return True
+
+    monkeypatch.setattr("rich.prompt.Confirm.ask", confirm)
+
+    assert _setup(yes=yes) == 0  # before the review, setup raised UnicodeEncodeError after replacing the file
+
+    out = _printed(capsys)
+    assert yaml.safe_load(config.read_text(encoding="utf-8"))["cognitive"]["llm_model_vision"] == "\ud800"  # premise
+    assert len(asked) == (0 if yes else 1)  # premise: only the final question, and only without --yes
+    assert out.count("vision (model '<redacted>') uses it") == (1 if yes else 2)
+
+
+_FILE_SECRET = "sk-bf995-file-secret-N9Q4"
+
+
+@pytest.mark.parametrize(
+    ("key", "key_yaml", "model_yaml", "note"),
+    [
+        (f"'{_FILE_SECRET}'", f"\"'{_FILE_SECRET}'\"", _FILE_SECRET, "model <redacted>"),
+        ("sk-bf995-file\\\\N9Q4", "sk-bf995-file\\\\N9Q4", "sk-bf995-file\\N9Q4", "model '<redacted>'"),
+        ("sk-bf995-file\\N9Q4", "sk-bf995-file\\N9Q4", "sk-bf995-file\\N9Q4", "model '<redacted>'"),
+    ],
+    ids=["quoted", "doubled-backslash", "raw-backslash"],
+)
+def test_a_shown_model_never_completes_a_file_key(
+    key: str, key_yaml: str, model_yaml: str, note: str, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # quoted and doubled-backslash: the model's repr adds the quotes or the second backslash and so forms the key;
+    # raw-backslash: only the raw redaction finds the key, since repr doubles its backslash.
+    config = _existing(tmp_path, f"  llm_api_key_vision: {key_yaml}", f"  llm_model_vision: {model_yaml}")
+    assert ps.config_text_api_keys(config.read_text(encoding="utf-8")) == [key]  # premise: the file holds the key
+
+    assert _setup() == 0
+
+    out = _printed(capsys)
+    assert f"vision ({note}) uses it" in out
+    assert key not in out
