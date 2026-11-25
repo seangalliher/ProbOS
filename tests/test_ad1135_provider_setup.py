@@ -424,7 +424,7 @@ def test_probe_chat_400_returns_request_rejected_with_redacted_excerpt() -> None
     assert "<redacted>" in result.message
     assert _KEY not in result.message
     assert "TAIL-MARKER" not in result.message  # the excerpt is capped
-    assert result.message.endswith("...")
+    assert result.message.endswith("\u2026")  # #1414 item 6: the cut marker is U+2026, not "..."
 
 
 def test_probe_chat_400_excerpt_redacts_the_full_key_but_may_show_a_provider_masked_form() -> None:
@@ -469,7 +469,7 @@ def test_probe_chat_excerpt_cap_leaves_no_part_of_a_key_that_whitespace_folding_
 
     result = ps.probe_chat(_BASE, _ENC_KEY, "model-x", transport=transport)
 
-    assert result.message.endswith("...")  # premise: the excerpt was capped
+    assert result.message.endswith("\u2026")  # premise: the excerpt was capped (#1414 item 6: U+2026 marks the cut)
     assert _ENC_KEY[:6] not in result.message
 
 

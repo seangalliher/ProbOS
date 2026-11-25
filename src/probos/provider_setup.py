@@ -275,6 +275,9 @@ class ProbeResult:
 
 # Caps provider text shown to the operator at one readable line; costs the rest of a long error body.
 _EXCERPT_MAX_CHARS = 200
+# #1414 item 6: U+2026 marks a cut excerpt. No form of a key setup accepts can hold it: such keys are printable
+# ASCII (validate_key_transport) and every form of an ASCII key is ASCII.
+_CUT_MARKER = "\u2026"
 _REDACTED = "<redacted>"
 
 
@@ -334,6 +337,26 @@ def configured_api_keys(cognitive: CognitiveConfig) -> list[str]:
     return sorted((key for key in keys if key), key=lambda key: (-len(key), key))
 
 
+def config_text_api_keys(text: str | None) -> list[str]:
+    """Every non-empty ``cognitive.llm_api_key*`` string in config ``text``, longest first; ``[]`` for None.
+
+    #1414 item 7: setup redacts these, as well as the key it is configuring, wherever it prints text read
+    from the existing file. They are read without validation, so a file that does not load still names
+    its keys. Raises ConfigEditRefused, as parse_config_text does, when ``text`` is not a YAML mapping.
+    """
+    if text is None:
+        return []
+    section = parse_config_text(text).get("cognitive")
+    if not isinstance(section, dict):
+        return []
+    keys = {
+        value
+        for name, value in section.items()
+        if str(name).startswith("llm_api_key") and isinstance(value, str) and value
+    }
+    return sorted(keys, key=lambda key: (-len(key), key))
+
+
 # Path words of OpenAI-compatible base URLs: /api/v1, /openai/v1, /inference/v1, /compatible-mode/v1.
 _API_PATH_WORDS = frozenset({"api", "openai", "inference", "compatible-mode"})
 _API_VERSION_RE = re.compile(r"v\d{1,2}(?:(?:alpha|beta)\d{0,2})?", re.IGNORECASE)
@@ -375,7 +398,9 @@ def _excerpt(text: str, api_key: str) -> str:
     # capping, so the cap cannot cut a key form in half.
     printable = "".join(ch if ch.isprintable() else " " for ch in redact(text, api_key))
     line = redact(" ".join(printable.split()), api_key)
-    return line if len(line) <= _EXCERPT_MAX_CHARS else line[: _EXCERPT_MAX_CHARS - 3] + "..."
+    # #1414 item 6: _result redacts the message again. With an ASCII "..." marker a key of "." made the excerpt
+    # 227 characters, and a key such as "ab." was completed across the cut; _CUT_MARKER can do neither.
+    return line if len(line) <= _EXCERPT_MAX_CHARS else line[: _EXCERPT_MAX_CHARS - 1] + _CUT_MARKER
 
 
 def _result(

@@ -1589,8 +1589,13 @@ def _setup_candidate(
     target: Path,
     existing: str | None,
     values: dict[str, str],
+    keys: tuple[str, ...],
 ) -> str | int:
-    """Return the text setup would install (AD-1135 Q2), or print why not and return the exit code."""
+    """Return the text setup would install (AD-1135 Q2), or print why not and return the exit code.
+
+    ``keys`` (the chosen key and every one the existing file holds) are redacted from each refusal,
+    which can quote the existing file (#1414 item 7).
+    """
     from rich.markup import escape
 
     try:
@@ -1601,7 +1606,7 @@ def _setup_candidate(
     try:
         return provider_setup.apply_managed_values(scaffold, values)
     except provider_setup.ConfigEditRefused as exc:
-        refusal = str(exc)
+        refusal = provider_setup.redact_keys(str(exc), keys)
     if existing is None or not args.force:
         console.print(f"[red]Cannot edit {escape(str(target))}:[/red] {escape(refusal)}")
         if existing is not None:
@@ -1614,7 +1619,8 @@ def _setup_candidate(
             header="Rewritten by `probos setup --force`; the previous file, comments included, is its backup.",
         )
     except provider_setup.ConfigEditRefused as exc:
-        console.print(f"[red]Cannot rewrite {escape(str(target))}:[/red] {escape(str(exc))}")
+        shown = provider_setup.redact_keys(str(exc), keys)
+        console.print(f"[red]Cannot rewrite {escape(str(target))}:[/red] {escape(shown)}")
         return 4
     console.print(
         f"[yellow]--force: {escape(str(target))} will be rewritten[/yellow] ({escape(refusal)}); "
@@ -1642,12 +1648,13 @@ def _setup_shadow_guard(args: argparse.Namespace, console: Console, target: Path
     return False
 
 
-def _setup_shared_url_notes(console: Console, shared_url_tiers: dict[str, str], api_key: str) -> None:
+def _setup_shared_url_notes(console: Console, shared_url_tiers: dict[str, str], keys: tuple[str, ...]) -> None:
     """Name each optional tier that kept the shared llm_base_url in place (AD-1135 B7), one line per tier."""
     from rich.markup import escape
 
     for tier, model in shared_url_tiers.items():
-        shown = provider_setup.redact(model, api_key)  # read from the existing file, which can hold the key
+        # Read from the existing file, which can hold the chosen key or one it already had (#1414 item 7).
+        shown = provider_setup.redact_keys(model, keys)
         console.print(
             f"  Left the shared llm_base_url unchanged because {escape(tier)} (model {escape(repr(shown))}) uses it; "
             f"give {escape(tier)} its own llm_base_url_{escape(tier)} to move it"
@@ -1663,6 +1670,7 @@ def _setup_report(
     *,
     api_key: str,
     shared_url_tiers: dict[str, str],
+    keys: tuple[str, ...],
 ) -> None:
     """Print what setup wrote; of the key, only its presence is ever shown."""
     from rich.markup import escape
@@ -1674,7 +1682,7 @@ def _setup_report(
     console.print(f"  API key: {'present' if api_key else 'not set'}")
     if backup is not None:
         console.print(f"  Backup: {escape(str(backup))}")
-    _setup_shared_url_notes(console, shared_url_tiers, api_key)
+    _setup_shared_url_notes(console, shared_url_tiers, keys)
     if api_key and _same_path(target, _repo_default_config_path()):
         console.print(
             "[yellow]This is the source checkout's tracked config/system.yaml: "
@@ -1703,19 +1711,23 @@ def _setup_report(
 
 
 def _setup_confirm_write(
-    console: Console, target: Path, choice: provider_setup.ProviderChoice, shared_url_tiers: dict[str, str],
+    console: Console,
+    target: Path,
+    choice: provider_setup.ProviderChoice,
+    shared_url_tiers: dict[str, str],
+    keys: tuple[str, ...],
 ) -> bool:
     """Show what would be written, the key only as present or not, and ask the final question (M4)."""
     from rich.markup import escape
     from rich.prompt import Confirm
 
-    shown = {tier: provider_setup.redact(choice.models[tier], choice.api_key) for tier in provider_setup.TEXT_TIERS}
+    shown = {tier: provider_setup.redact_keys(choice.models[tier], keys) for tier in provider_setup.TEXT_TIERS}
     models = ", ".join(f"{tier} {escape(model)}" for tier, model in shown.items())
     console.print(
         f"  Provider {escape(choice.provider)} at {escape(choice.base_url)}; models: {models}; "
         f"API key: {'present' if choice.api_key else 'not set'}."
     )
-    _setup_shared_url_notes(console, shared_url_tiers, choice.api_key)
+    _setup_shared_url_notes(console, shared_url_tiers, keys)
     if Confirm.ask(f"  Write {escape(str(target))}?", default=True, console=console):
         return True
     console.print("  Nothing was written.")
@@ -1733,6 +1745,7 @@ class _SetupPlan(NamedTuple):
     candidate: str
     kept: dict[str, provider_setup.TierEndpoint]
     shared_url_tiers: dict[str, str]
+    keys: tuple[str, ...]  # the chosen API key and every one the existing file holds (#1414 item 7)
 
 
 def _setup_plan(
@@ -1751,22 +1764,26 @@ def _setup_plan(
     existing: str | None = None
     had_bom = False
     kept: dict[str, provider_setup.TierEndpoint] = {}
+    file_keys: tuple[str, ...] = ()
     if target.exists():
         try:
             existing, had_bom = provider_setup.read_config_text(target)
             # Not YAML, or optional-tier settings that do not load: exit 4 before anything else, --force included.
+            file_keys = tuple(provider_setup.config_text_api_keys(existing))
             kept = provider_setup.optional_tier_endpoints(existing)
         except provider_setup.ConfigEditRefused as exc:
-            console.print(f"[red]Cannot edit {escape(str(target))}:[/red] {escape(str(exc))}")
+            shown = provider_setup.redact_keys(str(exc), file_keys)  # #1414 item 7: a refusal can quote the file
+            console.print(f"[red]Cannot edit {escape(str(target))}:[/red] {escape(shown)}")
             return 4
 
     chosen = _setup_choice(args, console, transport)
     if isinstance(chosen, int):
         return chosen
     choice, listing = chosen
+    keys = (choice.api_key, *file_keys)
     shared_url_tiers = provider_setup.tiers_using_shared_url(kept)  # B7: these keep the shared URL where it is
     values = provider_setup.managed_values(choice, retain_shared_url=bool(shared_url_tiers))
-    candidate = _setup_candidate(args, console, target, existing, values)
+    candidate = _setup_candidate(args, console, target, existing, values, keys)
     if isinstance(candidate, int):
         return candidate
     if not _setup_shadow_guard(args, console, target):
@@ -1784,9 +1801,9 @@ def _setup_plan(
     if candidate == existing:
         console.print(f"[green]\u2713[/green] {escape(str(target))} already uses this provider; nothing was written.")
         return 0
-    if not args.yes and not _setup_confirm_write(console, target, choice, shared_url_tiers):
+    if not args.yes and not _setup_confirm_write(console, target, choice, shared_url_tiers, keys):
         return 1
-    return _SetupPlan(target, existing, had_bom, choice, values, candidate, kept, shared_url_tiers)
+    return _SetupPlan(target, existing, had_bom, choice, values, candidate, kept, shared_url_tiers, keys)
 
 
 def _cmd_setup(args: argparse.Namespace, *, transport: httpx.BaseTransport | None = None) -> int:
@@ -1814,11 +1831,13 @@ def _cmd_setup(args: argparse.Namespace, *, transport: httpx.BaseTransport | Non
             verify=lambda path: provider_setup.verify_config_file(path, plan.choice, kept=plan.kept),
         )
     except (provider_setup.ConfigEditRefused, OSError) as exc:
-        key = plan.choice.api_key  # B9: the target path, and so an OSError that names it, can hold the key
-        target = escape(provider_setup.redact(str(plan.target), key))
-        console.print(f"[red]Could not write {target}:[/red] {escape(provider_setup.redact(str(exc), key))}")
+        # B9: the target path, and so an OSError that names it, can hold the key; #1414 item 7: the verify
+        # step's refusal can quote the file, which can hold another key.
+        keys = plan.keys
+        target = escape(provider_setup.redact_keys(str(plan.target), keys))
+        console.print(f"[red]Could not write {target}:[/red] {escape(provider_setup.redact_keys(str(exc), keys))}")
         if isinstance(exc, provider_setup.ConfigReplaceFailed):
-            backup = escape(provider_setup.redact(str(exc.backup), key))
+            backup = escape(provider_setup.redact_keys(str(exc.backup), keys))
             console.print(f"  It was not replaced; the backup taken first is kept at {backup}")
         return 4
     _setup_report(
@@ -1829,6 +1848,7 @@ def _cmd_setup(args: argparse.Namespace, *, transport: httpx.BaseTransport | Non
         backup,
         api_key=plan.choice.api_key,
         shared_url_tiers=plan.shared_url_tiers,
+        keys=plan.keys,
     )
     return 0
 
