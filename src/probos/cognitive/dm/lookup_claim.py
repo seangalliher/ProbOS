@@ -46,8 +46,10 @@ _CLAIMS = re.compile(
 #: Quoted text is not the agent's claim (``_mask_quoted``): a fenced block, only with its closing line (the first
 #: later line made only of the same fence character, at least as many, and spaces); paired double quotes, paired
 #: curly quotes and backtick spans, each of which may run over line breaks but not over a blank line, so a stray
-#: quote reaches no further than its paragraph; and block-quote lines. An unclosed fence or an unpaired quote masks
-#: nothing: a missed mask appends a sentence that is true of the record, a wide one hides it. A line ends in LF or
+#: quote reaches no further than its paragraph; and block-quote lines. An unclosed fence makes no fenced span, and a
+#: quote with no closer in its paragraph masks nothing; an odd backtick of an unclosed backtick fence's opener can
+#: still pair with a later backtick of its paragraph and hide what lies between. A missed mask appends a sentence
+#: that is true of the record, a wide one hides it. A line ends in LF or
 #: CRLF (the CR directly before the LF belongs to the line break); a lone CR, U+2028, U+2029 or U+0085 is not a
 #: line break here.
 _FENCE_RUN = re.compile(r"[ \t]*(`{3,}|~{3,})")
