@@ -171,3 +171,110 @@ def test_drop_null_sections_drops_only_none_and_load_config_uses_it(tmp_path: Pa
     path = tmp_path / "system.yaml"
     path.write_text("memory:\nsystem:\n  name: Kept\n", encoding="utf-8")
     assert load_config(path).system.name == "Kept"
+
+
+@pytest.mark.parametrize(
+    ("data", "refusal"),
+    [
+        # int() of a hex string has no digit limit, str() of the result does (3,600 hex digits = 4,335 decimal).
+        (b"x: 0x" + b"f" * 3600 + b"\n", ValueError),
+        # The composer recurses two frames a level, the representer three: 360 levels load but do not dump.
+        (b"x: " + b"[" * 360 + b"]" * 360 + b"\n", RecursionError),
+    ],
+    ids=["hex-int", "nesting"],
+)
+def test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is(
+    data: bytes, refusal: type[BaseException], tmp_path: Path,
+) -> None:
+    path = tmp_path / "system.yaml"
+    path.write_bytes(data)
+    assert load_config(path).system.log_level == "INFO"  # premise: the file boots (an unknown section is ignored)
+    with pytest.raises(refusal):  # premise: PyYAML loads the value but cannot dump it
+        yaml.safe_dump(yaml.safe_load(data))
+    client, runtime = _client(path)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+    )
+    assert path.read_bytes() == data
+    assert list(tmp_path.glob("*.tmp")) == []  # the dump runs before a temporary file is made
+    assert runtime.config.system.log_level == "INFO"
+
+
+def test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is(tmp_path: Path) -> None:
+    data = b"dm_agentic:\n  budget_awareness_thresholds: [" + b"9" * 400 + b"]\n"
+    path = tmp_path / "system.yaml"
+    path.write_bytes(data)
+    # premise: math.isfinite on a 400-digit int raises OverflowError, which pydantic does not wrap, so there is no loc;
+    # load_config raises the same at boot (#1820).
+    with pytest.raises(OverflowError):
+        SystemConfig.model_validate(yaml.safe_load(data))
+    client, runtime = _client(path)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_invalid", "errors": [{"loc": [], "type": "OverflowError"}]},
+    )
+    assert path.read_bytes() == data
+    assert runtime.config.system.log_level == "INFO"
+
+
+def test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = "system:\n  name: Kept\n"
+    path = tmp_path / "system.yaml"
+    path.write_text(text, encoding="utf-8")
+    client, runtime = _client(path)
+    # Injected: a config path under a directory the process cannot search. Path.exists() ignores ENOENT, ENOTDIR,
+    # EBADF and ELOOP only, so the EACCES from stat reaches its caller.
+    real_exists = Path.exists
+
+    def exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+        if self == path:
+            raise PermissionError(13, "Permission denied")
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", exists)
+    with pytest.raises(PermissionError):  # premise: the injected denial reaches Path.exists' caller
+        path.exists()
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_unreadable", "reason": "unreadable (PermissionError)"},
+    )
+    assert path.read_text(encoding="utf-8") == text
+    assert runtime.config.system.log_level == "INFO"
+
+
+def test_a_directory_at_the_config_path_is_refused_and_left_as_it_is(tmp_path: Path) -> None:
+    path = tmp_path / "system.yaml"
+    path.mkdir()
+    client, runtime = _client(path)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == "config_unreadable"
+    # A real OS read failure: Windows raises PermissionError for a directory, POSIX IsADirectoryError.
+    assert response.json()["reason"] in {"unreadable (PermissionError)", "unreadable (IsADirectoryError)"}
+    assert path.is_dir()
+    assert runtime.config.system.log_level == "INFO"
+
+
+def test_a_secret_path_is_refused_before_the_file_is_read(tmp_path: Path) -> None:
+    data = b"system: [\n"  # unreadable: a guard that ran after the read would answer 409 config_unreadable
+    path = tmp_path / "system.yaml"
+    path.write_bytes(data)
+    client, _ = _client(path)
+
+    response = _save(client, {"cloud_pickers": {"google_drive": {"client_secret": "new-secret"}}})
+
+    assert (response.status_code, response.json()) == (
+        400, {"error": "secret_field_readonly", "blocked": ["cloud_pickers.google_drive.client_secret"]},
+    )
+    assert path.read_bytes() == data

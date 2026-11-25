@@ -154,14 +154,16 @@ def _read_disk_mapping(path: Path) -> dict[str, Any]:
     """#1414 item 3: the config file's sections as they are on disk; ``{}`` when it does not exist.
 
     Top-level sections that parse as None (every value commented out) are dropped by the helper
-    load_config uses. Raises _ConfigUnreadable when the file cannot be read, is not UTF-8, is not
-    YAML or its top level is not a mapping; the reason never quotes the file, since a YAML error's
-    own text holds the offending line. PyYAML also fails outside YAMLError: a ValueError for an
-    impossible date or an integer of over 4,300 digits, and a RecursionError for deep nesting.
+    load_config uses. Raises _ConfigUnreadable when the file cannot be checked for or read, is not
+    UTF-8, is not YAML or its top level is not a mapping; the reason never quotes the file, since a
+    YAML error's own text holds the offending line. PyYAML also fails outside YAMLError: a ValueError
+    for an impossible date or an integer of over 4,300 digits, and a RecursionError for deep nesting.
+    The existence check is load_config's own, inside the OSError guard: Path.exists() lets an EACCES
+    from stat through.
     """
-    if not path.exists():
-        return {}
     try:
+        if not path.exists():
+            return {}
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         raise _ConfigUnreadable("not valid UTF-8 text") from None
@@ -321,9 +323,33 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
                 "errors": [{"loc": list(err["loc"]), "type": err["type"]} for err in e.errors()],
             },
         )
+    except OverflowError as exc:
+        # pydantic wraps only ValueError and AssertionError. A float field, or the math.isfinite of
+        # budget_awareness_thresholds, raises this for an integer too large for a float, with no loc;
+        # load_config raises the same on such a file at boot (#1820).
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): validating the file raised %s; it is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"error": "config_invalid", "errors": [{"loc": [], "type": type(exc).__name__}]},
+        )
 
     try:
         _write_yaml_atomic(cfg_path, to_write)
+    except (ValueError, RecursionError) as exc:
+        # The dump, _write_yaml_atomic's first statement, runs before any file is opened. It refuses values the file
+        # can hold and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and
+        # nesting deeper than the dump's recursion allows. The patch, parsed from JSON, holds neither, so the file
+        # is named.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+        )
     except OSError as ex:
         logger.error(
             "AD-741 config write failed (cfg_path=%s): %s; "
