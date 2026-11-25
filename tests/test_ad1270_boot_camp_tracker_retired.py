@@ -2,7 +2,7 @@
 
 Finalization built it and nothing fed it: no caller of ``advance_phase`` or ``get_or_create``
 and no reader of ``runtime.boot_camp_tracker``. Its five phases are not AD-638's 1 to 4, and
-AD-486's birth chamber carries the orientation phases. A config that still carries
+AD-486's birth chamber carried the orientation phases (AD-1355 S1, #1700, deleted it). A config that still carries
 ``boot_camp_phase:`` keeps loading, because SystemConfig ignores unknown keys (the BF-926
 precedent); the Captain's own file is one.
 """
@@ -67,7 +67,7 @@ def test_finalization_no_longer_wires_a_tracker() -> None:
     }
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
 
-    assert "_wire_birth_chamber" in called  # premise: the scan sees the neighbouring wirer
+    assert "_wire_curriculum_registry" in called  # premise: the scan sees a neighbouring wirer (AD-1355 S1 deleted the chamber's)
     assert "_wire_boot_camp_tracker" not in called
     assert "ship_state_snapshot" in attributes  # premise: the scan sees runtime attributes
     assert "boot_camp_tracker" not in attributes
