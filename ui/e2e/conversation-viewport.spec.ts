@@ -8,6 +8,7 @@ import type { AgentFixture, MessageFixture, ThreadFixture } from './_helpers';
 import type TelemetryFixture from './fixtures/issue1370-telemetry.json';
 import type { CrewSessionDetailProjection, StartWorkResult } from '../src/store/types';
 import type { TodoStep } from '../src/components/workspace/todosApi';
+import type { UnmanagedOwnedStepsView } from '../src/components/workspace/ownedStepsApi';
 
 const telemetry: typeof TelemetryFixture = JSON.parse(
   readFileSync(new URL('./fixtures/issue1370-telemetry.json', import.meta.url), 'utf8'),
@@ -376,13 +377,22 @@ test('baseline: fresh desktop Alpha conversation preserves usable chat and Send'
     expect(await page.evaluate(() => navigator.serviceWorker.controller)).toBeNull();
     expect(browserErrors).toEqual([]);
     expect(sends).toHaveLength(1);
+    // The baseline answers only the reads chat and Send need. Every other read is denied and pinned
+    // here as an exact list, so a read the app starts making fails this test until it is classified.
+    // Denied: the Bridge's polls (approvals, faults, config, voice, extensions, recreation,
+    // perception budget, DMs), which this test does not exercise, and the thread read ProfileChatTab
+    // makes to bind live tool progress (AD-1174), which the DM tests answer and assert.
+    // Re-pinned for #1414 item 8: 4b7dfb3b moved the capability poll to /actionable, b4378fb4
+    // (AD-1207) added the faults poll and 5c362508 (AD-1174) added the thread read.
     expect([...new Set(deniedHttp)].sort()).toEqual([
-      'GET /api/capability-requests?status=pending',
+      'GET /api/capability-requests/actionable',
       'GET /api/config',
+      'GET /api/faults?limit=50&offset=0',
       'GET /api/perception/budget',
       'GET /api/recreation/active',
       'GET /api/skill-requests?status=pending',
       'GET /api/system/extensions',
+      'GET /api/threads/baseline-alpha',
       'GET /api/voice/health',
       'GET /api/wardroom/dms',
     ]);
@@ -840,6 +850,18 @@ function taskViewportFixture(cell: string) {
   });
   fixtures.set(`GET /api/crew-tasks/${parentId}`, () => started ? { session } : undefined);
   fixtures.set(`GET /api/work-items/${parentId}/steps?limit=1001`, () => started ? { steps, gate_completion: true } : undefined);
+  // #1414 item 8: the task rail asks the owned-steps route first and reads the legacy checklist
+  // above only for an unmanaged parent. Shape: get_owned_work_item_steps in routers/workforce.py
+  // (1-based ordinal). The rail's decodeUnmanaged checks it at run time; tsc -b does not read e2e/.
+  fixtures.set(`GET /api/work-items/${parentId}/owned-steps`, () => {
+    if (!started) return undefined;
+    const view: UnmanagedOwnedStepsView = {
+      version: 1, mode: 'unmanaged', parent_id: parentId, requested_item_id: parentId, reference: null,
+      rows: steps.map((todo, index) => ({ ordinal: index + 1, todo })),
+      previous_cursor: null, next_cursor: null, recovery: [], finalization: 'none',
+    };
+    return view;
+  });
   fixtures.set(`PATCH /api/work-items/${parentId}/steps/0`, request => {
     if (!started || confirmed || !isDeepStrictEqual(request.postDataJSON(), { status: 'done', actor: 'captain' })) return undefined;
     confirmed = true;
@@ -1229,6 +1251,8 @@ for (const host of taskHosts) {
           expect(isolation.deniedSockets).toEqual([]);
           expect(isolation.browserErrors).toEqual([]);
           expect(isolation.deniedHttp.filter(request => /^(POST|PATCH|PUT|DELETE) /.test(request.key))).toEqual([]);
+          expect(isolation.deniedHttp.filter(request => request.key.includes('/owned-steps')).map(request => request.key),
+            'every owned-steps read is answered').toEqual([]);
           expect(rendered).toHaveProperty('activeMedia', []);
           expect(rendered).toHaveProperty('capabilities.blockedCapabilities', ['serviceWorker.register']);
           expect(context.serviceWorkers()).toEqual([]);
