@@ -156,8 +156,11 @@ def _read_disk_mapping(path: Path) -> dict[str, Any]:
     Top-level sections that parse as None (every value commented out) are dropped by the helper
     load_config uses. Raises _ConfigUnreadable when the file cannot be checked for or read, is not
     UTF-8, is not YAML or its top level is not a mapping; the reason never quotes the file, since a
-    YAML error's own text holds the offending line. PyYAML also fails outside YAMLError: a ValueError
-    for an impossible date or an integer of over 4,300 digits, and a RecursionError for deep nesting.
+    YAML error's own text holds the offending line. Any exception from the parse counts as not YAML:
+    besides YAMLError, PyYAML raises ValueError for an impossible date or an integer of over 4,300
+    digits, RecursionError for deep nesting and, from its constructors, KeyError (!!bool on a
+    non-boolean), IndexError (an empty !!int or !!float), AttributeError (!!timestamp on a non-date)
+    and OverflowError (a long sexagesimal float). load_config fails on each such file at boot.
     The existence check is load_config's own, inside the OSError guard: Path.exists() lets an EACCES
     from stat through.
     """
@@ -171,7 +174,7 @@ def _read_disk_mapping(path: Path) -> dict[str, Any]:
         raise _ConfigUnreadable(f"unreadable ({type(exc).__name__})") from None
     try:
         document = yaml.safe_load(text)
-    except (yaml.YAMLError, ValueError, RecursionError):
+    except Exception:  # any type, as the docstring says: PyYAML's constructors raise several besides YAMLError
         raise _ConfigUnreadable("not valid YAML") from None
     if document is None:
         return {}
@@ -338,18 +341,6 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
 
     try:
         _write_yaml_atomic(cfg_path, to_write)
-    except (ValueError, RecursionError) as exc:
-        # The dump, _write_yaml_atomic's first statement, runs before any file is opened. It refuses values the file
-        # can hold and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and
-        # nesting deeper than the dump's recursion allows. The patch, parsed from JSON, holds neither, so the file
-        # is named.
-        logger.warning(
-            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
-            cfg_path, type(exc).__name__,
-        )
-        return JSONResponse(
-            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
-        )
     except OSError as ex:
         logger.error(
             "AD-741 config write failed (cfg_path=%s): %s; "
@@ -360,6 +351,19 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
         return JSONResponse(
             status_code=500,
             content={"error": "write_failed", "detail": str(ex)},
+        )
+    except Exception as exc:
+        # Every step after _write_yaml_atomic's first statement, the dump, raises OSError (the dump's text is ASCII),
+        # so this is the dump, which runs before any file is opened. It refuses values the merged mapping can hold
+        # and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and nesting
+        # deeper than the dump's recursion allows (from the file, or from the patch, which JSON nests as deep as it
+        # likes). Any other exception it raises is the dump's too and gets the same answer.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
         )
 
     changed_fields = _diff_paths(current, merged)

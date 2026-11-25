@@ -15,6 +15,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 import probos.config as config_mod
+import probos.routers.config as config_router
 from probos.api import create_app
 from probos.config import CognitiveConfig, SystemConfig, load_config
 
@@ -219,6 +220,81 @@ def test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is(tmp_path: 
         409, {"error": "config_invalid", "errors": [{"loc": [], "type": "OverflowError"}]},
     )
     assert path.read_bytes() == data
+    assert runtime.config.system.log_level == "INFO"
+
+
+@pytest.mark.parametrize(
+    ("data", "error"),
+    [
+        (b"x: !!bool not-a-boolean\n", KeyError),
+        (b'x: !!int ""\n', IndexError),
+        (b'x: !!float ""\n', IndexError),
+        (b"x: !!timestamp not-a-date\n", AttributeError),
+        (b"x: " + b"1:" * 199 + b"1.5\n", OverflowError),  # 200 sexagesimal segments: 60**199 is past a float
+    ],
+    ids=["bool", "int", "float", "timestamp", "sexagesimal"],
+)
+def test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is(
+    data: bytes, error: type[BaseException], tmp_path: Path,
+) -> None:
+    path = tmp_path / "system.yaml"
+    path.write_bytes(data)
+    with pytest.raises(error):  # premise: PyYAML's constructor raises this, not a YAMLError
+        yaml.safe_load(data)
+    with pytest.raises(error):  # premise: the file does not boot either
+        load_config(path)
+    client, runtime = _client(path)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (409, {"error": "config_unreadable", "reason": "not valid YAML"})
+    assert path.read_bytes() == data
+    assert runtime.config.system.log_level == "INFO"
+
+
+def test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _empty_file(tmp_path)
+    client, runtime = _client(path)
+
+    def refuse(cfg_path: str, data: dict[str, Any]) -> None:
+        raise PermissionError(13, "Permission denied", cfg_path)
+
+    monkeypatch.setattr(config_router, "_write_yaml_atomic", refuse)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    # AD-741's answer, kept: only the dump's refusals are 409; an OS refusal of the write is 500 write_failed.
+    assert (response.status_code, response.json()["error"]) == (500, "write_failed")
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert runtime.config.system.log_level == "INFO"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [yaml.representer.RepresenterError("cannot represent an object"), TypeError("not serializable")],
+    ids=["representer-error", "type-error"],
+)
+def test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file(
+    error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No loadable value is known to make the dump raise anything but ValueError or RecursionError, so the fault is injected:
+    # the dump runs before a file is opened, so an exception that is not an OSError is the dump's.
+    path = _empty_file(tmp_path)
+    client, runtime = _client(path)
+
+    def fail(cfg_path: str, data: dict[str, Any]) -> None:
+        raise error
+
+    monkeypatch.setattr(config_router, "_write_yaml_atomic", fail)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+    )
+    assert path.read_text(encoding="utf-8") == "{}\n"
     assert runtime.config.system.log_level == "INFO"
 
 
