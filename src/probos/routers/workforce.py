@@ -112,9 +112,11 @@ async def build_ws_workforce_snapshot(
     store = getattr(runtime, "work_item_store", None)
     if store is None:
         return {"work_items": [], "bookings": [], "resources": []}
-    visible_items = await store.list_ws_visible_work_items(limit=limit)
-    if len(visible_items) > limit:
-        raise ValueError("ws_workforce_source_overflow")
+    # #1414 item 11: past the cap the snapshot carries the first ``limit`` rows in the
+    # store's order (priority, then newest) instead of failing the whole socket. The
+    # HXI upserts snapshot rows without removing any and re-reads every bucket on each
+    # snapshot, so a partial list is correct and the rest arrives by REST.
+    visible_items = (await store.list_ws_visible_work_items(limit=limit))[:limit]
     return {
         "work_items": [item.to_dict() for item in visible_items],
         "bookings": [],
