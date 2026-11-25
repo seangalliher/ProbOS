@@ -134,7 +134,6 @@ from probos.config_models.crew import (
     DutyDefinition,
     EPSDepartmentConfig,
     FirewallConfig,
-    HolodeckBirthChamberConfig,
     HolodeckScenarioConfig,
     HolodeckTeamSimulationConfig,
     MemorySecurityConfig,
@@ -3944,7 +3943,6 @@ class SystemConfig(BaseModel):
     quality_trigger: QualityTriggerConfig = QualityTriggerConfig()  # AD-564
     quality_router: QualityRouterConfig = QualityRouterConfig()  # AD-565
     onboarding: OnboardingConfig = OnboardingConfig()
-    holodeck_birth_chamber: HolodeckBirthChamberConfig = HolodeckBirthChamberConfig()
     holodeck_scenarios: HolodeckScenarioConfig = HolodeckScenarioConfig()
     team_simulations: HolodeckTeamSimulationConfig = HolodeckTeamSimulationConfig()
     skill_requests: SkillRequestConfig = SkillRequestConfig()  # AD-906
