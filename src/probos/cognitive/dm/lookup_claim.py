@@ -47,17 +47,22 @@ _CLAIMS = re.compile(
 #: later line made only of the same fence character, at least as many, and spaces); paired double quotes, paired
 #: curly quotes and backtick spans, each of which may run over line breaks but not over a blank line, so a stray
 #: quote reaches no further than its paragraph; and block-quote lines. An unclosed fence or an unpaired quote masks
-#: nothing: a missed mask appends a sentence that is true of the record, a wide one hides it.
+#: nothing: a missed mask appends a sentence that is true of the record, a wide one hides it. A line ends in LF or
+#: CRLF (the CR directly before the LF belongs to the line break); a lone CR, U+2028, U+2029 or U+0085 is not a
+#: line break here.
 _FENCE_RUN = re.compile(r"[ \t]*(`{3,}|~{3,})")
-_FENCE_ONLY = re.compile(r"[ \t]*(?:`{3,}|~{3,})[ \t]*")
+_FENCE_ONLY = re.compile(r"[ \t]*(?:`{3,}|~{3,})[ \t]*\r?")
 _SPAN_START = re.compile(r'["`\u201c]|^[ \t]*>', re.MULTILINE)
 _SPAN_END = {'"': '"', "`": "`", "\u201c": "\u201d"}
-#: A line break that starts a blank line: no quote or backtick span crosses one.
-_PARAGRAPH_BREAK = re.compile(r"\n(?=[ \t]*\n)")
+#: A line break that starts a blank line (spaces or tabs, then LF or CRLF): no quote or backtick span crosses one.
+_PARAGRAPH_BREAK = re.compile(r"\n(?=[ \t]*\r?\n)")
 
 
 def _fenced_spans(text: str) -> list[tuple[int, int]]:
     """The character spans of the fenced blocks that have a closing line, in order.
+
+    Lines are split at LF, so a CRLF line keeps its CR at the end: ``_FENCE_ONLY`` allows it on a closing line,
+    and a span ends after that CR.
 
     Linear in the length of ``text``: a backward pass records, for every line, the longest closing line of each
     fence character after it, so an opener that nothing ends costs one lookup instead of a scan to the end.
@@ -99,7 +104,7 @@ def _fenced_spans(text: str) -> list[tuple[int, int]]:
 
 
 def _mask_quoted(text: str) -> str:
-    """``text`` with every quoted span blanked to spaces. Line breaks are kept, so its length and lines are kept.
+    """``text`` with every quoted span blanked to spaces. Every CR and LF is kept, so its length and lines are kept.
 
     Linear in the length of ``text`` for every input: ``pos`` only moves forward and a found span is skipped
     whole; a failed search for a straight quote or a backtick proves no opener of its kind remains before the
@@ -146,9 +151,11 @@ def _mask_quoted(text: str) -> str:
     chars = list(text)
     for begin, end in spans:
         for index in range(begin, end):
-            if chars[index] != "\n":
+            if chars[index] not in ("\r", "\n"):
                 chars[index] = " "
     return "".join(chars)
+
+
 #: A word directly before the match that makes it conditional, a question or a negation.
 _NOT_A_CLAIM_BEFORE = re.compile(
     r"(?:\b(?:if|whether|unless|have|had|did|not|never)|n" + _APOS + r"t)\s+$", re.IGNORECASE,
