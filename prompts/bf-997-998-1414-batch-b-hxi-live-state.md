@@ -1,6 +1,7 @@
 # BF-997 / BF-998 -- #1414 Batch B: HXI live state (B1, B2, B3)
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25 (review round 1 repairs, section 6b; the Python file grows to 18 cases).
 **Status:** ready to build. **Base:** `fc57a8b2` (Batch A's merge, tree `a96ffd10`). The pairs were drafted against `8447d6ef` and re-proved on the post-A tree (see 'Re-proof on the post-Batch-A base'); 6.8 and 6.9 are anchored on Batch A's text. **Issue:** #1414 items 8, 11, 12, 14. **Suggested path:** `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`. **Estimated tests:** 1 new Python file (5 cases), 1 new vitest file (1 case), 1 Playwright spec gains one stubbed read, one assertion and a re-pinned list of denied reads, 1 existing pin updated with its reason inline.
 
 ## 1. Problem
@@ -43,6 +44,8 @@ D1 to D7 as stated above this contract; they are recorded in `DECISIONS.md` (6.9
 | M2 | B2 | `ui/src/components/bridge/BridgeNotifications.tsx`, new `ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx` | `a notification's room read refused by the live fence navigates nowhere and offers a retry (#1414 B2)` |
 | M3 | B3 | `ui/e2e/conversation-viewport.spec.ts` | `the issue1369 Playwright suite answers the owned-steps read the task rail makes and re-pins the baseline's denied reads (#1414 B3)` |
 | M4 | trackers and generated artifacts | `PROGRESS.md`, `DECISIONS.md`, `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` (generated) | `trackers and generated artifacts for #1414 Batch B` |
+| M5 | B1 review repair | `src/probos/ws_event_stream.py`, `src/probos/routers/workforce.py`, `tests/test_ad1133_live_crew_session_refresh.py` (a comment), `tests/test_bf997_ws_snapshot_and_work_state_resync.py` (13 cases added), `PROGRESS.md` line 3, `DECISIONS.md` D1, D2 and Reversal | `the HXI event stream asks for a resync on a dropped assignment or claim, and its drop classifier compares no foreign key (#1414 B1 review)` |
+| M6 | B2 review repair | `ui/src/components/bridge/BridgeNotifications.tsx` (a comment), `ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx` (its header), `PROGRESS.md` line 5 | `the comment and test header for a refused notification read describe the one-shot focus step (#1414 B2 review)` |
 
 **Overlap with Batch A** (A's file list as given in the brief):
 
@@ -799,6 +802,561 @@ REPLACE:
 
 If 6.9 runs against `8447d6ef` instead, anchor on `### Acclimation S1 -- the AD-486 Birth Chamber and the department activation scheduler deleted (2026-11-25, #1700, AD-1355)`.
 
+## 6b. Review round 1: repairs (B1-R1-F1, B1-R1-F2, B1-R1-F3, B2-R1-F1)
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25. Candidate before repair: `850a1a35` (tree `49b9f8c4`). The pairs 6.10 to 6.18 apply in order to that tree; each SEARCH is whole lines and occurs once at its turn.
+
+**Erratum.** Wording that 6b corrects also appears in the REPLACE blocks of 6.1 (lines 205-206 of this file), 6.3 (341), 6.5 (546), 6.6 (562), 6.8 (772, 774) and 6.9 (791-792). Those pairs record what M1, M2 and M4 committed and stay as they are. The text of 6b supersedes their wording.
+
+**Decisions.**
+- *D8 (B1-R1-F1).* A dropped frame of any of the five work-item events the HXI invalidates on (`useStore.ts`, the two calls of `invalidateWorkItemFrame`: created, updated, status_changed, assigned, claimed) that names a bounded, non-blank `work_item.id` requests the existing resync marker. The set is the new module constant `_RESYNC_WORK_ITEM_EVENTS`. `_WORK_ITEM_EVENTS`, the ingress shape check and the projector's own set (`crew_session_live.py:287-291`) are unchanged. Rejected:
+  - a `work_item_` prefix, because it takes in `work_item_reconciled` and `work_item_quarantined`;
+  - widening `_WORK_ITEM_EVENTS`, because it would refuse the store's fallback assigned payload `{"work_item": {}}` (`workforce.py:8757`), which is delivered today.
+- *D9 (B1-R1-F2).* The classifier reads the raw data the wire refused. It looks up no key in a dict until the module helper `_has_exact_str_keys` has passed for that dict: `data` at the top of `_resyncs_on_drop`, before the correlated-tool check, and the `work_item` record before its lookup. A frame that fails takes the silent drop, a correlated tool event included. On `fc57a8b2` such a tool event raised out of `hub.ingress`. Rejected:
+  - guarding only the new branches, because the tool-event raise would remain;
+  - an allow-list of built-in scalar keys, because no producer emits a non-`str` key.
+- *D10 (B1-R1-F3, B2-R1-F1).* Wording only. For B1: snapshot rows are upserted without removing any, every work-item bucket is marked stale, and a surface that shows a bucket re-reads it by REST up to that bucket's cap. For B2: the room tries focus once, finds no band and returns, and a band mounted later is never focused.
+
+**Builder may / may not:** as in section 5. In addition, the Builder may not:
+- change `_WORK_ITEM_EVENTS`;
+- add any line inside `class WSEventStreamHub` (the span stays 492);
+- loosen a 6.13 assertion. If `assign_work_item` returns None on the oracle, that is a hard stop: return to the Architect.
+
+**Focused gates.**
+- **M5:**
+  - the M1 four-file pytest list (expected: 160 + 13 = 173 passed);
+  - `-m pytest tests/test_ad1324_srp_layout.py -q -n 0`;
+  - `scripts/check_architecture_principles.py --check`;
+  - `scripts/gen_ad_ledger.py --check`. The headings do not change; if it reports drift anyway, regenerate the ledger pair inside M5.
+- **M6:**
+  - the M2 four-file vitest list (expected: 77 passed);
+  - `npx tsc -b`;
+  - `-m pytest tests/test_ad1214_decision_pre_clearance.py -k agree_on_the_offer_marker -q -n 0`.
+
+**A/B on `850a1a35`.** Of the 13 new pytest cases, 9 are red:
+- `test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker`: rows `[assigned-with-booking]`, `[assigned-from-command]` and `[claimed]` fail at `marker["type"] == "resync_required"`, because `system_mode` arrives instead.
+- `test_a_dropped_assignment_requests_the_resync_marker_through_the_real_store` fails at the same assertion on `socket.sent[2]`.
+- All 5 rows of `test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop` raise `AssertionError("a foreign key object was compared")` out of `hub.ingress` or `_publish`.
+
+4 are green guard rows: `[created]`, `[updated]` and `[status-changed]`, plus `test_an_assignment_frame_naming_no_row_is_still_delivered`. 6.10 makes all 9 red cases pass. 6.11, 6.12 and 6.14 to 6.18 change comments and text only.
+
+### 6.10 `src/probos/ws_event_stream.py` (M5)
+
+**P-1** (module level)
+SEARCH:
+```
+_WORK_ITEM_EVENTS = {
+    "work_item_created",
+    "work_item_updated",
+    "work_item_status_changed",
+}
+```
+REPLACE:
+```
+_WORK_ITEM_EVENTS = {
+    "work_item_created",
+    "work_item_updated",
+    "work_item_status_changed",
+}
+# The work-item frames the HXI treats as invalidations (ui/src/store/useStore.ts,
+# invalidateWorkItemFrame). A dropped one that names its row asks for a resync.
+_RESYNC_WORK_ITEM_EVENTS = frozenset({
+    "work_item_created",
+    "work_item_updated",
+    "work_item_status_changed",
+    "work_item_assigned",
+    "work_item_claimed",
+})
+```
+
+**P-2** (module level, outside the hub)
+SEARCH:
+```
+def _resyncs_on_drop(event_type: object, data: object) -> bool:
+    """Whether a dropped frame asks every client for the existing resync marker.
+
+    A correlated tool event does. Since #1414 item 12 so does a work-item frame
+    naming its ``work_item.id``, or a crew-session projection naming its
+    ``parent_id``: dropping one leaves the HXI's view of that work stale until
+    something else re-reads it. A drop that names no row keeps clients on their
+    prior state.
+    """
+    if _is_correlated_tool_event(event_type, data):
+        return True
+    if type(event_type) is EventType:
+        event_type = event_type.value
+    if type(event_type) is not str or type(data) is not dict:
+        return False
+    if event_type in _WORK_ITEM_EVENTS:
+        record, key = data.get("work_item"), "id"
+    elif event_type == "crew_session_projection":
+        record, key = data, "parent_id"
+    else:
+        return False
+    if type(record) is not dict:
+        return False
+    value = record.get(key)
+    return type(value) is str and bool(value.strip()) and len(value) <= 128
+```
+REPLACE:
+```
+def _has_exact_str_keys(mapping: dict[object, object]) -> bool:
+    """Whether every key of ``mapping`` is an exact ``str``.
+
+    Iterating a dict compares no keys, so this calls into no key object; a lookup
+    by name in a dict that passes compares only exact strings.
+    """
+    return all(type(name) is str for name in mapping)
+
+
+def _resyncs_on_drop(event_type: object, data: object) -> bool:
+    """Whether a dropped frame asks every client for the existing resync marker.
+
+    A correlated tool event does. Since #1414 item 12 so does a work-item frame
+    the HXI treats as an invalidation, naming its ``work_item.id``, or a
+    crew-session projection naming its ``parent_id``: dropping one leaves the
+    HXI's view of that work stale until something else re-reads it. A drop that
+    names no row keeps clients on their prior state. ``data`` may be the raw
+    value the wire detacher refused, so no key is looked up in a dict until
+    every key of that dict is an exact ``str``.
+    """
+    if type(data) is not dict or not _has_exact_str_keys(data):
+        return False
+    if _is_correlated_tool_event(event_type, data):
+        return True
+    if type(event_type) is EventType:
+        event_type = event_type.value
+    if type(event_type) is not str:
+        return False
+    if event_type in _RESYNC_WORK_ITEM_EVENTS:
+        record, key = data.get("work_item"), "id"
+    elif event_type == "crew_session_projection":
+        record, key = data, "parent_id"
+    else:
+        return False
+    if type(record) is not dict or not _has_exact_str_keys(record):
+        return False
+    value = record.get(key)
+    return type(value) is str and bool(value.strip()) and len(value) <= 128
+```
+
+### 6.11 `src/probos/routers/workforce.py` (M5)
+
+**P-1**
+SEARCH:
+```
+    # #1414 item 11: past the cap the snapshot carries the first ``limit`` rows in the
+    # store's order (priority, then newest) instead of failing the whole socket. The
+    # HXI upserts snapshot rows without removing any and re-reads every bucket on each
+    # snapshot, so a partial list is correct and the rest arrives by REST.
+    visible_items = (await store.list_ws_visible_work_items(limit=limit))[:limit]
+```
+REPLACE:
+```
+    # #1414 item 11: past the cap the snapshot carries the first ``limit`` rows in the
+    # store's order (priority, then newest) instead of failing the whole socket. The
+    # HXI upserts snapshot rows without removing any and marks every bucket stale, so
+    # a partial list removes nothing; a surface that shows a bucket re-reads it by
+    # REST, up to that bucket's cap.
+    visible_items = (await store.list_ws_visible_work_items(limit=limit))[:limit]
+```
+
+### 6.12 `tests/test_ad1133_live_crew_session_refresh.py` (M5)
+
+**P-1**
+SEARCH:
+```
+    # BF-997 (#1414 item 11) supersedes AD-1133's "Overflow closes 1013" for the
+    # workforce source: past the cap the snapshot keeps the first 100 rows in the
+    # store's order (newest first here), and the HXI re-reads the rest by REST.
+    # Every other snapshot overflow still ends the socket with 1013
+    # (test_snapshot_source_overflow_closes_1013_without_partial_frame).
+```
+REPLACE:
+```
+    # BF-997 (#1414 item 11) supersedes AD-1133's "Overflow closes 1013" for the
+    # workforce source: past the cap the snapshot keeps the first 100 rows in the
+    # store's order (newest first here); the HXI marks its buckets stale and a
+    # surface that shows a bucket re-reads it by REST, up to that bucket's cap.
+    # Every other snapshot overflow still ends the socket with 1013
+    # (test_snapshot_source_overflow_closes_1013_without_partial_frame).
+```
+
+### 6.13 `tests/test_bf997_ws_snapshot_and_work_state_resync.py` (M5)
+
+**P-1**
+SEARCH:
+```
+from probos.workforce import WorkItemStore
+```
+REPLACE:
+```
+from probos.workforce import AgentCalendar, BookableResource, CalendarEntry, WorkItemStore
+```
+
+**P-2**
+SEARCH:
+```
+OVERSIZED = "x" * (MAX_FRAME_BYTES + 1)
+```
+REPLACE:
+```
+OVERSIZED = "x" * (MAX_FRAME_BYTES + 1)
+# A work-item record the wire refuses, with the keys the ingress shape check reads.
+OVERSIZED_ROW = {"id": "row-1", "work_type": "task", "status": "open", "description": OVERSIZED}
+
+
+class _CollidingKey:
+    """A dict key that hashes like ``name`` and counts, then refuses, every comparison."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.compared = 0
+
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        self.compared += 1
+        raise AssertionError("a foreign key object was compared")
+
+
+class _CollidingStr(str):
+    """A ``str`` subclass key, hashing as its value, that counts, then refuses, every comparison."""
+
+    compared = 0
+    __hash__ = str.__hash__
+
+    def __eq__(self, other: object) -> bool:
+        self.compared += 1
+        raise AssertionError("a foreign key object was compared")
+```
+
+**P-3** (appends after the last test)
+SEARCH:
+```
+        assert json.loads(socket.sent[1])["type"] == "system_mode"
+        assert hub.sequence == 1
+    finally:
+        await _stop(hub, connection)
+```
+REPLACE:
+```
+        assert json.loads(socket.sent[1])["type"] == "system_mode"
+        assert hub.sequence == 1
+    finally:
+        await _stop(hub, connection)
+
+
+@pytest.mark.parametrize("event", [
+    pytest.param(
+        {"type": "work_item_created", "data": {"work_item": OVERSIZED_ROW}},
+        id="created",
+    ),
+    pytest.param(
+        {"type": "work_item_updated", "data": {"work_item": OVERSIZED_ROW}},
+        id="updated",
+    ),
+    pytest.param(
+        {"type": "work_item_status_changed", "data": {
+            "work_item": OVERSIZED_ROW,
+            "old_status": "draft",
+            "new_status": "open",
+        }},
+        id="status-changed",
+    ),
+    pytest.param(
+        {"type": "work_item_assigned", "data": {
+            "work_item": OVERSIZED_ROW,
+            "booking": {"id": "booking-1"},
+            "resource": {"resource_id": "agent-1"},
+        }},
+        id="assigned-with-booking",
+    ),
+    pytest.param(
+        {"type": "work_item_assigned", "data": {"work_item": OVERSIZED_ROW, "source": "captain"}},
+        id="assigned-from-command",
+    ),
+    pytest.param(
+        {"type": "work_item_claimed", "data": {
+            "work_item": OVERSIZED_ROW,
+            "booking": {"id": "booking-1"},
+            "resource": {"resource_id": "agent-1"},
+        }},
+        id="claimed",
+    ),
+])
+async def test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker(
+    tmp_path: Path,
+    event: dict[str, Any],
+) -> None:
+    # The five work-item events the HXI invalidates on (useStore.ts, invalidateWorkItemFrame),
+    # each in its producer's shape: created, updated and status_changed carry the projection;
+    # assigned carries the record with a booking and a resource, or with its source; claimed
+    # carries the record with a booking and a resource (workforce.py).
+    runtime = _Runtime(tmp_path)
+    hub, socket, connection = await _serve(runtime)
+    try:
+        await _wait_until(lambda: len(socket.sent) == 1)
+        hub.ingress({**event, "timestamp": 1.0})
+        hub.ingress({"type": "system_mode", "data": {"mode": "active"}, "timestamp": 2.0})
+        await _wait_until(lambda: len(socket.sent) >= 2)
+        # A/B: on 850a1a35 the assigned and claimed frames were dropped silently and
+        # system_mode arrived here as sequence 1.
+        marker = json.loads(socket.sent[1])
+        assert marker["type"] == "resync_required" and marker["data"] == {}
+        assert marker["stream"] == {"generation": hub.generation, "sequence": 1}
+        await _wait_until(lambda: len(socket.sent) == 3)
+        following = json.loads(socket.sent[2])
+        assert following["type"] == "system_mode"
+        assert following["stream"]["sequence"] == 2
+    finally:
+        await _stop(hub, connection)
+
+
+async def test_a_dropped_assignment_requests_the_resync_marker_through_the_real_store(
+    wired: tuple[_Runtime, WorkItemStore],
+) -> None:
+    runtime, store = wired
+    store.register_resource(
+        BookableResource(
+            resource_id="assign-agent",
+            resource_type="crew",
+            agent_type="builder",
+            callsign="Builder",
+            capacity=1,
+            department="engineering",
+            active=True,
+        )
+    )
+    store.register_calendar(AgentCalendar(resource_id="assign-agent", entries=[CalendarEntry()]))
+    hub, socket, connection = await _serve(runtime)
+    try:
+        await _wait_until(lambda: len(socket.sent) == 1)
+        # The created frame is refused first; its marker is delivered before the assignment.
+        await store.create_work_item(id="oversized", title="Oversized", description=OVERSIZED)
+        await _wait_until(lambda: len(socket.sent) == 2)
+        assert json.loads(socket.sent[1])["type"] == "resync_required"
+        # assign_work_item emits only work_item_assigned, carrying the full record
+        # (workforce.py, _publish_assignment), so the next marker can come only from it.
+        assert await store.assign_work_item("oversized", "assign-agent") is not None
+        runtime.emit("system_mode", {"mode": "active"})
+        await _wait_until(lambda: len(socket.sent) >= 3)
+        # A/B: on 850a1a35 the assignment was dropped silently and system_mode arrived here.
+        marker = json.loads(socket.sent[2])
+        assert marker["type"] == "resync_required" and marker["data"] == {}
+        assert marker["stream"] == {"generation": hub.generation, "sequence": 2}
+        await _wait_until(lambda: len(socket.sent) == 4)
+        following = json.loads(socket.sent[3])
+        assert following["type"] == "system_mode"
+        assert following["stream"]["sequence"] == 3
+    finally:
+        await _stop(hub, connection)
+
+
+async def test_an_assignment_frame_naming_no_row_is_still_delivered(
+    tmp_path: Path,
+) -> None:
+    # The resync set is separate from _WORK_ITEM_EVENTS, which also drives the ingress shape
+    # check. The store's fallback assigned payload carries an empty record (workforce.py,
+    # "updated.to_dict() if updated else {}"); it is delivered as before, not refused.
+    runtime = _Runtime(tmp_path)
+    hub, socket, connection = await _serve(runtime)
+    try:
+        await _wait_until(lambda: len(socket.sent) == 1)
+        hub.ingress({
+            "type": "work_item_assigned",
+            "data": {"work_item": {}, "source": "captain"},
+            "timestamp": 1.0,
+        })
+        hub.ingress({"type": "system_mode", "data": {"mode": "active"}, "timestamp": 2.0})
+        await _wait_until(lambda: len(socket.sent) >= 2)
+        delivered = json.loads(socket.sent[1])
+        assert delivered["type"] == "work_item_assigned"
+        assert delivered["data"] == {"work_item": {}, "source": "captain"}
+        assert delivered["stream"]["sequence"] == 1
+        await _wait_until(lambda: len(socket.sent) == 3)
+        assert json.loads(socket.sent[2])["type"] == "system_mode"
+    finally:
+        await _stop(hub, connection)
+
+
+@pytest.mark.parametrize("case", [
+    "work-item-data-key",
+    "work-item-record-key",
+    "work-item-str-subclass-key",
+    "tool-event-data-key",
+    "projection-data-key",
+])
+async def test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop(
+    tmp_path: Path,
+    case: str,
+) -> None:
+    # The drop classifier reads the raw data the wire detacher refused. A key object that
+    # hashes like a name the classifier looks up must never be compared: the frame takes
+    # the silent drop. The tool-event row already raised on fc57a8b2.
+    key: _CollidingKey | _CollidingStr
+    if case == "work-item-str-subclass-key":
+        key = _CollidingStr("work_item")
+    else:
+        key = _CollidingKey({
+            "work-item-data-key": "work_item",
+            "work-item-record-key": "id",
+            "tool-event-data-key": "run_id",
+            "projection-data-key": "parent_id",
+        }[case])
+    runtime = _Runtime(tmp_path)
+    hub, socket, connection = await _serve(runtime)
+    try:
+        await _wait_until(lambda: len(socket.sent) == 1)
+        data: dict[Any, Any]
+        # A/B: on 850a1a35 the comparison raised out of the hub in every row.
+        if case == "projection-data-key":
+            data = {key: "parent"}
+            hub._projector._publish("crew_session_projection", data, hub.generation)
+        else:
+            if case == "work-item-record-key":
+                event_type, data = "work_item_updated", {"work_item": {key: "row-1"}}
+            elif case == "tool-event-data-key":
+                event_type, data = "agentic_tool_call_started", {key: "run"}
+            else:
+                event_type, data = "work_item_updated", {key: {"id": "row-1"}}
+            hub.ingress({"type": event_type, "data": data, "timestamp": 1.0})
+        hub.ingress({"type": "system_mode", "data": {"mode": "active"}, "timestamp": 2.0})
+        await _wait_until(lambda: len(socket.sent) == 2)
+        assert key.compared == 0
+        assert json.loads(socket.sent[1])["type"] == "system_mode"
+        assert hub.sequence == 1
+    finally:
+        await _stop(hub, connection)
+```
+
+### 6.14 `PROGRESS.md` (M5)
+
+**P-1** (the whole of `PROGRESS.md` line 3, exactly as the committed M4 wrote it; built by the orchestrator from the real line)
+SEARCH:
+```
+**BF-997 (2026-11-25), #1414 -- the HXI event stream keeps the socket past 100 work items, and a work-state frame it cannot send asks clients for a resync.** With more than 100 board-visible work items, `build_ws_workforce_snapshot` raised `ws_workforce_source_overflow`. `serve` then ended the socket with 1013 "snapshot unavailable", and since the HXI resets its backoff on every open, each tab reconnected about once a second and received no live event of any kind. The snapshot now carries the first 100 rows in the store's order (priority, then newest) and adds no field: `tests/test_bf997_ws_snapshot_and_work_state_resync.py::test_a_snapshot_past_the_cap_carries_the_first_100_rows_and_the_socket_stays_live` runs a real `WorkItemStore` with 101 rows through the real hub, and the socket then delivers a later event. The HXI already upserts snapshot rows without removing any and re-reads every bucket on each snapshot (`ui/src/store/__tests__/workItemReconciliation.test.ts`, "upserts snapshot rows without removing records the snapshot omits"). `tests/test_ad1133_live_crew_session_refresh.py::test_ws_workforce_snapshot_ordinary_overflow_is_stable` now expects those 100 rows, with the reason inline. Every other snapshot failure still ends the socket with 1013 (`test_snapshot_source_overflow_closes_1013_without_partial_frame`). At both drop sites, a work-item frame that names its row, or a crew-session projection that names its parent, and fails the 256 KiB wire bound now requests the existing resync marker. `test_a_dropped_work_item_frame_requests_the_resync_marker` proves this through the real store, and `test_a_dropped_crew_session_projection_requests_the_resync_marker` through the projector's publish callback. A dropped frame that names no row, or belongs to another family, stays silent (`test_a_drop_that_names_no_work_row_keeps_the_silent_drop`). The hub class keeps its 492-line span. Mutation census: 9 of 9 killed (rows B1-M1 to B1-M9; B1-M10 is a review property), run once on the overlay of fc57a8b2. Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+```
+REPLACE:
+```
+**BF-997 (2026-11-25), #1414 -- the HXI event stream keeps the socket past 100 work items, and a work-state frame it cannot send asks clients for a resync.** With more than 100 board-visible work items, `build_ws_workforce_snapshot` raised `ws_workforce_source_overflow`. `serve` then ended the socket with 1013 "snapshot unavailable", and since the HXI resets its backoff on every open, each tab reconnected about once a second and received no live event of any kind. The snapshot now carries the first 100 rows in the store's order (priority, then newest) and adds no field: `tests/test_bf997_ws_snapshot_and_work_state_resync.py::test_a_snapshot_past_the_cap_carries_the_first_100_rows_and_the_socket_stays_live` runs a real `WorkItemStore` with 101 rows through the real hub, and the socket then delivers a later event. The HXI upserts snapshot rows without removing any (`ui/src/store/__tests__/workItemReconciliation.test.ts`, "upserts snapshot rows without removing records the snapshot omits") and marks every work-item bucket stale on each snapshot; a surface that shows a bucket re-reads it by REST, up to that bucket's cap (20 rows for done and cancelled, 100 for each other status). A partial snapshot therefore removes nothing, and a row past the cap reaches the HXI only when a bucket read includes it. `tests/test_ad1133_live_crew_session_refresh.py::test_ws_workforce_snapshot_ordinary_overflow_is_stable` now expects those 100 rows, with the reason inline. Every other snapshot failure still ends the socket with 1013 (`test_snapshot_source_overflow_closes_1013_without_partial_frame`). At both drop sites, a frame that fails the 256 KiB wire bound now requests the existing resync marker when it is one of the five work-item events the HXI invalidates on (`work_item_created`, `work_item_updated`, `work_item_status_changed`, `work_item_assigned`, `work_item_claimed`) and names its `work_item.id`, or a crew-session projection that names its parent. `test_a_dropped_work_item_frame_requests_the_resync_marker` and `test_a_dropped_assignment_requests_the_resync_marker_through_the_real_store` prove this through the real store, `test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker` covers each of the five in its producer's shape, and `test_a_dropped_crew_session_projection_requests_the_resync_marker` covers the projector's publish callback. `_WORK_ITEM_EVENTS` and the ingress shape check are unchanged (`test_an_assignment_frame_naming_no_row_is_still_delivered`). A dropped frame that names no row, or belongs to another family, stays silent (`test_a_drop_that_names_no_work_row_keeps_the_silent_drop`). The classifier reads the raw data the wire refused, so it looks up no key in a dict until every key of that dict is an exact `str`; a frame that fails that check, a correlated tool event included, takes the silent drop, where before a key object hashing like a looked-up name could raise out of `hub.ingress` (`test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop`). The hub class keeps its 492-line span. Mutation census: 17 of 17 killed (rows B1-M1 to B1-M9 and B1-M11 to B1-M18, run once on the overlay of fc57a8b2; B1-M10 is a review property). Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+```
+
+### 6.15 `DECISIONS.md` (M5)
+
+**P-1** (the whole of `DECISIONS.md` line 16, exactly as the committed M4 wrote it; built by the orchestrator from the real line)
+SEARCH:
+```
+- *D1.* Past the 100-row cap, the WebSocket snapshot carries the first 100 rows in the store's order and adds no field. The HXI already upserts snapshot rows without removing any and re-reads every bucket on each snapshot, so a partial list is correct. This supersedes AD-1133's workforce clauses (`prompts/archive/ad-1133-live-crew-session-thread-refresh.md:256` as it applies to the workforce source, and `:272-274`). Every other snapshot overflow still ends the socket with 1013. Rejected: a truncation flag (it duplicates the repair the HXI already runs) and a status filter or a larger cap (it still has a cliff).
+```
+REPLACE:
+```
+- *D1.* Past the 100-row cap, the WebSocket snapshot carries the first 100 rows in the store's order and adds no field. The HXI upserts snapshot rows without removing any and marks every work-item bucket stale on each snapshot; a surface that shows a bucket re-reads it by REST, up to that bucket's cap. So a partial list removes nothing, and a row past the cap reaches the HXI when a bucket read includes it. This supersedes AD-1133's workforce clauses (`prompts/archive/ad-1133-live-crew-session-thread-refresh.md:256` as it applies to the workforce source, and `:272-274`). Every other snapshot overflow still ends the socket with 1013. Rejected: a truncation flag (it duplicates the repair the HXI already runs) and a status filter or a larger cap (it still has a cliff).
+```
+
+**P-2** (line 17)
+SEARCH:
+```
+- *D2.* A dropped frame requests the existing resync marker when it is a correlated tool event (unchanged), a work-item event naming `work_item.id`, or a crew-session projection naming `parent_id`. IDs-only message and artifact frames, and every other family, keep the silent drop. Rejected: resync on any work-item drop (an empty projection names no row) and resync on every drop.
+```
+REPLACE:
+```
+- *D2.* A dropped frame requests the existing resync marker when it is a correlated tool event (unchanged), one of the five work-item events the HXI invalidates on (`work_item_created`, `work_item_updated`, `work_item_status_changed`, `work_item_assigned`, `work_item_claimed`) naming `work_item.id`, or a crew-session projection naming `parent_id`. The classifier reads the raw data the wire refused, so it looks up no key in a dict until every key of that dict is an exact `str`; a frame that fails, a correlated tool event included, keeps the silent drop. IDs-only message and artifact frames, and every other family, keep the silent drop. Rejected: resync on any work-item drop (an empty projection names no row), resync on every drop, a `work_item_` prefix (it takes in `work_item_reconciled` and `work_item_quarantined`), and widening `_WORK_ITEM_EVENTS` (it also drives the ingress shape check).
+```
+
+**P-3**
+SEARCH:
+```
+- *Reversal.* Revert the slice's commit; each slice is independent. The `test_ad1133` pin reverts with BF-997.
+```
+REPLACE:
+```
+- *Reversal.* Revert the slice's commits (its build commit and its review-round repair); each slice is independent. The `test_ad1133` pin reverts with BF-997.
+```
+
+### 6.16 `ui/src/components/bridge/BridgeNotifications.tsx` (M6)
+
+**P-1**
+SEARCH:
+```
+    // #1414 item 14: a read the live fence refuses, with no session cached for the parent, would
+    // open a room whose session band never renders, so its focus step could never run. Open nothing.
+```
+REPLACE:
+```
+    // #1414 item 14: a read the live fence refuses, with no session cached for the parent, would
+    // open a room with no session band yet. The room tries focus once, finds no band and returns;
+    // a band mounted later by the panel's own read is never focused and the request stays pending.
+    // Open nothing.
+```
+
+### 6.17 `ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx` (M6)
+
+**P-1**
+SEARCH:
+```
+// #1414 item 14 (BF-998): when the live fence refuses a notification's room-context read and no
+// session is cached for its parent, the card opens nothing and offers a retry, instead of opening a
+// room whose session band never renders and leaving the focus request pending. Real NotificationCard,
+// real store and real liveReadFence (reset before each test by src/test/setup.ts); fetch is stubbed.
+```
+REPLACE:
+```
+// #1414 item 14 (BF-998): when the live fence refuses a notification's room-context read and no
+// session is cached for its parent, the card opens nothing and offers a retry, instead of opening a
+// room with no session band, whose one-shot focus step returns early and leaves the focus request
+// pending even if the band mounts later. Real NotificationCard, real store and real liveReadFence
+// (reset before each test by src/test/setup.ts); fetch is stubbed.
+```
+
+### 6.18 `PROGRESS.md` (M6)
+
+**P-1** (the whole of `PROGRESS.md` line 5, exactly as the committed M4 wrote it; built by the orchestrator from the real line)
+SEARCH:
+```
+**BF-998 (2026-11-25), #1414 -- a notification's room-context read that the live fence refuses, with no session cached, navigates nowhere and offers a retry.** `hydrateCrewSession` returns false when a live write to the parent lands after the read was issued. The card ignored that: it opened the room and set a focus request. With no session cached, the room's session band never rendered, so the focus step returned early and the request stayed pending. Now the card opens nothing and clears the request. It says "Context unavailable: the room changed while it was loading. Retry to check again.", and its existing Retry reads again and opens the room (`ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx`, with the real store and the real `liveReadFence`). A refused read whose parent already holds a live session still opens the room (`ui/src/__tests__/WorkStateReconciliation.issue1375.test.tsx`, "M4 an opened notification keeps a live projection written while its older-issued context read was in flight"). Mutation census: 5 of 5 killed (rows B2-M1 to B2-M5), run once on the overlay of fc57a8b2. Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+```
+REPLACE:
+```
+**BF-998 (2026-11-25), #1414 -- a notification's room-context read that the live fence refuses, with no session cached, navigates nowhere and offers a retry.** `hydrateCrewSession` returns false when a live write to the parent lands after the read was issued. The card ignored that: it opened the room and set a focus request. With no session cached the room opened with no session band; its focus step runs once, so it returned early, and a band the panel's own read mounted later was never focused, leaving the request pending. Now the card opens nothing and clears the request. It says "Context unavailable: the room changed while it was loading. Retry to check again.", and its existing Retry reads again and opens the room (`ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx`, with the real store and the real `liveReadFence`). A refused read whose parent already holds a live session still opens the room (`ui/src/__tests__/WorkStateReconciliation.issue1375.test.tsx`, "M4 an opened notification keeps a live projection written while its older-issued context read was in flight"). Mutation census: 5 of 5 killed (rows B2-M1 to B2-M5), run once on the overlay of fc57a8b2. Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+```
+
+### 6b Verified Against Codebase (2026-11-25, tree at `850a1a35`)
+- `ws_event_stream.py`:
+  - `:58-62` `_WORK_ITEM_EVENTS` (3 events); `:86-110` `_resyncs_on_drop`; `:69-83` `_is_correlated_tool_event` calls `data.get` on its input.
+  - `:407-409` the ingress drop site passes raw `event.get("data")`; `:599` the final-envelope site; `:241` `_finalize_frame` detaches only after its header checks.
+  - `:165-171`, `:119` the detacher refuses a non-`str` key without comparing it.
+  - `:489-498` the ingress shape check; `:344` the `sequence` property; `:628-647`, `:757-758` marker coalescing.
+- `crew_session_live.py:287-291` the projector's own three-event set; `:347` publishes by default.
+- `workforce.py` emit payloads:
+  - `:11392-11401` assigned and claimed: `{"work_item": item.to_dict(), "booking", "resource"}`;
+  - `:7185-7188` assigned: `{"work_item": projection, "source"}`;
+  - `:8755-8759` assigned with the `{}` fallback;
+  - `:7776-7779` created; `:10846-10850` status_changed.
+- `workforce.py` assignment path: `:11347-11378` `assign_work_item` emits nothing before `_publish_assignment`; the emit grep shows no `_emit` between `:11296` and `:11397`; `:11408` dispatcher only when one is set; `:11830` `register_resource`; `:11879` `register_calendar`.
+- `events.py:101-108`, `:347`: every `work_item_*` value.
+- `useStore.ts:3914-3922`, `:4220-4223`: the only two calls of `invalidateWorkItemFrame`; it needs `work_item.id`.
+- `workItemReconciliation.ts:66-67`, `:114`, `:430-433`.
+- `ProfileChatTab.tsx:1006-1036`.
+- `test_ad1125_room_bound_execution.py:3125-3147` is the precedent for the resource and calendar setup.
+
+### 6b Absence Verified (2026-11-25)
+- CLAIM: no existing name collides with `_RESYNC_WORK_ITEM_EVENTS`, `_has_exact_str_keys`, `_CollidingKey`, `_CollidingStr` or the new test names. RUN: Grep across the repository. FOUND: 0. HOLDS: yes.
+- CLAIM: the HXI invalidates on no other work-item event. RUN: Grep `invalidateWorkItemFrame\(` in `ui/src`. FOUND: `useStore.ts:3916`, `:3922`, `:4220` (the definition). HOLDS: yes.
+- CLAIM: no existing test drives the drop classifier with non-`str` data keys. RUN: Grep `resync` across `tests/test_ad1174*`, `test_ad1359*` and `fixtures/*` (0 hits); Grep `__hash__|__eq__|resync_required` in `test_ad1133` (hits only at `:484`, `:2004`, `:2498`, `:2644`, `:2722`); Read `:448-525` (string keys only). HOLDS: yes for the drop tests. The triggers of the hits at `:2004` and `:2722` were not read; the M5 gate runs that file.
+
+### 6b Re-proof (orchestrator, 2026-11-25)
+
+Measured by the orchestrator on oracle trees at `850a1a35` (the Architect read and ran nothing; its pairs needed no correction).
+
+- **Pairs.** All 14 pairs of 6.10 to 6.18 apply, each SEARCH once at its turn, whole-line aligned (`line_aligned.py`: 14 audited, 0 misaligned). The code, test and comment pairs (6.10 to 6.13, 6.16, 6.17) were applied to two trees whose six blobs equal the checkpoint table; the tracker pairs (6.14, 6.15, 6.18) were applied to a third tree against the real committed lines of PROGRESS.md and DECISIONS.md.
+- **Findings reproduced first-hand before the decision** (probe `probe_b1_f1_f2.py`: the real hub on `_FakeWebSocket`, frames over MAX_FRAME_BYTES naming `work_item.id`). On `850a1a35`: `work_item_updated` gets `resync_required`; `work_item_assigned` and `work_item_claimed` get nothing; a hash-colliding key object in the data (and in the record) makes `hub.ingress` raise, one foreign `__eq__` call each. On `fc57a8b2`: none of the three work-item events gets a marker, and the key cases raise nothing (0 calls). The neighbour (a key colliding with `run_id` in an `agentic_tool_call_started` frame) raises on `fc57a8b2` too, 1 call.
+- **A/B on `850a1a35`** (the 6.13 test pairs only, source unrepaired): the 18-case file gives 9 failed and 9 passed. Failed: `[assigned-with-booking]`, `[assigned-from-command]`, `[claimed]` (system_mode arrives where the marker should), `..._through_the_real_store` (the same assertion, so `assign_work_item` returned a booking), and the five `...foreign_key...` rows (`WireValueError: wire_string_invalid` from the detacher, then `AssertionError: a foreign key object was compared` from the drop path). Passed: the five cases of M1, `[created]`, `[updated]`, `[status-changed]` and `test_an_assignment_frame_naming_no_row_is_still_delivered`.
+- **Repaired tree.** The M5 list (the four-file Python list): 173 passed (160 + 13). `tests/test_ad1324_srp_layout.py` and the seam tests: 16 passed. `scripts/check_architecture_principles.py --check` passes (srp-size 90); the `WSEventStreamHub` span is 492 by AST. `scripts/gen_ad_ledger.py --check` reports the ledger current with the tracker pairs applied, so no ledger regeneration is part of M5.
+- **Mutation census of record** (`bf997_998_rows.py`, run once on the repaired tree, each row restored byte for byte): B1 17 of 17 killed (B1-M1 to B1-M9 and B1-M11 to B1-M18; each killed by its named case, B1-M4 also takes the new rows that cross the ingress site; B1-M10 is a review property), B2 5 of 5, B3 3 of 3, the unmutated baseline of the Python and vitest files clean. The baseline's Playwright pair failed its first test once, in the freshly installed tree (the cold-cache first-run failure recorded for #1820, reproduced on the base tree); on the warm tree both passed (2 passed), and the B3 rows ran after it.
+- **Read, not run.** The wording of 6.11, 6.12, 6.14 to 6.18 against `workItemReconciliation.ts:430-433, 65-68, 114` and `ProfileChatTab.tsx:1006-1036`; the B2 late-band behaviour rests on the round-1 reviewer's probe and on that read.
+
 ## 7. Mutation census and generated-artifact commands
 
 | Row | Mutant | Killer (runner) |
@@ -813,10 +1371,18 @@ If 6.9 runs against `8447d6ef` instead, anchor on `### Acclimation S1 -- the AD-
 | B1-M8 | the correlated-tool clause is removed | `test_ad1133...::test_correlated_tool_finalization_drop_requests_existing_empty_resync` (pytest) |
 | B1-M9 | the `EventType` normalization is removed | `test_a_dropped_work_item_frame_requests_the_resync_marker` (the store emits an `EventType` member) (pytest) |
 | B1-M10 | the projection branch accepts a missing `parent_id` | no test; Diff Reviewer property B1-8 |
+| B1-M11 | `work_item_assigned` removed from `_RESYNC_WORK_ITEM_EVENTS` | `test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker[assigned-with-booking]` and `[assigned-from-command]`, `test_a_dropped_assignment_requests_the_resync_marker_through_the_real_store` (pytest) |
+| B1-M12 | `work_item_claimed` removed from it | `test_a_dropped_work_item_frame_of_each_invalidating_type_requests_the_resync_marker[claimed]` (pytest) |
+| B1-M13 | the classifier tests `_WORK_ITEM_EVENTS` again | the killers of B1-M11 and B1-M12, plus the real-store case (pytest) |
+| B1-M14 | `_WORK_ITEM_EVENTS` gains assigned and claimed (the ingress check widens) | `test_an_assignment_frame_naming_no_row_is_still_delivered` (pytest) |
+| B1-M15 | the top-level data guard is removed (the dict check stays) | `test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop[work-item-data-key]`, `[work-item-str-subclass-key]`, `[tool-event-data-key]` (pytest) |
+| B1-M16 | the record guard is removed | `test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop[work-item-record-key]` (pytest) |
+| B1-M17 | the data guard moves after the correlated-tool check | `test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop[tool-event-data-key]` (pytest) |
+| B1-M18 | the helper uses `isinstance(name, str)` | `test_a_refused_frame_with_a_foreign_key_object_keeps_the_silent_drop[work-item-str-subclass-key]` (pytest) |
 | B2-M1 | the guard is removed | `BridgeNotifications.issue1414.test.tsx` (vitest) |
 | B2-M2 | the guard refuses whenever hydrate returns false | `WorkStateReconciliation.issue1375.test.tsx` "M4 an opened notification keeps a live projection ..." (vitest) |
 | B2-M3 | the refusal skips `cancel()` | `BridgeNotifications.issue1414.test.tsx` (`notificationNavigation` null) (vitest) |
-| B2-M4 | the message lacks "unavailable" | `BridgeNotifications.issue1414.test.tsx` (no Retry button) (vitest) |
+| B2-M4 | the message lacks "unavailable" | `BridgeNotifications.issue1414.test.tsx` at the refused-status assertion (`toHaveTextContent(REFUSED)`), before the Retry lookup is reached (vitest) |
 | B2-M5 | `setChatThread` stays before the guard | `BridgeNotifications.issue1414.test.tsx` (`chatThreads.has` false) (vitest) |
 | B3-M1 | the owned-steps answer is removed | the `task matrix:` tests at the `:1156` poll (2 of 2 sampled under `--max-failures 2`; all 32 on the base, which lacks the answer), and 6.7 P-4's assertion (Playwright) |
 | B3-M2 | the answer gains an extra key, which `decodeUnmanaged` rejects | the `task matrix:` tests (2 of 2 sampled under `--max-failures 2`; record the runner's error line, do not predict it) (Playwright) |
@@ -855,6 +1421,8 @@ Preflight phases that fail if a step is missing:
 | `PROGRESS.md`, `DECISIONS.md` | `scripts/gen_ad_ledger.py` | the ledger pair (regenerated); both are on Batch A's list |
 | ledger pair | `tests/test_ad1184_ad_ledger.py`, preflight `ad-ledger` | regenerated at M4; on Batch A's list |
 
+`[projection-data-key]` of the 6b guard test is covered by both guards, because the record is the data. The 6b repair adds no reader or pin. `ws_event_stream.py` grows by module-level lines only (span 492, the baseline unchanged). The `test_ad1133` line citations at and after `:620` shift by +1 (not asserted). `workforce.py`'s `:223` docstring citation now drifts by +3 (not asserted).
+
 UI gates the batch must keep green: `npx tsc -b` (it reads `BridgeNotifications.tsx` and the new vitest file) and `npx vitest run`. The orchestrator runs both once after M3; `run_test_gate.py` runs neither.
 
 ## 8. Diff Reviewer brief (per slice) and #1414 landing comment
@@ -869,12 +1437,25 @@ UI gates the batch must keep green: `npx tsc -b` (it reads `BridgeNotifications.
 - B1-7: the `test_ad1133` pin keeps its name, states its reason inline, and asserts the 100 ids in order.
 - B1-8: the projection branch rejects a missing, blank, over-128-character or non-string `parent_id`.
 
+**B1 repair delta (M5).**
+- B1-R1: `_RESYNC_WORK_ITEM_EVENTS` is exactly the five types at `useStore.ts:3914-3921`. `_WORK_ITEM_EVENTS`, the ingress check and the projector set are byte-unchanged.
+- B1-R2: no `.get` or subscript runs on a dict before `_has_exact_str_keys` has passed for that dict. The helper only iterates and calls `type`.
+- B1-R3: a guarded frame returns False. Nothing raises out of `hub.ingress` or `_publish_projector` for a foreign key.
+- B1-R4: span 492, the baseline unchanged, `test_ad1324_srp_layout` green.
+- B1-R5: the new cases cross the real hub, and one drives the real `assign_work_item`.
+- B1-R6: every corrected sentence says only "upsert without removal; every bucket marked stale; a surface that shows a bucket re-reads it up to its cap".
+- Consumer: the same as B1, plus `invalidateWorkItemFrame`.
+
 **B2. Consumers:** the `NotificationCard` source view, and `ProfileChatTab.tsx:1006-1036` (unchanged).
 - B2-1: the refusal happens only when `hydrateCrewSession` returns false and a fresh `useStore.getState()` holds no session for `session.task_id`. With a cached session the path is as before.
 - B2-2: on refusal: no `setChatThread`, no `openGroupChatThread`, no navigation with a destination. `cancel()` leaves `notificationNavigation` null.
 - B2-3: the message contains "unavailable", so the existing Retry button renders. It is ASCII, with no emoji.
 - B2-4: `setChatThread` moving after the hydrate is safe, because `hydrateCrewSession` reads no chat thread.
 - B2-5: `test_ad1214:1183-1186` and the emoji `?raw` check still hold.
+
+**B2 repair delta (M6).**
+- B2-R1: comments, the test header and `PROGRESS.md` line 5 only; no code token changes. ASCII, no emoji. `test_ad1214:1183-1186` and the emoji `?raw` scan still hold.
+- B2-R2: the text matches `ProfileChatTab.tsx:1013-1036`: one focus attempt, a return when the band is not connected, and no re-run when the band mounts.
 
 **B3. Consumer:** the rail's `decodeUnmanaged` (`ownedStepsApi.ts:372-391`), the isolation helper (`_helpers.ts:188-228`) and the baseline's own route (base `:160-214`).
 - B3-1: the answer is served only after Start Work. Its keys are exactly the unmanaged view's, with ordinals 1-based, `reference` null and `finalization` `'none'`, and there are at most 20 rows.
@@ -887,13 +1468,13 @@ UI gates the batch must keep green: `npx tsc -b` (it reads `BridgeNotifications.
 ```
 Batch B (HXI live state) is merged in <PR #...> (<sha>), gated by <receipt path, receipt sha>.
 
-- [x] Item 11 (the WS snapshot drops the socket with 1013 above 100 rows): BF-997. Past the cap the snapshot carries the first 100 rows in the store's order; the HXI re-reads the rest by REST. Proof: tests/test_bf997_ws_snapshot_and_work_state_resync.py, a real WorkItemStore with 101 rows through the real hub. Every other snapshot overflow still ends the socket with 1013.
-- [x] Item 12 (dropped work-item frames never request a resync): BF-997. A dropped work-item frame naming its row, or a dropped crew-session projection naming its parent, now requests the existing resync marker at both drop sites; drops naming no row stay silent.
+- [x] Item 11 (the WS snapshot drops the socket with 1013 above 100 rows): BF-997. Past the cap the snapshot carries the first 100 rows in the store's order; the HXI upserts them without removing any and marks every bucket stale, and a surface that shows a bucket re-reads it by REST up to that bucket's cap. Proof: tests/test_bf997_ws_snapshot_and_work_state_resync.py, a real WorkItemStore with 101 rows through the real hub. Every other snapshot overflow still ends the socket with 1013.
+- [x] Item 12 (dropped work-item frames never request a resync): BF-997. At both drop sites, a dropped frame of any of the five work-item events the HXI invalidates on (created, updated, status_changed, assigned, claimed) naming its row, or a dropped crew-session projection naming its parent, now requests the existing resync marker. Drops naming no row stay silent, as does a refused frame whose data carries a non-string key (before this, such a tool event could raise out of the hub).
 - [x] Item 14 (notification focus handoff skipped after a fenced hydrate): BF-998. With no session cached, the card opens nothing, clears the request and offers a retry; with a session cached it opens as before. Proof: ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx, real store and real fence.
 - [x] Item 8 (issue1369 Playwright suite red): the suite answers the owned-steps read the task rail makes, and the baseline's exact denied list is re-pinned to the reads the app now makes (4b7dfb3b, b4378fb4, 5c362508). 33 of 71 failed on the base; 71 passed after. Test-only, no BF. Running e2e suites in CI is out of scope; nothing filed.
 
-Mutation census: B1 9/9 (B1-M10 is a review property), B2 5/5, B3 3/3 killed.
-Residuals for #1820 (latent): a single row over the 64K-character string bound, or a snapshot over 1 MiB, still ends the socket with 1013; the HXI resets its reconnect backoff on every open.
+Mutation census: B1 17/17 (B1-M10 is a review property), B2 5/5, B3 3/3 killed.
+Residuals for #1820 (latent): a single row over the 64K-character string bound, or a snapshot over 1 MiB, still ends the socket with 1013; the HXI resets its reconnect backoff on every open. The hub reads the raw event envelope (ws_event_stream.py:400, :445, :451, :458) before any key check; the runtime builds that envelope itself (injected-only).
 Not ticked here: items 1, 9, 10 and 13 (item 1 shipped earlier; Batch C; the item 10 consolidation; item 13 as a limit).
 ```
 
