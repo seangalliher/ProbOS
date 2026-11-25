@@ -39,7 +39,7 @@ Nothing compares a claimed read with the turn's record.
 
 - **New `cognitive/dm/lookup_claim.py`** (runtime-free, beside `write_ledger.py`):
   - `find_lookup_claim(text)` returns the first claim in the reply's own wording (bounded to 80 characters), or `None`. A claim is a past-tense search or record-lookup phrase:
-    - outside fenced blocks (only with their closing fence), paired double quotes, curly quotes and backticks (over line breaks, not over a blank line) and `>` block quotes (amendment A2);
+    - outside fenced blocks (only with their closing fence), paired double quotes, curly quotes and backticks (over line breaks, not over a blank line) and `>` block quotes (amendment A2), with LF or CRLF line breaks (amendment A3);
     - not after `if`, `whether`, `unless`, `have`, `had`, `did`, `not`, `never` or `n't`;
     - not about the agent's memory.
   - `assess_lookup_claim(text, invocations, *, record_incomplete)` returns that claim only when `type(invocations) is ToolInvocations` with empty `attempted` and `succeeded` and `incomplete` False (amendment A2), and `record_incomplete is False`.
@@ -888,7 +888,7 @@ types.py:78-104               IntentResult(result=None, metadata default_factory
 - **L1:** a lookup made on an earlier turn and cited now gets the sentence. The sentence remains true of this turn.
 - **L2:** a turn with any tool call (for example only `publish_finding`, or a lookup that failed) is not checked.
 - **L3:** passive recall and Oracle injection (AD-568a/AD-620) are not tool calls. A claim built on them gets the sentence, which stays true ("through a tool").
-- **L4:** English only, with the listed past-tense forms. Single quotes are not masked. Paraphrases ("I had a look") are not found. A quote or backtick span is masked over line breaks but not over a blank line, and a fence only with its closing fence; an unpaired quote can still pair with a later one in the same paragraph and hide a claim between them (the sentence is then missed, never false).
+- **L4:** English only, with the listed past-tense forms. Single quotes are not masked. Paraphrases ("I had a look") are not found. A quote or backtick span is masked over line breaks but not over a blank line, and a fence only with its closing fence; an unpaired quote can still pair with a later one in the same paragraph and hide a claim between them (the sentence is then missed, never false). Lines end in LF or CRLF; a lone CR, U+2028, U+2029 or U+0085 is not a line break for the masking (amendment A3, D14).
 - **L5:** unchecked paths: group replies, federated turns, AD-272 cache replays, AD-1230 held-turn replays and AD-1165 promoted-run reports, which carry no record or bypass the pipeline.
 - **L6:** a reply longer than about 410 characters loses the sentence from its stored episode (`[:500]`).
 - **L7 (amendment A2; the earlier text named a case A2 removes):** a pass whose projection raises carries no record, and the pass fold skips it, so a later empty pass can stand for the turn. The projection reads plain attributes and has no known trigger. An unverifiable id, the reachable case, now marks the record `incomplete` in every pass order.
@@ -901,7 +901,7 @@ types.py:78-104               IntentResult(result=None, metadata default_factory
 
 - The two live sentences, on a turn with an empty tool record, run through the real chain and `run()`: they end with `LOOKUP_DISCLOSURE` in the reply, the response and the episode, and a WARNING names the claim.
 - A turn whose lookup ran, a turn any of whose passes called a tool with an unverifiable id (in any pass order), the switch off, an in-reply read, a dispatched retry (whatever it returned) and the Captain's own words leave the reply unchanged; a reply the gate accepts is still checked.
-- The 16 wordings that are not claims are not found, nor are the six wordings quoted or fenced over several lines (amendment A2); the four unquoted controls beside a fence or a quote are found.
+- The 16 wordings that are not claims are not found, nor are the seven wordings quoted or fenced over several lines, each with LF and with CRLF line breaks (amendments A2 and A3); the four unquoted controls beside a fence or a quote are found with either.
 - Every mutation row is killed by its named killer.
 - The focused gate and the broad gate pass. `gen_config_reference.py --check` passes.
 - Verify all changes comply with the Engineering Principles in `.github/copilot-instructions.md`.
@@ -910,7 +910,7 @@ types.py:78-104               IntentResult(result=None, metadata default_factory
 
 > AD-1358 S2 is merged (#<PR>, merge `<sha>`). Gate: <result>.
 >
-> **What S2 does:** on a 1:1 DM turn whose agentic loop called no tool, a reply whose own wording claims a search or a record lookup ("I searched", "the record I found", "the Ship's Records search turned up", "my search shows") ends with one sentence: "[This turn's tool record is empty: no search or lookup was run through a tool on it.]". The turn log names the claim at WARNING. The tool record decides and the wording only selects the turn; the reply's own words stay. It sits under `write_claim_guard.enabled` (on by default). Measured by `tests/test_ad1358_s2_lookup_claim.py` (47 cases, including the two sentences of 2026-11-04) and `tests/test_ad1358_s2_a2_repairs.py` (46 cases: a retry whatever it returns, an unverifiable call in any pass order, quotes and fences over several lines, masking in linear time); mutation census <...>.
+> **What S2 does:** on a 1:1 DM turn whose agentic loop called no tool, a reply whose own wording claims a search or a record lookup ("I searched", "the record I found", "the Ship's Records search turned up", "my search shows") ends with one sentence: "[This turn's tool record is empty: no search or lookup was run through a tool on it.]". The turn log names the claim at WARNING. The tool record decides and the wording only selects the turn; the reply's own words stay. It sits under `write_claim_guard.enabled` (on by default). Measured by `tests/test_ad1358_s2_lookup_claim.py` (47 cases, including the two sentences of 2026-11-04) and `tests/test_ad1358_s2_a2_repairs.py` (65 cases: a retry whatever it returns, an unverifiable call in any pass order, quotes and fences over several lines with LF or CRLF line breaks, masking in linear time); mutation census <...>.
 >
 > **What stays for S3:** claims about shared history ("last time you beat me"), the extraction and revision pass, this issue's DM acceptance (no such claim in the reply, the log naming the dropped claim) and the BF-741 check on a retracted claim.
 >
@@ -1056,7 +1056,7 @@ The mutation census of A2 (A2-M1 to A2-M25) and its pinned files are in 16.10.
 | D9 | **Step 1 sets the flag when it dispatches a retry**: before the send, for every outcome (adopted, empty text, None, no response, a raise). A retry is a second run of the agent and may call tools whatever it returns, while `ctx.tool_invocations` stays the first attempt's record in every case. Abstaining on a raise is the safe side: a timed-out dispatch may have run tools. A gate that accepts the reply dispatches nothing and leaves the flag False. F1 (#1820) is unchanged. |
 | D10 | **The record says when it left a call out.** `ToolInvocations` gains `incomplete: bool = False`. `_project_tool_invocations` sets it when it drops a call whose id is unverifiable, whether or not other calls are listed. `merged_with` ORs it. `to_wire` emits `"incomplete": true` only when it is set, and `from_wire` accepts the key only with the value `true`. `assess_lookup_claim` abstains unless it is exactly False. The flag rides the record through every hop the record already takes (the pass fold, `_attach_run_provenance`, the `act()` copy at `cognitive_agent.py:6801-6803`, `_build_result_metadata`, the route), and the AD-272 cache strips it with the record. So no new key, field or route change is needed, and `cognitive_agent.py` is untouched. The lists do not change, so `step_4n` (reads `attempted`), `agent_work_runner` (reads `succeeded`) and the write verdict are unchanged for every input. P1-8's `None` is replaced: `None` again means only that the pairs were not read (`agentic_dispatch.py:2465-2469`) or that the projection raised (L7). Rejected: a sticky observation key plus a second metadata key (two facts that must travel together over five hops, a route change, and a new outcome field to tell "dropped" from "never ran"); a `None` pass absorbing the union (loses known write evidence, so a failed save would go undisclosed); keeping `None` and making the fold remember it (the fold cannot tell an unreadable pass from one whose loop never ran). |
 | D11 | **Quoted wording over several lines is masked, bounded by the paragraph.** A fenced block (three or more backticks or tildes at a line start) is masked only together with its closing line: the first later line made only of the same fence character, at least as many, and spaces. Paired double quotes, paired curly quotes and backtick spans may run over line breaks but not over a blank line. A stray quote can hide at most the rest of its paragraph, and an unclosed fence hides nothing. The two errors are not symmetric: a missed mask appends a sentence that is still true of the record (D1) and logs quoted words as a claim, while a wide mask drops a true disclosure. Rejected: a character cap (arbitrary; it cuts real examples); masking to the end of the text after an unclosed fence (a stray fence would hide every later claim); guessing which unpaired quote is stray (no reliable signal); one regex for all of it (its fence alternative rescanned the rest of the text from every unclosed opener and its curly alternative from every unpaired opener: quadratic, measured at 1.8 s and 3.2 s on about 40 KB of unclosed fence lines before round 2). The masking is a line pass for fences (a backward pass records the longest closing line of each fence character after every line, so an opener without one costs one lookup) and one forward pass for quotes, backticks and block quotes (a failed search proves that no opener of its kind remains before the paragraph break, and a failed curly search marks the paragraph): linear in the text's length (A2-6, A2-19). A span may still run into a fenced block, as with the single regex. Internal prior art: BF-866b `_fence_spans` (`artifact_extractor.py:358-392`) uses the same closing rule and the opposite tail rule (an unclosed fence runs to the end), because on the write side the wide mask is the safe one. |
-| D12 | **Round 2 reviews the whole candidate** (`8704d194` to the A2 head), not the delta. A2 changes shared contracts that section 4 lists or adds: the `ToolInvocations` shape and wire, what the step-1 flag means, and the tracker text. The brief is section 9 as amended, plus properties 13 to 17 below. |
+| D12 | **Round 2 reviews the whole candidate** (`8704d194` to the A2 head), not the delta. A2 changes shared contracts that section 4 lists or adds: the `ToolInvocations` shape and wire, what the step-1 flag means, and the tracker text. The brief is section 9 as amended, plus properties 13 to 17, which section 17 states (amendment A3). |
 
 **Consumers checked (D10).**
 - `step_4n` (`reply_pipeline.py:2410-2415`) reads `attempted` only: same verdict.
@@ -2045,3 +2045,373 @@ def test_masking_takes_linear_time_on_unclosed_openers(unit) -> None:
     assert found is not None and "i searched" in found.lower()
     assert elapsed < 2.0, f"masking took {elapsed:.2f} s on {len(text)} characters"
 ```
+
+## 17. Amendment A3 (review round 2: CRLF text, the timing note)
+
+**Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25
+
+**Finding.** Review round 2 (`gpt-6.1-sol`, the whole candidate `e2972c27`) returned REQUEST CHANGES with two P3 findings, both regressions of A2; R1-1, R1-2 and R2-0 are repaired, R1-3 is not fully.
+- **F-1 (CRLF).** `_fenced_spans`, `_PARAGRAPH_BREAK` and the masking loop of `lookup_claim.py` read LF only. With CRLF line breaks: (a) a closing fence line `~~~` plus CR does not match `_FENCE_ONLY`, so a fence with its closing line is read as unterminated and the claim inside it as the agent's own (sentence appended, WARNING); (b) `_PARAGRAPH_BREAK` does not see CRLF CRLF as a blank line, so a stray quote masks across the paragraph and hides a genuine claim, which the pre-A2 module found; (c) the block-quote span ends at the LF, so its CR is blanked, contrary to "line breaks are kept". The orchestrator reproduced (a), (b) and (c) first-hand (`repro_b14_r2_crlf.py`); the paired-quote, block-quote and plain-claim controls give the LF results.
+- **F-2 (timing note).** The docstring of the scaling guard claims about 20 times margin on both sides. Measured: the quadratic variants took 4.70 to 13.88 s against the 2 s bound (16.10 and round 2), the linear pass 8 to 50 ms.
+
+**Live reach** (read only, an immutable open of the vessel's `chat_threads.db`): of 632 agent replies, 451 hold a line break and 0 hold a CR, a CRLF or U+2028, U+2029, U+0085. No live reply has met F-1; it is repaired because a repair of this change introduced it.
+
+**Decisions (continuing section 3).**
+
+| # | Decision |
+|---|---|
+| D13 | **The masking reads LF and CRLF line breaks alike and keeps every offset and every CR and LF.** `_FENCE_ONLY` ends `[ \t]*\r?` (a closing line may end in the CR of its CRLF); `_PARAGRAPH_BREAK` becomes `\n(?=[ \t]*\r?\n)` (a blank line is spaces or tabs, then LF or CRLF); the loop blanks no CR and no LF. Lines are still split at LF, so a CRLF line keeps its CR and every span offset is unchanged. On a text with no CR each pattern and the loop give the result of `e2972c27`. Linear time holds: `_FENCE_ONLY.fullmatch` stays one pass over one line, the lookahead after each LF scans one run of spaces and tabs plus at most a CR and an LF, and the runs after distinct LFs do not overlap, since an LF ends each run. Rejected: turning CRLF into LF before masking (breaks the length and line-break property and changes the claim text the WARNING logs); universal line ends (a lone CR, U+2028, U+2029, U+0085) throughout (no live reply holds one, and it would rework the line split under the linear-time argument of D11). `[ \t\r]*` in either pattern gives the same result on every LF and CRLF text; `\r?` is chosen because it names the CRLF line end. |
+| D14 | **A lone CR, U+2028, U+2029 and U+0085 are not line breaks for the masking.** A lone CR inside a masked span is kept as it stands, which changes no match: every pattern of the module reads it as `\s`. CommonMark counts a lone CR as a line ending (spec 0.31.2, "line ending"); this module does not, because no live reply holds one (0 of 632). The limit is one sentence in L4 (in-place edit), not a new number: the trackers and the landing comment say L1 to L9. |
+| D15 | **Round 3 reviews the delta** (`e2972c27` to the A3 head). No shared contract changes: `_mask_quoted` and `_fenced_spans` are private and imported outside the module only by `tests/test_ad1358_s2_a2_repairs.py`; `find_lookup_claim` keeps its signature and, on text without a CR, its result; no wire, schema, config field, event or step changes. The brief is the round-3 list of this section and property 15 as amended. |
+| D16 | **Tests in place.** The R1-3 tests and the masking test run with LF and with CRLF (`_EOLS`, a stacked parametrize; each text gets `.replace("\n", eol)`). One case is added, `tilde-fence-then-text`: the existing tilde case ends at its closing line, so its CRLF form holds no closing line with a CR; and the backtick-fence cases show F-1 (a) only while the paragraph repair stands, because without it the backtick-span rule masks the claim anyway. The A2 file stays at 15 functions and goes from 46 to 65 cases (R1-3 section: 20 to 39). |
+| D17 | **The timing note states the measured margins**: the linear pass 8 to 50 ms, the quadratic variants 4.7 to 14 s, so the 2 s bound is at least 40 times above the first and only 2.3 to 7 times below the second; a host more than 2.3 times as fast could pass the weakest quadratic variant. The bound and the 16,000 units stay; the scaling measurement of 14.7.3 remains the stronger evidence. |
+
+**Consumers checked (D15).**
+- `_mask_quoted`, `_fenced_spans`, `_FENCE_ONLY`, `_PARAGRAPH_BREAK`: used in `lookup_claim.py` and, outside it, only at `tests/test_ad1358_s2_a2_repairs.py:22` and `:286`.
+- `find_lookup_claim` and `assess_lookup_claim`: `lookup_claim.py`, `reply_pipeline.py` and the two S2 test files. No signature changes.
+
+**What A3 does not change.** Every file except `lookup_claim.py`, the A2 test file, `PROGRESS.md`, `DECISIONS.md` and this contract; any config field, event, wire or schema; the S2 file; the claim patterns; F1 (#1820); S3.
+
+**Milestones.** One Builder delegation of about 15 tool calls: A3-1 to A3-15. The Builder runs no test. The orchestrator first commits this section and the in-place edits of the contract. Subject: `Amend the contract with the two findings of review round 2`.
+- **M8:** A3-1 to A3-4. Subject: `The lookup check reads LF and CRLF line breaks alike in fences, paragraphs and masking`.
+- **M9:** A3-5 to A3-11. Subject: `Tests run the multi-line quote cases with LF and CRLF line breaks and state the measured timing margins`.
+- **M10:** A3-12 to A3-15, then `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_ad_ledger.py` (no `--online`). Stage the two ledger files if they change. Subject: `Trackers for the lookup check after review round 2`.
+
+Every body says `Refs #1750.` No subject or body quotes a test name.
+
+**Builder: may and may not.** Section 5, unchanged, applied to the pairs of this section. It creates no file.
+
+**Gates (added to section 8).**
+- Check 11: every SEARCH of A3-1 to A3-15 matches exactly once at its turn on `e2972c27`. Expected: 15 of 15. Result: 15 of 15, and `ws_ambiguity.py` finds 0 whitespace hazards.
+- Check 12: the A2 test file after A3-5 to A3-11, run on the `e2972c27` source. Expected, derived by reading: exactly three cases fail, `test_wording_quoted_over_several_lines_is_not_found[tilde-fence-then-text-crlf]`, `test_an_unquoted_claim_beside_a_fence_or_quote_is_found[stray-quote-stops-at-blank-line-crlf]` and `test_masking_keeps_length_and_line_breaks[crlf]`; the other 62 pass (`[fence-with-blank-line-crlf]` and `[fenced-block-crlf]` pass there only because the backtick-span rule masks the claim when both repairs are absent; A3-M1 proves them). Result: on the A2 test file with A3-5 to A3-11 applied to the `e2972c27` source: 65 cases, 3 failed and 62 passed, the three named above; on the A3 overlay (A3-1 to A3-11): 65 passed. The three cases that fail on the old source are the ones the derivation names, and no other case fails there.
+- Check 13: the scaling probe of 14.7.3 with each family's lines joined by CRLF, and four more families for the new classes: each doubling about 2 (a quadratic family gives about 4). Result: `probe_quoted_scaling.py` (the ten LF families of 14.7.3) and `probe_quoted_scaling_crlf.py` (the same families with every LF replaced by CRLF, and four more for the new classes: bare fence lines that each open and close, a blank line of a space and a CR, a long run of CRs and spaces after one line break, doubled CRs; both outside the repository), on the A3 overlay, from 500 to 8,000 lines: every doubling took 1.7 to 2.7 times as long (LF, 40 doublings) and 1.5 to 2.6 times as long (CRLF, 56 doublings), against 1.9 to 2.0 for the plain-line control and about 4 for a quadratic family; the claim at the end was found in every family; the slowest family at 8,000 lines (the nested mix) takes 49 ms (LF, 184,045 characters) and 52 ms (CRLF, 232,047 characters). The differential fuzz `fuzz_b14_crlf.py` (outside the repository) over 100,000 random texts: on a text without a CR the new module and the `e2972c27` module give the same claim and the same masked text on every one; on the 84,933 that hold a line break the new masking commutes with the CRLF conversion exactly (the masked CRLF text is the masked LF text with every LF replaced by CRLF) and the claim found in the CRLF form equals that of the LF form on every one, where the old module fails the first on 51,527 and the second on 12,368.
+- Focused gate: the command of section 8, unchanged. Preflight: `scripts/run_test_gate.py --preflight-only --label ad-1358-s2` exits 0. Then the broad gate once.
+
+**Properties 13 to 17.** D12 pointed at these and section 16 does not hold them. They are the properties the round-2 brief carried, written here once; property 15 is as amended by A3 (D13, D14), and the round-3 brief carries it.
+13. `ToolInvocations.incomplete` defaults to False and `from_names` coerces it to bool. `merged_with` ORs it in both orders and still unions the names. `to_wire` emits the key only when True, so a complete record's payload is byte-identical to the Base's. `from_wire` rejects the key with any value but `true`, accepts every payload it accepted before with the same value, and still rejects an unknown extra key.
+14. Through the real pass fold, `_attach_run_provenance`, `_build_result_metadata` and the route, a turn in which any pass dropped a call delivers `incomplete=True` in every pass order with every listed name of every pass kept, and the lookup check abstains. A turn of only tool-free passes delivers `ToolInvocations()` and the check can fire. The AD-272 cache still strips the record. No other producer or consumer of the record is left unhandled.
+15. The masking takes time linear in the text's length for every input; it keeps the text's length and every CR and LF; it finds a claim in a text's CRLF form exactly when it finds one in its LF form, for every case of the A2 file; a lone CR, U+2028, U+2029 and U+0085 are not line breaks (D14). A fenced block is masked only together with its closing line, and an opener with no closing line masks nothing; a quote, curly-quote or backtick span may run over line breaks but not over a blank line, and an unpaired quote masks nothing; block-quote lines are masked.
+16. End to end with real objects the sentence reaches the response, the thread message and the episode; a retry that returns nothing and a reply the gate accepts behave as the tests say; and on every path that builds a 1:1 reply (plan mode, the cache replay, held and promoted replies, federation) the check either cannot fire or its sentence is true.
+17. The live facts of sections 14.4 and 16 hold: all six agent replies of 2026-11-04 carry the persisted trace of an empty array; the wording patterns match 4 of 632 historical agent replies and 342 of the 632 are longer than 410 characters (L6); the vessel's logs hold no uncorrelatable-id warning and no retry marker. F1 (14.5) is unchanged by the flag.
+
+**Verified Against Codebase (2026-11-25, tree `e2972c27`).**
+```
+lookup_claim.py:46-50     the comment above _FENCE_RUN; no "CR" or "\r" anywhere in the file
+lookup_claim.py:51-56     _FENCE_RUN; _FENCE_ONLY `[ \t]*(?:`{3,}|~{3,})[ \t]*`; _SPAN_START; _SPAN_END; _PARAGRAPH_BREAK `\n(?=[ \t]*\n)`
+lookup_claim.py:59-77     _fenced_spans: text.split("\n") (:65), offset += len(line) + 1 (:73), _FENCE_ONLY.fullmatch(line) (:77)
+lookup_claim.py:96        span end starts[last] + len(lines[last]) (holds the closing line's CR)
+lookup_claim.py:101-102   _mask_quoted docstring "Line breaks are kept"
+lookup_claim.py:111       breaks from _PARAGRAPH_BREAK.finditer
+lookup_claim.py:124-128   block-quote span ends at text.find("\n", start)
+lookup_claim.py:146-152   loop `if chars[index] != "\n"`; `return "".join(chars)` directly followed by the #: comment of _NOT_A_CLAIM_BEFORE
+lookup_claim.py:162-166   find_lookup_claim calls _mask_quoted
+test_ad1358_s2_a2_repairs.py:22        imports _mask_quoted
+test_ad1358_s2_a2_repairs.py:212-305   R1-3 section: 224-233, 236-246, 249-260, 263-281, 284-288, 291-305; :299 "about 20 times"
+PROGRESS.md:3             "(15 functions, 46 cases), the repairs of review round 1:"; "the masking keeps the reply's length and line breaks, and it takes"; "and 25 of 25 killed (rows A2-M1 to A2-M25, ..."
+DECISIONS.md LC7          "at least as long; the masking takes time linear in the reply's length, and one regex"
+contract:1925             A2-M24 4.99/10.13/10.00 s; A2-M23 6.22/4.70 s; linear about 0.05 s
+```
+
+**Absence Verified (2026-11-25).**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| Private helpers have one importer outside the module | `rg "_mask_quoted\|_fenced_spans\|_PARAGRAPH_BREAK\|_FENCE_ONLY" -g "*.py"` | `lookup_claim.py` (9 lines); `test_ad1358_s2_a2_repairs.py:22, :286` | yes |
+| The module has no CR handling | `rg -c "CRLF\|\\r" src/probos/cognitive/dm/lookup_claim.py` | 0 | yes |
+| Section 9 holds no property 13 to 17 | `rg "^1[3-7]\. " prompts/ad-1358-s2-lookup-claim-trace.md` | nothing | yes |
+| Public callers | `rg -l "find_lookup_claim\|assess_lookup_claim" -g "*.py"` | `lookup_claim.py`, `reply_pipeline.py`, the two S2 test files | yes |
+
+### 17.1 `src/probos/cognitive/dm/lookup_claim.py` (M8)
+
+**A3-1**
+SEARCH:
+```python
+#: nothing: a missed mask appends a sentence that is true of the record, a wide one hides it.
+_FENCE_RUN = re.compile(r"[ \t]*(`{3,}|~{3,})")
+_FENCE_ONLY = re.compile(r"[ \t]*(?:`{3,}|~{3,})[ \t]*")
+_SPAN_START = re.compile(r'["`\u201c]|^[ \t]*>', re.MULTILINE)
+_SPAN_END = {'"': '"', "`": "`", "\u201c": "\u201d"}
+#: A line break that starts a blank line: no quote or backtick span crosses one.
+_PARAGRAPH_BREAK = re.compile(r"\n(?=[ \t]*\n)")
+```
+REPLACE:
+```python
+#: nothing: a missed mask appends a sentence that is true of the record, a wide one hides it. A line ends in LF or
+#: CRLF (the CR directly before the LF belongs to the line break); a lone CR, U+2028, U+2029 or U+0085 is not a
+#: line break here.
+_FENCE_RUN = re.compile(r"[ \t]*(`{3,}|~{3,})")
+_FENCE_ONLY = re.compile(r"[ \t]*(?:`{3,}|~{3,})[ \t]*\r?")
+_SPAN_START = re.compile(r'["`\u201c]|^[ \t]*>', re.MULTILINE)
+_SPAN_END = {'"': '"', "`": "`", "\u201c": "\u201d"}
+#: A line break that starts a blank line (spaces or tabs, then LF or CRLF): no quote or backtick span crosses one.
+_PARAGRAPH_BREAK = re.compile(r"\n(?=[ \t]*\r?\n)")
+```
+
+**A3-2**
+SEARCH:
+```python
+    """The character spans of the fenced blocks that have a closing line, in order.
+
+    Linear in the length of ``text``: a backward pass records, for every line, the longest closing line of each
+```
+REPLACE:
+```python
+    """The character spans of the fenced blocks that have a closing line, in order.
+
+    Lines are split at LF, so a CRLF line keeps its CR at the end: ``_FENCE_ONLY`` allows it on a closing line,
+    and a span ends after that CR.
+
+    Linear in the length of ``text``: a backward pass records, for every line, the longest closing line of each
+```
+
+**A3-3**
+SEARCH:
+```python
+    """``text`` with every quoted span blanked to spaces. Line breaks are kept, so its length and lines are kept.
+```
+REPLACE:
+```python
+    """``text`` with every quoted span blanked to spaces. Every CR and LF is kept, so its length and lines are kept.
+```
+
+**A3-4**
+SEARCH:
+```python
+            if chars[index] != "\n":
+                chars[index] = " "
+    return "".join(chars)
+#: A word directly before the match that makes it conditional, a question or a negation.
+```
+REPLACE:
+```python
+            if chars[index] not in ("\r", "\n"):
+                chars[index] = " "
+    return "".join(chars)
+
+
+#: A word directly before the match that makes it conditional, a question or a negation.
+```
+
+### 17.2 `tests/test_ad1358_s2_a2_repairs.py` (M9)
+
+**A3-5**
+SEARCH:
+```python
+_UNQUOTED = "Here is the template:\nGood evening.\n\nI searched the records and found two games.\nFill it in."
+
+
+@pytest.mark.parametrize("text", [
+    pytest.param(_FENCED, id="fence-with-blank-line"),
+    pytest.param("~~~\nI searched the records and found two games.\n~~~", id="tilde-fence"),
+    pytest.param(_FENCE + "text\nThe record I found shows it as a draw.\n" + _FENCE, id="fence-info-string"),
+    pytest.param(_QUOTED_OVER_LINES, id="multi-line-double-quote"),
+    pytest.param("\u201cGood evening.\nI searched the records.\u201d That was the line.", id="multi-line-curly"),
+    pytest.param("Use `the phrase\nI searched the records` as the test.", id="multi-line-backtick"),
+])
+def test_wording_quoted_over_several_lines_is_not_found(text) -> None:
+    assert find_lookup_claim(text) is None
+```
+REPLACE:
+```python
+_UNQUOTED = "Here is the template:\nGood evening.\n\nI searched the records and found two games.\nFill it in."
+#: Every R1-3 case runs with LF and with CRLF line breaks (amendment A3): the masking reads both.
+_EOLS = pytest.mark.parametrize("eol", [pytest.param("\n", id="lf"), pytest.param("\r\n", id="crlf")])
+
+
+@_EOLS
+@pytest.mark.parametrize("text", [
+    pytest.param(_FENCED, id="fence-with-blank-line"),
+    pytest.param("~~~\nI searched the records and found two games.\n~~~", id="tilde-fence"),
+    pytest.param("~~~\nI searched the records and found two games.\n~~~\nThat was the form.",
+                 id="tilde-fence-then-text"),
+    pytest.param(_FENCE + "text\nThe record I found shows it as a draw.\n" + _FENCE, id="fence-info-string"),
+    pytest.param(_QUOTED_OVER_LINES, id="multi-line-double-quote"),
+    pytest.param("\u201cGood evening.\nI searched the records.\u201d That was the line.", id="multi-line-curly"),
+    pytest.param("Use `the phrase\nI searched the records` as the test.", id="multi-line-backtick"),
+])
+def test_wording_quoted_over_several_lines_is_not_found(text, eol) -> None:
+    assert find_lookup_claim(text.replace("\n", eol)) is None
+```
+
+**A3-6**
+SEARCH:
+```python
+@pytest.mark.parametrize("text", [
+    pytest.param(_FENCE + "\nexample\n" + _FENCE + "\nI searched the records and found two games.",
+                 id="after-a-closed-fence"),
+    pytest.param(_FENCE + "\nI searched the records and found two games.", id="unclosed-fence"),
+    pytest.param('The board is 6" wide.\n\nI searched the records and found the "draw" entry.',
+                 id="stray-quote-stops-at-blank-line"),
+    pytest.param('He said "hi.\nI searched the records and found two games.', id="unpaired-quote"),
+])
+def test_an_unquoted_claim_beside_a_fence_or_quote_is_found(text) -> None:
+    found = find_lookup_claim(text)
+```
+REPLACE:
+```python
+@_EOLS
+@pytest.mark.parametrize("text", [
+    pytest.param(_FENCE + "\nexample\n" + _FENCE + "\nI searched the records and found two games.",
+                 id="after-a-closed-fence"),
+    pytest.param(_FENCE + "\nI searched the records and found two games.", id="unclosed-fence"),
+    pytest.param('The board is 6" wide.\n\nI searched the records and found the "draw" entry.',
+                 id="stray-quote-stops-at-blank-line"),
+    pytest.param('He said "hi.\nI searched the records and found two games.', id="unpaired-quote"),
+])
+def test_an_unquoted_claim_beside_a_fence_or_quote_is_found(text, eol) -> None:
+    found = find_lookup_claim(text.replace("\n", eol))
+```
+
+**A3-7**
+SEARCH:
+```python
+@pytest.mark.parametrize(("reply", "fires"), [
+    pytest.param(_FENCED, False, id="fenced-block"),
+    pytest.param(_QUOTED_OVER_LINES, False, id="multi-line-quote"),
+    pytest.param(_UNQUOTED, True, id="unquoted-control"),
+])
+def test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged(reply, fires, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    ctx = _ctx_for_turn(_agentic_result([]), reply)
+```
+REPLACE:
+```python
+@_EOLS
+@pytest.mark.parametrize(("reply", "fires"), [
+    pytest.param(_FENCED, False, id="fenced-block"),
+    pytest.param(_QUOTED_OVER_LINES, False, id="multi-line-quote"),
+    pytest.param(_UNQUOTED, True, id="unquoted-control"),
+])
+def test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged(reply, fires, eol, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+    ctx = _ctx_for_turn(_agentic_result([]), reply.replace("\n", eol))
+```
+
+**A3-8**
+SEARCH:
+```python
+@pytest.mark.parametrize(("text", "expected"), [
+```
+REPLACE:
+```python
+@_EOLS
+@pytest.mark.parametrize(("text", "expected"), [
+```
+
+**A3-9**
+SEARCH:
+```python
+def test_a_fence_ends_only_on_its_own_kind_and_length(text, expected) -> None:
+    """A fence ends at the first later line of the same character, at least as long; a stray opener masks nothing."""
+    found = find_lookup_claim(text)
+```
+REPLACE:
+```python
+def test_a_fence_ends_only_on_its_own_kind_and_length(text, expected, eol) -> None:
+    """A fence ends at the first later line of the same character, at least as long; a stray opener masks nothing."""
+    found = find_lookup_claim(text.replace("\n", eol))
+```
+
+**A3-10**
+SEARCH:
+```python
+def test_masking_keeps_length_and_line_breaks() -> None:
+    text = 'a "b\nc" d\n> e\n' + _FENCE + "\nf\n\ng\n" + _FENCE + "\n\u201ch\u201d `i`"
+    masked = _mask_quoted(text)
+    assert len(masked) == len(text)
+    assert masked == "a   \n   d\n   \n   \n \n\n \n   \n" + " " * 7
+```
+REPLACE:
+```python
+@_EOLS
+def test_masking_keeps_length_and_line_breaks(eol) -> None:
+    text = ('a "b\nc" d\n> e\n' + _FENCE + "\nf\n\ng\n" + _FENCE + "\n\u201ch\u201d `i`").replace("\n", eol)
+    masked = _mask_quoted(text)
+    assert len(masked) == len(text)
+    assert masked == ("a   \n   d\n   \n   \n \n\n \n   \n" + " " * 7).replace("\n", eol)
+```
+
+**A3-11**
+SEARCH:
+```python
+    """16,000 openers that nothing ends. The linear pass takes milliseconds; the first draft of A2-6 rescanned the
+    rest of the text from every fence opener (about 7 s and 12 s for the two fence kinds, measured by the
+    orchestrator before round 2). The bound leaves about 20 times margin on both sides."""
+```
+REPLACE:
+```python
+    """16,000 openers that nothing ends. The linear pass took 8 to 50 ms where measured; the quadratic variants of
+    the census (the first draft of A2-6, and an opener check that rescans the later lines) took 4.7 to 14 s. So the
+    2 s bound is 40 times or more above the linear pass and only 2.3 to 7 times below the quadratic ones: a host
+    over 2.3 times as fast could pass the weakest quadratic variant (contract sections 14.7.3, 16.10 and 17)."""
+```
+
+### 17.3 `PROGRESS.md` (M10)
+
+**A3-12**
+SEARCH:
+```markdown
+(15 functions, 46 cases), the repairs of review round 1:
+```
+REPLACE:
+```markdown
+(15 functions, 65 cases), the repairs of review rounds 1 and 2:
+```
+
+**A3-13**
+SEARCH:
+```markdown
+the masking keeps the reply's length and line breaks, and it takes
+```
+REPLACE:
+```markdown
+the masking keeps the reply's length and every CR and LF, each of these quoted-wording cases holds with LF and with CRLF line breaks, and the masking takes
+```
+
+**A3-14**
+SEARCH:
+```markdown
+and 25 of 25 killed (rows A2-M1 to A2-M25, run once on the A2 overlay of `102e8b33`), each by a test the contract names.
+```
+REPLACE:
+```markdown
+and 25 of 25 killed (rows A2-M1 to A2-M25, run once on the A2 overlay of `102e8b33`) and 3 of 3 killed (rows A3-M1 to A3-M3, run once on the A3 overlay of `e2972c27`), each by a test the contract names.
+```
+
+### 17.4 `DECISIONS.md` (M10)
+
+**A3-15**
+SEARCH:
+```markdown
+at least as long; the masking takes time linear in the reply's length, and one regex
+```
+REPLACE:
+```markdown
+at least as long; lines end in LF or CRLF, and the masking keeps every CR and LF (amendment A3); the masking takes time linear in the reply's length, and one regex
+```
+
+### 17.5 Mutation census (A3): run once on the A3 overlay (`e2972c27` plus A3-1 to A3-11), the campaign of record
+
+"A2 file" is `tests/test_ad1358_s2_a2_repairs.py`. Each mutant puts one line of A3 back to its `e2972c27` form, so every LF case passes under it, as on `e2972c27`; each is killed only by a CRLF case.
+
+| Row | Mutant | Killer |
+|---|---|---|
+| A3-M1 | `_FENCE_ONLY` ends `[ \t]*` (drop `\r?`) | A2 file `test_wording_quoted_over_several_lines_is_not_found[fence-with-blank-line-crlf, tilde-fence-then-text-crlf]`; `test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged[fenced-block-crlf]`; `test_masking_keeps_length_and_line_breaks[crlf]` |
+| A3-M2 | `_PARAGRAPH_BREAK` lookahead `[ \t]*\n` (drop `\r?`) | A2 file `test_an_unquoted_claim_beside_a_fence_or_quote_is_found[stray-quote-stops-at-blank-line-crlf]` |
+| A3-M3 | The loop blanks CR (`not in ("\r", "\n")` becomes `!= "\n"`) | A2 file `test_masking_keeps_length_and_line_breaks[crlf]` |
+
+Not a row: `[ \t\r]*` in place of `[ \t]*\r?` in either pattern gives the same result on every LF and CRLF text and differs only on a lone CR (D14). The two blank lines after `return "".join(chars)` are style.
+
+Rerun on the same overlay, because `lookup_claim.py` and the killers' test section changed: every earlier row that mutates `lookup_claim.py` (LC-1 to LC-4, LC-6 to LC-8, LC-19, whose sentence lives there; A2-M13 to A2-M25). A2-M25 now drops `if chars[index] not in ("\r", "\n"):`; its killer is `test_masking_keeps_length_and_line_breaks[lf, crlf]`. Rows that mutate other files keep their results: their files and the R1-1 and R1-2 tests are unchanged.
+
+Results: **3 of 3 killed**, run once on the A3 overlay (the frozen head `e2972c27` with A3-1 to A3-11 applied by tool), one mutant at a time, each file restored byte for byte, with `bf1358_a3_rows.py` (outside the repository: the runner of the A2 census with the A3 rows added and the killer ids of the R1-3 tests ending in -lf or -crlf). Every case that fails under a row is a CRLF case, so no LF case fails under any of them. Baselines on the overlay: 47 (S2 file), 61 (ad1295), 58 (ad1285) and 65 (A2 file) cases passed.
+
+| ID | Verdict | Killed by |
+|---|---|---|
+| A3-M1 | KILLED | A2 file: `test_wording_quoted_over_several_lines_is_not_found[fence-with-blank-line-crlf, tilde-fence-then-text-crlf]`; A2 file: `test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged[fenced-block-crlf]`; A2 file: `test_masking_keeps_length_and_line_breaks[crlf]` |
+| A3-M2 | KILLED | A2 file: `test_an_unquoted_claim_beside_a_fence_or_quote_is_found[stray-quote-stops-at-blank-line-crlf]` |
+| A3-M3 | KILLED | A2 file: `test_masking_keeps_length_and_line_breaks[crlf]` |
+
+Rerun on the same overlay: all 25 rows of the A2 census (A2-M25 now drops `if chars[index] not in ("\r", "\n"):` and is killed by `test_masking_keeps_length_and_line_breaks[lf, crlf]`) and the 16 first-census rows that survived A2 (LC-1 to LC-4, LC-6 to LC-16 and LC-19) are all KILLED, by the killers of their earlier tables (the R1-3 case ids of those tables read with the -lf suffix). The scaling guards failed under A2-M23 and A2-M24 as before.
+
+Pinned files (sha256 and blob id): `src/probos/cognitive/dm/lookup_claim.py` sha256 `47bb8d10d68137edaaf099fa2b8f159db414a1d6f7ded97adca419208d79d6a1`, blob id `1765abff6d6f0ecfc5f4f4e6210d0b04640a5685`; `tests/test_ad1358_s2_a2_repairs.py` sha256 `88febe84ac322d2d7226eabf918a7b3ff0f403ecb94b779a001dad8fb0aedfaa`, blob id `cb35f5ab51083004463b5fe14870ea9f35dabab9` (the sha256 of the overlay's working copy and the git blob id under autocrlf, as in 16.10; the other five pinned files of 16.10 are unchanged). If either differs, rerun A3-M1 to A3-M3 and the rows listed above.
