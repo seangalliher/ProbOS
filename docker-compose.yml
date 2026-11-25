@@ -11,7 +11,9 @@ services:
     environment:
       - PROBOS_NATS_ENABLED=true
       - PROBOS_NATS_URL=nats://nats:4222
-      # LLM config: set your provider URL
+      # LLM config: PROBOS_LLM_URL replaces only the shared llm_base_url. With no config
+      # file every tier uses it; a config that gives a tier its own llm_base_url_<tier>
+      # keeps that URL for the tier.
       # - PROBOS_LLM_URL=http://ollama:11434/v1
     depends_on:
       nats:

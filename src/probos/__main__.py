@@ -1081,6 +1081,7 @@ system:
 
 cognitive:
   default_llm_tier: "fast"
+  llm_timeout_seconds: 300.0
   llm_base_url_fast: "{llm_url}"
   llm_api_key_fast: ""
   llm_model_fast: "{llm_model}"
@@ -1137,6 +1138,23 @@ security:
     )
 
 
+def _init_api_format(llm_url: str) -> str:
+    """#1414 item 2: ``ollama`` only for an Ollama root (port 11434, no path); ``openai`` for every other URL.
+
+    The client posts ``api/chat`` under an ``ollama`` base and ``chat/completions`` under an ``openai`` one,
+    so init's own Ollama default, ``http://localhost:11434/v1``, is Ollama's OpenAI-compatible API. A URL
+    whose port does not parse is ``openai``, as it was for any URL without ``:11434``.
+    """
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(llm_url)
+        port = parts.port
+    except ValueError:
+        return "openai"
+    return "ollama" if port == 11434 and parts.path.strip("/") == "" else "openai"
+
+
 def _cmd_init(args: argparse.Namespace) -> None:
     """Handle ``probos init`` -- interactive Rich TUI wizard (AD-484)."""
     from rich.prompt import Prompt
@@ -1188,7 +1206,7 @@ def _cmd_init(args: argparse.Namespace) -> None:
         default_model = "claude-sonnet-4-20250514"
     llm_model = Prompt.ask("  LLM model", default=default_model, console=console)
 
-    api_format = "ollama" if ":11434" in llm_url else "openai"
+    api_format = _init_api_format(llm_url)
 
     home.mkdir(parents=True, exist_ok=True)
     (home / "data").mkdir(exist_ok=True)
