@@ -2,9 +2,9 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24
 
-**Revised by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, after proving every pair on an oracle tree at the B14 head `ba2b3a4b`: the `{U+XXXX}` placeholders of the draft are the characters they name (the contract tools run with `--utf8 U+03B1,U+2014,U+2192`); the census numbers of P-46 and P-46a are measured; four pairs are added, P-47a (the `EventType` row of the architecture baseline goes stale, section 7 step 4), P-53 and P-54 (the two measured AD-1152 golden values, section 7 step 5) and P-55 (the pin of the `srp-size` count 92 in `tests/test_ad1270b_architecture_fitness.py`, which the draft's M3 focused list fails on: 90 after P-47 and P-47a); the Builder runs no test and no script, so sections 4, 5 and 7 say what the orchestrator runs; and one claim of the draft that the oracle disproved is corrected (section 15, the SRP row); and P-26 and P-28 delete their whole line (the draft's empty REPLACE left a blank line inside a dict literal of `tests/test_ad1270e2g_crew_models.py`: each SEARCH now carries the row that follows and its REPLACE keeps it); and P-52 is anchored at the whole line of the old first heading of `DECISIONS.md` (`### BF-992 -- ...`) and puts the new entry before it, instead of matching the end of the `## Era V` line and the empty line after it (the Builder's `edit` tool dropped the blank line between the new entry and the old heading for that shape; the file the pair produces is the same).
+**Revised by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, after proving every pair on an oracle tree at the B14 head `ba2b3a4b`: the `{U+XXXX}` placeholders of the draft are the characters they name (the contract tools run with `--utf8 U+03B1,U+2014,U+2192`); the census numbers of P-46 and P-46a are measured; four pairs are added, P-47a (the `EventType` row of the architecture baseline goes stale, section 7 step 4), P-53 and P-54 (the two measured AD-1152 golden values, section 7 step 5) and P-55 (the pin of the `srp-size` count 92 in `tests/test_ad1270b_architecture_fitness.py`, which the draft's M3 focused list fails on: 90 after P-47 and P-47a); the Builder runs no test and no script, so sections 4, 5 and 7 say what the orchestrator runs; and one claim of the draft that the oracle disproved is corrected (section 15, the SRP row); and P-26 and P-28 delete their whole line (the draft's empty REPLACE left a blank line inside a dict literal of `tests/test_ad1270e2g_crew_models.py`: each SEARCH now carries the row that follows and its REPLACE keeps it); and P-52 is anchored at the whole line of the old first heading of `DECISIONS.md` (`### BF-992 -- ...`) and puts the new entry before it, instead of matching the end of the `## Era V` line and the empty line after it (the Builder's `edit` tool dropped the blank line between the new entry and the old heading for that shape; the file the pair produces is the same); and pair P-56 and milestone M4 are added after the first broad gate failed on `tests/test_ad1324_srp_layout.py::test_architecture_baseline_is_byte_identical_to_the_reviewed_base` (that test pins the LF-normalised sha256 of `docs/development/architecture-baseline.yaml` and says a reviewed baseline edit moves the pin in the same commit; the draft's census of pins missed it, because it sits in no focused list: section 6.30).
 
-**Status:** build-ready. Drafted on `8704d194`; it builds after B14 (AD-1358 S2) merges, and every pair is re-proved on that base (here the B14 head `ba2b3a4b`, whose tree is the base after the merge). No new AD or BF number: this is slice S1 of #1700. Ceiling AD-1361, next AD-1362 (`scripts/ad_ceiling.py`); BF-993 (`docs/development/open-ads-report.md:32`). **Captain:** nothing parked. The Captain may overrule D1 (old key ignored without a warning) and D2 (six event types deleted, not reserved). **Dependencies:** none. **Tests:** one new file (18 cases); 2 files deleted; 9 existing test files updated by pairs; one golden fixture (two values) refreshed by measurement.
+**Status:** build-ready. Drafted on `8704d194`; it builds after B14 (AD-1358 S2) merges, and every pair is re-proved on that base (here the B14 head `ba2b3a4b`, whose tree is the base after the merge). No new AD or BF number: this is slice S1 of #1700. Ceiling AD-1361, next AD-1362 (`scripts/ad_ceiling.py`); BF-993 (`docs/development/open-ads-report.md:32`). **Captain:** nothing parked. The Captain may overrule D1 (old key ignored without a warning) and D2 (six event types deleted, not reserved). **Dependencies:** none. **Tests:** one new file (18 cases); 2 files deleted; 10 existing test files updated by pairs; one golden fixture (two values) refreshed by measurement.
 
 **Prose rule (phantom pre-check):** outside fenced blocks, deleted names never appear in `runtime.<name>` or `Class.member(` form, because the pre-check reads prose. All fences are untagged.
 
@@ -73,6 +73,7 @@ Commit subjects carry no AD or BF token:
 - **M1:** `Acclimation S1 M1: the Birth Chamber, the department scheduler, their config, wirer, seams and event types are deleted (#1700)`
 - **M2:** `Acclimation S1 M2: tests that named the deleted chamber, scheduler, config model or event types follow the deletion (#1700)`
 - **M3:** `Acclimation S1 M3: config reference, facade, profile and architecture baselines, the default-config golden, docs and trackers follow the deletion (#1700)`
+- **M4:** `Acclimation S1 M4: the baseline pin of the layout test follows the two baseline rows S1 deletes (#1700)`
 
 **M1 build order (Builder):**
 1. Apply P-1 to P-21 and create the census file of section 6.13, each followed by its blob check.
@@ -83,6 +84,8 @@ The Builder runs no test and no script. Before the build the orchestrator ran th
 **M2 build order (Builder):** apply P-22 to P-40. The orchestrator then runs the M2 focused gate.
 
 **M3 build order:** the orchestrator runs section 7's steps 1 to 6 on the oracle and proves each diff; the Builder applies the pairs P-41 to P-55 (the brief's table carries their blob ids), and the generated files (the facade baseline, the config reference and the ledger pair) are committed from the oracle's blobs. The orchestrator then runs the M3 focused gate and the script checks, regenerates the ledger and runs `--preflight-only`.
+
+**M4 build order (Builder):** apply P-56 (section 6.30), found by the first broad gate. The orchestrator then runs `tests/test_ad1324_srp_layout.py`, the M3 focused gate (now with that file) and `--preflight-only`, and gates again.
 
 ## 5. Builder may and may not
 
@@ -114,7 +117,7 @@ tests/test_ad1270_boot_camp_tracker_retired.py tests/test_ad1270e2g_crew_models.
 
 **M3 focused gate:** M2's list plus:
 ```
-tests/test_ad1270e1_config_facade.py tests/test_ad1152_agentic_correlation.py tests/test_ad1185_config_profiles.py tests/test_config_reference_current.py tests/test_ad1270b_architecture_fitness.py tests/test_ad1270_dormant_classes.py tests/test_ad1184_ad_ledger.py
+tests/test_ad1270e1_config_facade.py tests/test_ad1152_agentic_correlation.py tests/test_ad1185_config_profiles.py tests/test_config_reference_current.py tests/test_ad1270b_architecture_fitness.py tests/test_ad1324_srp_layout.py tests/test_ad1270_dormant_classes.py tests/test_ad1184_ad_ledger.py
 ```
 Then each with `-P`:
 - `scripts/check_config_facade.py --check`
@@ -137,7 +140,7 @@ Then each with `-P`:
 | `seam-contracts`, `store-registry` | no change expected |
 | `compile` | does not catch a dangling import |
 
-Outside the preflight, tests catch these: the AD-1152 golden (P-44, P-53 and P-54), the architecture fitness count pin (P-55), the facade pins (P-41 to P-43), the e2g tables (P-24 to P-31), the event pins (P-32 to P-34), and the tracked yaml (P-21).
+Outside the preflight, tests catch these: the AD-1152 golden (P-44, P-53 and P-54), the architecture fitness count pin (P-55), the baseline's byte pin (P-56), the facade pins (P-41 to P-43), the e2g tables (P-24 to P-31), the event pins (P-32 to P-34), and the tracked yaml (P-21).
 
 **Broad gate, once:**
 ```
@@ -1580,6 +1583,26 @@ REPLACE:
     }
 ```
 
+### 6.30 `tests/test_ad1324_srp_layout.py` (M4)
+
+The first broad gate (`ad1355-s1`, head `e9772f4e`) failed on `test_architecture_baseline_is_byte_identical_to_the_reviewed_base` and on nothing else (1 failed, 54842 passed, 184 skipped). The test pins the LF-normalised sha256 of `docs/development/architecture-baseline.yaml`; its header says that a reviewed baseline edit moves the pin in the same commit and records why beside it (the two earlier moves are AD-1270 slice 4b and BF-941). P-47 and P-47a edit that file, so the pin moves. The new digest is the orchestrator's measurement of the committed baseline, LF-normalised, taken twice (from the working copy and from the HEAD blob). The readers of the baseline are the checker (`scripts/check_architecture_principles.py`), `tests/test_ad1270b_architecture_fitness.py` (the counts, P-55) and this test (the bytes); nothing under `.github` names it.
+
+**P-56** (found by the first broad gate)
+SEARCH:
+```
+# was c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f.
+ARCHITECTURE_BASELINE_SHA256 = "59f090fd6c03496c17944ce05cbbd63ca5fc9bcfda0d8b6ac957c89ea7879098"
+```
+REPLACE:
+```
+# was c2ee53af26ff8a4ca97a971a2e3f6b2aba7450213fc48bbd83036078d2aff70f.
+# AD-1355 S1 (#1700) deleted two srp-size rows: the BirthChamber class went with its module, and
+# EventType's class span fell from 508 to 500 lines (the trigger is more than 500) once its six
+# AD-486 members were deleted; the architecture checker requires both rows to follow in the same
+# commit. The pin before AD-1355 S1 was 59f090fd6c03496c17944ce05cbbd63ca5fc9bcfda0d8b6ac957c89ea7879098.
+ARCHITECTURE_BASELINE_SHA256 = "d4fd33313f20075d3190850753db35a53993e1f7b1805075352b4a54c4e1d639"
+```
+
 ## 7. Generated artifacts (M3, in order)
 
 The orchestrator runs steps 1 to 6 on the oracle and proves each diff against the lists below. The pairs of this section (P-45 to P-55) are applied by the Builder; the generated files are committed from the oracle's blobs.
@@ -1593,7 +1616,7 @@ The orchestrator runs steps 1 to 6 on the oracle and proves each diff against th
    Nothing else changes: `incidental` stays 13 and `aliased_fields` stays 1.
 2. `d:/ProbOS/.venv/Scripts/python.exe -P scripts/gen_config_reference.py`. The only change allowed is that the `## holodeck_birth_chamber` section goes (15 lines).
 3. Apply P-45. Measure the five census counts with the instrument `config-profiles.yaml` names, on the base and on the candidate. Fill and apply P-46 and P-46a. Run `-P scripts/check_config_profiles.py --check`.
-4. Apply P-47 and P-47a, then run `-P scripts/check_architecture_principles.py --check`. It passes with `srp-size=90` (92 on the base): the `BirthChamber` row (P-47) and the `EventType` row (P-47a) leave, and no other row changes. `EventType`'s class span falls from 508 to 500 lines against the trigger of more than 500 (`SRP_MAX_BODY_LINES`), so its row is stale once the six members are deleted. The count pin of `tests/test_ad1270b_architecture_fitness.py` (`test_json_report_carries_the_categories_block`) moves from 92 to 90 with it (P-55).
+4. Apply P-47 and P-47a, then run `-P scripts/check_architecture_principles.py --check`. It passes with `srp-size=90` (92 on the base): the `BirthChamber` row (P-47) and the `EventType` row (P-47a) leave, and no other row changes. `EventType`'s class span falls from 508 to 500 lines against the trigger of more than 500 (`SRP_MAX_BODY_LINES`), so its row is stale once the six members are deleted. The count pin of `tests/test_ad1270b_architecture_fitness.py` (`test_json_report_carries_the_categories_block`) moves from 92 to 90 with it (P-55), and the byte pin of `tests/test_ad1324_srp_layout.py` (the LF-normalised sha256 of the baseline) moves to the new digest with it (P-56, M4).
 5. Apply P-53 and P-54 (the AD-1152 golden). The orchestrator measured both values by following `tests/test_ad1152_agentic_correlation.py:54-62` after P-44: `test_default_off_matches_pinned_base` first fails on `default_config_sha256` alone (golden line 17), then on `observation_sha256` alone (line 15), and with both replaced the whole file passes (41 passed). Lines 15 and 17 are the only changes. Record both values in the M3 commit message.
 6. Run `-P scripts/check_dormant_classes.py --check`, `-P scripts/check_seam_contracts.py --check` and `-P scripts/check_store_registry.py --check`. No change is expected; any change is a stop.
 7. Apply P-48 to P-52.
@@ -1659,7 +1682,7 @@ The orchestrator runs steps 1 to 6 on the oracle and proves each diff against th
 7. The holodeck package exports exactly its 14 scenario and team-simulation names, and `scenarios.py` and `team_simulations.py` are untouched.
 8. `EventType` loses exactly the six AD-486 members and `GRANDFATHERED` exactly their six rows. The four `HOLODECK_SCENARIO_*` stay, and the import-time completeness check passes.
 9. Each generated artifact matches its tool or measurement, and its diff is exactly section 7's allowed diff. This covers the facade baseline, the config reference, the profile manifest row and census, the architecture baseline's `BirthChamber` and `EventType` rows, the two AD-1152 digests and the ledger pair.
-10. Every changed count pin states its delta in a comment, and no assertion is loosened. This covers the ad1195 counts, the e2g tables, the e1 facade counts and the architecture fitness count.
+10. Every changed count pin states its delta in a comment, and no assertion is loosened. This covers the ad1195 counts, the e2g tables, the e1 facade counts, the architecture fitness count and the AD-1324 baseline digest (P-56: it equals the sha256 of the LF-normalised baseline at the head, and the old digest is recorded beside it).
 11. Deleted tests covered only deleted code. `list_by_phase` stays covered by `tests/test_ad507_curriculum.py:151`, the curriculum wirer by `:194-207`, the prober's wiring by `tests/test_ad487_self_distillation.py:396-397`, and direct subscription by `tests/test_bf903_ward_room_scope.py` (the served POST) and `tests/test_assignment.py`.
 12. The DECISIONS heading does not start with an AD or BF token, and the PROGRESS head's first 120 characters hold no ledger status word. AD-1355 resolves `allocated-open`.
 
