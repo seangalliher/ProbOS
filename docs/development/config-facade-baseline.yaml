@@ -51,8 +51,8 @@ surface_counts:
   field_definitions: 1877
   incidental: 13
   own_models: 228
-  owned: 296
-  public_names: 309
+  owned: 297
+  public_names: 310
 canonical_dump_sha256: 1daa02e0ff25d3dde7b9dd908a38468c533cd0f3b93d73d6b8bd18c3b35c15ea
 non_instantiable:
 - A2APeerConfig
@@ -439,6 +439,7 @@ names:
   WorkstationsConfig: {kind: model, tier: owned}
   WriteClaimGuardConfig: {kind: model, tier: owned}
   annotations: {kind: other, removable_in: e3, tier: incidental}
+  drop_null_sections: {kind: function, tier: owned}
   field_validator: {kind: function, removable_in: e3, tier: incidental}
   format_trust: {kind: function, tier: owned}
   load_config: {kind: function, tier: owned}

@@ -10,6 +10,15 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-994 / BF-995 / BF-996 -- #1414 Batch A: init's provider format and timeout, setup's redaction, the HXI save's base file (2026-11-25, #1414)
+
+- *Scope.* `__main__.py` (`_init_api_format`, the init scaffold, the setup print sites, setup's HXI note), `provider_setup.py` (`_CUT_MARKER`, `config_text_api_keys`), `config.py` (`drop_null_sections`), `routers/config.py`, `docs/getting-started/configuration.md`, `docker-compose.yml`; tests `tests/test_bf994_init_config_reaches_its_api.py`, `tests/test_bf995_setup_redaction.py`, `tests/test_bf996_hxi_save_on_disk.py`. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+- *D1.* `probos init` writes `llm_api_format_fast: ollama` only for an Ollama root (port 11434, empty path); every other URL, init's `/v1` default included, is `openai`. Rejected: always `openai` (a typed root would post to `/chat/completions`), rewriting the typed URL, and the `:11434` substring test.
+- *D2.* The scaffold shared by init and setup's create path sets the shared `llm_timeout_seconds: 300.0`; existing files keep what they have, and the `CognitiveConfig` default stays 30.0. Rejected: changing the default (it moves every existing config and the facade and profile baselines).
+- *D3.* Setup's excerpt is cut with U+2026 at 200 characters. Setup redacts its chosen key and every `cognitive.llm_api_key*` value in the existing file wherever it prints text from that file; other secrets in the file are out of scope. Rejected: a console that redacts all output (highlighting and markup escaping change a key's bytes, and a short key could break markup).
+- *D4.* An HXI save writes the on-disk mapping plus the patch, validated, never a dump of the running config; an unusable file answers 409 `config_unreadable`, an invalid result 409 `config_invalid` with `loc` and `type` only. No await runs between the read and the write. Rejected: refusing a save when the file's hash differs from boot (runtime plumbing, and it blocks a legitimate save).
+- *Reversal.* Revert the slice's commit; each slice is independent. The M4 facade baseline row for `drop_null_sections` goes with BF-996.
+
 ### Acclimation S1 -- the AD-486 Birth Chamber and the department activation scheduler deleted (2026-11-25, #1700, AD-1355)
 
 - *Scope.* `holodeck/__init__.py` and the deleted `chamber.py`, `gates.py`, `phases.py`, `affect.py`, `scheduler.py`; `startup/finalize.py`, `agent_onboarding.py`, `assignment.py`, `proactive.py`, `config.py`, `config_models/crew.py`, `config_models/__init__.py`, `events.py`, `event_persistence.py`, `config/system.yaml`; test `tests/test_ad1355_birth_chamber_removed.py`. Contract `prompts/ad-1355-s1-birth-chamber-removal.md`. Slice S1 of #1700.
