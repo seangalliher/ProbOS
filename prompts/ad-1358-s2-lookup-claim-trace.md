@@ -1014,7 +1014,7 @@ The A2 overlay is a clean detached tree at the frozen head `102e8b33` with the s
 
 #### 14.7.3 The scaling measurement that changed A2-6 (found by the orchestrator before round 2)
 
-Property 15 of the first A2 text says no alternative of the masking can backtrack super-linearly. The orchestrator measured it with `probe_quoted_scaling.py` (outside the repository): `find_lookup_claim` on n lines of one family plus an unquoted claim, n doubling from 500 to 8,000, with a control of plain lines that scales by 2.0 per doubling.
+The first A2 text claimed that no alternative of the masking can backtrack super-linearly. The orchestrator measured it with `probe_quoted_scaling.py` (outside the repository): `find_lookup_claim` on n lines of one family plus an unquoted claim, n doubling from 500 to 8,000, with a control of plain lines that scales by 2.0 per doubling.
 
 - The first draft of A2-6 (one regex) was quadratic on unclosed fence openers: 8,000 lines of three backticks and a letter (40,045 characters) took 1,831 ms and 8,000 lines of three tildes and a letter 3,154 ms, about four times per doubling. Unpaired double quotes, unpaired backticks and a single long fence stayed linear (3 to 9 ms).
 - The same probe on the head before A2 (`102e8b33`) showed that the single-line curly alternative of the first built version was already quadratic: 8,000 unpaired curly quotes on one line (24,045 characters) took 611 ms, 5.8 times at the last doubling. The Architect had derived this from the regex; the measurement confirms it.
@@ -1055,8 +1055,8 @@ The mutation census of A2 (A2-M1 to A2-M25) and its pinned files are in 16.10.
 |---|---|
 | D9 | **Step 1 sets the flag when it dispatches a retry**: before the send, for every outcome (adopted, empty text, None, no response, a raise). A retry is a second run of the agent and may call tools whatever it returns, while `ctx.tool_invocations` stays the first attempt's record in every case. Abstaining on a raise is the safe side: a timed-out dispatch may have run tools. A gate that accepts the reply dispatches nothing and leaves the flag False. F1 (#1820) is unchanged. |
 | D10 | **The record says when it left a call out.** `ToolInvocations` gains `incomplete: bool = False`. `_project_tool_invocations` sets it when it drops a call whose id is unverifiable, whether or not other calls are listed. `merged_with` ORs it. `to_wire` emits `"incomplete": true` only when it is set, and `from_wire` accepts the key only with the value `true`. `assess_lookup_claim` abstains unless it is exactly False. The flag rides the record through every hop the record already takes (the pass fold, `_attach_run_provenance`, the `act()` copy at `cognitive_agent.py:6801-6803`, `_build_result_metadata`, the route), and the AD-272 cache strips it with the record. So no new key, field or route change is needed, and `cognitive_agent.py` is untouched. The lists do not change, so `step_4n` (reads `attempted`), `agent_work_runner` (reads `succeeded`) and the write verdict are unchanged for every input. P1-8's `None` is replaced: `None` again means only that the pairs were not read (`agentic_dispatch.py:2465-2469`) or that the projection raised (L7). Rejected: a sticky observation key plus a second metadata key (two facts that must travel together over five hops, a route change, and a new outcome field to tell "dropped" from "never ran"); a `None` pass absorbing the union (loses known write evidence, so a failed save would go undisclosed); keeping `None` and making the fold remember it (the fold cannot tell an unreadable pass from one whose loop never ran). |
-| D11 | **Quoted wording over several lines is masked, bounded by the paragraph.** A fenced block (three or more backticks or tildes at a line start) is masked only together with its closing line: the first later line made only of the same fence character, at least as many, and spaces. Paired double quotes, paired curly quotes and backtick spans may run over line breaks but not over a blank line. A stray quote can hide at most the rest of its paragraph, and an unclosed fence hides nothing. The two errors are not symmetric: a missed mask appends a sentence that is still true of the record (D1) and logs quoted words as a claim, while a wide mask drops a true disclosure. Rejected: a character cap (arbitrary; it cuts real examples); masking to the end of the text after an unclosed fence (a stray fence would hide every later claim); guessing which unpaired quote is stray (no reliable signal); one regex for all of it (its fence alternative rescanned the rest of the text from every unclosed opener and its curly alternative from every unpaired opener: quadratic, measured at 1.8 s and 3.2 s on about 40 KB of unclosed fence lines before round 2). The masking is a line pass for fences (a backward pass records the longest closing line of each fence character after every line, so an opener without one costs one lookup) and one forward pass for quotes, backticks and block quotes (a failed search proves that no opener of its kind remains before the paragraph break, and a failed curly search marks the paragraph): linear in the text's length (A2-6, A2-19). A span may still run into a fenced block, as with the single regex. Internal prior art: BF-866b `_fence_spans` (`artifact_extractor.py:358-392`) uses the same closing rule and the opposite tail rule (an unclosed fence runs to the end), because on the write side the wide mask is the safe one. |
-| D12 | **Round 2 reviews the whole candidate** (`8704d194` to the A2 head), not the delta. A2 changes shared contracts that section 4 lists or adds: the `ToolInvocations` shape and wire, what the step-1 flag means, and the tracker text. The brief is section 9 as amended, plus properties 13 to 17, which section 17 states (amendment A3). |
+| D11 | **Quoted wording over several lines is masked, bounded by the paragraph.** A fenced block (three or more backticks or tildes at a line start) is masked only together with its closing line: the first later line made only of the same fence character, at least as many, and spaces. Paired double quotes, paired curly quotes and backtick spans may run over line breaks but not over a blank line. A stray quote can hide at most the rest of its paragraph, and an unclosed fence makes no fenced span (an odd backtick of a backtick opener can still pair with a later backtick of its paragraph). The two errors are not symmetric: a missed mask appends a sentence that is still true of the record (D1) and logs quoted words as a claim, while a wide mask drops a true disclosure. Rejected: a character cap (arbitrary; it cuts real examples); masking to the end of the text after an unclosed fence (a stray fence would hide every later claim); guessing which unpaired quote is stray (no reliable signal); one regex for all of it (its fence alternative rescanned the rest of the text from every unclosed opener and its curly alternative from every unpaired opener: quadratic, measured at 1.8 s and 3.2 s on about 40 KB of unclosed fence lines before round 2). The masking is a line pass for fences (a backward pass records the longest closing line of each fence character after every line, so an opener without one costs one lookup) and one forward pass for quotes, backticks and block quotes (a failed search proves that no opener of its kind remains before the paragraph break, and a failed curly search marks the paragraph): linear in the text's length (A2-6, A2-19). A span may still run into a fenced block, as with the single regex. Internal prior art: BF-866b `_fence_spans` (`artifact_extractor.py:358-392`) uses the same closing rule and the opposite tail rule (an unclosed fence runs to the end), because on the write side the wide mask is the safe one. |
+| D12 | **Round 2 reviews the whole candidate** (`8704d194` to the A2 head), not the delta. A2 changes shared contracts that section 4 lists or adds: the `ToolInvocations` shape and wire, what the step-1 flag means, and the tracker text. The brief is section 9 as amended. |
 
 **Consumers checked (D10).**
 - `step_4n` (`reply_pipeline.py:2410-2415`) reads `attempted` only: same verdict.
@@ -1888,7 +1888,7 @@ REPLACE:
 | A2-M24 | `_mask_quoted` returns the first draft of A2-6 (`_QUOTED.sub(lambda m: " " * len(m.group(0)), text)` with that draft's `_QUOTED`) | `test_masking_takes_linear_time_on_unclosed_openers[unopened-backtick-fences, unopened-tilde-fences, unpaired-curly-quotes]`; `test_masking_keeps_length_and_line_breaks` |
 | A2-M25 | Masking blanks line breaks too (drop `if chars[index] != "\n"`) | `test_masking_keeps_length_and_line_breaks` |
 
-Not a row: dropping the curly marker (`curly_dead_until`) gives the same results, and at the guard's size the repeated `str.find` runs in C and stays under the bound, so no bounded-time test can kill it. The linearity argument covers it, and the round-2 reviewer checks it (property 15).
+Not a row: dropping the curly marker (`curly_dead_until`) gives the same results, and at the guard's size the repeated `str.find` runs in C and stays under the bound, so no bounded-time test can kill it. The linearity argument covers it, and the round-2 reviewer checks it.
 
 Results:
 
@@ -2061,8 +2061,8 @@ def test_masking_takes_linear_time_on_unclosed_openers(unit) -> None:
 | # | Decision |
 |---|---|
 | D13 | **The masking reads LF and CRLF line breaks alike and keeps every offset and every CR and LF.** `_FENCE_ONLY` ends `[ \t]*\r?` (a closing line may end in the CR of its CRLF); `_PARAGRAPH_BREAK` becomes `\n(?=[ \t]*\r?\n)` (a blank line is spaces or tabs, then LF or CRLF); the loop blanks no CR and no LF. Lines are still split at LF, so a CRLF line keeps its CR and every span offset is unchanged. On a text with no CR each pattern and the loop give the result of `e2972c27`. Linear time holds: `_FENCE_ONLY.fullmatch` stays one pass over one line, the lookahead after each LF scans one run of spaces and tabs plus at most a CR and an LF, and the runs after distinct LFs do not overlap, since an LF ends each run. Rejected: turning CRLF into LF before masking (breaks the length and line-break property and changes the claim text the WARNING logs); universal line ends (a lone CR, U+2028, U+2029, U+0085) throughout (no live reply holds one, and it would rework the line split under the linear-time argument of D11). `[ \t\r]*` in either pattern gives the same result on every LF and CRLF text; `\r?` is chosen because it names the CRLF line end. |
-| D14 | **A lone CR, U+2028, U+2029 and U+0085 are not line breaks for the masking.** A lone CR inside a masked span is kept as it stands, which changes no match: every pattern of the module reads it as `\s`. CommonMark counts a lone CR as a line ending (spec 0.31.2, "line ending"); this module does not, because no live reply holds one (0 of 632). The limit is one sentence in L4 (in-place edit), not a new number: the trackers and the landing comment say L1 to L9. |
-| D15 | **Round 3 reviews the delta** (`e2972c27` to the A3 head). No shared contract changes: `_mask_quoted` and `_fenced_spans` are private, and the only use of either outside the module is the import of `_mask_quoted` by `tests/test_ad1358_s2_a2_repairs.py`; `find_lookup_claim` keeps its signature and, on text without a CR, its result; no wire, schema, config field, event or step changes. Property 15 as amended is written below (properties 13 to 17). |
+| D14 | **A lone CR, U+2028, U+2029 and U+0085 are not line breaks for the masking.** A lone CR inside a masked span is kept as it stands. The three wording filters (`_CLAIMS`, `_NOT_A_CLAIM_BEFORE` and `_MEMORY_AFTER`) read a CR as white space, so whether a claim is found does not change; the claim text that `find_lookup_claim` returns (at most 80 characters of it) can carry the CR where a masked span lay between its words. CommonMark counts a lone CR as a line ending (spec 0.31.2, "line ending"); this module does not, because no live reply holds one (0 of 632). The limit is one sentence in L4 (in-place edit), not a new number: the trackers and the landing comment say L1 to L9. |
+| D15 | **Round 3 reviews the delta** (`e2972c27` to the A3 head). No shared contract changes: `_mask_quoted` and `_fenced_spans` are private, and the one user of either outside the module is `tests/test_ad1358_s2_a2_repairs.py`, which imports and calls `_mask_quoted`; `find_lookup_claim` keeps its signature and, on text without a CR, its result; no wire, schema, config field, event or step changes. |
 | D16 | **Tests in place.** The R1-3 tests other than the timing test (five functions, 36 cases) run with LF and with CRLF (`_EOLS`, a stacked parametrize; each text gets `.replace("\n", eol)`); the timing test (three cases) stays LF-only, because its inputs measure time, not line breaks. One case is added, `tilde-fence-then-text`: the existing tilde case ends at its closing line, so its CRLF form holds no closing line with a CR; and the backtick-fence cases show F-1 (a) only while the paragraph repair stands, because without it the backtick-span rule masks the claim anyway. The A2 file stays at 15 functions and goes from 46 to 65 cases (R1-3 section: 20 to 39). |
 | D17 | **The timing note states the measured margins**: the linear pass 8 to 50 ms, the quadratic variants 4.7 to 14 s, so the 2 s bound is at least 40 times above the first and only 2.3 to 7 times below the second; a host more than 2.3 times as fast could pass the weakest quadratic variant. The bound and the 16,000 units stay; the scaling measurement of 14.7.3 remains the stronger evidence. |
 
@@ -2084,15 +2084,8 @@ Every body says `Refs #1750.` No subject or body quotes a test name.
 **Gates (added to section 8).**
 - Check 11: every SEARCH of A3-1 to A3-15 matches exactly once at its turn on `e2972c27`. Expected: 15 of 15. Result: 15 of 15, and `ws_ambiguity.py` finds 0 whitespace hazards.
 - Check 12: the A2 test file after A3-5 to A3-11, run on the `e2972c27` source. Expected, derived by reading: exactly three cases fail, `test_wording_quoted_over_several_lines_is_not_found[tilde-fence-then-text-crlf]`, `test_an_unquoted_claim_beside_a_fence_or_quote_is_found[stray-quote-stops-at-blank-line-crlf]` and `test_masking_keeps_length_and_line_breaks[crlf]`; the other 62 pass (`[fence-with-blank-line-crlf]` and `[fenced-block-crlf]` pass there only because the backtick-span rule masks the claim when both repairs are absent; A3-M1 proves them). Result: on the A2 test file with A3-5 to A3-11 applied to the `e2972c27` source: 65 cases, 3 failed and 62 passed, the three named above; on the A3 overlay (A3-1 to A3-11): 65 passed. The three cases that fail on the old source are the ones the derivation names, and no other case fails there.
-- Check 13: the scaling probe of 14.7.3 on CRLF text (eight of its families with every LF replaced by CRLF) and six more families for the new classes: each doubling about 2 (a quadratic family gives about 4). Result: `probe_quoted_scaling.py` (its ten LF families, the plain-line control included) and `probe_quoted_scaling_crlf.py` (fourteen families with CRLF line breaks: eight of those ten and six for the new classes, namely bare tilde lines and bare backtick-fence lines that each open and close, unpaired double quotes with a blank line of a space and a CR, a long run of CRs and spaces after one line break, doubled CRs on every line, and a space-and-CR blank line after every line break; both outside the repository), on the A3 overlay, from 500 to 8,000 lines: every doubling took 1.7 to 2.7 times as long (LF, 40 doublings) and 1.5 to 2.6 times as long (CRLF, 56 doublings), against 1.9 to 2.0 for the plain-line control and about 4 for a quadratic family; the claim at the end was found in every family; the slowest family at 8,000 lines (the nested mix) takes 49 ms (LF, 184,045 characters) and 52 ms (CRLF, 232,047 characters). The differential fuzz `fuzz_b14_crlf.py` (outside the repository) over 100,000 random texts: on a text without a CR the new module and the `e2972c27` module give the same claim and the same masked text on every one; on the 84,933 that hold a line break the new masking commutes with the CRLF conversion exactly (the masked CRLF text is the masked LF text with every LF replaced by CRLF) and the claim found in the CRLF form equals that of the LF form on every one, where the old module fails the first on 51,527 and the second on 12,368.
+- Check 13: the scaling probe of 14.7.3 on CRLF text (seven of its families with every LF replaced by CRLF and one with a CRLF after every unit) and six more families for the new classes: each doubling about 2 (a quadratic family gives about 4). Result: `probe_quoted_scaling.py` (its ten LF families, the plain-line control included) and `probe_quoted_scaling_crlf.py` (fourteen families with CRLF line breaks: seven of those ten with every LF replaced by CRLF, an eighth (the curly quotes in one paragraph) with a CRLF after every unit, and six for the new classes, namely bare tilde lines and bare backtick-fence lines that each open and close, unpaired double quotes with a blank line of a space and a CR, a long run of CRs and spaces after one line break, doubled CRs on every line, and a space-and-CR blank line after every line break; both outside the repository), on the A3 overlay, from 500 to 8,000 lines: every doubling took 1.7 to 2.7 times as long (LF, 40 doublings) and 1.5 to 2.6 times as long (CRLF, 56 doublings), against 1.9 to 2.0 for the plain-line control and about 4 for a quadratic family; the claim at the end was found in every family; the slowest family at 8,000 lines (the nested mix) takes 49 ms (LF, 184,045 characters) and 52 ms (CRLF, 232,047 characters). The differential fuzz `fuzz_b14_crlf.py` (outside the repository) over 100,000 random texts: on a text without a CR the new module and the `e2972c27` module give the same claim and the same masked text on every one; on the 84,933 that hold a line break the new masking commutes with the CRLF conversion exactly (the masked CRLF text is the masked LF text with every LF replaced by CRLF) and the claim found in the CRLF form equals that of the LF form on every one, where the old module fails the first on 51,527 and the second on 12,368.
 - Focused gate: the command of section 8, unchanged. Preflight: `scripts/run_test_gate.py --preflight-only --label ad-1358-s2` exits 0. Then the broad gate once.
-
-**Properties 13 to 17.** D12 pointed at these and section 16 does not hold them. They are the properties the round-2 brief carried, written here once; property 15 is as amended by A3 (D13, D14), and the round-3 brief carries it.
-13. `ToolInvocations.incomplete` defaults to False and `from_names` coerces it to bool. `merged_with` ORs it in both orders and still unions the names. `to_wire` emits the key only when True, so a complete record's payload is byte-identical to the Base's. `from_wire` rejects the key with any value but `true`, accepts every payload it accepted before with the same value, and still rejects an unknown extra key.
-14. Through the real pass fold, `_attach_run_provenance`, `_build_result_metadata` and the route, a turn in which any pass dropped a call delivers `incomplete=True` in every pass order with every listed name of every pass kept, and the lookup check abstains. A turn of only tool-free passes delivers `ToolInvocations()` and the check can fire. The AD-272 cache still strips the record. No other producer or consumer of the record is left unhandled.
-15. The masking takes time linear in the text's length for every input; it keeps the text's length and every CR and LF; it finds a claim in a text's CRLF form exactly when it finds one in its LF form, for every text of the five R1-3 tests that run with both line breaks; a lone CR, U+2028, U+2029 and U+0085 are not line breaks (D14). A fenced block is masked only together with its closing line, and an opener with no closing line masks nothing; a quote, curly-quote or backtick span may run over line breaks but not over a blank line, and an unpaired quote masks nothing; block-quote lines are masked.
-16. End to end with real objects the sentence reaches the response, the thread message and the episode; a retry that returns nothing and a reply the gate accepts behave as the tests say; and on every path that builds a 1:1 reply (plan mode, the cache replay, held and promoted replies, federation) the check either cannot fire or its sentence is true.
-17. The live facts of sections 14.4 and 16 hold: all six agent replies of 2026-11-04 carry the persisted trace of an empty array; the wording patterns match 4 of 632 historical agent replies and 342 of the 632 are longer than 410 characters (L6); the vessel's logs hold no uncorrelatable-id warning and no retry marker. F1 (14.5) is unchanged by the flag.
 
 **Verified Against Codebase (2026-11-25, tree `e2972c27`).**
 ```
@@ -2118,7 +2111,6 @@ contract:1925             A2-M24 4.99/10.13/10.00 s; A2-M23 6.22/4.70 s; linear 
 |---|---|---|---|
 | Private helpers have one importer outside the module | `rg "_mask_quoted\|_fenced_spans\|_PARAGRAPH_BREAK\|_FENCE_ONLY" -g "*.py"` | `lookup_claim.py` (9 lines); `test_ad1358_s2_a2_repairs.py:22, :286` | yes |
 | The module has no CR handling | `rg -c "CRLF\|\\r" src/probos/cognitive/dm/lookup_claim.py` | 0 | yes |
-| Section 9 holds no property 13 to 17 | `rg "^1[3-7]\. " prompts/ad-1358-s2-lookup-claim-trace.md` | nothing | yes |
 | Public callers | `rg -l "find_lookup_claim\|assess_lookup_claim" -g "*.py"` | `lookup_claim.py`, `reply_pipeline.py`, the two S2 test files | yes |
 
 ### 17.1 `src/probos/cognitive/dm/lookup_claim.py` (M8)
@@ -2405,7 +2397,7 @@ Not a row: `[ \t\r]*` in place of `[ \t]*\r?` in either pattern gives the same r
 
 Rerun on the same overlay, because `lookup_claim.py` and the killers' test section changed: every earlier row that mutates `lookup_claim.py` (LC-1 to LC-4, LC-6 to LC-8, LC-19, whose sentence lives there; A2-M13 to A2-M25). A2-M25 now drops `if chars[index] not in ("\r", "\n"):`; its killer is `test_masking_keeps_length_and_line_breaks[lf, crlf]`. Rows that mutate other files keep their results: their files and the R1-1 and R1-2 tests are unchanged.
 
-Results: **3 of 3 killed**, run once on the A3 overlay (the frozen head `e2972c27` with A3-1 to A3-11 applied by tool), one mutant at a time, each file restored byte for byte, with `bf1358_a3_rows.py` (outside the repository: the runner of the A2 census with the A3 rows added and the killer ids of the five R1-3 tests that run with both line breaks ending in -lf or -crlf). Every case that fails under a row is a CRLF case, so no LF case fails under any of them. Baselines on the overlay: 47 (S2 file), 61 (ad1295), 58 (ad1285) and 65 (A2 file) cases passed.
+Results: **3 of 3 killed**, run once on the A3 overlay (the frozen head `e2972c27` with A3-1 to A3-11 applied by tool), one mutant at a time, each file restored byte for byte, with `bf1358_a3_rows.py` (outside the repository: the runner of the A2 census with the A3 rows added and the killer ids of the five R1-3 tests that run with both line breaks carrying the line break: a case id plus -lf or -crlf, and `[lf]` or `[crlf]` for the masking test). Every case that fails under a row is a CRLF case, so no LF case fails under any of them. Baselines on the overlay: 47 (S2 file), 61 (ad1295), 58 (ad1285) and 65 (A2 file) cases passed.
 
 | ID | Verdict | Killed by |
 |---|---|---|
@@ -2413,47 +2405,33 @@ Results: **3 of 3 killed**, run once on the A3 overlay (the frozen head `e2972c2
 | A3-M2 | KILLED | A2 file: `test_an_unquoted_claim_beside_a_fence_or_quote_is_found[stray-quote-stops-at-blank-line-crlf]` |
 | A3-M3 | KILLED | A2 file: `test_masking_keeps_length_and_line_breaks[crlf]` |
 
-Rerun on the same overlay: all 25 rows of the A2 census (A2-M25 now drops `if chars[index] not in ("\r", "\n"):` and is killed by `test_masking_keeps_length_and_line_breaks[lf, crlf]`) and the 16 first-census rows that survived A2 (LC-1 to LC-4, LC-6 to LC-16 and LC-19) are all KILLED, by the killers of their earlier tables (the case ids of those tables that belong to the five R1-3 tests with both line breaks read with the -lf suffix; the timing test's ids are unchanged). The scaling guards failed under A2-M23 and A2-M24 as before.
+Rerun on the same overlay: all 25 rows of the A2 census (A2-M25 now drops `if chars[index] not in ("\r", "\n"):` and is killed by `test_masking_keeps_length_and_line_breaks[lf, crlf]`) and the 16 first-census rows that survived A2 (LC-1 to LC-4, LC-6 to LC-16 and LC-19) are all KILLED, by the killers of their earlier tables (the case ids of those tables that belong to the four R1-3 tests with a case id and both line breaks read with the -lf suffix; the masking test's ids are `[lf]` and `[crlf]`, and the timing test's ids are unchanged). The scaling guards failed under A2-M23 and A2-M24 as before.
 
-Pinned files (sha256 and blob id): `src/probos/cognitive/dm/lookup_claim.py` sha256 `47bb8d10d68137edaaf099fa2b8f159db414a1d6f7ded97adca419208d79d6a1`, blob id `1765abff6d6f0ecfc5f4f4e6210d0b04640a5685`; `tests/test_ad1358_s2_a2_repairs.py` sha256 `88febe84ac322d2d7226eabf918a7b3ff0f403ecb94b779a001dad8fb0aedfaa`, blob id `cb35f5ab51083004463b5fe14870ea9f35dabab9` (the sha256 of the overlay's working copy and the git blob id under autocrlf, as in 16.10; the other five pinned files of 16.10 are unchanged). If either differs, rerun A3-M1 to A3-M3 and the rows listed above.
+Pinned files (sha256 and blob id): `src/probos/cognitive/dm/lookup_claim.py` sha256 `47bb8d10d68137edaaf099fa2b8f159db414a1d6f7ded97adca419208d79d6a1`, blob id `1765abff6d6f0ecfc5f4f4e6210d0b04640a5685`; `tests/test_ad1358_s2_a2_repairs.py` sha256 `88febe84ac322d2d7226eabf918a7b3ff0f403ecb94b779a001dad8fb0aedfaa`, blob id `cb35f5ab51083004463b5fe14870ea9f35dabab9` (the sha256 of the overlay's working copy and the git blob id under autocrlf, as in 16.10; the other five pinned files of 16.10 are unchanged). If either differs in code, rerun A3-M1 to A3-M3 and the rows listed above. At the head the two files differ from these pins only in comments and one docstring (A4-1, A5-1 and A5-2); section 19 gives the proof.
 
 ## 18. Amendment A4 (review round 3: R3-1, R3-2, R3-3)
 
-**Drafted by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, on the decision of `claude-architect` (Claude Code, Opus 5.5) at the round-three brake: continue, with round four reviewing the delta and the factual statements of A3's own part of section 17.
+**Drafted by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, on the decision of `claude-architect` (Claude Code, Opus 5.5) at the round-three brake: continue, with a fourth round.
 
-**Finding.** Review round 3 (`gpt-6.1-sol`, the delta `e2972c27` to `f71063d5`) resolved F-1 and F-2 and returned REQUEST CHANGES with two P3 findings, both regressions of A3's own text (documentation; no code and no behaviour):
+**Finding.** Review round 3 (`gpt-6.1-sol`, the delta `e2972c27` to `f71063d5`) approved F-1 and F-2 and returned REQUEST CHANGES with two P3 findings in A3's own text (documentation; no code and no behaviour):
 - **R3-1.** The comment above `_EOLS` in the A2 test file, D16 and the replacement block of pair A3-5 said that every R1-3 case (or test) runs with LF and with CRLF line breaks. The three cases of `test_masking_takes_linear_time_on_unclosed_openers` use units without a CR (the reviewer instrumented them: `CR_count=0`), so the timing test stays LF-only.
 - **R3-2.** "What A3 does not change" named five exceptions, and the delta also changes the two generated ledger files (their capture metadata).
-- **R3-3 (the Architect's, at the brake).** "Consumers checked (D15)" gave line numbers for the private names' use outside the module; A3's own edit of the test file moved one of them, and any line number goes stale with the next edit.
+- **R3-3** (the Architect's, at the brake). "Consumers checked (D15)" gave line numbers for the private names' use outside the module, and A3's own edit of the test file had moved one of them.
 
-The orchestrator then read A3's own part of section 17 against the head and corrected these statements as well, each wider than the fact or pointing at nothing: D15 said that both private names are imported by the A2 test file (it imports `_mask_quoted` only) and pointed at "the round-3 list of this section", which the contract never held; the milestone line promised "about 15 tool calls" and the Builder made 15 edits, each followed by its blob check; the check 13 result called the LF families "the ten LF families of 14.7.3" (14.7.3 gives no count) and the CRLF probe "the same families ... and four more" (it holds eight of the ten and six more); the census results said that the ids of "the R1-3 tests" end in -lf or -crlf (the timing test's ids do not); property 15 said "for every case of the A2 file" (the equivalence is pinned by the texts of the five tests that run both line breaks); and the "Absence Verified" table of section 17 gave line numbers of `e2972c27` without naming the tree. In `PROGRESS.md` the clause "each of these quoted-wording cases holds with LF and with CRLF line breaks" stood next to the name of the timing test, which runs on LF text.
+A4 also reworded other statements of A3's text that the orchestrator found wider than the fact. Review round 4 found more of them, and section 19 records those findings.
 
 **Decisions (continuing section 3).**
 
 | # | Decision |
 |---|---|
-| D18 | **A documentation repair; round 4 reviews the delta and A3's own statements.** One comment of the A2 test file (A4-1) and one clause of `PROGRESS.md` (A4-2) are reworded, and twelve statements of the contract are corrected in place (listed below). No code, no test case and no behaviour changes, and no collected test id changes. The Architect's decision at the round-three brake: round 4 reviews A4's delta and every factual statement of A3's own part of section 17 (D13 to D17, "Consumers checked", "What A3 does not change", the check results, the census text and the A3 pairs), each count, file list, line reference and "every", "only" or "all" against the head. The consolidated check of A4 is the contract's focused command and the preflight, because the repair changes a comment, a tracker clause and the contract. |
-| D19 | **A statement about the head names no line number.** It names the test, the function or the file: a line number goes stale with the next edit (A3's own edit moved the one of R3-3, and A4-1 moves it again). Line numbers stay only in the blocks that name the tree they were read at ("Verified Against Codebase", "Absence Verified"). |
+| D18 | **A documentation repair.** One comment of the A2 test file (A4-1) and one clause of `PROGRESS.md` (A4-2) are reworded, and statements of the contract are reworded in place. No code, no test case and no behaviour changes, and no collected test id changes. The consolidated check of A4 is the contract's focused command and the preflight, because the repair changes a comment, a tracker clause and the contract. |
+| D19 | **A statement about the head that A3, A4 or A5 makes names the test, the function or the file, not a line number**, because a line number can go stale when a file is edited (A3's own edit of the test file moved the one of R3-3). Line numbers stay in the blocks that name the tree they were read at ("Verified Against Codebase", "Absence Verified"). |
 
-**Milestones.** One Builder delegation: 2 `edit` calls, A4-1 and A4-2, each followed by its blob check. The Builder runs no test. The orchestrator first commits this section and the twelve in-place corrections. Subject: `Amend the contract with the findings of review round 3`.
+**Milestones.** One Builder delegation: 2 `edit` calls, A4-1 and A4-2, each followed by its blob check. The Builder runs no test. The orchestrator first commits this section and the in-place corrections of the contract. Subject: `Amend the contract with the findings of review round 3`.
 - **M11:** A4-1. Subject: `The note of the line-break tests names the timing test as LF-only`.
 - **M12:** A4-2. Subject: `PROGRESS says that the timing test runs on LF text`.
 
 Every body says `Refs #1750.` No subject or body quotes a test name. The ledger files are not regenerated: the check accepts their capture metadata.
-
-**The twelve in-place corrections** (made by the commit of this section, each on the statement as A3 left it):
-1. D15: the private names' use outside the module, and the pointer to a list the contract never held.
-2. D16: the five R1-3 tests that run with both line breaks, and the timing test that stays LF-only.
-3. The block of pair A3-5 (17.2): the comment of the test file as A4-1 makes it.
-4. "What A3 does not change": the two generated ledger files.
-5. "Consumers checked (D15)": the use of the private names, named by test and not by line.
-6. The "Absence Verified" table of section 17: the tree it was read at.
-7. The milestone line of section 17: 15 `edit` calls, each followed by its blob check.
-8. The check 13 line of section 17: eight of the LF families and six more.
-9. The check 13 result of section 17: the families of the LF and the CRLF probe.
-10. The census results of 17.5: the five R1-3 tests with both line breaks have the -lf and -crlf ids.
-11. The rerun paragraph of 17.5: the same, and the timing test's ids unchanged.
-12. Property 15 of section 17: the texts of the five tests.
 
 **Builder: may and may not.** Section 5, unchanged, applied to the pairs of this section. It creates no file.
 
@@ -2461,20 +2439,15 @@ Every body says `Refs #1750.` No subject or body quotes a test name. The ledger 
 - Check 14: every SEARCH of A4-1 and A4-2 matches exactly once at its turn on `f71063d5`. Result: 2 of 2, and `ws_ambiguity.py` finds 0 whitespace hazards.
 - Check 15: the A2 test file with A4-1: the same 65 cases collected and passed. The focused command of section 8: 1186 passed (the given order, on the oracle with A4-1 and A4-2 applied); the ledger check exits 0 with the changed `PROGRESS.md`. Preflight: `scripts/run_test_gate.py --preflight-only --label ad-1358-s2` exits 0. Then the broad gate once.
 
-**Properties 18 to 20.**
-18. No sentence of the head claims CRLF coverage for the timing test. Each sentence that names the tests that run with both line breaks (the comment of the A2 test file, D16, the block of pair A3-5 and the census text of 17.5) leaves the timing test out, and `PROGRESS.md` says that the timing test runs on LF text.
-19. Every file of `git diff --name-only f71063d5 <the A4 head>` is named, as changed, in "What A4 does not change".
-20. No statement of A3's or A4's text about the head names a line number that does not hold what is claimed, and each count, file list and "every", "only" or "all" of A3's own part of section 17 matches the head.
-
 **What A4 does not change.** Every file except `tests/test_ad1358_s2_a2_repairs.py` (one comment), `PROGRESS.md` (one clause) and this contract: in particular `lookup_claim.py`, the other test files, `DECISIONS.md` and the two generated ledger files.
 
 **Absence Verified (2026-11-25, tree `f71063d5`, before A4).**
 
 | Claim | Run | Found | Holds |
 |---|---|---|---|
-| Where the CRLF coverage of "the R1-3 tests" is stated | `git grep -n -i "every R1-3 case\|R1-3 tests" f71063d5 -- . ":!prompts/archive"` | the comment of the A2 test file, D16, the replacement block of A3-5 and the census results text of 17.5 (A4 corrects each) | yes |
-| Private names outside `lookup_claim.py` | `rg -n "_mask_quoted\|_fenced_spans\|_PARAGRAPH_BREAK\|_FENCE_ONLY\|_FENCE_RUN" -g "*.py"`, hits outside the module | the import of `_mask_quoted` and its one use, in `test_masking_keeps_length_and_line_breaks`, both in the A2 test file | yes |
-| Files that name `find_lookup_claim` or `assess_lookup_claim` | `rg -l "find_lookup_claim\|assess_lookup_claim" -g "*.py"` | `lookup_claim.py`, `reply_pipeline.py` and the two S2 test files | yes |
+| Where the CRLF coverage of "the R1-3 tests" is stated | `git grep -n -i -e "every R1-3 case" -e "R1-3 tests" f71063d5 -- . ":!prompts/archive"` | the comment of the A2 test file, D16, the replacement block of A3-5 and the census results text of 17.5 | yes |
+| Private names outside `lookup_claim.py` | `rg -n -e "_mask_quoted" -e "_fenced_spans" -e "_PARAGRAPH_BREAK" -e "_FENCE_ONLY" -e "_FENCE_RUN" -g "*.py"`, hits outside the module | the import of `_mask_quoted` and its one call, in `test_masking_keeps_length_and_line_breaks`, both in the A2 test file | yes |
+| Files that name `find_lookup_claim` or `assess_lookup_claim` | `rg -l -e "find_lookup_claim" -e "assess_lookup_claim" -g "*.py"` | `lookup_claim.py`, `reply_pipeline.py` and the two S2 test files | yes |
 | Files the round-3 delta changes | `git diff --name-only e2972c27 f71063d5` | seven: `lookup_claim.py`, the A2 test file, `PROGRESS.md`, `DECISIONS.md`, the two generated ledger files and this contract | yes |
 
 ### 18.1 `tests/test_ad1358_s2_a2_repairs.py` (M11)
@@ -2500,4 +2473,91 @@ or unpaired curly quotes (`test_a_fence_ends_only_on_its_own_kind_and_length`
 REPLACE:
 ```markdown
 or unpaired curly quotes of LF text (`test_a_fence_ends_only_on_its_own_kind_and_length`
+```
+
+## 19. Amendment A5 (review round 4: R4-1 to R4-9)
+
+**Drafted by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, on the decision of `claude-architect` (Claude Code, Opus 5.5) at the second round-three brake: continue, with a fifth round whose scope is the delta of A5 and every statement it adds or rewords, plus a check that none contradicts another statement of the same fact in the contract, `lookup_claim.py`, the A2 test file, `PROGRESS.md` or `DECISIONS.md`. The Architect also added the three sibling edits of D22 and two qualifiers of R4-7.
+
+**Finding.** Review round 4 (`gpt-6.1-sol`, the delta of A4 and the factual statements of A3's own text) approved R3-1, R3-2 and R3-3 and returned REQUEST CHANGES with nine P3 findings, all in the text of the contract (no code and no collected test id is involved):
+- **R4-1.** The first row of the "Absence Verified" table of section 18 gave a `git grep` command whose `\|` alternation does not survive the rendering of the table.
+- **R4-2.** The contract said that the ids of the five R1-3 tests that run with both line breaks end in -lf or -crlf. Four of them do; the ids of the masking test are `[lf]` and `[crlf]`.
+- **R4-3.** The contract said that eight of the LF scaling families were converted by replacing every LF with CRLF. Seven were; the curly quotes in one paragraph got a CRLF after every unit.
+- **R4-4.** D15 said that the only use of the private names outside the module is an import. The A2 test file imports and calls `_mask_quoted`.
+- **R4-5.** D14 said that keeping a CR changes no match because every pattern of the module reads it as `\s`. The three wording filters read it as white space, so whether a claim is found does not change; the masking patterns use `[ \t]` and `\r?`, and the claim text that `find_lookup_claim` returns can carry the CR.
+- **R4-6, R4-7 and R4-9.** Properties 14, 15 and 16 of the block "Properties 13 to 17" promised more than the code and its existing limits give: the retention of every listed name beyond the record's 64-name bound, an unclosed fence that masks nothing although an odd backtick of a backtick opener can pair with a later backtick of its paragraph, and a guarantee for every reply path that leaves out the documented limit L7 (R4-9 is injected-only).
+- **R4-8.** D19 said that a line number goes stale "with the next edit" (the import in the A2 test file stays at the same line through every edit so far), and D18 said that twelve statements were "corrected" although several corrections were still inaccurate.
+
+**Decisions (continuing section 3).**
+
+| # | Decision |
+|---|---|
+| D20 | **The block "Properties 13 to 17" is removed, with the pointers to it and one row of A3's "Absence Verified" table.** A3 wrote the block to make D12's pointer true; it restated the properties of the round-2 brief, and three of them promised more than the code and its limits give. D12 now says that the brief is section 9 as amended, and 14.7.3 says "the first A2 text claimed" where it named a property of the block. The contract's property list (section 9 and property 12 of section 15) is unchanged. |
+| D21 | **The other findings are repaired by saying what the code does.** D11 (section 16), D12 (section 16), D14 and D15 (section 17), the check 13 lines, the census text and the pins sentence of 17.5 (section 17) are reworded in place, as are D18, D19 and the "Absence Verified" table of section 18; A4's list of its own in-place corrections and its properties 18 to 20 are removed. D11's sentence that an unclosed fence "hides nothing" now says that it makes no fenced span and that an odd backtick of a backtick opener can still pair with a later backtick of its paragraph, which is what R4-7 found for property 15 of the removed block. |
+| D22 | **The three places that say the same of an unclosed fence are edited with D11** (the Architect's decision): the comment above `_FENCE_RUN` in `lookup_claim.py` (A5-1), the docstring of `test_a_fence_ends_only_on_its_own_kind_and_length` (A5-2) and the clause of `PROGRESS.md` about a claim after an unclosed fence (A5-3). They say what the code does, each as far as its place needs: (a) a fence with no closing line makes no fenced span; (b) a quote with no closer in its paragraph masks nothing; (c) an odd backtick of an unclosed backtick fence's opener can still pair with a later backtick of its paragraph and hide what lies between. A5-1 says all three, A5-2 the first and A5-3 the first and the third. The pair blocks of the earlier amendments that hold the old text (A2-6, A2-16, A2-21 and A3-9) give the text as built at their turn and are not edited. |
+
+**Milestones.** One Builder delegation: 3 `edit` calls, A5-1 to A5-3, each followed by its blob check. The Builder runs no test. The orchestrator first commits this section and the in-place corrections of the contract. Subject: `Amend the contract with the findings of review round 4`.
+- **M13:** A5-1. Subject: `The comment of the quote masking says what an unterminated fence does`.
+- **M14:** A5-2. Subject: `The docstring of the fence test says what a stray opener does`.
+- **M15:** A5-3. Subject: `PROGRESS says what follows an unterminated fence`.
+
+Every body says `Refs #1750.` No subject or body quotes a test name. The ledger files are not regenerated: the check accepts their capture metadata.
+
+**Builder: may and may not.** Section 5, unchanged, applied to the pairs of this section. It creates no file.
+
+**Gates (added to section 8).**
+- Check 16: every SEARCH of A5-1 to A5-3 matches exactly once at its turn on `6f7f2eeb`, and each in-place correction of this amendment matches exactly once in the contract of A4. Result: 3 of 3 SEARCHes match once at their turn on `6f7f2eeb` (`contract_tools.py apply` reports each as 1x on a fresh oracle), `ws_ambiguity.py` finds 0 whitespace hazards, and the assembler applied the 11 in-place corrections, each matched once in the contract of A4.
+- Check 17: `lookup_claim.py` at the head has the same code tokens as at `f71063d5`, and the A2 test file has the same syntax tree apart from the one docstring of A5-2; the A2 file collects the same 65 ids. Result: with the comments removed, `lookup_claim.py` has 1185 tokens on both sides, the two streams are equal and the two files differ; the syntax trees of the A2 test file are equal once the docstring of `test_a_fence_ends_only_on_its_own_kind_and_length` is removed on both sides, and the two docstrings differ; the same comparison without removing that docstring reports the trees differ; the A2 file collects the same 65 ids at `f71063d5` and on the oracle.
+- Check 18: the focused command of section 8, the three rows A3-M1 to A3-M3 and `scripts/run_test_gate.py --preflight-only --label ad-1358-s2` on the head. Result: on the oracle with A5-1 to A5-3 applied, the focused command gives 1186 passed (the given order); the rows A3-M1 to A3-M3 are killed (4, 1 and 1 cases fail) and the four baseline runs of the census script fail no case; the ledger check exits 0 with the changed `PROGRESS.md`; the preflight exits 0 with the three files staged. Then the broad gate once.
+
+**What A5 does not change.** Every file except `src/probos/cognitive/dm/lookup_claim.py` (one comment), `tests/test_ad1358_s2_a2_repairs.py` (one docstring), `PROGRESS.md` (one clause) and this contract.
+
+**Verified (2026-11-25, tree `6f7f2eeb`, before A5).**
+
+| Claim | Run | Found | Holds |
+|---|---|---|---|
+| The ids of the A2 test file | `python -m pytest tests/test_ad1358_s2_a2_repairs.py --collect-only -q -p no:randomly` | 65 ids; 34 end in -lf or -crlf (the four tests that carry a case id); `test_masking_keeps_length_and_line_breaks[lf]` and `[crlf]`; the three ids of the timing test carry no line break | yes |
+| Users of the private names outside `lookup_claim.py` | `rg -n -e "_mask_quoted" -e "_fenced_spans" -e "_PARAGRAPH_BREAK" -e "_FENCE_ONLY" -e "_FENCE_RUN" -g "*.py"`, hits outside the module | the import of `_mask_quoted` and its one call, both in the A2 test file | yes |
+| Places in the module, its test file and the trackers that say what an unclosed fence or a stray opener masks | `rg -n -e "masks nothing" -e "hides nothing" -e "unclosed fence" -e "stray opener" src/probos/cognitive/dm/lookup_claim.py tests/test_ad1358_s2_a2_repairs.py PROGRESS.md DECISIONS.md` | one hit in each of the four files: the comment above `_FENCE_RUN`, the docstring of the fence test and the clause of `PROGRESS.md` say it; the hit in `DECISIONS.md` (LC7) says "quadratic on unclosed fence lines" and does not | yes |
+| What an unclosed backtick fence does | `find_lookup_claim` on a backtick fence line with no closing line followed by a claim and an inline backtick span, on the same text with a tilde opener, and on the text without the inline span | the claim is not found with the backtick opener and the inline span (`_fenced_spans` returns no span, and the odd backtick of the opener pairs with the inline one); it is found in the other two | yes |
+
+### 19.1 `src/probos/cognitive/dm/lookup_claim.py` (M13)
+
+**A5-1**
+SEARCH:
+```python
+#: quote reaches no further than its paragraph; and block-quote lines. An unclosed fence or an unpaired quote masks
+#: nothing: a missed mask appends a sentence that is true of the record, a wide one hides it. A line ends in LF or
+```
+REPLACE:
+```python
+#: quote reaches no further than its paragraph; and block-quote lines. An unclosed fence makes no fenced span, and a
+#: quote with no closer in its paragraph masks nothing; an odd backtick of an unclosed backtick fence's opener can
+#: still pair with a later backtick of its paragraph and hide what lies between. A missed mask appends a sentence
+#: that is true of the record, a wide one hides it. A line ends in LF or
+```
+
+### 19.2 `tests/test_ad1358_s2_a2_repairs.py` (M14)
+
+**A5-2**
+SEARCH:
+```python
+    """A fence ends at the first later line of the same character, at least as long; a stray opener masks nothing."""
+```
+REPLACE:
+```python
+    """A fence ends at the first later line of the same character, at least as long; a stray opener makes no
+    fenced span."""
+```
+
+### 19.3 `PROGRESS.md` (M15)
+
+**A5-3**
+SEARCH:
+```markdown
+while the same claim unquoted, after an unclosed fence or past a stray quote's paragraph is found
+```
+REPLACE:
+```markdown
+while the same claim unquoted is found past a stray quote's paragraph and after an unclosed fence, which makes no fenced span though an odd backtick of a backtick opener can still pair with a later backtick of its paragraph
 ```
