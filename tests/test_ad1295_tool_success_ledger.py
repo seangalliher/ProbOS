@@ -820,9 +820,13 @@ def test_unverifiable_call_is_omitted_from_attempted(bad_id) -> None:
     """
     inv = _project_tool_invocations(_agentic_result_with_ids([(FINDING, True, bad_id)]))
 
-    # AD-1358 S2 (#1750): was an empty record. With every call unverifiable the record is None, so
-    # an empty one always means "called no tool"; the write guard abstains for both (step_4n).
-    assert inv is None
+    # AD-1358 S2 (#1750), amendment A2: the lists are empty, as before AD-1358, and the record says
+    # it left a call out, so an empty record that is not ``incomplete`` always means "called no
+    # tool". The write guard reads ``attempted`` only, so it abstains here as before (step_4n).
+    assert inv is not None
+    assert inv.attempted == ()
+    assert inv.succeeded == ()
+    assert inv.incomplete is True
 
 
 def test_uncorrelatable_call_does_not_hide_its_well_formed_sibling() -> None:
@@ -854,8 +858,12 @@ def test_duplicate_call_ids_are_uncorrelatable() -> None:
         )
     )
 
-    # AD-1358 S2 (#1750): was an empty record; every call is unverifiable, so the record is None.
-    assert inv is None
+    # AD-1358 S2 (#1750), amendment A2: every call is unverifiable: empty lists, as before AD-1358,
+    # and a record that says it left them out.
+    assert inv is not None
+    assert inv.attempted == ()
+    assert inv.succeeded == ()
+    assert inv.incomplete is True
 
 
 def test_a_call_with_a_well_formed_id_is_still_correlated() -> None:
@@ -956,9 +964,13 @@ def test_unverifiable_id_abstains_through_the_whole_pipeline(
         ),
     )
     before = ctx.response_text
-    # AD-1358 S2 (#1750): was an empty record; every call is unverifiable, so there is no record.
-    # The assertions below (no write sentence, an untouched ledger) are unchanged.
-    assert ctx.tool_invocations is None
+    # AD-1358 S2 (#1750), amendment A2: every call is unverifiable: empty lists, as before AD-1358,
+    # and a record marked incomplete. The assertions below (no write sentence, an untouched ledger)
+    # are unchanged.
+    assert ctx.tool_invocations is not None
+    assert ctx.tool_invocations.attempted == ()
+    assert ctx.tool_invocations.succeeded == ()
+    assert ctx.tool_invocations.incomplete is True
 
     asyncio.run(DmReplyPipeline(ctx).run())
 

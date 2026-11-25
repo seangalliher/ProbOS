@@ -117,6 +117,8 @@ def test_wording_that_is_not_a_claim_is_not_found(text) -> None:
     pytest.param(ToolInvocations.from_names(["publish_finding"], ["publish_finding"]), False, False, id="other-tool"),
     pytest.param(ToolInvocations(), True, False, id="incomplete"),
     pytest.param(ToolInvocations(), 1, False, id="incomplete-not-a-bool"),
+    pytest.param(ToolInvocations(incomplete=True), False, False, id="record-incomplete"),
+    pytest.param(ToolInvocations(incomplete=1), False, False, id="record-incomplete-not-a-bool"),
     pytest.param(ToolInvocations(), False, True, id="empty-record"),
 ])
 def test_the_record_decides(invocations, incomplete, fires) -> None:
@@ -136,7 +138,8 @@ def test_a_turn_whose_every_call_is_unverifiable_is_not_disclosed() -> None:
     """An empty record must not stand for a turn that did call a tool (``_project_tool_invocations``)."""
     reply = "I searched the records: two games."
     ctx = _ctx_for_turn(_agentic_result_with_ids([("oracle_query", True, None)]), reply)
-    assert ctx.tool_invocations is None
+    # Amendment A2 (R1-2): not None; the record lists no call and says it left one out.
+    assert ctx.tool_invocations == ToolInvocations(incomplete=True)
     asyncio.run(DmReplyPipeline(ctx).run())
     assert ctx.response_text == reply
 
