@@ -10,6 +10,15 @@ See [PROGRESS.md](PROGRESS.md) for project status. See [docs/development/roadmap
 
 ## Era V — Civilization (Phases 31-36)
 
+### BF-997 / BF-998 -- #1414 Batch B: the HXI event stream past 100 work items, dropped work-state frames, a refused notification read (2026-11-25, #1414)
+
+- *Scope.* `routers/workforce.py` (`build_ws_workforce_snapshot`), `ws_event_stream.py` (`_resyncs_on_drop` and the two drop sites), `ui/src/components/bridge/BridgeNotifications.tsx`; tests `tests/test_bf997_ws_snapshot_and_work_state_resync.py`, `ui/src/components/bridge/__tests__/BridgeNotifications.issue1414.test.tsx`, and the test-only `ui/e2e/conversation-viewport.spec.ts` change for item 8. Contract `prompts/bf-997-998-1414-batch-b-hxi-live-state.md`.
+- *D1.* Past the 100-row cap, the WebSocket snapshot carries the first 100 rows in the store's order and adds no field. The HXI already upserts snapshot rows without removing any and re-reads every bucket on each snapshot, so a partial list is correct. This supersedes AD-1133's workforce clauses (`prompts/archive/ad-1133-live-crew-session-thread-refresh.md:256` as it applies to the workforce source, and `:272-274`). Every other snapshot overflow still ends the socket with 1013. Rejected: a truncation flag (it duplicates the repair the HXI already runs) and a status filter or a larger cap (it still has a cliff).
+- *D2.* A dropped frame requests the existing resync marker when it is a correlated tool event (unchanged), a work-item event naming `work_item.id`, or a crew-session projection naming `parent_id`. IDs-only message and artifact frames, and every other family, keep the silent drop. Rejected: resync on any work-item drop (an empty projection names no row) and resync on every drop.
+- *D3.* When a notification's room-context read is refused by the live fence and no session is cached for the parent, the card opens nothing, clears the request and offers its existing retry. With a session cached, it opens as before. Rejected: re-running the focus step when the band mounts (it touches `ProfileChatTab.tsx`, which eight source-reading tests cover).
+- *D4.* Item 8 is test-only: one canned owned-steps answer in the shape the router serves, and the baseline's exact denied list re-pinned to the reads the app makes now (`4b7dfb3b`, `b4378fb4`, `5c362508`). The baseline answers only what chat and Send need. No workflow is added.
+- *Reversal.* Revert the slice's commit; each slice is independent. The `test_ad1133` pin reverts with BF-997.
+
 ### BF-994 / BF-995 / BF-996 -- #1414 Batch A: init's provider format and timeout, setup's redaction, the HXI save's base file (2026-11-25, #1414)
 
 - *Scope.* `__main__.py` (`_init_api_format`, the init scaffold, the setup print sites, setup's HXI note), `provider_setup.py` (`_CUT_MARKER`, `config_text_api_keys`), `config.py` (`drop_null_sections`), `routers/config.py`, `docs/getting-started/configuration.md`, `docker-compose.yml`; tests `tests/test_bf994_init_config_reaches_its_api.py`, `tests/test_bf995_setup_redaction.py`, `tests/test_bf996_hxi_save_on_disk.py`. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
