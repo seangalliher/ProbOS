@@ -147,7 +147,7 @@ def _diff_paths(before: dict, after: dict, prefix: str = "") -> list[str]:
 
 
 class _ConfigUnreadable(Exception):
-    """The config file cannot be the base of a save; ``str()`` is a reason that quotes none of the file."""
+    """The config file, or the mapping a save would write, cannot be used; ``str()`` is a reason that quotes none of it."""
 
 
 def _read_disk_mapping(path: Path) -> dict[str, Any]:
@@ -186,7 +186,10 @@ def _read_disk_mapping(path: Path) -> dict[str, Any]:
 def _write_yaml_atomic(path: str, data: dict) -> None:
     p = Path(path)
     header = f"# Edited via HXI {time.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-    body = yaml.safe_dump(data, sort_keys=False)
+    try:
+        body = yaml.safe_dump(data, sort_keys=False)
+    except Exception as exc:  # any type from the dump, and only from the dump: it runs before any file is opened
+        raise _ConfigUnreadable("holds a value that cannot be written back") from exc
     fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -352,18 +355,18 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
             status_code=500,
             content={"error": "write_failed", "detail": str(ex)},
         )
-    except Exception as exc:
-        # Every step after _write_yaml_atomic's first statement, the dump, raises OSError (the dump's text is ASCII),
-        # so this is the dump, which runs before any file is opened. It refuses values the merged mapping can hold
-        # and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and nesting
-        # deeper than the dump's recursion allows (from the file, or from the patch, which JSON nests as deep as it
-        # likes). Any other exception it raises is the dump's too and gets the same answer.
+    except _ConfigUnreadable as exc:
+        # _write_yaml_atomic raises this only for its dump, which runs before any file is opened. The dump refuses
+        # values the merged mapping can hold and load_config accepts: an integer of over 4,300 decimal digits (a YAML
+        # hex literal loads) and nesting deeper than the dump's recursion allows (from the file, or from the patch,
+        # which JSON nests as deep as it likes). Any other exception from the dump gets the same answer; an exception
+        # from a later step is not the dump's and is not answered here.
         logger.warning(
             "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
-            cfg_path, type(exc).__name__,
+            cfg_path, type(exc.__cause__).__name__,
         )
         return JSONResponse(
-            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+            status_code=409, content={"error": "config_unreadable", "reason": str(exc)},
         )
 
     changed_fields = _diff_paths(current, merged)

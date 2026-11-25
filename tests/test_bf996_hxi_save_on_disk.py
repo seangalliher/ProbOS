@@ -279,15 +279,15 @@ def test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file(
 def test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file(
     error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # No loadable value is known to make the dump raise anything but ValueError or RecursionError, so the fault is injected:
-    # the dump runs before a file is opened, so an exception that is not an OSError is the dump's.
+    # No loadable value is known to make the dump raise anything but ValueError or RecursionError, so the fault is injected
+    # at the dump itself, the one step whose failures the router answers 409.
     path = _empty_file(tmp_path)
     client, runtime = _client(path)
 
-    def fail(cfg_path: str, data: dict[str, Any]) -> None:
+    def fail(data: Any, **kwargs: Any) -> str:
         raise error
 
-    monkeypatch.setattr(config_router, "_write_yaml_atomic", fail)
+    monkeypatch.setattr(config_router.yaml, "safe_dump", fail)
 
     response = _save(client, {"system": {"log_level": "DEBUG"}})
 
@@ -295,6 +295,31 @@ def test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_f
         409, {"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
     )
     assert path.read_text(encoding="utf-8") == "{}\n"
+    assert list(tmp_path.glob("*.tmp")) == []  # the dump runs before a temporary file is made
+    assert runtime.config.system.log_level == "INFO"
+
+
+@pytest.mark.parametrize("error", [TypeError("not a path"), MemoryError()], ids=["type-error", "memory-error"])
+def test_a_failure_after_the_dump_is_not_answered_as_an_unwritable_value(
+    error: BaseException, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Round 3 answered any exception from the write step 409 "cannot be written back" (A3-R3-F2). Only the dump's failures
+    # are that; a later step's exception that is not an OSError reaches the server's own 500, as on the base.
+    path = _empty_file(tmp_path)
+    _, runtime = _client(path)
+    client = TestClient(create_app(runtime), raise_server_exceptions=False)
+
+    def fail(src: Any, dst: Any) -> None:
+        raise error
+
+    monkeypatch.setattr(config_router.os, "replace", fail)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert response.status_code == 500
+    assert "config_unreadable" not in response.text
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert list(tmp_path.glob("*.tmp")) == []  # the temporary file is removed when the replace fails
     assert runtime.config.system.log_level == "INFO"
 
 
