@@ -219,20 +219,26 @@ _QUOTED_OVER_LINES = (
     'Say it like this: "Good evening, Captain.\nI searched the records and found two games." That is the form.'
 )
 _UNQUOTED = "Here is the template:\nGood evening.\n\nI searched the records and found two games.\nFill it in."
+#: Every R1-3 case runs with LF and with CRLF line breaks (amendment A3): the masking reads both.
+_EOLS = pytest.mark.parametrize("eol", [pytest.param("\n", id="lf"), pytest.param("\r\n", id="crlf")])
 
 
+@_EOLS
 @pytest.mark.parametrize("text", [
     pytest.param(_FENCED, id="fence-with-blank-line"),
     pytest.param("~~~\nI searched the records and found two games.\n~~~", id="tilde-fence"),
+    pytest.param("~~~\nI searched the records and found two games.\n~~~\nThat was the form.",
+                 id="tilde-fence-then-text"),
     pytest.param(_FENCE + "text\nThe record I found shows it as a draw.\n" + _FENCE, id="fence-info-string"),
     pytest.param(_QUOTED_OVER_LINES, id="multi-line-double-quote"),
     pytest.param("\u201cGood evening.\nI searched the records.\u201d That was the line.", id="multi-line-curly"),
     pytest.param("Use `the phrase\nI searched the records` as the test.", id="multi-line-backtick"),
 ])
-def test_wording_quoted_over_several_lines_is_not_found(text) -> None:
-    assert find_lookup_claim(text) is None
+def test_wording_quoted_over_several_lines_is_not_found(text, eol) -> None:
+    assert find_lookup_claim(text.replace("\n", eol)) is None
 
 
+@_EOLS
 @pytest.mark.parametrize("text", [
     pytest.param(_FENCE + "\nexample\n" + _FENCE + "\nI searched the records and found two games.",
                  id="after-a-closed-fence"),
@@ -241,25 +247,27 @@ def test_wording_quoted_over_several_lines_is_not_found(text) -> None:
                  id="stray-quote-stops-at-blank-line"),
     pytest.param('He said "hi.\nI searched the records and found two games.', id="unpaired-quote"),
 ])
-def test_an_unquoted_claim_beside_a_fence_or_quote_is_found(text) -> None:
-    found = find_lookup_claim(text)
+def test_an_unquoted_claim_beside_a_fence_or_quote_is_found(text, eol) -> None:
+    found = find_lookup_claim(text.replace("\n", eol))
     assert found is not None and "i searched" in found.lower()
 
 
+@_EOLS
 @pytest.mark.parametrize(("reply", "fires"), [
     pytest.param(_FENCED, False, id="fenced-block"),
     pytest.param(_QUOTED_OVER_LINES, False, id="multi-line-quote"),
     pytest.param(_UNQUOTED, True, id="unquoted-control"),
 ])
-def test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged(reply, fires, caplog) -> None:
+def test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged(reply, fires, eol, caplog) -> None:
     caplog.set_level(logging.WARNING, logger=_LOGGER)
-    ctx = _ctx_for_turn(_agentic_result([]), reply)
+    ctx = _ctx_for_turn(_agentic_result([]), reply.replace("\n", eol))
     asyncio.run(DmReplyPipeline(ctx).run())
     assert (ctx.write_disclosure_suffix == LOOKUP_DISCLOSURE) is fires
     assert ctx.response_text == ctx.pre_write_disclosure_body + (LOOKUP_DISCLOSURE if fires else "")
     assert any("lookup-claim check" in r.getMessage() for r in caplog.records) is fires
 
 
+@_EOLS
 @pytest.mark.parametrize(("text", "expected"), [
     pytest.param(
         "~~~\nintro\n" + _FENCE + "\nI searched the records and found two games.\n" + _FENCE
@@ -275,17 +283,18 @@ def test_a_claim_quoted_over_several_lines_leaves_the_reply_unchanged(reply, fir
         "i searched", id="other-character",
     ),
 ])
-def test_a_fence_ends_only_on_its_own_kind_and_length(text, expected) -> None:
+def test_a_fence_ends_only_on_its_own_kind_and_length(text, expected, eol) -> None:
     """A fence ends at the first later line of the same character, at least as long; a stray opener masks nothing."""
-    found = find_lookup_claim(text)
+    found = find_lookup_claim(text.replace("\n", eol))
     assert found is not None and expected in found.lower()
 
 
-def test_masking_keeps_length_and_line_breaks() -> None:
-    text = 'a "b\nc" d\n> e\n' + _FENCE + "\nf\n\ng\n" + _FENCE + "\n\u201ch\u201d `i`"
+@_EOLS
+def test_masking_keeps_length_and_line_breaks(eol) -> None:
+    text = ('a "b\nc" d\n> e\n' + _FENCE + "\nf\n\ng\n" + _FENCE + "\n\u201ch\u201d `i`").replace("\n", eol)
     masked = _mask_quoted(text)
     assert len(masked) == len(text)
-    assert masked == "a   \n   d\n   \n   \n \n\n \n   \n" + " " * 7
+    assert masked == ("a   \n   d\n   \n   \n \n\n \n   \n" + " " * 7).replace("\n", eol)
 
 
 @pytest.mark.parametrize("unit", [
@@ -294,9 +303,10 @@ def test_masking_keeps_length_and_line_breaks() -> None:
     pytest.param("\u201ca ", id="unpaired-curly-quotes"),
 ])
 def test_masking_takes_linear_time_on_unclosed_openers(unit) -> None:
-    """16,000 openers that nothing ends. The linear pass takes milliseconds; the first draft of A2-6 rescanned the
-    rest of the text from every fence opener (about 7 s and 12 s for the two fence kinds, measured by the
-    orchestrator before round 2). The bound leaves about 20 times margin on both sides."""
+    """16,000 openers that nothing ends. The linear pass took 8 to 50 ms where measured; the quadratic variants of
+    the census (the first draft of A2-6, and an opener check that rescans the later lines) took 4.7 to 14 s. So the
+    2 s bound is 40 times or more above the linear pass and only 2.3 to 7 times below the quadratic ones: a host
+    over 2.3 times as fast could pass the weakest quadratic variant (contract sections 14.7.3, 16.10 and 17)."""
     text = unit * 16_000 + "\nI searched the records and found two games."
     began = time.perf_counter()
     found = find_lookup_claim(text)
