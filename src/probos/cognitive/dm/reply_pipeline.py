@@ -185,9 +185,10 @@ class DmReplyContext:
     # default is ``None`` because every construction site that does not set it
     # is, by definition, one where the loop's record is unknown.
     tool_invocations: ToolInvocations | None = None
-    # AD-1358 S2 (#1750): True when this reply's reads are not all in ``tool_invocations``: an adopted
-    # retry (step 1 keeps the first attempt's record), an ``[ACTION:]`` marker (step 4e) or a
-    # ``[MESH ...]`` read (step 4h). The lookup-claim check in step 4m abstains when it is set.
+    # AD-1358 S2 (#1750): True when this reply's reads are not all in ``tool_invocations``: a dispatched
+    # retry (step 1 keeps the first attempt's record, whatever the retry ran or returned), an ``[ACTION:]``
+    # marker (step 4e) or a ``[MESH ...]`` read (step 4h). The lookup-claim check in step 4m abstains when
+    # it is set.
     lookup_record_incomplete: bool = False
     owned_steps_view: owned_steps.OwnedStepsView | None = None
     owned_steps_reference: owned_steps.OwnedStepsViewReference | None = None
@@ -691,6 +692,10 @@ class DmReplyPipeline:
                         if self.ctx.plan_mode_gate is not None else None
                     ),
                 )
+                # AD-1358 S2 (#1750): set before the send. A retry can run tools whatever it then returns
+                # (text, no text, None, a raise after a timeout), and ``ctx.tool_invocations`` stays the
+                # first attempt's record in every case, so the lookup-claim check abstains for this reply.
+                self.ctx.lookup_record_incomplete = True
                 try:
                     retry_resp = await self.ctx.runtime.intent_bus.send(retry_intent)
                     retry_text = ""
@@ -713,9 +718,6 @@ class DmReplyPipeline:
                                 retry_result.cleaned_text
                             )
                         )
-                        # AD-1358 S2 (#1750): ``ctx.tool_invocations`` is still the first
-                        # attempt's record, so the lookup-claim check abstains for this reply.
-                        self.ctx.lookup_record_incomplete = True
                         # AD-1360 (#1828): the reply now comes from the retry's own cycle, so the steps after this one
                         # (the DM episode, the Ward Room posts) belong to it; a retry result with no id keeps this one.
                         self.ctx.cycle_id = result_cycle_id(retry_resp) or self.ctx.cycle_id
