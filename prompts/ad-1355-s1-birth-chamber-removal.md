@@ -2,7 +2,7 @@
 
 **Drafted by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-24
 
-**Revised by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, after proving every pair on an oracle tree at the B14 head `ba2b3a4b`: the `{U+XXXX}` placeholders of the draft are the characters they name (the contract tools run with `--utf8 U+03B1,U+2014,U+2192`); the census numbers of P-46 and P-46a are measured; four pairs are added, P-47a (the `EventType` row of the architecture baseline goes stale, section 7 step 4), P-53 and P-54 (the two measured AD-1152 golden values, section 7 step 5) and P-55 (the pin of the `srp-size` count 92 in `tests/test_ad1270b_architecture_fitness.py`, which the draft's M3 focused list fails on: 90 after P-47 and P-47a); the Builder runs no test and no script, so sections 4, 5 and 7 say what the orchestrator runs; and one claim of the draft that the oracle disproved is corrected (section 15, the SRP row); and P-26 and P-28 delete their whole line (the draft's empty REPLACE left a blank line inside a dict literal of `tests/test_ad1270e2g_crew_models.py`: each SEARCH now carries the row that follows and its REPLACE keeps it).
+**Revised by:** the orchestrator (`claude-sonnet-5.5`), 2026-11-25, after proving every pair on an oracle tree at the B14 head `ba2b3a4b`: the `{U+XXXX}` placeholders of the draft are the characters they name (the contract tools run with `--utf8 U+03B1,U+2014,U+2192`); the census numbers of P-46 and P-46a are measured; four pairs are added, P-47a (the `EventType` row of the architecture baseline goes stale, section 7 step 4), P-53 and P-54 (the two measured AD-1152 golden values, section 7 step 5) and P-55 (the pin of the `srp-size` count 92 in `tests/test_ad1270b_architecture_fitness.py`, which the draft's M3 focused list fails on: 90 after P-47 and P-47a); the Builder runs no test and no script, so sections 4, 5 and 7 say what the orchestrator runs; and one claim of the draft that the oracle disproved is corrected (section 15, the SRP row); and P-26 and P-28 delete their whole line (the draft's empty REPLACE left a blank line inside a dict literal of `tests/test_ad1270e2g_crew_models.py`: each SEARCH now carries the row that follows and its REPLACE keeps it); and P-52 is anchored at the whole line of the old first heading of `DECISIONS.md` (`### BF-992 -- ...`) and puts the new entry before it, instead of matching the end of the `## Era V` line and the empty line after it (the Builder's `edit` tool dropped the blank line between the new entry and the old heading for that shape; the file the pair produces is the same).
 
 **Status:** build-ready. Drafted on `8704d194`; it builds after B14 (AD-1358 S2) merges, and every pair is re-proved on that base (here the B14 head `ba2b3a4b`, whose tree is the base after the merge). No new AD or BF number: this is slice S1 of #1700. Ceiling AD-1361, next AD-1362 (`scripts/ad_ceiling.py`); BF-993 (`docs/development/open-ads-report.md:32`). **Captain:** nothing parked. The Captain may overrule D1 (old key ignored without a warning) and D2 (six event types deleted, not reserved). **Dependencies:** none. **Tests:** one new file (18 cases); 2 files deleted; 9 existing test files updated by pairs; one golden fixture (two values) refreshed by measurement.
 
@@ -1518,13 +1518,10 @@ REPLACE:
 **P-52**
 SEARCH:
 ```
-Civilization (Phases 31-36)
-
+### BF-992 -- Readers that hold a slot id count episodes under the agent's sovereign id: boot camp, recall probe, profile (2026-11-24, #1324)
 ```
 REPLACE:
 ```
-Civilization (Phases 31-36)
-
 ### Acclimation S1 -- the AD-486 Birth Chamber and the department activation scheduler deleted (2026-11-25, #1700, AD-1355)
 
 - *Scope.* `holodeck/__init__.py` and the deleted `chamber.py`, `gates.py`, `phases.py`, `affect.py`, `scheduler.py`; `startup/finalize.py`, `agent_onboarding.py`, `assignment.py`, `proactive.py`, `config.py`, `config_models/crew.py`, `config_models/__init__.py`, `events.py`, `event_persistence.py`, `config/system.yaml`; test `tests/test_ad1355_birth_chamber_removed.py`. Contract `prompts/ad-1355-s1-birth-chamber-removal.md`. Slice S1 of #1700.
@@ -1535,6 +1532,7 @@ Civilization (Phases 31-36)
 - *Effect.* None at the default. An operator who had set `enabled: true` now gets the default path: admitted agents are no longer held at `ship_records` or skipped by the proactive loop, and assignment subscriptions are no longer queued.
 - *Reversal.* Revert the three S1 commits.
 
+### BF-992 -- Readers that hold a slot id count episodes under the agent's sovereign id: boot camp, recall probe, profile (2026-11-24, #1324)
 ```
 
 ### 6.28 `tests/fixtures/ad1152_agentic_off_golden.json` (M3)
