@@ -1675,9 +1675,9 @@ def _setup_shared_url_notes(console: Console, shared_url_tiers: dict[str, str], 
 
     for tier, model in shared_url_tiers.items():
         # Read from the existing file, which can hold the chosen key or one it already had (#1414 item 7).
-        # The raw model is redacted first (repr doubles a backslash in it), then its repr, whose quotes and
-        # escapes can complete a key the raw model holds only part of (#1414 review).
-        shown = provider_setup.redact_keys(repr(provider_setup.redact_keys(model, keys)), keys)
+        # Redacted after repr, whose quotes can complete a key the model holds only part of; a key the model
+        # holds whole appears in the repr as the key's Python-quoted spelling, which redact also matches.
+        shown = provider_setup.redact_keys(repr(model), keys)
         console.print(
             f"  Left the shared llm_base_url unchanged because {escape(tier)} (model {escape(shown)}) uses it; "
             f"give {escape(tier)} its own llm_base_url_{escape(tier)} to move it"

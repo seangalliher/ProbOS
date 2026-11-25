@@ -186,7 +186,7 @@ def test_a_shown_model_never_completes_a_file_key(
     key: str, key_yaml: str, model_yaml: str, note: str, tmp_path: Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
     # quoted and doubled-backslash: the model's repr adds the quotes or the second backslash and so forms the key;
-    # raw-backslash: only the raw redaction finds the key, since repr doubles its backslash.
+    # raw-backslash: repr doubles the key's backslash, so the key's Python-quoted spelling is what redact matches.
     config = _existing(tmp_path, f"  llm_api_key_vision: {key_yaml}", f"  llm_model_vision: {model_yaml}")
     assert ps.config_text_api_keys(config.read_text(encoding="utf-8")) == [key]  # premise: the file holds the key
 
@@ -195,3 +195,38 @@ def test_a_shown_model_never_completes_a_file_key(
     out = _printed(capsys)
     assert f"vision ({note}) uses it" in out
     assert key not in out
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["sk-bf995-a\\b", "sk-bf995-'a\\b", "sk-bf995-'q\"", "sk-bf995-\x07", "sk-bf995-\ud800"],
+    ids=["backslash", "quote-and-backslash", "both-quotes", "control", "lone-surrogate"],
+)
+def test_redact_hides_the_python_quoted_spellings_of_a_key(key: str) -> None:
+    # repr leaves a ' bare when the key holds no "; inside a longer string that holds both quotes it escapes the '.
+    alone, beside = repr(key), repr(f"{key}'\"")
+    assert key not in alone and key not in beside  # premise: only the quoted spellings are present
+
+    assert ps.redact(alone, key) == f"{alone[0]}<redacted>{alone[0]}"
+    assert ps.redact(beside, key) == "'<redacted>\\'\"'"
+
+
+@pytest.mark.parametrize(
+    ("key_yaml", "key"),
+    [("'sk-bf995-file\\N9Q4'", "sk-bf995-file\\N9Q4"), ('"sk-bf995-file-\\uD800"', "sk-bf995-file-\ud800")],
+    ids=["backslash", "lone-surrogate"],
+)
+def test_a_validator_quoting_a_file_key_prints_no_spelling_of_it(
+    key_yaml: str, key: str, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # attachments.vision_tier's validator says "got {v!r}": repr doubles the backslash, or escapes the surrogate.
+    config = _existing(tmp_path, f"  llm_api_key_vision: {key_yaml}")
+    with config.open("a", encoding="utf-8") as handle:
+        handle.write(f"attachments:\n  vision_tier: {key_yaml}\n")
+    assert ps.config_text_api_keys(config.read_text(encoding="utf-8")) == [key]  # premise: the file holds the key
+
+    assert _setup() == 4  # the result does not load, so the file is not replaced
+
+    out = _printed(capsys)
+    assert "Could not write" in out and "got '<redacted>'" in out  # premise: the validator's message was printed
+    assert repr(key)[1:-1] not in out and key not in out
