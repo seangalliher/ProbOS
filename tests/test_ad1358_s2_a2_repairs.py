@@ -219,7 +219,8 @@ _QUOTED_OVER_LINES = (
     'Say it like this: "Good evening, Captain.\nI searched the records and found two games." That is the form.'
 )
 _UNQUOTED = "Here is the template:\nGood evening.\n\nI searched the records and found two games.\nFill it in."
-#: Every R1-3 case runs with LF and with CRLF line breaks (amendment A3): the masking reads both.
+#: Every test of this section except the timing test at its end runs with LF and with CRLF line breaks
+#: (amendment A3): the masking reads both. The timing test (three cases) stays LF-only.
 _EOLS = pytest.mark.parametrize("eol", [pytest.param("\n", id="lf"), pytest.param("\r\n", id="crlf")])
 
 
