@@ -49,6 +49,9 @@ D1 to D7 as stated above this contract; they are recorded in `DECISIONS.md` (6.1
 | M4 | artifacts and trackers | `docs/development/config-facade-baseline.yaml` (generated), `tests/test_ad1270e1_config_facade.py`, `PROGRESS.md`, `DECISIONS.md`, `docs/development/ad-ledger-snapshot.json` and `docs/development/open-ads-report.md` (generated) | `trackers and generated artifacts for #1414 Batch A` |
 | R1 | A1, A2 (review round 1) | `src/probos/__main__.py`, `src/probos/provider_setup.py`, `tests/test_bf994_init_config_reaches_its_api.py`, `tests/test_bf995_setup_redaction.py`, `PROGRESS.md`, `DECISIONS.md` | `init judges its URL as the client sends it and asks again for one setup refuses; setup redacts any file key and a shown model's repr (#1414 review)` |
 | R2 | A3 (review round 1) | `src/probos/routers/config.py`, `tests/test_bf996_hxi_save_on_disk.py`, `PROGRESS.md`, `DECISIONS.md` | `an HXI settings save answers 409 for a file it cannot stat, write back or validate (#1414 A3)` |
+| R3-A1 | A1 (review round 2) | `src/probos/__main__.py`, `tests/test_bf994_init_config_reaches_its_api.py`, `PROGRESS.md`, `DECISIONS.md` | `init writes its URL and model as typed, judges the path the client sends and asks again for a URL the client cannot parse (#1414 review)` |
+| R3-A2 | A2 (review round 2) | `src/probos/provider_setup.py`, `src/probos/__main__.py`, `tests/test_bf995_setup_redaction.py`, `PROGRESS.md`, `DECISIONS.md` | `setup also hides each API key's Python-quoted spelling (#1414 A2)` |
+| R3-A3 | A3 (review round 2) | `src/probos/routers/config.py`, `tests/test_bf996_hxi_save_on_disk.py`, `PROGRESS.md`, `DECISIONS.md` | `an HXI settings save answers 409 for any file PyYAML cannot parse or any result it cannot dump (#1414 A3)` |
 
 **Overlap with B15** (from `git diff --stat 40f9305f feat/ad1355-s1-birth-chamber-removal-20261125`):
 
@@ -85,6 +88,9 @@ D1 to D7 as stated above this contract; they are recorded in `DECISIONS.md` (6.1
 - M4: the commands in section 7, then `-m pytest tests/test_ad1270e1_config_facade.py tests/test_ad1184_ad_ledger.py -q -n 0`
 - R1: `-m pytest tests/test_bf994_init_config_reaches_its_api.py tests/test_bf995_setup_redaction.py tests/test_ad1135_provider_setup.py tests/test_ad1135_setup_cli.py tests/test_claude_bootstrap_init_defaults.py "tests/test_distribution.py::TestProbOSInit" tests/test_ad1137_doctor.py tests/test_ad1137_quickstart_chain.py tests/test_ad1327_verifier_independence.py -q -n 0`
 - R2: `-m pytest tests/test_bf996_hxi_save_on_disk.py tests/test_ad741_config_api.py tests/test_ad741_integration.py tests/test_ad741_secret_redaction.py tests/test_bf908_crew_scope_token.py -q -n 0`
+- R3-A1: `-m pytest tests/test_bf994_init_config_reaches_its_api.py tests/test_ad1135_provider_setup.py tests/test_ad1135_setup_cli.py -q -n 0`
+- R3-A2: `-m pytest tests/test_bf995_setup_redaction.py tests/test_ad1135_provider_setup.py tests/test_ad1135_setup_cli.py tests/test_ad1137_doctor.py tests/test_ad1137_quickstart_chain.py tests/test_ad1327_verifier_independence.py -q -n 0`
+- R3-A3: `-m pytest tests/test_bf996_hxi_save_on_disk.py tests/test_ad741_config_api.py tests/test_ad741_integration.py tests/test_ad741_secret_redaction.py tests/test_bf908_crew_scope_token.py -q -n 0`
 
 **Broad gate:** once, after M4: `scripts/run_test_gate.py --label 1414-batch-a --receipt logs/gates/1414-batch-a.receipt.json`.
 
@@ -2179,6 +2185,918 @@ tests/test_claude_bootstrap_init_defaults.py:33,48,61,73 and tests/test_distribu
 
 Prior-art search was skipped: this is ProbOS router plumbing with no outside analogue.
 
+## 6d. Review round 2: repairs R3-A1 (A1), R3-A2 (A2) and R3-A3 (A3)
+
+Review round 2 (three delta re-reviews on `gpt-6.1-sol`, one per slice, on the head `c75d5347`) returned REQUEST CHANGES for all three slices: A1 three P2 findings, A2 three P2 findings and A3 one P2 and two P3 findings. The decisions below are the Architect's (consults e08d4dc5 for A1 and cb243e94 for A2 and A3); the pairs follow in sections 6.28 to 6.40. The three milestones apply in order, each on top of the one before it (R3-A1, then R3-A2, then R3-A3), because PROGRESS.md, DECISIONS.md and `src/probos/__main__.py` are shared (each milestone edits its own lines); each is committed separately.
+
+### R3-A1 decisions (A1)
+
+**R3 decision: fix all three findings in A1, plus the model input the reviewer named under F1.** The fix makes one contract: a URL init accepts is one the client can parse, it is written exactly as typed, and it is classified by the encoded path the client sends. Two related items, setup's share of F2 and init's home path, go to #1820 as follow-ups with their reach. Head `c75d5347` confirmed with `git log`.
+
+
+| Finding | Decision | Reason under the convergence rule |
+|---|---|---|
+| F3 `%2F` classified as root | **Fix**: classify on `url.raw_path.strip(b"/") == b""` | It is R1's own regression, so it must be fixed. Your `split(b"?")` and `decode` steps are dropped: init refuses `?` before this runs, and a query would make the path non-root (`openai`) anyway. |
+| F1 typed URL != loaded URL | **Fix**: render URL **and model** with `json.dumps(v, ensure_ascii=False)`; init applies setup's model rule (non-empty, `isprintable()`, `provider_setup.py:228`) | Ordinary reach: typed operator input. The failure is silent (init prints "Created"), and the `/\u002f` routing is a regression. The model has the same defect, and the reviewer named it, so fixing only the URL would bring round 4. JSON leaves only non-printable characters raw (DEL, NEL, U+2028, surrogates). `normalize_base_url` already refuses those for the URL; the model rule refuses them for the model. Weighing: these characters are rare, but the reach is operator input, not an injected fault, so the rule says fix. |
+| F2 URL urllib accepts, httpx refuses | **Fix in init**: `_init_api_format` lets `httpx.InvalidURL` propagate and is called inside the URL loop's `try` | Ordinary reach (typed). Init gates on the same parse the format is judged on, so the acceptance check and the classifier cannot drift apart. R1's `except` -> `openai` branch was unreachable from init anyway: its only caller is `__main__.py:1220`. Rejected home: `normalize_base_url`. It is shared with setup (`:1529`, `provider_setup.py:222`), so changing it changes the AD-1135 contract. Setup's share becomes #1820 item 1. |
+| (pre-empt) home path with `"` or `\` in `repo_path` | **Record**, #1820 item 2, and declare it in brief A1-6 | Not a finding and not a regression. Writing `repo_path` losslessly would turn setup's pinned refusals (`test_ad1135_setup_cli.py:601-628`) into acceptances, which changes AD-1135's contract. |
+
+**Effect on setup's create path and the goldens:** none in bytes. `_setup_scaffold` passes the constants `"http://127.0.0.1:8080/v1"` and `"unset"` (`__main__.py:1313-1320`). The three goldens use ASCII URLs and models with no `"` or `\` (`test_ad1135_provider_setup.py:60-67`). For such strings `json.dumps` gives exactly `"value"`.
+
+**R1 and M1 lines R3 replaces:**
+- the `_init_api_format` docstring and body (R1);
+- the loop's `except` line (R1);
+- line 1220 `api_format = ...` (M1);
+- `_chat_posts`'s append (M1);
+- the format-table comment (R1);
+- `test_a_url_the_client_cannot_parse_is_openai` (R1, deleted).
+
+The contract line 1459 ("Builder may swap `localhost:abc`") goes moot.
+
+### R3-A2 and R3-A3 decisions (A2 and A3)
+
+**Verdict.**
+- **A2:** fix F3 by giving every key its Python-quoted spellings. Record F1 and F2 on #1820. I rejected the whole-line boundary: it breaks an ordinary case and still cannot hide part of a key. This is a rescope of property A2-5.
+- **A3:** fix F1 as a class. Any exception from the parse, and any exception from the dump, now answers 409. The draft named an extra dump member, `!!omap` and `!!pairs`; the oracle refuted it (see the oracle corrections below). F2 and F3 are wording only.
+- **Captain:** no condition applies. A2 still redacts strictly more than the base, and I widen no authority.
+
+
+| Finding | Decision | Reason and reach |
+|---|---|---|
+| A2-F1 (marker completes `prefix-<redacted>`) | **Record** (#1820) | Needs a file key that holds the literal marker text. No provider issues such a key, and only the file's author, who already holds it, can write one. The printed line is the same for every value of that key: neither pass matches it in `'prefix-abc'`, so its value never affects the output. Base, round-1 head and candidate each print one key-shaped substring; only which coincidence shows has changed, so this is not a disclosure regression. Fixing it needs line-level withholding, rejected below. |
+| A2-F2 (template completes a key), plus the reviewer's `fast model-x` confirm-line variant | **Record** (#1820) | The key must equal setup's own words around a value plus that value. The line depends only on the model and the template, not on the key. This is one member of a class substring redaction cannot hide: text that holds part of a key. A model equal to the key minus one character shows whatever boundary we add. The module docstring already concedes the same for a provider's masked key (`provider_setup.py:15-16`). |
+| A2-F3 (validator `{v!r}` spelling) | **Fix** | This is a true disclosure: an escaped spelling of the whole key. The producers on setup's paths are the `{v!r}` validators (`config_models/integrations.py:283` and five in `config.py`), `str(OSError)`, which reprs the path, and the B7 note's `repr`. It is cheap to close completely: Python's `repr` of a `str` has exactly two quote regimes. |
+| A2, surrogate vision key stops boot (`llm_client.py:869-870`) | **Record** (#1820) | Inherited (head and base alike), on the boot path, and it fails before printing anything, so nothing is disclosed. |
+| Your A2 boundary proposal | **Reject** | 1. It brings in a regression of ordinary reach. Ollama's own docs use the placeholder `api_key='ollama'`, and setup prints `Provider ollama at ...` (`provider_setup.py:94-95`, `__main__.py:1740`), so the confirm line would collapse to `<redacted>` whenever the operator picks Ollama again. Under the convergence rule that is a must-fix, which means round 4. 2. It still leaves partial keys showing. 3. D3 already rejected redacting all output. For item 7 (one model quoting one other key) it over-reaches. |
+| A3-F1 (constructor exceptions -> 500) | **Fix the class** | Any `Exception` from `safe_load` becomes 409 `not valid YAML`. The same applies at the dump: any non-`OSError` exception becomes 409, with `OSError` handled first. The draft named a dump member no reviewer had raised, `!!omap` / `!!pairs`; the oracle refuted it (`SafeRepresenter` writes a tuple as a list, so they dump without error), and the clause keeps the class design on its other reason: the dump runs before any file is opened, so an exception that is not an `OSError` there is the dump's. |
+| A3-F2 ("write back" -> 409) | **Fix wording** | A read-only file answering 500 `write_failed` is the existing AD-741 contract. Landing item 3, A3-3 and D4 now say so, and a new test pins it (it also kills A3-M18). |
+| A3-F3 (the comment says the patch cannot reach the dump) | **Fix wording** | The comment now says the merged mapping, from the file or the patch. The error name stays the same. |
+| Validation stage (A3) | **Not widened** | No member was found: `config.py` and `config_models` have no `model_validator(mode="before")`, and the field before-validators guard their types. Widening without a member would give a census row no test can kill. The patch route to the existing `budget_awareness_thresholds` item is added as a note on that item (claim 10). |
+
+**Rescope statement.** The A2 tail does not converge under a substring metric, because a substring of the output can equal a crafted key by coincidence. A2-5 becomes: "no whole form of a known key", with the coincidence and partial-key cases out of scope and recorded. This narrows what the contract promised, not the control that shipped: the base redacted only the chosen key, and the candidate redacts strictly more.
+
+### Oracle corrections (orchestrator)
+
+**Oracle corrections (orchestrator, 2026-11-25).** Two claims of the answers that rested on reading were refuted on an oracle tree, and the pairs in sections 6.28 to 6.40 carry the measured text:
+1. R3-P9 (A1), the e2e case `test_the_init_config_reaches_the_api_its_url_serves[escaped-slash]`: httpx does not percent-encode a backslash in the raw path (the request path carries it as it is), so the expected path is `"/\\u002f/chat/completions"` (two backslashes in the Python source), not `"/%5Cu002f/chat/completions"`.
+2. R3-A3, the dump: `!!omap` and `!!pairs` dump without error (`yaml.representer.SafeRepresenter.yaml_representers[tuple]` is `represent_list`; `yaml.safe_dump` of the loaded value writes `x:\n- - a\n  - 1\n`); the same measurement is in section 6b (R2's oracle measurements). So the third dump refusal that the draft named does not exist. Consequences, each applied in the pairs: R3-A3-P5 (the two rows) is dropped; R3-A3-P3's comment names only the two dump failures that exist (an integer of over 4,300 digits written in hex, nesting too deep); the pairs for the census (P7), A3-3 (P8) and the PROGRESS line (P10) drop the tuples. The Architect's class design for the dump stays, on its other reason: the dump runs before any file is opened and every later step of `_write_yaml_atomic` raises `OSError`, so an exception that is not an `OSError` there is the dump's (`except OSError` first, then `except Exception`). Because no natural member is left to pin the widened clause, a test injects the fault (`test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[representer-error,type-error]`, appended to R3-A3-P6); it is the killer of A3-M17 and a killer of A3-M11 and A3-M12.
+3. R3-A3-P10 (PROGRESS line 7) is not a literal pair in the answer ("that line with these three in-place changes"). The orchestrator built it from the real line (the whole line as SEARCH and as REPLACE) with the Architect's replacement sentence, minus the omap clause (correction 2) and with the injected-fault test named.
+4. Three answers edit the census line of the landing comment; the final text composes them: `Mutation census: A1 14/14 (A1-M9 retired), A2 13/13 (A2-M10 retired), A3 17/17 killed; A3-M10 is a review property.`
+5. The focused commands of R3-A2 and R3-A3 carry `-n 0`, as every earlier milestone's does.
+
+**Revised by:** `claude-architect` (Claude Code, Opus 5.5), 2026-11-25; oracle corrections by the orchestrator, 2026-11-25
+
+**Milestone R3-A1.** It applies to the head `c75d5347` (R2). Files: `src/probos/__main__.py`, `tests/test_bf994_init_config_reaches_its_api.py`, `PROGRESS.md` (line 3) and `DECISIONS.md` (D1), plus this contract's sections 7 and 8. It changes none of A2's or A3's files. Commit subject: `init writes its URL and model as typed, judges the path the client sends and asks again for a URL the client cannot parse (#1414 review)`. **The Builder may not:** do anything section 5 forbids, or change any A2 or A3 file. If a premise line of a new test fails, that is a hard stop: report it to the Architect. The rows A1-M10 to A1-M15 are the orchestrator's (A1-M9 is retired).
+
+**Milestone R3-A2.** It applies on top of R3-A1. Files: `src/probos/provider_setup.py`, `src/probos/__main__.py` (the B7 note's line only), `tests/test_bf995_setup_redaction.py`, `PROGRESS.md` (line 5) and `DECISIONS.md` (D3), plus this contract's sections 7 and 8. It changes none of A1's or A3's files. Commit subject: `setup also hides each API key's Python-quoted spelling (#1414 A2)`. **The Builder may not:** do anything section 5 forbids, or change any A1 or A3 file. If a premise line of a new test fails, that is a hard stop: report it to the Architect. The rows A2-M11 to A2-M14 are the orchestrator's (A2-M10 is retired).
+
+**Milestone R3-A3.** It applies on top of R3-A2. Files: `src/probos/routers/config.py`, `tests/test_bf996_hxi_save_on_disk.py`, `PROGRESS.md` (line 7) and `DECISIONS.md` (D4), plus this contract's sections 7 and 8. It changes none of A1's or A2's files. Commit subject: `an HXI settings save answers 409 for any file PyYAML cannot parse or any result it cannot dump (#1414 A3)`. **The Builder may not:** do anything section 5 forbids, or change any A1 or A2 file. If a premise line of a new test fails, that is a hard stop: report it to the Architect. The rows A3-M16 to A3-M18 are the orchestrator's.
+
+### 6.28 `src/probos/__main__.py` (R3-A1)
+
+**P-1**
+SEARCH:
+```
+    """Render the ``probos init`` config text; ``probos setup`` reuses it as its create-path scaffold."""
+    config_content = f"""\
+# ProbOS Configuration -- generated by `{generated_by}`
+system:
+  name: "ProbOS"
+  version: "0.1.0"
+  log_level: "WARNING"
+
+cognitive:
+  default_llm_tier: "fast"
+  llm_timeout_seconds: 300.0
+  llm_base_url_fast: "{llm_url}"
+  llm_api_key_fast: ""
+  llm_model_fast: "{llm_model}"
+  llm_api_format_fast: "{api_format}"
+```
+REPLACE:
+```
+    """Render the ``probos init`` config text; ``probos setup`` reuses it as its create-path scaffold.
+
+    #1414 review: the URL and the model are written as JSON strings, which YAML reads back unchanged for any
+    printable text (written raw, a backslash or a double quote changed the loaded value or broke the file).
+    Text holding neither renders byte-identically to the plain quoted form.
+    """
+    import json
+
+    config_content = f"""\
+# ProbOS Configuration -- generated by `{generated_by}`
+system:
+  name: "ProbOS"
+  version: "0.1.0"
+  log_level: "WARNING"
+
+cognitive:
+  default_llm_tier: "fast"
+  llm_timeout_seconds: 300.0
+  llm_base_url_fast: {json.dumps(llm_url, ensure_ascii=False)}
+  llm_api_key_fast: ""
+  llm_model_fast: {json.dumps(llm_model, ensure_ascii=False)}
+  llm_api_format_fast: "{api_format}"
+```
+
+**P-2**
+SEARCH:
+```
+    is judged as the client sends it (#1414 review): the base with one trailing slash, parsed by httpx, which
+    removes dot segments, so ``/v1/..`` and ``/./`` are the root. A URL httpx cannot parse is ``openai``, as
+    it was for any URL without ``:11434``.
+    """
+    import httpx
+
+    try:
+        url = httpx.URL(llm_url.rstrip("/") + "/")  # what OpenAICompatibleClient._build_client builds
+    except (httpx.InvalidURL, ValueError):
+        return "openai"
+    return "ollama" if url.port == 11434 and url.path.strip("/") == "" else "openai"
+```
+REPLACE:
+```
+    is judged as the client sends it (#1414 review): the base with one trailing slash, parsed by httpx, which
+    removes dot segments, so ``/v1/..`` and ``/./`` are the root. The encoded path is judged, not the decoded
+    one: ``/%2F`` is sent as ``/%2F/api/chat``, so it is not the root. A URL httpx cannot parse raises
+    ``httpx.InvalidURL``: the client could not be built from it, and init asks again.
+    """
+    import httpx
+
+    url = httpx.URL(llm_url.rstrip("/") + "/")  # what OpenAICompatibleClient._build_client builds
+    return "ollama" if url.port == 11434 and url.raw_path.strip(b"/") == b"" else "openai"
+```
+
+**P-3**
+SEARCH:
+```
+    """Handle ``probos init`` -- interactive Rich TUI wizard (AD-484)."""
+    from rich.markup import escape
+    from rich.prompt import Prompt
+```
+REPLACE:
+```
+    """Handle ``probos init`` -- interactive Rich TUI wizard (AD-484)."""
+    import httpx
+    from rich.markup import escape
+    from rich.prompt import Prompt
+```
+
+**P-4**
+SEARCH:
+```
+            provider_setup.normalize_base_url(llm_url)
+        except provider_setup.SetupInputError as exc:
+            console.print(f"  [red]Invalid endpoint URL:[/red] {escape(str(exc))}")
+            continue
+        break
+
+    # Prompt for model with sensible default per provider
+    if "ollama" in detected or ":11434" in llm_url:
+        default_model = "llama3.1:8b"
+    else:
+        default_model = "claude-sonnet-4-20250514"
+    llm_model = Prompt.ask("  LLM model", default=default_model, console=console)
+
+    api_format = _init_api_format(llm_url)
+
+    home.mkdir(parents=True, exist_ok=True)
+```
+REPLACE:
+```
+            provider_setup.normalize_base_url(llm_url)
+            # The client's own parse; a URL it could not be built from (http://[v1.a]:11434) is asked for again.
+            api_format = _init_api_format(llm_url)
+        except (ValueError, httpx.InvalidURL) as exc:  # SetupInputError is a ValueError
+            console.print(f"  [red]Invalid endpoint URL:[/red] {escape(str(exc))}")
+            continue
+        break
+
+    # Prompt for model with sensible default per provider
+    if "ollama" in detected or ":11434" in llm_url:
+        default_model = "llama3.1:8b"
+    else:
+        default_model = "claude-sonnet-4-20250514"
+    while True:
+        llm_model = Prompt.ask("  LLM model", default=default_model, console=console)
+        if llm_model and llm_model.isprintable():  # setup's model rule (provider_setup.validate_choice)
+            break
+        console.print("  [red]Invalid model:[/red] the model name must be non-empty printable text")
+
+    home.mkdir(parents=True, exist_ok=True)
+```
+
+### 6.29 `tests/test_bf994_init_config_reaches_its_api.py` (R3-A1)
+
+**P-1**
+SEARCH:
+```
+import argparse
+from io import StringIO
+```
+REPLACE:
+```
+import argparse
+import string
+from io import StringIO
+```
+
+**P-2**
+SEARCH:
+```
+import probos.__main__ as main_mod
+from probos.cognitive.llm_client import OpenAICompatibleClient
+```
+REPLACE:
+```
+import probos.__main__ as main_mod
+from probos import provider_setup
+from probos.cognitive.llm_client import OpenAICompatibleClient
+```
+
+**P-3**
+SEARCH:
+```
+    """Send one request through the real client built from ``config_path``; return the paths it POSTed."""
+    posts: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+```
+REPLACE:
+```
+    """Send one request through the real client built from ``config_path``; return the paths it POSTed, as sent."""
+    posts: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(request.url.raw_path.decode("ascii"))  # encoded: /%2F stays /%2F
+```
+
+**P-4**
+SEARCH:
+```
+        ("http://127.0.0.1:8080", "openai"),
+    ],
+    # #1414 review: dot segments are judged as httpx sends them (/v1/.. is the root); a port that does not
+    # parse is now refused by init (test_init_asks_again_for_a_url_setup_would_refuse).
+    ids=[
+        "ollama-v1", "ollama-v1-slash", "v1-dot", "ollama-root", "ollama-root-slash", "root-double-slash",
+        "root-dot", "v1-dotdot", "sub-dotdot", "proxy-v1", "other-root",
+    ],
+)
+```
+REPLACE:
+```
+        ("http://127.0.0.1:8080", "openai"),
+        ("http://localhost:11434/%2F", "openai"),
+        ("http://localhost:11434/\\u002f", "openai"),
+        ('http://localhost:11434/v1"x', "openai"),
+    ],
+    # #1414 review: dot segments are judged as httpx sends them (/v1/.. is the root); a port that does not
+    # parse is now refused by init (test_init_asks_again_for_a_url_setup_would_refuse). The path is judged
+    # encoded, as sent (/%2F is not the root), and a URL with a backslash or a quote is written as typed.
+    ids=[
+        "ollama-v1", "ollama-v1-slash", "v1-dot", "ollama-root", "ollama-root-slash", "root-double-slash",
+        "root-dot", "v1-dotdot", "sub-dotdot", "proxy-v1", "other-root", "encoded-slash", "escaped-slash",
+        "double-quote",
+    ],
+)
+```
+
+**P-5**
+SEARCH:
+```
+        ({}, ("http://localhost:11434/v1/..", "llama3.1:8b"), "http://localhost:11434/v1/..", "/api/chat"),
+    ],
+    ids=["detected-default", "bare-root", "root-by-dot-segments"],
+)
+```
+REPLACE:
+```
+        ({}, ("http://localhost:11434/v1/..", "llama3.1:8b"), "http://localhost:11434/v1/..", "/api/chat"),
+        ({}, ("http://localhost:11434/%2F", "llama3.1:8b"), "http://localhost:11434/%2F", "/%2F/chat/completions"),
+        (
+            {}, ("http://localhost:11434/\\u002f", "llama3.1:8b"), "http://localhost:11434/\\u002f",
+            "/\\u002f/chat/completions",
+        ),
+    ],
+    ids=["detected-default", "bare-root", "root-by-dot-segments", "encoded-slash", "escaped-slash"],
+)
+```
+
+**P-6**
+SEARCH:
+```
+def test_a_url_the_client_cannot_parse_is_openai() -> None:
+    unparsable = "http://localhost:abc/v1"
+    with pytest.raises(httpx.InvalidURL):
+        httpx.URL(unparsable)  # premise: the parse the client and init's rule share fails
+
+    assert main_mod._init_api_format(unparsable) == "openai"
+```
+REPLACE:
+```
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [
+        ("http://[v1.a]:11434/", "Invalid IPv6 address"),
+        ("http://\u00fc-.example/v1", "Invalid IDNA hostname"),
+    ],
+    ids=["ipv6-literal", "idna-host"],
+)
+def test_init_asks_again_for_a_url_the_client_cannot_parse(
+    refused: str, reason: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert provider_setup.normalize_base_url(refused)  # premise: setup's rule alone accepts it
+    with pytest.raises(httpx.InvalidURL):
+        httpx.URL(refused.rstrip("/") + "/")  # premise: the client could not be built from it
+    accepted = "http://localhost:11434/v1"
+    output = StringIO()
+
+    written = _init(monkeypatch, tmp_path / "init", {}, refused, accepted, "llama3.1:8b", output=output)
+
+    assert written["cognitive"]["llm_base_url_fast"] == accepted
+    assert reason in " ".join(output.getvalue().split())
+
+
+@pytest.mark.parametrize("model", ['m"x', "m\\tx"], ids=["double-quote", "backslash-t"])
+def test_init_writes_the_model_as_typed(model: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    written = _init(monkeypatch, tmp_path / "init", {}, "http://localhost:11434/v1", model)
+
+    # Written raw, a quote broke the file and \t loaded as a tab.
+    assert written["cognitive"]["llm_model_fast"] == model
+
+
+@pytest.mark.parametrize("refused", ["m\x7fx", "m\x85x"], ids=["delete", "next-line"])
+def test_init_asks_again_for_a_model_setup_would_refuse(
+    refused: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = StringIO()
+
+    written = _init(
+        monkeypatch, tmp_path / "init", {}, "http://localhost:11434/v1", refused, "llama3.1:8b", output=output,
+    )
+
+    # Setup's model rule (non-empty, printable); JSON would leave these characters raw.
+    assert written["cognitive"]["llm_model_fast"] == "llama3.1:8b"
+    assert "must be non-empty printable text" in " ".join(output.getvalue().split())
+
+
+def test_the_scaffold_writes_any_printable_url_and_model_as_given(tmp_path: Path) -> None:
+    # The class behind the escaped-slash and double-quote rows: every printable ASCII character, and three beyond.
+    for ch in [c for c in string.printable if not c.isspace()] + ["\u00fc", "\u2603", "\U0001f600"]:
+        url, model = f"http://localhost:11434/v1/a{ch}b", f"m{ch}x"
+        text = main_mod._render_init_config(
+            tmp_path, llm_url=url, llm_model=model, api_format="openai", profile="strict",
+        )
+        cognitive = yaml.safe_load(text)["cognitive"]
+        assert (cognitive["llm_base_url_fast"], cognitive["llm_model_fast"]) == (url, model), repr(ch)
+```
+
+### 6.30 `PROGRESS.md` (R3-A1)
+
+**P-1**
+SEARCH:
+```
+**BF-994 (2026-11-25), #1414 -- `probos init` writes the OpenAI format for Ollama's /v1 default, and the scaffold it shares with `probos setup` sets the shipped 300 s LLM timeout.** `_cmd_init` wrote `llm_api_format_fast: ollama` for any URL holding `:11434`, so its own default, `http://localhost:11434/v1`, posted to `/v1/api/chat`. It now writes `ollama` only for an Ollama root as the client sends it (port 11434, an empty path once the base has its trailing slash and httpx has removed dot segments, so `/v1/..` is a root), and `openai` otherwise, a URL httpx cannot parse included (`test_a_url_the_client_cannot_parse_is_openai`). Init also asks again for a URL that setup's base-URL rule refuses: a query, for one, would carry the path the client appends (`test_init_asks_again_for_a_url_setup_would_refuse`). `tests/test_bf994_init_config_reaches_its_api.py::test_the_init_config_reaches_the_api_its_url_serves` sends a request through the real `OpenAICompatibleClient` built from the written file: the detected default posts to `/v1/chat/completions`, and a typed root and a root written as `/v1/..` to `/api/chat`. `test_init_writes_the_format_the_typed_url_serves` covers eleven URLs, among them roots written with dot segments or a double slash. The scaffold sets `llm_timeout_seconds: 300.0` under `cognitive:`, the value `config/system.yaml` ships, for init (`test_the_init_scaffold_gives_every_text_tier_the_shipped_timeout`) and for setup's create path (`test_setup_create_path_writes_the_shipped_timeout`). An existing file is given no timeout and keeps its default (`test_setup_on_an_existing_file_adds_no_timeout`); the `CognitiveConfig` default stays 30.0. The init byte goldens in `tests/test_ad1135_provider_setup.py` move by the new line and, for the Ollama row, the format word. `docs/getting-started/configuration.md` and the `docker-compose.yml` comment now say that `PROBOS_LLM_URL` replaces only the shared URL and that a tier with its own `llm_base_url_<tier>` keeps it. A query in a hand-edited base URL still reaches the client and is recorded on #1820. Mutation census: 9 of 9 killed (rows A1-M1 to A1-M9, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+REPLACE:
+```
+**BF-994 (2026-11-25), #1414 -- `probos init` writes the OpenAI format for Ollama's /v1 default, and the scaffold it shares with `probos setup` sets the shipped 300 s LLM timeout.** `_cmd_init` wrote `llm_api_format_fast: ollama` for any URL holding `:11434`, so its own default, `http://localhost:11434/v1`, posted to `/v1/api/chat`. It now writes `ollama` only for an Ollama root as the client sends it (port 11434, an encoded path that is empty once the base has its trailing slash and httpx has removed dot segments, so `/v1/..` is a root and `/%2F` is not), and `openai` otherwise. Init also asks again for a URL that setup's base-URL rule refuses (a query, for one, would carry the path the client appends: `test_init_asks_again_for_a_url_setup_would_refuse`), for one httpx cannot parse, which the client could not be built from (`test_init_asks_again_for_a_url_the_client_cannot_parse`), and for a model setup's model rule refuses (`test_init_asks_again_for_a_model_setup_would_refuse`). The URL and the model are written as JSON strings, which YAML reads back unchanged; written raw, a backslash or a double quote in either changed the loaded value or broke the file (`test_the_scaffold_writes_any_printable_url_and_model_as_given`, `test_init_writes_the_model_as_typed`). `tests/test_bf994_init_config_reaches_its_api.py::test_the_init_config_reaches_the_api_its_url_serves` sends a request through the real `OpenAICompatibleClient` built from the written file: the detected default posts to `/v1/chat/completions`, a typed root and a root written as `/v1/..` to `/api/chat`, and `/%2F` to `/%2F/chat/completions`. `test_init_writes_the_format_the_typed_url_serves` covers fourteen URLs, among them roots written with dot segments or a double slash, an encoded slash and a URL holding a double quote. The scaffold sets `llm_timeout_seconds: 300.0` under `cognitive:`, the value `config/system.yaml` ships, for init (`test_the_init_scaffold_gives_every_text_tier_the_shipped_timeout`) and for setup's create path (`test_setup_create_path_writes_the_shipped_timeout`). An existing file is given no timeout and keeps its default (`test_setup_on_an_existing_file_adds_no_timeout`); the `CognitiveConfig` default stays 30.0. The init byte goldens in `tests/test_ad1135_provider_setup.py` move by the new line and, for the Ollama row, the format word. `docs/getting-started/configuration.md` and the `docker-compose.yml` comment now say that `PROBOS_LLM_URL` replaces only the shared URL and that a tier with its own `llm_base_url_<tier>` keeps it. A query in a hand-edited base URL, setup's acceptance of a URL httpx cannot parse and a home path the scaffold cannot carry are recorded on #1820. Mutation census: 14 of 14 killed (rows A1-M1 to A1-M15, A1-M9 retired by the second review repair; run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+
+### 6.31 `DECISIONS.md` (R3-A1)
+
+**P-1**
+SEARCH:
+```
+- *D1.* `probos init` writes `llm_api_format_fast: ollama` only for an Ollama root as the client sends it (port 11434, an empty path once the base has its trailing slash and httpx has removed dot segments); every other URL, init's `/v1` default included, is `openai`, as is one httpx cannot parse. Init asks again for a URL that setup's base-URL rule (`normalize_base_url`) refuses: a query, for one, would carry the path the client appends. Rejected: always `openai` (a typed root would post to `/chat/completions`), rewriting the typed URL, the `:11434` substring test, a path test on the URL as typed (`/v1/..` is the root to httpx), and repairing the client's base-URL join for a query (it sits on every request's path; a hand-edited query is recorded on #1820).
+```
+REPLACE:
+```
+- *D1.* `probos init` writes `llm_api_format_fast: ollama` only for an Ollama root as the client sends it (port 11434, an encoded path that is empty once the base has its trailing slash and httpx has removed dot segments); every other URL, init's `/v1` default included, is `openai`. Init asks again for a URL that setup's base-URL rule (`normalize_base_url`) refuses (a query, for one, would carry the path the client appends), for one httpx cannot parse (the client could not be built from it; the format is judged on that same parse) and for a model setup's model rule refuses. The URL and the model are written as JSON strings, which YAML reads back unchanged, so the file holds what was typed. Rejected: always `openai` (a typed root would post to `/chat/completions`), rewriting the typed URL, the `:11434` substring test, a path test on the URL as typed or on httpx's decoded path (`/v1/..` is the root to httpx; `/%2F` is sent encoded and is not), `openai` for a URL httpx cannot parse (the client cannot be built from it), refusing a backslash or a double quote (legal in a URL, and the file can carry them), the httpx parse inside `normalize_base_url` (setup's shared rule; setup's share is recorded on #1820) and repairing the client's base-URL join for a query (it sits on every request's path; a hand-edited query is recorded on #1820).
+```
+
+### 6.32 `src/probos/provider_setup.py` (R3-A2)
+
+**P-1**
+SEARCH:
+```
+Setup never prints the API key. Probe messages never include a 401 or 403 body,
+any part of a redirect's Location, or a chat reply's text. The key's literal,
+percent-encoded (``quote``, ``quote_plus``) and base64 (bare and
+``Bearer``-prefixed) forms are what ``carries_key`` detects and ``redact``
+replaces with ``<redacted>``. A listed model ID holding one is withheld from
+``model_ids``, so setup never shows, suggests or writes it (B8); other provider
+excerpts are shown redacted. A provider can still echo another transformation,
+such as its own masked form ``sk-abcd****wxyz``. Tests measure each of these
+properties.
+```
+REPLACE:
+```
+Setup never prints the API key. Probe messages never include a 401 or 403 body,
+any part of a redirect's Location, or a chat reply's text. The key's literal,
+Python-quoted (``repr`` without its quotes), percent-encoded (``quote``,
+``quote_plus``) and base64 (bare and ``Bearer``-prefixed) forms are what
+``carries_key`` detects and ``redact`` replaces with ``<redacted>``. A listed
+model ID holding one is withheld from ``model_ids``, so setup never shows,
+suggests or writes it (B8); other provider excerpts are shown redacted. A
+provider can still echo another transformation, such as its own masked form
+``sk-abcd****wxyz``, and text that holds only part of a key is shown even where
+the words printed around it complete the key (#1820). Tests measure each of
+these properties.
+```
+
+**P-2**
+SEARCH:
+```
+def _key_forms(api_key: str) -> list[str]:
+    try:
+        raw = api_key.encode("utf-8")
+    except UnicodeEncodeError:
+        # #1414 review: a key read from the existing file is not validated (config_text_api_keys). One that
+        # holds a lone surrogate has no encoded form, so only its literal text can appear in what setup prints.
+        return [api_key]
+    forms = {
+        api_key,
+        quote(api_key, safe=""),
+        quote_plus(api_key),
+        base64.b64encode(raw).decode("ascii"),
+        base64.b64encode(b"Bearer " + raw).decode("ascii"),
+    }
+    return sorted(forms, key=lambda form: (-len(form), form))
+```
+REPLACE:
+```
+def _key_forms(api_key: str) -> list[str]:
+    # #1414 review round 2: a validator's {v!r}, str() of an OSError naming a path and the B7 note print a key as
+    # repr spells it, which differs from the key when it holds a backslash, a quote repr escapes or a character repr
+    # writes as an escape. A longer string that holds both quotes escapes a ' the key's own repr leaves bare, so both
+    # spellings are forms.
+    forms = {api_key, repr(api_key)[1:-1], repr(api_key + "'\"")[1:-4]}
+    try:
+        raw = api_key.encode("utf-8")
+    except UnicodeEncodeError:
+        # #1414 review: a key read from the existing file is not validated (config_text_api_keys). One that holds
+        # a lone surrogate has no encoded form, so only its literal and quoted text can appear in what setup prints.
+        pass
+    else:
+        forms |= {
+            quote(api_key, safe=""),
+            quote_plus(api_key),
+            base64.b64encode(raw).decode("ascii"),
+            base64.b64encode(b"Bearer " + raw).decode("ascii"),
+        }
+    return sorted(forms, key=lambda form: (-len(form), form))
+```
+
+**P-3**
+SEARCH:
+```
+    """Replace each literal, percent-encoded and base64 form of ``api_key`` in ``text`` with ``<redacted>``.
+
+    One left-to-right pass over the whole text, longest form first; an empty key changes nothing.
+    For any other key that validate_key_transport accepts, the output holds no form of the key,
+    so ``carries_key`` is False on it and a second pass changes nothing. Proof:
+
+    1. No form holds ``<`` or ``>``: the key holds neither, percent-encoding writes only
+       ``A-Za-z0-9_.-~%+``, and base64 only ``A-Za-z0-9+/=``.
+    2. No form lies inside ``redacted``: the key is not part of ``<redacted>``, a percent-encoded
+       form made only of letters is the key itself, a base64 form is a multiple of 4 characters
+       long and no 4- or 8-character window of ``redacted`` base64-decodes to printable ASCII,
+       and a ``Bearer`` form has at least 12 characters.
+```
+REPLACE:
+```
+    """Replace each literal, Python-quoted, percent-encoded and base64 form of ``api_key`` with ``<redacted>``.
+
+    One left-to-right pass over the whole text, longest form first; an empty key changes nothing.
+    For any other key that validate_key_transport accepts, the output holds no form of the key,
+    so ``carries_key`` is False on it and a second pass changes nothing. Proof:
+
+    1. No form holds ``<`` or ``>``: the key holds neither, its Python-quoted forms add only
+       backslashes before a backslash or quote, percent-encoding writes only ``A-Za-z0-9_.-~%+``,
+       and base64 only ``A-Za-z0-9+/=``.
+    2. No form lies inside ``redacted``: the key is not part of ``<redacted>``, a Python-quoted
+       form is the key itself or holds a backslash, a percent-encoded form made only of letters is
+       the key itself, a base64 form is a multiple of 4 characters long and no 4- or 8-character
+       window of ``redacted`` base64-decodes to printable ASCII, and a ``Bearer`` form has at
+       least 12 characters.
+```
+
+### 6.33 `src/probos/__main__.py` (R3-A2)
+
+**P-1**
+SEARCH:
+```
+    for tier, model in shared_url_tiers.items():
+        # Read from the existing file, which can hold the chosen key or one it already had (#1414 item 7).
+        # The raw model is redacted first (repr doubles a backslash in it), then its repr, whose quotes and
+        # escapes can complete a key the raw model holds only part of (#1414 review).
+        shown = provider_setup.redact_keys(repr(provider_setup.redact_keys(model, keys)), keys)
+```
+REPLACE:
+```
+    for tier, model in shared_url_tiers.items():
+        # Read from the existing file, which can hold the chosen key or one it already had (#1414 item 7).
+        # Redacted after repr, whose quotes can complete a key the model holds only part of; a key the model
+        # holds whole appears in the repr as the key's Python-quoted spelling, which redact also matches.
+        shown = provider_setup.redact_keys(repr(model), keys)
+```
+
+### 6.34 `tests/test_bf995_setup_redaction.py` (R3-A2)
+
+**P-1**
+SEARCH:
+```
+    # quoted and doubled-backslash: the model's repr adds the quotes or the second backslash and so forms the key;
+    # raw-backslash: only the raw redaction finds the key, since repr doubles its backslash.
+    config = _existing(tmp_path, f"  llm_api_key_vision: {key_yaml}", f"  llm_model_vision: {model_yaml}")
+```
+REPLACE:
+```
+    # quoted and doubled-backslash: the model's repr adds the quotes or the second backslash and so forms the key;
+    # raw-backslash: repr doubles the key's backslash, so the key's Python-quoted spelling is what redact matches.
+    config = _existing(tmp_path, f"  llm_api_key_vision: {key_yaml}", f"  llm_model_vision: {model_yaml}")
+```
+
+**P-2**
+SEARCH:
+```
+    out = _printed(capsys)
+    assert f"vision ({note}) uses it" in out
+    assert key not in out
+```
+REPLACE:
+```
+    out = _printed(capsys)
+    assert f"vision ({note}) uses it" in out
+    assert key not in out
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["sk-bf995-a\\b", "sk-bf995-'a\\b", "sk-bf995-'q\"", "sk-bf995-\x07", "sk-bf995-\ud800"],
+    ids=["backslash", "quote-and-backslash", "both-quotes", "control", "lone-surrogate"],
+)
+def test_redact_hides_the_python_quoted_spellings_of_a_key(key: str) -> None:
+    # repr leaves a ' bare when the key holds no "; inside a longer string that holds both quotes it escapes the '.
+    alone, beside = repr(key), repr(f"{key}'\"")
+    assert key not in alone and key not in beside  # premise: only the quoted spellings are present
+
+    assert ps.redact(alone, key) == f"{alone[0]}<redacted>{alone[0]}"
+    assert ps.redact(beside, key) == "'<redacted>\\'\"'"
+
+
+@pytest.mark.parametrize(
+    ("key_yaml", "key"),
+    [("'sk-bf995-file\\N9Q4'", "sk-bf995-file\\N9Q4"), ('"sk-bf995-file-\\uD800"', "sk-bf995-file-\ud800")],
+    ids=["backslash", "lone-surrogate"],
+)
+def test_a_validator_quoting_a_file_key_prints_no_spelling_of_it(
+    key_yaml: str, key: str, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # attachments.vision_tier's validator says "got {v!r}": repr doubles the backslash, or escapes the surrogate.
+    config = _existing(tmp_path, f"  llm_api_key_vision: {key_yaml}")
+    with config.open("a", encoding="utf-8") as handle:
+        handle.write(f"attachments:\n  vision_tier: {key_yaml}\n")
+    assert ps.config_text_api_keys(config.read_text(encoding="utf-8")) == [key]  # premise: the file holds the key
+
+    assert _setup() == 4  # the result does not load, so the file is not replaced
+
+    out = _printed(capsys)
+    assert "Could not write" in out and "got '<redacted>'" in out  # premise: the validator's message was printed
+    assert repr(key)[1:-1] not in out and key not in out
+```
+
+### 6.35 `PROGRESS.md` (R3-A2)
+
+**P-1**
+SEARCH:
+```
+**BF-995 (2026-11-25), #1414 -- setup's provider excerpt stays at 200 characters, and setup hides every API key the existing config holds in the messages it prints from that file.** The excerpt's cut marker is U+2026, which no form of a key holds, so the second redaction in `_result` cannot match or complete a key across the cut. A key of `.` gives a 200-character excerpt where it gave 227 (`tests/test_bf995_setup_redaction.py::test_the_excerpt_for_a_key_of_dots_stays_at_200_characters`), and a key the old cut would have completed is not formed (`test_the_cut_completes_no_key`). Setup now redacts its chosen key and every `cognitive.llm_api_key*` value in the existing file (`config_text_api_keys`, read without validation) at the eight sites that print text from that file. A retained optional-tier model that holds the file's shared, vision or verifier key prints as `<redacted>` (`test_a_retained_model_holding_a_key_from_the_file_is_shown_redacted`). A refusal from reading or editing the file, the `--force` note and a write failure print no key from it (`test_a_refusal_quoting_the_file_prints_no_key_from_it`, `test_a_write_failure_quoting_the_file_prints_no_key_from_it`). A key with no UTF-8 form, such as a lone surrogate written as a YAML escape, is matched by its literal text; before the review, setup ended in a traceback after replacing the file (`test_a_key_with_no_utf8_form_is_hidden_and_setup_completes`, `test_redact_keys_hides_a_key_with_no_utf8_form`). The B7 note redacts a retained model before and after `repr`, whose quotes and backslash escapes could otherwise complete a key (`test_a_shown_model_never_completes_a_file_key`). Two limits are recorded on #1820: a key whose text is part of the `<redacted>` marker, such as `ed`, still shows inside each marker, and the lines that print the config's own path show it as given. Two pins in `tests/test_ad1135_provider_setup.py` now expect the new marker. Mutation census: 10 of 10 killed (rows A2-M1 to A2-M10, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+REPLACE:
+```
+**BF-995 (2026-11-25), #1414 -- setup's provider excerpt stays at 200 characters, and setup hides every API key the existing config holds in the messages it prints from that file.** The excerpt's cut marker is U+2026, which no form of a key holds, so the second redaction in `_result` cannot match or complete a key across the cut. A key of `.` gives a 200-character excerpt where it gave 227 (`tests/test_bf995_setup_redaction.py::test_the_excerpt_for_a_key_of_dots_stays_at_200_characters`), and a key the old cut would have completed is not formed (`test_the_cut_completes_no_key`). Setup now redacts its chosen key and every `cognitive.llm_api_key*` value in the existing file (`config_text_api_keys`, read without validation) at the eight sites that print text from that file. A retained optional-tier model that holds the file's shared, vision or verifier key prints as `<redacted>` (`test_a_retained_model_holding_a_key_from_the_file_is_shown_redacted`). A refusal from reading or editing the file, the `--force` note and a write failure print no key from it (`test_a_refusal_quoting_the_file_prints_no_key_from_it`, `test_a_write_failure_quoting_the_file_prints_no_key_from_it`). Every key is also matched in its Python-quoted spelling (`repr` without its quotes, alone and beside both quote characters), which is how a validator's `{v!r}`, an OSError's path and the B7 note's `repr` print it: a file key a validator quotes, holding a backslash or a lone surrogate, shows as `<redacted>` (`test_a_validator_quoting_a_file_key_prints_no_spelling_of_it`, `test_redact_hides_the_python_quoted_spellings_of_a_key`). A key with no UTF-8 form, such as a lone surrogate written as a YAML escape, is matched by its literal and quoted text; before the review, setup ended in a traceback after replacing the file (`test_a_key_with_no_utf8_form_is_hidden_and_setup_completes`, `test_redact_keys_hides_a_key_with_no_utf8_form`). The B7 note redacts the `repr` of a retained model, whose quotes could otherwise complete a key (`test_a_shown_model_never_completes_a_file_key`). Redaction matches whole forms, so three limits are recorded on #1820: a key whose text is part of the `<redacted>` marker, such as `ed`, still shows inside each marker; a key that only the text printed around a value completes (one holding the marker's text, or one equal to setup's own words around a value plus that value) shows on that line, which is the same whatever the key; and the lines that print the config's own path show it as given. Two pins in `tests/test_ad1135_provider_setup.py` now expect the new marker. Mutation census: 13 of 13 killed (rows A2-M1 to A2-M9 and A2-M11 to A2-M14, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases; A2-M10 was retired with the line it mutated. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+
+### 6.36 `DECISIONS.md` (R3-A2)
+
+**P-1**
+SEARCH:
+```
+- *D3.* Setup's excerpt is cut with U+2026 at 200 characters. Setup redacts its chosen key and every `cognitive.llm_api_key*` value in the existing file in each message it prints from that file; a key with no UTF-8 form is matched by its literal text, and a model shown with `repr` is redacted before and after it. Two limits are recorded on #1820: a key whose text is part of the `<redacted>` marker shows inside each marker, and the lines that print the config path show it as given. Other secrets in the file are out of scope. Rejected: a console that redacts all output (highlighting and markup escaping change a key's bytes, and a short key could break markup), and redacting the path lines with the file's keys (the path is the operator's own argument or the default under the home directory, and a one- or two-character key would mangle every path setup prints).
+```
+REPLACE:
+```
+- *D3.* Setup's excerpt is cut with U+2026 at 200 characters. Setup redacts its chosen key and every `cognitive.llm_api_key*` value in the existing file in each message it prints from that file. Every key is also matched in its Python-quoted spelling (`repr` without its quotes, alone and beside both quote characters), which covers a validator's `{v!r}`, an OSError's path and a model shown with `repr`; a key with no UTF-8 form is matched by its literal and quoted text. Redaction matches whole forms, so three limits are recorded on #1820: a key whose text is part of the `<redacted>` marker shows inside each marker; a key that only the text printed around a value completes shows on that line, which is the same whatever the key (no provider issues such a key); and the lines that print the config path show it as given. Other secrets in the file are out of scope. Rejected: a console that redacts all output (highlighting and markup escaping change a key's bytes, and a short key could break markup); checking each printed line whole and withholding it (Ollama's documented placeholder key `ollama` would withhold the confirmation whenever the provider is Ollama, and a value holding part of a key would still show it); and redacting the path lines with the file's keys (the path is the operator's own argument or the default under the home directory, and a one- or two-character key would mangle every path setup prints).
+```
+
+### 6.37 `src/probos/routers/config.py` (R3-A3)
+
+**P-1**
+SEARCH:
+```
+    load_config uses. Raises _ConfigUnreadable when the file cannot be checked for or read, is not
+    UTF-8, is not YAML or its top level is not a mapping; the reason never quotes the file, since a
+    YAML error's own text holds the offending line. PyYAML also fails outside YAMLError: a ValueError
+    for an impossible date or an integer of over 4,300 digits, and a RecursionError for deep nesting.
+```
+REPLACE:
+```
+    load_config uses. Raises _ConfigUnreadable when the file cannot be checked for or read, is not
+    UTF-8, is not YAML or its top level is not a mapping; the reason never quotes the file, since a
+    YAML error's own text holds the offending line. Any exception from the parse counts as not YAML:
+    besides YAMLError, PyYAML raises ValueError for an impossible date or an integer of over 4,300
+    digits, RecursionError for deep nesting and, from its constructors, KeyError (!!bool on a
+    non-boolean), IndexError (an empty !!int or !!float), AttributeError (!!timestamp on a non-date)
+    and OverflowError (a long sexagesimal float). load_config fails on each such file at boot.
+```
+
+**P-2**
+SEARCH:
+```
+    try:
+        document = yaml.safe_load(text)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        raise _ConfigUnreadable("not valid YAML") from None
+```
+REPLACE:
+```
+    try:
+        document = yaml.safe_load(text)
+    except Exception:  # any type, as the docstring says: PyYAML's constructors raise several besides YAMLError
+        raise _ConfigUnreadable("not valid YAML") from None
+```
+
+**P-3**
+SEARCH:
+```
+    try:
+        _write_yaml_atomic(cfg_path, to_write)
+    except (ValueError, RecursionError) as exc:
+        # The dump, _write_yaml_atomic's first statement, runs before any file is opened. It refuses values the file
+        # can hold and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and
+        # nesting deeper than the dump's recursion allows. The patch, parsed from JSON, holds neither, so the file
+        # is named.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+        )
+    except OSError as ex:
+        logger.error(
+            "AD-741 config write failed (cfg_path=%s): %s; "
+            "in-memory runtime config unchanged.",
+            cfg_path,
+            ex,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "write_failed", "detail": str(ex)},
+        )
+```
+REPLACE:
+```
+    try:
+        _write_yaml_atomic(cfg_path, to_write)
+    except OSError as ex:
+        logger.error(
+            "AD-741 config write failed (cfg_path=%s): %s; "
+            "in-memory runtime config unchanged.",
+            cfg_path,
+            ex,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": "write_failed", "detail": str(ex)},
+        )
+    except Exception as exc:
+        # Every step after _write_yaml_atomic's first statement, the dump, raises OSError (the dump's text is ASCII),
+        # so this is the dump, which runs before any file is opened. It refuses values the merged mapping can hold
+        # and load_config accepts: an integer of over 4,300 decimal digits (a YAML hex literal loads) and nesting
+        # deeper than the dump's recursion allows (from the file, or from the patch, which JSON nests as deep as it
+        # likes). Any other exception it raises is the dump's too and gets the same answer.
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the dump raised %s; the file is unchanged.",
+            cfg_path, type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=409, content={"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+        )
+```
+
+### 6.38 `tests/test_bf996_hxi_save_on_disk.py` (R3-A3)
+
+**P-1**
+SEARCH:
+```
+import probos.config as config_mod
+from probos.api import create_app
+from probos.config import CognitiveConfig, SystemConfig, load_config
+```
+REPLACE:
+```
+import probos.config as config_mod
+import probos.routers.config as config_router
+from probos.api import create_app
+from probos.config import CognitiveConfig, SystemConfig, load_config
+```
+
+**P-2**
+SEARCH:
+```
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_invalid", "errors": [{"loc": [], "type": "OverflowError"}]},
+    )
+    assert path.read_bytes() == data
+    assert runtime.config.system.log_level == "INFO"
+```
+REPLACE:
+```
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_invalid", "errors": [{"loc": [], "type": "OverflowError"}]},
+    )
+    assert path.read_bytes() == data
+    assert runtime.config.system.log_level == "INFO"
+
+
+@pytest.mark.parametrize(
+    ("data", "error"),
+    [
+        (b"x: !!bool not-a-boolean\n", KeyError),
+        (b'x: !!int ""\n', IndexError),
+        (b'x: !!float ""\n', IndexError),
+        (b"x: !!timestamp not-a-date\n", AttributeError),
+        (b"x: " + b"1:" * 199 + b"1.5\n", OverflowError),  # 200 sexagesimal segments: 60**199 is past a float
+    ],
+    ids=["bool", "int", "float", "timestamp", "sexagesimal"],
+)
+def test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is(
+    data: bytes, error: type[BaseException], tmp_path: Path,
+) -> None:
+    path = tmp_path / "system.yaml"
+    path.write_bytes(data)
+    with pytest.raises(error):  # premise: PyYAML's constructor raises this, not a YAMLError
+        yaml.safe_load(data)
+    with pytest.raises(error):  # premise: the file does not boot either
+        load_config(path)
+    client, runtime = _client(path)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (409, {"error": "config_unreadable", "reason": "not valid YAML"})
+    assert path.read_bytes() == data
+    assert runtime.config.system.log_level == "INFO"
+
+
+def test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _empty_file(tmp_path)
+    client, runtime = _client(path)
+
+    def refuse(cfg_path: str, data: dict[str, Any]) -> None:
+        raise PermissionError(13, "Permission denied", cfg_path)
+
+    monkeypatch.setattr(config_router, "_write_yaml_atomic", refuse)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    # AD-741's answer, kept: only the dump's refusals are 409; an OS refusal of the write is 500 write_failed.
+    assert (response.status_code, response.json()["error"]) == (500, "write_failed")
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert runtime.config.system.log_level == "INFO"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [yaml.representer.RepresenterError("cannot represent an object"), TypeError("not serializable")],
+    ids=["representer-error", "type-error"],
+)
+def test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file(
+    error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No loadable value is known to make the dump raise anything but ValueError or RecursionError, so the fault is injected:
+    # the dump runs before a file is opened, so an exception that is not an OSError is the dump's.
+    path = _empty_file(tmp_path)
+    client, runtime = _client(path)
+
+    def fail(cfg_path: str, data: dict[str, Any]) -> None:
+        raise error
+
+    monkeypatch.setattr(config_router, "_write_yaml_atomic", fail)
+
+    response = _save(client, {"system": {"log_level": "DEBUG"}})
+
+    assert (response.status_code, response.json()) == (
+        409, {"error": "config_unreadable", "reason": "holds a value that cannot be written back"},
+    )
+    assert path.read_text(encoding="utf-8") == "{}\n"
+    assert runtime.config.system.log_level == "INFO"
+```
+
+### 6.39 `PROGRESS.md` (R3-A3)
+
+**P-1**
+SEARCH:
+```
+**BF-996 (2026-11-25), #1414 -- an HXI settings save merges its patch onto the config file as it is on disk, so edits made since boot are kept.** `POST /api/config` wrote a dump of the configuration the process booted with. It now writes the file's own sections plus the patch, with all-commented sections dropped by `drop_null_sections`, the helper `load_config` now shares, and validates that result before writing it. An out-of-band edit and an earlier save awaiting restart both survive (`tests/test_bf996_hxi_save_on_disk.py::test_a_save_keeps_an_edit_made_to_the_file_after_boot`, `test_two_saves_before_a_restart_keep_both_changes`). A value set by `PROBOS_LLM_URL` is not written (`test_a_save_writes_no_value_the_environment_set`). A missing file receives only the patch (`test_a_save_onto_a_missing_file_writes_only_the_patch`), and a secret already in the file stays (`test_a_secret_already_in_the_file_survives_a_save`). A file that is not UTF-8, is not YAML (an impossible date or nesting past the recursion limit included) or is not a mapping answers 409 `config_unreadable` and is left byte for byte (`test_an_unusable_file_is_refused_and_left_as_it_is`). So does a config path the OS will not stat (`test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is`, the denial injected) or read (`test_a_directory_at_the_config_path_is_refused_and_left_as_it_is`), and a file holding a value the YAML dump refuses: an integer of over 4,300 decimal digits written in hex, or nesting too deep to dump (`test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is`). One that does not validate answers 409 `config_invalid` with `loc` and `type` only (`test_a_file_that_does_not_validate_is_refused_without_quoting_it`). One whose validation raises `OverflowError` (an integer too large for a float in `dm_agentic.budget_awareness_thresholds`) answers 409 `config_invalid` with one entry whose `loc` is empty (`test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is`); the validator, which stops `load_config` at boot on the same file, is a #1820 item. The secret-path guard still runs before the file is read (`test_a_secret_path_is_refused_before_the_file_is_read`); it, the runtime 422, `changed_fields` and hot reload are unchanged (`tests/test_ad741_config_api.py`, `tests/test_ad741_integration.py`, `tests/test_ad741_secret_redaction.py`). `tests/test_bf908_crew_scope_token.py` now expects no `auth` section in the written file. The facade baseline gains `drop_null_sections`. Mutation census: 14 of 14 killed (rows A3-M1 to A3-M9 and A3-M11 to A3-M15, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases; A3-M10 is a review property. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+REPLACE:
+```
+**BF-996 (2026-11-25), #1414 -- an HXI settings save merges its patch onto the config file as it is on disk, so edits made since boot are kept.** `POST /api/config` wrote a dump of the configuration the process booted with. It now writes the file's own sections plus the patch, with all-commented sections dropped by `drop_null_sections`, the helper `load_config` now shares, and validates that result before writing it. An out-of-band edit and an earlier save awaiting restart both survive (`tests/test_bf996_hxi_save_on_disk.py::test_a_save_keeps_an_edit_made_to_the_file_after_boot`, `test_two_saves_before_a_restart_keep_both_changes`). A value set by `PROBOS_LLM_URL` is not written (`test_a_save_writes_no_value_the_environment_set`). A missing file receives only the patch (`test_a_save_onto_a_missing_file_writes_only_the_patch`), and a secret already in the file stays (`test_a_secret_already_in_the_file_survives_a_save`). A file that is not UTF-8, is not YAML or is not a mapping answers 409 `config_unreadable` and is left byte for byte (`test_an_unusable_file_is_refused_and_left_as_it_is`). Any exception from the parse counts as not YAML: besides `YAMLError`, PyYAML raises `ValueError` for an impossible date, `RecursionError` for deep nesting and, from its constructors, `KeyError`, `IndexError`, `AttributeError` or `OverflowError` (`!!bool` on a non-boolean, an empty `!!int` or `!!float`, `!!timestamp` on a non-date, a long sexagesimal float; `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is`). So does a config path the OS will not stat (`test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is`, the denial injected) or read (`test_a_directory_at_the_config_path_is_refused_and_left_as_it_is`), and a merged result the YAML dump refuses with any exception: an integer of over 4,300 decimal digits written in hex, or nesting too deep to dump (`test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is`); any other exception from the write step gets the same answer (`test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file`, the failure injected). A write the OS refuses still answers 500 `write_failed` (`test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file`, the refusal injected). One that does not validate answers 409 `config_invalid` with `loc` and `type` only (`test_a_file_that_does_not_validate_is_refused_without_quoting_it`). One whose validation raises `OverflowError` (an integer too large for a float in `dm_agentic.budget_awareness_thresholds`) answers 409 `config_invalid` with one entry whose `loc` is empty (`test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is`); the validator, which stops `load_config` at boot on the same file, is a #1820 item. The secret-path guard still runs before the file is read (`test_a_secret_path_is_refused_before_the_file_is_read`); it, the runtime 422, `changed_fields` and hot reload are unchanged (`tests/test_ad741_config_api.py`, `tests/test_ad741_integration.py`, `tests/test_ad741_secret_redaction.py`). `tests/test_bf908_crew_scope_token.py` now expects no `auth` section in the written file. The facade baseline gains `drop_null_sections`. Mutation census: 17 of 17 killed (rows A3-M1 to A3-M9 and A3-M11 to A3-M18, run once on the candidate overlay of `dea82930` after the review repairs), each by its named cases; A3-M10 is a review property. Contract `prompts/bf-994-996-1414-batch-a-cli-config.md`.
+```
+
+### 6.40 `DECISIONS.md` (R3-A3)
+
+**P-1**
+SEARCH:
+```
+- *D4.* An HXI save writes the on-disk mapping plus the patch, validated, never a dump of the running config; an unusable file answers 409 `config_unreadable` (one the OS will not stat or read, and one holding a value the YAML dump refuses, included), an invalid result 409 `config_invalid` with `loc` and `type` only, and a validator's `OverflowError` 409 `config_invalid` with one entry, `loc` empty. No await runs between the read and the write. Rejected: refusing a save when the file's hash differs from boot (runtime plumbing, and it blocks a legitimate save); making the `budget_awareness_thresholds` validator raise `ValueError` in this batch (it changes `load_config`'s boot failure on such a file, which this batch keeps; #1820).
+```
+REPLACE:
+```
+- *D4.* An HXI save writes the on-disk mapping plus the patch, validated, never a dump of the running config; an unusable file answers 409 `config_unreadable` (one the OS will not stat or read, one whose parse raises any exception, and a merged result the YAML dump refuses with any exception, included), an invalid result 409 `config_invalid` with `loc` and `type` only, and a validator's `OverflowError` 409 `config_invalid` with one entry, `loc` empty; a write the OS refuses stays 500 `write_failed`. No await runs between the read and the write. Rejected: refusing a save when the file's hash differs from boot (runtime plumbing, and it blocks a legitimate save); making the `budget_awareness_thresholds` validator raise `ValueError` in this batch (it changes `load_config`'s boot failure on such a file, which this batch keeps; #1820); listing the parse's and the dump's exception types (each review round found another, and the dump runs before any file is opened, so anything but `OSError` there is the dump's).
+```
+
+## 6e. Verified Against Codebase and Absence Verified (review round 2 repairs, 2026-11-25)
+
+### R3-A1 (the head `c75d5347`)
+
+**Verified by grep:**
+- `_init_api_format` has exactly one caller, `__main__.py:1220`, plus one test, `test_bf994...:186`.
+- `SetupInputError(ValueError)` is at `provider_setup.py:127`.
+- The model rule is at `provider_setup.py:228`.
+- `from probos import provider_setup` is at `__main__.py:54`.
+- The json import pattern is local (`:703`, `:976`).
+
+**The Architect's red-on-the-head table for the new A1 cases** (the measured A/B is below).
+
+| Case | Red line on head and its reason |
+|---|---|
+| format `[encoded-slash]` | `:133`: format is `ollama` (decoded `.path` is `///`) |
+| format `[escaped-slash]` | `:132` premise: the file loads `http://localhost:11434//` |
+| format `[double-quote]` | `_init` `:61`: `yaml.safe_load` raises, so it is red by error |
+| e2e `[encoded-slash]` | `:156`: posted `/%2F/api/chat` (new recorder, applied with the test file) |
+| e2e `[escaped-slash]` | `:151` premise: loaded `//` != typed |
+| `..._client_cannot_parse[*]` | `_init` `:60` `assert not pending`: head accepts the URL, the model prompt takes `accepted`, and `llama3.1:8b` is left unused. Both premise lines pass on head. |
+| `..._model_as_typed[double-quote]` | `:61`: red by error, the YAML scanner raises |
+| `..._model_as_typed[backslash-t]` | the final assert: the model loads with a real tab |
+| `..._model_setup_would_refuse[*]` | `_init` `:60`: head asks for the model once |
+| `..._any_printable_url_and_model...` | `yaml.safe_load` raises at `ch == '"'`, so it is red by error |
+
+### R3-A2 and R3-A3 (the head `c75d5347`)
+
+- `provider_setup.py`: 9-17 (module docstring), 281 (`_REDACTED`), 284-298 (`_key_forms`), 311-322 (`redact` docstring), 94-95 (the `ollama` preset).
+- `__main__.py`: 1666-1674 (B7 note), 1737-1741 (confirm line), 1851 (write failure).
+- `routers/config.py`: 153-180 (reader), 339-363 (write).
+- `tests/test_bf995_setup_redaction.py:173-197`, `tests/test_bf996_hxi_save_on_disk.py:115-222`.
+- `PROGRESS.md:5,7`, `DECISIONS.md:18-19`, contract lines 2202-2219, 2260-2267 and 2284-2287.
+
+### Measured by the orchestrator
+
+**Measured on the oracle (orchestrator, 2026-11-25).** The oracle is the head `c75d5347` with the pairs of sections 6.28 to 6.40 applied.
+- The three new or changed test files: 81 passed. The consumer-focused run (the R1 and R2 lists of section 5, 14 entries): 807 passed, 3 skipped.
+- A/B against the head's production code (the same three test files, the head's source): 26 of the 81 tests fail, each for the reason the answers name. A1 (12): `test_init_writes_the_format_the_typed_url_serves[encoded-slash,escaped-slash,double-quote]`, `test_the_init_config_reaches_the_api_its_url_serves[encoded-slash,escaped-slash]`, `test_init_asks_again_for_a_url_the_client_cannot_parse[ipv6-literal,idna-host]`, `test_init_writes_the_model_as_typed[double-quote,backslash-t]`, `test_init_asks_again_for_a_model_setup_would_refuse[delete,next-line]`, `test_the_scaffold_writes_any_printable_url_and_model_as_given`. A2 (7): `test_redact_hides_the_python_quoted_spellings_of_a_key[*]` (5 ids), `test_a_validator_quoting_a_file_key_prints_no_spelling_of_it[backslash,lone-surrogate]`. A3 (7): `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is[*]` (5 ids), `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` (2 ids). `test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file` is green there by design: it pins the answer the wording now states and kills A3-M18.
+- Mutation census: 44 of 44 rows killed (A1 14, A2 13, A3 17), the baseline of the five row-bearing test files clean (268 passed, 1 skipped), every named killer of every row failing in its row.
+- The seven generator and check scripts pass: architecture principles, config reference, config profiles, config facade, seam contracts, store registry, AD ledger.
+
+### Claims that rested on reading, and what the oracle measured (A1)
+
+**Claims of the A1 answer that rested on reading, and what the oracle measured (orchestrator, 2026-11-25).**
+1. httpx percent-encodes a backslash in a path as `%5C`: refuted (correction 1).
+2. `httpx.URL` accepts a double quote in a path, so init does not refuse the `double-quote` row: confirmed (`test_init_writes_the_format_the_typed_url_serves[double-quote]` passes: the URL is written and classified `openai`).
+3. `URL.raw_path` is the encoded path with dot segments removed: confirmed (A1-M10 and the `[encoded-slash]` cases).
+4. `http://\u00fc-.example/v1` passes `normalize_base_url` and httpx raises `InvalidURL` with the text "Invalid IDNA hostname": confirmed on the head and the base (`http://[v1.a]:11434` likewise: "Invalid IPv6 address"); the `idna-host` row stays.
+5. `httpx.InvalidURL` is not a `ValueError`: confirmed (its only base is `Exception`); `ValueError` stays in the `except` clause as R1 had it.
+6. `json.dumps(value, ensure_ascii=False)` is a YAML double-quoted scalar that PyYAML reads back equal for printable text: confirmed (`test_the_scaffold_writes_any_printable_url_and_model_as_given`).
+7. The goldens and setup's scaffold stay byte-identical: confirmed (the init goldens in `tests/test_ad1135_provider_setup.py` and the setup CLI tests pass).
+8. `AsyncClient(base_url=...)` parses the string init parses: confirmed (the e2e cases build a real `OpenAICompatibleClient` from the written file).
+9. Line lengths stay under the repository's ruff limit: moot; no file in the repository sets one (no `[tool.ruff]` or `line-length` in `pyproject.toml`, and no `ruff.toml`, `.flake8`, `setup.cfg` or `tox.ini`).
+
+### Claims that rested on reading, and what the oracle measured (A2 and A3)
+
+**Claims of the A2 and A3 answer that rested on reading, and what the oracle measured (orchestrator, 2026-11-25).**
+1. `!!omap` and `!!pairs` load as tuples that `safe_dump` cannot represent: refuted (correction 2).
+2. Inside `_write_yaml_atomic` only `OSError` can follow the dump: confirmed by reading and by the dump's output: the statements after `yaml.safe_dump(data, sort_keys=False)` are `tempfile.mkstemp`, `os.fdopen`, two `write` calls and `os.replace` (`routers/config.py`, `_write_yaml_atomic`), and `safe_dump` with `allow_unicode` unset writes ASCII.
+3. The two quoted spellings cover every way a Python `repr` embeds a key: confirmed exhaustively: every key of 1 to 3 characters over `a`, a backslash, `'`, `"`, U+0007, U+00E9, U+0085, U+D800 and `<`, inside 100 hosts each (81,900 pairs, both quote regimes), has its embedded spelling among the key's forms; against the head's `_key_forms` the same probe finds 71,880 outside them.
+4. The quoted forms keep `redact`'s one-pass proof: confirmed: `test_redact_hides_every_form_of_every_accepted_key_beside_and_between_markers` passes on the oracle.
+5. Under the simplified B7 line the three B7 tests stay green and A2-M9 is still killed: confirmed (807 passed in the consumer run; A2-M9 killed). A2-M10's mutant is now the code itself, so the row is retired.
+6. The F3 setup test exits 4 through verify, `load_config` and the write-failure site: confirmed (the test asserts exit 4 and `got '<redacted>'` in the output).
+7. No test counts `_key_forms`: confirmed (no file under `tests/` names it).
+8. The reviewer's `fast model-x` confirm-line case shows: reproduced: on the head and on the oracle the line `models: fast model-x, ...` holds the text of a file key `fast model-x`; the line is the same for any other key, so nothing about the key is disclosed.
+9. No `model_validator(mode="before")` in `src/probos/config*`: confirmed (a search of `config.py` and `config_models/` finds none).
+10. A patch holding a 400-digit integer in `dm_agentic.budget_awareness_thresholds` answers 500 at the runtime merge: confirmed (500 on the head and on the oracle, the file unchanged; a valid list answers 200).
+11. A2-F1 does not depend on the key: confirmed (a key `zzz-<redacted>` in place of `prefix-<redacted>` prints the same line).
+12. The 200-segment float raises `OverflowError` in `safe_load` and `load_config`: confirmed (the premise lines of `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is[sexagesimal]` pass).
+13. Ollama's documentation uses the placeholder `api_key='ollama'`: not checked (a web claim); it supported the whole-line boundary the Architect rejected, which is not built.
+
 ## 7. Mutation census and generated-artifact commands
 
 | Row | Mutant | Killer |
@@ -2191,7 +3109,13 @@ Prior-art search was skipped: this is ProbOS router plumbing with no outside ana
 | A1-M6 | setup's managed values add `llm_timeout_seconds` | `test_setup_on_an_existing_file_adds_no_timeout` |
 | A1-M7 | `_init_api_format` judges `urlsplit(llm_url).path`, the URL as typed | `test_init_writes_the_format_the_typed_url_serves[root-dot,v1-dotdot,sub-dotdot]`, `test_the_init_config_reaches_the_api_its_url_serves[root-by-dot-segments]` |
 | A1-M8 | `_cmd_init` takes the first URL without `normalize_base_url` | `test_init_asks_again_for_a_url_setup_would_refuse[*]` |
-| A1-M9 | `_init_api_format`'s `except` clause is removed | `test_a_url_the_client_cannot_parse_is_openai` |
+| A1-M9 | retired by R3: `_init_api_format` has no `except` clause; its successor is A1-M11 | -- |
+| A1-M10 | `_init_api_format` judges the decoded `url.path` (R1's line) | `test_init_writes_the_format_the_typed_url_serves[encoded-slash]`, `test_the_init_config_reaches_the_api_its_url_serves[encoded-slash]` |
+| A1-M11 | `_init_api_format` returns `openai` for a URL httpx cannot parse (R1's `except` clause restored) | `test_init_asks_again_for_a_url_the_client_cannot_parse[*]` |
+| A1-M12 | `_cmd_init` computes the format after the model prompt, outside the URL loop's `try` | `test_init_asks_again_for_a_url_the_client_cannot_parse[*]` |
+| A1-M13 | the URL line renders `"{llm_url}"` again | `test_the_scaffold_writes_any_printable_url_and_model_as_given`, `test_init_writes_the_format_the_typed_url_serves[escaped-slash,double-quote]`, `test_the_init_config_reaches_the_api_its_url_serves[escaped-slash]` |
+| A1-M14 | the model line renders `"{llm_model}"` again | `test_the_scaffold_writes_any_printable_url_and_model_as_given`, `test_init_writes_the_model_as_typed[*]` |
+| A1-M15 | the model prompt takes the first answer (no model rule) | `test_init_asks_again_for_a_model_setup_would_refuse[*]` |
 | A2-M1 | the marker reverts to `"..."` with the cut at -3 | `test_the_excerpt_for_a_key_of_dots_stays_at_200_characters`, `test_the_cut_completes_no_key`, `test_ad1135_provider_setup.py:425,470` |
 | A2-M2 | `_CUT_MARKER` is kept but the cut stays at -3 (198 characters) | `test_the_excerpt_for_a_key_of_dots_stays_at_200_characters` (asserts 200), `test_the_cut_completes_no_key` |
 | A2-M3 | the shared-URL notes redact only the chosen key | `test_a_retained_model_holding_a_key_from_the_file_is_shown_redacted[*]` |
@@ -2201,7 +3125,11 @@ Prior-art search was skipped: this is ProbOS router plumbing with no outside ana
 | A2-M7 | the write-failure site redacts only the chosen key | `test_a_write_failure_quoting_the_file_prints_no_key_from_it` |
 | A2-M8 | `_key_forms` lets `UnicodeEncodeError` through | `test_redact_keys_hides_a_key_with_no_utf8_form`, `test_a_key_with_no_utf8_form_is_hidden_and_setup_completes[*]` |
 | A2-M9 | the B7 note prints the `repr` of the redacted model without redacting it again (the head's line) | `test_a_shown_model_never_completes_a_file_key[quoted,doubled-backslash]` |
-| A2-M10 | the B7 note redacts only the `repr` text | `test_a_shown_model_never_completes_a_file_key[raw-backslash]` |
+| A2-M10 | retired in R3: R3 removed the raw-model redaction it mutated, since a key the model holds whole shows in the `repr` as its quoted spelling | none |
+| A2-M11 | `_key_forms` yields no Python-quoted spelling | `test_redact_hides_the_python_quoted_spellings_of_a_key[*]`, `test_a_validator_quoting_a_file_key_prints_no_spelling_of_it[*]`, `test_a_shown_model_never_completes_a_file_key[raw-backslash]` |
+| A2-M12 | `_key_forms` drops the spelling beside both quotes | `test_redact_hides_the_python_quoted_spellings_of_a_key[quote-and-backslash]` |
+| A2-M13 | `_key_forms` drops repr's own spelling | `test_redact_hides_the_python_quoted_spellings_of_a_key[quote-and-backslash]` |
+| A2-M14 | a key with no UTF-8 form yields its literal text only | `test_redact_hides_the_python_quoted_spellings_of_a_key[lone-surrogate]`, `test_a_validator_quoting_a_file_key_prints_no_spelling_of_it[lone-surrogate]`, `test_a_key_with_no_utf8_form_is_hidden_and_setup_completes[*]` |
 | A3-M1 | the save writes `new_cfg.model_dump(mode="json")` | `test_a_save_keeps_an_edit_made_to_the_file_after_boot`, `test_two_saves_before_a_restart_keep_both_changes`, `test_a_save_writes_no_value_the_environment_set`, `test_a_save_onto_a_missing_file_writes_only_the_patch`, `test_a_section_whose_values_are_all_commented_out_does_not_block_a_save`, `test_a_secret_already_in_the_file_survives_a_save` |
 | A3-M2 | the disk-mapping validation is removed | `test_a_file_that_does_not_validate_is_refused_without_quoting_it` |
 | A3-M3 | `_ConfigUnreadable` is treated as `{}` | `test_an_unusable_file_is_refused_and_left_as_it_is[*]` |
@@ -2212,11 +3140,14 @@ Prior-art search was skipped: this is ProbOS router plumbing with no outside ana
 | A3-M8 | a missing file answers 409 | `test_a_save_onto_a_missing_file_writes_only_the_patch` |
 | A3-M9 | the YAML `except` clause catches only `yaml.YAMLError` | `test_an_unusable_file_is_refused_and_left_as_it_is[impossible-date,deep-nesting]` |
 | A3-M10 | `changed_fields` is computed from the disk diff | no test; Diff Reviewer property A3-5 |
-| A3-M11 | the write's dump clause (`ValueError`, `RecursionError`) is removed | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[*]` |
-| A3-M12 | the write's dump clause catches only `ValueError` | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[nesting]` |
+| A3-M11 | the write's dump clause (`except Exception`) is removed | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[*]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M12 | the write's dump clause catches only `ValueError` | `test_a_file_holding_a_value_the_dump_refuses_is_refused_and_left_as_it_is[nesting]`, `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
 | A3-M13 | the disk validation's `OverflowError` clause is removed | `test_a_file_a_validator_cannot_check_is_refused_and_left_as_it_is` |
 | A3-M14 | `path.exists()` runs before the reader's `try` again | `test_a_config_path_the_os_will_not_stat_is_refused_and_left_as_it_is` |
 | A3-M15 | the secret guard is moved after the disk read | `test_a_secret_path_is_refused_before_the_file_is_read` |
+| A3-M16 | the reader's `except` catches only `(yaml.YAMLError, ValueError, RecursionError)` again | `test_a_file_pyyaml_cannot_construct_is_refused_and_left_as_it_is[*]` |
+| A3-M17 | the write's dump clause catches only `(ValueError, RecursionError)` again | `test_a_dump_that_fails_with_any_other_exception_answers_409_and_leaves_the_file[*]` |
+| A3-M18 | the write's `except Exception` clause comes before `except OSError` | `test_a_write_the_os_refuses_answers_write_failed_and_leaves_the_file` |
 
 Generated artifacts, in order, at M4, on the post-B15 base (interpreter `d:/ProbOS/.venv/Scripts/python.exe`):
 
@@ -2239,11 +3170,12 @@ Preflight phases that fail if a step is missing:
 ## 8. Diff Reviewer brief (per slice) and #1414 landing comment
 
 **A1. Consumers to accept the change:** `OpenAICompatibleClient` (`llm_client.py:866`, `:2383`, `:2494`), `load_config`, and setup's create path (`_setup_scaffold`).
-- A1-1: `_cmd_init` writes `ollama` only when the URL, given one trailing slash and parsed by httpx as the client does (dot segments removed), has port 11434 and an empty or slash-only path. Every other URL, including `http://localhost:11434/v1` and `/v1/.`, and a URL httpx cannot parse, gets `openai`. The model-default line is unchanged.
+- A1-1: `_cmd_init` writes `ollama` only when the URL, given one trailing slash and parsed by httpx as the client does (dot segments removed), has port 11434 and an encoded path (`raw_path`) that is empty or slashes only, so `/%2F` is `openai`. Every other URL, including `http://localhost:11434/v1` and `/v1/.`, gets `openai`. The model-default line is unchanged.
 - A1-2: the only scaffold change is `llm_timeout_seconds: 300.0` under `cognitive:`. Setup's edit and `--force` paths never add it, and the `CognitiveConfig` default stays 30.0.
 - A1-3: the init goldens move only by that line and by the Ollama row's format word; the comment says why.
 - A1-4: the docs and the compose comment say `PROBOS_LLM_URL` replaces only the shared URL and that per-tier URLs win. The compose example still ends in `/v1`.
-- A1-5: init asks for the endpoint URL again, printing setup's reason, for any URL `provider_setup.normalize_base_url` refuses (a query or fragment, credentials, whitespace, a scheme other than http(s), no host, a port that does not parse or is 0), and writes the URL as typed once one passes.
+- A1-5: init asks for the endpoint URL again, printing setup's reason, for any URL `provider_setup.normalize_base_url` refuses (a query or fragment, credentials, whitespace, a scheme other than http(s), no host, a port that does not parse or is 0), and, printing httpx's reason, for any URL httpx cannot parse once given its trailing slash (the parse the format is judged on, inside the same `try`). It writes the URL as typed once one passes.
+- A1-6: `_render_init_config` writes the URL and the model as `json.dumps(value, ensure_ascii=False)`, so `yaml.safe_load` returns them unchanged for any printable text. Init asks again for a model that is empty or not printable (setup's model rule), which JSON would leave raw. A URL or model without a backslash or a double quote renders byte-identically, so the goldens and setup's scaffold do not move. `repo_path` is unchanged: setup's create path refuses a home the template cannot carry, and init's share of that is recorded on #1820, as is setup's acceptance of a URL httpx cannot parse.
 
 **A2. Consumers:** the operator's terminal and `probos doctor` (which shows the excerpt).
 - A2-1: `_excerpt` returns at most 200 characters, ending in U+2026 when cut, and the source holds the `"\u2026"` escape, not the literal character.
@@ -2257,14 +3189,14 @@ Preflight phases that fail if a step is missing:
   - P7 `_cmd_setup`'s "Could not write";
   - P8 the backup line.
 - A2-4: `file_keys` is computed before `optional_tier_endpoints` runs, and the message of the invalid-YAML exit 4 is unchanged.
-- A2-5: no message setup prints from text it read from the existing file shows a key, and "API key: present / not set" is unchanged. Out of scope, recorded on #1820: the lines that print the target path, and a key whose text is part of `<redacted>`.
-- A2-6: `_key_forms` never raises: a key with no UTF-8 form yields its literal text only, and every other key yields the same five forms as before.
-- A2-7: `_setup_shared_url_notes` redacts the model, then redacts the `repr` of the result, and prints that with no further `repr`.
+- A2-5: no message setup prints from text it read from the existing file shows a whole form of a key it knows (the five forms and the two Python-quoted spellings), and "API key: present / not set" is unchanged. Out of scope, recorded on #1820: the lines that print the target path; a key whose text is part of `<redacted>`; and a key that only the text printed around a value completes (one holding the marker's text, or one equal to setup's words around a value plus that value), whose line is the same whatever that key is.
+- A2-6: `_key_forms` never raises. Every key yields its literal text and its two Python-quoted spellings, `repr(key)[1:-1]` and `repr(key + "'\"")[1:-4]`; a key with a UTF-8 form also yields the four percent-encoded and base64 forms as before.
+- A2-7: `_setup_shared_url_notes` redacts the `repr` of the model with the chosen and file keys and prints that with no further `repr`; R1's redaction of the raw model is gone, since a key the model holds whole shows in the `repr` as its quoted spelling.
 
 **A3. Consumers:** the HXI settings store (`ui/src/store/useSettingsStore.ts:196-229`) and the next boot's `load_config`.
 - A3-1: what is written equals `_deep_merge(on-disk mapping, patch)`. The on-disk mapping is passed through `drop_null_sections`, the same function `load_config` calls, and is never a dump of `runtime.config`.
 - A3-2: that mapping passes `SystemConfig.model_validate` before the write. On failure the answer is 409 `config_invalid` with `loc` and `type` only, and the file and `runtime.config` are unchanged. An `OverflowError` from a validator, which pydantic does not wrap, answers 409 `config_invalid` with the one entry `{"loc": [], "type": "OverflowError"}`; the validator itself is a #1820 item.
-- A3-3: a missing file starts from `{}`. A file whose existence check or read raises `OSError`, that is not UTF-8, is not YAML (an impossible date and nesting past the recursion limit included) or is not a mapping answers 409 `config_unreadable` with a fixed reason and is left untouched. So does a file holding a value `yaml.safe_dump` refuses (`ValueError` or `RecursionError` from the dump, which runs before any file is opened), with the reason `holds a value that cannot be written back`.
+- A3-3: a missing file starts from `{}`. A file whose existence check or read raises `OSError`, that is not UTF-8, whose parse raises any exception (besides `YAMLError`, PyYAML raises `ValueError`, `RecursionError`, and from its constructors `KeyError`, `IndexError`, `AttributeError` and `OverflowError`) or that is not a mapping answers 409 `config_unreadable` with a fixed reason and is left untouched. So does a merged mapping, from the file or the patch, that `yaml.safe_dump` refuses with any exception (an integer of over 4,300 digits, nesting too deep), with the reason `holds a value that cannot be written back`; the dump runs before any file is opened. An `OSError` from the write is still 500 `write_failed`.
 - A3-4: no `await` runs between the disk read and `_write_yaml_atomic`.
 - A3-5: the secret guard (400) runs first. The runtime merge and 422, the 503, the runtime-based `changed_fields` and hot reload are unchanged.
 - A3-6: `load_config` behaves the same for every input, including the `AttributeError` for a top level that is not a mapping.
@@ -2277,14 +3209,14 @@ Preflight phases that fail if a step is missing:
 ```
 Batch A (CLI and configuration) is merged in <PR #...> (<sha>), gated by <receipt path, receipt sha>.
 
-- [x] Item 2 (init with Ollama posted to /v1/api/chat): BF-994. init writes the openai format for its /v1 default; only an Ollama root as the client sends it (port 11434, an empty path once dot segments are removed) keeps ollama, and init asks again for a URL setup's rule refuses, such as one with a query. Proof: tests/test_bf994_init_config_reaches_its_api.py, a real OpenAICompatibleClient over a mock transport (POST /v1/chat/completions for the detected default, /api/chat for a typed root and for /v1/..).
+- [x] Item 2 (init with Ollama posted to /v1/api/chat): BF-994. init writes the openai format for its /v1 default; only an Ollama root as the client sends it (port 11434, an encoded path that is empty once dot segments are removed) keeps ollama. init asks again for a URL setup's rule refuses, such as one with a query, for a URL the client could not be built from, and for a model that is not printable text, and it writes the URL and the model exactly as typed. Proof: tests/test_bf994_init_config_reaches_its_api.py, a real OpenAICompatibleClient over a mock transport (POST /v1/chat/completions for the detected default, /api/chat for a typed root and for /v1/.., /%2F/chat/completions for /%2F). Setup's acceptance of a URL httpx cannot parse and a home path the scaffold cannot carry are recorded on #1820.
 - [x] Item 5 (30 s timeout in generated configs): BF-994. The scaffold shared by init and setup's create path sets llm_timeout_seconds: 300.0; existing files are unchanged.
 - [x] Item 4 (PROBOS_LLM_URL reaches only the shared URL): behaves as documented; docs/getting-started/configuration.md and the docker-compose.yml comment now say a tier with its own llm_base_url_<tier> keeps it. No code change.
 - [x] Item 6 (excerpt over 200 characters): BF-995. Cut marker U+2026; a key of "." gives 200 characters (227 before).
-- [x] Item 7 (setup redacts only the key being configured): BF-995. Setup redacts every cognitive.llm_api_key* value in the existing file at the eight sites that print text from it, a key with no UTF-8 form and a model shown with repr included. Other secret kinds in the file are out of this item's scope; the config path lines and a key that is part of the <redacted> marker are recorded on #1820.
-- [x] Item 3 (HXI save reverts out-of-band edits): BF-996. The save merges its patch onto the file as it is on disk; a file it cannot stat, read, parse, validate or write back answers 409 and is left as it is. Proof: tests/test_bf996_hxi_save_on_disk.py through the real router. The budget_awareness_thresholds validator's OverflowError, which also stops a boot, is a #1820 item.
+- [x] Item 7 (setup redacts only the key being configured): BF-995. Setup redacts every cognitive.llm_api_key* value in the existing file at the eight sites that print text from it, in each key's literal, encoded and Python-quoted spellings (a validator's {v!r}, a model shown with repr), a key with no UTF-8 form included. Other secret kinds in the file are out of this item's scope; the config path lines, a key that is part of the <redacted> marker and a key that only the words printed around a value complete are recorded on #1820.
+- [x] Item 3 (HXI save reverts out-of-band edits): BF-996. The save merges its patch onto the file as it is on disk; a file it cannot stat, read, parse or validate, or a merged result the YAML dump refuses, answers 409 and is left as it is, and a write the OS refuses still answers 500 write_failed. Proof: tests/test_bf996_hxi_save_on_disk.py through the real router. The budget_awareness_thresholds validator's OverflowError, which also stops a boot, is a #1820 item.
 
-Mutation census: A1 9/9, A2 10/10, A3 14/14 killed; A3-M10 is a review property.
+Mutation census: A1 14/14 (A1-M9 retired), A2 13/13 (A2-M10 retired), A3 17/17 killed; A3-M10 is a review property.
 Not ticked here: items 1, 8 to 14 (Batches B and C, the item 10 consolidation, item 13 as a limit).
 ```
 
