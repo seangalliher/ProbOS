@@ -441,8 +441,11 @@ class EpisodicRecallProbe:
                 details={"skipped": True, "reason": "no_episodic_memory"},
             )
 
-        # Check sufficient episodes
-        episode_count = await runtime.episodic_memory.count_for_agent(agent_id)
+        # Check sufficient episodes. BF-992: agent_id is the registry's key (the slot id, as the lookup
+        # below uses it); the agent's episodes carry its sovereign id, so both episode reads use that.
+        from probos.cognitive.episodic import resolve_sovereign_id_from_registry
+        memory_id = resolve_sovereign_id_from_registry(agent_id, getattr(runtime, "registry", None))
+        episode_count = await runtime.episodic_memory.count_for_agent(memory_id)
         if episode_count < 3:
             return TestResult(
                 agent_id=agent_id,
@@ -471,7 +474,7 @@ class EpisodicRecallProbe:
             )
 
         # Get 3 episodes
-        episodes = await runtime.episodic_memory.recent_for_agent(agent_id, k=3)
+        episodes = await runtime.episodic_memory.recent_for_agent(memory_id, k=3)
         if len(episodes) < 3:
             return TestResult(
                 agent_id=agent_id,

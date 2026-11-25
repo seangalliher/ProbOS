@@ -997,12 +997,14 @@ async def _activate_boot_camp_on_cold_start(*, runtime: Any) -> bool:
     coordinator = getattr(runtime, "boot_camp", None)
     if coordinator is None or not await _is_new_crew_start(runtime):
         return False
+    from probos.cognitive.episodic import resolve_sovereign_id
     from probos.cognitive.standing_orders import get_department
 
     ontology = getattr(runtime, "ontology", None)
     crew_agents = [
         {
             "agent_id": agent.id,
+            "memory_id": resolve_sovereign_id(agent),  # BF-992: the id the agent's episodes carry
             "callsign": getattr(agent, "callsign", "") or agent.agent_type,
             "department": getattr(agent, "department", "") or get_department(agent.agent_type) or "unassigned",
         }
