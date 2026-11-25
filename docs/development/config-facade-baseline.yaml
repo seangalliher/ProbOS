@@ -3427,7 +3427,7 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: 11122e41ac178ecae553516ec2f186ec7567b2da0f1248c50270cc9b1d48be5d
+    schema_sha256: 1b59da8eed80e6c6bcb1e1184862fa4c4d4601c3e9768347887939433d21eeb6
     fields:
     - {default: SystemInfo(...), name: system}
     - {default: PoolConfig(...), name: pools}
@@ -3943,6 +3943,6 @@ models:
     bases:
     - BaseModel
     - object
-    schema_sha256: f52a9886550b551b13497f79179c9135be1b9f16bf00c682f44de468ac229b51
+    schema_sha256: ecb38aa280253b905dcd571501141521cc287120c5becb39090f10513edfd561
     fields:
     - {default: 'True', name: enabled}

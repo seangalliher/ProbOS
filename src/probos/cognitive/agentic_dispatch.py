@@ -2389,7 +2389,12 @@ def _project_tool_invocations(result: Any) -> ToolInvocations | None:
                 "them rather than risk contradicting a successful write",
                 len(dropped), sorted(set(dropped)),
             )
-        return ToolInvocations.from_names(attempted, succeeded)
+        # AD-1358 S2 (#1750): a record that left calls out says so. Without the mark, a turn whose every
+        # call was unverifiable would read as "called no tool", which it did not. The mark rides the
+        # record through the pass union (``merged_with``) and the wire, so no later pass can make the
+        # record look complete. The lists, and so the write verdict, are unchanged: ``step_4n`` reads
+        # ``attempted`` only.
+        return ToolInvocations.from_names(attempted, succeeded, incomplete=bool(dropped))
     except Exception:
         logger.warning(
             "AD-1295: tool-invocation projection raised; this turn carries no "

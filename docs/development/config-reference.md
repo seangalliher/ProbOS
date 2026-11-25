@@ -1892,7 +1892,7 @@ Whether a reply is checked against the turn's write ledger.
 
 | Field | Type | Default | Bounds | Description |
 |---|---|---|---|---|
-| `enabled` | `bool` | `True` | — | AD-1285 (#1087): check a 1:1 reply against the turn's write ledger and append one honest sentence when a durable-write channel ran and wrote nothing. Reads no reply text. Default ON because this is a safety control rather than a capability, and a default-OFF control defends nothing (#13(a)) -- which is the AD-1157 failure mode #1087 names. Safe on: the verdict abstains unless a channel actually ran, so a turn with no write marker is byte-identical. |
+| `enabled` | `bool` | `True` | — | AD-1285 (#1087): check a 1:1 reply against the turn's write ledger and append one honest sentence when a durable-write channel ran and wrote nothing; that verdict reads no reply text. AD-1358 S2 (#1750): the same switch appends one sentence when the reply's wording claims a search or lookup and the turn's tool record holds no call. Default ON because this is a safety control rather than a capability, and a default-OFF control defends nothing (#13(a)) -- which is the AD-1157 failure mode #1087 names. Safe on: each check abstains unless its record shows the case (a channel that ran; a tool record with no call). |
 
 ## `self_contradiction_recall`
 
