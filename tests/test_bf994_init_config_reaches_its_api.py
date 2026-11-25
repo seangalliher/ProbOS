@@ -8,6 +8,7 @@ an existing file is not given one.
 from __future__ import annotations
 
 import argparse
+import string
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ import yaml
 from rich.console import Console
 
 import probos.__main__ as main_mod
+from probos import provider_setup
 from probos.cognitive.llm_client import OpenAICompatibleClient
 from probos.config import load_config
 from probos.types import LLMRequest
@@ -73,12 +75,12 @@ def _timeouts(path: Path) -> dict[str, float]:
 
 
 async def _chat_posts(config_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Send one request through the real client built from ``config_path``; return the paths it POSTed."""
+    """Send one request through the real client built from ``config_path``; return the paths it POSTed, as sent."""
     posts: list[str] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
         if request.method == "POST":
-            posts.append(request.url.path)
+            posts.append(request.url.raw_path.decode("ascii"))  # encoded: /%2F stays /%2F
         # One body both formats read: Ollama's native message and the OpenAI choices.
         message = {"role": "assistant", "content": "ok"}
         return httpx.Response(200, json={
@@ -116,12 +118,17 @@ async def _chat_posts(config_path: Path, monkeypatch: pytest.MonkeyPatch) -> lis
         ("http://localhost:11434/a/../", "ollama"),
         ("http://127.0.0.1:8080/v1", "openai"),
         ("http://127.0.0.1:8080", "openai"),
+        ("http://localhost:11434/%2F", "openai"),
+        ("http://localhost:11434/\\u002f", "openai"),
+        ('http://localhost:11434/v1"x', "openai"),
     ],
     # #1414 review: dot segments are judged as httpx sends them (/v1/.. is the root); a port that does not
-    # parse is now refused by init (test_init_asks_again_for_a_url_setup_would_refuse).
+    # parse is now refused by init (test_init_asks_again_for_a_url_setup_would_refuse). The path is judged
+    # encoded, as sent (/%2F is not the root), and a URL with a backslash or a quote is written as typed.
     ids=[
         "ollama-v1", "ollama-v1-slash", "v1-dot", "ollama-root", "ollama-root-slash", "root-double-slash",
-        "root-dot", "v1-dotdot", "sub-dotdot", "proxy-v1", "other-root",
+        "root-dot", "v1-dotdot", "sub-dotdot", "proxy-v1", "other-root", "encoded-slash", "escaped-slash",
+        "double-quote",
     ],
 )
 def test_init_writes_the_format_the_typed_url_serves(
@@ -139,8 +146,13 @@ def test_init_writes_the_format_the_typed_url_serves(
         ({"ollama": "http://localhost:11434"}, (), "http://localhost:11434/v1", "/v1/chat/completions"),
         ({}, ("http://localhost:11434", "llama3.1:8b"), "http://localhost:11434", "/api/chat"),
         ({}, ("http://localhost:11434/v1/..", "llama3.1:8b"), "http://localhost:11434/v1/..", "/api/chat"),
+        ({}, ("http://localhost:11434/%2F", "llama3.1:8b"), "http://localhost:11434/%2F", "/%2F/chat/completions"),
+        (
+            {}, ("http://localhost:11434/\\u002f", "llama3.1:8b"), "http://localhost:11434/\\u002f",
+            "/\\u002f/chat/completions",
+        ),
     ],
-    ids=["detected-default", "bare-root", "root-by-dot-segments"],
+    ids=["detected-default", "bare-root", "root-by-dot-segments", "encoded-slash", "escaped-slash"],
 )
 async def test_the_init_config_reaches_the_api_its_url_serves(
     detected: dict[str, str], answers: tuple[str, ...], url: str, path: str,
@@ -178,12 +190,61 @@ def test_init_asks_again_for_a_url_setup_would_refuse(
     assert reason in " ".join(output.getvalue().split())
 
 
-def test_a_url_the_client_cannot_parse_is_openai() -> None:
-    unparsable = "http://localhost:abc/v1"
+@pytest.mark.parametrize(
+    ("refused", "reason"),
+    [
+        ("http://[v1.a]:11434/", "Invalid IPv6 address"),
+        ("http://\u00fc-.example/v1", "Invalid IDNA hostname"),
+    ],
+    ids=["ipv6-literal", "idna-host"],
+)
+def test_init_asks_again_for_a_url_the_client_cannot_parse(
+    refused: str, reason: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert provider_setup.normalize_base_url(refused)  # premise: setup's rule alone accepts it
     with pytest.raises(httpx.InvalidURL):
-        httpx.URL(unparsable)  # premise: the parse the client and init's rule share fails
+        httpx.URL(refused.rstrip("/") + "/")  # premise: the client could not be built from it
+    accepted = "http://localhost:11434/v1"
+    output = StringIO()
 
-    assert main_mod._init_api_format(unparsable) == "openai"
+    written = _init(monkeypatch, tmp_path / "init", {}, refused, accepted, "llama3.1:8b", output=output)
+
+    assert written["cognitive"]["llm_base_url_fast"] == accepted
+    assert reason in " ".join(output.getvalue().split())
+
+
+@pytest.mark.parametrize("model", ['m"x', "m\\tx"], ids=["double-quote", "backslash-t"])
+def test_init_writes_the_model_as_typed(model: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    written = _init(monkeypatch, tmp_path / "init", {}, "http://localhost:11434/v1", model)
+
+    # Written raw, a quote broke the file and \t loaded as a tab.
+    assert written["cognitive"]["llm_model_fast"] == model
+
+
+@pytest.mark.parametrize("refused", ["m\x7fx", "m\x85x"], ids=["delete", "next-line"])
+def test_init_asks_again_for_a_model_setup_would_refuse(
+    refused: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = StringIO()
+
+    written = _init(
+        monkeypatch, tmp_path / "init", {}, "http://localhost:11434/v1", refused, "llama3.1:8b", output=output,
+    )
+
+    # Setup's model rule (non-empty, printable); JSON would leave these characters raw.
+    assert written["cognitive"]["llm_model_fast"] == "llama3.1:8b"
+    assert "must be non-empty printable text" in " ".join(output.getvalue().split())
+
+
+def test_the_scaffold_writes_any_printable_url_and_model_as_given(tmp_path: Path) -> None:
+    # The class behind the escaped-slash and double-quote rows: every printable ASCII character, and three beyond.
+    for ch in [c for c in string.printable if not c.isspace()] + ["\u00fc", "\u2603", "\U0001f600"]:
+        url, model = f"http://localhost:11434/v1/a{ch}b", f"m{ch}x"
+        text = main_mod._render_init_config(
+            tmp_path, llm_url=url, llm_model=model, api_format="openai", profile="strict",
+        )
+        cognitive = yaml.safe_load(text)["cognitive"]
+        assert (cognitive["llm_base_url_fast"], cognitive["llm_model_fast"]) == (url, model), repr(ch)
 
 
 def test_the_init_scaffold_gives_every_text_tier_the_shipped_timeout(
