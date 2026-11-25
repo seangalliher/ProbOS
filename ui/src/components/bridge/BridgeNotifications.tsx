@@ -181,7 +181,9 @@ export function NotificationCard({ notification }: { notification: NotificationV
       return;
     }
     // #1414 item 14: a read the live fence refuses, with no session cached for the parent, would
-    // open a room whose session band never renders, so its focus step could never run. Open nothing.
+    // open a room with no session band yet. The room tries focus once, finds no band and returns;
+    // a band mounted later by the panel's own read is never focused and the request stays pending.
+    // Open nothing.
     if (!current.hydrateCrewSession(session.task_id, session, issuedAt)
       && !useStore.getState().crewSessionsByParent.has(session.task_id)) {
       cancel();

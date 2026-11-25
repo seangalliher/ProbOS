@@ -1,7 +1,8 @@
 // #1414 item 14 (BF-998): when the live fence refuses a notification's room-context read and no
 // session is cached for its parent, the card opens nothing and offers a retry, instead of opening a
-// room whose session band never renders and leaving the focus request pending. Real NotificationCard,
-// real store and real liveReadFence (reset before each test by src/test/setup.ts); fetch is stubbed.
+// room with no session band, whose one-shot focus step returns early and leaves the focus request
+// pending even if the band mounts later. Real NotificationCard, real store and real liveReadFence
+// (reset before each test by src/test/setup.ts); fetch is stubbed.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
