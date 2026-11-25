@@ -1521,6 +1521,18 @@ AD-1346 M3e4d8 is the eighth part of M3e4d and the first of `workforce.py`. `Wor
 - *Residual.* Recorded limits L1 to L19 of the contract.
 - *Reversal.* Revert the AD-1357 commits.
 
+### AD-1358 S2 -- A reply that claims a search or lookup is checked against the turn's tool record (2026-11-25, #1750)
+
+- *Scope.* `cognitive/dm/lookup_claim.py` (new), `cognitive/dm/reply_pipeline.py` (`step_4m`, the `lookup_record_incomplete` field, steps 1, 4e and 4h), `cognitive/agentic_dispatch.py` (`_project_tool_invocations`), the `write_claim_guard.enabled` description; tests. Contract `prompts/ad-1358-s2-lookup-claim-trace.md`.
+- *LC1 (the record decides).* The sentence states a fact of the turn's AD-1295 tool record ("no search or lookup was run through a tool on it"); the reply's wording only selects the turns. Any recorded call abstains, whatever its name or result. Rejected: a list of lookup tool names (drifts with every reader); the trace digest (serializer-bound, absent without a store).
+- *LC2 (action).* Append one sentence and log the claim, as AD-1285 does for saves (#13(c)). Rejected: removing the sentence (it can carry true content), refusing the reply, logging only, a revision pass (S3).
+- *LC3 (home).* `step_4m` with a pure module beside `write_ledger.py`; no new step. Rejected: a new step (the step tuple, plan-mode and census pins); BF-922 `output_grounding.py` (runs before the DM tool record exists).
+- *LC4 (switch).* `write_claim_guard.enabled`, default on; no new field.
+- *LC5 (unverifiable ids).* A record whose every call was unverifiable is None, not empty; the write verdict is unchanged.
+- *Not changed.* `write_ledger.py`, `ToolInvocations` and its wire shape, the step tuples, the group fan-out, config fields.
+- *Residual.* Limits L1 to L9 and finding F1 of the contract.
+- *Reversal.* Revert the S2 commits, or set `write_claim_guard.enabled: false` (which also turns off the write sentence).
+
 ### AD-1358 S1 -- A crew member in a game is told the recorded games against that opponent (2026-11-06, #1750)
 
 - *Scope.* `recreation/history.py` (new: `parse_game_record`, `GameOutcome`, `HeadToHead`, `read_head_to_head`), `cognitive/cognitive_agent.py` (`_build_head_to_head_context`, the `head_to_head` DM bid after `active_game`, its inventory entry), `cognitive/oracle_service.py` (`records_reader_for`, public), `cognitive/dm_targeted_lookup.py` (`_knowledge_lookup_reader` delegates), tests. Contract `prompts/ad-1358-s1-head-to-head-tally.md`.
