@@ -8,7 +8,10 @@ Three endpoints:
 - ``GET /api/config/yaml`` returns the current YAML text with secret
   values replaced by ``"<redacted>"``.
 - ``POST /api/config`` accepts a sparse patch dict, validates it by
-  constructing a fresh :class:`SystemConfig`, persists it to disk, and
+  constructing a fresh :class:`SystemConfig`, merges it onto the config
+  file as it is on disk (#1414 item 3: an edit made since boot is kept,
+  and no value the environment set is written), validates that too,
+  persists it, and
   returns ``restart_required=True``. Secret-flagged paths are rejected
   with 400 ``secret_field_readonly`` — defense-in-depth alongside the
   UI's chip-only render.
@@ -31,7 +34,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 
-from probos.config import SystemConfig
+from probos.config import SystemConfig, drop_null_sections
 from probos.routers.auth import require_crew_scope
 from probos.routers.deps import get_runtime
 from probos.settings import section_registry
@@ -141,6 +144,38 @@ def _diff_paths(before: dict, after: dict, prefix: str = "") -> list[str]:
         elif bv != av:
             out.append(path)
     return out
+
+
+class _ConfigUnreadable(Exception):
+    """The config file cannot be the base of a save; ``str()`` is a reason that quotes none of the file."""
+
+
+def _read_disk_mapping(path: Path) -> dict[str, Any]:
+    """#1414 item 3: the config file's sections as they are on disk; ``{}`` when it does not exist.
+
+    Top-level sections that parse as None (every value commented out) are dropped by the helper
+    load_config uses. Raises _ConfigUnreadable when the file cannot be read, is not UTF-8, is not
+    YAML or its top level is not a mapping; the reason never quotes the file, since a YAML error's
+    own text holds the offending line. PyYAML also fails outside YAMLError: a ValueError for an
+    impossible date or an integer of over 4,300 digits, and a RecursionError for deep nesting.
+    """
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        raise _ConfigUnreadable("not valid UTF-8 text") from None
+    except OSError as exc:
+        raise _ConfigUnreadable(f"unreadable ({type(exc).__name__})") from None
+    try:
+        document = yaml.safe_load(text)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        raise _ConfigUnreadable("not valid YAML") from None
+    if document is None:
+        return {}
+    if not isinstance(document, dict):
+        raise _ConfigUnreadable("not a mapping of config sections")
+    return drop_null_sections(document)
 
 
 def _write_yaml_atomic(path: str, data: dict) -> None:
@@ -263,8 +298,32 @@ async def post_config(req: Request, runtime: Any = Depends(get_runtime)) -> Any:
     if not cfg_path:
         return JSONResponse(status_code=503, content={"error": "config_path_unavailable"})
 
+    # #1414 item 3: merge onto the file as it is now, not onto the config this process booted with, so an
+    # edit made since boot (probos setup, a hand edit, an earlier save awaiting restart) is kept and no value
+    # the environment set (PROBOS_LLM_URL) is written. No await runs from this read to the write below, so
+    # two saves in this process cannot interleave.
     try:
-        _write_yaml_atomic(cfg_path, new_cfg.model_dump(mode="json"))
+        on_disk = _read_disk_mapping(Path(cfg_path))
+    except _ConfigUnreadable as exc:
+        logger.warning(
+            "AD-741 config save refused (cfg_path=%s): the file is %s; it is unchanged.", cfg_path, exc,
+        )
+        return JSONResponse(status_code=409, content={"error": "config_unreadable", "reason": str(exc)})
+    to_write = _deep_merge(on_disk, patch)
+    try:
+        SystemConfig.model_validate(to_write)
+    except ValidationError as e:
+        # loc and type only: a message can quote a value from the file, which may be a secret.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "config_invalid",
+                "errors": [{"loc": list(err["loc"]), "type": err["type"]} for err in e.errors()],
+            },
+        )
+
+    try:
+        _write_yaml_atomic(cfg_path, to_write)
     except OSError as ex:
         logger.error(
             "AD-741 config write failed (cfg_path=%s): %s; "

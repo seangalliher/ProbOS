@@ -1705,8 +1705,8 @@ def _setup_report(
         )
     console.print("Restart [bold]probos serve[/bold] (or the [bold]probos[/bold] shell) to use the new provider.")
     console.print(
-        "[dim]Restart any running HXI before saving settings there: a settings save rewrites "
-        "this file from the configuration it booted with.[/dim]"
+        "[dim]A settings save in a running HXI keeps these settings: it merges its changes onto this file "
+        "as it is on disk, though it rewrites the file without its comments.[/dim]"
     )
 
 
